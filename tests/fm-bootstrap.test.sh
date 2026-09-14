@@ -1217,6 +1217,17 @@ SH
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$out" "slot reference is missing or belongs to another harness: missing-slot" "bootstrap did not report the missing local slot binding"
+
+  # A secondmate inherits crew-dispatch.json but never account-slots.json, so a
+  # home holding slotted rules with no registry of its own cannot resolve them
+  # and is not thereby misconfigured; the spawn naming the slot is what refuses.
+  printf '%s\n' '{"default":{"harness":"claude","accountSlots":["claude-a"]}}' > "$case_dir/home/config/crew-dispatch.json"
+  mv "$case_dir/home/config/account-slots.json" "$case_dir/inherited-registry"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "CREW_DISPATCH:" "bootstrap blocked dispatch in a home that inherited slotted rules without its own registry"
+  mv "$case_dir/inherited-registry" "$case_dir/home/config/account-slots.json"
+  chmod 600 "$case_dir/home/config/account-slots.json"
   pass "bootstrap validates account-slot registries and references without probing providers or gating on quota-axi"
 }
 

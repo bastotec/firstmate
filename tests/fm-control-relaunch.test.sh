@@ -1825,35 +1825,6 @@ test_relaunch_refuses_invalid_account_binding_before_stop() {
   pass "relaunch validates the local binding before stopping the old worker"
 }
 
-test_relaunch_uses_one_config_override_for_preflight_and_launch() {
-  local dir override store out rc
-  dir=$(new_case account-config-override rl55)
-  add_ship_task "$dir" rl55 claude
-  configure_relaunch_slots "$dir"
-  printf 'account_slot=claude-a\n' >> "$dir/home/state/rl55.meta"
-  jq '.slots["claude-a"].expectedAccountId="home-account"' "$dir/home/config/account-slots.json" > "$dir/home/config/account-slots.tmp"
-  mv "$dir/home/config/account-slots.tmp" "$dir/home/config/account-slots.json"
-  chmod 600 "$dir/home/config/account-slots.json"
-
-  override="$dir/override-config"
-  store="$dir/override-claude-profile"
-  mkdir -p "$override" "$store"
-  chmod 700 "$override" "$store"
-  printf '{}\n' > "$store/.credentials.json"
-  chmod 600 "$store/.credentials.json"
-  cat > "$override/account-slots.json" <<JSON
-{"version":1,"slots":{"claude-a":{"harness":"claude","storePath":"$store","expectedAccountId":"override-account"}}}
-JSON
-  chmod 600 "$override/account-slots.json"
-
-  out=$(FM_CONFIG_OVERRIDE="$override" FM_FAKE_QUOTA_ID=override-account \
-    run_control "$dir" rl55 relaunch --note "use the overridden account registry"); rc=$?
-  expect_code 0 "$rc" "config-overridden account relaunch should succeed"
-  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$store'" "replacement launch did not use the preflighted overridden store"
-  assert_not_contains "$(cat "$dir/fake/literal")" "$dir/claude-profile" "relaunch mixed the default-home registry with the override"
-  pass "relaunch preflight and replacement launch resolve the same config override"
-}
-
 test_direct_spawn_relaunch_refuses_secondmate_account_slot_after_metadata_load() {
   local dir home smhome out rc
   dir=$(new_case account-direct-secondmate smslot)
@@ -1946,5 +1917,4 @@ test_relaunch_moves_a_drifted_item_back_in_flight
 test_same_harness_relaunch_preserves_account_slot
 test_relaunch_can_clear_or_reset_account_slot
 test_relaunch_refuses_invalid_account_binding_before_stop
-test_relaunch_uses_one_config_override_for_preflight_and_launch
 test_direct_spawn_relaunch_refuses_secondmate_account_slot_after_metadata_load

@@ -616,7 +616,6 @@ TARGET_MODEL=
 TARGET_EFFORT=
 PRIOR_ACCOUNT_SLOT=
 TARGET_ACCOUNT_SLOT=
-ACCOUNT_SLOT_CONFIG=
 
 journal_write() {  # <phase> [extra-line]...
   local phase=$1
@@ -840,12 +839,10 @@ resolve_relaunch_profile() {
       claude|codex) ;;
       *) die "account slots are supported only for claude and codex workers" ;;
     esac
-    ACCOUNT_SLOT_CONFIG=$(CDPATH='' cd -- "$CONFIG" 2>/dev/null && pwd -P) \
-      || ACCOUNT_SLOT_CONFIG=$CONFIG
     # A relaunch re-resolves the local binding before touching the old worker
     # or publishing its progress note, so a slot that is gone or signed out
     # refuses while the current agent is still running.
-    fm_account_slot_resolve "$ACCOUNT_SLOT_CONFIG" "$TARGET_ACCOUNT_SLOT" "$TARGET_HARNESS" \
+    fm_account_slot_resolve "$CONFIG" "$TARGET_ACCOUNT_SLOT" "$TARGET_HARNESS" \
       || die "$FM_ACCOUNT_SLOT_ERROR"
   fi
 }
@@ -1005,9 +1002,8 @@ do_relaunch() {
   elif [ "$ACCOUNT_SLOT_SET" = 1 ] || [ -n "$PRIOR_ACCOUNT_SLOT" ]; then
     spawn_args+=(--account-slot default)
   fi
-  spawn_env=("FM_CONTROL_RELAUNCH_TX=$RELAUNCH_TX")
-  [ -z "$ACCOUNT_SLOT_CONFIG" ] || spawn_env+=("FM_CONFIG_OVERRIDE=$ACCOUNT_SLOT_CONFIG")
-  if env "${spawn_env[@]}" "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
+  if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
+      "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
   else
     [ "$(fm_meta_get "$META" control_relaunch_tx)" != "$RELAUNCH_TX" ] \

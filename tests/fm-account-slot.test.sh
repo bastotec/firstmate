@@ -111,6 +111,37 @@ PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
   "$ROOT/bin/fm-account-slot.sh" validate >/dev/null || fail "valid four-slot registry and dispatch were refused"
 pass "validates a strict four-slot registry and dispatch cross-references"
 
+# Only one rule matches at intake, so the same profile reappearing in an
+# unrelated rule never produces a two-candidate choice. Ambiguity is a repeated
+# effective tuple inside one candidate set: one rule's own `use` array, or
+# `default`.
+cat > "$HOME_DIR/config/crew-dispatch.json" <<'JSON'
+{"rules":[
+  {"when":"big feature","use":{"harness":"claude","model":"sonnet","effort":"high","accountSlots":["claude-a","claude-b"]}},
+  {"when":"risky refactor","use":{"harness":"claude","model":"sonnet","effort":"high","accountSlots":["claude-a","claude-b"]}}
+],"default":[{"harness":"claude","model":"sonnet","effort":"high","accountSlots":["claude-a","claude-b"]}]}
+JSON
+chmod 600 "$HOME_DIR/config/crew-dispatch.json"
+PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+  "$ROOT/bin/fm-account-slot.sh" validate >/dev/null \
+  || fail "the same slotted profile in two unrelated rules was reported as an ambiguous duplicate"
+
+cat > "$HOME_DIR/config/crew-dispatch.json" <<'JSON'
+{"rules":[{"when":"big feature","use":[
+  {"harness":"claude","model":"sonnet","effort":"high","accountSlots":["claude-a","claude-b"]},
+  {"harness":"claude","model":"sonnet","effort":"high","accountSlots":["claude-a"]}
+]}]}
+JSON
+chmod 600 "$HOME_DIR/config/crew-dispatch.json"
+if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+  "$ROOT/bin/fm-account-slot.sh" validate >/dev/null 2>"$TMP_ROOT/one-set-duplicate.err"; then
+  fail "one candidate set offering claude-a twice was accepted"
+fi
+assert_contains "$(cat "$TMP_ROOT/one-set-duplicate.err")" "duplicate effective dispatch tuple: claude|sonnet|high|claude-a" \
+  "within-candidate-set duplicate refusal was unclear"
+write_dispatch
+pass "duplicate effective tuples are ambiguous within one candidate set, not across unrelated rules"
+
 out=$(PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" ANTHROPIC_API_KEY=hostile CODEX_HOME=/hostile \
   FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-slot.sh" probe claude-a) \
   || fail "valid Claude slot probe failed"
