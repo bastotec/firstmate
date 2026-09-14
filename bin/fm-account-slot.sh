@@ -3,14 +3,14 @@
 # Usage:
 #   fm-account-slot.sh validate
 #   fm-account-slot.sh probe <slot>
-#   fm-account-slot.sh probe-all [<slot>...]
+#   fm-account-slot.sh probe-all <slot>...
 #
 # FM_HOME selects the home. FM_CONFIG_OVERRIDE selects its exact config
-# directory. probe-all de-duplicates explicitly named slots, validates the
-# registry and references as one configuration, then probes sequentially. With
-# no names it probes every configured slot. A valid but unavailable slot emits
-# only its logical ID plus availability.status=unavailable and does not stop
-# later slots; malformed configuration and missing requested IDs still refuse.
+# directory. probe-all requires at least one slot ID, de-duplicates the names it
+# is given, validates the registry and references as one configuration, then
+# probes sequentially. A valid but unavailable slot emits only its logical ID
+# plus availability.status=unavailable and does not stop later slots; malformed
+# configuration and missing requested IDs still refuse.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,19 +43,16 @@ case "${1:-}" in
     ;;
   probe-all)
     shift
+    [ "$#" -gt 0 ] || { echo "usage: fm-account-slot.sh probe-all <slot>..." >&2; exit 2; }
     fm_account_slot_validate_registry "$CONFIG" || die_slot
     fm_account_slot_validate_dispatch "$CONFIG" || die_slot
     fm_quota_axi_supports_profile_only \
       || { FM_ACCOUNT_SLOT_ERROR="quota-axi does not support --profile-only; install a published release that advertises that flag"; die_slot; }
     slots=
-    if [ "$#" -eq 0 ]; then
-      slots=$(jq -r '.slots | keys[]' "$CONFIG/account-slots.json")
-    else
-      for slot in "$@"; do
-        case $'\n'"$slots"$'\n' in *$'\n'"$slot"$'\n'*) continue ;; esac
-        slots=${slots:+$slots$'\n'}$slot
-      done
-    fi
+    for slot in "$@"; do
+      case $'\n'"$slots"$'\n' in *$'\n'"$slot"$'\n'*) continue ;; esac
+      slots=${slots:+$slots$'\n'}$slot
+    done
     while IFS= read -r slot; do
       [ -n "$slot" ] || continue
       harness=$(jq -r --arg slot "$slot" '.slots[$slot].harness // empty' "$CONFIG/account-slots.json") \
@@ -78,7 +75,7 @@ case "${1:-}" in
     sed -n '2,${/^#/!q;p;}' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
-    echo "usage: fm-account-slot.sh validate|probe <slot>|probe-all [<slot>...]" >&2
+    echo "usage: fm-account-slot.sh validate|probe <slot>|probe-all <slot>..." >&2
     exit 2
     ;;
 esac

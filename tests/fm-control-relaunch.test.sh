@@ -57,6 +57,10 @@ trap relaunch_cleanup EXIT
 make_tmux_stub() {  # <dir>
   local fb="$1/fakebin"
   mkdir -p "$fb"
+  # No slot store in this suite is signed in to a keychain, so the store-scoped
+  # lookup must answer "absent" without reaching the developer's real keychain.
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 44' > "$fb/security"
+  chmod +x "$fb/security"
   cat > "$fb/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -1820,7 +1824,7 @@ test_relaunch_refuses_invalid_account_binding_before_stop() {
   rm "$dir/claude-profile/.credentials.json"
   out=$(run_control "$dir" rl54 relaunch --note "must not stop"); rc=$?
   expect_code 1 "$rc" "a signed-out slot should refuse relaunch"
-  assert_contains "$out" "credential file is missing" "signed-out slot refusal was unclear"
+  assert_contains "$out" "no vendor-managed credential" "signed-out slot refusal was unclear"
   assert_equals claude "$(cat "$dir/fake/command")" "a signed-out slot stopped the old worker"
   pass "relaunch validates the local binding before stopping the old worker"
 }

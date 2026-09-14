@@ -211,10 +211,10 @@ Each suffix is the first eight hex characters of the SHA-256 of the NFC-normaliz
 So two slots never read one item, and neither reads the ambient `Claude Code-credentials` that an unslotted Claude uses.
 The `CLAUDE_CONFIG_DIR=<store>` prefix `bin/fm-spawn.sh` puts on a slotted Claude launch is therefore a real per-subscription binding, not an unpinned hint, and it needs no launch-time flag of its own - the Codex `-c cli_auth_credentials_store="file"` pin exists because Codex's store choice is configurable per home, and Claude's is not.
 
-Two consequences worth keeping in view.
 Claude's credential store is a keychain-primary composite with the config-dir file as its fallback, and a successful keychain write deletes the file, so on a host whose panes can reach the login keychain a `claude login` under a slot store leaves no `<storePath>/.credentials.json`.
-The registry and `fm_account_slot_resolve` both read that file, so such a slot reports as unavailable; provisioning a Claude slot means ending up with the file present.
-The measurement host had no `Claude Code-credentials` keychain item at all (`security find-generic-password` exited 44 with keychain access working), so its own credentials live in the file and the file path is the one exercised end to end here.
+Both halves of that composite are scoped to the store, so `fm_account_slot_credential_present` accepts either: the file if it is there, otherwise the store's own keychain item.
+Presence is read with `security find-generic-password -a <user> -s <service>` and no `-w`, which returns attributes only - it reads no secret and, per the Background-session row in `docs/verification/runtime-backends.md`, still answers where reading the secret would exit 36.
+The measurement host had no `Claude Code-credentials` keychain item at all (`security find-generic-password` exited 44 with keychain access working), so its own credentials live in the file and the file path is the one exercised end to end here; the keychain path is covered deterministically in `tests/fm-account-slot.test.sh` against a `security` stub that answers only for the store-scoped service name.
 
 Re-check this section against a newer Claude Code and update the pinned version with it.
 

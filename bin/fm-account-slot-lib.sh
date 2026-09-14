@@ -115,6 +115,45 @@ fm_account_slot_credential_path() { # <harness> <store-path>
   esac
 }
 
+fm_account_slot_keychain_account() {
+  local name=${USER:-}
+  [ -n "$name" ] || name=$(id -un 2>/dev/null) || name=
+  case "$name" in
+    ''|*[!a-zA-Z0-9._-]*) name=claude-code-user ;;
+  esac
+  printf '%s' "$name"
+}
+
+# Claude scopes its keychain item to the config directory it was signed in
+# under - service "Claude Code-credentials-<sha256(storePath)[0:8]>" - so this
+# never observes the ambient unsuffixed item, and it reads no secret material:
+# find-generic-password without -w returns attributes only.
+fm_account_slot_keychain_present() { # <store-path>
+  local digest
+  command -v security >/dev/null 2>&1 || return 1
+  if command -v shasum >/dev/null 2>&1; then
+    digest=$(printf '%s' "$1" | shasum -a 256 2>/dev/null) || return 1
+  elif command -v sha256sum >/dev/null 2>&1; then
+    digest=$(printf '%s' "$1" | sha256sum 2>/dev/null) || return 1
+  else
+    return 1
+  fi
+  digest=${digest%% *}
+  [ "${#digest}" -ge 8 ] || return 1
+  security find-generic-password -a "$(fm_account_slot_keychain_account)" \
+    -s "Claude Code-credentials-${digest:0:8}" >/dev/null 2>&1
+}
+
+fm_account_slot_credential_present() { # <harness> <store-path>
+  local credential
+  credential=$(fm_account_slot_credential_path "$1" "$2") || return 1
+  if [ -e "$credential" ] || [ -L "$credential" ]; then
+    return 0
+  fi
+  [ "$1" = claude ] || return 1
+  fm_account_slot_keychain_present "$2"
+}
+
 fm_account_slot_validate_registry() { # <config-dir>
   local config=$1 registry="$1/account-slots.json" error rows slot harness path credential canonical seen=
   FM_ACCOUNT_SLOT_ERROR=
@@ -191,7 +230,7 @@ fm_account_slot_validate_dispatch() { # <config-dir> [dispatch-file]
 }
 
 fm_account_slot_resolve() { # <config-dir> <slot> <harness>
-  local config=$1 slot=$2 harness=$3 registry="$1/account-slots.json" row credential
+  local config=$1 slot=$2 harness=$3 registry="$1/account-slots.json" row
   FM_ACCOUNT_SLOT_ERROR=
   [ "$slot" != default ] || { fm_account_slot_fail "account slot 'default' is reserved for clearing an account selection"; return 1; }
   fm_account_slot_validate_registry "$config" || return 1
@@ -206,10 +245,8 @@ fm_account_slot_resolve() { # <config-dir> <slot> <harness>
   IFS=$'\t' read -r FM_ACCOUNT_SLOT_ID FM_ACCOUNT_SLOT_HARNESS FM_ACCOUNT_SLOT_STORE_PATH <<< "$row"
   FM_ACCOUNT_SLOT_EXPECTED_ACCOUNT_ID=$(jq -r --arg slot "$slot" '.slots[$slot].expectedAccountId // empty' "$registry") \
     || { fm_account_slot_fail "slot '$slot' expected account identity cannot be read"; return 1; }
-  credential=$(fm_account_slot_credential_path "$FM_ACCOUNT_SLOT_HARNESS" "$FM_ACCOUNT_SLOT_STORE_PATH") \
-    || { fm_account_slot_fail "slot '$slot' has no known vendor credential location"; return 1; }
-  [ -e "$credential" ] || [ -L "$credential" ] \
-    || { fm_account_slot_fail "slot '$slot' is unavailable: its vendor-managed credential file is missing"; return 1; }
+  fm_account_slot_credential_present "$FM_ACCOUNT_SLOT_HARNESS" "$FM_ACCOUNT_SLOT_STORE_PATH" \
+    || { fm_account_slot_fail "slot '$slot' is unavailable: its store holds no vendor-managed credential"; return 1; }
 }
 
 fm_account_slot_probe() { # <config-dir> <slot>
@@ -273,7 +310,8 @@ fm_account_slot_probe() { # <config-dir> <slot>
       $p.account.accountId == $account_id and
       $p.source == "oauth" and
       (if $provider == "claude" then
-         ([ $p.attempts[]? | select(.status == "success" and .source == "oauth-file") ] | length) == 1
+         ([ $p.attempts[]? | select(.status == "success") | .source ] as $succeeded |
+           ($succeeded | length) == 1 and (["oauth-file","keychain"] | index($succeeded[0])) != null)
        else
          ([ $p.attempts[]? | select((.source == "pi") or (.source == "cli-rpc")) ] | length) == 0
        end) and
