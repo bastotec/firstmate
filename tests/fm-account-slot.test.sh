@@ -65,7 +65,7 @@ case "$provider" in
     email=private@example.invalid
     case "${CLAUDE_CONFIG_DIR-}" in *claude-b) account=claude-account-b ;; esac
     source=oauth
-    attempt=oauth-file
+    attempt=${FAKE_ATTEMPT_SOURCE:-oauth-file}
     ;;
   codex)
     account=codex-account-a
@@ -102,6 +102,30 @@ else
 fi
 SH
 chmod +x "$FAKEBIN/quota-axi"
+
+# Claude names its keychain item after the store it was signed in under. This
+# stub answers only for the service FAKE_KEYCHAIN_STORE hashes to, so a lookup
+# that fell back to the ambient unsuffixed item finds nothing.
+cat > "$FAKEBIN/security" <<'SH'
+#!/usr/bin/env bash
+[ -n "${FAKE_KEYCHAIN_STORE:-}" ] || exit 44
+service=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -w) exit 1 ;;
+    -s) service=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if command -v shasum >/dev/null 2>&1; then
+  digest=$(printf '%s' "$FAKE_KEYCHAIN_STORE" | shasum -a 256)
+else
+  digest=$(printf '%s' "$FAKE_KEYCHAIN_STORE" | sha256sum)
+fi
+[ "$service" = "Claude Code-credentials-${digest:0:8}" ] || exit 44
+exit 0
+SH
+chmod +x "$FAKEBIN/security"
 
 write_registry
 write_dispatch
@@ -170,6 +194,35 @@ PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
   "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null \
   || fail "first Claude slot probe failed"
 pass "matches each slot against its own configured expectedAccountId"
+
+mv "$HOME_DIR/profiles/claude-b/.credentials.json" "$TMP_ROOT/keychain-only-credential"
+if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+    "$ROOT/bin/fm-account-slot.sh" probe claude-b >/dev/null 2>"$TMP_ROOT/no-credential.err"; then
+  fail "a Claude slot with no credential anywhere was treated as available"
+fi
+assert_contains "$(cat "$TMP_ROOT/no-credential.err")" "no vendor-managed credential" "absent-credential refusal was unclear"
+if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_KEYCHAIN_STORE="$HOME_DIR/profiles/claude-a" \
+    FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-slot.sh" probe claude-b >/dev/null 2>&1; then
+  fail "claude-b accepted another store's keychain item"
+fi
+: > "$CALLS"
+out=$(PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_ATTEMPT_SOURCE=keychain \
+  FAKE_KEYCHAIN_STORE="$HOME_DIR/profiles/claude-b" FM_HOME="$HOME_DIR" \
+  "$ROOT/bin/fm-account-slot.sh" probe claude-b) \
+  || fail "a Claude slot signed in to its own store-scoped keychain item was reported unavailable"
+assert_contains "$out" '"accountSlot":"claude-b"' "keychain-backed slot emitted no sanitized evidence"
+assert_contains "$(cat "$CALLS")" "claude=$HOME_DIR/profiles/claude-b" "keychain-backed probe did not isolate the selected store"
+mv "$TMP_ROOT/keychain-only-credential" "$HOME_DIR/profiles/claude-b/.credentials.json"
+chmod 600 "$HOME_DIR/profiles/claude-b/.credentials.json"
+pass "a Claude slot is available through its own store-scoped keychain item, never the ambient one"
+
+if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+    "$ROOT/bin/fm-account-slot.sh" probe-all >/dev/null 2>"$TMP_ROOT/probe-all-noargs.err"; then
+  fail "probe-all without slot IDs was accepted"
+fi
+assert_contains "$(cat "$TMP_ROOT/probe-all-noargs.err")" "usage: fm-account-slot.sh probe-all <slot>..." \
+  "probe-all did not require the slot IDs the decision references"
+pass "probe-all probes only the slots it is asked for"
 
 mv "$HOME_DIR/profiles/codex-b/auth.json" "$TMP_ROOT/signed-out-credential"
 PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
