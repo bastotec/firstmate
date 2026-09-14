@@ -10,8 +10,8 @@
     "claude-secondary": {
       "harness": "claude",
       "storePath": "/absolute/path/to/claude-secondary-profile",
-      "expectedSource": "keychain",
-      "expectedEmail": "<expected-email>"
+      "expectedSource": "oauth-file",
+      "expectedAccountId": "<expected-account-id>"
     },
     "codex-primary": {
       "harness": "codex",
@@ -23,7 +23,7 @@
       "harness": "codex",
       "storePath": "/absolute/path/to/codex-secondary-profile",
       "expectedSource": "oauth",
-      "expectedEmail": "<expected-email>"
+      "expectedAccountId": "<expected-account-id>"
     }
   }
 }

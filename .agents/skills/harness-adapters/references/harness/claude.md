@@ -18,7 +18,7 @@ Busy hooks verified 2026-07-28 on Claude Code 2.1.220.
 
 One slotted worker selects one vendor profile through a single `CLAUDE_CONFIG_DIR`; profiles are never merged within a worker.
 `../../../../../docs/configuration.md` "Account slots" owns the home-local registry and operator contract.
-A slot-changing relaunch validates and probes the replacement profile before the control plane stops the current worker.
+A slot-changing relaunch resolves the replacement profile before the control plane stops the current worker.
 
 ## Workspace trust
 

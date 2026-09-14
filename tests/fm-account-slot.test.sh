@@ -27,7 +27,7 @@ write_registry() {
   "version": 1,
   "slots": {
     "claude-a": {"harness":"claude","storePath":"$HOME_DIR/profiles/claude-a","expectedSource":"oauth-file","expectedAccountId":"claude-account-a"},
-    "claude-b": {"harness":"claude","storePath":"$HOME_DIR/profiles/claude-b","expectedSource":"oauth-file","expectedEmail":"claude-b@example.invalid"},
+    "claude-b": {"harness":"claude","storePath":"$HOME_DIR/profiles/claude-b","expectedSource":"oauth-file","expectedAccountId":"claude-account-b"},
     "codex-a": {"harness":"codex","storePath":"$HOME_DIR/profiles/codex-a","expectedSource":"oauth","expectedAccountId":"codex-account-a"},
     "codex-b": {"harness":"codex","storePath":"$HOME_DIR/profiles/codex-b","expectedSource":"oauth","expectedAccountId":"codex-account-b"}
   }
@@ -63,7 +63,7 @@ case "$provider" in
   claude)
     account=claude-account-a
     email=private@example.invalid
-    case "${CLAUDE_CONFIG_DIR-}" in *claude-b) account=private-account; email=claude-b@example.invalid ;; esac
+    case "${CLAUDE_CONFIG_DIR-}" in *claude-b) account=claude-account-b ;; esac
     source=oauth
     attempt=oauth-file
     ;;
@@ -134,11 +134,32 @@ pass "probes Codex through one isolated profile"
 
 PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
   "$ROOT/bin/fm-account-slot.sh" probe claude-b >/dev/null \
-  || fail "email-identified Claude slot probe failed"
+  || fail "second Claude slot probe failed"
 PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
   "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null \
-  || fail "account-ID-identified Claude slot probe failed"
-pass "keeps account-ID and email identity fields distinct"
+  || fail "first Claude slot probe failed"
+pass "matches each slot against its own configured expectedAccountId"
+
+mv "$HOME_DIR/profiles/codex-b/auth.json" "$TMP_ROOT/signed-out-credential"
+PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+  "$ROOT/bin/fm-account-slot.sh" validate >/dev/null \
+  || fail "one signed-out slot invalidated the whole registry"
+PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+  "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null \
+  || fail "one signed-out slot blocked an unrelated healthy slot"
+: > "$CALLS"
+out=$(PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+  "$ROOT/bin/fm-account-slot.sh" probe-all codex-b codex-a) \
+  || fail "a signed-out slot stopped probe-all"
+printf '%s' "$out" | jq -e '
+  .slots | length == 2 and
+  .[0] == {accountSlot:"codex-b",availability:{status:"unavailable"}} and
+  .[1].accountSlot == "codex-a"
+' >/dev/null || fail "a signed-out slot was not reported as that slot being unavailable"
+assert_equals 1 "$(wc -l < "$CALLS" | tr -d ' ')" "probe-all probed a slot with no vendor credential"
+mv "$TMP_ROOT/signed-out-credential" "$HOME_DIR/profiles/codex-b/auth.json"
+chmod 600 "$HOME_DIR/profiles/codex-b/auth.json"
+pass "treats a missing vendor credential as one unavailable slot, not an invalid registry"
 
 : > "$CALLS"
 PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
@@ -181,12 +202,17 @@ assert_contains "$(cat "$TMP_ROOT/multi-document.err")" "malformed quota evidenc
 assert_equals "" "$(cat "$TMP_ROOT/multi-document.out")" "multiple-root refusal emitted sanitized evidence"
 pass "requires exactly one JSON root from every quota probe"
 
+PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_NO_PROFILE_ONLY=1 FM_HOME="$HOME_DIR" \
+  "$ROOT/bin/fm-account-slot.sh" validate >/dev/null \
+  || fail "a missing quota-axi capability was reported as invalid slot configuration"
+: > "$CALLS"
 if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_NO_PROFILE_ONLY=1 FM_HOME="$HOME_DIR" \
-    "$ROOT/bin/fm-account-slot.sh" validate >/dev/null 2>"$TMP_ROOT/capability.err"; then
-  fail "slotted dispatch accepted quota-axi without --profile-only"
+    "$ROOT/bin/fm-account-slot.sh" probe-all claude-a >/dev/null 2>"$TMP_ROOT/capability.err"; then
+  fail "automatic slot ranking accepted quota-axi without --profile-only"
 fi
-assert_contains "$(cat "$TMP_ROOT/capability.err")" "must support --profile-only" "missing capability refusal did not name the prerequisite"
-pass "feature-detects the upstream source-only prerequisite"
+assert_contains "$(cat "$TMP_ROOT/capability.err")" "--profile-only" "missing capability refusal did not name the prerequisite"
+assert_equals 0 "$(wc -l < "$CALLS" | tr -d ' ')" "probe-all read provider quota without the source-only capability"
+pass "gates automatic quota ranking, not configuration validity, on the source-only prerequisite"
 
 cp "$HOME_DIR/config/account-slots.json" "$TMP_ROOT/valid-registry"
 cp "$HOME_DIR/config/crew-dispatch.json" "$TMP_ROOT/valid-dispatch"

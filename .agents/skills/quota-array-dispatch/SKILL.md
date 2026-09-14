@@ -43,6 +43,7 @@ When a matched profile contains `accountSlots`, expand it into one `(harness, mo
 A single profile with two slots is therefore a quota-aware choice even though the profile itself is not an array.
 Use `bin/fm-account-slot.sh probe-all <slot>...` once with the distinct referenced logical slots.
 That public helper validates the current home's registry, requires quota-axi's advertised `--profile-only` capability, probes sequentially with credential refresh disabled, verifies configured identity and provenance, and emits only sanitized quota evidence plus logical slot IDs.
+Without that capability there is no automatic slot selection at all: `probe-all` refuses, and you must pick a slot by explicit captain instruction or leave the profile unslotted.
 Malformed registry data, references, duplicate tuples, and missing requested IDs refuse the whole candidate set.
 After that global validation, an individual slot whose isolated probe is unavailable emits only its logical ID with `availability.status=unavailable`; exclude that tuple and continue evaluating healthy later slots.
 Never run the ordinary provider snapshot for a slotted tuple, and never put account identity, credential paths, source attempts, or raw full JSON into candidate accounting.

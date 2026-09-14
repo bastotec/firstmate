@@ -1197,7 +1197,7 @@ SH
   chmod +x "$fakebin/quota-axi"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "quota-axi must support --profile-only" "bootstrap did not report the missing source-only capability"
+  assert_not_contains "$out" "CREW_DISPATCH:" "bootstrap reported valid slot configuration as invalid because quota-axi lacks --profile-only"
 
   cat > "$fakebin/quota-axi" <<'SH'
 #!/usr/bin/env bash
@@ -1206,11 +1206,18 @@ if [ "${1:-}" = --help ]; then printf '%s\n' 'flags: --profile-only'; exit 0; fi
 exit 0
 SH
   chmod +x "$fakebin/quota-axi"
+  mv "$store/.credentials.json" "$case_dir/signed-out-credential"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "CREW_DISPATCH:" "bootstrap reported one signed-out slot as invalid home configuration"
+  mv "$case_dir/signed-out-credential" "$store/.credentials.json"
+  chmod 600 "$store/.credentials.json"
+
   printf '%s\n' '{"default":{"harness":"claude","accountSlots":["missing-slot"]}}' > "$case_dir/home/config/crew-dispatch.json"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$out" "slot reference is missing or belongs to another harness: missing-slot" "bootstrap did not report the missing local slot binding"
-  pass "bootstrap validates account-slot registries, references, and upstream capability without probing providers"
+  pass "bootstrap validates account-slot registries and references without probing providers or gating on quota-axi"
 }
 
 test_bootstrap_reporting

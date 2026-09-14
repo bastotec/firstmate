@@ -500,8 +500,6 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
-# shellcheck source=bin/fm-quota-axi-lib.sh
-. "$SCRIPT_DIR/fm-quota-axi-lib.sh"
 # shellcheck source=bin/fm-account-slot-lib.sh
 . "$SCRIPT_DIR/fm-account-slot-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
@@ -1962,10 +1960,6 @@ if [ -n "$ACCOUNT_SLOT_EFFECTIVE" ]; then
     claude|codex) ;;
     *) echo "error: account slots are supported only for claude and codex workers" >&2; exit 1 ;;
   esac
-  fm_quota_axi_supports_profile_only || {
-    echo "error: account slot routing requires quota-axi --profile-only; install a published release that advertises that flag" >&2
-    exit 1
-  }
   fm_account_slot_resolve "$CONFIG" "$ACCOUNT_SLOT_EFFECTIVE" "$HARNESS" || {
     echo "error: $FM_ACCOUNT_SLOT_ERROR" >&2
     exit 1

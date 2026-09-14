@@ -184,13 +184,34 @@ quota-axi --help
 
 The version command returned `0.1.42`.
 The help output listed 12 flags and did not list `--profile-only`.
-Configured account-slot validation therefore correctly refuses routing on this installation instead of reading combined or ambient provider evidence.
+Automatic quota-ranked slot selection therefore correctly refuses on this installation instead of reading combined or ambient provider evidence.
+Explicit `fm-spawn.sh --account-slot` and `fm-control.sh relaunch --account-slot` do not consume quota evidence and are unaffected by this gap.
 This is not a four-profile live pass.
 After a published quota-axi advertises the required capability and two Claude plus two Codex profiles are provisioned, refresh this evidence with:
 
 ```sh
 FM_ACCOUNT_SLOT_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-account-slot-live-e2e.test.sh
 ```
+
+## Codex slot credential storage
+
+Verified 2026-09-14 against codex-cli 0.154.0 (upstream tag `rust-v0.154.0`), because no codex binary is installed on this machine.
+
+`codex-rs/config/src/config_toml.rs` declares the config key:
+
+```rust
+/// Preferred backend for storing CLI auth credentials.
+/// file (default): Use a file in the Codex home directory.
+/// keyring: Use an OS-specific keyring service.
+/// auto: Use the keyring if available, otherwise use a file.
+#[serde(default)]
+pub cli_auth_credentials_store: Option<AuthCredentialsStoreMode>,
+```
+
+`codex-rs/config/src/types.rs` declares its accepted values as a `#[serde(rename_all = "lowercase")]` enum: `file` (the default, documented as "Persist credentials in `CODEX_HOME/auth.json`"), `keyring`, `auto`, and `ephemeral`.
+So `-c cli_auth_credentials_store="file"` names a real key with a real value, and it pins a slotted worker to `<storePath>/auth.json` even when a config layer under that home asks for `keyring` or `auto`.
+That is the same file the registry validates for a Codex slot.
+Re-check this section against the installed codex once one is present, and update the pinned version with it.
 
 ## Standalone Grok discovery probe
 
