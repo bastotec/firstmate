@@ -173,6 +173,25 @@ Neither this per-source shape nor `state.authStatus` exists before quota-axi 0.1
 Grok also reports `credits.remaining: 0` alongside `percentRemaining: 41` on a healthy account.
 That zero is a prepaid balance, not the subscription window, and is never headroom.
 
+## Account-slot producer capability
+
+Verified 2026-09-13 against the installed quota-axi 0.1.42.
+
+```sh
+quota-axi --version
+quota-axi --help
+```
+
+The version command returned `0.1.42`.
+The help output listed 12 flags and did not list `--profile-only`.
+Configured account-slot validation therefore correctly refuses routing on this installation instead of reading combined or ambient provider evidence.
+This is not a four-profile live pass.
+After a published quota-axi advertises the required capability and two Claude plus two Codex profiles are provisioned, refresh this evidence with:
+
+```sh
+FM_ACCOUNT_SLOT_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-account-slot-live-e2e.test.sh
+```
+
 ## Standalone Grok discovery probe
 
 Verified 2026-07-30 on `grok 0.2.117 (f1c06093089f) [stable]`.
@@ -199,6 +218,8 @@ Re-run the two commands above and update this section and the pinned version tog
 It asserts that the script accepts no harness, model, or provider input, never calls `quota-axi`, exits alike for every probe result because it renders no verdict, invokes only the two fixed non-destructive argv forms with stdin closed, holds a real bound even when the configured bound is zero or malformed, and never echoes raw vendor output.
 `tests/fm-spawn-dispatch-profile.test.sh` owns spawn's deterministic profile and harness refusals.
 `tests/fm-bootstrap.test.sh` owns the quota-axi version-floor diagnostic.
+`tests/fm-account-slot.test.sh` owns portable registry, owner-comparator, mode, symlink, hardlink, identity-field, provenance, single-document, mixed-availability, and sanitized-probe coverage.
+`tests/fm-account-slot-live-e2e.test.sh` is the opt-in prompt-free four-profile producer check; it skips unless enabled and fails when enabled without `--profile-only` or without two distinct configured profiles for each supported harness.
 `tests/fm-quota-array-dispatch-live-e2e.test.sh` drives the public Pi skill-loading interface against one fake schema-5 snapshot per case, served as quota-axi's default TOON.
 It covers TOON-first `spendPriority` ranking among candidates that pass eligibility, reasoning-class, and runway-feasibility gates, explicit accounting for unmeasurable runway, the strongest-reasoning constraint, and the runway feasibility floor over a higher `spendPriority`.
 The skill's primary path is that default TOON; `--json` is the documented defensive fallback, and this section records the producer `--json` shape that fallback consumes.

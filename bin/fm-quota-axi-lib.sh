@@ -11,6 +11,19 @@
 
 FM_QUOTA_AXI_MIN=0.1.29
 
+# Account-slot routing is capability-gated rather than tied to an unpublished
+# version. The existing provider-level dispatch path retains the floor above.
+fm_quota_axi_supports_profile_only() {
+  local timeout=${1:-5} output
+  command -v quota-axi >/dev/null 2>&1 || return 1
+  if declare -F fm_run_timed >/dev/null 2>&1; then
+    output=$(fm_run_timed "$timeout" quota-axi --help 2>/dev/null </dev/null) || return 1
+  else
+    output=$(quota-axi --help 2>/dev/null </dev/null) || return 1
+  fi
+  printf '%s\n' "$output" | grep -Eq '(^|[[:space:],])--profile-only([[:space:],]|$)'
+}
+
 fm_quota_axi_compatible() {
   local timeout=${1:-} output parts major minor patch extra
   local min_major min_minor min_patch min_extra

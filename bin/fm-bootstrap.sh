@@ -169,6 +169,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 # shellcheck source=bin/fm-quota-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
+# shellcheck source=bin/fm-account-slot-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-account-slot-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tangle-lib.sh"
 # shellcheck source=bin/fm-ff-lib.sh disable=SC1091
@@ -1104,6 +1106,12 @@ EOF
 crew_dispatch_validate() {
   local file err
   file="$CONFIG/crew-dispatch.json"
+  if [ -e "$CONFIG/account-slots.json" ] || [ -L "$CONFIG/account-slots.json" ]; then
+    if ! fm_account_slot_validate_registry "$CONFIG"; then
+      echo "CREW_DISPATCH: invalid config/account-slots.json - $FM_ACCOUNT_SLOT_ERROR"
+      return 0
+    fi
+  fi
   [ -f "$file" ] || return 0
   if ! command -v jq >/dev/null 2>&1; then
     echo "MISSING: jq (install: $(install_cmd jq))"
@@ -1179,6 +1187,10 @@ crew_dispatch_validate() {
   ' "$file" 2>/dev/null || true)
   if [ -n "$err" ]; then
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $err"
+    return 0
+  fi
+  if ! fm_account_slot_validate_dispatch "$CONFIG" "$file"; then
+    echo "CREW_DISPATCH: invalid account slot routing - $FM_ACCOUNT_SLOT_ERROR"
     return 0
   fi
   if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
