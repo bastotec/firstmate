@@ -193,6 +193,31 @@ After a published quota-axi advertises the required capability and two Claude pl
 FM_ACCOUNT_SLOT_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-account-slot-live-e2e.test.sh
 ```
 
+## Claude slot credential storage
+
+Verified 2026-09-14 on macOS 26 (Darwin 25.6.0) aarch64 against the installed Claude Code 2.1.270.
+
+The open question was whether the login keychain outranks a `CLAUDE_CONFIG_DIR`-scoped credential file, which would let a slotted Claude worker authenticate as the ambient account.
+It does not, because the keychain item itself is scoped to the config directory.
+A logging shim named `security` was placed first on `PATH`, recording every argv before handing off to `/usr/bin/security`, and `claude auth status` was run three times against the same user and login keychain:
+
+| `CLAUDE_CONFIG_DIR` | keychain service `claude` asked for |
+| --- | --- |
+| unset | `Claude Code-credentials` |
+| `<lab>/storeA` | `Claude Code-credentials-31620bad` |
+| `<lab>/storeB` | `Claude Code-credentials-7b599179` |
+
+Each suffix is the first eight hex characters of the SHA-256 of the NFC-normalized config directory path, confirmed with `shasum -a 256` over both paths.
+So two slots never read one item, and neither reads the ambient `Claude Code-credentials` that an unslotted Claude uses.
+The `CLAUDE_CONFIG_DIR=<store>` prefix `bin/fm-spawn.sh` puts on a slotted Claude launch is therefore a real per-subscription binding, not an unpinned hint, and it needs no launch-time flag of its own - the Codex `-c cli_auth_credentials_store="file"` pin exists because Codex's store choice is configurable per home, and Claude's is not.
+
+Two consequences worth keeping in view.
+Claude's credential store is a keychain-primary composite with the config-dir file as its fallback, and a successful keychain write deletes the file, so on a host whose panes can reach the login keychain a `claude login` under a slot store leaves no `<storePath>/.credentials.json`.
+The registry and `fm_account_slot_resolve` both read that file, so such a slot reports as unavailable; provisioning a Claude slot means ending up with the file present.
+The measurement host had no `Claude Code-credentials` keychain item at all (`security find-generic-password` exited 44 with keychain access working), so its own credentials live in the file and the file path is the one exercised end to end here.
+
+Re-check this section against a newer Claude Code and update the pinned version with it.
+
 ## Codex slot credential storage
 
 Verified 2026-09-14 against codex-cli 0.154.0 (upstream tag `rust-v0.154.0`), because no codex binary is installed on this machine.

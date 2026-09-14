@@ -145,20 +145,20 @@ fm_account_slot_validate_registry() { # <config-dir>
   done <<< "$rows"
 }
 
-fm_account_slot_dispatch_profiles() {
+fm_account_slot_dispatch_candidate_sets() {
   jq -c '
-    def profiles($v): if ($v | type) == "array" then $v[] else $v end;
+    def profiles($v): if ($v | type) == "array" then $v else [$v] end;
     ((.rules // [])[]? | profiles(.use)), (if has("default") then profiles(.default) else empty end)
   ' "$1" 2>/dev/null
 }
 
 fm_account_slot_validate_dispatch() { # <config-dir> [dispatch-file]
-  local config=$1 dispatch=${2:-$1/crew-dispatch.json} registry="$1/account-slots.json" error profiles refs duplicates
+  local config=$1 dispatch=${2:-$1/crew-dispatch.json} registry="$1/account-slots.json" error sets refs duplicates
   FM_ACCOUNT_SLOT_ERROR=
   [ -f "$dispatch" ] || return 0
-  profiles=$(fm_account_slot_dispatch_profiles "$dispatch") \
+  sets=$(fm_account_slot_dispatch_candidate_sets "$dispatch") \
     || { fm_account_slot_fail "config/crew-dispatch.json cannot be inspected for accountSlots"; return 1; }
-  refs=$(printf '%s\n' "$profiles" | jq -sc '[.[] | select(has("accountSlots"))]') \
+  refs=$(printf '%s\n' "$sets" | jq -sc '[.[][] | select(has("accountSlots"))]') \
     || { fm_account_slot_fail "config/crew-dispatch.json cannot be inspected for accountSlots"; return 1; }
   [ "$(printf '%s' "$refs" | jq 'length')" -gt 0 ] || return 0
   error=$(printf '%s' "$refs" | jq -r '
@@ -170,6 +170,10 @@ fm_account_slot_validate_dispatch() { # <config-dir> [dispatch-file]
     elif any(.[]; .harness != "claude" and .harness != "codex") then "accountSlots are supported only for claude and codex profiles"
     else empty end') || { fm_account_slot_fail "config/crew-dispatch.json accountSlots cannot be validated"; return 1; }
   [ -z "$error" ] || { fm_account_slot_fail "config/crew-dispatch.json is invalid - $error"; return 1; }
+  # A home with no registry of its own - a secondmate that inherited slotted
+  # dispatch rules, say - cannot resolve these references and is not thereby
+  # misconfigured. fm_account_slot_resolve refuses the unknown slot at spawn.
+  [ -e "$registry" ] || [ -L "$registry" ] || return 0
   fm_account_slot_validate_registry "$config" || return 1
   error=$(jq -nr --argjson profiles "$refs" --slurpfile registry "$registry" '
     [$profiles[] as $p | $p.accountSlots[] as $slot |
@@ -177,9 +181,11 @@ fm_account_slot_validate_dispatch() { # <config-dir> [dispatch-file]
       $slot] | if length > 0 then "slot reference is missing or belongs to another harness: " + .[0] else empty end') \
     || { fm_account_slot_fail "account slot references cannot be validated"; return 1; }
   [ -z "$error" ] || { fm_account_slot_fail "$error"; return 1; }
-  duplicates=$(printf '%s' "$refs" | jq -r '
-    [.[] | . as $p | .accountSlots[] | [$p.harness,($p.model // "default"),($p.effort // "default"),.] | join("|")]
-    | group_by(.) | map(select(length > 1) | .[0]) | .[0] // empty') \
+  duplicates=$(printf '%s\n' "$sets" | jq -sr '
+    [.[] | [.[] | select(has("accountSlots")) | . as $p | .accountSlots[]
+              | [$p.harness,($p.model // "default"),($p.effort // "default"),.] | join("|")]
+          | group_by(.) | map(select(length > 1) | .[0])[]]
+    | .[0] // empty') \
     || { fm_account_slot_fail "effective account-slot tuples cannot be validated"; return 1; }
   [ -z "$duplicates" ] || { fm_account_slot_fail "duplicate effective dispatch tuple: $duplicates"; return 1; }
 }

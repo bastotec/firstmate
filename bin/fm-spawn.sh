@@ -1302,6 +1302,14 @@ if [ "$RELAUNCH" -eq 1 ] && [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart"
   exit 1
 fi
 if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in */*) false ;; *) true ;; esac then
+  # An account slot is one subscription, so sharing it across a batch would put
+  # every worker on the same account and leave its siblings idle. Each worker
+  # needs its own resolved slot: one single-task spawn per worker, which the
+  # captain may run in parallel.
+  if [ "$ACCOUNT_SLOT_SET" -eq 1 ] && [ "${#POS[@]}" -gt 1 ]; then
+    echo "error: --account-slot is single-task only; spawn each worker separately with its own resolved slot" >&2
+    exit 1
+  fi
   if [ "$KIND" != secondmate ] && [ -z "$HARNESS_ARG" ] && [ -f "$CONFIG/crew-dispatch.json" ]; then
     echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
     exit 1

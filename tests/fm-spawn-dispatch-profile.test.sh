@@ -841,14 +841,36 @@ test_batch_forwards_shared_profile_flags() {
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high --account-slot codex-a)
   status=$?
+  expect_code 1 "$status" "a multi-pair batch must refuse one shared account slot"
+  assert_contains "$out" "--account-slot is single-task only" "shared account-slot refusal was unclear"
+  assert_absent "$HOME_DIR/state/$id1.meta" "refused batch still spawned the first pair"
+  assert_absent "$HOME_DIR/state/$id2.meta" "refused batch still spawned the second pair"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high)
+  status=$?
   expect_code 0 "$status" "batch spawn with shared profile flags should succeed"
   assert_contains "$out" "spawned $id1 harness=codex" "first batch task did not use shared harness"
   assert_contains "$out" "spawned $id2 harness=codex" "second batch task did not use shared harness"
   assert_meta_profile "$HOME_DIR/state/$id1.meta" codex gpt-5 high
   assert_meta_profile "$HOME_DIR/state/$id2.meta" codex gpt-5 high
-  assert_grep "account_slot=codex-a" "$HOME_DIR/state/$id1.meta" "first batch task lost the shared account slot"
-  assert_grep "account_slot=codex-a" "$HOME_DIR/state/$id2.meta" "second batch task lost the shared account slot"
-  pass "batch dispatch forwards shared --harness, --model, --effort, and --account-slot to every pair"
+  assert_not_contains "$(cat "$HOME_DIR/state/$id1.meta")" "account_slot=" "batch spawn invented an account slot"
+  pass "batch dispatch shares --harness, --model, and --effort but refuses one shared --account-slot"
+}
+
+test_single_pair_batch_still_accepts_an_account_slot() {
+  local rec id out status
+  id=profile-batch-single-z9b
+  rec=$(make_spawn_case profile-batch-single codex "$id")
+  read_case_record "$rec"
+  configure_account_slot "$HOME_DIR" codex codex-a
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id=$PROJ_DIR" --harness codex --account-slot codex-a)
+  status=$?
+  expect_code 0 "$status" "a one-pair batch spawn with an account slot should succeed"
+  assert_grep "account_slot=codex-a" "$HOME_DIR/state/$id.meta" "one-pair batch lost its resolved account slot"
+  pass "the single-worker pair form still resolves one account slot"
 }
 
 test_claude_forwards_firstmate_config_dir_when_set() {
@@ -1503,6 +1525,7 @@ test_pi_signed_threads_shared_pi_profile_and_preserves_identity
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
 test_batch_forwards_shared_profile_flags
+test_single_pair_batch_still_accepts_an_account_slot
 test_claude_forwards_firstmate_config_dir_when_set
 test_claude_omits_config_dir_prefix_when_unset
 test_claude_permission_mode_bypass_matches_absent_launch
