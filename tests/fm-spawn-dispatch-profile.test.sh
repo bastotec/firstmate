@@ -64,17 +64,17 @@ SH
 }
 
 configure_account_slot() {
-  local home=$1 harness=$2 slot=$3 store="$1/$3-profile" source credential
+  local home=$1 harness=$2 slot=$3 store="$1/$3-profile" credential
   mkdir -p "$store"
   chmod 700 "$store"
   case "$harness" in
-    claude) source=oauth-file; credential="$store/.credentials.json" ;;
-    codex) source=oauth; credential="$store/auth.json" ;;
+    claude) credential="$store/.credentials.json" ;;
+    codex) credential="$store/auth.json" ;;
   esac
   printf '{}\n' > "$credential"
   chmod 600 "$credential"
   cat > "$home/config/account-slots.json" <<JSON
-{"version":1,"slots":{"$slot":{"harness":"$harness","storePath":"$store","expectedSource":"$source","expectedAccountId":"test-account"}}}
+{"version":1,"slots":{"$slot":{"harness":"$harness","storePath":"$store","expectedAccountId":"test-account"}}}
 JSON
   chmod 600 "$home/config/account-slots.json"
 }
@@ -1442,7 +1442,9 @@ test_codex_account_slot_binds_home_and_file_store() {
   assert_contains "$launch" "/usr/bin/env -i" "test did not exercise the launch environment allowlist"
   assert_not_contains "$launch" "CLAUDE_CONFIG_DIR=/hostile" "Codex launch leaked the competing Claude selector"
   assert_grep "account_slot=codex-a" "$HOME_DIR/state/$id.meta" "Codex metadata omitted the logical account slot"
-  pass "Codex account slots survive the environment allowlist and force file credential storage"
+  assert_absent "$store/config.toml" "spawn invented a Codex trust record instead of leaving the one-time dialog to the post-spawn step"
+  assert_equals "auth.json" "$(cd "$store" && ls -A)" "a slotted Codex spawn wrote something other than the provisioned credential into the slot store"
+  pass "Codex account slots survive the environment allowlist, force file credential storage, and pre-register no trust"
 }
 
 test_account_slot_refuses_raw_and_secondmate_launches() {

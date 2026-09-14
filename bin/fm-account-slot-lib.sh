@@ -13,7 +13,6 @@ FM_ACCOUNT_SLOT_ERROR=
 FM_ACCOUNT_SLOT_ID=
 FM_ACCOUNT_SLOT_HARNESS=
 FM_ACCOUNT_SLOT_STORE_PATH=
-FM_ACCOUNT_SLOT_EXPECTED_SOURCE=
 FM_ACCOUNT_SLOT_EXPECTED_ACCOUNT_ID=
 FM_ACCOUNT_SLOT_MAX_AGE_SECONDS=${FM_ACCOUNT_SLOT_MAX_AGE_SECONDS:-900}
 FM_ACCOUNT_SLOT_MAX_FUTURE_SKEW_SECONDS=${FM_ACCOUNT_SLOT_MAX_FUTURE_SKEW_SECONDS:-60}
@@ -90,7 +89,7 @@ fm_account_slot_secure_directory() { # <path> <slot>
 fm_account_slot_registry_shape_error() { # <registry>
   jq -r '
     def slug: type == "string" and test("^[a-z0-9][a-z0-9-]{0,62}$");
-    def allowed_entry: ["expectedAccountId","expectedSource","harness","storePath"];
+    def allowed_entry: ["expectedAccountId","harness","storePath"];
     if type != "object" then "top-level value must be an object"
     elif ((keys - ["slots","version"]) | length) > 0 then "unknown top-level field: " + ((keys - ["slots","version"])[0])
     elif .version != 1 then "version must be 1"
@@ -103,9 +102,6 @@ fm_account_slot_registry_shape_error() { # <registry>
       "slot " + ([.slots | to_entries[] | select(((.value | keys) - allowed_entry | length) > 0)][0].key) + " has an unknown field"
     elif ([.slots | to_entries[] | select(.value.harness != "claude" and .value.harness != "codex")] | length) > 0 then "slot harness must be claude or codex"
     elif ([.slots | to_entries[] | select((.value.storePath | type) != "string" or (.value.storePath | startswith("/") | not))] | length) > 0 then "each storePath must be an absolute string"
-    elif ([.slots | to_entries[] | select((.value.expectedSource | type) != "string")] | length) > 0 then "each expectedSource must be a string"
-    elif ([.slots | to_entries[] | select(.value.harness == "claude" and .value.expectedSource != "oauth-file")] | length) > 0 then "Claude expectedSource must be oauth-file"
-    elif ([.slots | to_entries[] | select(.value.harness == "codex" and .value.expectedSource != "oauth")] | length) > 0 then "Codex expectedSource must be oauth"
     elif ([.slots | to_entries[] | select((.value.expectedAccountId | type) != "string" or (.value.expectedAccountId | length) == 0 or (.value.expectedAccountId | length) > 512 or (.value.expectedAccountId | test("^\\s|\\s$") ))] | length) > 0 then "each slot must set expectedAccountId as a non-empty trimmed string of at most 512 characters"
     else empty end
   ' "$1" 2>/dev/null
@@ -120,7 +116,7 @@ fm_account_slot_credential_path() { # <harness> <store-path>
 }
 
 fm_account_slot_validate_registry() { # <config-dir>
-  local config=$1 registry="$1/account-slots.json" error rows slot path canonical seen=
+  local config=$1 registry="$1/account-slots.json" error rows slot harness path credential canonical seen=
   FM_ACCOUNT_SLOT_ERROR=
   [ -e "$registry" ] || [ -L "$registry" ] \
     || { fm_account_slot_fail "config/account-slots.json is missing"; return 1; }
@@ -131,9 +127,9 @@ fm_account_slot_validate_registry() { # <config-dir>
   error=$(fm_account_slot_registry_shape_error "$registry") \
     || { fm_account_slot_fail "config/account-slots.json cannot be validated"; return 1; }
   [ -z "$error" ] || { fm_account_slot_fail "config/account-slots.json is invalid - $error"; return 1; }
-  rows=$(jq -r '.slots | to_entries[] | [.key,.value.storePath] | @tsv' "$registry") \
+  rows=$(jq -r '.slots | to_entries[] | [.key,.value.harness,.value.storePath] | @tsv' "$registry") \
     || { fm_account_slot_fail "config/account-slots.json cannot be read"; return 1; }
-  while IFS=$'\t' read -r slot path; do
+  while IFS=$'\t' read -r slot harness path; do
     [ -n "$slot" ] || continue
     fm_account_slot_secure_directory "$path" "$slot" || return 1
     canonical=$(CDPATH='' cd -- "$path" && pwd -P) || return 1
@@ -141,6 +137,11 @@ fm_account_slot_validate_registry() { # <config-dir>
       *$'\n'"$canonical"$'\n'*) fm_account_slot_fail "slot '$slot' duplicates another slot's canonical storePath"; return 1 ;;
     esac
     seen=${seen:+$seen$'\n'}$canonical
+    credential=$(fm_account_slot_credential_path "$harness" "$path") \
+      || { fm_account_slot_fail "slot '$slot' has no known vendor credential location"; return 1; }
+    if [ -e "$credential" ] || [ -L "$credential" ]; then
+      fm_account_slot_secure_file "$credential" "slot '$slot' credential file" || return 1
+    fi
   done <<< "$rows"
 }
 
@@ -187,28 +188,22 @@ fm_account_slot_resolve() { # <config-dir> <slot> <harness>
   local config=$1 slot=$2 harness=$3 registry="$1/account-slots.json" row credential
   FM_ACCOUNT_SLOT_ERROR=
   [ "$slot" != default ] || { fm_account_slot_fail "account slot 'default' is reserved for clearing an account selection"; return 1; }
-  case "$slot" in
-    ''|*[!a-z0-9-]*|-*|*-) fm_account_slot_fail "account slot must be a lowercase slug"; return 1 ;;
-  esac
-  [ "${#slot}" -le 63 ] || { fm_account_slot_fail "account slot must be at most 63 characters"; return 1; }
   fm_account_slot_validate_registry "$config" || return 1
   row=$(jq -r --arg slot "$slot" --arg harness "$harness" '
     .slots[$slot] as $s |
     if $s == null then empty
     elif $s.harness != $harness then "HARNESS_MISMATCH"
-    else [$slot,$s.harness,$s.storePath,$s.expectedSource] | @tsv end
+    else [$slot,$s.harness,$s.storePath] | @tsv end
   ' "$registry") || { fm_account_slot_fail "slot '$slot' cannot be read"; return 1; }
   [ -n "$row" ] || { fm_account_slot_fail "slot '$slot' is not configured in this home"; return 1; }
   [ "$row" != HARNESS_MISMATCH ] || { fm_account_slot_fail "slot '$slot' does not belong to harness '$harness'"; return 1; }
-  IFS=$'\t' read -r FM_ACCOUNT_SLOT_ID FM_ACCOUNT_SLOT_HARNESS FM_ACCOUNT_SLOT_STORE_PATH \
-    FM_ACCOUNT_SLOT_EXPECTED_SOURCE <<< "$row"
+  IFS=$'\t' read -r FM_ACCOUNT_SLOT_ID FM_ACCOUNT_SLOT_HARNESS FM_ACCOUNT_SLOT_STORE_PATH <<< "$row"
   FM_ACCOUNT_SLOT_EXPECTED_ACCOUNT_ID=$(jq -r --arg slot "$slot" '.slots[$slot].expectedAccountId // empty' "$registry") \
     || { fm_account_slot_fail "slot '$slot' expected account identity cannot be read"; return 1; }
   credential=$(fm_account_slot_credential_path "$FM_ACCOUNT_SLOT_HARNESS" "$FM_ACCOUNT_SLOT_STORE_PATH") \
     || { fm_account_slot_fail "slot '$slot' has no known vendor credential location"; return 1; }
   [ -e "$credential" ] || [ -L "$credential" ] \
     || { fm_account_slot_fail "slot '$slot' is unavailable: its vendor-managed credential file is missing"; return 1; }
-  fm_account_slot_secure_file "$credential" "slot '$slot' credential file" || return 1
 }
 
 fm_account_slot_probe() { # <config-dir> <slot>
@@ -256,7 +251,7 @@ fm_account_slot_probe() { # <config-dir> <slot>
     return 1
   fi
   now=${FM_ACCOUNT_SLOT_NOW_EPOCH:-$(date +%s)}
-  if ! jq -e --arg provider "$harness" --arg source "$FM_ACCOUNT_SLOT_EXPECTED_SOURCE" \
+  if ! jq -e --arg provider "$harness" \
       --arg account_id "$FM_ACCOUNT_SLOT_EXPECTED_ACCOUNT_ID" \
       --argjson now "$now" --argjson max_age "$FM_ACCOUNT_SLOT_MAX_AGE_SECONDS" \
       --argjson future "$FM_ACCOUNT_SLOT_MAX_FUTURE_SKEW_SECONDS" '
@@ -270,10 +265,10 @@ fm_account_slot_probe() { # <config-dir> <slot>
       ($p.account | type) == "object" and
       (($p.account.identityStatus? == null) or $p.account.identityStatus == "verified") and
       $p.account.accountId == $account_id and
+      $p.source == "oauth" and
       (if $provider == "claude" then
-         $p.source == "oauth" and ([ $p.attempts[]? | select(.status == "success" and .source == $source) ] | length) == 1
+         ([ $p.attempts[]? | select(.status == "success" and .source == "oauth-file") ] | length) == 1
        else
-         $p.source == "oauth" and $source == "oauth" and
          ([ $p.attempts[]? | select((.source == "pi") or (.source == "cli-rpc")) ] | length) == 0
        end) and
       ($p.quotaSemantics | type) == "object" and

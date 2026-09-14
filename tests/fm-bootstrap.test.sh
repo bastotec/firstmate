@@ -1174,7 +1174,7 @@ test_account_slot_bootstrap_validation() {
   printf '{}\n' > "$store/.credentials.json"
   chmod 600 "$store/.credentials.json"
   cat > "$case_dir/home/config/account-slots.json" <<JSON
-{"version":1,"slots":{"claude-a":{"harness":"claude","storePath":"$store","expectedSource":"oauth-file","expectedAccountId":"test-account"}}}
+{"version":1,"slots":{"claude-a":{"harness":"claude","storePath":"$store","expectedAccountId":"test-account"}}}
 JSON
   chmod 600 "$case_dir/home/config/account-slots.json"
   printf '%s\n' '{"default":{"harness":"claude","accountSlots":["claude-a"]}}' > "$case_dir/home/config/crew-dispatch.json"

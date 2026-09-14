@@ -26,10 +26,10 @@ write_registry() {
 {
   "version": 1,
   "slots": {
-    "claude-a": {"harness":"claude","storePath":"$HOME_DIR/profiles/claude-a","expectedSource":"oauth-file","expectedAccountId":"claude-account-a"},
-    "claude-b": {"harness":"claude","storePath":"$HOME_DIR/profiles/claude-b","expectedSource":"oauth-file","expectedAccountId":"claude-account-b"},
-    "codex-a": {"harness":"codex","storePath":"$HOME_DIR/profiles/codex-a","expectedSource":"oauth","expectedAccountId":"codex-account-a"},
-    "codex-b": {"harness":"codex","storePath":"$HOME_DIR/profiles/codex-b","expectedSource":"oauth","expectedAccountId":"codex-account-b"}
+    "claude-a": {"harness":"claude","storePath":"$HOME_DIR/profiles/claude-a","expectedAccountId":"claude-account-a"},
+    "claude-b": {"harness":"claude","storePath":"$HOME_DIR/profiles/claude-b","expectedAccountId":"claude-account-b"},
+    "codex-a": {"harness":"codex","storePath":"$HOME_DIR/profiles/codex-a","expectedAccountId":"codex-account-a"},
+    "codex-b": {"harness":"codex","storePath":"$HOME_DIR/profiles/codex-b","expectedAccountId":"codex-account-b"}
   }
 }
 JSON
@@ -160,6 +160,41 @@ assert_equals 1 "$(wc -l < "$CALLS" | tr -d ' ')" "probe-all probed a slot with 
 mv "$TMP_ROOT/signed-out-credential" "$HOME_DIR/profiles/codex-b/auth.json"
 chmod 600 "$HOME_DIR/profiles/codex-b/auth.json"
 pass "treats a missing vendor credential as one unavailable slot, not an invalid registry"
+
+chmod 644 "$HOME_DIR/profiles/codex-b/auth.json"
+if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+    "$ROOT/bin/fm-account-slot.sh" validate >/dev/null 2>"$TMP_ROOT/insecure-credential.err"; then
+  fail "a group/world-readable vendor credential was accepted as valid configuration"
+fi
+assert_contains "$(cat "$TMP_ROOT/insecure-credential.err")" "slot 'codex-b' credential file" "insecure credential refusal did not name the offending slot"
+assert_contains "$(cat "$TMP_ROOT/insecure-credential.err")" "no group or world permissions" "insecure credential refusal did not name the permission problem"
+: > "$CALLS"
+if out=$(PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+    "$ROOT/bin/fm-account-slot.sh" probe-all codex-b codex-a 2>"$TMP_ROOT/insecure-probe-all.err"); then
+  fail "probe-all hid an insecure vendor credential behind per-slot unavailability: $out"
+fi
+assert_contains "$(cat "$TMP_ROOT/insecure-probe-all.err")" "slot 'codex-b' credential file" "probe-all refusal did not name the misconfigured credential"
+assert_equals 0 "$(wc -l < "$CALLS" | tr -d ' ')" "probe-all probed a provider before refusing insecure credential configuration"
+chmod 600 "$HOME_DIR/profiles/codex-b/auth.json"
+pass "reports a present but insecure vendor credential as configuration, not silent unavailability"
+
+jq '.slots["codex-trailing-"]=.slots["codex-b"] | del(.slots["codex-b"])' "$HOME_DIR/config/account-slots.json" > "$TMP_ROOT/trailing-registry"
+mv "$TMP_ROOT/trailing-registry" "$HOME_DIR/config/account-slots.json"
+chmod 600 "$HOME_DIR/config/account-slots.json"
+jq '.default[1].accountSlots=["codex-a","codex-trailing-"]' "$HOME_DIR/config/crew-dispatch.json" > "$TMP_ROOT/trailing-dispatch"
+mv "$TMP_ROOT/trailing-dispatch" "$HOME_DIR/config/crew-dispatch.json"
+chmod 600 "$HOME_DIR/config/crew-dispatch.json"
+PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+  "$ROOT/bin/fm-account-slot.sh" validate >/dev/null \
+  || fail "the registry validator rejected a slot ID its own slug rule accepts"
+out=$(PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+  "$ROOT/bin/fm-account-slot.sh" probe-all codex-trailing-) \
+  || fail "a slot ID the validator accepts could not be probed"
+printf '%s' "$out" | jq -e '.slots | length == 1 and .[0].accountSlot == "codex-trailing-" and .[0].providers[0].provider == "codex"' \
+  >/dev/null || fail "a healthy slot was dropped from routing by a second slug rule"
+write_registry
+write_dispatch
+pass "one slug rule governs every configured slot ID"
 
 : > "$CALLS"
 PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
