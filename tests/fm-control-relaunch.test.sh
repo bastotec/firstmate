@@ -1772,10 +1772,11 @@ test_same_harness_relaunch_preserves_account_slot() {
   assert_equals claude-a "$(journal_field "$dir" rl50 from_account_slot)" "journal omitted the prior account slot"
   assert_equals claude-a "$(journal_field "$dir" rl50 to_account_slot)" "journal omitted the target account slot"
   calls=$(wc -l < "$dir/fake/quota-calls" | tr -d ' ')
-  assert_equals 1 "$calls" "same-harness relaunch did not probe the preserved slot exactly once"
+  assert_equals 0 "$calls" "an explicit slot relaunch consumed quota evidence"
+  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$dir/claude-profile'" "replacement launch did not bind the preserved slot store"
   assert_not_contains "$(cat "$dir/home/state/rl50.control-relaunch")" "$dir/claude-profile" "relaunch journal leaked the account path"
   assert_not_contains "$(cat "$dir/home/state/rl50.control-relaunch")" "test-account" "relaunch journal leaked account identity"
-  pass "same-harness relaunch preserves and revalidates the logical account slot"
+  pass "same-harness relaunch preserves the logical account slot from the local binding alone"
 }
 
 test_relaunch_can_clear_or_reset_account_slot() {
@@ -1812,19 +1813,20 @@ test_relaunch_refuses_invalid_account_binding_before_stop() {
   assert_equals claude "$(cat "$dir/fake/command")" "missing account binding stopped the old worker"
   assert_not_contains "$(cat "$dir/fake/literal")" "/exit" "missing account binding sent an exit command"
 
-  dir=$(new_case account-mismatch rl54)
+  dir=$(new_case account-signed-out rl54)
   add_ship_task "$dir" rl54 claude
   configure_relaunch_slots "$dir"
   printf 'account_slot=claude-a\n' >> "$dir/home/state/rl54.meta"
-  out=$(FM_FAKE_QUOTA_ID=wrong-account run_control "$dir" rl54 relaunch --note "must not stop"); rc=$?
-  expect_code 1 "$rc" "identity mismatch should refuse relaunch"
-  assert_contains "$out" "mismatched" "identity mismatch refusal was unclear"
-  assert_equals claude "$(cat "$dir/fake/command")" "identity mismatch stopped the old worker"
-  pass "relaunch validates local binding and account identity before stopping the old worker"
+  rm "$dir/claude-profile/.credentials.json"
+  out=$(run_control "$dir" rl54 relaunch --note "must not stop"); rc=$?
+  expect_code 1 "$rc" "a signed-out slot should refuse relaunch"
+  assert_contains "$out" "credential file is missing" "signed-out slot refusal was unclear"
+  assert_equals claude "$(cat "$dir/fake/command")" "a signed-out slot stopped the old worker"
+  pass "relaunch validates the local binding before stopping the old worker"
 }
 
 test_relaunch_uses_one_config_override_for_preflight_and_launch() {
-  local dir override store out rc calls
+  local dir override store out rc
   dir=$(new_case account-config-override rl55)
   add_ship_task "$dir" rl55 claude
   configure_relaunch_slots "$dir"
@@ -1847,10 +1849,8 @@ JSON
   out=$(FM_CONFIG_OVERRIDE="$override" FM_FAKE_QUOTA_ID=override-account \
     run_control "$dir" rl55 relaunch --note "use the overridden account registry"); rc=$?
   expect_code 0 "$rc" "config-overridden account relaunch should succeed"
-  calls=$(cat "$dir/fake/quota-calls")
-  assert_contains "$calls" "claude=$store" "relaunch preflight did not probe the overridden config store"
   assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$store'" "replacement launch did not use the preflighted overridden store"
-  assert_not_contains "$calls" "$dir/claude-profile" "relaunch preflight mixed the default-home registry with the override"
+  assert_not_contains "$(cat "$dir/fake/literal")" "$dir/claude-profile" "relaunch mixed the default-home registry with the override"
   pass "relaunch preflight and replacement launch resolve the same config override"
 }
 

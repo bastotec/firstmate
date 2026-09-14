@@ -61,7 +61,6 @@ case "${1:-}" in
       harness=$(jq -r --arg slot "$slot" '.slots[$slot].harness // empty' "$CONFIG/account-slots.json") \
         || { FM_ACCOUNT_SLOT_ERROR="slot '$slot' cannot be read"; die_slot; }
       [ -n "$harness" ] || { FM_ACCOUNT_SLOT_ERROR="slot '$slot' is not configured in this home"; die_slot; }
-      fm_account_slot_resolve "$CONFIG" "$slot" "$harness" || die_slot
     done <<< "$slots"
     tmp=$(mktemp "${TMPDIR:-/tmp}/fm-account-slots.XXXXXX") || exit 1
     trap 'rm -f "$tmp"' EXIT

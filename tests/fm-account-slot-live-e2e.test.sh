@@ -22,8 +22,8 @@ assert_equals 4 "$(printf '%s\n' "$slots" | grep -c . | tr -d ' ')" "live check 
 
 identity_counts=$(jq -r '
   [
-    ([.slots[] | select(.harness == "claude") | (.expectedAccountId // .expectedEmail)] | unique | length),
-    ([.slots[] | select(.harness == "codex") | (.expectedAccountId // .expectedEmail)] | unique | length)
+    ([.slots[] | select(.harness == "claude") | .expectedAccountId] | unique | length),
+    ([.slots[] | select(.harness == "codex") | .expectedAccountId] | unique | length)
   ] | @tsv
 ' "$REGISTRY") || fail "configured expected identities could not be compared"
 assert_equals $'2\t2' "$identity_counts" "each provider's two slots must name distinct expected identities"

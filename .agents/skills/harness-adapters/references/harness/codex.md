@@ -18,9 +18,10 @@ Verified on 2026-06-11 with codex-cli 0.139.0 unless a fact gives a newer versio
 
 ## Account slots
 
-One slotted worker selects one vendor profile through a single `CODEX_HOME`, with Codex file credential storage under that home; profiles are never merged within a worker.
+One slotted worker selects one vendor profile through a single `CODEX_HOME`; profiles are never merged within a worker.
+Launch pins credential storage to that home with `-c cli_auth_credentials_store="file"`, verified on codex-cli 0.154.0 (see `../../../../../docs/verification/dispatch-auth.md` "Codex slot credential storage").
 `../../../../../docs/configuration.md` "Account slots" owns the home-local registry and operator contract.
-A slot-changing relaunch validates and probes the replacement profile before the control plane stops the current worker.
+A slot-changing relaunch resolves the replacement profile before the control plane stops the current worker.
 
 A directory trust dialog appears on the first run for a repository root: "Do you trust the contents of this directory?"
 Accept it with Enter and verify the instructions begin processing.

@@ -163,10 +163,6 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
-# shellcheck source=bin/fm-timeout-lib.sh
-. "$SCRIPT_DIR/fm-timeout-lib.sh"
-# shellcheck source=bin/fm-quota-axi-lib.sh
-. "$SCRIPT_DIR/fm-quota-axi-lib.sh"
 # shellcheck source=bin/fm-account-slot-lib.sh
 . "$SCRIPT_DIR/fm-account-slot-lib.sh"
 
@@ -846,12 +842,10 @@ resolve_relaunch_profile() {
     esac
     ACCOUNT_SLOT_CONFIG=$(CDPATH='' cd -- "$CONFIG" 2>/dev/null && pwd -P) \
       || ACCOUNT_SLOT_CONFIG=$CONFIG
+    # A relaunch re-resolves the local binding before touching the old worker
+    # or publishing its progress note, so a slot that is gone or signed out
+    # refuses while the current agent is still running.
     fm_account_slot_resolve "$ACCOUNT_SLOT_CONFIG" "$TARGET_ACCOUNT_SLOT" "$TARGET_HARNESS" \
-      || die "$FM_ACCOUNT_SLOT_ERROR"
-    # A relaunch is a fresh routing decision. Validate identity, provenance,
-    # freshness, and the upstream source-only capability before touching the
-    # old worker or publishing its progress note.
-    fm_account_slot_probe "$ACCOUNT_SLOT_CONFIG" "$TARGET_ACCOUNT_SLOT" >/dev/null \
       || die "$FM_ACCOUNT_SLOT_ERROR"
   fi
 }
