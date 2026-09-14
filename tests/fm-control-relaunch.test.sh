@@ -184,8 +184,8 @@ configure_relaunch_slots() { # <case-dir>
   chmod 600 "$claude_store/.credentials.json" "$codex_store/auth.json"
   cat > "$home/config/account-slots.json" <<JSON
 {"version":1,"slots":{
-  "claude-a":{"harness":"claude","storePath":"$claude_store","expectedSource":"oauth-file","expectedAccountId":"test-account"},
-  "codex-a":{"harness":"codex","storePath":"$codex_store","expectedSource":"oauth","expectedAccountId":"test-account"}
+  "claude-a":{"harness":"claude","storePath":"$claude_store","expectedAccountId":"test-account"},
+  "codex-a":{"harness":"codex","storePath":"$codex_store","expectedAccountId":"test-account"}
 }}
 JSON
   chmod 600 "$home/config/account-slots.json"
@@ -1842,7 +1842,7 @@ test_relaunch_uses_one_config_override_for_preflight_and_launch() {
   printf '{}\n' > "$store/.credentials.json"
   chmod 600 "$store/.credentials.json"
   cat > "$override/account-slots.json" <<JSON
-{"version":1,"slots":{"claude-a":{"harness":"claude","storePath":"$store","expectedSource":"oauth-file","expectedAccountId":"override-account"}}}
+{"version":1,"slots":{"claude-a":{"harness":"claude","storePath":"$store","expectedAccountId":"override-account"}}}
 JSON
   chmod 600 "$override/account-slots.json"
 

@@ -211,7 +211,25 @@ pub cli_auth_credentials_store: Option<AuthCredentialsStoreMode>,
 `codex-rs/config/src/types.rs` declares its accepted values as a `#[serde(rename_all = "lowercase")]` enum: `file` (the default, documented as "Persist credentials in `CODEX_HOME/auth.json`"), `keyring`, `auto`, and `ephemeral`.
 So `-c cli_auth_credentials_store="file"` names a real key with a real value, and it pins a slotted worker to `<storePath>/auth.json` even when a config layer under that home asks for `keyring` or `auto`.
 That is the same file the registry validates for a Codex slot.
-Re-check this section against the installed codex once one is present, and update the pinned version with it.
+
+## Codex slot directory trust
+
+Verified 2026-09-14 against codex-cli 0.154.0 (upstream tag `rust-v0.154.0`), same source-only basis as the section above.
+
+`codex-rs/tui/src/lib.rs` decides whether to show the "Do you trust the contents of this directory?" screen with:
+
+```rust
+fn should_show_trust_screen(config: &Config) -> bool {
+    config.active_project.trust_level.is_none()
+}
+```
+
+It consults only whether the active project already has a recorded `trust_level`, and no approval-policy or sandbox input, so `--dangerously-bypass-approvals-and-sandbox` does not suppress it.
+Accepting writes `projects."<path>".trust_level` into the active `CODEX_HOME`'s `config.toml` (`codex-rs/tui/src/config_update.rs`), so the decision is scoped to that home.
+A freshly provisioned account slot therefore shows the dialog once per repository even where the ambient home already accepted it.
+Firstmate pre-registers no Codex trust: `tests/fm-spawn-dispatch-profile.test.sh` asserts a slotted Codex spawn writes no trust record into the slot store, and the existing post-spawn trust step in `AGENTS.md` and the `harness-adapters` Codex reference is what answers the dialog.
+
+Re-check both Codex sections against the installed codex once one is present, and update the pinned version with them.
 
 ## Standalone Grok discovery probe
 

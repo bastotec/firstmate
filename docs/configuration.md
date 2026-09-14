@@ -464,12 +464,12 @@ It is not inherited into secondmate homes, and `--account-slot` is refused for p
 See [`docs/examples/account-slots.json`](examples/account-slots.json) for placeholder-only structure.
 
 The strict version 1 schema is an object containing only `version` and a non-empty `slots` object.
-Each slot key is a unique lowercase slug of at most 63 characters other than reserved clear sentinel `default`, and each slot value contains only `harness`, `storePath`, `expectedSource`, and `expectedAccountId`.
-`harness` is `claude` or `codex`; Claude `expectedSource` is `oauth-file`, while Codex `expectedSource` is `oauth`.
+Each slot key is a unique lowercase slug of at most 63 characters other than reserved clear sentinel `default`, and each slot value contains only `harness`, `storePath`, and `expectedAccountId`.
+`harness` is `claude` or `codex`, and it alone decides the credential file and the OAuth provenance a probe demands: `<storePath>/.credentials.json` for Claude and `<storePath>/auth.json` for Codex.
 Only file-backed vendor profiles are supported, because an OS keychain credential is one item per user and cannot be isolated per slot.
 `expectedAccountId` is a non-empty trimmed string of at most 512 characters.
 Canonical store paths must be unique absolute existing directories owned by the current user, directly named rather than symlinked, and have no group or world permissions.
-The registry and every vendor credential file it reaches must be readable, current-user-owned, non-symlink regular files with one hard link and no group or world permissions.
+The registry and every vendor credential file that is present must be readable, current-user-owned, non-symlink regular files with one hard link and no group or world permissions; a credential file that is present but insecure is a reported configuration error, not a quietly unavailable slot.
 A slot whose vendor credential file is absent - after `claude` or `codex logout`, say - is that one slot being unavailable; it never invalidates the registry or blocks routing to the home's other slots.
 `bin/fm-account-slot.sh validate` is the public validation entry point, and its help plus [`fm-spawn.sh --help`](../bin/fm-spawn.sh) own exact command mechanics.
 
@@ -477,6 +477,8 @@ At dispatch, each profile with `accountSlots` expands to one `(harness, model, e
 The selected logical ID is passed as `fm-spawn.sh --account-slot <id>`; one explicit account slot is shared by every pair in a batch spawn.
 On relaunch, omitting the flag preserves the recorded slot, while `--account-slot default` clears it and returns the replacement worker to the harness's normal profile.
 Every worker uses exactly one selected profile: Claude receives one `CLAUDE_CONFIG_DIR`, and Codex receives one `CODEX_HOME`.
+Provisioning a slot is `claude` or `codex login` under that store, plus - for Codex only - answering the harness's one-time directory trust dialog once per repository, because Codex records that decision inside the active `CODEX_HOME`.
+Spawn pre-registers Claude workspace trust into the selected Claude store, while a Codex slot uses the existing post-spawn trust step in `AGENTS.md`; Firstmate keeps no trust store of its own for Codex.
 Automatic quota-ranked slot selection remains unavailable unless the installed `quota-axi --help` advertises `--profile-only`; `probe` and `probe-all` refuse rather than falling back to an ambient or combined provider read, and there is no automatic selection without that evidence.
 An explicit `--account-slot` launch or relaunch needs no quota evidence: it resolves the home-local binding and routes to it.
 `probe-all` refuses malformed registry data, references, and missing requested IDs before probing.

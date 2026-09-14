@@ -4,25 +4,21 @@
     "claude-primary": {
       "harness": "claude",
       "storePath": "/absolute/path/to/claude-primary-profile",
-      "expectedSource": "oauth-file",
       "expectedAccountId": "<expected-account-id>"
     },
     "claude-secondary": {
       "harness": "claude",
       "storePath": "/absolute/path/to/claude-secondary-profile",
-      "expectedSource": "oauth-file",
       "expectedAccountId": "<expected-account-id>"
     },
     "codex-primary": {
       "harness": "codex",
       "storePath": "/absolute/path/to/codex-primary-profile",
-      "expectedSource": "oauth",
       "expectedAccountId": "<expected-account-id>"
     },
     "codex-secondary": {
       "harness": "codex",
       "storePath": "/absolute/path/to/codex-secondary-profile",
-      "expectedSource": "oauth",
       "expectedAccountId": "<expected-account-id>"
     }
   }
