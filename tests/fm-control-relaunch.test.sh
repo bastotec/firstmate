@@ -133,6 +133,32 @@ SH
 exit 0
 SH
   chmod +x "$fb/sleep"
+  cat > "$fb/timeout" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != -k ] || shift 2
+shift
+exec "$@"
+SH
+  cat > "$fb/quota-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --help ]; then
+  printf '%s\n' 'flags: --provider --profile-only --full --json --no-credential-refresh'
+  exit 0
+fi
+if [ "${1:-}" = --version ]; then printf '%s\n' 'quota-axi 0.1.42'; exit 0; fi
+printf 'argv=%s|claude=%s|codex=%s\n' "$*" "${CLAUDE_CONFIG_DIR-}" "${CODEX_HOME-}" >> "${FM_FAKE_QUOTA_CALLS:?}"
+provider=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --provider ]; then provider=$2; shift 2; else shift; fi
+done
+now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+attempt=oauth
+[ "$provider" != claude ] || attempt=oauth-file
+cat <<JSON
+{"generatedAt":"$now","schemaVersion":5,"providers":[{"provider":"$provider","source":"oauth","account":{"accountId":"${FM_FAKE_QUOTA_ID:-test-account}","identityStatus":"verified"},"attempts":[{"source":"$attempt","status":"success"}],"state":{"status":"fresh","stale":false,"refreshedAt":"$now"},"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":50,"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":-0.5}}]}}]}
+JSON
+SH
+  chmod +x "$fb/timeout" "$fb/quota-axi"
 }
 
 # new_case <name> [id] -> echoes a case dir with a live claude ship task.
@@ -141,11 +167,28 @@ new_case() {
   mkdir -p "$dir/home/state" "$dir/home/data" "$dir/fake"
   : > "$dir/fake/literal"
   : > "$dir/fake/keys"
+  : > "$dir/fake/quota-calls"
   printf 'claude' > "$dir/fake/command"
   printf 'claude' > "$dir/fake/becomes"
   printf '%s\n' "fm-$id" > "$dir/fake/windows"
   make_tmux_stub "$dir"
   printf '%s\n' "$dir"
+}
+
+configure_relaunch_slots() { # <case-dir>
+  local dir=$1 home="$1/home" claude_store="$1/claude-profile" codex_store="$1/codex-profile"
+  mkdir -p "$home/config" "$claude_store" "$codex_store"
+  chmod 700 "$home/config" "$claude_store" "$codex_store"
+  printf '{}\n' > "$claude_store/.credentials.json"
+  printf '{}\n' > "$codex_store/auth.json"
+  chmod 600 "$claude_store/.credentials.json" "$codex_store/auth.json"
+  cat > "$home/config/account-slots.json" <<JSON
+{"version":1,"slots":{
+  "claude-a":{"harness":"claude","storePath":"$claude_store","expectedSource":"oauth-file","expectedAccountId":"test-account"},
+  "codex-a":{"harness":"codex","storePath":"$codex_store","expectedSource":"oauth","expectedAccountId":"test-account"}
+}}
+JSON
+  chmod 600 "$home/config/account-slots.json"
 }
 
 # add_ship_task <case-dir> <id> [harness]
@@ -197,6 +240,7 @@ run_control() {  # <case-dir> <args...>
     FM_FAKE_TRACE_RELEASE="${FM_FAKE_TRACE_RELEASE:-}" \
     FM_FAKE_META_WRITER_READY="${FM_FAKE_META_WRITER_READY:-}" \
     FM_FAKE_TRACE_EXPORTED="${FM_FAKE_TRACE_EXPORTED:-}" \
+    FM_FAKE_QUOTA_CALLS="$dir/fake/quota-calls" FM_FAKE_QUOTA_ID="${FM_FAKE_QUOTA_ID:-test-account}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -1715,6 +1759,133 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
   pass "relaunch heals an item that drifted out of In flight while the task stayed live"
 }
 
+test_same_harness_relaunch_preserves_account_slot() {
+  local dir out rc calls
+  dir=$(new_case account-preserve rl50)
+  add_ship_task "$dir" rl50 claude
+  configure_relaunch_slots "$dir"
+  printf 'account_slot=claude-a\n' >> "$dir/home/state/rl50.meta"
+
+  out=$(run_control "$dir" rl50 relaunch --note "continue on the selected account"); rc=$?
+  expect_code 0 "$rc" "same-harness slotted relaunch should succeed"
+  assert_equals claude-a "$(meta_field "$dir" rl50 account_slot)" "same-harness relaunch did not preserve the account slot"
+  assert_equals claude-a "$(journal_field "$dir" rl50 from_account_slot)" "journal omitted the prior account slot"
+  assert_equals claude-a "$(journal_field "$dir" rl50 to_account_slot)" "journal omitted the target account slot"
+  calls=$(wc -l < "$dir/fake/quota-calls" | tr -d ' ')
+  assert_equals 1 "$calls" "same-harness relaunch did not probe the preserved slot exactly once"
+  assert_not_contains "$(cat "$dir/home/state/rl50.control-relaunch")" "$dir/claude-profile" "relaunch journal leaked the account path"
+  assert_not_contains "$(cat "$dir/home/state/rl50.control-relaunch")" "test-account" "relaunch journal leaked account identity"
+  pass "same-harness relaunch preserves and revalidates the logical account slot"
+}
+
+test_relaunch_can_clear_or_reset_account_slot() {
+  local dir out rc
+  dir=$(new_case account-clear rl51)
+  add_ship_task "$dir" rl51 claude
+  configure_relaunch_slots "$dir"
+  printf 'account_slot=claude-a\n' >> "$dir/home/state/rl51.meta"
+
+  out=$(run_control "$dir" rl51 relaunch --account-slot default --note "return to ambient credentials"); rc=$?
+  expect_code 0 "$rc" "explicit account-slot clear should succeed"
+  assert_equals "" "$(meta_field "$dir" rl51 account_slot)" "explicit default did not clear account metadata"
+  assert_equals "" "$(journal_field "$dir" rl51 to_account_slot)" "journal did not record the account-slot clear"
+
+  dir=$(new_case account-switch rl52)
+  add_ship_task "$dir" rl52 claude
+  configure_relaunch_slots "$dir"
+  printf 'account_slot=claude-a\n' >> "$dir/home/state/rl52.meta"
+  printf 'codex' > "$dir/fake/becomes"
+  out=$(run_control "$dir" rl52 relaunch --harness codex --note "switch harnesses"); rc=$?
+  expect_code 0 "$rc" "harness switch should clear an incompatible account slot"
+  assert_equals "" "$(meta_field "$dir" rl52 account_slot)" "harness switch retained the old account slot"
+  pass "explicit default and harness switches clear prior account bindings"
+}
+
+test_relaunch_refuses_invalid_account_binding_before_stop() {
+  local dir out rc
+  dir=$(new_case account-missing rl53)
+  add_ship_task "$dir" rl53 claude
+  printf 'account_slot=claude-a\n' >> "$dir/home/state/rl53.meta"
+  out=$(run_control "$dir" rl53 relaunch --note "must not stop"); rc=$?
+  expect_code 1 "$rc" "missing account registry should refuse relaunch"
+  assert_contains "$out" "config/account-slots.json is missing" "missing account binding refusal was unclear"
+  assert_equals claude "$(cat "$dir/fake/command")" "missing account binding stopped the old worker"
+  assert_not_contains "$(cat "$dir/fake/literal")" "/exit" "missing account binding sent an exit command"
+
+  dir=$(new_case account-mismatch rl54)
+  add_ship_task "$dir" rl54 claude
+  configure_relaunch_slots "$dir"
+  printf 'account_slot=claude-a\n' >> "$dir/home/state/rl54.meta"
+  out=$(FM_FAKE_QUOTA_ID=wrong-account run_control "$dir" rl54 relaunch --note "must not stop"); rc=$?
+  expect_code 1 "$rc" "identity mismatch should refuse relaunch"
+  assert_contains "$out" "mismatched" "identity mismatch refusal was unclear"
+  assert_equals claude "$(cat "$dir/fake/command")" "identity mismatch stopped the old worker"
+  pass "relaunch validates local binding and account identity before stopping the old worker"
+}
+
+test_relaunch_uses_one_config_override_for_preflight_and_launch() {
+  local dir override store out rc calls
+  dir=$(new_case account-config-override rl55)
+  add_ship_task "$dir" rl55 claude
+  configure_relaunch_slots "$dir"
+  printf 'account_slot=claude-a\n' >> "$dir/home/state/rl55.meta"
+  jq '.slots["claude-a"].expectedAccountId="home-account"' "$dir/home/config/account-slots.json" > "$dir/home/config/account-slots.tmp"
+  mv "$dir/home/config/account-slots.tmp" "$dir/home/config/account-slots.json"
+  chmod 600 "$dir/home/config/account-slots.json"
+
+  override="$dir/override-config"
+  store="$dir/override-claude-profile"
+  mkdir -p "$override" "$store"
+  chmod 700 "$override" "$store"
+  printf '{}\n' > "$store/.credentials.json"
+  chmod 600 "$store/.credentials.json"
+  cat > "$override/account-slots.json" <<JSON
+{"version":1,"slots":{"claude-a":{"harness":"claude","storePath":"$store","expectedSource":"oauth-file","expectedAccountId":"override-account"}}}
+JSON
+  chmod 600 "$override/account-slots.json"
+
+  out=$(FM_CONFIG_OVERRIDE="$override" FM_FAKE_QUOTA_ID=override-account \
+    run_control "$dir" rl55 relaunch --note "use the overridden account registry"); rc=$?
+  expect_code 0 "$rc" "config-overridden account relaunch should succeed"
+  calls=$(cat "$dir/fake/quota-calls")
+  assert_contains "$calls" "claude=$store" "relaunch preflight did not probe the overridden config store"
+  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$store'" "replacement launch did not use the preflighted overridden store"
+  assert_not_contains "$calls" "$dir/claude-profile" "relaunch preflight mixed the default-home registry with the override"
+  pass "relaunch preflight and replacement launch resolve the same config override"
+}
+
+test_direct_spawn_relaunch_refuses_secondmate_account_slot_after_metadata_load() {
+  local dir home smhome out rc
+  dir=$(new_case account-direct-secondmate smslot)
+  home="$dir/home"
+  smhome="$dir/smhome"
+  fm_git_worktree "$dir/proj" "$smhome" smslot-branch
+  mkdir -p "$home/data/smslot" "$smhome/state" "$smhome/data" "$smhome/bin"
+  printf '# secondmate brief\n' > "$home/data/smslot/brief.md"
+  printf 'smslot\n' > "$smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$smhome/AGENTS.md"
+  {
+    echo "window=fmses:fm-smslot"
+    echo "endpoint_task_id=smslot"
+    echo "worktree=$smhome"
+    echo "project=$smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "home=$smhome"
+  } > "$home/state/smslot.meta"
+  printf '%s\n' fm-smslot > "$dir/fake/windows"
+  printf '%s' "$smhome" > "$dir/fake/cwd"
+  printf 'zsh' > "$dir/fake/command"
+
+  out=$(run_spawn "$dir" smslot --relaunch --account-slot claude-a); rc=$?
+  expect_code 1 "$rc" "direct secondmate relaunch accepted an account slot"
+  assert_contains "$out" "persistent secondmate account selection is not supported" "direct relaunch refusal did not use the recorded secondmate kind"
+  assert_equals zsh "$(cat "$dir/fake/command")" "direct secondmate relaunch started a replacement"
+  pass "direct spawn relaunch rechecks the recorded secondmate kind before account selection"
+}
+
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
@@ -1772,3 +1943,8 @@ test_spawn_relaunch_refuses_an_unrecorded_task
 test_spawn_relaunch_refuses_a_pane_outside_the_worktree
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight
+test_same_harness_relaunch_preserves_account_slot
+test_relaunch_can_clear_or_reset_account_slot
+test_relaunch_refuses_invalid_account_binding_before_stop
+test_relaunch_uses_one_config_override_for_preflight_and_launch
+test_direct_spawn_relaunch_refuses_secondmate_account_slot_after_metadata_load

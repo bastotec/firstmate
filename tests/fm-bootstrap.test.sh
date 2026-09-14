@@ -1163,6 +1163,56 @@ ROWS
   pass "bootstrap validates crew-dispatch.json and reports malformed or unverified configs"
 }
 
+test_account_slot_bootstrap_validation() {
+  local case_dir fakebin out store
+  case_dir="$TMP_ROOT/account-slots-bootstrap"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  store="$case_dir/home/claude-profile"
+  mkdir -p "$store"
+  chmod 700 "$store"
+  printf '{}\n' > "$store/.credentials.json"
+  chmod 600 "$store/.credentials.json"
+  cat > "$case_dir/home/config/account-slots.json" <<JSON
+{"version":1,"slots":{"claude-a":{"harness":"claude","storePath":"$store","expectedSource":"oauth-file","expectedAccountId":"test-account"}}}
+JSON
+  chmod 600 "$case_dir/home/config/account-slots.json"
+  printf '%s\n' '{"default":{"harness":"claude","accountSlots":["claude-a"]}}' > "$case_dir/home/config/crew-dispatch.json"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_real_jq "$fakebin"
+  cat > "$fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then printf '%s\n' 'quota-axi 0.1.42'; exit 0; fi
+if [ "${1:-}" = --help ]; then printf '%s\n' 'flags: --profile-only'; exit 0; fi
+exit 0
+SH
+  chmod +x "$fakebin/quota-axi"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "valid account slot bootstrap should be silent, got: $out"
+
+  # shellcheck disable=SC2016 # The fake script, not this fixture, expands its argument.
+  printf '%s\n' '#!/usr/bin/env bash' 'if [ "${1:-}" = --version ]; then echo quota-axi-0.1.42; fi' > "$fakebin/quota-axi"
+  chmod +x "$fakebin/quota-axi"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "quota-axi must support --profile-only" "bootstrap did not report the missing source-only capability"
+
+  cat > "$fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then printf '%s\n' 'quota-axi 0.1.42'; exit 0; fi
+if [ "${1:-}" = --help ]; then printf '%s\n' 'flags: --profile-only'; exit 0; fi
+exit 0
+SH
+  chmod +x "$fakebin/quota-axi"
+  printf '%s\n' '{"default":{"harness":"claude","accountSlots":["missing-slot"]}}' > "$case_dir/home/config/crew-dispatch.json"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "slot reference is missing or belongs to another harness: missing-slot" "bootstrap did not report the missing local slot binding"
+  pass "bootstrap validates account-slot registries, references, and upstream capability without probing providers"
+}
+
 test_bootstrap_reporting
 test_no_mistakes_min_version
 test_gh_axi_min_version
@@ -1191,3 +1241,4 @@ test_network_phases_record_per_step_elapsed_times
 test_tasks_axi_verdict_handoff_is_consumed_once
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
 test_crew_dispatch_validation
+test_account_slot_bootstrap_validation

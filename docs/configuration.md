@@ -424,13 +424,13 @@ This section is the single owner of the canonical schema and its per-field seman
     {
       "when": "<natural-language condition describing a kind of task>",
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>" }
+        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "accountSlots": ["<optional logical slot ID>"] }
       ],
       "why": "<optional rationale that helps firstmate choose>"
     }
   ],
   "default": [
-    { "harness": "<adapter>", "model": "<optional model>", "effort": "<optional effort>" }
+    { "harness": "<adapter>", "model": "<optional model>", "effort": "<optional effort>", "accountSlots": ["<optional logical slot ID>"] }
   ]
 }
 ```
@@ -439,6 +439,7 @@ Per rule, `when` and `use` are required.
 Both `use` and the optional top-level `default` accept either one profile object or a non-empty array of profile objects.
 The single-object form stays fully backward-compatible, and every profile needs `harness`.
 Profile `model` and `effort` fields and rule `why` are optional.
+Profile `accountSlots` is optional, supported only for Claude and Codex, and must be a non-empty array of unique logical slot IDs from the current home's `config/account-slots.json`.
 `ultra` is native-only: the model-aware validation contract and launch mapping are owned by `bin/fm-harness.sh validate-native-effort` and `bin/fm-spawn.sh` respectively.
 Codex `max` is valid when the profile selects `gpt-5.6-luna`, whose installed catalog entry supports that reasoning level.
 An omitted model or effort means the selected harness uses its own default for that axis.
@@ -452,6 +453,29 @@ Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstr
 Malformed JSON, an empty or malformed rule/default array, an unverified harness, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
+
+## Account slots (config/account-slots.json)
+
+`config/account-slots.json` is an optional home-local, gitignored registry for selecting one Claude or Codex vendor profile without exposing its identity or credential path to dispatch reasoning.
+It is not inherited into secondmate homes, and `--account-slot` is refused for persistent secondmate launches; a secondmate whose inherited dispatch rules reference slots needs its own registry with the same logical IDs.
+See [`docs/examples/account-slots.json`](examples/account-slots.json) for placeholder-only structure.
+
+The strict version 1 schema is an object containing only `version` and a non-empty `slots` object.
+Each slot key is a unique lowercase slug of at most 63 characters other than reserved clear sentinel `default`, and each slot value contains only `harness`, `storePath`, `expectedSource`, and exactly one of `expectedAccountId` or `expectedEmail`.
+`harness` is `claude` or `codex`; Claude `expectedSource` is `oauth-file` or `keychain`, while Codex `expectedSource` is `oauth`.
+Expected identities are non-empty trimmed strings of at most 512 characters.
+Canonical store paths must be unique absolute existing directories owned by the current user, directly named rather than symlinked, and have no group or world permissions.
+The registry and any required vendor credential file must be readable, current-user-owned, non-symlink regular files with one hard link and no group or world permissions.
+`bin/fm-account-slot.sh validate` is the public validation entry point, and its help plus [`fm-spawn.sh --help`](../bin/fm-spawn.sh) own exact command mechanics.
+
+At dispatch, each profile with `accountSlots` expands to one `(harness, model, effort, accountSlot)` candidate per slot and follows the same quota-array selection procedure.
+The selected logical ID is passed as `fm-spawn.sh --account-slot <id>`; one explicit account slot is shared by every pair in a batch spawn.
+On relaunch, omitting the flag preserves the recorded slot, while `--account-slot default` clears it and returns the replacement worker to the harness's normal profile.
+Every worker uses exactly one selected profile: Claude receives one `CLAUDE_CONFIG_DIR`, and Codex receives one `CODEX_HOME`.
+Configured slot routing remains unavailable unless the installed `quota-axi --help` advertises `--profile-only`; validation and probes refuse rather than falling back to an ambient or combined provider read.
+`probe-all` refuses malformed registry data, references, and missing requested IDs before probing.
+Once configuration is valid, one unavailable isolated slot produces only its logical ID and `availability.status=unavailable`, allowing healthy later slots to remain candidates without exposing the unavailable probe's error, identity, or paths.
+An explicit single-slot `probe` keeps refusal semantics.
 
 ## Toolchain
 
