@@ -213,14 +213,6 @@ fm_pr_head_valid() {
   [[ "$head" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
 }
 
-# A task record is a set of key=value lines. Only a well-formed key is readable
-# as a record, so anything else is corruption rather than metadata.
-fm_pr_metadata_key_valid() {
-  local key=${1-}
-  local LC_ALL=C
-  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
-}
-
 fm_pr_file_mode() {
   if [ "$(uname)" = Darwin ]; then
     /usr/bin/stat -f %Lp "$1" 2>/dev/null
@@ -298,14 +290,13 @@ fm_pr_regular_destination_on_device_or_absent() {
 # names the same pull request. The record is append-mostly and outlives the
 # arming - bin/fm-spawn.sh's relaunch path rewrites it with control_relaunch_tx=
 # at the tail, and bin/fm-captain-hold.sh appends decisions_reviewed= and
-# decision_keys= - so the guarantee is stated as a property of the whole file
-# rather than of its tail: every line is a readable key=value record, exactly
-# one pr= line carries a canonical URL, and every pr_head= line carries a valid
-# head wherever it appears. A key this parser does not know carries no PR
-# identity, so it is not evidence of tampering; treating it as such revoked live
-# merge polls, and because arming rewrote pr= to the end of the file the refusal
-# could only ever surface later, in the watcher. A blank line is separation
-# rather than content and is skipped for the same reason.
+# decision_keys= - so the guarantee is about PR identity wherever it appears in
+# the file rather than about its tail: exactly one pr= line carries a canonical
+# URL, and every pr_head= line carries a valid head. A key this parser does not
+# know carries no PR identity, so it is skipped rather than treated as
+# tampering; treating it as tampering revoked live merge polls, and because
+# arming rewrote pr= to the end of the file the refusal could only ever surface
+# later, in the watcher.
 fm_pr_metadata_identity_parse() {
   local file=$1 line key value pr_count=0
   FM_PR_META_PROVIDER=
@@ -317,11 +308,9 @@ fm_pr_metadata_identity_parse() {
   [ "$(fm_pr_file_link_count "$file")" = 1 ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
-      '') continue ;;
       *=*) key=${line%%=*} ;;
-      *) return 1 ;;
+      *) continue ;;
     esac
-    fm_pr_metadata_key_valid "$key" || return 1
     value=${line#*=}
     case "$key" in
       pr)

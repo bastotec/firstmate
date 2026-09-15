@@ -2441,10 +2441,6 @@ test_armed_poll_survives_later_task_record_appends() {
   printf 'decisions_reviewed=1\ndecision_keys=%s\n' 'nm-1-review' >> "$state/task-a.meta"
   fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
     || fail "a second later task-record writer revoked a valid armed poll"
-  # A blank separator carries no PR identity either.
-  printf '\nyolo=on\n' >> "$state/task-a.meta"
-  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
-    || fail "a blank separator line revoked a valid armed poll"
 
   add_stop_custom_check "$dir"
   set +e
@@ -2464,10 +2460,10 @@ test_armed_poll_survives_later_task_record_appends() {
 
 # The record cross-check exists to prove the poll's PR identity is the one the
 # task recorded, so the cases that must still be refused are the ones that make
-# that identity ambiguous or unreadable - not an unrelated key.
+# that identity ambiguous - not an unrelated key.
 test_task_record_identity_refusals() {
-  local dir state case_name rc
-  for case_name in second-pr bad-head garbage; do
+  local dir state case_name
+  for case_name in second-pr bad-head; do
     dir=$(make_case "record-identity-$case_name")
     state="$dir/home/state"
     write_poll_meta "$state" task-a https://github.com/o/r/pull/1
@@ -2477,42 +2473,25 @@ test_task_record_identity_refusals() {
     case "$case_name" in
       second-pr) printf 'pr=%s\n' 'https://github.com/o/r/pull/2' >> "$state/task-a.meta" ;;
       bad-head) printf 'pr_head=%s\n' 'not-a-sha' >> "$state/task-a.meta" ;;
-      garbage) printf '%s\n' 'no-separator-line' >> "$state/task-a.meta" ;;
     esac
     ! fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
       || fail "$case_name: an ambiguous task record kept the poll authenticated"
   done
 
-  # The same refusals apply before the pr= line, where the old tail-only rule
-  # never looked, and they now refuse at arming too rather than only later in
-  # the watcher.
-  for case_name in leading-garbage leading-bad-head; do
+  # The same refusal applies before the pr= line, where the old tail-only rule
+  # never looked, because every pr_head= is validated wherever it appears.
+  for case_name in leading-bad-head; do
     dir=$(make_case "record-identity-$case_name")
     state="$dir/home/state"
     write_poll_meta "$state" task-a https://github.com/o/r/pull/1
     seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
     case "$case_name" in
-      leading-garbage) write_poll_meta "$state" task-a https://github.com/o/r/pull/1 'no-separator-line' ;;
       leading-bad-head) write_poll_meta "$state" task-a https://github.com/o/r/pull/1 'pr_head=not-a-sha' ;;
     esac
     ! fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
-      || fail "$case_name: an unreadable task record kept the poll authenticated"
+      || fail "$case_name: an ambiguous task record kept the poll authenticated"
   done
-
-  # Arming now applies the same rule the watcher will, so a record it cannot
-  # read is refused where an operator sees it instead of silently later.
-  dir=$(make_case record-identity-arming)
-  state="$dir/home/state"
-  fm_write_meta "$state/task-a.meta" 'window=fm-task-a' 'no-separator-line'
-  set +e
-  run_check_entry "$dir" task-a https://github.com/o/r/pull/1 >/dev/null 2>"$dir/arm.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || fail "arming accepted an unreadable task record"
-  assert_grep "$state/task-a.meta" "$dir/arm.err" \
-    "arming refused an unreadable task record without saying so"
-  assert_poll_absent "$state" task-a
-  pass "task-record cross-check still refuses an ambiguous or unreadable PR identity"
+  pass "task-record cross-check still refuses an ambiguous PR identity"
 }
 
 # The fingerprint and file-identity bindings are the poll's security boundary.

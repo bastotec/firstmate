@@ -440,15 +440,17 @@ test_relaunch_preserves_durable_task_metadata() {
 # cycle, so a relaunch that leaves the record unreadable to that check silently
 # revokes the merge notification for the rest of the task's life.
 test_relaunch_keeps_an_armed_merge_poll_authenticated() {
-  local dir out rc state url
+  local dir out rc state url old_umask
   dir=$(new_case armed-poll rl40)
   add_ship_task "$dir" rl40 claude
   state="$dir/home/state"
   url=https://github.com/example/repo/pull/40
   printf 'pr=%s\n' "$url" >> "$state/rl40.meta"
+  old_umask=$(umask)
   fm_pr_poll_prepare "$state" rl40 github "$url" github.com example/repo 40 \
     "$ROOT/bin/fm-pr-poll.sh" || fail "could not prepare the armed poll fixture"
   fm_pr_poll_publish_prepared || fail "could not publish the armed poll fixture"
+  umask "$old_umask"
   fm_pr_poll_artifacts_valid "$state" rl40 "$ROOT/bin/fm-pr-poll.sh" \
     || fail "the armed poll fixture was not authenticated before relaunch"
 
