@@ -156,7 +156,7 @@ while [ "$#" -gt 0 ]; do
   if [ "$1" = --provider ]; then provider=$2; shift 2; else shift; fi
 done
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-attempt=oauth
+attempt=auth-json
 [ "$provider" != claude ] || attempt=oauth-file
 cat <<JSON
 {"generatedAt":"$now","schemaVersion":5,"providers":[{"provider":"$provider","account":{"accountId":"${FM_FAKE_QUOTA_ID:-test-account}","identityStatus":"verified"},"attempts":[{"source":"$attempt","status":"success"}],"state":{"status":"fresh","stale":false},"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":50,"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":-0.5}}]}}]}

@@ -280,6 +280,7 @@ fm_account_slot_probe() { # <config-dir> <slot>
       --argjson now "$now" --argjson max_age 900 --argjson future 60 '
     def epoch: try fromdateiso8601 catch null;
     def recent($v): ($v | type) == "string" and (($v | epoch) as $t | $t != null and $t <= ($now + $future) and $t >= ($now - $max_age));
+    def isolated_sources($p): if $p == "claude" then ["oauth-file","keychain"] else ["auth-json"] end;
     .schemaVersion == 5 and (.providers | type) == "array" and (.providers | length) == 1 and
     recent(.generatedAt) and
     (.providers[0] as $p |
@@ -288,12 +289,9 @@ fm_account_slot_probe() { # <config-dir> <slot>
       ($p.account | type) == "object" and
       (($p.account.identityStatus? == null) or $p.account.identityStatus == "verified") and
       $p.account.accountId == $account_id and
-      (if $provider == "claude" then
-         ([ $p.attempts[]? | select(.status == "success") | .source ] as $succeeded |
-           ($succeeded | length) == 1 and (["oauth-file","keychain"] | index($succeeded[0])) != null)
-       else
-         ([ $p.attempts[]? | select((.source == "pi") or (.source == "cli-rpc")) ] | length) == 0
-       end) and
+      ([ $p.attempts[]? | select(.status == "success") ] as $succeeded |
+        any($succeeded[]; . as $a | (isolated_sources($provider) | index($a.source)) != null) and
+        all($succeeded[]; . as $a | ($a.accountId? == null) or $a.accountId == $account_id)) and
       ($p.quotaSemantics | type) == "object" and
       ($p.quotaSemantics.status as $s | (["known","partial","unknown"] | index($s)) != null) and
       ($p.quotaSemantics.effectiveAvailability | type) == "array" and

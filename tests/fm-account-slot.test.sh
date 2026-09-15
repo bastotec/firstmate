@@ -69,7 +69,7 @@ case "$provider" in
   codex)
     account=codex-account-a
     case "${CODEX_HOME-}" in *codex-b) account=codex-account-b ;; esac
-    attempt=oauth
+    attempt=auth-json
     ;;
 esac
 selected_store=${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}
@@ -85,9 +85,10 @@ stale=${stale:-false}
 status=fresh
 [ "$stale" = false ] || status=stale
 valid_account=$account
+attempts=${FAKE_ATTEMPTS:-"[{\"source\":\"$attempt\",\"status\":\"success\",\"path\":\"/private/credential\"}]"}
 emit_document() {
 cat <<JSON
-{"generatedAt":"$now","schemaVersion":5,"providers":[{"provider":"$provider","account":{"accountId":"$account","email":"${email:-private@example.invalid}","organization":"private","identityStatus":"verified"},"attempts":[{"source":"$attempt","status":"success","path":"/private/credential"}],"state":{"status":"$status","stale":$stale},"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":75,"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":-0.25}}]}}]}
+{"generatedAt":"$now","schemaVersion":5,"providers":[{"provider":"$provider","account":{"accountId":"$account","email":"${email:-private@example.invalid}","organization":"private","identityStatus":"verified"},"attempts":$attempts,"state":{"status":"$status","stale":$stale},"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":75,"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":-0.25}}]}}]}
 JSON
 }
 if [ "${FAKE_MODE:-ok}" = invalid-then-valid ]; then
@@ -306,6 +307,27 @@ for mode in mismatch wrong-source stale; do
   assert_contains "$(cat "$TMP_ROOT/$mode.err")" "stale, mismatched, or malformed quota evidence" "$mode refusal was not concrete"
 done
 pass "rejects stale, wrong-source, and mismatched-account evidence"
+
+: > "$CALLS"
+PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+  FAKE_ATTEMPTS='[{"source":"auth-json","status":"success"},{"source":"cli-rpc","status":"failure"}]' \
+  "$ROOT/bin/fm-account-slot.sh" probe codex-a >/dev/null \
+  || fail "a failed fallback attempt beside a successful isolated source made a healthy Codex slot unavailable"
+PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+  FAKE_ATTEMPTS='[{"source":"oauth-file","status":"success"},{"source":"keychain","status":"success"}]' \
+  "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null \
+  || fail "a store holding both a credential file and its keychain item was reported unavailable"
+if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+    FAKE_ATTEMPTS='[{"source":"auth-json","status":"failure"},{"source":"cli-rpc","status":"failure"}]' \
+    "$ROOT/bin/fm-account-slot.sh" probe codex-a >/dev/null 2>&1; then
+  fail "evidence with no successful attempt was accepted"
+fi
+if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+    FAKE_ATTEMPTS='[{"source":"oauth-file","status":"success","accountId":"claude-account-b"}]' \
+    "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null 2>&1; then
+  fail "a successful attempt naming another account was accepted"
+fi
+pass "provenance reads successful attempts only and refuses zero-success or cross-account evidence"
 
 if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_MODE=invalid-then-valid FM_HOME="$HOME_DIR" \
     "$ROOT/bin/fm-account-slot.sh" probe claude-a >"$TMP_ROOT/multi-document.out" 2>"$TMP_ROOT/multi-document.err"; then
