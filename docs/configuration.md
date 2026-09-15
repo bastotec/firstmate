@@ -477,8 +477,9 @@ A slot with no credential in its store - after `claude` or `codex logout`, say -
 At dispatch, each profile with `accountSlots` expands to one `(harness, model, effort, accountSlot)` candidate per slot and follows the same quota-array selection procedure.
 The selected logical ID is passed as `fm-spawn.sh --account-slot <id>`, which is single-task only: a batch spawn of more than one `id=repo` pair refuses it, because one slot is one subscription and every worker needs its own resolved slot.
 Spawn each of those workers with its own single-task invocation; the captain may run those invocations in parallel.
-On relaunch, omitting the flag preserves the recorded slot, while `--account-slot default` clears it and returns the replacement worker to the harness's normal profile.
+On relaunch, `--account-slot default` clears the recorded slot and returns the replacement worker to the harness's normal profile, while an omitted flag preserves it under the same harness-change reset rule as model and effort ([agent-control.md](agent-control.md#transactional-relaunch)).
 Every worker uses exactly one selected profile: Claude receives one `CLAUDE_CONFIG_DIR`, and Codex receives one `CODEX_HOME`.
+A slotted launch unsets both store variables and that vendor's ambient API-key and token variables first, so the selected store is the worker's only credential source; the isolated quota probe unsets the same names.
 Provisioning a slot is `claude` or `codex login` under that store, plus - for Codex only - answering the harness's one-time directory trust dialog once per repository, because Codex records that decision inside the active `CODEX_HOME`.
 Spawn pre-registers Claude workspace trust into the selected Claude store, while a Codex slot uses the existing post-spawn trust step in `AGENTS.md`; Firstmate keeps no trust store of its own for Codex.
 Automatic quota-ranked slot selection remains unavailable unless the installed `quota-axi --help` advertises `--profile-only`; `probe` and `probe-all` refuse rather than falling back to an ambient or combined provider read, and there is no automatic selection without that evidence.
