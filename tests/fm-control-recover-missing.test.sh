@@ -103,7 +103,52 @@ case "${1:-}" in
     printf '@999\n'
     exit 0 ;;
   set-window-option) exit 0 ;;
-  list-windows) [ -f "$D/windows" ] && cat "$D/windows"; exit 0 ;;
+  has-session)
+    shift
+    ses=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -t) ses=${2:-}; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    # Real tmux treats a leading '=' as "match this name exactly".
+    ses=${ses#=}
+    grep -qxF "$ses" "$D/sessions" 2>/dev/null && exit 0
+    echo "can't find session: $ses" >&2
+    exit 1 ;;
+  new-session)
+    [ -z "${FM_FAKE_NEW_SESSION_FAIL:-}" ] || { echo "create session failed" >&2; exit 1; }
+    shift
+    ses=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -s) ses=${2:-}; shift 2 ;;
+        -c) shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    printf '%s\n' "$ses" >> "$D/sessions"
+    printf '%s\n' "$ses" >> "$D/created-sessions"
+    exit 0 ;;
+  list-windows)
+    shift
+    ses=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -t) ses=${2:-}; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    ses=${ses#=}
+    if ! grep -qxF "$ses" "$D/sessions" 2>/dev/null; then
+      # Exactly what real tmux writes when the whole session is gone; the
+      # recovery-grade classifier reads this as `missing`.
+      echo "can't find session: $ses" >&2
+      exit 1
+    fi
+    [ -f "$D/windows" ] && cat "$D/windows"
+    exit 0 ;;
 esac
 exit 0
 SH
@@ -127,6 +172,8 @@ new_case() {
   printf 'claude' > "$dir/fake/command"
   printf 'claude' > "$dir/fake/becomes"
   printf '%s\n' "fm-$id" > "$dir/fake/windows"
+  printf 'fmses\n' > "$dir/fake/sessions"
+  : > "$dir/fake/created-sessions"
   make_tmux_stub "$dir"
   printf '%s\n' "$dir"
 }
@@ -171,6 +218,16 @@ make_endpoint_missing() {  # <case-dir>
   : > "$1/fake/windows"
 }
 
+# Drop the whole SESSION out of the server inventory: the recorded window is
+# gone with it, and tmux answers the classifier's window listing with "can't
+# find session", which is the second shape that reads `missing`. This is the
+# shape a task records as window=<session>:fm-<id> when that session no longer
+# exists on the machine at all.
+make_session_missing() {  # <case-dir>
+  : > "$1/fake/sessions"
+  : > "$1/fake/windows"
+}
+
 # A Treehouse pool slot, shaped the way fm_treehouse_pool_slot recognizes one:
 # <pool>/treehouse-state.json beside <pool>/<slot>/<checkout>, with the slot's
 # Firstmate ownership claim at <pool>/<slot>/.fm-slot-owner.
@@ -193,6 +250,7 @@ run_control() {  # <case-dir> <args...>
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
     FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_FAKE_NEW_WINDOW_FAIL="${FM_FAKE_NEW_WINDOW_FAIL:-}" \
+    FM_FAKE_NEW_SESSION_FAIL="${FM_FAKE_NEW_SESSION_FAIL:-}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -532,6 +590,171 @@ test_recover_missing_requires_a_note_for_a_ship_task() {
   pass "fm-control recover-missing: a ship task's recovery requires the progress note"
 }
 
+# --- 4. the second missing shape: the whole session is gone -----------------
+
+test_recover_missing_recreates_a_gone_session_before_the_window() {
+  local dir out rc
+  dir=$(new_case gone-session rm16)
+  add_ship_task "$dir" rm16
+  make_session_missing "$dir"
+
+  out=$(run_control "$dir" rm16 recover-missing --note "the whole session went away"); rc=$?
+  expect_code 0 "$rc" "a task whose whole session is gone should recover"$'\n'"$out"
+  assert_contains "$out" "recovered rm16 harness=claude from=claude" \
+    "the outcome should name the recovered task and its runtime"
+  assert_contains "$out" "endpoint=fmses:fm-rm16" \
+    "the recreated endpoint must keep the recorded handle, session included"
+
+  assert_grep "fmses" "$dir/fake/created-sessions" \
+    "the gone session must be recreated under its exact recorded name"
+  assert_grep "fm-rm16" "$dir/fake/created-windows" \
+    "the task window must then be recreated inside it"
+  assert_grep "encode launch-brief" "$dir/fake/literal" \
+    "the launch should still be handed to the existing owner"
+
+  [ "$(meta_field "$dir" rm16 window)" = "fmses:fm-rm16" ] \
+    || fail "recreating the session must not rewrite the recorded endpoint"
+  [ "$(meta_field "$dir" rm16 worktree)" = "$dir/wt" ] \
+    || fail "the local copy must be reused, never reallocated"
+  [ "$(journal_field "$dir" rm16 phase)" = complete ] \
+    || fail "the transaction journal should end complete"
+  pass "fm-control recover-missing: a whole gone session is recreated under its recorded name, then the task window"
+}
+
+test_recover_missing_does_not_recreate_a_session_that_is_still_alive() {
+  local dir out rc
+  dir=$(new_case live-session rm17)
+  add_ship_task "$dir" rm17
+  # Only the WINDOW is gone here; the session is still listed.
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" rm17 recover-missing --note "only the window went away"); rc=$?
+  expect_code 0 "$rc" "a missing window in a live session should recover"$'\n'"$out"
+  [ ! -s "$dir/fake/created-sessions" ] \
+    || fail "a session that still exists must be left exactly as it is, not recreated"
+  assert_grep "fm-rm17" "$dir/fake/created-windows" \
+    "the task window must still be recreated"
+  pass "fm-control recover-missing: a surviving session is left untouched and only the window comes back"
+}
+
+test_recover_missing_refuses_when_the_session_cannot_be_recreated() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case session-fail rm18)
+  add_ship_task "$dir" rm18
+  make_session_missing "$dir"
+  meta_before=$(cat "$dir/home/state/rm18.meta")
+  brief_before=$(cat "$dir/home/data/rm18/brief.md")
+
+  out=$(FM_FAKE_NEW_SESSION_FAIL=1 run_control "$dir" rm18 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "an unrecreatable session must refuse"$'\n'"$out"
+  assert_contains "$out" "recorded tmux session 'fmses' is gone and could not be recreated" \
+    "the refusal should name the session it could not bring back"
+  [ ! -s "$dir/fake/created-windows" ] \
+    || fail "a refused session recreation must not go on to create a window"
+  [ "$(cat "$dir/home/state/rm18.meta")" = "$meta_before" ] \
+    || fail "a refused recovery must leave the durable record byte-identical"
+  [ "$(cat "$dir/home/data/rm18/brief.md")" = "$brief_before" ] \
+    || fail "a refused recovery must roll the progress note back"
+  ! grep -Fq "encode launch-brief" "$dir/fake/literal" \
+    || fail "a refused recovery must not launch an agent"
+  pass "fm-control recover-missing: a session that cannot be recreated refuses and leaves everything in place"
+}
+
+# --- 5. every identity axis comes from the task's own record ----------------
+
+test_recover_missing_freezes_the_recorded_profile_for_a_secondmate() {
+  local dir home out rc
+  dir=$(new_case smfreeze sm9)
+  home="$dir/home"
+  mkdir -p "$home/config" "$home/data/sm9"
+  # The durable pin names a DIFFERENT runtime than the record. A relaunch
+  # re-resolves this pin on purpose; a recovery must not, because it continues
+  # the same run in the same terminal.
+  printf 'codex some-model high\n' > "$home/config/secondmate-harness"
+  printf '# secondmate brief\n' > "$home/data/sm9/brief.md"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
+  printf 'sm9\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  # Recovery refuses a dirty local copy, so the secondmate home has to be a
+  # committed checkout rather than the scratch tree a relaunch case can get
+  # away with.
+  git -C "$dir/smhome" add -A
+  git -C "$dir/smhome" commit --quiet -m "secondmate home"
+  {
+    echo "window=fmses:fm-sm9"
+    echo "endpoint_task_id=sm9"
+    echo "worktree=$dir/smhome"
+    echo "project=$dir/smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "model=opus"
+    echo "effort=xhigh"
+    echo "home=$dir/smhome"
+  } > "$home/state/sm9.meta"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" sm9 recover-missing); rc=$?
+  expect_code 0 "$rc" "a secondmate with a missing endpoint should recover"$'\n'"$out"
+  assert_contains "$out" "harness=claude from=claude" \
+    "recovery must continue the RECORDED harness, not the configured pin"
+  assert_contains "$out" "model=opus effort=xhigh" \
+    "recovery must continue the recorded model and effort, not reset them to the pin's"
+  [ "$(journal_field "$dir" sm9 to_harness)" = claude ] \
+    || fail "the journal should record the recorded harness, got '$(journal_field "$dir" sm9 to_harness)'"
+  [ "$(journal_field "$dir" sm9 to_model)" = opus ] \
+    || fail "the journal should record the recorded model, got '$(journal_field "$dir" sm9 to_model)'"
+  [ "$(journal_field "$dir" sm9 to_effort)" = xhigh ] \
+    || fail "the journal should record the recorded effort, got '$(journal_field "$dir" sm9 to_effort)'"
+  pass "fm-control recover-missing: a secondmate's recorded harness, model and effort survive a differing configured pin"
+}
+
+# --- 6. which local-copy dirt actually blocks a rescue -----------------------
+
+test_recover_missing_accepts_a_worktree_holding_only_spawn_leftovers() {
+  local dir out rc
+  dir=$(new_case spawn-dirt rm19)
+  add_ship_task "$dir" rm19
+  make_endpoint_missing "$dir"
+  # What a previous incarnation's own spawn leaves behind. These are not the
+  # task's work, and refusing them would block recovery for exactly the tasks
+  # this verb exists to rescue.
+  mkdir -p "$dir/wt/.claude"
+  printf '{}\n' > "$dir/wt/.claude/settings.local.json"
+
+  out=$(run_control "$dir" rm19 recover-missing --note "recover"); rc=$?
+  expect_code 0 "$rc" "a worktree dirty only with spawn leftovers should recover"$'\n'"$out"
+  assert_grep "fm-rm19" "$dir/fake/created-windows" "the terminal should have been recreated"
+  pass "fm-control recover-missing: a worktree holding only the previous spawn's own leftovers still recovers"
+}
+
+test_recover_missing_refuses_an_untracked_source_file() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case untracked-src rm20)
+  add_ship_task "$dir" rm20
+  make_endpoint_missing "$dir"
+  meta_before=$(cat "$dir/home/state/rm20.meta")
+  brief_before=$(cat "$dir/home/data/rm20/brief.md")
+  # Untracked, but real unlanded work rather than a spawn leftover.
+  printf 'work in progress\n' > "$dir/wt/new-source.sh"
+
+  out=$(run_control "$dir" rm20 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "an untracked source file must refuse"$'\n'"$out"
+  assert_contains "$out" "uncommitted changes; refusing to recover rather than cleaning it" \
+    "the refusal should say it will not clean the copy"
+  assert_nothing_changed "$dir" rm20 "$meta_before" "$brief_before"
+  pass "fm-control recover-missing: untracked work that is not a spawn leftover still refuses"
+}
+
+test_recover_missing_recreates_a_gone_session_before_the_window
+test_recover_missing_does_not_recreate_a_session_that_is_still_alive
+test_recover_missing_refuses_when_the_session_cannot_be_recreated
+test_recover_missing_freezes_the_recorded_profile_for_a_secondmate
+test_recover_missing_accepts_a_worktree_holding_only_spawn_leftovers
+test_recover_missing_refuses_an_untracked_source_file
 test_recover_missing_recreates_the_terminal_and_launches_the_replacement
 test_recover_missing_refuses_a_live_endpoint
 test_recover_missing_refuses_an_ambiguous_endpoint

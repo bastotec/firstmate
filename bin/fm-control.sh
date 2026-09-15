@@ -64,9 +64,15 @@
 #              tmux-only today, because a tmux window comes back under the same
 #              recorded fm-<id> handle and so rewrites no durable record; every
 #              other backend refuses before anything is touched.
+#              Both tmux losses are recovered: the task's window gone from a
+#              session that is still alive, and the whole session (or the whole
+#              server) gone, which is recreated under its exact recorded name
+#              before the window. A session that still exists is untouched.
 #              It continues the SAME run, so the recorded harness, model, and
-#              effort carry through unchanged and only --note/--note-file
-#              apply; choosing a different runtime is what `relaunch` is for.
+#              effort carry through unchanged - nothing is re-resolved from
+#              configuration, including a secondmate's config/secondmate-harness
+#              pin - and only --note/--note-file apply; picking up a changed pin
+#              or choosing a different runtime is what `relaunch` is for.
 #
 # Teardown and discard are NOT verbs here and never will be. `exit` stops an
 # agent and preserves everything else; removing a worktree, killing an
@@ -688,7 +694,7 @@ resolve_relaunch_profile() {
   CONFIG_HARNESS=
   CONFIG_MODEL=
   CONFIG_EFFORT=
-  if [ "$KIND" = secondmate ]; then
+  if [ "$KIND" = secondmate ] && [ "$VERB" != recover-missing ]; then
     # A secondmate's harness, model, and effort are a durable configured pin
     # that every respawn re-resolves (the secondmate-provisioning contract), so
     # a relaunch with no explicit harness picks up a newly configured one
@@ -696,6 +702,13 @@ resolve_relaunch_profile() {
     # and scouts deliberately do NOT resolve config here: their harness comes
     # from firstmate's own dispatch-profile judgment at intake, and silently
     # re-resolving it would bypass that consultation.
+    #
+    # recover-missing resolves NOTHING here, for any kind. It continues the
+    # same run in the same terminal, so every identity axis comes from the
+    # task's own durable record - which is what its header, its refusal of
+    # --harness/--model/--effort, and docs/agent-control.md all already
+    # promise. Re-resolving the pin here would silently move a secondmate onto
+    # a different runtime, and reset its model and effort, during a rescue.
     CONFIG_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" secondmate 2>/dev/null || true)
     CONFIG_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
     CONFIG_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
@@ -982,9 +995,21 @@ do_recover_missing() {
   wname="fm-$ID"
   proj_abs=$(cd "$wt" && pwd -P)
   fm_backend_source "$BACKEND" || die "could not load backend $BACKEND"
-  # Endpoint validation already proved $T is exactly <session>:fm-<id>, and the
-  # window comes back under that same name, so $T keeps addressing the terminal
-  # and neither the postconditions below nor the durable record need rewriting.
+  # Endpoint validation already proved $T is exactly <session>:fm-<id> with a
+  # non-empty session (bin/fm-backend.sh's fm_backend_validate_task_endpoint,
+  # called before any verb runs), which is what refuses a recorded endpoint
+  # string that will not parse. The window comes back under that same name, so
+  # $T keeps addressing the terminal and neither the postconditions below nor
+  # the durable record need rewriting.
+  #
+  # Two shapes read as a missing endpoint and both are recovered here: the
+  # task's window is gone from a session that is still alive, or the whole
+  # session (or the whole tmux server) is gone. The second needs the session
+  # back before a window can be added to it; the first leaves it untouched.
+  # A failure after the session is recreated but before the window exists still
+  # reads missing, so the verb stays retryable rather than stranding the task.
+  fm_backend_tmux_recreate_session "${T%%:*}" "$proj_abs" \
+    || die "task $ID's recorded tmux session '${T%%:*}' is gone and could not be recreated"
   fm_backend_tmux_create_task "${T%%:*}" "$wname" "$proj_abs" >/dev/null \
     || die "could not recreate tmux window for $ID"
 

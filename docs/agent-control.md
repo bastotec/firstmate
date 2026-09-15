@@ -33,7 +33,7 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
 | `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. |
 | `relaunch` | Replace the running agent with a new one in the same endpoint and worktree, on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the recorded endpoint, and the durable record names the harness that is actually running. |
-| `recover-missing` | Recreate the exact recorded terminal for a task whose tmux endpoint is missing, then hand the launch to the existing owner (`fm-spawn.sh --relaunch`) on the recorded harness, model, and effort. | The backend's recovery-grade classifier proves the agent was missing, unavailable/dirty worktrees refuse rather than repairing, and the new agent is alive on the exact recreated terminal. |
+| `recover-missing` | Recreate the exact recorded terminal for a task whose tmux endpoint is missing - the window alone, or the whole session it lived in - then hand the launch to the existing owner (`fm-spawn.sh --relaunch`) on the recorded harness, model, and effort. | The backend's recovery-grade classifier proves the agent was missing, unavailable/dirty worktrees refuse rather than repairing, and the new agent is alive on the exact recreated terminal. |
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
 Interrupt never rewrites busy state as proof of its own success.
@@ -83,6 +83,8 @@ It differs from the steps above in exactly three places.
 
 - No profile flags. `--harness`, `--model`, and `--effort` are refused; a recovery continues the same run, and choosing a different runtime is what `relaunch` is for.
   Only `--note`/`--note-file` apply, and a ship or scout still requires one for the same reason a relaunch does.
+  Nothing is re-resolved from configuration either: every identity axis comes from the task's own durable record, so a secondmate whose `config/secondmate-harness` pin has since changed is recovered on the harness, model, and effort it actually recorded.
+  Picking the changed pin up is a `relaunch`, which is the verb that deliberately re-resolves it.
 - Two extra preconditions around the checkpoint: the endpoint must read the positively `missing` state, and the recorded local copy must be present, free of uncommitted changes beyond the spawn's own untracked leftovers, and - for a Treehouse pool slot - still claimed by this task.
   Each of those refuses rather than cleaning, reallocating, or repairing anything; no worktree and no pool slot is ever created here.
 - No stop step. Nothing is running, so step 4 is replaced by recreating the window under the recorded `fm-<id>` name in the recorded session and worktree, and step 5 hands that agent-free terminal to the same launch owner.
@@ -116,6 +118,9 @@ It differs from the steps above in exactly three places.
   zellij, orca, and cmux are refused rather than reported as successful blind.
 - `recover-missing` additionally requires a backend that can recreate a terminal under the recorded endpoint handle, which today is tmux only: its window keeps the recorded `fm-<id>` name, so recovery rewrites no durable record.
   Herdr mints a fresh pane id for every new tab, so recreating there would have to republish the task's endpoint; that is refused rather than shipped without regression coverage.
+- On tmux, two different losses read as a missing endpoint and both are recovered: the task's window is gone from a session that is still alive, or the whole session - or the whole tmux server - is gone.
+  The second is recreated session first, under the exact recorded session name, and then the window inside it; a session that still exists is left exactly as it is.
+  A session that cannot be recreated refuses before the window, the record, or the instructions are touched.
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
 - `exit`'s composer-empty check, above, is itself a fail-closed boundary that `relaunch` inherits by stopping the old agent through `exit`.
@@ -141,5 +146,5 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 
 - `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, and rollback after a failed launch.
-- `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery: the success path under the recorded handle, the live, ambiguous, absent-copy, dirty-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, the refused profile flags, the basename-harness and unsupported-backend refusals, and the message after a failed launch handoff.
+- `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery: the success path under the recorded handle for both losses (a missing window in a live session, and a whole gone session recreated before it), the live, ambiguous, absent-copy, dirty-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, the refusal when the session cannot be recreated, the recorded profile surviving a differing configured secondmate pin, the spawn-leftover dirt exemption against real untracked work, the refused profile flags, the basename-harness and unsupported-backend refusals, and the message after a failed launch handoff.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
