@@ -53,6 +53,14 @@
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
 #
+#   recover-missing Recreate the exact recorded terminal for a task whose
+#              endpoint is authoritatively missing, then hand the launch to the
+#              existing owner (bin/fm-spawn.sh --relaunch). Proves the missing
+#              state and refuses an unavailable, dirty, or conflicting
+#              local-copy ownership rather than resetting or reallocating
+#              anything. No new worktree or pool slot is created. A backend
+#              with no recovery-grade classifier or recreation support refuses.
+#
 # Teardown and discard are NOT verbs here and never will be. `exit` stops an
 # agent and preserves everything else; removing a worktree, killing an
 # endpoint, or discarding work stays with bin/fm-teardown.sh, which owns the
@@ -242,9 +250,9 @@ if [ -n "$control_want_value" ]; then
   die "--$control_want_value requires a value"
 fi
 
-if [ "$VERB" != relaunch ]; then
+if [ "$VERB" != relaunch ] && [ "$VERB" != recover-missing ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
+    || die "--harness, --model, --effort, and --note apply to 'relaunch' or 'recover-missing' only"
 fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
@@ -581,6 +589,13 @@ relaunch_rollback() {
       journal_write "failed:$RELAUNCH_PHASE" "rollback=instructions-restored" || true
       echo "error: relaunch of $ID was refused before its agent was touched; nothing changed" >&2
       ;;
+    recreating)
+      journal_write "failed:$RELAUNCH_PHASE" "rollback=prior-record-restored" || true
+      if [ -f "$META_PRIOR" ]; then
+        mv "$META_PRIOR" "$META" 2>/dev/null || true
+      fi
+      echo "error: $ID's missing-endpoint recovery failed while recreating the terminal; no agent is running, and its work plus the recorded progress note are preserved at $WT" >&2
+      ;;
     stopping)
       state=$(agent_state 2>/dev/null || printf unknown)
       case "$state" in
@@ -867,6 +882,126 @@ do_relaunch() {
   echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
 }
 
+do_recover_missing() {
+  local state note_line wt dirty_raw dirty session wsid wname proj_abs new_window task_ids tab_id pane_id
+  local -a spawn_args
+
+  require_state_verified_backend recover-missing
+  resolve_relaunch_profile
+
+  case "$KIND" in
+    ship|scout)
+      RELAUNCH_BRIEF="$DATA/$ID/brief.md"
+      [ -f "$RELAUNCH_BRIEF" ] \
+        || die "task $ID has no instructions at $RELAUNCH_BRIEF; refusing to recover a worker with nothing to work from"
+      [ "$NOTE_SET" = 1 ] && [ -n "$NOTE" ] \
+        || die "recovery of a $KIND task requires --note (or --note-file): the replacement worker inherits the local copy but none of the conversation, so it must be told what happened"
+      ;;
+    secondmate)
+      RELAUNCH_BRIEF=
+      ;;
+    *)
+      die "task $ID records kind '$KIND', which has no defined recovery shape"
+      ;;
+  esac
+
+  state=$(agent_state)
+  case "$state" in
+    missing) ;;
+    dead|alive|ambiguous) die "task $ID's endpoint reads '$state'; recover-missing requires a positively missing endpoint and no agent owning the task" ;;
+    *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to recover" ;;
+  esac
+
+  wt=$(fm_meta_get "$META" worktree)
+  [ -n "$wt" ] && [ -d "$wt" ] || die "task $ID's recorded worktree '${wt:-none}' is absent; refusing to recover without the local copy its work lives in"
+
+  if fm_treehouse_pool_slot "$(fm_meta_get "$META" project)" "$wt" >/dev/null 2>&1; then
+    fm_treehouse_slot_owner_state "$wt" "$ID"
+    case "$FM_TREEHOUSE_SLOT_OWNER" in
+      other) die "task $ID's recorded pool slot $wt is currently claimed by task $FM_TREEHOUSE_SLOT_OWNER_ID; refusing to recover and tangle ownership" ;;
+      unsafe) die "task $ID's recorded pool slot $wt has an unreadable owner claim; refusing to recover and risk a conflict" ;;
+    esac
+  fi
+
+  [ -d "$wt/.git" ] || [ -f "$wt/.git" ] || die "worktree $wt is not a git repository"
+  git -C "$wt" rev-parse --verify HEAD >/dev/null 2>&1 || die "worktree $wt has an unreadable HEAD"
+  dirty_raw=$(git -C "$wt" status --porcelain 2>/dev/null) || die "cannot read git status in $wt"
+  dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' | head -1 || true)
+  [ -z "$dirty" ] || die "worktree $wt has uncommitted changes; refusing to recover rather than cleaning it"
+
+  if [ -n "$NOTE" ]; then
+    note_line="note_file=$NOTE_FILE"
+  else
+    note_line="note=none"
+  fi
+  safe_checkpoint
+  cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before recovery"
+  RELAUNCH_ACTIVE=1
+  journal_write checkpoint "${CHECKPOINT_LINES[@]}" "$note_line"
+
+  record_note
+  journal_write noted "${CHECKPOINT_LINES[@]}" "$note_line"
+
+  journal_write recreating "${CHECKPOINT_LINES[@]}" "$note_line"
+  wname="fm-$ID"
+  proj_abs=$(cd "$wt" && pwd -P)
+  fm_backend_source "$BACKEND" || die "could not load backend $BACKEND"
+  case "$BACKEND" in
+    tmux)
+      session=${T%%:*}
+      new_window=$(fm_backend_tmux_create_task "$session" "$wname" "$proj_abs") || die "could not recreate tmux window for $ID"
+      TARGET="$session:$wname"
+      ;;
+    herdr)
+      session=${T%%:*}
+      wsid=$(fm_meta_get "$META" herdr_workspace_id)
+      [ -n "$wsid" ] || die "herdr workspace id is missing from $META"
+      local HERDR_LABEL_HOME
+      HERDR_LABEL_HOME=$(fm_backend_hometag_read 2>/dev/null) || HERDR_LABEL_HOME=$FM_HOME
+      task_ids=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "${session}:${wsid}" "$wname" "$proj_abs" "") || die "could not recreate herdr task for $ID"
+      read -r tab_id pane_id <<EOF
+$task_ids
+EOF
+      [ -n "$tab_id" ] && [ -n "$pane_id" ] || die "herdr did not return tab/pane id for $ID"
+      awk -v win="$session:$pane_id" -v tid="$tab_id" -v pid="$pane_id" -F= '
+        BEGIN{OFS="="}
+        $1=="window"{$2=win}
+        $1=="herdr_tab_id"{$2=tid}
+        $1=="herdr_pane_id"{$2=pid}
+        {print}
+      ' "$META" > "$META.tmp" || die "could not write updated herdr target to $META.tmp"
+      mv "$META.tmp" "$META" || die "could not apply updated herdr target to $META"
+      TARGET="$session:$pane_id"
+      ;;
+    *)
+      die "backend $BACKEND has no supported way to recreate an endpoint with the recorded identity; refusing to recover"
+      ;;
+  esac
+
+  RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
+  journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
+  spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
+  [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
+  [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
+  if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
+      "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
+    RELAUNCH_META_PUBLISHED=1
+  else
+    [ "$(fm_meta_get "$META" control_relaunch_tx)" != "$RELAUNCH_TX" ] \
+      || RELAUNCH_META_PUBLISHED=1
+    die "the replacement agent for $ID could not be launched on $TARGET_HARNESS"
+  fi
+
+  state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {
+    die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
+  }
+  RELAUNCH_AGENT_CONFIRMED=1
+
+  journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=recreated"
+  RELAUNCH_ACTIVE=0
+  echo "recovered $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$TARGET worktree=$wt"
+}
+
 # --- verbs ------------------------------------------------------------------
 
 case "$VERB" in
@@ -892,5 +1027,8 @@ case "$VERB" in
     ;;
   relaunch)
     do_relaunch
+    ;;
+  recover-missing)
+    do_recover_missing
     ;;
 esac
