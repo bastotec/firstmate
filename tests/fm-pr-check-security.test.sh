@@ -2480,17 +2480,13 @@ test_task_record_identity_refusals() {
 
   # The same refusal applies before the pr= line, where the old tail-only rule
   # never looked, because every pr_head= is validated wherever it appears.
-  for case_name in leading-bad-head; do
-    dir=$(make_case "record-identity-$case_name")
-    state="$dir/home/state"
-    write_poll_meta "$state" task-a https://github.com/o/r/pull/1
-    seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
-    case "$case_name" in
-      leading-bad-head) write_poll_meta "$state" task-a https://github.com/o/r/pull/1 'pr_head=not-a-sha' ;;
-    esac
-    ! fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
-      || fail "$case_name: an ambiguous task record kept the poll authenticated"
-  done
+  dir=$(make_case record-identity-leading-bad-head)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/1
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/1 'pr_head=not-a-sha'
+  ! fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "leading-bad-head: an ambiguous task record kept the poll authenticated"
   pass "task-record cross-check still refuses an ambiguous PR identity"
 }
 
