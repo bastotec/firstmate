@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # fm-control.sh relaunch: the transactional replace-the-agent verb.
 #
-# Relaunch is the only control verb that changes durable records, so these
-# tests pin the transaction itself, hermetically (stubbed session provider, no
-# real agent):
+# Relaunch changes durable records (as `recover-missing` does, in its own
+# suite), so these tests pin the transaction itself, hermetically (stubbed
+# session provider, no real agent):
 #   1. A same-harness relaunch keeps every identity axis and reuses the SAME
 #      endpoint and worktree - it replaces an agent, it never forks a task.
 #   2. A harness switch is one ordinary relaunch: the record follows, the
@@ -17,6 +17,8 @@
 #   6. fm-spawn --relaunch refuses on its own: a live agent, a contradicting
 #      flag, an extra positional, or a backend that cannot prove the previous
 #      agent exited.
+#   7. The record rewrite leaves an already-armed merge poll authenticated, so
+#      a relaunched task still gets its merge notification.
 set -u
 
 # shellcheck source=tests/lib.sh
