@@ -87,7 +87,8 @@ It differs from the steps above in exactly three places.
   Picking the changed pin up is a `relaunch`, which is the verb that deliberately re-resolves it.
 - Two extra preconditions around the checkpoint: the endpoint must read the positively `missing` state, and the recorded local copy must be present, free of uncommitted changes beyond the spawn's own untracked leftovers, and - for a Treehouse pool slot - still claimed by this task.
   Each of those refuses rather than cleaning, reallocating, or repairing anything; no worktree and no pool slot is ever created here.
-- No stop step. Nothing is running, so step 4 is replaced by recreating the window under the recorded `fm-<id>` name in the recorded session and worktree, and step 5 hands that agent-free terminal to the same launch owner.
+- No stop step. Nothing is running, so step 4 is replaced by recreating the window under the recorded `fm-<id>` name in the recorded session and worktree, then waiting on a bounded budget for the new terminal to hold an agent-free state before step 5 hands it to the same launch owner.
+  A login shell that is still running its rc files reads `ambiguous` while each of them owns the pane, and the launch owner takes one un-retried state read that must be `dead`, so the state has to hold rather than merely be observed once.
 
 ### Failure and rollback
 
@@ -96,7 +97,7 @@ It differs from the steps above in exactly three places.
 - If the launch owner already published the new record but no running agent can be confirmed, the new record is kept: the task is recorded on the new harness with no agent confirmed, which is exactly what recovery reconciles.
   Rewriting it back to the old harness would be a second, worse inaccuracy.
 - A `recover-missing` failure while the terminal is being recreated restores the prior record and the prior instructions byte-exact, because no agent was ever touched in that phase.
-- A `recover-missing` launch failure after the terminal is back never claims an agent was stopped, and names the state the operator is now in: the recreated terminal holds a bare shell, so the endpoint reads `dead` rather than `missing` and the verb that retries it is `relaunch`.
+- A `recover-missing` failure once the terminal is back - the new shell never settling to agent-free, or the launch itself failing - never claims an agent was stopped, and names the state the operator is now in: the recreated terminal holds a bare shell, so the endpoint reads `dead` rather than `missing` and the verb that retries it is `relaunch`.
 
 ## Fail-closed boundaries
 
@@ -146,5 +147,5 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 
 - `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, and rollback after a failed launch.
-- `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery: the success path under the recorded handle for both losses (a missing window in a live session, and a whole gone session recreated before it), the live, ambiguous, absent-copy, dirty-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, the refusal when the session cannot be recreated, the recorded profile surviving a differing configured secondmate pin, the spawn-leftover dirt exemption against real untracked work, the refused profile flags, the basename-harness and unsupported-backend refusals, and the message after a failed launch handoff.
+- `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery: the success path under the recorded handle for both losses (a missing window in a live session, and a whole gone session recreated before it), the live, ambiguous, absent-copy, dirty-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, the refusal when the session cannot be recreated, the recorded profile surviving a differing configured secondmate pin, the spawn-leftover dirt exemption against real untracked work, the refused profile flags, the basename-harness and unsupported-backend refusals, a still-starting shell being waited out rather than handed over and the refusal when it never settles, and the message after a failed launch handoff.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
