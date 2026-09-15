@@ -647,7 +647,11 @@ relaunch_rollback() {
         cp -p "$BRIEF_PRIOR" "$RELAUNCH_BRIEF" 2>/dev/null || true
       fi
       journal_write "failed:$RELAUNCH_PHASE" "rollback=instructions-restored" || true
-      echo "error: relaunch of $ID was refused before its agent was touched; nothing changed" >&2
+      if [ "$VERB" = recover-missing ]; then
+        echo "error: $ID's missing-endpoint recovery was refused before its terminal was recreated; its agent was already gone, so nothing was touched and nothing changed" >&2
+      else
+        echo "error: relaunch of $ID was refused before its agent was touched; nothing changed" >&2
+      fi
       ;;
     recreating)
       # Recovery only ever runs against a missing endpoint, so no agent was
@@ -771,8 +775,12 @@ resolve_relaunch_profile() {
   # is only reached after the old agent has been stopped. Asking the same
   # capability table here keeps that refusal on the pre-stop side of the
   # transaction, where nothing has changed yet.
-  fm_control_harness_supports_kind "$TARGET_HARNESS" "$KIND" \
-    || die "'$TARGET_HARNESS' is not verified to run a $KIND task, so relaunching $ID onto it would stop the running agent for a launch that must be refused; choose an adapter verified for this kind"
+  if ! fm_control_harness_supports_kind "$TARGET_HARNESS" "$KIND"; then
+    if [ "$VERB" = recover-missing ]; then
+      die "'$TARGET_HARNESS' is not verified to run a $KIND task, so recovering $ID would recreate its terminal for a launch that must be refused; its endpoint is missing and nothing was touched, so its work is preserved at $WT until this adapter is verified for this kind"
+    fi
+    die "'$TARGET_HARNESS' is not verified to run a $KIND task, so relaunching $ID onto it would stop the running agent for a launch that must be refused; choose an adapter verified for this kind"
+  fi
   # A model or effort chosen for the previous harness does not transfer to a
   # different one, so an explicit harness change resets both axes unless the
   # caller names them too.
