@@ -19,6 +19,11 @@ slots=$(jq -r '
   [.slots | to_entries[] | select(.value.harness == "codex") | .key][0:2] | .[]
 ' "$REGISTRY") || fail "account slot registry could not be read"
 assert_equals 4 "$(printf '%s\n' "$slots" | grep -c . | tr -d ' ')" "live check requires two Claude and two Codex slots"
+slot_args=()
+while IFS= read -r slot; do
+  [ -n "$slot" ] || continue
+  slot_args+=("$slot")
+done <<< "$slots"
 
 identity_counts=$(jq -r '
   [
@@ -55,7 +60,7 @@ chmod +x "$lab/bin/quota-axi"
 output="$lab/sanitized.json"
 if ! fm_run_timed 120 env PATH="$lab/bin:$PATH" FM_ACCOUNT_SLOT_REAL_QUOTA="$real_quota" \
     FM_ACCOUNT_SLOT_LIVE_CALLS="$calls" FM_HOME="${FM_HOME:-$ROOT}" \
-    "$ROOT/bin/fm-account-slot.sh" probe-all $slots > "$output"; then
+    "$ROOT/bin/fm-account-slot.sh" probe-all "${slot_args[@]}" > "$output"; then
   fail "four-profile account-slot probe failed"
 fi
 
