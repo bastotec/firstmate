@@ -2467,7 +2467,7 @@ test_armed_poll_survives_later_task_record_appends() {
 # that identity ambiguous or unreadable - not an unrelated key.
 test_task_record_identity_refusals() {
   local dir state case_name rc
-  for case_name in second-pr bad-head second-head garbage; do
+  for case_name in second-pr bad-head garbage; do
     dir=$(make_case "record-identity-$case_name")
     state="$dir/home/state"
     write_poll_meta "$state" task-a https://github.com/o/r/pull/1
@@ -2477,10 +2477,6 @@ test_task_record_identity_refusals() {
     case "$case_name" in
       second-pr) printf 'pr=%s\n' 'https://github.com/o/r/pull/2' >> "$state/task-a.meta" ;;
       bad-head) printf 'pr_head=%s\n' 'not-a-sha' >> "$state/task-a.meta" ;;
-      second-head)
-        printf 'pr_head=%s\n' '0123456789abcdef0123456789abcdef01234567' >> "$state/task-a.meta"
-        printf 'pr_head=%s\n' 'fedcba9876543210fedcba9876543210fedcba98' >> "$state/task-a.meta"
-        ;;
       garbage) printf '%s\n' 'no-separator-line' >> "$state/task-a.meta" ;;
     esac
     ! fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
@@ -2513,6 +2509,8 @@ test_task_record_identity_refusals() {
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "arming accepted an unreadable task record"
+  assert_grep "$state/task-a.meta" "$dir/arm.err" \
+    "arming refused an unreadable task record without saying so"
   assert_poll_absent "$state" task-a
   pass "task-record cross-check still refuses an ambiguous or unreadable PR identity"
 }

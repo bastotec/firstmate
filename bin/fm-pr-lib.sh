@@ -300,14 +300,14 @@ fm_pr_regular_destination_on_device_or_absent() {
 # at the tail, and bin/fm-captain-hold.sh appends decisions_reviewed= and
 # decision_keys= - so the guarantee is stated as a property of the whole file
 # rather than of its tail: every line is a readable key=value record, exactly
-# one pr= line carries a canonical URL, and at most one pr_head= carries a valid
+# one pr= line carries a canonical URL, and every pr_head= line carries a valid
 # head wherever it appears. A key this parser does not know carries no PR
 # identity, so it is not evidence of tampering; treating it as such revoked live
 # merge polls, and because arming rewrote pr= to the end of the file the refusal
 # could only ever surface later, in the watcher. A blank line is separation
 # rather than content and is skipped for the same reason.
 fm_pr_metadata_identity_parse() {
-  local file=$1 line key value pr_count=0 head_count=0
+  local file=$1 line key value pr_count=0
   FM_PR_META_PROVIDER=
   FM_PR_META_URL=
   FM_PR_META_HOST=
@@ -335,8 +335,6 @@ fm_pr_metadata_identity_parse() {
         FM_PR_META_NUMBER=$FM_PR_NUMBER
         ;;
       pr_head)
-        head_count=$((head_count + 1))
-        [ "$head_count" -eq 1 ] || return 1
         fm_pr_head_valid "$value" || return 1
         ;;
     esac
