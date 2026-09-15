@@ -1,0 +1,177 @@
+Firstmate merge-notification poll: live operator transcript
+fixed tree  = /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2JJGVWRCX707ZJSZJ86FE4W (8237f57)
+base tree   = /tmp/nm-drive/base (8b10b61, before the fix)
+
+############################################################
+# BASE 8b10b61 - the reported failure, reproduced live
+############################################################
+### operator registers the PR for merge notification
+armed: state/task-a.check.sh
+$ fm-pr-check.sh task-a https://github.com/o/r/pull/1 -> exit 0
+--- state/task-a.meta after registration ---
+window=firstmate:fm-task-a
+endpoint_task_id=task-a
+worktree=/tmp/nm-drive/baserun2/later-key/wt
+project=/tmp/nm-drive/baserun2/later-key/project
+kind=ship
+mode=no-mistakes
+pr=https://github.com/o/r/pull/1
+pr_head=0123456789abcdef0123456789abcdef01234567
+### the task record then gains later keys (relaunch + captain hold)
+### watcher cycle with the forge reporting MERGED
+$ fm-watch.sh -> exit 0
+--- watcher stdout ---
+check: rejected unauthenticated state checks: /tmp/nm-drive/baserun2/later-key/home/state/task-a.check.sh
+--- watcher stderr ---
+
+############################################################
+# FIXED 8237f57 - same operator sequence
+############################################################
+### operator registers the PR for merge notification
+armed: state/task-a.check.sh
+$ fm-pr-check.sh task-a https://github.com/o/r/pull/1 -> exit 0
+--- state/task-a.meta after registration ---
+window=firstmate:fm-task-a
+endpoint_task_id=task-a
+worktree=/tmp/nm-drive/ev-fixed/later-key/wt
+project=/tmp/nm-drive/ev-fixed/later-key/project
+kind=ship
+mode=no-mistakes
+pr=https://github.com/o/r/pull/1
+pr_head=0123456789abcdef0123456789abcdef01234567
+### the task record then gains later keys (relaunch + captain hold)
+### watcher cycle with the forge reporting MERGED
+$ fm-watch.sh -> exit 0
+--- watcher stdout ---
+check: /tmp/nm-drive/ev-fixed/later-key/home/state/task-a.check.sh: merged
+--- watcher stderr ---
+
+############################################################
+# FIXED 8237f57 - adversarial: tampered
+############################################################
+### operator registers the PR for merge notification
+armed: state/task-a.check.sh
+$ fm-pr-check.sh task-a https://github.com/o/r/pull/1 -> exit 0
+--- state/task-a.meta after registration ---
+window=firstmate:fm-task-a
+endpoint_task_id=task-a
+worktree=/tmp/nm-drive/ev-fixed/tampered/wt
+project=/tmp/nm-drive/ev-fixed/tampered/project
+kind=ship
+mode=no-mistakes
+pr=https://github.com/o/r/pull/1
+pr_head=0123456789abcdef0123456789abcdef01234567
+### an attacker appends bytes to the armed poll program
+### watcher cycle with the forge reporting MERGED
+$ fm-watch.sh -> exit 0
+--- watcher stdout ---
+check: rejected unauthenticated state checks: /tmp/nm-drive/ev-fixed/tampered/home/state/task-a.check.sh
+--- watcher stderr ---
+
+############################################################
+# FIXED 8237f57 - adversarial: replaced
+############################################################
+### operator registers the PR for merge notification
+armed: state/task-a.check.sh
+$ fm-pr-check.sh task-a https://github.com/o/r/pull/1 -> exit 0
+--- state/task-a.meta after registration ---
+window=firstmate:fm-task-a
+endpoint_task_id=task-a
+worktree=/tmp/nm-drive/ev-fixed/replaced/wt
+project=/tmp/nm-drive/ev-fixed/replaced/project
+kind=ship
+mode=no-mistakes
+pr=https://github.com/o/r/pull/1
+pr_head=0123456789abcdef0123456789abcdef01234567
+### the poll program file is replaced by a different file with identical bytes
+(replacement keeps byte-identical program text)
+### watcher cycle with the forge reporting MERGED
+$ fm-watch.sh -> exit 0
+--- watcher stdout ---
+check: rejected unauthenticated state checks: /tmp/nm-drive/ev-fixed/replaced/home/state/task-a.check.sh
+--- watcher stderr ---
+
+############################################################
+# FIXED 8237f57 - adversarial: second-pr
+############################################################
+### operator registers the PR for merge notification
+armed: state/task-a.check.sh
+$ fm-pr-check.sh task-a https://github.com/o/r/pull/1 -> exit 0
+--- state/task-a.meta after registration ---
+window=firstmate:fm-task-a
+endpoint_task_id=task-a
+worktree=/tmp/nm-drive/ev-fixed/second-pr/wt
+project=/tmp/nm-drive/ev-fixed/second-pr/project
+kind=ship
+mode=no-mistakes
+pr=https://github.com/o/r/pull/1
+pr_head=0123456789abcdef0123456789abcdef01234567
+### the task record gains a second, different pr= line
+### watcher cycle with the forge reporting MERGED
+$ fm-watch.sh -> exit 0
+--- watcher stdout ---
+check: rejected unauthenticated state checks: /tmp/nm-drive/ev-fixed/second-pr/home/state/task-a.check.sh
+--- watcher stderr ---
+
+############################################################
+# FIXED 8237f57 - adversarial: bad-head
+############################################################
+### operator registers the PR for merge notification
+armed: state/task-a.check.sh
+$ fm-pr-check.sh task-a https://github.com/o/r/pull/1 -> exit 0
+--- state/task-a.meta after registration ---
+window=firstmate:fm-task-a
+endpoint_task_id=task-a
+worktree=/tmp/nm-drive/ev-fixed/bad-head/wt
+project=/tmp/nm-drive/ev-fixed/bad-head/project
+kind=ship
+mode=no-mistakes
+pr=https://github.com/o/r/pull/1
+pr_head=0123456789abcdef0123456789abcdef01234567
+### the task record gains an invalid pr_head= line
+### watcher cycle with the forge reporting MERGED
+$ fm-watch.sh -> exit 0
+--- watcher stdout ---
+check: rejected unauthenticated state checks: /tmp/nm-drive/ev-fixed/bad-head/home/state/task-a.check.sh
+--- watcher stderr ---
+
+############################################################
+# FIXED 8237f57 - adversarial: poll lifted into another home
+############################################################
+### a whole armed poll is lifted from one home into another
+total 32
+-rw-------@ 1 bastotecnologia wheel 3905 Sep 15 11:01 task-a.check.sh
+-rw-------@ 1 bastotecnologia wheel 248 Sep 15 11:01 task-a.meta
+-rw-------@ 1 bastotecnologia wheel 54 Sep 15 11:01 task-a.pr-poll
+-rw-------@ 1 bastotecnologia wheel 256 Sep 15 11:01 task-a.pr-poll-registration
+### watcher in the receiving home B
+$ fm-watch.sh (home B) -> exit 0
+check: rejected unauthenticated state checks: /tmp/nm-drive/ev-cross/home-b/home/state/task-a.check.sh
+### watcher in the original home A
+$ fm-watch.sh (home A) -> exit 0
+check: /tmp/nm-drive/ev-cross/home-a/home/state/task-a.check.sh: merged
+
+############################################################
+# FIXED 8237f57 - adversarial: record rewritten to a different PR
+############################################################
+### operator registers the PR for merge notification
+armed: state/task-a.check.sh
+$ fm-pr-check.sh task-a https://github.com/o/r/pull/1 -> exit 0
+--- state/task-a.meta after registration ---
+window=firstmate:fm-task-a
+endpoint_task_id=task-a
+worktree=/tmp/nm-drive/ev-fixed2/swapped-pr/wt
+project=/tmp/nm-drive/ev-fixed2/swapped-pr/project
+kind=ship
+mode=no-mistakes
+pr=https://github.com/o/r/pull/1
+pr_head=0123456789abcdef0123456789abcdef01234567
+### the record's single pr= line is rewritten to a different PR
+project=/tmp/nm-drive/ev-fixed2/swapped-pr/project
+pr=https://github.com/o/r/pull/2
+pr_head=0123456789abcdef0123456789abcdef01234567
+### watcher cycle with the forge reporting MERGED
+$ fm-watch.sh -> exit 0
+--- watcher stdout ---
+check: rejected unauthenticated state checks: /tmp/nm-drive/ev-fixed2/swapped-pr/home/state/task-a.check.sh
+--- watcher stderr ---

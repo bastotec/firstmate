@@ -1,0 +1,14 @@
+Regression proof: the new tests fail on the base commit and pass on the target.
+
+--- base 8b10b61 + the new tests ---
+not ok - a later task-record key after pr= revoked a valid armed poll
+not ok - relaunch silently revoked the armed merge poll
+
+--- target 8237f57 ---
+/tmp/nm-sec.out:ok - an armed merge poll still runs after its task record gains a later key
+/tmp/nm-sec.out:ok - task-record cross-check still refuses an ambiguous PR identity
+/tmp/nm-sec.out:ok - registered polls run only with intact fingerprints, file identity, and home
+/tmp/nm-relaunch.out:ok - fm-control relaunch: an armed merge poll survives the record rewrite
+
+tests/fm-pr-check-security.test.sh: 36 ok, exit 0
+tests/fm-control-relaunch.test.sh: 57 ok, exit 0
