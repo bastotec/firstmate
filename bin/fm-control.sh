@@ -111,7 +111,9 @@
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
 #   FM_CONTROL_SETTLE_WAIT       adapter acknowledgement wait after interrupt (5)
-#   FM_CONTROL_EXIT_WAIT         alive->dead wait after the exit command (30)
+#   FM_CONTROL_EXIT_WAIT         wait for an endpoint to read agent-free: after
+#                                the exit command, and for a recreated
+#                                terminal's shell to finish starting (30)
 #   FM_CONTROL_LAUNCH_WAIT       dead->alive wait after a relaunch (90)
 #   FM_CONTROL_EXIT_RETRIES      Enter retries for the exit command (3)
 set -eu
@@ -165,6 +167,7 @@ SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
 EXIT_WAIT=${FM_CONTROL_EXIT_WAIT:-30}
 LAUNCH_WAIT=${FM_CONTROL_LAUNCH_WAIT:-90}
 EXIT_RETRIES=${FM_CONTROL_EXIT_RETRIES:-3}
+SETTLE_READS=3
 
 die() {  # <message>
   echo "error: $1" >&2
@@ -369,6 +372,39 @@ wait_agent_state() {  # <timeout> <wanted>...
         return 0
       fi
     done
+    awk -v e="$elapsed" -v t="$timeout" 'BEGIN{exit !(e < t)}' || break
+    sleep "$POLL"
+    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
+  done
+  printf '%s' "$state"
+  return 1
+}
+
+# wait_endpoint_settled <timeout>: poll until the endpoint reads 'dead' on
+# SETTLE_READS consecutive reads. Prints the last observed state; returns 0
+# once it has settled.
+#
+# A terminal that was just created is not agent-free yet even though it holds
+# nothing but a shell: the login shell is still running its rc files, and each
+# command they start (nvm's node, a prompt's git) owns the pane tty's
+# foreground process group for a moment, which classifies as `ambiguous`. A
+# single `dead` read proves nothing either, because the gaps between those
+# commands read agent-free too - so the state has to HOLD before the terminal
+# is handed to the launch owner, which takes one un-retried read and requires
+# exactly `dead`.
+wait_endpoint_settled() {  # <timeout>
+  local timeout=$1 state elapsed=0 held=0
+  while :; do
+    state=$(agent_state)
+    if [ "$state" = dead ]; then
+      held=$((held + 1))
+      if [ "$held" -ge "$SETTLE_READS" ]; then
+        printf '%s' "$state"
+        return 0
+      fi
+    else
+      held=0
+    fi
     awk -v e="$elapsed" -v t="$timeout" 'BEGIN{exit !(e < t)}' || break
     sleep "$POLL"
     elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
@@ -1012,6 +1048,14 @@ do_recover_missing() {
     || die "task $ID's recorded tmux session '${T%%:*}' is gone and could not be recreated"
   fm_backend_tmux_create_task "${T%%:*}" "$wname" "$proj_abs" >/dev/null \
     || die "could not recreate tmux window for $ID"
+
+  # The launch owner requires a positively agent-free endpoint, so wait for the
+  # new terminal's shell to finish starting before handing it over. Still
+  # inside the `recreating` phase: a refusal here rolls the progress note back
+  # and touches nothing else.
+  state=$(wait_endpoint_settled "$EXIT_WAIT") || {
+    die "task $ID's recreated terminal did not settle to an agent-free shell within ${EXIT_WAIT}s (endpoint reads '$state'); the terminal exists now, so once its shell is idle bring the worker up with 'relaunch'"
+  }
 
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
   journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"

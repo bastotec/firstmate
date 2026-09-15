@@ -79,7 +79,19 @@ case "${1:-}" in
     for a in "$@"; do
       case "$a" in
         *cursor_y*) printf '1\n'; exit 0 ;;
-        *pane_current_command*) cat "$D/command"; printf '\n'; exit 0 ;;
+        *pane_current_command*)
+          # A just-created pane is still running its login shell's rc files,
+          # and each command they start owns the pane tty's foreground process
+          # group for a moment. $D/busy-reads is how many reads report one of
+          # those (classified `other`, so the endpoint reads `ambiguous`)
+          # before the shell reaches its prompt.
+          busy=$(cat "$D/busy-reads" 2>/dev/null || printf '0')
+          if [ "${busy:-0}" -gt 0 ] 2>/dev/null; then
+            printf '%s\n' "$((busy - 1))" > "$D/busy-reads"
+            printf 'node\n'
+            exit 0
+          fi
+          cat "$D/command"; printf '\n'; exit 0 ;;
         *pane_current_path*) cat "$D/cwd"; printf '\n'; exit 0 ;;
       esac
     done
@@ -100,6 +112,7 @@ case "${1:-}" in
     printf '%s\n' "$name" >> "$D/created-windows"
     # A freshly created window holds a bare shell: agent-free, not missing.
     printf 'zsh' > "$D/command"
+    printf '%s\n' "${FM_FAKE_SHELL_BUSY_READS:-0}" > "$D/busy-reads"
     printf '@999\n'
     exit 0 ;;
   set-window-option) exit 0 ;;
@@ -248,9 +261,11 @@ run_control() {  # <case-dir> <args...>
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
-    FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
+    FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT="${FM_CONTROL_EXIT_WAIT:-0.05}" \
+    FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_FAKE_NEW_WINDOW_FAIL="${FM_FAKE_NEW_WINDOW_FAIL:-}" \
     FM_FAKE_NEW_SESSION_FAIL="${FM_FAKE_NEW_SESSION_FAIL:-}" \
+    FM_FAKE_SHELL_BUSY_READS="${FM_FAKE_SHELL_BUSY_READS:-0}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -294,6 +309,43 @@ test_recover_missing_recreates_the_terminal_and_launches_the_replacement() {
     *) fail "recovery must append to the original instructions, never rewrite them" ;;
   esac
   pass "fm-control recover-missing: a missing terminal is recreated under its recorded handle and relaunched"
+}
+
+test_recover_missing_waits_for_the_recreated_shell_to_settle() {
+  local dir out rc
+  dir=$(new_case cold-start rm21)
+  add_ship_task "$dir" rm21
+  make_endpoint_missing "$dir"
+
+  # A cold rescue on a real machine: the recreated pane's login shell is still
+  # running its rc files, so the endpoint reads `ambiguous` for a while. The
+  # launch owner takes ONE un-retried state read and requires `dead`, so
+  # handing the terminal over before it settles fails the whole rescue.
+  out=$(FM_FAKE_SHELL_BUSY_READS=4 FM_CONTROL_EXIT_WAIT=5 \
+    run_control "$dir" rm21 recover-missing --note "the terminal was closed out from under it"); rc=$?
+  expect_code 0 "$rc" "a still-starting shell must not fail the rescue"$'\n'"$out"
+  assert_contains "$out" "recovered rm21 harness=claude" "the rescue should complete in one command"
+  assert_grep "encode launch-brief" "$dir/fake/literal" \
+    "the launch should have been handed over only once the terminal read agent-free"
+  [ "$(journal_field "$dir" rm21 phase)" = complete ] \
+    || fail "the transaction journal should end complete"
+  pass "fm-control recover-missing: a recreated terminal whose shell is still starting is waited out, not handed over"
+}
+
+test_recover_missing_refuses_a_terminal_that_never_settles() {
+  local dir out rc
+  dir=$(new_case never-settles rm22)
+  add_ship_task "$dir" rm22
+  make_endpoint_missing "$dir"
+
+  # The recreated pane never reaches an agent-free shell within the budget.
+  out=$(FM_FAKE_SHELL_BUSY_READS=100000 run_control "$dir" rm22 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "a terminal that never settles must refuse"$'\n'"$out"
+  assert_contains "$out" "did not settle to an agent-free shell" \
+    "the refusal should name what it waited for"
+  ! grep -Fq "encode launch-brief" "$dir/fake/literal" \
+    || fail "an unsettled terminal must never be handed to the launch owner"
+  pass "fm-control recover-missing: a recreated terminal that never goes agent-free refuses instead of launching into it"
 }
 
 # --- 2. refusals ------------------------------------------------------------
@@ -756,6 +808,8 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate
 test_recover_missing_accepts_a_worktree_holding_only_spawn_leftovers
 test_recover_missing_refuses_an_untracked_source_file
 test_recover_missing_recreates_the_terminal_and_launches_the_replacement
+test_recover_missing_waits_for_the_recreated_shell_to_settle
+test_recover_missing_refuses_a_terminal_that_never_settles
 test_recover_missing_refuses_a_live_endpoint
 test_recover_missing_refuses_an_ambiguous_endpoint
 test_recover_missing_refuses_an_absent_local_copy
