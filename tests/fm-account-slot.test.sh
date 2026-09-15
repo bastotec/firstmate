@@ -117,11 +117,7 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-if command -v shasum >/dev/null 2>&1; then
-  digest=$(printf '%s' "$FAKE_KEYCHAIN_STORE" | shasum -a 256)
-else
-  digest=$(printf '%s' "$FAKE_KEYCHAIN_STORE" | sha256sum)
-fi
+digest=$(printf '%s' "$FAKE_KEYCHAIN_STORE" | shasum -a 256)
 [ "$service" = "Claude Code-credentials-${digest:0:8}" ] || exit 44
 exit 0
 SH

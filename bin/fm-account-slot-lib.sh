@@ -115,15 +115,6 @@ fm_account_slot_credential_path() { # <harness> <store-path>
   esac
 }
 
-fm_account_slot_keychain_account() {
-  local name=${USER:-}
-  [ -n "$name" ] || name=$(id -un 2>/dev/null) || name=
-  case "$name" in
-    ''|*[!a-zA-Z0-9._-]*) name=claude-code-user ;;
-  esac
-  printf '%s' "$name"
-}
-
 # Claude scopes its keychain item to the config directory it was signed in
 # under - service "Claude Code-credentials-<sha256(storePath)[0:8]>" - so this
 # never observes the ambient unsuffixed item, and it reads no secret material:
@@ -131,17 +122,10 @@ fm_account_slot_keychain_account() {
 fm_account_slot_keychain_present() { # <store-path>
   local digest
   command -v security >/dev/null 2>&1 || return 1
-  if command -v shasum >/dev/null 2>&1; then
-    digest=$(printf '%s' "$1" | shasum -a 256 2>/dev/null) || return 1
-  elif command -v sha256sum >/dev/null 2>&1; then
-    digest=$(printf '%s' "$1" | sha256sum 2>/dev/null) || return 1
-  else
-    return 1
-  fi
+  digest=$(printf '%s' "$1" | shasum -a 256 2>/dev/null) || return 1
   digest=${digest%% *}
   [ "${#digest}" -ge 8 ] || return 1
-  security find-generic-password -a "$(fm_account_slot_keychain_account)" \
-    -s "Claude Code-credentials-${digest:0:8}" >/dev/null 2>&1
+  security find-generic-password -s "Claude Code-credentials-${digest:0:8}" >/dev/null 2>&1
 }
 
 fm_account_slot_credential_present() { # <harness> <store-path>

@@ -213,7 +213,7 @@ The `CLAUDE_CONFIG_DIR=<store>` prefix `bin/fm-spawn.sh` puts on a slotted Claud
 
 Claude's credential store is a keychain-primary composite with the config-dir file as its fallback, and a successful keychain write deletes the file, so on a host whose panes can reach the login keychain a `claude login` under a slot store leaves no `<storePath>/.credentials.json`.
 Both halves of that composite are scoped to the store, so `fm_account_slot_credential_present` accepts either: the file if it is there, otherwise the store's own keychain item.
-Presence is read with `security find-generic-password -a <user> -s <service>` and no `-w`, which returns attributes only - it reads no secret and, per the Background-session row in `docs/verification/runtime-backends.md`, still answers where reading the secret would exit 36.
+Presence is read with `security find-generic-password -s <service>` and no `-w`, which returns attributes only - it reads no secret and, per the Background-session row in `docs/verification/runtime-backends.md`, still answers where reading the secret would exit 36.
 The measurement host had no `Claude Code-credentials` keychain item at all (`security find-generic-password` exited 44 with keychain access working), so its own credentials live in the file and the file path is the one exercised end to end here; the keychain path is covered deterministically in `tests/fm-account-slot.test.sh` against a `security` stub that answers only for the store-scoped service name.
 
 Re-check this section against a newer Claude Code and update the pinned version with it.
