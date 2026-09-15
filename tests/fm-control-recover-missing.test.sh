@@ -1,5 +1,20 @@
 #!/usr/bin/env bash
 # fm-control.sh recover-missing: the transactional recreate-the-terminal verb.
+#
+# The verb exists for a task whose recorded terminal is GONE rather than dead:
+# `relaunch` refuses a missing endpoint and fm-spawn --relaunch adopts only a
+# surviving agent-free one, so neither can bring such a task back. These tests
+# drive the real script end to end against a stubbed session provider (no real
+# agent), pinning:
+#   1. The success path: a missing endpoint is recreated under the recorded
+#      handle, the launch is handed to the existing owner, and the task keeps
+#      its endpoint, worktree, and instructions - now carrying the note.
+#   2. Every refusal the operation promises, each of which must leave the
+#      durable record and the instructions byte-identical: a live or ambiguous
+#      endpoint, an absent or dirty local copy, and a pool slot claimed by
+#      another task or carrying an unreadable claim.
+#   3. The runtime is not switchable here: --harness/--model/--effort belong to
+#      `relaunch`, and recovery continues the recorded profile.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -10,22 +25,26 @@ set -u
 . "$ROOT/bin/fm-trace-context-lib.sh"
 
 CONTROL="$ROOT/bin/fm-control.sh"
-SPAWN="$ROOT/bin/fm-spawn.sh"
 
-TMP_ROOT=$(fm_test_tmproot fm-control-recover)
+TMP_ROOT=$(fm_test_tmproot fm-control-recover-missing)
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
 TASK_TMPS=()
 
-relaunch_cleanup() {
+recover_cleanup() {
   local d
   for d in "${TASK_TMPS[@]:-}"; do
     [ -n "$d" ] && rm -rf "$d"
   done
   rm -rf "$TMP_ROOT"
 }
-trap relaunch_cleanup EXIT
+trap recover_cleanup EXIT
 
+# The same lifecycle-modelling tmux stub the relaunch suite uses, plus a real
+# new-window: the window inventory in $D/windows is what decides missing vs
+# present, and creating the window puts the recorded name back and leaves a
+# bare shell in it (agent-free), which is exactly the state fm-spawn --relaunch
+# requires before it adopts the endpoint.
 make_tmux_stub() {  # <dir>
   local fb="$1/fakebin"
   mkdir -p "$fb"
@@ -48,10 +67,10 @@ case "${1:-}" in
     if [ "$literal" = 1 ]; then
       printf '%s\n' "$payload" >> "$D/literal"
       case "$payload" in
-        *'encode launch-brief'*)
-          cat "$D/becomes" > "$D/command"
-          ;;
+        *'encode launch-brief'*) cat "$D/becomes" > "$D/command" ;;
       esac
+    else
+      printf '%s\n' "$payload" >> "$D/keys"
     fi
     exit 0 ;;
   display-message)
@@ -62,22 +81,27 @@ case "${1:-}" in
         *pane_current_path*) cat "$D/cwd"; printf '\n'; exit 0 ;;
       esac
     done
-    ;;
-  has-session)
-    [ -f "$D/session" ] && exit 0
-    exit 1 ;;
-  new-window)
-    printf '%s\n' "fm-t1" >> "$D/windows"
-    printf 'zsh\n' > "$D/command"
-    printf '@999\n'
-    exit 0 ;;
-  set-window-option) exit 0 ;;
-  list-windows)
-    [ -f "$D/windows" ] && cat "$D/windows"
-    exit 0 ;;
+    printf 'fakepane\n'; exit 0 ;;
   capture-pane)
     printf '╭────╮\n│    │\n╰────╯\n'
     exit 0 ;;
+  new-window)
+    [ -z "${FM_FAKE_NEW_WINDOW_FAIL:-}" ] || { echo "can't create window" >&2; exit 1; }
+    name=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -n) name=${2:-}; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    printf '%s\n' "$name" >> "$D/windows"
+    printf '%s\n' "$name" >> "$D/created-windows"
+    # A freshly created window holds a bare shell: agent-free, not missing.
+    printf 'zsh' > "$D/command"
+    printf '@999\n'
+    exit 0 ;;
+  set-window-option) exit 0 ;;
+  list-windows) [ -f "$D/windows" ] && cat "$D/windows"; exit 0 ;;
 esac
 exit 0
 SH
@@ -89,108 +113,331 @@ SH
   chmod +x "$fb/sleep"
 }
 
+# new_case <name> [id] -> echoes a case dir whose endpoint currently holds a
+# live claude agent. A test that wants the MISSING precondition calls
+# make_endpoint_missing.
 new_case() {
   local id=${2:-t1} dir="$TMP_ROOT/$1-$RANDOM"
   mkdir -p "$dir/home/state" "$dir/home/data" "$dir/fake"
   : > "$dir/fake/literal"
   : > "$dir/fake/keys"
+  : > "$dir/fake/created-windows"
   printf 'claude' > "$dir/fake/command"
   printf 'claude' > "$dir/fake/becomes"
   printf '%s\n' "fm-$id" > "$dir/fake/windows"
-  : > "$dir/fake/session"
   make_tmux_stub "$dir"
   printf '%s\n' "$dir"
 }
 
+# add_ship_task <case-dir> <id> [worktree]: a claude ship task recorded on the
+# tmux endpoint fmses:fm-<id>. The worktree defaults to <case-dir>/wt; a pool
+# case passes its slot checkout instead.
 add_ship_task() {
-  local dir=$1 id=$2 harness=${3:-claude}
-  local home="$dir/home" proj="$dir/proj" wt="$dir/wt"
+  local dir=$1 id=$2 wt=${3:-$1/wt}
+  local home="$dir/home" proj="$dir/proj"
   fm_git_worktree "$proj" "$wt" "task-$id"
   mkdir -p "$home/data/$id"
   cat > "$home/data/$id/brief.md" <<EOF
 # Task
+## Captain's intent
+Exercise missing-endpoint recovery for $id.
+
+## Firstmate spec
+Recreate the terminal without touching the local copy.
 EOF
   {
-    echo "harness=$harness"
+    echo "window=fmses:fm-$id"
+    echo "endpoint_task_id=$id"
     echo "worktree=$wt"
     echo "project=$proj"
+    echo "harness=claude"
     echo "kind=ship"
-    echo "backend=tmux"
-    echo "window=fm:fm-$id"
+    echo "mode=no-mistakes"
+    echo "yolo=off"
+    echo "tasktmp=/tmp/fm-$id"
+    echo "model=default"
+    echo "effort=default"
   } > "$home/state/$id.meta"
   printf '%s' "$wt" > "$dir/fake/cwd"
-  TASK_TMPS+=("$dir")
+  TASK_TMPS+=("/tmp/fm-$id")
 }
 
-test_recover_missing_success() {
-  local dir
-  dir=$(new_case success)
-  add_ship_task "$dir" "t1"
-  # Make the original window MISSING
-  rm -f "$dir/fake/windows"
-  echo "relaunch_tx=test" > "$dir/home/state/t1.meta.control_relaunch_tx"
-
-  # We have to stub fm-spawn.sh so it doesn't fail on missing harness
-  mkdir -p "$dir/fakebin"
-  cat > "$dir/fakebin/fm-spawn.sh" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$dir/fakebin/fm-spawn.sh"
-
-  FM_HOME="$dir/home" PATH="$dir/fakebin:$PATH" SCRIPT_DIR="$dir/fakebin" FM_FAKE_DIR="$dir/fake" FM_BACKEND_TMUX_NO_CREATE=1 \
-    "$CONTROL" t1 recover-missing --note "recover" >"$dir/out" 2>"$dir/err" || {
-      cat "$dir/err" >&2
-      echo "recover-missing failed"
-      exit 1
-    }
-
-  # The window target in meta is still fm:fm-t1
-  grep -q "window=fm:fm-t1" "$dir/home/state/t1.meta" || {
-    echo "target unexpectedly changed in meta"
-    exit 1
-  }
+# Drop the recorded window out of the session inventory: tmux's recovery-grade
+# classifier reports `missing` for a window the session does not list.
+make_endpoint_missing() {  # <case-dir>
+  rm -f "$1/fake/windows"
+  : > "$1/fake/windows"
 }
 
-test_recover_missing_refuses_alive() {
-  local dir
-  dir=$(new_case alive)
-  add_ship_task "$dir" "t1"
-  # Window is present, agent is claude (alive)
-
-  FM_HOME="$dir/home" PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" FM_BACKEND_TMUX_NO_CREATE=1 \
-    "$CONTROL" t1 recover-missing --note "recover" >"$dir/out" 2>"$dir/err" && exit 1
-  grep -q "endpoint reads 'alive'" "$dir/err" || exit 1
+# A Treehouse pool slot, shaped the way fm_treehouse_pool_slot recognizes one:
+# <pool>/treehouse-state.json beside <pool>/<slot>/<checkout>, with the slot's
+# Firstmate ownership claim at <pool>/<slot>/.fm-slot-owner.
+pool_slot_worktree() {  # <case-dir>
+  local pool="$1/pool"
+  mkdir -p "$pool/1"
+  printf '{}\n' > "$pool/treehouse-state.json"
+  printf '%s\n' "$pool/1/checkout"
 }
 
-test_recover_missing_refuses_dirty() {
-  local dir
-  dir=$(new_case dirty)
-  add_ship_task "$dir" "t1"
-  rm -f "$dir/fake/windows"
-  
+run_control() {  # <case-dir> <args...>
+  local dir=$1; shift
+  # A claude spawn pre-registers workspace trust in the launching user's own
+  # store (bin/fm-claude-trust.sh), and recovery reaches it through
+  # fm-spawn.sh; without a throwaway HOME this suite would write the
+  # developer's real ~/.claude.json.
+  mkdir -p "$dir/user-home"
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
+    FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
+    FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
+    FM_FAKE_NEW_WINDOW_FAIL="${FM_FAKE_NEW_WINDOW_FAIL:-}" \
+    "$CONTROL" "$@" 2>&1
+}
+
+meta_field() {  # <case-dir> <id> <key>
+  grep "^$3=" "$1/home/state/$2.meta" | tail -1 | cut -d= -f2-
+}
+
+journal_field() {  # <case-dir> <id> <key>
+  grep "^$3=" "$1/home/state/$2.control-relaunch" | tail -1 | cut -d= -f2-
+}
+
+# --- 1. the missing-terminal success path -----------------------------------
+
+test_recover_missing_recreates_the_terminal_and_launches_the_replacement() {
+  local dir out rc brief_before
+  dir=$(new_case success rm1)
+  add_ship_task "$dir" rm1
+  brief_before=$(cat "$dir/home/data/rm1/brief.md")
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" rm1 recover-missing --note "the terminal was closed out from under it"); rc=$?
+  expect_code 0 "$rc" "recovering a missing endpoint should succeed"$'\n'"$out"
+  assert_contains "$out" "recovered rm1 harness=claude from=claude" "the outcome should name the recovered task and its runtime"
+  assert_contains "$out" "endpoint=fmses:fm-rm1" "the outcome should name the recreated endpoint"
+
+  assert_grep "fm-rm1" "$dir/fake/created-windows" "the missing terminal should have been recreated under its recorded name"
+  assert_grep "encode launch-brief" "$dir/fake/literal" "the launch should have been handed to the existing owner"
+
+  [ "$(meta_field "$dir" rm1 window)" = "fmses:fm-rm1" ] \
+    || fail "the recreated endpoint must keep the recorded handle"
+  [ "$(meta_field "$dir" rm1 worktree)" = "$dir/wt" ] \
+    || fail "the local copy must be reused, never reallocated"
+  [ "$(meta_field "$dir" rm1 harness)" = claude ] || fail "the recorded harness must survive recovery"
+  [ "$(meta_field "$dir" rm1 kind)" = ship ] || fail "kind must survive recovery"
+  [ "$(journal_field "$dir" rm1 phase)" = complete ] \
+    || fail "the transaction journal should end complete"
+  assert_grep "the terminal was closed out from under it" "$dir/home/data/rm1/brief.md" \
+    "the progress note must land in the instructions the replacement reads"
+  case "$(cat "$dir/home/data/rm1/brief.md")" in
+    "$brief_before"*) : ;;
+    *) fail "recovery must append to the original instructions, never rewrite them" ;;
+  esac
+  pass "fm-control recover-missing: a missing terminal is recreated under its recorded handle and relaunched"
+}
+
+# --- 2. refusals ------------------------------------------------------------
+
+# assert_nothing_changed <case-dir> <id> <meta-before> <brief-before>
+assert_nothing_changed() {
+  local dir=$1 id=$2 meta_before=$3 brief_before=$4
+  [ "$(cat "$dir/home/state/$id.meta")" = "$meta_before" ] \
+    || fail "a refused recovery must leave the durable record byte-identical"
+  [ "$(cat "$dir/home/data/$id/brief.md")" = "$brief_before" ] \
+    || fail "a refused recovery must leave the instructions byte-identical"
+  [ ! -s "$dir/fake/created-windows" ] \
+    || fail "a refused recovery must not create a terminal"
+  ! grep -Fq "encode launch-brief" "$dir/fake/literal" \
+    || fail "a refused recovery must not launch an agent"
+}
+
+test_recover_missing_refuses_a_live_endpoint() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case alive rm2)
+  add_ship_task "$dir" rm2
+  meta_before=$(cat "$dir/home/state/rm2.meta")
+  brief_before=$(cat "$dir/home/data/rm2/brief.md")
+
+  out=$(run_control "$dir" rm2 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "a live endpoint must refuse"$'\n'"$out"
+  assert_contains "$out" "endpoint reads 'alive'" "the refusal should name the observed state"
+  assert_nothing_changed "$dir" rm2 "$meta_before" "$brief_before"
+  pass "fm-control recover-missing: a live endpoint refuses and changes nothing"
+}
+
+test_recover_missing_refuses_an_ambiguous_endpoint() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case ambiguous rm3)
+  add_ship_task "$dir" rm3
+  # A foreground process that is neither a known agent nor a shell: the
+  # classifier can prove neither presence nor absence of an agent.
+  printf 'mystery' > "$dir/fake/command"
+  meta_before=$(cat "$dir/home/state/rm3.meta")
+  brief_before=$(cat "$dir/home/data/rm3/brief.md")
+
+  out=$(run_control "$dir" rm3 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "an ambiguous endpoint must refuse"$'\n'"$out"
+  assert_contains "$out" "endpoint reads 'ambiguous'" "the refusal should name the observed state"
+  assert_nothing_changed "$dir" rm3 "$meta_before" "$brief_before"
+  pass "fm-control recover-missing: an ambiguous endpoint refuses and changes nothing"
+}
+
+test_recover_missing_refuses_an_absent_local_copy() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case absent-wt rm4)
+  add_ship_task "$dir" rm4
+  make_endpoint_missing "$dir"
+  meta_before=$(cat "$dir/home/state/rm4.meta")
+  brief_before=$(cat "$dir/home/data/rm4/brief.md")
+  rm -rf "$dir/wt"
+
+  out=$(run_control "$dir" rm4 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "an absent local copy must refuse"$'\n'"$out"
+  assert_contains "$out" "is absent; refusing to recover without the local copy" \
+    "the refusal should name the missing local copy"
+  assert_nothing_changed "$dir" rm4 "$meta_before" "$brief_before"
+  pass "fm-control recover-missing: an unavailable local copy refuses rather than reallocating one"
+}
+
+test_recover_missing_refuses_a_dirty_local_copy() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case dirty rm5)
+  add_ship_task "$dir" rm5
+  make_endpoint_missing "$dir"
+  meta_before=$(cat "$dir/home/state/rm5.meta")
+  brief_before=$(cat "$dir/home/data/rm5/brief.md")
   : > "$dir/wt/dirty.txt"
   git -C "$dir/wt" add dirty.txt
 
-  FM_HOME="$dir/home" PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" FM_BACKEND_TMUX_NO_CREATE=1 \
-    "$CONTROL" t1 recover-missing --note "recover" >"$dir/out" 2>"$dir/err" && exit 1
-  grep -q "uncommitted changes; refusing" "$dir/err" || exit 1
+  out=$(run_control "$dir" rm5 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "a dirty local copy must refuse"$'\n'"$out"
+  assert_contains "$out" "uncommitted changes; refusing to recover rather than cleaning it" \
+    "the refusal should say it will not clean the copy"
+  assert_nothing_changed "$dir" rm5 "$meta_before" "$brief_before"
+  pass "fm-control recover-missing: a dirty local copy refuses rather than resetting it"
 }
 
-test_recover_missing_refuses_ambiguous() {
-  local dir
-  dir=$(new_case ambiguous)
-  add_ship_task "$dir" "t1"
-  # Window is present, agent is unknown (ambiguous)
-  printf 'unknown\n' > "$dir/fake/command"
+test_recover_missing_refuses_a_pool_slot_owned_by_another_task() {
+  local dir wt out rc meta_before brief_before
+  dir=$(new_case slot-other rm6)
+  wt=$(pool_slot_worktree "$dir")
+  add_ship_task "$dir" rm6 "$wt"
+  make_endpoint_missing "$dir"
+  printf 'task=%s\nhome=%s\n' other-task "$dir/home" > "$(dirname "$wt")/.fm-slot-owner"
+  meta_before=$(cat "$dir/home/state/rm6.meta")
+  brief_before=$(cat "$dir/home/data/rm6/brief.md")
 
-  FM_HOME="$dir/home" PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" FM_BACKEND_TMUX_NO_CREATE=1 \
-    "$CONTROL" t1 recover-missing --note "recover" >"$dir/out" 2>"$dir/err" && exit 1
-  grep -q "endpoint reads 'ambiguous'" "$dir/err" || exit 1
+  out=$(run_control "$dir" rm6 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "a reassigned pool slot must refuse"$'\n'"$out"
+  assert_contains "$out" "claimed by task other-task" "the refusal should name the claiming task"
+  assert_nothing_changed "$dir" rm6 "$meta_before" "$brief_before"
+  pass "fm-control recover-missing: a pool slot claimed by another task refuses rather than tangling ownership"
 }
 
-test_recover_missing_success
-test_recover_missing_refuses_alive
-test_recover_missing_refuses_ambiguous
-test_recover_missing_refuses_dirty
+test_recover_missing_refuses_an_unreadable_pool_slot_claim() {
+  local dir wt out rc meta_before brief_before
+  dir=$(new_case slot-unsafe rm7)
+  wt=$(pool_slot_worktree "$dir")
+  add_ship_task "$dir" rm7 "$wt"
+  make_endpoint_missing "$dir"
+  # A claim that exists but names no task at all: unreadable, not absent.
+  printf 'home=%s\n' "$dir/home" > "$(dirname "$wt")/.fm-slot-owner"
+  meta_before=$(cat "$dir/home/state/rm7.meta")
+  brief_before=$(cat "$dir/home/data/rm7/brief.md")
+
+  out=$(run_control "$dir" rm7 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "an unreadable pool-slot claim must refuse"$'\n'"$out"
+  assert_contains "$out" "unreadable owner claim" "the refusal should name the unreadable claim"
+  assert_nothing_changed "$dir" rm7 "$meta_before" "$brief_before"
+  pass "fm-control recover-missing: an unreadable pool-slot claim refuses rather than risking a conflict"
+}
+
+test_recover_missing_keeps_its_own_pool_slot() {
+  local dir wt out rc
+  dir=$(new_case slot-mine rm8)
+  wt=$(pool_slot_worktree "$dir")
+  add_ship_task "$dir" rm8 "$wt"
+  make_endpoint_missing "$dir"
+  printf 'task=%s\nhome=%s\n' rm8 "$dir/home" > "$(dirname "$wt")/.fm-slot-owner"
+
+  out=$(run_control "$dir" rm8 recover-missing --note "recover"); rc=$?
+  expect_code 0 "$rc" "a task's own pool slot should recover"$'\n'"$out"
+  [ "$(meta_field "$dir" rm8 worktree)" = "$wt" ] \
+    || fail "the recovered task must keep its own pool slot"
+  [ "$(cat "$(dirname "$wt")/.fm-slot-owner")" = "$(printf 'task=rm8\nhome=%s' "$dir/home")" ] \
+    || fail "recovery must leave the slot's own ownership claim untouched"
+  pass "fm-control recover-missing: a task's own pool slot recovers with its claim untouched"
+}
+
+test_failed_recreation_rolls_the_progress_note_back() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case recreate-fail rm11)
+  add_ship_task "$dir" rm11
+  make_endpoint_missing "$dir"
+  meta_before=$(cat "$dir/home/state/rm11.meta")
+  brief_before=$(cat "$dir/home/data/rm11/brief.md")
+
+  # The note is appended to the instructions BEFORE the terminal is recreated,
+  # and the agent is never touched in any phase of a recovery, so a recreation
+  # that fails must put the instructions back. Otherwise every retry after the
+  # operator fixes the session provider stacks another progress note.
+  out=$(FM_FAKE_NEW_WINDOW_FAIL=1 run_control "$dir" rm11 recover-missing --note "first attempt"); rc=$?
+  expect_code 1 "$rc" "a failed recreation must refuse"$'\n'"$out"
+  assert_contains "$out" "failed while recreating the terminal" "the refusal should name the phase it failed in"
+  [ "$(cat "$dir/home/data/rm11/brief.md")" = "$brief_before" ] \
+    || fail "a failed recreation must roll the progress note back out of the instructions"
+  [ "$(cat "$dir/home/state/rm11.meta")" = "$meta_before" ] \
+    || fail "a failed recreation must restore the prior durable record"
+
+  out=$(run_control "$dir" rm11 recover-missing --note "second attempt"); rc=$?
+  expect_code 0 "$rc" "the retry after the provider recovers should succeed"$'\n'"$out"
+  [ "$(grep -c '^## Progress note' "$dir/home/data/rm11/brief.md")" = 1 ] \
+    || fail "a retry must leave exactly one progress note in the instructions"
+  assert_no_grep "first attempt" "$dir/home/data/rm11/brief.md" \
+    "the rolled-back attempt's note must not survive into the retry"
+  pass "fm-control recover-missing: a failed recreation rolls the progress note back so retries do not stack"
+}
+
+# --- 3. the runtime is not switchable here ----------------------------------
+
+test_recover_missing_rejects_runtime_switch_flags() {
+  local dir out rc flag
+  dir=$(new_case profile rm9)
+  add_ship_task "$dir" rm9
+  make_endpoint_missing "$dir"
+
+  for flag in "--harness codex" "--model opus" "--effort high"; do
+    # shellcheck disable=SC2086 # the flag pair is deliberately split.
+    out=$(run_control "$dir" rm9 recover-missing --note "recover" $flag); rc=$?
+    expect_code 1 "$rc" "recover-missing must reject '$flag'"$'\n'"$out"
+    assert_contains "$out" "apply to 'relaunch' only" "the refusal should point at the relaunch verb"
+  done
+  [ ! -s "$dir/fake/created-windows" ] || fail "a rejected flag must not create a terminal"
+  pass "fm-control recover-missing: runtime-switch flags belong to relaunch and are refused here"
+}
+
+test_recover_missing_requires_a_note_for_a_ship_task() {
+  local dir out rc
+  dir=$(new_case no-note rm10)
+  add_ship_task "$dir" rm10
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" rm10 recover-missing); rc=$?
+  expect_code 1 "$rc" "a ship recovery without a note must refuse"$'\n'"$out"
+  assert_contains "$out" "requires --note" "the refusal should name the missing note"
+  [ ! -s "$dir/fake/created-windows" ] || fail "a refused recovery must not create a terminal"
+  pass "fm-control recover-missing: a ship task's recovery requires the progress note"
+}
+
+test_recover_missing_recreates_the_terminal_and_launches_the_replacement
+test_recover_missing_refuses_a_live_endpoint
+test_recover_missing_refuses_an_ambiguous_endpoint
+test_recover_missing_refuses_an_absent_local_copy
+test_recover_missing_refuses_a_dirty_local_copy
+test_recover_missing_refuses_a_pool_slot_owned_by_another_task
+test_recover_missing_refuses_an_unreadable_pool_slot_claim
+test_recover_missing_keeps_its_own_pool_slot
+test_failed_recreation_rolls_the_progress_note_back
+test_recover_missing_rejects_runtime_switch_flags
+test_recover_missing_requires_a_note_for_a_ship_task
 echo "PASS: fm-control-recover-missing"

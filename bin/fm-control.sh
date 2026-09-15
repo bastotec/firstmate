@@ -7,6 +7,8 @@
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
 #                                         (--note <text> | --note-file <path>)
+#        fm-control.sh <task-id> recover-missing
+#                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
 # DATA plane: conversational text for the agent to read, always routing-marked
@@ -60,6 +62,9 @@
 #              local-copy ownership rather than resetting or reallocating
 #              anything. No new worktree or pool slot is created. A backend
 #              with no recovery-grade classifier or recreation support refuses.
+#              It continues the SAME run, so the recorded harness, model, and
+#              effort carry through unchanged and only --note/--note-file
+#              apply; choosing a different runtime is what `relaunch` is for.
 #
 # Teardown and discard are NOT verbs here and never will be. `exit` stops an
 # agent and preserves everything else; removing a worktree, killing an
@@ -250,10 +255,20 @@ if [ -n "$control_want_value" ]; then
   die "--$control_want_value requires a value"
 fi
 
-if [ "$VERB" != relaunch ] && [ "$VERB" != recover-missing ]; then
-  [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    || die "--harness, --model, --effort, and --note apply to 'relaunch' or 'recover-missing' only"
-fi
+case "$VERB" in
+  relaunch) ;;
+  recover-missing)
+    # A recovery recreates the recorded terminal and continues the SAME run, so
+    # it carries the recorded harness, model, and effort through unchanged.
+    # Choosing a different runtime is what 'relaunch' is for.
+    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] \
+      || die "--harness, --model, and --effort apply to 'relaunch' only; 'recover-missing' continues the recorded runtime"
+    ;;
+  *)
+    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
+      || die "--harness, --model, and --effort apply to 'relaunch' only, and --note to 'relaunch' or 'recover-missing' only"
+    ;;
+esac
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
@@ -590,11 +605,18 @@ relaunch_rollback() {
       echo "error: relaunch of $ID was refused before its agent was touched; nothing changed" >&2
       ;;
     recreating)
-      journal_write "failed:$RELAUNCH_PHASE" "rollback=prior-record-restored" || true
+      # Recovery only ever runs against a missing endpoint, so no agent was
+      # touched in any phase: the instructions go back byte-exact, exactly as
+      # they do for a relaunch refused before its agent was stopped. Without
+      # this every failed attempt would leave another progress note appended.
+      if [ -n "$RELAUNCH_BRIEF" ] && [ -f "$BRIEF_PRIOR" ]; then
+        cp -p "$BRIEF_PRIOR" "$RELAUNCH_BRIEF" 2>/dev/null || true
+      fi
+      journal_write "failed:$RELAUNCH_PHASE" "rollback=prior-record-and-instructions-restored" || true
       if [ -f "$META_PRIOR" ]; then
         mv "$META_PRIOR" "$META" 2>/dev/null || true
       fi
-      echo "error: $ID's missing-endpoint recovery failed while recreating the terminal; no agent is running, and its work plus the recorded progress note are preserved at $WT" >&2
+      echo "error: $ID's missing-endpoint recovery failed while recreating the terminal; its agent was never touched, so the progress note was rolled back and its work is preserved at $WT" >&2
       ;;
     stopping)
       state=$(agent_state 2>/dev/null || printf unknown)
@@ -883,7 +905,7 @@ do_relaunch() {
 }
 
 do_recover_missing() {
-  local state note_line wt dirty_raw dirty session wsid wname proj_abs new_window task_ids tab_id pane_id
+  local state note_line wt dirty_raw dirty session wsid wname proj_abs task_ids tab_id pane_id meta_lock meta_tmp
   local -a spawn_args
 
   require_state_verified_backend recover-missing
@@ -949,34 +971,56 @@ do_recover_missing() {
   case "$BACKEND" in
     tmux)
       session=${T%%:*}
-      new_window=$(fm_backend_tmux_create_task "$session" "$wname" "$proj_abs") || die "could not recreate tmux window for $ID"
+      # The window keeps its recorded fm-<id> name, so the recorded endpoint
+      # handle addresses the replacement window unchanged.
+      fm_backend_tmux_create_task "$session" "$wname" "$proj_abs" >/dev/null \
+        || die "could not recreate tmux window for $ID"
       TARGET="$session:$wname"
       ;;
     herdr)
       session=${T%%:*}
       wsid=$(fm_meta_get "$META" herdr_workspace_id)
       [ -n "$wsid" ] || die "herdr workspace id is missing from $META"
-      local HERDR_LABEL_HOME
-      HERDR_LABEL_HOME=$(fm_backend_hometag_read 2>/dev/null) || HERDR_LABEL_HOME=$FM_HOME
-      task_ids=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "${session}:${wsid}" "$wname" "$proj_abs" "") || die "could not recreate herdr task for $ID"
+      task_ids=$(fm_backend_herdr_create_task "${session}:${wsid}" "$wname" "$proj_abs" "") \
+        || die "could not recreate herdr task for $ID"
       read -r tab_id pane_id <<EOF
 $task_ids
 EOF
       [ -n "$tab_id" ] && [ -n "$pane_id" ] || die "herdr did not return tab/pane id for $ID"
-      awk -v win="$session:$pane_id" -v tid="$tab_id" -v pid="$pane_id" -F= '
+      # A herdr pane id is minted fresh, so the durable record must name the new
+      # one before the launch owner reads it back. Every other writer of this
+      # record takes the per-task metadata lock (bin/fm-spawn.sh,
+      # bin/fm-teardown.sh, bin/fm-inactive-reconcile.sh); fm-control's own
+      # .control-<id>.lock does not exclude them, so take it here too and
+      # release it before handing the launch over.
+      meta_lock=$(fm_meta_lock_path "$META") \
+        || die "could not derive the metadata lock path for $META"
+      fm_lock_acquire_wait "$meta_lock" \
+        || die "could not lock $META to record $ID's recreated herdr target"
+      meta_tmp="$META.recover.${BASHPID:-$$}"
+      if awk -v win="$session:$pane_id" -v tid="$tab_id" -v pid="$pane_id" -F= '
         BEGIN{OFS="="}
         $1=="window"{$2=win}
         $1=="herdr_tab_id"{$2=tid}
         $1=="herdr_pane_id"{$2=pid}
         {print}
-      ' "$META" > "$META.tmp" || die "could not write updated herdr target to $META.tmp"
-      mv "$META.tmp" "$META" || die "could not apply updated herdr target to $META"
+      ' "$META" > "$meta_tmp" && mv "$meta_tmp" "$META"; then
+        fm_lock_release "$meta_lock" || true
+      else
+        rm -f "$meta_tmp"
+        fm_lock_release "$meta_lock" || true
+        die "could not apply $ID's recreated herdr target to $META"
+      fi
       TARGET="$session:$pane_id"
       ;;
     *)
       die "backend $BACKEND has no supported way to recreate an endpoint with the recorded identity; refusing to recover"
       ;;
   esac
+  # Every postcondition from here on - the launch wait, the journal's endpoint=
+  # line, the rollback's state read - must address the RECREATED terminal, not
+  # the destroyed one the endpoint validation resolved at startup.
+  T=$TARGET
 
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
   journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
