@@ -159,7 +159,7 @@ now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 attempt=oauth
 [ "$provider" != claude ] || attempt=oauth-file
 cat <<JSON
-{"generatedAt":"$now","schemaVersion":5,"providers":[{"provider":"$provider","source":"oauth","account":{"accountId":"${FM_FAKE_QUOTA_ID:-test-account}","identityStatus":"verified"},"attempts":[{"source":"$attempt","status":"success"}],"state":{"status":"fresh","stale":false,"refreshedAt":"$now"},"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":50,"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":-0.5}}]}}]}
+{"generatedAt":"$now","schemaVersion":5,"providers":[{"provider":"$provider","account":{"accountId":"${FM_FAKE_QUOTA_ID:-test-account}","identityStatus":"verified"},"attempts":[{"source":"$attempt","status":"success"}],"state":{"status":"fresh","stale":false},"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":50,"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":-0.5}}]}}]}
 JSON
 SH
   chmod +x "$fb/timeout" "$fb/quota-axi"

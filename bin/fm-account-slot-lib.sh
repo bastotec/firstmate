@@ -284,11 +284,10 @@ fm_account_slot_probe() { # <config-dir> <slot>
     recent(.generatedAt) and
     (.providers[0] as $p |
       $p.provider == $provider and
-      ($p.state | type) == "object" and $p.state.status == "fresh" and $p.state.stale == false and recent($p.state.refreshedAt) and
+      ($p.state | type) == "object" and $p.state.status == "fresh" and $p.state.stale == false and
       ($p.account | type) == "object" and
       (($p.account.identityStatus? == null) or $p.account.identityStatus == "verified") and
       $p.account.accountId == $account_id and
-      $p.source == "oauth" and
       (if $provider == "claude" then
          ([ $p.attempts[]? | select(.status == "success") | .source ] as $succeeded |
            ($succeeded | length) == 1 and (["oauth-file","keychain"] | index($succeeded[0])) != null)
@@ -315,7 +314,7 @@ fm_account_slot_probe() { # <config-dir> <slot>
     fm_account_slot_fail "slot '$slot' returned stale, mismatched, or malformed quota evidence"
     return 1
   fi
-  jq -c --arg slot "$slot" '{schemaVersion,generatedAt,accountSlot:$slot,providers:[.providers[0] | {provider,state:{status:.state.status,stale:.state.stale,refreshedAt:.state.refreshedAt},quotaSemantics}]}' "$raw"
+  jq -c --arg slot "$slot" '{schemaVersion,generatedAt,accountSlot:$slot,providers:[.providers[0] | {provider,state:{status:.state.status,stale:.state.stale},quotaSemantics}]}' "$raw"
   rc=$?
   rm -f "$raw"
   [ "$rc" -eq 0 ] || { fm_account_slot_fail "slot '$slot' sanitized quota evidence could not be emitted"; return 1; }
