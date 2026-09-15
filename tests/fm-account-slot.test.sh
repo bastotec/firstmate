@@ -64,13 +64,11 @@ case "$provider" in
     account=claude-account-a
     email=private@example.invalid
     case "${CLAUDE_CONFIG_DIR-}" in *claude-b) account=claude-account-b ;; esac
-    source=oauth
     attempt=${FAKE_ATTEMPT_SOURCE:-oauth-file}
     ;;
   codex)
     account=codex-account-a
     case "${CODEX_HOME-}" in *codex-b) account=codex-account-b ;; esac
-    source=oauth
     attempt=oauth
     ;;
 esac
@@ -80,7 +78,7 @@ if [ -n "${FAKE_UNAVAILABLE_SLOT:-}" ]; then
 fi
 case "${FAKE_MODE:-ok}" in
   mismatch) account=wrong-account ;;
-  wrong-source) source=pi ;;
+  wrong-source) attempt=pi ;;
   stale) stale=true ;;
 esac
 stale=${stale:-false}
@@ -89,7 +87,7 @@ status=fresh
 valid_account=$account
 emit_document() {
 cat <<JSON
-{"generatedAt":"$now","schemaVersion":5,"providers":[{"provider":"$provider","source":"$source","account":{"accountId":"$account","email":"${email:-private@example.invalid}","organization":"private","identityStatus":"verified"},"attempts":[{"source":"$attempt","status":"success","path":"/private/credential"}],"state":{"status":"$status","stale":$stale,"refreshedAt":"$now"},"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":75,"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":-0.25}}]}}]}
+{"generatedAt":"$now","schemaVersion":5,"providers":[{"provider":"$provider","account":{"accountId":"$account","email":"${email:-private@example.invalid}","organization":"private","identityStatus":"verified"},"attempts":[{"source":"$attempt","status":"success","path":"/private/credential"}],"state":{"status":"$status","stale":$stale},"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":75,"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":-0.25}}]}}]}
 JSON
 }
 if [ "${FAKE_MODE:-ok}" = invalid-then-valid ]; then
