@@ -1,0 +1,30 @@
+### tampered: poll program bytes edited after registration
+  appended to task-a.check.sh: printf tampered-bytes-ran
+  fm-watch.sh exit 0
+  check: rejected unauthenticated state checks: /tmp/fm-poll-drive/tmp/trust-tampered/home/state/task-a.check.sh
+RESULT[tampered]: refused as unauthenticated, no merge reported
+
+### replaced: the registered file swapped for a different file with identical bytes
+  replacement is byte-identical to bin/fm-pr-poll.sh
+  fm-watch.sh exit 0
+  check: rejected unauthenticated state checks: /tmp/fm-poll-drive/tmp/trust-replaced/home/state/task-a.check.sh
+RESULT[replaced]: refused as unauthenticated, no merge reported
+
+### cross-home: a whole registered poll lifted into a second home
+  copied home A's four poll artifacts into home B
+  home B fm-watch.sh exit 0
+  check: rejected unauthenticated state checks: /tmp/fm-poll-drive/tmp/trust-home-b/home/state/task-a.check.sh
+RESULT[cross-home]: refused as unauthenticated, no merge reported
+  home A (the home that registered it) still reports:
+  check: /tmp/fm-poll-drive/tmp/trust-home-a/home/state/task-a.check.sh: merged
+
+### ambiguous identity: a second pr= line appended to the task record
+  task record now names two pull requests (42 and 99)
+  fm-watch.sh exit 0
+  check: rejected unauthenticated state checks: /tmp/fm-poll-drive/tmp/trust-second-pr/home/state/task-a.check.sh
+RESULT[second-pr]: refused as unauthenticated, no merge reported
+
+### ambiguous identity: a malformed pr_head= appended to the task record
+  fm-watch.sh exit 0
+  check: rejected unauthenticated state checks: /tmp/fm-poll-drive/tmp/trust-bad-head/home/state/task-a.check.sh
+RESULT[bad-head]: refused as unauthenticated, no merge reported

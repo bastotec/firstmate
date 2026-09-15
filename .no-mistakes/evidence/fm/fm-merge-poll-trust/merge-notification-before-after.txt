@@ -1,0 +1,63 @@
+=============== BEFORE: base commit 8b10b61 (bug reproduced) ===============
+# operator registers the PR for merge notification
+armed: state/task-a.check.sh
+fm-pr-check.sh: exit 0 (registration reported success)
+
+# what the registration armed:
+  task-a.check.sh
+  task-a.meta
+  task-a.pr-poll
+  task-a.pr-poll-registration
+
+# then the task is relaunched and the captain reviews - both append to the task record
+  task record now reads:
+    window=fm-task-a
+    endpoint_task_id=task-a
+    worktree=/tmp/fm-poll-drive/tmp/merge-notification-before/wt
+    project=/tmp/fm-poll-drive/tmp/merge-notification-before/project
+    kind=ship
+    mode=no-mistakes
+    pr=https://github.com/example/repo/pull/42
+    pr_head=0123456789abcdef0123456789abcdef01234567
+    control_relaunch_tx=96772.20260915T115436Z.29459
+    decisions_reviewed=1
+    decision_keys=nm-1-review
+
+# the PR merges (gh reports MERGED); the supervisor's watcher runs
+fm-watch.sh: exit 0
+watcher told the supervisor:
+  check: rejected unauthenticated state checks: /tmp/fm-poll-drive/tmp/merge-notification-before/home/state/task-a.check.sh
+
+RESULT: NO merge notification - poll refused as unauthenticated
+
+=============== AFTER: branch fm/fm-merge-poll-trust (0a76069) ===============
+# operator registers the PR for merge notification
+armed: state/task-a.check.sh
+fm-pr-check.sh: exit 0 (registration reported success)
+
+# what the registration armed:
+  task-a.check.sh
+  task-a.meta
+  task-a.pr-poll
+  task-a.pr-poll-registration
+
+# then the task is relaunched and the captain reviews - both append to the task record
+  task record now reads:
+    window=fm-task-a
+    endpoint_task_id=task-a
+    worktree=/tmp/fm-poll-drive/tmp/merge-notification-after/wt
+    project=/tmp/fm-poll-drive/tmp/merge-notification-after/project
+    kind=ship
+    mode=no-mistakes
+    pr=https://github.com/example/repo/pull/42
+    pr_head=0123456789abcdef0123456789abcdef01234567
+    control_relaunch_tx=96772.20260915T115436Z.29459
+    decisions_reviewed=1
+    decision_keys=nm-1-review
+
+# the PR merges (gh reports MERGED); the supervisor's watcher runs
+fm-watch.sh: exit 0
+watcher told the supervisor:
+  check: /tmp/fm-poll-drive/tmp/merge-notification-after/home/state/task-a.check.sh: merged
+
+RESULT: merge notification delivered
