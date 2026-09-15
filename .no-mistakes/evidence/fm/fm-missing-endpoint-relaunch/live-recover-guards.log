@@ -1,0 +1,33 @@
+
+=== G1 the recorded endpoint really is missing on this live tmux server ===
+zsh 
+
+=== G1 recover-missing must refuse a slot another task now claims ===
+error: task g1's recorded pool slot /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.f7thEG/pool/1/checkout is currently claimed by task other-task; refusing to recover and tangle ownership
+exit=1
+slot claim untouched: task=other-task home=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.f7thEG/home 
+no window created:    zsh 
+durable record byte-identical: yes
+
+=== G1b the SAME task's own claim recovers instead of refusing ===
+warning: /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.f7thEG/home/data/g1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered g1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmguard:fm-g1 worktree=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.f7thEG/pool/1/checkout
+exit=0
+window now:        zsh fm-g1 
+slot claim still:  task=g1 home=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.f7thEG/home 
+worktree still:    worktree=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.f7thEG/pool/1/checkout
+
+=== G2 configured pin says codex; the record says claude/opus/xhigh ===
+codex some-model high
+
+=== G2 recovery must continue the RECORDED runtime, not the pin ===
+warning: secondmate g2 sync skipped before launch: primary default-branch commit cannot be resolved
+recovered g2 harness=claude from=claude model=opus effort=xhigh backend=tmux endpoint=fmguard:fm-g2 worktree=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.f7thEG/smhome
+exit=0
+--- the process actually launched in the recreated terminal ---
+-zsh   -zsh
+claude claude 3600
+--- the journal's recorded target runtime ---
+to_harness=claude
+to_model=opus
+to_effort=xhigh

@@ -1,0 +1,34 @@
+
+=== G1 the recorded endpoint really is missing on this live tmux server ===
+zsh 
+
+=== G1 recover-missing must refuse a slot another task now claims ===
+error: task g1's recorded pool slot /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.5pBfs1/pool/1/checkout is currently claimed by task other-task; refusing to recover and tangle ownership
+exit=1
+slot claim untouched: task=other-task home=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.5pBfs1/home 
+no window created:    zsh 
+durable record byte-identical: yes
+
+=== G1b the SAME task's own claim recovers instead of refusing ===
+error: legacy mixed # Task brief has no provenance-marked captain words for no-mistakes --intent; add [captain] lines or migrate to ## Captain's intent and ## Firstmate spec
+error: the replacement agent for g1 could not be launched on claude
+error: g1's terminal was recreated but the replacement did not launch; no agent was ever stopped, its work plus the recorded progress note are preserved at /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.5pBfs1/pool/1/checkout, and the recreated terminal now holds a bare shell - retry with 'relaunch', which is the verb for an agent-free endpoint
+exit=1
+window now:        zsh fm-g1 
+slot claim still:  task=g1 home=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.5pBfs1/home 
+worktree still:    worktree=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.5pBfs1/pool/1/checkout
+
+=== G2 configured pin says codex; the record says claude/opus/xhigh ===
+codex some-model high
+
+=== G2 recovery must continue the RECORDED runtime, not the pin ===
+warning: secondmate g2 sync skipped before launch: primary default-branch commit cannot be resolved
+recovered g2 harness=claude from=claude model=opus effort=xhigh backend=tmux endpoint=fmguard:fm-g2 worktree=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live-guards.5pBfs1/smhome
+exit=0
+--- the process actually launched in the recreated terminal ---
+-zsh   -zsh
+claude claude --dangerously-skip-permissions --settings {"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false}} --model opus --effort xhigh \040-cFIRSTMATE_OP: v1 launch-brief: # secondmate brief
+--- the journal's recorded target runtime ---
+to_harness=claude
+to_model=opus
+to_effort=xhigh
