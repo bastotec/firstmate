@@ -60,8 +60,10 @@
 #              existing owner (bin/fm-spawn.sh --relaunch). Proves the missing
 #              state and refuses an unavailable, dirty, or conflicting
 #              local-copy ownership rather than resetting or reallocating
-#              anything. No new worktree or pool slot is created. A backend
-#              with no recovery-grade classifier or recreation support refuses.
+#              anything. No new worktree or pool slot is created. Recreation is
+#              tmux-only today, because a tmux window comes back under the same
+#              recorded fm-<id> handle and so rewrites no durable record; every
+#              other backend refuses before anything is touched.
 #              It continues the SAME run, so the recorded harness, model, and
 #              effort carry through unchanged and only --note/--note-file
 #              apply; choosing a different runtime is what `relaunch` is for.
@@ -369,9 +371,9 @@ wait_agent_state() {  # <timeout> <wanted>...
   return 1
 }
 
-require_state_verified_backend() {  # <verb>
+require_state_verified_backend() {  # <verb> <postcondition>
   fm_control_backend_state_verified "$BACKEND" && return 0
-  die "task $ID runs on the $BACKEND backend, which has no recovery-grade agent-state classifier, so '$1' cannot prove the agent actually stopped; refusing rather than reporting an unproven transition as done"
+  die "task $ID runs on the $BACKEND backend, which has no recovery-grade agent-state classifier, so '$1' cannot prove $2; refusing rather than reporting an unproven transition as done"
 }
 
 # send_interrupt_keys: deliver the harness's interrupt key the verified number
@@ -473,7 +475,7 @@ retire_busy_incarnation() {
 # `already-stopped` or `stopped`.
 do_exit() {
   local state cmd verdict composer_state cancel interrupt_result=not-needed
-  require_state_verified_backend exit
+  require_state_verified_backend exit "the agent actually stopped"
   state=$(agent_state)
   case "$state" in
     dead)
@@ -549,6 +551,7 @@ RELAUNCH_META_PUBLISHED=0
 RELAUNCH_AGENT_CONFIRMED=0
 RELAUNCH_TX=
 RELAUNCH_BRIEF=
+RELAUNCH_PAST_TENSE=relaunched
 PRIOR_HARNESS=$HARNESS
 PRIOR_RECORDED_HARNESS=$RECORDED_HARNESS
 CONFIG_HARNESS=
@@ -651,7 +654,14 @@ relaunch_rollback() {
         # reconciles. Rewriting it back to the old harness would be a second,
         # worse inaccuracy.
         journal_write "failed:$RELAUNCH_PHASE" "rollback=none-new-record-kept" || true
-        echo "error: $ID was relaunched on $TARGET_HARNESS but no running agent could be confirmed; its work is preserved at $WT" >&2
+        echo "error: $ID was ${RELAUNCH_PAST_TENSE} on $TARGET_HARNESS but no running agent could be confirmed; its work is preserved at $WT" >&2
+      elif [ "$VERB" = recover-missing ]; then
+        # Recovery never stops anything, so saying so would be a false account.
+        # The terminal it recreated is still there holding a bare shell, which
+        # reads 'dead' rather than 'missing' - so the verb that retries this is
+        # relaunch, not another recover-missing.
+        journal_write "failed:$RELAUNCH_PHASE" "rollback=prior-record-kept" || true
+        echo "error: $ID's terminal was recreated but the replacement did not launch; no agent was ever stopped, its work plus the recorded progress note are preserved at $WT, and the recreated terminal now holds a bare shell - retry with 'relaunch', which is the verb for an agent-free endpoint" >&2
       else
         journal_write "failed:$RELAUNCH_PHASE" "rollback=prior-record-kept" || true
         echo "error: $ID's agent was stopped but the replacement did not launch; no agent is running, and its work plus the recorded progress note are preserved at $WT" >&2
@@ -670,6 +680,9 @@ resolve_relaunch_profile() {
   [ -n "$PRIOR_EFFORT" ] || PRIOR_EFFORT=default
   if [ "$HARNESS_SET" = 0 ] \
      && [ "$PRIOR_RECORDED_HARNESS" != "$PRIOR_HARNESS" ]; then
+    if [ "$VERB" = recover-missing ]; then
+      die "task $ID records harness '$PRIOR_RECORDED_HARNESS', whose original launch command cannot be reconstructed from its recorded basename; recovery continues the recorded runtime and would have to substitute the canonical adapter '$PRIOR_HARNESS' for the command actually running, so it refuses rather than bringing the terminal back on a different runtime than the record names"
+    fi
     die "task $ID records harness '$PRIOR_RECORDED_HARNESS', whose original launch command cannot be reconstructed from its recorded basename; relaunching without --harness would substitute the canonical adapter '$PRIOR_HARNESS' for the command actually running. Pass an explicit --harness to choose the replacement runtime deliberately"
   fi
   CONFIG_HARNESS=
@@ -742,6 +755,7 @@ resolve_relaunch_profile() {
 # CHECKPOINT_LINES with the journal lines describing what it proved, and
 # refuses outright when any of it cannot be established.
 CHECKPOINT_LINES=()
+CHECKPOINT_STATUS_RAW=
 safe_checkpoint() {
   local wt_real wt_top wt_top_real head head_ref head_ref_status status_output dirty children marker child_meta
   CHECKPOINT_LINES=()
@@ -769,6 +783,7 @@ safe_checkpoint() {
   fi
   status_output=$(git -C "$WT" status --porcelain 2>/dev/null) \
     || die "task $ID's worktree status cannot be inspected; refusing to relaunch without accounting for local changes"
+  CHECKPOINT_STATUS_RAW=$status_output
   if [ -n "$status_output" ]; then
     dirty=yes
   else
@@ -840,7 +855,7 @@ do_relaunch() {
   local exit_result state note_line
   local -a spawn_args
 
-  require_state_verified_backend relaunch
+  require_state_verified_backend relaunch "the agent actually stopped"
   resolve_relaunch_profile
 
   case "$KIND" in
@@ -905,11 +920,14 @@ do_relaunch() {
 }
 
 do_recover_missing() {
-  local state note_line wt dirty_raw dirty session wsid wname proj_abs task_ids tab_id pane_id meta_lock meta_tmp
+  local state note_line wt dirty wname proj_abs
   local -a spawn_args
 
-  require_state_verified_backend recover-missing
+  require_state_verified_backend recover-missing "the endpoint is actually missing"
+  [ "$BACKEND" = tmux ] \
+    || die "backend $BACKEND has no supported way to recreate an endpoint with the recorded identity; refusing to recover"
   resolve_relaunch_profile
+  RELAUNCH_PAST_TENSE=recovered
 
   case "$KIND" in
     ship|scout)
@@ -945,18 +963,14 @@ do_recover_missing() {
     esac
   fi
 
-  [ -d "$wt/.git" ] || [ -f "$wt/.git" ] || die "worktree $wt is not a git repository"
-  git -C "$wt" rev-parse --verify HEAD >/dev/null 2>&1 || die "worktree $wt has an unreadable HEAD"
-  dirty_raw=$(git -C "$wt" status --porcelain 2>/dev/null) || die "cannot read git status in $wt"
-  dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' | head -1 || true)
-  [ -z "$dirty" ] || die "worktree $wt has uncommitted changes; refusing to recover rather than cleaning it"
-
   if [ -n "$NOTE" ]; then
     note_line="note_file=$NOTE_FILE"
   else
     note_line="note=none"
   fi
   safe_checkpoint
+  dirty=$(printf '%s\n' "$CHECKPOINT_STATUS_RAW" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' | head -1 || true)
+  [ -z "$dirty" ] || die "worktree $wt has uncommitted changes; refusing to recover rather than cleaning it"
   cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before recovery"
   RELAUNCH_ACTIVE=1
   journal_write checkpoint "${CHECKPOINT_LINES[@]}" "$note_line"
@@ -968,59 +982,11 @@ do_recover_missing() {
   wname="fm-$ID"
   proj_abs=$(cd "$wt" && pwd -P)
   fm_backend_source "$BACKEND" || die "could not load backend $BACKEND"
-  case "$BACKEND" in
-    tmux)
-      session=${T%%:*}
-      # The window keeps its recorded fm-<id> name, so the recorded endpoint
-      # handle addresses the replacement window unchanged.
-      fm_backend_tmux_create_task "$session" "$wname" "$proj_abs" >/dev/null \
-        || die "could not recreate tmux window for $ID"
-      TARGET="$session:$wname"
-      ;;
-    herdr)
-      session=${T%%:*}
-      wsid=$(fm_meta_get "$META" herdr_workspace_id)
-      [ -n "$wsid" ] || die "herdr workspace id is missing from $META"
-      task_ids=$(fm_backend_herdr_create_task "${session}:${wsid}" "$wname" "$proj_abs" "") \
-        || die "could not recreate herdr task for $ID"
-      read -r tab_id pane_id <<EOF
-$task_ids
-EOF
-      [ -n "$tab_id" ] && [ -n "$pane_id" ] || die "herdr did not return tab/pane id for $ID"
-      # A herdr pane id is minted fresh, so the durable record must name the new
-      # one before the launch owner reads it back. Every other writer of this
-      # record takes the per-task metadata lock (bin/fm-spawn.sh,
-      # bin/fm-teardown.sh, bin/fm-inactive-reconcile.sh); fm-control's own
-      # .control-<id>.lock does not exclude them, so take it here too and
-      # release it before handing the launch over.
-      meta_lock=$(fm_meta_lock_path "$META") \
-        || die "could not derive the metadata lock path for $META"
-      fm_lock_acquire_wait "$meta_lock" \
-        || die "could not lock $META to record $ID's recreated herdr target"
-      meta_tmp="$META.recover.${BASHPID:-$$}"
-      if awk -v win="$session:$pane_id" -v tid="$tab_id" -v pid="$pane_id" -F= '
-        BEGIN{OFS="="}
-        $1=="window"{$2=win}
-        $1=="herdr_tab_id"{$2=tid}
-        $1=="herdr_pane_id"{$2=pid}
-        {print}
-      ' "$META" > "$meta_tmp" && mv "$meta_tmp" "$META"; then
-        fm_lock_release "$meta_lock" || true
-      else
-        rm -f "$meta_tmp"
-        fm_lock_release "$meta_lock" || true
-        die "could not apply $ID's recreated herdr target to $META"
-      fi
-      TARGET="$session:$pane_id"
-      ;;
-    *)
-      die "backend $BACKEND has no supported way to recreate an endpoint with the recorded identity; refusing to recover"
-      ;;
-  esac
-  # Every postcondition from here on - the launch wait, the journal's endpoint=
-  # line, the rollback's state read - must address the RECREATED terminal, not
-  # the destroyed one the endpoint validation resolved at startup.
-  T=$TARGET
+  # Endpoint validation already proved $T is exactly <session>:fm-<id>, and the
+  # window comes back under that same name, so $T keeps addressing the terminal
+  # and neither the postconditions below nor the durable record need rewriting.
+  fm_backend_tmux_create_task "${T%%:*}" "$wname" "$proj_abs" >/dev/null \
+    || die "could not recreate tmux window for $ID"
 
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
   journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
@@ -1043,7 +1009,7 @@ EOF
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=recreated"
   RELAUNCH_ACTIVE=0
-  echo "recovered $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$TARGET worktree=$wt"
+  echo "recovered $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$wt"
 }
 
 # --- verbs ------------------------------------------------------------------

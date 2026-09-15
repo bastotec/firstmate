@@ -33,7 +33,7 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
 | `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. |
 | `relaunch` | Replace the running agent with a new one in the same endpoint and worktree, on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the recorded endpoint, and the durable record names the harness that is actually running. |
-| `recover-missing` | Recreate the exact recorded terminal for a task whose endpoint is missing, then hand the launch to the existing owner (`fm-spawn.sh --relaunch`) on the recorded harness, model, and effort. | The backend's recovery-grade classifier proves the agent was missing, unavailable/dirty worktrees refuse rather than repairing, and the new agent is alive on the exact recreated terminal. |
+| `recover-missing` | Recreate the exact recorded terminal for a task whose tmux endpoint is missing, then hand the launch to the existing owner (`fm-spawn.sh --relaunch`) on the recorded harness, model, and effort. | The backend's recovery-grade classifier proves the agent was missing, unavailable/dirty worktrees refuse rather than repairing, and the new agent is alive on the exact recreated terminal. |
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
 Interrupt never rewrites busy state as proof of its own success.
@@ -100,6 +100,8 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
   Orca's terminal API exposes only an interrupt and an Enter, so it can deliver neither Escape nor Ctrl+U.
 - `exit`, `relaunch`, and `recover-missing` require a backend with a recovery-grade agent-state classifier - tmux and herdr - because without one the "the agent stopped" or "the endpoint is missing" postcondition cannot be proven.
   zellij, orca, and cmux are refused rather than reported as successful blind.
+- `recover-missing` additionally requires a backend that can recreate a terminal under the recorded endpoint handle, which today is tmux only: its window keeps the recorded `fm-<id>` name, so recovery rewrites no durable record.
+  Herdr mints a fresh pane id for every new tab, so recreating there would have to republish the task's endpoint; that is refused rather than shipped without regression coverage.
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
 - `exit`'s composer-empty check, above, is itself a fail-closed boundary that `relaunch` inherits by stopping the old agent through `exit`.
