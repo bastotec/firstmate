@@ -1,0 +1,88 @@
+== 1. stand the task up the way a spawn leaves it: real tmux session + task window running the agent
+endpoint state with the agent up: alive
+
+== 2. the terminal is closed out from under the task (window killed, session survives)
+endpoint state now: missing
+windows left in the session: zsh 
+
+== 4. the rescue, in ONE cold command
+03:45:38
+warning: /tmp/fm-recover-live/run/home/data/s1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered s1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-s1 worktree=/tmp/fm-recover-live/run/wt-s1
+recover-missing rc=0
+03:45:45
+
+== 5. what the product looks like afterwards
+windows: zsh fm-s1 
+endpoint state: alive
+pane cwd: /private/tmp/fm-recover-live/run/wt-s1
+--- durable record ---
+window=fmlive:fm-s1
+endpoint_task_id=s1
+worktree=/tmp/fm-recover-live/run/wt-s1
+project=/tmp/fm-recover-live/run/proj-s1
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+tasktmp=/tmp/fm-s1
+model=default
+effort=default
+busy_gen=g1789443943.1692.16259
+spawn_gen=s1789443943.164.12524
+control_relaunch_tx=99049.20260915T034542Z.7091
+--- journal ---
+v1
+task=s1
+phase=complete
+ts=2026-09-15T03:45:45Z
+backend=tmux
+endpoint=fmlive:fm-s1
+worktree=/tmp/fm-recover-live/run/wt-s1
+kind=ship
+from_harness=claude
+from_model=default
+from_effort=default
+to_harness=claude
+to_model=default
+to_effort=default
+worktree_head=bbecb4f02c4101714ba2e11d8f413dcce9f6d023
+worktree_dirty=no
+note_file=/tmp/fm-recover-live/run/home/state/s1.control-relaunch.note
+exit_result=recreated
+--- instructions tail ---
+# Task
+## Captain's intent
+Exercise missing-endpoint recovery for s1 against a real tmux server.
+
+## Firstmate spec
+Recreate the terminal without touching the local copy.
+
+## Progress note (2026-09-15T03:45:38Z)
+
+This task was relaunched. Continue from here; the local copy and every
+uncommitted change are exactly as the previous worker left them.
+
+First, check your instruction inbox: list /tmp/fm-recover-live/run/home/state/s1.inbox/*.msg, act on
+each message in numeric order, then mv each handled file into
+/tmp/fm-recover-live/run/home/state/s1.inbox/handled/. A steer sent before the relaunch survives there.
+
+the terminal was closed out from under it; continue the same run
+--- worktree still the same checkout ---
+## task-s1
+--- pane, as the captain would see it ---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

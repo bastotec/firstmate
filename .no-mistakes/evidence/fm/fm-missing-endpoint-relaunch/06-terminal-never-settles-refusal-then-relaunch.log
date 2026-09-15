@@ -1,0 +1,18 @@
+== a recreated terminal that will not go agent-free inside the budget
+error: task e1's recreated terminal did not settle to an agent-free shell within 5s (endpoint reads 'ambiguous'); the terminal exists now, so once its shell is idle bring the worker up with 'relaunch'
+error: e1's missing-endpoint recovery failed while recreating the terminal; its agent was never touched, so the progress note was rolled back and its work is preserved at /tmp/fm-recover-live/run/wt-e1
+rc=1
+endpoint state now: ambiguous
+the terminal does exist: sleep fm-e1 
+durable record: byte-identical
+instructions: byte-identical (the progress note was rolled back)
+journal: phase=failed:recreating rollback=prior-record-and-instructions-restored 
+no agent was launched into it: 0 claude lines on screen
+
+== the refusal's own guidance: once the shell is idle, 'relaunch' brings the worker up
+endpoint state: dead
+warning: /tmp/fm-recover-live/run/home/data/e1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+relaunched e1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-e1 worktree=/tmp/fm-recover-live/run/wt-e1
+relaunch rc=0
+endpoint state: alive
+journal: phase=complete

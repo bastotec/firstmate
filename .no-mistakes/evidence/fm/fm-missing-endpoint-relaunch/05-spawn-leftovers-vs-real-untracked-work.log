@@ -1,0 +1,15 @@
+#### D. a worktree holding only the previous worker's own spawn leftovers still recovers ####
+status as the product reads it: ?? .claude/ ?? .fm-grok-turnend 
+warning: /tmp/fm-recover-live/run/home/data/d1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered d1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-d1 worktree=/tmp/fm-recover-live/run/wt-d1
+rc=0
+endpoint state: alive
+leftovers untouched: ?? .claude/ ?? .fm-grok-turnend 
+
+#### D2. the same worktree plus ONE real untracked source file must refuse ####
+status as the product reads it: ?? .claude/ ?? feature.py 
+error: worktree /tmp/fm-recover-live/run/wt-d2 has uncommitted changes; refusing to recover rather than cleaning it
+rc=1
+durable record and instructions: byte-identical
+the unsaved work is still there: half-finished work
+no terminal was created: zsh fm-d1 

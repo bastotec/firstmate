@@ -1,0 +1,83 @@
+== 1. stand the task up the way a spawn leaves it: real tmux session + task window running the agent
+endpoint state with the agent up: alive
+
+== 2. the terminal is closed out from under the task (window killed, session survives)
+endpoint state now: missing
+windows left in the session: zsh 
+
+== 4. the rescue, in ONE cold command
+03:48:27
+error: task s1's endpoint reads 'ambiguous'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh s1 exit)
+error: the replacement agent for s1 could not be launched on claude
+error: s1's terminal was recreated but the replacement did not launch; no agent was ever stopped, its work plus the recorded progress note are preserved at /tmp/fm-recover-live/prev-run/wt-s1, and the recreated terminal now holds a bare shell - retry with 'relaunch', which is the verb for an agent-free endpoint
+recover-missing rc=1
+03:48:28
+
+== 5. what the product looks like afterwards
+windows: zsh fm-s1 
+endpoint state: ambiguous
+pane cwd: /private/tmp/fm-recover-live/prev-run/wt-s1
+--- durable record ---
+window=fmlive:fm-s1
+endpoint_task_id=s1
+worktree=/tmp/fm-recover-live/prev-run/wt-s1
+project=/tmp/fm-recover-live/prev-run/proj-s1
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+tasktmp=/tmp/fm-recover-live/prev-run/tmp/fm-s1
+model=default
+effort=default
+--- journal ---
+v1
+task=s1
+phase=failed:launching
+ts=2026-09-15T03:48:28Z
+backend=tmux
+endpoint=fmlive:fm-s1
+worktree=/tmp/fm-recover-live/prev-run/wt-s1
+kind=ship
+from_harness=claude
+from_model=default
+from_effort=default
+to_harness=claude
+to_model=default
+to_effort=default
+rollback=prior-record-kept
+--- instructions tail ---
+# Task
+## Captain's intent
+Exercise missing-endpoint recovery for s1 against a real tmux server.
+
+## Firstmate spec
+Recreate the terminal without touching the local copy.
+
+## Progress note (2026-09-15T03:48:27Z)
+
+This task was relaunched. Continue from here; the local copy and every
+uncommitted change are exactly as the previous worker left them.
+
+First, check your instruction inbox: list /tmp/fm-recover-live/prev-run/home/state/s1.inbox/*.msg, act on
+each message in numeric order, then mv each handled file into
+/tmp/fm-recover-live/prev-run/home/state/s1.inbox/handled/. A steer sent before the relaunch survives there.
+
+the terminal was closed out from under it; continue the same run
+--- worktree still the same checkout ---
+## task-s1
+--- pane, as the captain would see it ---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

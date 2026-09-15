@@ -1,0 +1,151 @@
+=== S1: a live endpoint refuses, and nothing changes ===================
+precondition: the product classifies fmses:fm-live1 as 'alive'
+error: task live1's endpoint reads 'alive'; recover-missing requires a positively missing endpoint and no agent owning the task
+ok - S1 a live endpoint refuses
+ok - S1 the durable record is byte-identical after the refusal
+ok - S1 the instructions are byte-identical after the refusal
+
+=== S2: the task's window is gone from a session that is still alive ===
+--- windows in fmses before recovery:
+scratch
+--- the product's own verdict on the recorded endpoint:
+missing
+error: task live1's endpoint reads 'ambiguous'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh live1 exit)
+error: the replacement agent for live1 could not be launched on claude
+error: live1's terminal was recreated but the replacement did not launch; no agent was ever stopped, its work plus the recorded progress note are preserved at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/live1-wt, and the recreated terminal now holds a bare shell - retry with 'relaunch', which is the verb for an agent-free endpoint
+--- windows in fmses after recovery:
+scratch
+fm-live1
+ok - S2 the recorded window fm-live1 is back in the real session
+--- the recreated pane's working directory (must be the recorded local copy):
+/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/live1-wt
+ok - S2 the recreated terminal is bound to the recorded local copy
+ok - S2 the endpoint handle is unchanged
+ok - S2 the local copy was reused, never reallocated
+ok - S2 the progress note landed in the instructions the replacement reads
+ok - S2 the original instructions were appended to, never rewritten
+--- transaction journal:
+v1
+task=live1
+phase=failed:launching
+ts=2026-09-15T03:16:07Z
+backend=tmux
+endpoint=fmses:fm-live1
+worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/live1-wt
+kind=ship
+from_harness=claude
+from_model=default
+from_effort=default
+to_harness=claude
+to_model=default
+to_effort=default
+rollback=prior-record-kept
+not ok - S2 the launch handoff FAILED after the terminal was recreated (rc=1)
+
+=== S3: the WHOLE recorded session is gone =============================
+--- sessions on the server now:
+no server running on /private/tmp/tmux-501/fm-recover-live-54536
+--- the product's own verdict on the recorded endpoint:
+missing
+warning: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/home/data/live1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered live1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmses:fm-live1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/live1-wt
+--- sessions after recovery:
+fmses
+ok - S3 the session came back under its EXACT recorded name (fmses)
+--- windows in the recreated session:
+zsh
+fm-live1
+ok - S3 the task window is back inside the recreated session
+ok - S3 the replacement worker launched and the verb reported success
+
+=== S4: a session that is still alive is left untouched ================
+session_id before=$0 after=$0
+ok - S4 a surviving session is the SAME session, never recreated
+
+=== S5: a dirty local copy refuses rather than being reset =============
+--- git status in the local copy:
+ M README.md
+error: worktree /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/live1-wt has uncommitted changes; refusing to recover rather than cleaning it
+ok - S5 a dirty local copy refuses
+ok - S5 the uncommitted work is still there, untouched
+ok - S5 the durable record is byte-identical after the refusal
+ok - S5 the instructions are byte-identical after the refusal
+ok - S5 no terminal was created by the refused recovery
+
+=== S6: only the previous spawn's own leftovers still recovers =========
+--- git status in the local copy:
+warning: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/home/data/live1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered live1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmses:fm-live1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/live1-wt
+ok - S6 a worktree holding only the spawn's own leftovers passes the dirty gate
+ok - S6 the terminal was recreated despite the leftovers
+
+=== S7: real untracked source work still refuses =======================
+--- git status in the local copy:
+?? feature.py
+error: worktree /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/live1-wt has uncommitted changes; refusing to recover rather than cleaning it
+ok - S7 untracked work that is not a spawn leftover still refuses
+ok - S7 the untracked work survives the refusal
+
+=== S8: a pool slot claimed by another task refuses ====================
+--- the slot's ownership claim:
+task=someone-else
+home=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/other-home
+error: task pool1's recorded pool slot /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/pool/1/checkout is currently claimed by task someone-else; refusing to recover and tangle ownership
+ok - S8 a pool slot owned by another task refuses rather than tangling ownership
+ok - S8 the other task's claim is untouched
+ok - S8 the durable record is byte-identical after the refusal
+
+=== S8b: an unreadable slot claim refuses ==============================
+error: task pool1's recorded pool slot /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/pool/1/checkout has an unreadable owner claim; refusing to recover and risk a conflict
+ok - S8b an unreadable pool-slot claim refuses
+
+=== S8c: the task's OWN slot recovers, claim untouched =================
+warning: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/home/data/pool1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered pool1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmses:fm-pool1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/pool/1/checkout
+ok - S8c the task's own pool slot is not treated as a conflict
+ok - S8c the terminal was recreated on the task's own slot
+ok - S8c the task's own claim is byte-identical (nothing reallocated)
+
+=== S9: an absent local copy refuses rather than reallocating one ======
+error: task gone1's recorded worktree '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-recover-live.M9Zngr/gone1-wt' is absent; refusing to recover without the local copy its work lives in
+ok - S9 an absent local copy refuses
+ok - S9 nothing was reallocated
+
+=== S10: runtime-switch flags belong to relaunch =======================
+--harness -> error: --harness, --model, and --effort apply to 'relaunch' only; 'recover-missing' continues the recorded runtime
+ok - S10 --harness is refused for recover-missing
+--model -> error: --harness, --model, and --effort apply to 'relaunch' only; 'recover-missing' continues the recorded runtime
+ok - S10 --model is refused for recover-missing
+--effort -> error: --harness, --model, and --effort apply to 'relaunch' only; 'recover-missing' continues the recorded runtime
+ok - S10 --effort is refused for recover-missing
+
+=== S11: how often does the full rescue actually complete? =============
+(missing window -> recover-missing -> replacement worker confirmed alive)
+attempt 1: RECOVERED
+attempt 2: RECOVERED
+attempt 3: RECOVERED
+attempt 4: RECOVERED
+attempt 5: RECOVERED
+attempt 6: RECOVERED
+attempt 7: RECOVERED
+attempt 8: RECOVERED
+full rescue completed 8/8, failed 0/8
+ok - S11 the rescue the verb exists for completes every time
+
+=== S11b: the same, for the WHOLE-SESSION-GONE shape ==================
+(the shape firstmate-account-slot-routing is in: recorded session absent)
+attempt 1: RECOVERED
+attempt 2: RECOVERED
+attempt 3: RECOVERED
+attempt 4: RECOVERED
+attempt 5: RECOVERED
+attempt 6: RECOVERED
+attempt 7: RECOVERED
+attempt 8: RECOVERED
+whole-session rescue completed 8/8, failed 0/8
+ok - S11b the whole-session rescue completes every time
+
+=== S12: what the operator can do after a failed handoff ==============
+(this attempt happened to win the race; forcing the failed-handoff shape is not possible here)
+
+RESULT rc=1

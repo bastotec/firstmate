@@ -1,0 +1,16 @@
+#### F. a secondmate recovery continues the RECORDED runtime, not a changed configured pin ####
+the configured pin now names: codex some-model high
+the task's own record says: harness=claude model=opus effort=xhigh
+warning: secondmate sm1 sync skipped before launch: primary default-branch commit cannot be resolved
+recovered sm1 harness=claude from=claude model=opus effort=xhigh backend=tmux endpoint=fmlive:fm-sm1 worktree=/tmp/fm-recover-live/run/smhome
+rc=0
+journal runtime: to_harness=claude to_model=opus to_effort=xhigh 
+endpoint state: alive
+
+#### G. a pool slot claimed by ANOTHER task refuses rather than tangling ownership ####
+the slot's owner claim: someone-elses-task
+error: task g1's recorded pool slot /tmp/fm-recover-live/run/pool/1/checkout has an unreadable owner claim; refusing to recover and risk a conflict
+rc=1
+durable record: byte-identical
+the other task's claim is untouched: someone-elses-task
+no terminal was created: zsh fm-sm1 

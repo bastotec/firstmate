@@ -1,0 +1,15 @@
+FAILED    | error: task cold1's endpoint reads 'ambiguous'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh cold1 exit)
+          | operator guidance: error: cold1's terminal was recreated but the replacement did not launch; no agent was ever stopped, its work plus the recorded progress note are preserved at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/tmp.wUrkPxJ57a/wt, and the recreated terminal now holds a bare shell - retry with 'relaunch', which is the verb for an agent-free endpoint
+          | endpoint now reads: ambiguous
+          | retry recover-missing -> rc=1 error: task cold1's endpoint reads 'ambiguous'; recover-missing requires a positively missing endpoint and no agent owning the task
+          | relaunch -> rc=0 relaunched cold1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmses:fm-cold1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/tmp.wUrkPxJ57a/wt
+FAILED    | error: task cold1's endpoint reads 'ambiguous'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh cold1 exit)
+          | operator guidance: error: cold1's terminal was recreated but the replacement did not launch; no agent was ever stopped, its work plus the recorded progress note are preserved at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/tmp.ZE6RR4NiWl/wt, and the recreated terminal now holds a bare shell - retry with 'relaunch', which is the verb for an agent-free endpoint
+          | endpoint now reads: ambiguous
+          | retry recover-missing -> rc=1 error: task cold1's endpoint reads 'dead'; recover-missing requires a positively missing endpoint and no agent owning the task
+          | relaunch -> rc=0 relaunched cold1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmses:fm-cold1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/tmp.ZE6RR4NiWl/wt
+FAILED    | error: task cold1's endpoint reads 'ambiguous'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh cold1 exit)
+          | operator guidance: error: cold1's terminal was recreated but the replacement did not launch; no agent was ever stopped, its work plus the recorded progress note are preserved at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/tmp.wf3MhlK2r1/wt, and the recreated terminal now holds a bare shell - retry with 'relaunch', which is the verb for an agent-free endpoint
+          | endpoint now reads: ambiguous
+          | retry recover-missing -> rc=1 error: task cold1's endpoint reads 'dead'; recover-missing requires a positively missing endpoint and no agent owning the task
+          | relaunch -> rc=0 relaunched cold1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmses:fm-cold1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/tmp.wf3MhlK2r1/wt

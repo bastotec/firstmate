@@ -1,0 +1,31 @@
+################ A. a LIVE endpoint must refuse #################
+endpoint state: alive  (a worker is at the keyboard)
+error: task a1's endpoint reads 'alive'; recover-missing requires a positively missing endpoint and no agent owning the task
+rc=1
+durable record and instructions: byte-identical
+windows: zsh fm-a1 
+
+################ B. an AMBIGUOUS endpoint must refuse #################
+endpoint state: ambiguous  (a stranger's process holds the pane)
+error: task a2's endpoint reads 'ambiguous'; recover-missing requires a positively missing endpoint and no agent owning the task
+rc=1
+durable record and instructions: byte-identical
+
+################ C. real uncommitted work must refuse #################
+worktree status: ?? notes.txt 
+error: worktree /tmp/fm-recover-live/run/wt-a3 has uncommitted changes; refusing to recover rather than cleaning it
+rc=1
+durable record and instructions: byte-identical
+the uncommitted work is still there: half-finished work
+
+################ D. the previous spawn's own leftovers still recover #################
+worktree status: 
+warning: /tmp/fm-recover-live/run/home/data/a4/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered a4 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-a4 worktree=/tmp/fm-recover-live/run/wt-a4
+rc=0
+endpoint state: alive
+the leftovers were not cleaned: 
+
+################ E. runtime-switch flags belong to relaunch #################
+error: --harness, --model, and --effort apply to 'relaunch' only; 'recover-missing' continues the recorded runtime
+rc=1

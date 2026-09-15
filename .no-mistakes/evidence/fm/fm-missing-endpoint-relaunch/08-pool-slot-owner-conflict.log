@@ -1,0 +1,19 @@
+the slot's owner claim:
+  task=someone-elses-task
+  home=/tmp/other
+error: task g1's recorded pool slot /tmp/fm-recover-live/run/pool/1/checkout is currently claimed by task someone-elses-task; refusing to recover and tangle ownership
+rc=1
+durable record: byte-identical
+the other task's claim is untouched:
+  task=someone-elses-task
+  home=/tmp/other
+no terminal was created for g1: zsh fm-sm1 
+
+#### H. the task's OWN claim on its own slot recovers, claim untouched ####
+warning: /tmp/fm-recover-live/run/home/data/g1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered g1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-g1 worktree=/tmp/fm-recover-live/run/pool/1/checkout
+rc=0
+claim after recovery:
+  task=g1
+  home=/tmp/fm-recover-live/run/pool/1/checkout
+endpoint state: alive

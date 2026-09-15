@@ -1,0 +1,11 @@
+== the terminal is THERE but the agent exited: a dead endpoint, not a missing one
+endpoint state: dead
+error: task j1's endpoint reads 'dead'; recover-missing requires a positively missing endpoint and no agent owning the task
+rc=1
+durable record and instructions: byte-identical
+
+== and the verb that DOES own a dead endpoint still works, unchanged ==
+warning: /tmp/fm-recover-live/run/home/data/j1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+relaunched j1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-j1 worktree=/tmp/fm-recover-live/run/wt-j1
+relaunch rc=0
+endpoint state: alive

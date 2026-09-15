@@ -1,0 +1,27 @@
+== the motivating shape: a steering message is still pending in the task's inbox
+inbox before: 016.msg handled 
+local copy HEAD before: 6bb14cf6da7cdb719b4a961f2bf7859c467c6b96
+warning: /tmp/fm-recover-live/run/home/data/i1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered i1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-i1 worktree=/tmp/fm-recover-live/run/wt-i1
+recover-missing rc=0
+
+== after the rescue
+inbox after: 016.msg handled 
+handled/ is still empty: []
+the pending steer is byte-identical:
+  from=captain
+  Refocus on the proxy handshake before anything else.
+local copy HEAD after: 6bb14cf6da7cdb719b4a961f2bf7859c467c6b96  (branch task-i1)
+endpoint: alive
+the instructions the replacement reads now point at that inbox:
+  13:First, check your instruction inbox: list /tmp/fm-recover-live/run/home/state/i1.inbox/*.msg, act on
+  14-each message in numeric order, then mv each handled file into
+  15-/tmp/fm-recover-live/run/home/state/i1.inbox/handled/. A steer sent before the relaunch survives there.
+  16-
+
+== the same cold one-command rescue, repeated (round 1 measured 9/9 failures here)
+run 1: endpoint before=missing -> recovered i1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-i1 worktree=/tmp/fm-recover-live/run/wt-i1 -> endpoint after=alive
+run 2: endpoint before=missing -> recovered i1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-i1 worktree=/tmp/fm-recover-live/run/wt-i1 -> endpoint after=alive
+run 3: endpoint before=missing -> recovered i1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-i1 worktree=/tmp/fm-recover-live/run/wt-i1 -> endpoint after=alive
+run 4: endpoint before=missing -> recovered i1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-i1 worktree=/tmp/fm-recover-live/run/wt-i1 -> endpoint after=alive
+run 5: endpoint before=missing -> recovered i1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-i1 worktree=/tmp/fm-recover-live/run/wt-i1 -> endpoint after=alive

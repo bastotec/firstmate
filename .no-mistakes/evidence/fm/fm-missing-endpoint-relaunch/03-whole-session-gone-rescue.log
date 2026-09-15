@@ -1,0 +1,18 @@
+== the firstmate-account-slot-routing shape: the task records a session that no longer exists
+window=oes-demo:fm-s2
+tmux server state: no server running on /private/tmp/tmux-501/fm-recover-live 
+endpoint state: missing
+
+== the rescue, in ONE cold command (no tmux server running at all)
+warning: /tmp/fm-recover-live/run/home/data/s2/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered s2 harness=claude from=claude model=default effort=default backend=tmux endpoint=oes-demo:fm-s2 worktree=/tmp/fm-recover-live/run/wt-s2
+recover-missing rc=0
+
+== afterwards
+sessions: oes-demo: 2 windows (created Tue Sep 15 00:46:13 2026) 
+windows in oes-demo: zsh fm-s2 
+endpoint state: alive
+pane cwd: /private/tmp/fm-recover-live/run/wt-s2
+recorded window still: window=oes-demo:fm-s2
+recorded worktree still: worktree=/tmp/fm-recover-live/run/wt-s2
+journal phase: phase=complete
