@@ -113,6 +113,7 @@ It differs from the steps above in exactly three places.
   `recover-missing` refuses such a record outright rather than pointing at `--harness`, because it takes no profile flags: bringing the terminal back on a different runtime than the record names is not a recovery.
 - An adapter that is not verified for this task's kind is refused **before** the running agent is stopped, not after.
   Muse is a crewmate and scout adapter only, so relaunching a secondmate onto it refuses while its agent is still up rather than leaving that secondmate with no agent when the launch owner refuses.
+  The same table refuses a `recover-missing` before the terminal is recreated, where there is no running agent to stop and nothing has been touched at all.
 - A backend that cannot deliver the harness's interrupt key, or the composer clear that key needs, is refused rather than sent a different key.
   Orca's terminal API exposes only an interrupt and an Enter, so it can deliver neither Escape nor Ctrl+U.
 - `exit`, `relaunch`, and `recover-missing` require a backend with a recovery-grade agent-state classifier - tmux and herdr - because without one the "the agent stopped" or "the endpoint is missing" postcondition cannot be proven.
