@@ -730,9 +730,16 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate() {
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   # Recovery refuses a dirty local copy, so the secondmate home has to be a
   # committed checkout rather than the scratch tree a relaunch case can get
-  # away with.
+  # away with. The identity is inline because tests/git-config-helpers.sh takes
+  # the host's global and system config away from every fixture: a bare commit
+  # is then left with Git's own <user>@<hostname> guess, which a developer
+  # machine supplies and a CI runner whose hostname carries no domain does not.
+  # Without it the commit fails, the two staged files stay staged, and this case
+  # fails on the dirty-copy refusal instead of exercising the profile freeze.
   git -C "$dir/smhome" add -A
-  git -C "$dir/smhome" commit --quiet -m "secondmate home"
+  git -C "$dir/smhome" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
+    commit --quiet -m "secondmate home" \
+    || fail "the secondmate home fixture could not be committed"
   {
     echo "window=fmses:fm-sm9"
     echo "endpoint_task_id=sm9"
