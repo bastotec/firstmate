@@ -14,9 +14,6 @@ FM_ACCOUNT_SLOT_ID=
 FM_ACCOUNT_SLOT_HARNESS=
 FM_ACCOUNT_SLOT_STORE_PATH=
 FM_ACCOUNT_SLOT_EXPECTED_ACCOUNT_ID=
-FM_ACCOUNT_SLOT_MAX_AGE_SECONDS=${FM_ACCOUNT_SLOT_MAX_AGE_SECONDS:-900}
-FM_ACCOUNT_SLOT_MAX_FUTURE_SKEW_SECONDS=${FM_ACCOUNT_SLOT_MAX_FUTURE_SKEW_SECONDS:-60}
-FM_ACCOUNT_SLOT_PROBE_TIMEOUT=${FM_ACCOUNT_SLOT_PROBE_TIMEOUT:-20}
 
 fm_account_slot_fail() {
   FM_ACCOUNT_SLOT_ERROR=$1
@@ -253,7 +250,7 @@ fm_account_slot_probe() { # <config-dir> <slot>
     || { fm_account_slot_fail "private quota probe output cannot be created"; return 1; }
   selector=CLAUDE_CONFIG_DIR
   [ "$harness" = claude ] || selector=CODEX_HOME
-  if fm_run_timed "$FM_ACCOUNT_SLOT_PROBE_TIMEOUT" env \
+  if fm_run_timed 20 env \
       -u CLAUDE_CONFIG_DIR -u CODEX_HOME \
       -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
       -u OPENAI_API_KEY -u CODEX_API_KEY \
@@ -277,11 +274,10 @@ fm_account_slot_probe() { # <config-dir> <slot>
     fm_account_slot_fail "slot '$slot' returned stale, mismatched, or malformed quota evidence"
     return 1
   fi
-  now=${FM_ACCOUNT_SLOT_NOW_EPOCH:-$(date +%s)}
+  now=$(date +%s)
   if ! jq -e --arg provider "$harness" \
       --arg account_id "$FM_ACCOUNT_SLOT_EXPECTED_ACCOUNT_ID" \
-      --argjson now "$now" --argjson max_age "$FM_ACCOUNT_SLOT_MAX_AGE_SECONDS" \
-      --argjson future "$FM_ACCOUNT_SLOT_MAX_FUTURE_SKEW_SECONDS" '
+      --argjson now "$now" --argjson max_age 900 --argjson future 60 '
     def epoch: try fromdateiso8601 catch null;
     def recent($v): ($v | type) == "string" and (($v | epoch) as $t | $t != null and $t <= ($now + $future) and $t >= ($now - $max_age));
     .schemaVersion == 5 and (.providers | type) == "array" and (.providers | length) == 1 and
