@@ -144,8 +144,24 @@ fm_backend_tmux_send_text_line() {  # <target> <text>
 # fm_backend_tmux_send_literal: send TEXT as literal bytes with no
 # submission - the caller sends Enter separately (fm-spawn.sh's launch-command
 # send pauses between the literal send and Enter for the harness to settle).
-# Mirrors `tmux send-keys -t "$T" -l "<text>"`.
+# Mirrors `tmux send-keys -t "$T" -l "<text>"`, behind the pane input-readiness
+# gate.
+#
+# The gate is what makes a long launch command land at all. A pane whose shell
+# is still running something has its tty in canonical mode, where the kernel
+# buffers the line and silently discards the whole thing past MAX_CANON - the
+# 2026-09-15 report where a ~1117-byte launch command vanished and the worker
+# never started. Splitting the text across several sends does not help, because
+# the limit is on the accumulated line and not on the write; waiting for the
+# pane to read input itself does, and a ready pane takes 4088 bytes intact.
+# fm_tmux_wait_pane_input_ready (bin/fm-tmux-lib.sh) owns the mode read and the
+# bounded wait, and treats an unreadable tty as ready so this can only ever hold
+# back a pane it positively measured as busy.
 fm_backend_tmux_send_literal() {  # <target> <text>
+  if ! fm_tmux_wait_pane_input_ready "$1"; then
+    echo "error: pane $1 was still busy after ${FM_PANE_READY_TIMEOUT:-5}s and never started reading input; refusing to type ${#2} bytes it would silently discard" >&2
+    return 1
+  fi
   tmux send-keys -t "$1" -l "$2"
 }
 

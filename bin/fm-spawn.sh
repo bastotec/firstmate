@@ -4210,7 +4210,16 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   LAUNCH="$LAUNCH_ENV_PREFIX /bin/sh -c $(shell_quote "$LAUNCH")"
 fi
 sleep 0.3
-spawn_send_literal "$T" "$LAUNCH"
+# A refused literal send is the whole point of the readiness gate: the pane was
+# still busy, so the launch command would have been typed into a kernel line
+# buffer that discards it whole and reports nothing. Fail here, naming that
+# reason, rather than sending Enter into a pane holding no command and leaving
+# recovery to report later that no running agent could be confirmed.
+if ! spawn_send_literal "$T" "$LAUNCH"; then
+  printf 'failed: %s\n' "launch command not delivered: window $T was still busy and never started reading input" >> "$STATE/$ID.status"
+  echo "error: task $ID's launch command was not delivered because window $T was still busy and never started reading input; no agent was started, inspect window $T" >&2
+  exit 1
+fi
 sleep 0.3
 if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   HERDR_PROJECTION_ABORT_CLEANUP=0
