@@ -104,8 +104,13 @@ status=fresh
 valid_account=$account
 attempts=${FAKE_ATTEMPTS:-"[{\"source\":\"$attempt\",\"status\":\"success\",\"path\":\"/private/credential\"}]"}
 emit_document() {
+local identity="\"accountId\":\"$account\","
+case "${FAKE_MODE:-ok}" in
+  no-account-id) identity= ;;
+  numeric-account-id) identity='"accountId":42,' ;;
+esac
 cat <<JSON
-{"generatedAt":"$now","schemaVersion":5,"providers":[{"provider":"$provider","account":{"accountId":"$account","email":"${email:-private@example.invalid}","organization":"private","identityStatus":"verified"},"attempts":$attempts,"state":{"status":"$status","stale":$stale},"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":75,"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":-0.25}}]}}]}
+{"generatedAt":"$now","schemaVersion":5,"providers":[{"provider":"$provider","account":{$identity"email":"${email:-private@example.invalid}","organization":"private","identityStatus":"verified"},"attempts":$attempts,"state":{"status":"$status","stale":$stale},"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":75,"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":-0.25}}]}}]}
 JSON
 }
 if [ "${FAKE_MODE:-ok}" = invalid-then-valid ]; then
@@ -365,6 +370,26 @@ if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
 fi
 assert_contains "$(cat "$TMP_ROOT/attempt-identity.err")" "expectedAccountId" "a cross-account attempt was not reported as an identity mismatch"
 pass "reports an identity mismatch as its own reason, never as stale or malformed evidence"
+
+# A document whose account object carries no usable accountId is producer drift,
+# not a mistyped registry value, so it must point at the evidence and never send
+# the operator off to edit a correct expectedAccountId.
+for mode in no-account-id numeric-account-id; do
+  if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_MODE="$mode" FM_HOME="$HOME_DIR" \
+      "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null 2>"$TMP_ROOT/$mode.err"; then
+    fail "quota evidence with a $mode account identity was accepted"
+  fi
+  drift_reason=$(cat "$TMP_ROOT/$mode.err")
+  assert_contains "$drift_reason" "stale, mismatched, or malformed quota evidence" "a $mode account identity was not reported as malformed producer evidence"
+  assert_not_contains "$drift_reason" "expectedAccountId" "a $mode account identity was blamed on the operator's configured expectedAccountId"
+done
+if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+    FAKE_ATTEMPTS='[{"source":"oauth-file","status":"success","accountId":42}]' \
+    "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null 2>"$TMP_ROOT/attempt-drift.err"; then
+  fail "a successful attempt carrying a non-string accountId was accepted"
+fi
+assert_not_contains "$(cat "$TMP_ROOT/attempt-drift.err")" "expectedAccountId" "a drifted attempt identity was blamed on the operator's configured expectedAccountId"
+pass "classifies a missing or non-string account identity as producer drift, not an identity mismatch"
 
 : > "$CALLS"
 PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
