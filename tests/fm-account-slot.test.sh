@@ -49,7 +49,12 @@ JSON
 cat > "$FAKEBIN/quota-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --help ]; then
-  [ "${FAKE_NO_PROFILE_ONLY:-0}" = 1 ] || printf '%s\n' 'flags: --provider --profile-only --full --json --no-credential-refresh'
+  advertised=
+  for flag in --provider --profile-only --full --json --no-credential-refresh; do
+    [ "$flag" != "${FAKE_OMIT_FLAG:-}" ] || continue
+    advertised="${advertised:+$advertised }$flag"
+  done
+  printf '%s\n' "flags: $advertised"
   exit 0
 fi
 if [ "${1:-}" = --version ]; then printf '%s\n' 'quota-axi 0.1.42'; exit 0; fi
@@ -232,9 +237,10 @@ out=$(PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
   || fail "a signed-out slot stopped probe-all"
 printf '%s' "$out" | jq -e '
   .slots | length == 2 and
-  .[0] == {accountSlot:"codex-b",availability:{status:"unavailable"}} and
+  .[0].accountSlot == "codex-b" and .[0].availability.status == "unavailable" and
+  (.[0].availability.reason | test("no vendor-managed credential")) and
   .[1].accountSlot == "codex-a"
-' >/dev/null || fail "a signed-out slot was not reported as that slot being unavailable"
+' >/dev/null || fail "a signed-out slot was not reported as that slot being unavailable with a stated reason"
 assert_equals 1 "$(wc -l < "$CALLS" | tr -d ' ')" "probe-all probed a slot with no vendor credential"
 mv "$TMP_ROOT/signed-out-credential" "$HOME_DIR/profiles/codex-b/auth.json"
 chmod 600 "$HOME_DIR/profiles/codex-b/auth.json"
@@ -289,12 +295,19 @@ out=$(PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_UNAVAILABLE_SLOT=claude-a F
 assert_equals 2 "$(wc -l < "$CALLS" | tr -d ' ')" "mixed probe-all did not probe every selected slot"
 printf '%s' "$out" | jq -e '
   .slots | length == 2 and
-  .[0] == {accountSlot:"claude-a",availability:{status:"unavailable"}} and
+  .[0].accountSlot == "claude-a" and .[0].availability.status == "unavailable" and
+  (.[0].availability.reason | type) == "string" and (.[0].availability.reason | length) > 0 and
+  (.[0] | has("providers") | not) and
   .[1].accountSlot == "codex-a" and .[1].providers[0].provider == "codex"
 ' >/dev/null || fail "mixed probe-all did not emit sanitized unavailable evidence beside the healthy result"
 if printf '%s' "$out" | jq -e 'any(.. | objects; has("account") or has("attempts") or has("source") or has("storePath"))' >/dev/null; then
   fail "mixed probe-all leaked a forbidden private field"
 fi
+reason=$(printf '%s' "$out" | jq -r '.slots[0].availability.reason')
+assert_contains "$reason" "claude-a" "unavailable evidence did not name the slot its reason belongs to"
+for secret in claude-account-a wrong-account private@example.invalid "$HOME_DIR/profiles/claude-a" /private/credential; do
+  assert_not_contains "$reason" "$secret" "unavailable reason leaked private probe detail"
+done
 printf '%s\n' '{"forbidden":{"source":"private"},"later":{}}' | jq -e 'any(.. | objects; has("account") or has("attempts") or has("source") or has("storePath"))' >/dev/null \
   || fail "forbidden-field privacy predicate missed a nested field"
 pass "continues after an unavailable slot and emits one privacy verdict"
@@ -337,17 +350,25 @@ assert_contains "$(cat "$TMP_ROOT/multi-document.err")" "malformed quota evidenc
 assert_equals "" "$(cat "$TMP_ROOT/multi-document.out")" "multiple-root refusal emitted sanitized evidence"
 pass "requires exactly one JSON root from every quota probe"
 
-PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_NO_PROFILE_ONLY=1 FM_HOME="$HOME_DIR" \
+PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_OMIT_FLAG=--profile-only FM_HOME="$HOME_DIR" \
   "$ROOT/bin/fm-account-slot.sh" validate >/dev/null \
   || fail "a missing quota-axi capability was reported as invalid slot configuration"
-: > "$CALLS"
-if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_NO_PROFILE_ONLY=1 FM_HOME="$HOME_DIR" \
-    "$ROOT/bin/fm-account-slot.sh" probe-all claude-a >/dev/null 2>"$TMP_ROOT/capability.err"; then
-  fail "automatic slot ranking accepted quota-axi without --profile-only"
-fi
-assert_contains "$(cat "$TMP_ROOT/capability.err")" "--profile-only" "missing capability refusal did not name the prerequisite"
-assert_equals 0 "$(wc -l < "$CALLS" | tr -d ' ')" "probe-all read provider quota without the source-only capability"
-pass "gates automatic quota ranking, not configuration validity, on the source-only prerequisite"
+for missing in --provider --profile-only --full --json --no-credential-refresh; do
+  : > "$CALLS"
+  if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_OMIT_FLAG="$missing" FM_HOME="$HOME_DIR" \
+      "$ROOT/bin/fm-account-slot.sh" probe-all claude-a >/dev/null 2>"$TMP_ROOT/capability.err"; then
+    fail "automatic slot ranking accepted quota-axi without $missing"
+  fi
+  assert_contains "$(cat "$TMP_ROOT/capability.err")" "$missing" "missing capability refusal did not name the absent flag"
+  assert_equals 0 "$(wc -l < "$CALLS" | tr -d ' ')" "probe-all sent $missing to a quota-axi that does not advertise it"
+  : > "$CALLS"
+  if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_OMIT_FLAG="$missing" FM_HOME="$HOME_DIR" \
+      "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null 2>"$TMP_ROOT/capability-single.err"; then
+    fail "single-slot probe accepted quota-axi without $missing"
+  fi
+  assert_contains "$(cat "$TMP_ROOT/capability-single.err")" "$missing" "single-slot capability refusal did not name the absent flag"
+done
+pass "gates automatic quota ranking on every flag the probe sends and names the missing one"
 
 cp "$HOME_DIR/config/account-slots.json" "$TMP_ROOT/valid-registry"
 cp "$HOME_DIR/config/crew-dispatch.json" "$TMP_ROOT/valid-dispatch"

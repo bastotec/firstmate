@@ -239,12 +239,13 @@ fm_account_slot_probe() { # <config-dir> <slot>
   [ -n "$harness" ] || { fm_account_slot_fail "slot '$slot' is not configured in this home"; return 1; }
   fm_account_slot_resolve "$config" "$slot" "$harness" || return 1
   path=$FM_ACCOUNT_SLOT_STORE_PATH
-  declare -F fm_quota_axi_supports_profile_only >/dev/null 2>&1 \
+  declare -F fm_quota_axi_probe_capability >/dev/null 2>&1 \
     || { fm_account_slot_fail "internal quota-axi capability check is unavailable"; return 1; }
-  fm_quota_axi_supports_profile_only \
-    || { fm_account_slot_fail "quota-axi does not support --profile-only; install a published release that advertises that flag"; return 1; }
+  fm_quota_axi_probe_capability \
+    || { fm_account_slot_fail "$FM_QUOTA_AXI_CAPABILITY_ERROR"; return 1; }
   declare -F fm_run_timed >/dev/null 2>&1 \
     || { fm_account_slot_fail "bounded command execution is unavailable"; return 1; }
+  fm_quota_axi_probe_argv "$harness"
   umask 077
   raw=$(mktemp "${TMPDIR:-/tmp}/fm-account-slot.XXXXXX") \
     || { fm_account_slot_fail "private quota probe output cannot be created"; return 1; }
@@ -254,7 +255,7 @@ fm_account_slot_probe() { # <config-dir> <slot>
       -u CLAUDE_CONFIG_DIR -u CODEX_HOME \
       -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
       -u OPENAI_API_KEY -u CODEX_API_KEY \
-      "$selector=$path" quota-axi --provider "$harness" --profile-only --full --json --no-credential-refresh \
+      "$selector=$path" quota-axi "${FM_QUOTA_AXI_PROBE_ARGV[@]}" \
       >"$raw" 2>/dev/null </dev/null; then
     rc=0
   else

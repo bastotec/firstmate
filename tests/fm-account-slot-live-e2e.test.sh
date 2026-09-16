@@ -9,7 +9,9 @@ fm_live_gate opt-in FM_ACCOUNT_SLOT_LIVE_E2E quota-axi jq
 
 real_quota=$(command -v quota-axi) || fail "quota-axi is unavailable"
 quota_help=$(quota-axi --help 2>/dev/null) || fail "quota-axi --help failed"
-assert_contains "$quota_help" "--profile-only" "installed quota-axi lacks the required --profile-only capability"
+for probe_flag in --provider --profile-only --full --json --no-credential-refresh; do
+  assert_contains "$quota_help" "$probe_flag" "installed quota-axi does not advertise a flag the account-slot probe sends"
+done
 
 REGISTRY="${FM_HOME:-$ROOT}/config/account-slots.json"
 [ -f "$REGISTRY" ] || fail "FM_ACCOUNT_SLOT_LIVE_E2E requires a provisioned config/account-slots.json"
