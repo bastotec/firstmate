@@ -471,7 +471,15 @@ Only credential sources that a vendor scopes to that one store count, and a slot
 Codex is pinned to `<storePath>/auth.json` at launch, so its file is the only source.
 Claude also signs in to the login keychain under an item named for the store (`Claude Code-credentials-<sha256(storePath)[0:8]>`), so that item counts too; the ambient unsuffixed item never does, and presence is read from keychain attributes without ever reading the secret.
 See [`docs/verification/dispatch-auth.md`](verification/dispatch-auth.md) for the measurements behind both.
-`expectedAccountId` is a non-empty trimmed string of at most 512 characters.
+`expectedAccountId` is a non-empty trimmed string of at most 512 characters, and it must equal the `providers[0].account.accountId` the quota document reports for that store - not the account's email, plan name, or logical slot ID.
+Read it from the store itself, with the store path that slot configures:
+
+```sh
+CLAUDE_CONFIG_DIR=<storePath> quota-axi --provider claude --full --json --no-credential-refresh | jq -r '.providers[0].account.accountId'
+CODEX_HOME=<storePath> quota-axi --provider codex --full --json --no-credential-refresh | jq -r '.providers[0].account.accountId'
+```
+
+A slot whose `expectedAccountId` does not match what its store reports is refused by its own reason naming that identity mismatch, distinct from the stale or malformed evidence reason, so a mistyped id is never mistaken for producer drift.
 Canonical store paths must be unique absolute existing directories owned by the current user, directly named rather than symlinked, and have no group or world permissions.
 The registry and every vendor credential file that is present must be readable, current-user-owned, non-symlink regular files with one hard link and no group or world permissions; a credential file that is present but insecure is a reported configuration error, not a quietly unavailable slot.
 A slot with no credential in its store - after `claude` or `codex logout`, say - is that one slot being unavailable; it never invalidates the registry or blocks routing to the home's other slots.
