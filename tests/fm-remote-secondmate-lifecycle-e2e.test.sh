@@ -516,6 +516,26 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   # A home the command refuses locally must stay usable: the refusal names what
   # it could not carry, and the archive guard that stops a frozen home starting
   # a session must not be left behind by a migration that never staged anything.
+  # The ordinary remote job ceiling is 1 MiB, and a mate carrying real reports
+  # and memory packs well past it. Move one whose durable records exceed that
+  # ceiling to prove the raised migration bound holds on both sides of the
+  # transport - the staging side and the worker that runs the staged job.
+  migration_source big-work
+  yes 'a durable line of memory that pushes this record past the ordinary remote job ceiling' \
+    | head -c 1572864 > "$TMP_ROOT/source-big-work/data/learnings.md"
+  [ "$(LC_ALL=C wc -c < "$TMP_ROOT/source-big-work/data/learnings.md" | tr -d ' ')" -gt 1048576 ] \
+    || fail 'the oversized fixture record is not above the ordinary remote job ceiling'
+  out=$(migrate big-work 2>&1) || fail "a migration past the ordinary job ceiling failed: $out"
+  cmp -s "$TMP_ROOT/source-big-work/data/learnings.md" "$TMP_ROOT/migrated-big-work/data/learnings.md" \
+    || fail 'the oversized durable record did not cross byte-exact'
+  cmp -s "$TMP_ROOT/source-big-work/data/backlog.md" "$TMP_ROOT/migrated-big-work/data/backlog.md" \
+    || fail 'the rest of the oversized snapshot did not cross byte-exact'
+  assert_grep 'big-work - Persistent responsibility (host:' "$PARENT/data/secondmates.md" \
+    'the oversized migration did not switch the route'
+  assert_grep 'remote_herdr_session=fm-remote' "$PARENT/state/big-work.meta" \
+    'the oversized migration did not launch on fm-remote'
+  pass 'a snapshot past the ordinary remote job ceiling stages, reaches the worker, and completes'
+
   # Records only ever arrive or change while the source is frozen, so a snapshot
   # that has stopped carrying one the host already holds is a signal, not a
   # deletion instruction: it is refused by name and the host keeps its bytes.

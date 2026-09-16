@@ -122,6 +122,20 @@ fm_remote_job_command_preemptible() { # <staged argv command>
   case "${1:-}" in fm-remote-delta-read.sh) return 0 ;; *) return 1 ;; esac
 }
 
+# Single owner of the one carve-out over the ordinary stdin ceiling: the typed
+# existing-home migration receiver accepts a whole durable snapshot. Staging and
+# the worker size the same staged file, so both read the decision from here, and
+# the raised value comes from its own owner rather than being restated.
+fm_remote_job_stdin_limit() { # <staged argv command> [first argument]
+  if [ "${1:-}" = fm-remote-home-provision.sh ] && [ "${2:-}" = --migration ]; then
+    # shellcheck source=bin/fm-home-migration-lib.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/fm-home-migration-lib.sh"
+    printf '%s\n' "$FM_MIGRATION_MAX_BYTES"
+    return 0
+  fi
+  printf '%s\n' "$FM_REMOTE_JOB_MAX_BYTES"
+}
+
 fm_remote_job_validate_settings() {
   case "$FM_REMOTE_JOB_MAX_BYTES" in ''|*[!0-9]*|0) return 1 ;; esac
   [ "$FM_REMOTE_JOB_MAX_BYTES" -le 1048576 ] || return 1
@@ -615,15 +629,8 @@ fm_remote_job_cancel() { # <account-home> <id>
 fm_remote_job_stage() { # <account-home> <root> <home> <command> [args...]; stdin is captured
   local account_home=$1 root=$2 home=$3 command=$4 stage id destination bytes queue_deadline owner_start stdin_limit
   shift 4
-  # Only the typed existing-home migration receiver accepts a larger snapshot.
-  # argv, output and every other command keep the ordinary 1 MiB ceiling, and the
-  # raised value is read from its owner rather than restated here.
-  stdin_limit=$FM_REMOTE_JOB_MAX_BYTES
-  if [ "$command" = fm-remote-home-provision.sh ] && [ "${1:-}" = --migration ]; then
-    # shellcheck source=bin/fm-home-migration-lib.sh
-    . "$(dirname "${BASH_SOURCE[0]}")/fm-home-migration-lib.sh"
-    stdin_limit=$FM_MIGRATION_MAX_BYTES
-  fi
+  # argv, output and every other command keep the ordinary ceiling.
+  stdin_limit=$(fm_remote_job_stdin_limit "$command" "${1:-}")
   fm_remote_job_prepare_state "$account_home" || return 1
   root=$(fm_remote_job_canonical_existing_dir "$root") || {
     FM_REMOTE_JOB_ERROR="remote job root is unavailable or unsafe"
