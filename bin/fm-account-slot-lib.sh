@@ -276,7 +276,7 @@ fm_account_slot_probe() { # <config-dir> <slot>
   if ! jq -e --arg provider "$harness" \
       --arg account_id "$FM_ACCOUNT_SLOT_EXPECTED_ACCOUNT_ID" \
       --argjson now "$now" --argjson max_age 900 --argjson future 60 '
-    def epoch: try fromdateiso8601 catch null;
+    def epoch: (sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null);
     def recent($v): ($v | type) == "string" and (($v | epoch) as $t | $t != null and $t <= ($now + $future) and $t >= ($now - $max_age));
     def isolated_sources($p): if $p == "claude" then ["oauth-file","keychain"] else ["auth-json"] end;
     .schemaVersion == 5 and (.providers | type) == "array" and (.providers | length) == 1 and

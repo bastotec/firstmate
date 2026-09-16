@@ -74,6 +74,8 @@ while [ "$#" -gt 0 ]; do
   if [ "$1" = --provider ]; then provider=$2; shift 2; else shift; fi
 done
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# The published producer stamps generatedAt with milliseconds.
+[ -z "${FAKE_SUBSECOND_GENERATED_AT:-}" ] || now=${now%Z}.579Z
 case "$provider" in
   claude)
     account=claude-account-a
@@ -204,6 +206,17 @@ PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
   "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null \
   || fail "first Claude slot probe failed"
 pass "matches each slot against its own configured expectedAccountId"
+
+# Regression: quota-axi stamps generatedAt with milliseconds
+# ("2026-09-16T02:08:27.579Z"). Before the freshness gate normalized that, every
+# real document was read as stale and every slot dropped out of routing.
+out=$(PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_SUBSECOND_GENERATED_AT=1 \
+  FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-slot.sh" probe-all claude-a codex-a) \
+  || fail "slots were refused for a millisecond generatedAt the real producer always emits"
+assert_contains "$out" '"accountSlot":"claude-a"' "Claude slot dropped out on a millisecond generatedAt"
+assert_contains "$out" '"accountSlot":"codex-a"' "Codex slot dropped out on a millisecond generatedAt"
+assert_not_contains "$out" '"status":"unavailable"' "a fresh millisecond-stamped document was reported unavailable"
+pass "accepts the millisecond generatedAt the published producer emits"
 
 mv "$HOME_DIR/profiles/claude-b/.credentials.json" "$TMP_ROOT/keychain-only-credential"
 if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
