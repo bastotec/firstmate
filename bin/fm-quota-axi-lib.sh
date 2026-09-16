@@ -42,7 +42,7 @@ fm_quota_axi_probe_capability() {
     output=$(quota-axi --help 2>/dev/null </dev/null)
   fi || { FM_QUOTA_AXI_CAPABILITY_ERROR="quota-axi --help could not be read"; return 1; }
   for flag in "${FM_QUOTA_AXI_PROBE_FLAGS[@]}"; do
-    printf '%s\n' "$output" | grep -Eq "(^|[[:space:],])$flag([[:space:],=]|\$)" && continue
+    printf '%s\n' "$output" | grep -Eq "(^|[][[:space:],(|/])$flag([])[[:space:],=|]|\$)" && continue
     FM_QUOTA_AXI_CAPABILITY_ERROR="quota-axi does not support $flag; install a published release that advertises that flag"
     return 1
   done

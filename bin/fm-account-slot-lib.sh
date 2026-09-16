@@ -210,15 +210,15 @@ fm_account_slot_validate_dispatch() { # <config-dir> [dispatch-file]
   [ -z "$duplicates" ] || { fm_account_slot_fail "duplicate effective dispatch tuple: $duplicates"; return 1; }
 }
 
-fm_account_slot_resolve() { # <config-dir> <slot> <harness>
-  local config=$1 slot=$2 harness=$3 registry="$1/account-slots.json" row
+fm_account_slot_resolve() { # <config-dir> <slot> [harness]
+  local config=$1 slot=$2 harness=${3:-} registry="$1/account-slots.json" row
   FM_ACCOUNT_SLOT_ERROR=
   [ "$slot" != default ] || { fm_account_slot_fail "account slot 'default' is reserved for clearing an account selection"; return 1; }
   fm_account_slot_validate_registry "$config" || return 1
   row=$(jq -r --arg slot "$slot" --arg harness "$harness" '
     .slots[$slot] as $s |
     if $s == null then empty
-    elif $s.harness != $harness then "HARNESS_MISMATCH"
+    elif $harness != "" and $s.harness != $harness then "HARNESS_MISMATCH"
     else [$slot,$s.harness,$s.storePath] | @tsv end
   ' "$registry") || { fm_account_slot_fail "slot '$slot' cannot be read"; return 1; }
   [ -n "$row" ] || { fm_account_slot_fail "slot '$slot' is not configured in this home"; return 1; }
@@ -233,11 +233,8 @@ fm_account_slot_resolve() { # <config-dir> <slot> <harness>
 fm_account_slot_probe() { # <config-dir> <slot>
   local config=$1 slot=$2 harness path raw rc now selector
   FM_ACCOUNT_SLOT_ERROR=
-  fm_account_slot_validate_registry "$config" || return 1
-  harness=$(jq -r --arg slot "$slot" '.slots[$slot].harness // empty' "$config/account-slots.json") \
-    || { fm_account_slot_fail "slot '$slot' cannot be read"; return 1; }
-  [ -n "$harness" ] || { fm_account_slot_fail "slot '$slot' is not configured in this home"; return 1; }
-  fm_account_slot_resolve "$config" "$slot" "$harness" || return 1
+  fm_account_slot_resolve "$config" "$slot" || return 1
+  harness=$FM_ACCOUNT_SLOT_HARNESS
   path=$FM_ACCOUNT_SLOT_STORE_PATH
   declare -F fm_quota_axi_probe_capability >/dev/null 2>&1 \
     || { fm_account_slot_fail "internal quota-axi capability check is unavailable"; return 1; }
