@@ -158,7 +158,8 @@ PARENT_INBOX="$STATE/$ID.inbox"
 REMOTE_INBOX="$REMOTE_HOME/state/parent-route/$ID.inbox"
 while IFS= read -r line || [ -n "$line" ]; do
   line=${line//"$PARENT_STATUS"/"$REMOTE_STATUS"}
-  printf '%s\n' "${line//"$PARENT_INBOX"/"$REMOTE_INBOX"}"
+  line=${line//"$PARENT_INBOX"/"$REMOTE_INBOX"}
+  printf '%s\n' "$line"
 done < "$BRIEF" > "$TMP/charter.remote"
 
 PROJECTS_CSV=
