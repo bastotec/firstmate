@@ -86,7 +86,7 @@ case "$provider" in
   codex)
     account=codex-account-a
     case "${CODEX_HOME-}" in *codex-b) account=codex-account-b ;; esac
-    attempt=auth-json
+    attempt=oauth
     ;;
 esac
 selected_store=${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}
@@ -346,7 +346,7 @@ pass "rejects stale, wrong-source, and mismatched-account evidence"
 
 : > "$CALLS"
 PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
-  FAKE_ATTEMPTS='[{"source":"auth-json","status":"success"},{"source":"cli-rpc","status":"failure"}]' \
+  FAKE_ATTEMPTS='[{"source":"oauth","status":"success"},{"source":"cli-rpc","status":"failure"}]' \
   "$ROOT/bin/fm-account-slot.sh" probe codex-a >/dev/null \
   || fail "a failed fallback attempt beside a successful isolated source made a healthy Codex slot unavailable"
 PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
@@ -354,7 +354,7 @@ PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
   "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null \
   || fail "a store holding both a credential file and its keychain item was reported unavailable"
 if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
-    FAKE_ATTEMPTS='[{"source":"auth-json","status":"failure"},{"source":"cli-rpc","status":"failure"}]' \
+    FAKE_ATTEMPTS='[{"source":"oauth","status":"failure"},{"source":"cli-rpc","status":"failure"}]' \
     "$ROOT/bin/fm-account-slot.sh" probe codex-a >/dev/null 2>&1; then
   fail "evidence with no successful attempt was accepted"
 fi
@@ -364,6 +364,25 @@ if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
   fail "a successful attempt naming another account was accepted"
 fi
 pass "provenance reads successful attempts only and refuses zero-success or cross-account evidence"
+
+# Regression: the Codex quota document spells its CODEX_HOME-scoped credential
+# source "oauth", not the "auth-json" the separate `quota-axi auth` report uses.
+# Against the real producer that mismatch dropped both Codex subscriptions out
+# of routing. The ambient fallback the producer reaches for when the slot store
+# holds no credential is "pi:openai-codex", which must still be refused.
+: > "$CALLS"
+out=$(PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+  FAKE_ATTEMPTS='[{"source":"oauth","status":"success"}]' \
+  "$ROOT/bin/fm-account-slot.sh" probe-all codex-a) \
+  || fail "the Codex source spelling the real producer emits dropped the slot out of routing"
+printf '%s' "$out" | jq -e '.slots | length == 1 and .[0].accountSlot == "codex-a" and .[0].providers[0].provider == "codex"' \
+  >/dev/null || fail "a Codex slot the real producer reports as its own was not routable"
+if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+    FAKE_ATTEMPTS='[{"source":"oauth","status":"skipped","error":"credentials_missing"},{"source":"pi:openai-codex","status":"success"}]' \
+    "$ROOT/bin/fm-account-slot.sh" probe codex-a >/dev/null 2>&1; then
+  fail "a Codex slot served by the ambient Pi credential instead of its own store was accepted"
+fi
+pass "reads the Codex source vocabulary the quota document itself uses, and still refuses the ambient one"
 
 if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_MODE=invalid-then-valid FM_HOME="$HOME_DIR" \
     "$ROOT/bin/fm-account-slot.sh" probe claude-a >"$TMP_ROOT/multi-document.out" 2>"$TMP_ROOT/multi-document.err"; then
