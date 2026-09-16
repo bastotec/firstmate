@@ -672,12 +672,14 @@ relaunch_rollback() {
       if [ -f "$META_PRIOR" ]; then
         mv "$META_PRIOR" "$META" 2>/dev/null || true
       fi
-      state=$(agent_state 2>/dev/null || printf unknown)
-      if [ "$state" = missing ]; then
-        echo "error: $ID's missing-endpoint recovery failed while recreating the terminal; its agent was never touched, so the progress note was rolled back and its work is preserved at $WT" >&2
-      else
-        echo "error: $ID's missing-endpoint recovery recreated the terminal but could not hand it over (it reads '$state'); its agent was never touched, so the progress note was rolled back and its work is preserved at $WT - the recreated terminal now holds a bare shell, so retry with 'relaunch', which is the verb for an agent-free endpoint" >&2
-      fi
+      case "$(agent_state 2>/dev/null || printf unknown)" in
+        dead|alive|ambiguous)
+          echo "error: $ID's missing-endpoint recovery recreated the terminal but could not hand it over; its agent was never touched, so the progress note was rolled back and its work is preserved at $WT" >&2
+          ;;
+        *)
+          echo "error: $ID's missing-endpoint recovery failed while recreating the terminal; its agent was never touched, so the progress note was rolled back and its work is preserved at $WT" >&2
+          ;;
+      esac
       ;;
     stopping)
       state=$(agent_state 2>/dev/null || printf unknown)

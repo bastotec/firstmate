@@ -102,7 +102,11 @@ case "${1:-}" in
     printf '╭────╮\n│    │\n╰────╯\n'
     exit 0 ;;
   new-window)
-    [ -z "${FM_FAKE_NEW_WINDOW_FAIL:-}" ] || { echo "can't create window" >&2; exit 1; }
+    if [ -n "${FM_FAKE_NEW_WINDOW_FAIL:-}" ]; then
+      [ -z "${FM_FAKE_LOSE_SERVER:-}" ] || : > "$D/server-lost"
+      echo "can't create window" >&2
+      exit 1
+    fi
     name=
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -156,6 +160,12 @@ case "${1:-}" in
       esac
     done
     ses=${ses#=}
+    if [ -f "$D/server-lost" ]; then
+      # Not one of the wordings the classifier reads as a gone session, so the
+      # endpoint reads `unreadable`: nothing is proven about the window.
+      echo "lost server" >&2
+      exit 1
+    fi
     if ! grep -qxF "$ses" "$D/sessions" 2>/dev/null; then
       # Exactly what real tmux writes when the whole session is gone; the
       # recovery-grade classifier reads this as `missing`.
@@ -267,6 +277,7 @@ run_control() {  # <case-dir> <args...>
     FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_FAKE_NEW_WINDOW_FAIL="${FM_FAKE_NEW_WINDOW_FAIL:-}" \
     FM_FAKE_NEW_SESSION_FAIL="${FM_FAKE_NEW_SESSION_FAIL:-}" \
+    FM_FAKE_LOSE_SERVER="${FM_FAKE_LOSE_SERVER:-}" \
     FM_FAKE_SHELL_BUSY_READS="${FM_FAKE_SHELL_BUSY_READS:-0}" \
     "$CONTROL" "$@" 2>&1
 }
@@ -348,13 +359,16 @@ test_recover_missing_refuses_a_terminal_that_never_settles() {
   ! grep -Fq "encode launch-brief" "$dir/fake/literal" \
     || fail "an unsettled terminal must never be handed to the launch owner"
   # The terminal IS back - only the handover failed - so the rollback must not
-  # tell the operator the recreation never happened; the bare shell it left
-  # behind reads `dead` once its rc files finish, which is relaunch's input.
+  # tell the operator the recreation never happened. The pane was just measured
+  # as NOT agent-free, so the only advice the operator gets is the refusal's own
+  # qualified line; the rollback must not duplicate it with an unqualified one.
   assert_grep "fm-rm22" "$dir/fake/created-windows" "the terminal should already have been recreated"
   assert_contains "$out" "recreated the terminal but could not hand it over" \
     "the rollback must admit the terminal now exists"
-  assert_contains "$out" "retry with 'relaunch'" \
-    "the rollback should name the verb that acts on the bare shell it left behind"
+  assert_contains "$out" "once its shell is idle bring the worker up with 'relaunch'" \
+    "the refusal should keep the qualified advice for the pane it measured as busy"
+  [ "$(grep -c "relaunch'" <<<"$out")" = 1 ] \
+    || fail "the rollback must not repeat the refusal's relaunch advice unqualified"
   pass "fm-control recover-missing: a recreated terminal that never goes agent-free refuses instead of launching into it"
 }
 
@@ -489,8 +503,8 @@ test_failed_recreation_rolls_the_progress_note_back() {
   expect_code 1 "$rc" "a failed recreation must refuse"$'\n'"$out"
   assert_contains "$out" "failed while recreating the terminal" "the refusal should name the phase it failed in"
   # Nothing was created here: the window never appeared, so the endpoint still
-  # reads missing and the rollback must not send the operator to 'relaunch'.
-  assert_not_contains "$out" "retry with 'relaunch'" \
+  # reads missing and the rollback must not claim a terminal is back.
+  assert_not_contains "$out" "recreated the terminal" \
     "a recreation that created nothing must not claim a terminal now exists"
   [ "$(cat "$dir/home/data/rm11/brief.md")" = "$brief_before" ] \
     || fail "a failed recreation must roll the progress note back out of the instructions"
@@ -504,6 +518,25 @@ test_failed_recreation_rolls_the_progress_note_back() {
   assert_no_grep "first attempt" "$dir/home/data/rm11/brief.md" \
     "the rolled-back attempt's note must not survive into the retry"
   pass "fm-control recover-missing: a failed recreation rolls the progress note back so retries do not stack"
+}
+
+test_unreadable_endpoint_after_a_failed_recreation_claims_nothing() {
+  local dir out rc
+  dir=$(new_case recreate-unreadable rm23)
+  add_ship_task "$dir" rm23
+  make_endpoint_missing "$dir"
+
+  # The window creation fails and the session provider then goes unreachable,
+  # so the rollback's own read comes back `unreadable`. Nothing proves a window
+  # exists, so it must not tell the operator one was recreated.
+  out=$(FM_FAKE_NEW_WINDOW_FAIL=1 FM_FAKE_LOSE_SERVER=1 \
+    run_control "$dir" rm23 recover-missing --note "first attempt"); rc=$?
+  expect_code 1 "$rc" "a failed recreation must refuse"$'\n'"$out"
+  assert_contains "$out" "failed while recreating the terminal" \
+    "an endpoint that proves nothing must keep the nothing-created wording"
+  assert_not_contains "$out" "recreated the terminal" \
+    "an unreadable endpoint must not be reported as a recreated terminal"
+  pass "fm-control recover-missing: an unreadable endpoint after a failed recreation claims no terminal exists"
 }
 
 test_launch_failure_never_claims_an_agent_was_stopped() {
@@ -842,6 +875,7 @@ test_recover_missing_refuses_a_pool_slot_owned_by_another_task
 test_recover_missing_refuses_an_unreadable_pool_slot_claim
 test_recover_missing_keeps_its_own_pool_slot
 test_failed_recreation_rolls_the_progress_note_back
+test_unreadable_endpoint_after_a_failed_recreation_claims_nothing
 test_launch_failure_never_claims_an_agent_was_stopped
 test_recover_missing_refuses_a_backend_it_cannot_recreate_on
 test_recover_missing_refusal_names_the_postcondition_it_cannot_prove
