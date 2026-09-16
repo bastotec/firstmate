@@ -50,7 +50,7 @@ cat > "$FAKEBIN/quota-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --help ]; then
   advertised=
-  for flag in --provider --profile-only --full --json --no-credential-refresh; do
+  for flag in --provider --full --json --no-credential-refresh; do
     [ "$flag" != "${FAKE_OMIT_FLAG:-}" ] || continue
     advertised="${advertised:+$advertised }$flag"
   done
@@ -187,7 +187,7 @@ assert_not_contains "$out" 'claude-account-a' "sanitized output leaked account i
 assert_not_contains "$out" 'private@example.invalid' "sanitized output leaked email"
 assert_not_contains "$out" '/private/credential' "sanitized output leaked a credential path"
 call=$(cat "$CALLS")
-assert_contains "$call" 'argv=--provider claude --profile-only --full --json --no-credential-refresh' "probe argv did not request source-only full JSON without refresh"
+assert_contains "$call" 'argv=--provider claude --full --json --no-credential-refresh' "probe argv did not request single-provider full JSON without refresh"
 assert_contains "$call" "claude=$HOME_DIR/profiles/claude-a|codex=|anthropic=|openai=" "Claude probe did not isolate the selected store and clear competing selectors"
 pass "probes Claude through one isolated profile and emits only sanitized quota evidence"
 
@@ -392,10 +392,10 @@ assert_contains "$(cat "$TMP_ROOT/multi-document.err")" "malformed quota evidenc
 assert_equals "" "$(cat "$TMP_ROOT/multi-document.out")" "multiple-root refusal emitted sanitized evidence"
 pass "requires exactly one JSON root from every quota probe"
 
-PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_OMIT_FLAG=--profile-only FM_HOME="$HOME_DIR" \
+PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_OMIT_FLAG=--full FM_HOME="$HOME_DIR" \
   "$ROOT/bin/fm-account-slot.sh" validate >/dev/null \
   || fail "a missing quota-axi capability was reported as invalid slot configuration"
-for missing in --provider --profile-only --full --json --no-credential-refresh; do
+for missing in --provider --full --json --no-credential-refresh; do
   : > "$CALLS"
   if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_OMIT_FLAG="$missing" FM_HOME="$HOME_DIR" \
       "$ROOT/bin/fm-account-slot.sh" probe-all claude-a >/dev/null 2>"$TMP_ROOT/capability.err"; then

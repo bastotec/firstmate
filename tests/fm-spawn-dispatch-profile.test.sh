@@ -51,7 +51,7 @@ SH
   cat > "$fakebin/quota-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --help ]; then
-  printf '%s\n' 'flags: --provider --profile-only --full --json --no-credential-refresh'
+  printf '%s\n' 'flags: --provider --full --json --no-credential-refresh'
 elif [ "${1:-}" = --version ]; then
   printf '%s\n' 'quota-axi 0.1.42'
 fi

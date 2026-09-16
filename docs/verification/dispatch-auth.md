@@ -183,14 +183,14 @@ quota-axi --version
 quota-axi --help
 ```
 
-The version command returned `0.1.42`.
-The help output listed 12 flags and did not list `--profile-only`.
-The account-slot probe sends `--provider`, `--profile-only`, `--full`, `--json`, and `--no-credential-refresh`; of those only `--full` and `--json` are recorded above against a measured release.
+The version command returned `0.1.42`, and the help output listed 12 flags: `--provider`, `--json`, `--full`, `--tui`, `--refresh`, `--once`, `--allow-keychain-prompt`, `--no-credential-refresh`, `--intelligence`, `--sort`, `--help`, and `-v/--version`.
+The account-slot probe sends `--provider`, `--full`, `--json`, and `--no-credential-refresh`; all four are advertised by this measured release, so automatic quota-ranked slot selection runs against it.
 `bin/fm-quota-axi-lib.sh` owns that flag list once: it builds the probe's argv and requires `--help` to advertise every entry, so no probe flag is sent to a release whose own help does not advertise it.
-Automatic quota-ranked slot selection therefore correctly refuses on this installation instead of reading combined or ambient provider evidence, and the refusal names the first flag the installed help does not advertise.
-Explicit `fm-spawn.sh --account-slot` and `fm-control.sh relaunch --account-slot` do not consume quota evidence and are unaffected by this gap.
+Isolation does not depend on any of those flags: the probe binds one store through `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, asks for one `--provider`, and refuses evidence whose successful `attempts[].source` is not that store's own.
+An older release that drops one of the four still refuses by naming the first flag its help does not advertise, rather than reading combined or ambient provider evidence.
+Explicit `fm-spawn.sh --account-slot` and `fm-control.sh relaunch --account-slot` consume no quota evidence and are unaffected either way.
 This is not a four-profile live pass.
-After a published quota-axi advertises the required capability and two Claude plus two Codex profiles are provisioned, refresh this evidence with:
+After two Claude plus two Codex profiles are provisioned, refresh this evidence with:
 
 ```sh
 FM_ACCOUNT_SLOT_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-account-slot-live-e2e.test.sh

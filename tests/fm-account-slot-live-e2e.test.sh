@@ -44,7 +44,7 @@ calls="$lab/calls"
 cat > "$lab/bin/quota-axi" <<'SH'
 #!/usr/bin/env bash
 case " $* " in
-  *' --profile-only '*)
+  *' --no-credential-refresh '*)
     provider=unknown
     prior=
     for arg in "$@"; do
@@ -65,9 +65,9 @@ if ! fm_run_timed 120 env PATH="$lab/bin:$PATH" FM_ACCOUNT_SLOT_REAL_QUOTA="$rea
   fail "four-profile account-slot probe failed"
 fi
 
-assert_equals 4 "$(wc -l < "$calls" | tr -d ' ')" "live check did not invoke exactly four profile-only quota probes"
-assert_equals 2 "$(grep -c '^claude$' "$calls" | tr -d ' ')" "live check did not invoke two Claude profile probes"
-assert_equals 2 "$(grep -c '^codex$' "$calls" | tr -d ' ')" "live check did not invoke two Codex profile probes"
+assert_equals 4 "$(wc -l < "$calls" | tr -d ' ')" "live check did not invoke exactly four single-provider quota probes"
+assert_equals 2 "$(grep -c '^claude$' "$calls" | tr -d ' ')" "live check did not invoke two Claude slot probes"
+assert_equals 2 "$(grep -c '^codex$' "$calls" | tr -d ' ')" "live check did not invoke two Codex slot probes"
 
 jq -e '.slots | length == 4 and all(.[]; .providers | length == 1) and all(.[]; .providers[0].state.status == "fresh" and .providers[0].state.stale == false)' \
   "$output" >/dev/null || fail "sanitized live evidence did not contain four fresh provider rows"
