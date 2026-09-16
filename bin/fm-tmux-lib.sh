@@ -189,6 +189,69 @@ EOF
   return 1
 }
 
+# fm_tmux_pane_input_mode: read the target pane's tty LINE DISCIPLINE, which is
+# the kernel fact deciding how much text one typed line can carry.
+#
+#   raw       - the pane's foreground program reads input itself, character at a
+#               time: any interactive shell's line editor, and every harness
+#               TUI. There is no line-length limit in this state; 4088 bytes in
+#               a single literal send were measured arriving intact.
+#   canonical - nothing is reading input, so the KERNEL buffers the line. Past
+#               its limit it discards the WHOLE line, silently. This is what a
+#               pane looks like while its shell is still running something.
+#   unknown   - the mode could not be read.
+#
+# The limit itself is deliberately not encoded here. It is MAX_CANON, 1024 on
+# macOS, and other platforms size it differently; callers wait for `raw` rather
+# than measuring the text against a number. See
+# docs/verification/runtime-backends.md "Pane input readiness".
+#
+# `unknown` is NOT "not ready": a pane whose tty cannot be read must keep
+# behaving exactly as it does today, so only a positively measured `canonical`
+# ever holds a send back. BSD `stty -f` and GNU `stty -F` are both tried so the
+# read works on macOS and Linux alike.
+fm_tmux_pane_input_mode() {  # <target> -> raw|canonical|unknown
+  local target=$1 tty out
+  tty=$(tmux display-message -p -t "$target" '#{pane_tty}' 2>/dev/null) || { printf 'unknown'; return 0; }
+  case "$tty" in /dev/*) ;; *) printf 'unknown'; return 0 ;; esac
+  [ -c "$tty" ] || { printf 'unknown'; return 0; }
+  out=$(stty -f "$tty" -a 2>/dev/null) || out=$(stty -F "$tty" -a 2>/dev/null) \
+    || { printf 'unknown'; return 0; }
+  # GNU stty separates flags with newlines and semicolons, BSD with newlines and
+  # spaces; normalize to spaces so each flag is a whole token, and match
+  # `-icanon` first so the negated flag is never read as the plain one.
+  out=" $(printf '%s' "$out" | tr '\n;,' '   ') "
+  case "$out" in
+    *' -icanon '*) printf 'raw' ;;
+    *' icanon '*) printf 'canonical' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+# fm_tmux_wait_pane_input_ready: wait, bounded, for <target> to be reading input
+# itself, so a long line can actually land. Returns 0 as soon as the pane is
+# ready - or immediately when its mode cannot be read at all - and 1 only when
+# the pane stayed measurably canonical for the whole wait.
+#
+# The default 5s budget is three times the longest canonical window measured on
+# a real pane (1.64s for a `sleep 1`) and matches the worktree-settle budget
+# bin/fm-spawn.sh already spends. A ready pane costs one poll, which is the
+# common case: the `export` lines the spawn path sends before launch leave the
+# pane ready again in under one 0.05s poll.
+fm_tmux_wait_pane_input_ready() {  # <target> [timeout-seconds] [poll-seconds]
+  local target=$1 timeout=${2:-${FM_PANE_READY_TIMEOUT:-5}} poll=${3:-${FM_PANE_READY_POLL:-0.05}}
+  local mode waited=0 polls
+  polls=$(awk -v t="$timeout" -v p="$poll" 'BEGIN { n = t / p; printf "%d", (n < 1 ? 1 : n) }' 2>/dev/null) \
+    || polls=100
+  while :; do
+    mode=$(fm_tmux_pane_input_mode "$target")
+    [ "$mode" = canonical ] || return 0
+    waited=$((waited + 1))
+    [ "$waited" -lt "$polls" ] || return 1
+    sleep "$poll"
+  done
+}
+
 # fm_pane_input_pending: 0 when the composer is not proven empty, so pending
 # text, ambiguous structure, unreadable state, and future verdicts all defer.
 fm_pane_input_pending() {  # <target>
@@ -285,6 +348,16 @@ fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
   # Enter, so only a clean idle-to-busy transition may confirm a submit.
   baseline_state=$(fm_pane_busy_state "$target")
   [ "$baseline_state" = idle ] && baseline_idle=1
+  # Readiness gate, ahead of the single literal send: a pane that is not reading
+  # input yet buffers the line in the kernel and silently discards it past
+  # MAX_CANON, so typing into one loses long text outright. `send-failed` is the
+  # existing verdict for "the text did not go in", so the vocabulary and the
+  # retry contract below are unchanged; only the named reason on stderr is new.
+  if ! fm_tmux_wait_pane_input_ready "$target"; then
+    echo "error: pane $target was still busy after ${FM_PANE_READY_TIMEOUT:-5}s and never started reading input; refusing to type ${#text} bytes it would silently discard" >&2
+    printf 'send-failed'
+    return 0
+  fi
   tmux send-keys -t "$target" -l "$text" 2>/dev/null || { printf 'send-failed'; return 0; }
   sleep "$settle"
   fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$baseline_idle"
