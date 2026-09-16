@@ -178,12 +178,20 @@ test_never_ready_pane_refuses_loudly() {
   status=0
   FM_PANE_READY_TIMEOUT=0.5 fm_backend_tmux_send_literal "$SESSION:$window" "$cmd" 2>"$err" \
     || status=$?
-  [ "$status" -ne 0 ] \
-    || fail "a pane that never becomes ready must refuse, not report success"
+  [ "$status" -eq 2 ] \
+    || fail "the gate must refuse with its own status 2, so a caller can tell a busy pane from a failed send, got $status"
   grep -q 'never started reading input' "$err" \
     || fail "refusal did not name the real reason, got: $(cat "$err")"
   grep -q "$window" "$err" \
     || fail "refusal did not name the pane, got: $(cat "$err")"
+
+  # A target whose session does not exist reads `unknown`, which the gate treats
+  # as ready, so `tmux send-keys` is what fails - the dead-server shape, which
+  # must not carry the gate's status.
+  status=0
+  fm_backend_tmux_send_literal "no-such-session-$$:win" "$cmd" 2>/dev/null || status=$?
+  [ "$status" -eq 1 ] \
+    || fail "a send that failed on its own must not be reported with the gate's refusal status, got $status"
   pass "pane that never becomes ready refuses loudly and names the reason"
 }
 

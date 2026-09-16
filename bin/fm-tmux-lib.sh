@@ -45,6 +45,8 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-composer-lib.sh"
 # shellcheck source=bin/fm-cursor-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-cursor-lib.sh"
+# shellcheck source=bin/fm-timing-lib.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/fm-timing-lib.sh"
 
 
 # fm_tmux_strip_ghost: thin adapter over the shared, fleet-wide ghost extractor
@@ -228,18 +230,6 @@ fm_tmux_pane_input_mode() {  # <target> -> raw|canonical|unknown
   esac
 }
 
-# fm_tmux_clock_seconds: seconds since the epoch, fractional where the shell can
-# read one. EPOCHREALTIME is a bash 5 builtin and costs no fork; macOS's system
-# bash 3.2 has none, so it degrades to whole seconds - a coarser deadline, still
-# a deadline.
-fm_tmux_clock_seconds() {
-  local raw=${EPOCHREALTIME:-}
-  case "$raw" in
-    *[0-9][.,][0-9]*) printf '%s.%s' "${raw%%[.,]*}" "${raw#*[.,]}"; return 0 ;;
-  esac
-  date +%s 2>/dev/null || printf '0'
-}
-
 # fm_tmux_wait_pane_input_ready: wait, bounded by ELAPSED TIME, for <target> to
 # be reading input itself, so a long line can actually land. Returns 0 as soon
 # as the pane is ready - or immediately when its mode cannot be read at all -
@@ -248,7 +238,10 @@ fm_tmux_clock_seconds() {
 # The bound is a clock deadline rather than a count of polls, because each poll
 # spends a `tmux display-message` and an `stty` fork on top of its sleep: a
 # counted budget would hold a never-ready pane for several times the number the
-# caller's refusal then names.
+# caller's refusal then names. The clock is fm_timing_now_ms
+# (bin/fm-timing-lib.sh), the fleet's single reader of it, so the deadline
+# degrades on a shell without EPOCHREALTIME exactly where every other elapsed
+# measurement does.
 #
 # The default 5s budget is three times the longest canonical window measured on
 # a real pane (1.64s for a `sleep 1`) and matches the worktree-settle budget
@@ -257,13 +250,14 @@ fm_tmux_clock_seconds() {
 # pane ready again in under one 0.05s poll.
 fm_tmux_wait_pane_input_ready() {  # <target> [timeout-seconds] [poll-seconds]
   local target=$1 timeout=${2:-${FM_PANE_READY_TIMEOUT:-5}} poll=${3:-${FM_PANE_READY_POLL:-0.05}}
-  local mode start
-  start=$(fm_tmux_clock_seconds)
+  local mode budget_ms deadline_ms
+  budget_ms=$(awk -v t="$timeout" 'BEGIN { printf "%d", (t > 0 ? t * 1000 : 0) }' 2>/dev/null)
+  case "$budget_ms" in ''|*[!0-9]*) budget_ms=5000 ;; esac
+  deadline_ms=$(( $(fm_timing_now_ms) + budget_ms ))
   while :; do
     mode=$(fm_tmux_pane_input_mode "$target")
     [ "$mode" = canonical ] || return 0
-    awk -v s="$start" -v n="$(fm_tmux_clock_seconds)" -v t="$timeout" \
-      'BEGIN { exit !(n - s < t) }' || return 1
+    [ "$(fm_timing_now_ms)" -lt "$deadline_ms" ] || return 1
     sleep "$poll"
   done
 }

@@ -157,10 +157,14 @@ fm_backend_tmux_send_text_line() {  # <target> <text>
 # fm_tmux_wait_pane_input_ready (bin/fm-tmux-lib.sh) owns the mode read and the
 # bounded wait, and treats an unreadable tty as ready so this can only ever hold
 # back a pane it positively measured as busy.
+#
+# Exit status 2 is the gate refusing, and is distinct from 1 so callers can tell
+# a busy pane from `tmux send-keys` itself failing - a dead server or a killed
+# session is not a line-discipline problem and must not be reported as one.
 fm_backend_tmux_send_literal() {  # <target> <text>
   if ! fm_tmux_wait_pane_input_ready "$1"; then
     echo "error: pane $1 was still busy after ${FM_PANE_READY_TIMEOUT:-5}s and never started reading input; refusing to type ${#2} bytes it would silently discard" >&2
-    return 1
+    return 2
   fi
   tmux send-keys -t "$1" -l "$2"
 }
