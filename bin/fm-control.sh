@@ -58,12 +58,18 @@
 #   recover-missing Recreate the exact recorded terminal for a task whose
 #              endpoint is authoritatively missing, then hand the launch to the
 #              existing owner (bin/fm-spawn.sh --relaunch). Proves the missing
-#              state and refuses an unavailable, dirty, or conflicting
-#              local-copy ownership rather than resetting or reallocating
-#              anything. No new worktree or pool slot is created. Recreation is
-#              tmux-only today, because a tmux window comes back under the same
-#              recorded fm-<id> handle and so rewrites no durable record; every
-#              other backend refuses before anything is touched.
+#              state and refuses an unavailable or conflicting local-copy
+#              ownership rather than resetting or reallocating anything.
+#              Uncommitted work in that copy is the NORMAL state of a task
+#              worth rescuing and is neither a refusal nor something this verb
+#              touches: nothing under it writes to the local copy except the
+#              launch owner's own git-excluded harness wiring, and the base
+#              refresh that would reset a worktree is skipped for a relaunch,
+#              which is how every recovery spawns. No new worktree or pool slot
+#              is created. Recreation is tmux-only today, because a tmux window
+#              comes back under the same recorded fm-<id> handle and so rewrites
+#              no durable record; every other backend refuses before anything is
+#              touched.
 #              Both tmux losses are recovered: the task's window gone from a
 #              session that is still alive, and the whole session (or the whole
 #              server) gone, which is recreated under its exact recorded name
@@ -812,7 +818,6 @@ resolve_relaunch_profile() {
 # CHECKPOINT_LINES with the journal lines describing what it proved, and
 # refuses outright when any of it cannot be established.
 CHECKPOINT_LINES=()
-CHECKPOINT_STATUS_RAW=
 safe_checkpoint() {
   local wt_real wt_top wt_top_real head head_ref head_ref_status status_output dirty children marker child_meta
   CHECKPOINT_LINES=()
@@ -840,7 +845,6 @@ safe_checkpoint() {
   fi
   status_output=$(git -C "$WT" status --porcelain 2>/dev/null) \
     || die "task $ID's worktree status cannot be inspected; refusing to relaunch without accounting for local changes"
-  CHECKPOINT_STATUS_RAW=$status_output
   if [ -n "$status_output" ]; then
     dirty=yes
   else
@@ -977,7 +981,7 @@ do_relaunch() {
 }
 
 do_recover_missing() {
-  local state note_line wt dirty wname proj_abs
+  local state note_line wt wname proj_abs
   local -a spawn_args
 
   require_state_verified_backend recover-missing "the endpoint is actually missing"
@@ -1025,9 +1029,12 @@ do_recover_missing() {
   else
     note_line="note=none"
   fi
+  # No dirty-copy refusal here on purpose. The task this verb rescues is
+  # mid-work by definition, so uncommitted changes are its normal state, and
+  # recovery only recreates the terminal beside that work - the checkpoint
+  # above records what it found (worktree_dirty=) as evidence, and nothing
+  # below cleans, resets, or stashes any of it.
   safe_checkpoint
-  dirty=$(printf '%s\n' "$CHECKPOINT_STATUS_RAW" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' | head -1 || true)
-  [ -z "$dirty" ] || die "worktree $wt has uncommitted changes; refusing to recover rather than cleaning it"
   cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before recovery"
   RELAUNCH_ACTIVE=1
   journal_write checkpoint "${CHECKPOINT_LINES[@]}" "$note_line"
