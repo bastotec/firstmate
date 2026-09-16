@@ -950,7 +950,7 @@ record_note() {
 
 do_relaunch() {
   local exit_result state note_line
-  local -a spawn_args spawn_env
+  local -a spawn_args
 
   require_state_verified_backend relaunch "the agent actually stopped"
   resolve_relaunch_profile
@@ -1023,7 +1023,7 @@ do_relaunch() {
 
 do_recover_missing() {
   local state note_line wt dirty wname proj_abs
-  local -a spawn_args spawn_env
+  local -a spawn_args
 
   require_state_verified_backend recover-missing "the endpoint is actually missing"
   [ "$BACKEND" = tmux ] \
@@ -1118,12 +1118,9 @@ do_recover_missing() {
   # A recovery continues the recorded runtime, and the account slot is part of
   # it: without this the replacement worker would come back on the ambient
   # account instead of the subscription the record names.
-  spawn_env=("FM_CONTROL_RELAUNCH_TX=$RELAUNCH_TX")
-  if [ -n "$TARGET_ACCOUNT_SLOT" ]; then
-    spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
-    [ -z "$ACCOUNT_SLOT_CONFIG" ] || spawn_env+=("FM_CONFIG_OVERRIDE=$ACCOUNT_SLOT_CONFIG")
-  fi
-  if env "${spawn_env[@]}" "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
+  [ -z "$TARGET_ACCOUNT_SLOT" ] || spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
+  if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
+      "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
   else
     [ "$(fm_meta_get "$META" control_relaunch_tx)" != "$RELAUNCH_TX" ] \
