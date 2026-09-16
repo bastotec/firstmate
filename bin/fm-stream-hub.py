@@ -149,6 +149,12 @@ TOKEN_CLASSES = (CLASS_PUBLISH, CLASS_SUBSCRIBE)
 DEFAULT_CLASSES = (CLASS_SUBSCRIBE,)
 
 LABEL_RE = re.compile(r"\A[A-Za-z0-9._@%%+-]{1,%d}\Z" % MAX_LABEL_LEN)
+# The status vocabulary bin/fm-classify-lib.sh reconciles. The hub refuses
+# anything outside it so the return channel cannot append a line firstmate's
+# classifier would not understand.
+STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
+                 "failed", "resolved")
+
 MACHINE_RE = re.compile(r"\A[A-Za-z0-9._-]{1,%d}\Z" % MAX_MACHINE_LEN)
 ENDPOINT_ID_RE = re.compile(r"\A[0-9a-f]{32}\Z")
 COMMAND_ID_RE = re.compile(r"\A[0-9a-f]{32}\Z")
@@ -780,9 +786,14 @@ class Endpoint:
         # so freshness is measured against arrival here.
         self.state = {}
         self.state_received_at = 0.0
+        # The last time THIS endpoint's own agent spoke to the hub, by any
+        # route. One agent owns one endpoint, so this is the precise reachability
+        # signal; the machine-level one only groups the viewer.
+        self.agent_seen_at = _now()
 
     def feed(self, data: bytes) -> None:
         with self.wake:
+            self.agent_seen_at = _now()
             self.ring.append(data)
             self.screen.feed(data)
             self.wake.notify_all()
@@ -791,7 +802,11 @@ class Endpoint:
         with self.wake:
             self.state = state
             self.state_received_at = _now()
+            self.agent_seen_at = self.state_received_at
             self.wake.notify_all()
+
+    def agent_silent_for(self) -> float:
+        return max(0.0, _now() - self.agent_seen_at)
 
     def mark_closed(self, exit_code) -> None:
         with self.wake:
@@ -833,6 +848,7 @@ class Endpoint:
             "exit_code": self.exit_code,
             "stream_offset": self.ring.end,
             "state_age_secs": None if age < 0 else round(age, 3),
+            "agent_silent_for_secs": round(self.agent_silent_for(), 3),
         }
 
 
@@ -924,6 +940,19 @@ class Hub:
             if agent_id:
                 machine.agent_id = agent_id
             return machine
+
+    def touch_endpoint(self, endpoint_id: str) -> None:
+        """Record that this endpoint's own agent just spoke to the hub.
+
+        Freshness asks whether the OWNING agent is still reachable, not whether
+        the worker printed anything. An idle worker publishes no output and may
+        publish no new state for a while, and letting that read as stale would
+        turn every quiet endpoint into an unreadable one.
+        """
+        with self.lock:
+            endpoint = self.endpoints.get(endpoint_id)
+            if endpoint is not None:
+                endpoint.agent_seen_at = _now()
 
     def machine_silent_for(self, name: str) -> float:
         with self.lock:
@@ -1032,19 +1061,27 @@ class Hub:
                            command.error or "the owning agent refused the %s" % kind)
         return command
 
-    def take_commands(self, machine_name: str, wait: float) -> list:
-        """Long-poll: hand the named machine's agent whatever is queued."""
+    def take_commands(self, machine_name: str, endpoint_id: str, wait: float) -> list:
+        """Long-poll: hand a polling agent the commands for ITS endpoint.
+
+        The filter is not a convenience. One agent owns one endpoint, so several
+        agents poll the same machine, and an unfiltered take would let one of
+        them swallow a command meant for another endpoint's pty - which would
+        then be acknowledged as delivered to the wrong worker.
+        """
         deadline = _now() + wait
         with self.command_wake:
             while True:
                 machine = self.machines.get(machine_name)
                 if machine is not None and machine.queue:
-                    taken = machine.queue[:]
-                    machine.queue.clear()
-                    for command in taken:
-                        command.taken_at = _now()
-                        machine.pending[command.command_id] = command
-                    return taken
+                    taken = [c for c in machine.queue
+                             if not endpoint_id or c.endpoint_id == endpoint_id]
+                    if taken:
+                        for command in taken:
+                            machine.queue.remove(command)
+                            command.taken_at = _now()
+                            machine.pending[command.command_id] = command
+                        return taken
                 remaining = deadline - _now()
                 if remaining <= 0:
                     return []
@@ -1335,10 +1372,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             machine = _query_one(query, "machine")
             if not MACHINE_RE.match(machine):
                 raise HubError(HTTPStatus.BAD_REQUEST, "bad_machine", "malformed machine name")
+            endpoint_id = _query_one(query, "endpoint")
+            if endpoint_id and not ENDPOINT_ID_RE.match(endpoint_id):
+                raise HubError(HTTPStatus.BAD_REQUEST, "bad_endpoint_id",
+                               "malformed endpoint id")
             hub.touch_machine(machine)
+            if endpoint_id:
+                hub.touch_endpoint(endpoint_id)
             wait = min(max(_query_int(query, "wait", 25), 0), 120)
-            commands = hub.take_commands(machine, float(wait))
+            commands = hub.take_commands(machine, endpoint_id, float(wait))
             hub.touch_machine(machine)
+            if endpoint_id:
+                hub.touch_endpoint(endpoint_id)
             self._json(HTTPStatus.OK, {
                 "ok": True,
                 "commands": [c.describe() for c in commands],
@@ -1403,6 +1448,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, {"ok": True, "delivered": endpoint.endpoint_id})
             return
 
+        if tail == "status" and method == "POST":
+            payload = self._body()
+            state = str(payload.get("state") or "")
+            if state not in STATUS_STATES:
+                raise HubError(HTTPStatus.BAD_REQUEST, "bad_state",
+                               "unknown status state %r (known: %s)"
+                               % (state, ", ".join(STATUS_STATES)))
+            # The hub routes this; it never writes it. The owning agent holds
+            # the record and its path, which is why no local path is ever sent
+            # across the network.
+            hub.submit_command(endpoint, "status",
+                               {"state": state, "note": payload.get("note") or ""})
+            self._json(HTTPStatus.OK, {"ok": True, "appended": endpoint.endpoint_id})
+            return
+
         if tail == "capture" and method == "GET":
             lines = min(max(_query_int(query, "lines", 40), 1), hub.options.scrollback)
             ansi = _query_one(query, "format", "text") == "ansi"
@@ -1448,8 +1508,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         hub = self.server.hub
         max_age = hub.options.state_max_age_secs
         age = endpoint.state_age()
-        silent = hub.machine_silent_for(endpoint.machine)
-        stale = age < 0 or age > max_age or silent < 0 or silent > max_age
+        silent = endpoint.agent_silent_for()
+        machine_silent = hub.machine_silent_for(endpoint.machine)
+        stale = age < 0 or age > max_age or silent > max_age
         with endpoint.lock:
             state = dict(endpoint.state)
         answer = {
@@ -1458,7 +1519,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "machine": endpoint.machine,
             "stale": stale,
             "state_age_secs": None if age < 0 else round(age, 3),
-            "machine_silent_for_secs": None if silent < 0 else round(silent, 3),
+            "agent_silent_for_secs": round(silent, 3),
+            "machine_silent_for_secs": None if machine_silent < 0 else round(machine_silent, 3),
             "state_max_age_secs": max_age,
             "closed": bool(endpoint.closed_at),
             "exit_code": endpoint.exit_code,
@@ -1469,6 +1531,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "the owning agent on machine %s has been silent for %.1fs"
                 % (endpoint.machine, silent) if silent > max_age else
                 "the last state frame is %.1fs old" % age)
+            # Deliberately no verdict field: an unreachable agent and a dead
+            # worker are indistinguishable from here, and only one of them
+            # authorizes recovery.
             return answer
         answer["alive"] = bool(state.get("alive"))
         if field == "foreground":
