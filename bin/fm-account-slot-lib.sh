@@ -285,10 +285,11 @@ fm_account_slot_probe() { # <config-dir> <slot>
     (.providers[0] as $p |
       $p.provider == $provider and
       ($p.state | type) == "object" and $p.state.status == "fresh" and $p.state.stale == false and
-      ($p.account | type) == "object" and
+      ($p.account | type) == "object" and ($p.account.accountId | type) == "string" and
       (($p.account.identityStatus? == null) or $p.account.identityStatus == "verified") and
       ([ $p.attempts[]? | select(.status == "success") ] as $succeeded |
-        any($succeeded[]; . as $a | (isolated_sources($provider) | index($a.source)) != null)) and
+        any($succeeded[]; . as $a | (isolated_sources($provider) | index($a.source)) != null) and
+        all($succeeded[]; . as $a | ($a.accountId? == null) or ($a.accountId | type) == "string")) and
       ($p.quotaSemantics | type) == "object" and
       ($p.quotaSemantics.status as $s | (["known","partial","unknown"] | index($s)) != null) and
       ($p.quotaSemantics.effectiveAvailability | type) == "array" and
