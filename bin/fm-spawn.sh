@@ -4202,14 +4202,19 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   LAUNCH="$LAUNCH_ENV_PREFIX /bin/sh -c $(shell_quote "$LAUNCH")"
 fi
 sleep 0.3
-# A refused literal send is the whole point of the readiness gate: the pane was
-# still busy, so the launch command would have been typed into a kernel line
-# buffer that discards it whole and reports nothing. Fail here, naming that
-# reason, rather than sending Enter into a pane holding no command and leaving
-# recovery to report later that no running agent could be confirmed.
+# A refused literal send means the launch command is not in the terminal, so
+# sending Enter would submit an empty line and leave recovery to report later
+# that no running agent could be confirmed. Fail here instead, naming the reason
+# the backend that refused actually has: on tmux that is the readiness gate,
+# which refuses a pane whose kernel line buffer would discard the command whole;
+# the other backends have no such gate and refuse for their own reasons.
 if ! spawn_send_literal "$T" "$LAUNCH"; then
-  printf 'failed: %s\n' "launch command not delivered: window $T was still busy and never started reading input" >> "$STATE/$ID.status"
-  echo "error: task $ID's launch command was not delivered because window $T was still busy and never started reading input; no agent was started, inspect window $T" >&2
+  case "$BACKEND" in
+    tmux) LAUNCH_SEND_REASON="window $T was still busy and never started reading input" ;;
+    *) LAUNCH_SEND_REASON="the $BACKEND backend refused the literal send to $T" ;;
+  esac
+  printf 'failed: %s\n' "launch command not delivered: $LAUNCH_SEND_REASON" >> "$STATE/$ID.status"
+  echo "error: task $ID's launch command was not delivered: $LAUNCH_SEND_REASON; no agent was started, inspect window $T" >&2
   exit 1
 fi
 sleep 0.3

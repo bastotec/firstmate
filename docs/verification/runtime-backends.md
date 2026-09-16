@@ -158,6 +158,12 @@ The gate sits on the launch path only, in `fm_backend_tmux_send_literal`.
 Measured boundary behind those cases, same host and tmux version: a canonical-mode pane took 1023 payload bytes plus the newline intact and lost the entire line at 1024, while a pane at its prompt took 4088 bytes in one send intact.
 The readiness read tries BSD `stty -f` and GNU `stty -F`, so it works on both platforms; the boundary value itself is verified on macOS only, and Linux sizes its own buffer differently.
 
+#### Known limitation: readiness is sampled, not held
+
+The gate reads the pane's mode once and types immediately after; it does not make the send atomic.
+A pane draining a queue of earlier buffered lines oscillates between canonical and raw - the shell flips to raw for its line editor, consumes one line, flips back to canonical while that line runs, and so on - so a sample taken in one of those raw windows can be followed by a flip back to canonical before the text lands, and a long command can still be lost.
+Those windows are far narrower than the failure measured above (the spawn path's `export` lines each run and return in microseconds), so the gate closes the common case; it does not make the loss impossible.
+
 #### Chunking the send does not fix this
 
 Splitting the text across several `tmux send-keys -l` calls is the obvious fix and it does not work, so do not reach for it again.
