@@ -1039,9 +1039,9 @@ do_recover_missing() {
   fi
   # No dirty-copy refusal here on purpose. The task this verb rescues is
   # mid-work by definition, so uncommitted changes are its normal state, and
-  # recovery only recreates the terminal beside that work - the checkpoint
-  # above records what it found (worktree_dirty=) as evidence, and nothing
-  # below cleans, resets, or stashes any of it.
+  # recovery only recreates the terminal beside that work - safe_checkpoint
+  # records what it found (worktree_dirty=) as evidence, and nothing below
+  # cleans, resets, or stashes any of it.
   safe_checkpoint
   cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before recovery"
   RELAUNCH_ACTIVE=1
