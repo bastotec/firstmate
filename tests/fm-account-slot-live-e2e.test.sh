@@ -8,10 +8,11 @@ set -u
 fm_live_gate opt-in FM_ACCOUNT_SLOT_LIVE_E2E quota-axi jq
 
 real_quota=$(command -v quota-axi) || fail "quota-axi is unavailable"
-quota_help=$(quota-axi --help 2>/dev/null) || fail "quota-axi --help failed"
-for probe_flag in --provider --profile-only --full --json --no-credential-refresh; do
-  assert_contains "$quota_help" "$probe_flag" "installed quota-axi does not advertise a flag the account-slot probe sends"
-done
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$ROOT/bin/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-quota-axi-lib.sh
+. "$ROOT/bin/fm-quota-axi-lib.sh"
+fm_quota_axi_probe_capability || fail "$FM_QUOTA_AXI_CAPABILITY_ERROR"
 
 REGISTRY="${FM_HOME:-$ROOT}/config/account-slots.json"
 [ -f "$REGISTRY" ] || fail "FM_ACCOUNT_SLOT_LIVE_E2E requires a provisioned config/account-slots.json"
@@ -57,8 +58,6 @@ exec "${FM_ACCOUNT_SLOT_REAL_QUOTA:?}" "$@"
 SH
 chmod +x "$lab/bin/quota-axi"
 
-# shellcheck source=bin/fm-timeout-lib.sh
-. "$ROOT/bin/fm-timeout-lib.sh"
 output="$lab/sanitized.json"
 if ! fm_run_timed 120 env PATH="$lab/bin:$PATH" FM_ACCOUNT_SLOT_REAL_QUOTA="$real_quota" \
     FM_ACCOUNT_SLOT_LIVE_CALLS="$calls" FM_HOME="${FM_HOME:-$ROOT}" \
