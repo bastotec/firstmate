@@ -6,7 +6,8 @@
 # byte-exact as inert evidence under .fm-migration/state/. The captain inbox and
 # pending-reply records additionally retain their operational locations.
 # Original charter and parent binding remain in .fm-migration/; only the active
-# charter's home, parent status, and steering-inbox paths change placement.
+# charter's parent status and steering-inbox addresses change placement, so
+# charter prose that names the old path as history is preserved, not rewritten.
 # A source freeze marker is permanent until explicit later operator recovery:
 # it is not permission to discard the home or return its treehouse lease.
 # Perl's core JSON::PP, MIME::Base64, Digest::SHA, and File::Find avoid a new
@@ -98,7 +99,6 @@ if ($op eq 'pack') {
                 $add->($src, '.fm-migration/original-charter.md', $bytes);
                 $bytes =~ s{\Q$arg/$id.status\E}{$remote/state/parent-replies.status}g;
                 $bytes =~ s{\Q$arg/$id.inbox\E}{$remote/state/parent-route/$id.inbox}g;
-                $bytes =~ s{\Q$home\E}{$remote}g;
             }
             $add->($src, $dest, $bytes);
             $add->($src, $rel, $bytes) if $rel =~ m{\Astate/(?:inbox/|pending-replies/)};
@@ -112,7 +112,7 @@ if ($op eq 'pack') {
             my $p = $File::Find::name;
             return if $p eq $inbox;
             my $r = substr($p, length($inbox) + 1);
-            if ($r eq '.seq.lock') { $File::Find::prune = 1; return; }
+            if ($r =~ m{\A\.(?:seq\.lock|ring-state|escalated|staging\.[^/]*)\z}) { $File::Find::prune = 1; return; }
             return if $r eq 'handled' && -d $p && !-l $p;
             die "unclassified inbox artifact: $r\n" unless $r =~ m{\A(?:handled/)?[0-9]+\.msg\z};
             $add->($p, "state/parent-route/$id.inbox/$r");
@@ -150,6 +150,7 @@ if ($op eq 'pack') {
         my $dest = "$home/$p";
         if ($op eq 'check') { die "verification mismatch: $p\n" unless readfile($dest) eq $bytes; next; }
         readfile($dest) if -e $dest || -l $dest;
+        if (-e $dest) { chmod(0600, $dest) or die "$dest: $!\n"; }
         open my $f, '>', $dest or die "$dest: $!\n";
         binmode $f; print {$f} $bytes or die "$dest: $!\n";
         close $f or die "$dest: $!\n";
@@ -160,7 +161,7 @@ PERL
 }
 
 fm_migration_receive() { # --migration|--migration-verify <id> <sha256>
-  local action=$1 id=$2 digest=$3 parent lock_root lock_dir temp stage actual
+  local action=$1 id=$2 digest=$3 parent lock_root lock_dir temp='' stage actual
   case "$id" in ''|-*|*[!A-Za-z0-9._-]*) die 'invalid migration identity' ;; esac
   case "$digest" in *[!a-f0-9]*|'') die 'invalid migration digest' ;; esac
   [ "${#digest}" -eq 64 ] || die 'invalid migration digest length'
@@ -178,30 +179,46 @@ fm_migration_receive() { # --migration|--migration-verify <id> <sha256>
   . "$SCRIPT_DIR/fm-wake-lib.sh"
   fm_lock_try_acquire "$lock_dir" || die 'remote provisioning already in progress'
   # Failed staging is retained and a populated home is never removed in any
-  # migration failure path; only a completed publication clears its own staging.
+  # migration failure path; only a completed publication or verification clears
+  # its own staging.
   # The trap releases only this owned lock.
   trap 'fm_lock_release "$lock_dir" || true' EXIT
+  umask 077
+  if [ "$action" = --migration ]; then
+    temp=$(mktemp -d "$parent/.fm-migration-$id.XXXXXX") || die 'cannot stage migration'
+    head -c "$((FM_MIGRATION_MAX_BYTES + 1))" > "$temp/bundle.json"
+    [ "$(wc -c < "$temp/bundle.json" | tr -d ' ')" -le "$FM_MIGRATION_MAX_BYTES" ] \
+      || die 'migration exceeds its payload bound'
+    actual=$(provision_file_sha256 "$temp/bundle.json") || die 'cannot digest the migration payload'
+    [ "$actual" = "$digest" ] || die 'migration transport digest mismatch'
+  fi
   if [ -e "$FM_HOME" ] || [ -L "$FM_HOME" ]; then
     [ -d "$FM_HOME" ] && [ ! -L "$FM_HOME" ] \
       && [ -d "$FM_HOME/.fm-migration" ] && [ ! -L "$FM_HOME/.fm-migration" ] \
       && [ -f "$FM_HOME/.fm-migration/digest" ] && [ ! -L "$FM_HOME/.fm-migration/digest" ] \
-      && [ "$(cat "$FM_HOME/.fm-migration/digest")" = "$digest" ] \
       && [ -f "$FM_HOME/.fm-secondmate-home" ] && [ ! -L "$FM_HOME/.fm-secondmate-home" ] \
       && [ "$(cat "$FM_HOME/.fm-secondmate-home")" = "$id" ] || die 'destination is not this staged migration; no overwrite allowed'
-    fm_migration_data check "$FM_HOME" "$id" "$FM_HOME/.fm-migration/bundle.json" || die 'staged durable data no longer matches; reconcile on this host'
+    if [ "$(cat "$FM_HOME/.fm-migration/digest")" = "$digest" ]; then
+      fm_migration_data check "$FM_HOME" "$id" "$FM_HOME/.fm-migration/bundle.json" || die 'staged durable data no longer matches; reconcile on this host'
+    else
+      # This placement is staged, never launched, and not yet a published route,
+      # so a newer snapshot of the same identity re-lands its durable records
+      # here. Work the source packed after an interrupted attempt therefore
+      # crosses on the rerun instead of leaving it holding a digest this host
+      # will never accept again.
+      [ "$action" = --migration ] || die 'staged migration predates this payload; resend it'
+      fm_migration_data unpack "$FM_HOME" "$id" "$temp/bundle.json" || die 'cannot refresh migration records'
+      fm_migration_data check "$FM_HOME" "$id" "$temp/bundle.json" || die 'migration verification failed'
+      cp "$temp/bundle.json" "$FM_HOME/.fm-migration/bundle.json"
+      printf '%s\n' "$digest" > "$FM_HOME/.fm-migration/digest"
+    fi
+    [ -z "$temp" ] || rm -rf -- "$temp"
     printf 'verified-migration: %s %s\n' "$id" "$digest"
     fm_lock_release "$lock_dir"
     trap - EXIT
     return 0
   fi
   [ "$action" = --migration ] || die 'migration home not yet staged'
-  umask 077
-  temp=$(mktemp -d "$parent/.fm-migration-$id.XXXXXX") || die 'cannot stage migration'
-  head -c "$((FM_MIGRATION_MAX_BYTES + 1))" > "$temp/bundle.json"
-  [ "$(wc -c < "$temp/bundle.json" | tr -d ' ')" -le "$FM_MIGRATION_MAX_BYTES" ] \
-    || die 'migration exceeds its payload bound'
-  actual=$(provision_file_sha256 "$temp/bundle.json") || die 'cannot digest the migration payload'
-  [ "$actual" = "$digest" ] || die 'migration transport digest mismatch'
   stage="$temp/home"
   # Decode and validate ALL records before cloning any project. This staging
   # tree is private and absent, not the existing destination home.

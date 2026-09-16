@@ -412,6 +412,14 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   assert_present "$TMP_ROOT/migrated-move-work/data/backlog.md" "unknown stage lost remote data: $(cat "$TMP_ROOT/migrate.out")"
   assert_grep 'move-work - Persistent responsibility (home:' "$PARENT/data/secondmates.md" 'unknown staging switched live route'
   assert_absent "$TMP_ROOT/migrated-move-work/state/parent-route/move-work.meta" 'unknown staging launched an agent'
+  # The parent keeps steering a stopped mate between attempts. A steer queued
+  # after the first snapshot is real work the rerun has to carry across, and the
+  # watcher bookkeeping its re-ring ladder writes beside it is ordinary inbox
+  # furniture the rerun has to ignore. Neither may wedge the migration.
+  printf 'schema=fm-task-inbox.v1\n\nlater request\n' > "$PARENT/state/move-work.inbox/002.msg"
+  printf '001.msg\t1\t1756000000\n' > "$PARENT/state/move-work.inbox/.ring-state"
+  printf '001.msg\n' > "$PARENT/state/move-work.inbox/.escalated"
+  : > "$PARENT/state/move-work.inbox/.staging.Ab3xZ9"
   out=$(migrate move-work 2>&1) || fail "migration recovery failed: $out"
   assert_grep 'move-work - Persistent responsibility (host:' "$PARENT/data/secondmates.md" 'successful migration did not switch route'
   for path in data/backlog.md data/learnings.md data/report/report.md state/inbox/note.md; do
@@ -419,6 +427,12 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   done
   cmp -s "$TMP_ROOT/source-move-work/state/old.status" "$TMP_ROOT/migrated-move-work/.fm-migration/state/old.status" || fail 'unlanded state evidence lost'
   cmp -s "$PARENT/state/move-work.inbox/001.msg" "$TMP_ROOT/migrated-move-work/state/parent-route/move-work.inbox/001.msg" || fail 'pending steer bytes/correlation lost'
+  cmp -s "$PARENT/state/move-work.inbox/002.msg" "$TMP_ROOT/migrated-move-work/state/parent-route/move-work.inbox/002.msg" \
+    || fail 'a steer queued after the first snapshot did not cross on the rerun'
+  for artifact in .ring-state .escalated .staging.Ab3xZ9; do
+    assert_absent "$TMP_ROOT/migrated-move-work/state/parent-route/move-work.inbox/$artifact" \
+      'watcher inbox bookkeeping was transferred as a durable record'
+  done
   cmp -s "$TMP_ROOT/correlation.before" "$PARENT/state/pending-replies/0123456789abcdef" || fail 'parent correlation changed'
   cmp -s "$TMP_ROOT/source-move-work/data/charter.md" "$TMP_ROOT/migrated-move-work/.fm-migration/original-charter.md" || fail 'original charter lost'
   assert_grep "$TMP_ROOT/migrated-move-work/state/parent-replies.status" "$TMP_ROOT/migrated-move-work/data/charter.md" 'active charter retained local reply address'
@@ -433,7 +447,7 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   assert_grep 'remote_herdr_session=fm-remote' "$PARENT/state/move-work.meta" 'migration did not launch on fm-remote'
   [ -z "$(find "$TMP_ROOT" -maxdepth 1 -name '.fm-migration-move-work.*' -print)" ] \
     || fail 'a published migration left a duplicate of the durable records staged outside the home'
-  pass 'migration refuses children and doctor gaps, preserves exact durable bytes and correlations, excludes secrets, and relaunches the same identity'
+  pass 'migration refuses children and doctor gaps, converges a rerun that finds new steering, preserves exact durable bytes and correlations, excludes secrets, and relaunches the same identity'
 
   migration_source fail-work
   if FM_FAKE_SSH_MODE=migration-launch-fail migrate fail-work > "$TMP_ROOT/migrate.out" 2>&1; then fail 'failed launch reported migrated'; fi

@@ -173,12 +173,18 @@ What crosses is durable records only.
 `.env`, SSH, cloud, and vendor credential stores, key material, and the socket password are excluded and stay on the original machine; the operator still has to read the home's own durable records before authorizing the move, because a secret pasted into ordinary prose is not detectable.
 Projects are cloned on the host from each project's registered origin, exactly as a seed does, and no project tree, Git object, or working copy is copied.
 `data/` and the classified configuration land live, the captain inbox and pending-reply records keep their operational locations, and the rest of `state/` is retained byte-exact as inert evidence under `.fm-migration/state/` rather than as executable runtime state on a machine it was never written for.
-The original charter and parent binding are retained there too; only the active charter's home, reply address, and steering-inbox paths are rewritten for the new placement.
+The original charter and parent binding are retained there too; only the active charter's reply address and steering-inbox path are rewritten for the new placement, so charter prose that names the old path as history stays as written.
 
 The remote home is staged at an absent path, provisioned, verified byte-for-byte, and only then published atomically, and the source snapshot is re-taken and compared before the registry changes at all.
+That snapshot is re-taken on every run before cutover, so a steer the parent queues for the stopped mate between attempts crosses with the next run rather than failing the comparison against the first attempt's snapshot.
+An unchanged source packs to the same bytes, so a rerun that changes nothing re-sends the same payload and the host recognizes what it already staged.
 The route switch itself happens under the ordinary registry lock, after which the normal [`bin/fm-spawn.sh`](../bin/fm-spawn.sh) launch owner starts the same identity on that host in `fm-remote`.
 A launch failure the command can prove - a remote endpoint that reads back dead or missing - restores the original route and endpoint record, and both copies are kept.
 SSH exit 255 or an unreadable probe is unknown rather than failed: the remote placement is preserved, nothing is launched locally, and rerunning the identical command converges through the normal launch owner instead of creating a second endpoint.
+
+A migration that fails on the host after staging began leaves that attempt's staging directory next to the remote home, named `.fm-migration-<id>.XXXXXX`, and a retried attempt creates its own rather than reusing or clearing an earlier one.
+Each holds that attempt's bundle and a decoded copy of the same durable records - the charter, backlog, memory, reports, and configuration - so unlanded work is never removed automatically; only an attempt that completes its publication or verification clears its own staging.
+Removing a retained one is a manual operator step (`rm -rf <remote-home-parent>/.fm-migration-<id>.XXXXXX`), and it is only safe once that attempt's work is confirmed present in the published remote home or in the local archive.
 
 The original home is left behind as a frozen archive, not deleted.
 A `.fm-home-migration` marker in it refuses a session lock, a spawn, a local launch, and a reseed, so the same identity cannot end up running in two places while the archive is still around for rollback.
@@ -310,7 +316,7 @@ bin/fm-test-run.sh tests/fm-remote-home-migration.test.sh
 bin/fm-test-run.sh tests/fm-remote-secondmate-trace-context.test.sh
 ```
 
-The migration case reuses that same lifecycle fixture and covers the refusal with a live child record, the refusal on an unready host with no `--fix` repair, exact durable-byte and steering-correlation transfer, credential exclusion, the frozen-archive guards, a known launch failure restoring the original route while both copies survive, and an unknown completion converging on rerun without a duplicate endpoint or any effect on an unselected sibling home.
+The migration case reuses that same lifecycle fixture and covers the refusal with a live child record, the refusal on an unready host with no `--fix` repair, exact durable-byte and steering-correlation transfer, a rerun that finds a steer queued after the first snapshot and watcher bookkeeping beside it, credential exclusion, the frozen-archive guards, a known launch failure restoring the original route while both copies survive, and an unknown completion converging on rerun without a duplicate endpoint or any effect on an unselected sibling home.
 
 The account-level checks the doctor performs - a real Aqua login session, a real `launchctl` domain, and a real herdr server - are only ever exercised against fixtures here, so the readiness gate's behavior on a genuine Mac remains an operator-run smoke test.
 The audit-session facts the guard relies on are recorded with their commands in [runtime backend verification](verification/runtime-backends.md#fm-remote-server-birth-and-login-keychain-access).

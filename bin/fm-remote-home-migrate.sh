@@ -2,8 +2,10 @@
 # Migrate one explicitly selected, registered LOCAL home without retiring it.
 # Entry point: fm-remote-home-seed.sh --migrate <id> <local-home> <ssh-alias>
 #                                            <remote-root> <remote-home>
-# Rerun the identical command to reconcile an interrupted/SSH255 attempt; the
-# immutable journal binds identity, both placements and exact transferred bytes.
+# Rerun the identical command to reconcile an interrupted/SSH255 attempt. The
+# journal binds identity and both placements permanently and records the exact
+# transferred bytes; until cutover it re-snapshots them, so a steer the parent
+# queues for the stopped mate between attempts crosses on the next run.
 # No wildcard, batch, automatic local failover, secret grant, or cleanup verb.
 #
 # Before invocation the secondmate must persist its work and exit through
@@ -146,12 +148,20 @@ fi
 remote() { FM_DATA_OVERRIDE="$JOURNAL/route" "$SCRIPT_DIR/fm-on.sh" "$@"; }
 # Do not repair account-level prerequisites as a side effect of migration.
 remote "$ID" fm-remote-doctor.sh || { rc=$?; printf 'remote prerequisites unresolved; no route switched\n' >&2; exit "$rc"; }
-if [ ! -f "$JOURNAL/bundle.json" ]; then
-  fm_migration_data pack "$SOURCE" "$STATE" "$ID" "$REMOTE_HOME" > "$JOURNAL/data.json"
+PHASE=$(cat "$JOURNAL/phase")
+if [ "$PHASE" = complete ]; then printf 'already-migrated: %s archive=%s\n' "$ID" "$SOURCE"; exit 0; fi
+# Re-snapshot on every pre-cutover run rather than only on the first one. The
+# parent can still queue a steer for the stopped mate between attempts, and that
+# is real work: an attempt that ended before cutover must carry it across on the
+# rerun instead of failing the pre-cutover comparison against a stale snapshot
+# identically forever. An unchanged source packs byte-identically, so a rerun
+# that changes nothing keeps the same digest and the same idempotent staging.
+if [ "$PHASE" != cutover ]; then
+  fm_migration_data pack "$SOURCE" "$STATE" "$ID" "$REMOTE_HOME" > "$JOURNAL/data.next"
   {
     printf 'schema=fm-remote-home-provision.v1\nid_b64=%s\n' "$(printf '%s' "$ID" | base64 | tr -d '\n')"
     printf 'parent_host_b64=%s\n' "$(printf '%s' "$HOST" | base64 | tr -d '\n')"
-    printf 'charter_b64=%s\n' "$(jq -r '.records[] | select(.path=="data/charter.md") | .bytes' "$JOURNAL/data.json")"
+    printf 'charter_b64=%s\n' "$(jq -r '.records[] | select(.path=="data/charter.md") | .bytes' "$JOURNAL/data.next")"
     count=0
     if [ -f "$SOURCE/data/projects.md" ]; then count=$(awk '$1=="-" {n++} END {print n+0}' "$SOURCE/data/projects.md"); fi
     printf 'project_count=%s\n' "$count"
@@ -166,19 +176,20 @@ if [ ! -f "$JOURNAL/bundle.json" ]; then
       printf 'project=%s|%s|%s|%s\n' "$(printf '%s' "$project" | base64 | tr -d '\n')" \
         "$(printf '%s' "$origin" | base64 | tr -d '\n')" "$(printf '%s' "$line" | base64 | tr -d '\n')" "$(printf '%s' "$mode" | base64 | tr -d '\n')"
     done < <(if [ -f "$SOURCE/data/projects.md" ]; then cat "$SOURCE/data/projects.md"; fi)
-  } > "$JOURNAL/provision"
-  jq --rawfile provision "$JOURNAL/provision" '. + {provision: $provision}' "$JOURNAL/data.json" > "$JOURNAL/bundle.tmp"
+  } > "$JOURNAL/provision.next"
+  jq --rawfile provision "$JOURNAL/provision.next" '. + {provision: $provision}' "$JOURNAL/data.next" > "$JOURNAL/bundle.tmp"
+  mv "$JOURNAL/data.next" "$JOURNAL/data.json"
+  mv "$JOURNAL/provision.next" "$JOURNAL/provision"
   mv "$JOURNAL/bundle.tmp" "$JOURNAL/bundle.json"
 fi
 DIGEST=$(fm_inherit_sha256 "$JOURNAL/bundle.json")
-PHASE=$(cat "$JOURNAL/phase")
-if [ "$PHASE" = complete ]; then printf 'already-migrated: %s archive=%s\n' "$ID" "$SOURCE"; exit 0; fi
 if [ "$PHASE" != cutover ]; then
   remote --stdin "$ID" fm-remote-home-provision.sh --migration "$ID" "$DIGEST" < "$JOURNAL/bundle.json" || exit $?
   remote "$ID" fm-remote-home-provision.sh --migration-verify "$ID" "$DIGEST" || exit $?
-  # Byte-for-byte check of the immutable source snapshot before switching.
+  # Byte-for-byte check that the staged snapshot still matches before switching.
   fm_migration_data pack "$SOURCE" "$STATE" "$ID" "$REMOTE_HOME" > "$JOURNAL/recheck.json"
-  cmp -s "$JOURNAL/data.json" "$JOURNAL/recheck.json" || die 'source changed after staging; both copies retained, route not switched'
+  cmp -s "$JOURNAL/data.json" "$JOURNAL/recheck.json" \
+    || die 'source changed after staging; both copies retained, route not switched; rerun the identical command to carry the newer records across'
 fi
 secondmate_registry_line_for_id "$REG" "$ID" || die 'route disappeared during migration'
 BEFORE=$(cat "$JOURNAL/route.before")
