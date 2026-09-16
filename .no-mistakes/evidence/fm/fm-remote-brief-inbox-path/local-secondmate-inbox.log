@@ -1,0 +1,5 @@
+=== a LOCAL second mate still gets its OWN home's inbox (no remote rewrite involved) ===
+Firstmate steers you through durable message files in '/Users/bastotecnologia/Projects/firstmate/state/localmate.inbox'.
+When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list '/Users/bastotecnologia/Projects/firstmate/state/localmate.inbox'/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: `mv '/Users/bastotecnologia/Projects/firstmate/state/localmate.inbox'/NNN.msg '/Users/bastotecnologia/Projects/firstmate/state/localmate.inbox'/handled/`.
+this home's state dir: /Users/bastotecnologia/Projects/firstmate/state
+ok: local charter names this home's own inbox, unquoted and exact

@@ -1,0 +1,26 @@
+########## driving the published charter at 8b10b61 (fix(bin): read codex 0.154's idle braille starfield rows as composer furniture (#4532)) ##########
+41:# Firstmate instruction inbox
+42-Firstmate steers you through durable message files in '/Users/bastotecnologia/Projects/firstmate/state/ios.inbox'.
+43-When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list '/Users/bastotecnologia/Projects/firstmate/state/ios.inbox'/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: `mv '/Users/bastotecnologia/Projects/firstmate/state/ios.inbox'/NNN.msg '/Users/bastotecnologia/Projects/firstmate/state/ios.inbox'/handled/`.
+44-The move IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
+== every path the published charter names under a state directory ==
+'"/home/bruno/secondmates/bob-helper/state/parent-replies.status"'
+'/Users/bastotecnologia/Projects/firstmate/state/ios.inbox'
+
+== parent-path leakage check ==
+FAIL: published charter still names the parent inbox /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live-charter.BrrV2q/parent/state/ios.inbox
+
+== act on the charter as the mate: write a real steer with the product's own inbox writer, then run the charter's acknowledgement command verbatim ==
+########## driving the published charter at 69e15dc (fix(bin): name the remote home's own steering inbox in a published secondmate charter) ##########
+41:# Firstmate instruction inbox
+42-Firstmate steers you through durable message files in '"/home/bruno/secondmates/bob-helper/state/parent-route/ios.inbox"'.
+43-When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list '"/home/bruno/secondmates/bob-helper/state/parent-route/ios.inbox"'/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: `mv '"/home/bruno/secondmates/bob-helper/state/parent-route/ios.inbox"'/NNN.msg '"/home/bruno/secondmates/bob-helper/state/parent-route/ios.inbox"'/handled/`.
+44-The move IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
+== every path the published charter names under a state directory ==
+'"/home/bruno/secondmates/bob-helper/state/parent-route/ios.inbox"'
+'/home/bruno/secondmates/bob-helper/state/parent-replies.status'
+
+== parent-path leakage check ==
+ok: published charter names no parent-home inbox path
+
+== act on the charter as the mate: write a real steer with the product's own inbox writer, then run the charter's acknowledgement command verbatim ==

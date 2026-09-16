@@ -1,0 +1,19 @@
+The stray double quotes in the published charter are not cosmetic. They come
+from bash 3.2's pattern substitution, which takes the quotes around the
+replacement literally when the expansion sits inside a double-quoted word.
+
+bin/fm-remote-home-seed.sh:160-161
+
+  line=${line//"$PARENT_STATUS"/"$REMOTE_STATUS"}        <- assignment, clean
+  printf '%s\n' "${line//"$PARENT_INBOX"/"$REMOTE_INBOX"}"  <- quoted word, adds "
+
+That is why the status path now renders cleanly and the inbox path does not:
+the change moved the status rewrite into the assignment and left the new inbox
+rewrite in the position that carries the bug.
+
+GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25)
+assignment form : in '/remote/y.inbox'.
+inside a quote  : in '"/remote/y.inbox"'.
+
+What the mate is told to run, straight out of the published charter:
+When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list '"/home/bruno/secondmates/bob-helper/state/parent-route/bob-helper.inbox"'/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: `mv '"/home/bruno/secondmates/bob-helper/state/parent-route/bob-helper.inbox"'/NNN.msg '"/home/bruno/secondmates/bob-helper/state/parent-route/bob-helper.inbox"'/handled/`.

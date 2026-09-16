@@ -1,0 +1,41 @@
+seed exit=0
+== inbox section of the charter published on the remote host ==
+37-Before treating an investigation or visual review as complete, load `captain-hold-lifecycle` from this home's `.agents/skills/` and pass its shared completion gate.
+38-A message with NO marker is the captain typing directly into your pane: treat it as authoritative captain intervention and stay conversational exactly as you would for any captain message; do not force it onto the status path.
+39:A request arriving through the instruction inbox below follows the same marker and reply rules.
+40-
+41:# Firstmate instruction inbox
+42-Firstmate steers you through durable message files in '/home/bruno/secondmates/bob-helper/state/parent-route/ios.inbox'.
+43-When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list '/home/bruno/secondmates/bob-helper/state/parent-route/ios.inbox'/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: `mv '/home/bruno/secondmates/bob-helper/state/parent-route/ios.inbox'/NNN.msg '/home/bruno/secondmates/bob-helper/state/parent-route/ios.inbox'/handled/`.
+44-The move IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
+45-
+46-# Escalation to main firstmate
+47-Handle routine work yourself.
+48-Report only true captain-relevant outcomes or a declared external wait by appending one line:
+49-   `echo "{state}: {one short line}" >> '/home/bruno/secondmates/bob-helper/state/parent-replies.status'`
+50-States: working, needs-decision, blocked, paused, done, failed.
+51-Use `paused: {why}` (distinct from `blocked:`) only when your domain is deliberately idling on a known external wait you expect to clear on its own, naming when it clears with `until <YYYY-MM-DDTHH:MMZ>` (UTC) when you know; use `blocked:` when you are stuck and need firstmate to act.
+52-Use this only for material phase changes, a captain decision, a real blocker, a failure, work ready for review, or work you landed.
+53-Work you landed includes a merge you performed yourself under standing merge authority and one the captain merged on the forge: under that authority nothing is ever \"ready for review\", so a landed merge that goes unreported reaches the captain as silence.
+
+== every path the published charter names under a state directory ==
+'/home/bruno/secondmates/bob-helper/state/parent-replies.status'
+'/home/bruno/secondmates/bob-helper/state/parent-route/ios.inbox'
+
+== parent-path leakage check ==
+ok: published charter names no parent-home inbox path
+
+== act on the charter as the mate: write a real steer with the product's own inbox writer, then run the charter's acknowledgement command verbatim ==
+charter names inbox: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live-charter.54qAEG/remote home/state/parent-route/ios.inbox
+product delivered the steer to: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live-charter.54qAEG/remote home/state/parent-route/ios.inbox/001.msg
+ok: delivery directory == the directory the charter tells the mate to read
+--- record the mate would read ---
+schema=fm-task-inbox.v1
+at=2026-09-16T06:40:16Z
+--
+Run the iOS build and report the result.--- acknowledgement command exactly as the charter prints it ---
+mv '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live-charter.54qAEG/remote home/state/parent-route/ios.inbox'/NNN.msg '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live-charter.54qAEG/remote home/state/parent-route/ios.inbox'/handled/
+--- running it verbatim (only NNN.msg filled in with the delivered record) ---
+mv '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live-charter.54qAEG/remote home/state/parent-route/ios.inbox'/001.msg '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live-charter.54qAEG/remote home/state/parent-route/ios.inbox'/handled/
+ok: the charter's own acknowledgement command moved the delivered record into handled/
+001.msg

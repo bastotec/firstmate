@@ -1,0 +1,25 @@
+Driving bin/fm-remote-home-seed.sh end to end (SSH boundary faked; every
+firstmate script real), seeding secondmate 'bob-helper' onto remote host
+'workload' with remote home /home/bruno/secondmates/bob-helper - the exact
+placement from the report. The published charter is decoded out of the
+provisioning manifest the parent actually sends.
+
+Parent shell: GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25)   (env bash -> /bin/bash)
+
+=== BASE 8b10b61 (before the fix) ===
+--- published remote charter: Firstmate instruction inbox ---
+# Firstmate instruction inbox
+Firstmate steers you through durable message files in '/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-drive-before/parent/state/bob-helper.inbox'.
+--- published remote charter: parent-replies status line ---
+Nobody reads this chat: the captain and the main firstmate see only what is appended to '"/home/bruno/secondmates/bob-helper/state/parent-replies.status"', and a captain-facing sentence that is not appended there has not been sent.
+
+=== TARGET 69e15dc (after the fix) ===
+--- published remote charter: Firstmate instruction inbox ---
+# Firstmate instruction inbox
+Firstmate steers you through durable message files in '"/home/bruno/secondmates/bob-helper/state/parent-route/bob-helper.inbox"'.
+--- published remote charter: parent-replies status line ---
+Nobody reads this chat: the captain and the main firstmate see only what is appended to '/home/bruno/secondmates/bob-helper/state/parent-replies.status', and a captain-facing sentence that is not appended there has not been sent.
+
+=== local (non-remote) secondmate charter, unchanged path ===
+# Firstmate instruction inbox
+Firstmate steers you through durable message files in '/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-local-mate/state/local-mate.inbox'.

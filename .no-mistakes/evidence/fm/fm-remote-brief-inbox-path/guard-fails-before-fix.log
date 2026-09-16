@@ -1,0 +1,5 @@
+=== HEAD's e2e guard (tests/fm-remote-secondmate-lifecycle-e2e.test.sh:665) run against the PRE-FIX charter ===
+pattern: durable message files in '$REMOTE_HOME/state/parent-route/ios.inbox'.
+guard FAILED on the broken charter -> the test reproduces the defect (fail before fix)
+what the pre-fix charter actually printed:
+Firstmate steers you through durable message files in '"/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live-charter.PeAbOO/remote-home/state/parent-route/ios.inbox"'.

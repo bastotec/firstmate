@@ -1,0 +1,20 @@
+From the full remote-secondmate lifecycle drive (tests/fm-remote-secondmate-lifecycle-e2e.test.sh):
+a real steer was sent to the remote mate and delivered as a durable record.
+
+Directory the steer was actually delivered into:
+  /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-remote-secondmate-e2e.wd6pao/remote-home/state/parent-route/ios.inbox
+Records found there:
+  001.msg
+  handled
+
+Delivered record body:
+  schema=fm-task-inbox.v1
+  at=2026-09-16T05:47:05Z
+  --
+  [fm-from-firstmate]⁣corr=697551e1c2424b6c Firstmate instructions or inherited config changed on this host. Re-read AGENTS.md and the inherited config files before further work.
+Path the published charter names for that inbox:
+  Firstmate steers you through durable message files in '"/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-remote-secondmate-e2e.wd6pao/remote-home/state/parent-route/ios.inbox"'.
+
+The charter now points at the remote home instead of the parent, but the
+literal path it prints carries stray double quotes, so it is not the
+directory above.
