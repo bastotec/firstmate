@@ -228,10 +228,27 @@ fm_tmux_pane_input_mode() {  # <target> -> raw|canonical|unknown
   esac
 }
 
-# fm_tmux_wait_pane_input_ready: wait, bounded, for <target> to be reading input
-# itself, so a long line can actually land. Returns 0 as soon as the pane is
-# ready - or immediately when its mode cannot be read at all - and 1 only when
-# the pane stayed measurably canonical for the whole wait.
+# fm_tmux_clock_seconds: seconds since the epoch, fractional where the shell can
+# read one. EPOCHREALTIME is a bash 5 builtin and costs no fork; macOS's system
+# bash 3.2 has none, so it degrades to whole seconds - a coarser deadline, still
+# a deadline.
+fm_tmux_clock_seconds() {
+  local raw=${EPOCHREALTIME:-}
+  case "$raw" in
+    *[0-9][.,][0-9]*) printf '%s.%s' "${raw%%[.,]*}" "${raw#*[.,]}"; return 0 ;;
+  esac
+  date +%s 2>/dev/null || printf '0'
+}
+
+# fm_tmux_wait_pane_input_ready: wait, bounded by ELAPSED TIME, for <target> to
+# be reading input itself, so a long line can actually land. Returns 0 as soon
+# as the pane is ready - or immediately when its mode cannot be read at all -
+# and 1 only when the pane stayed measurably canonical for the whole wait.
+#
+# The bound is a clock deadline rather than a count of polls, because each poll
+# spends a `tmux display-message` and an `stty` fork on top of its sleep: a
+# counted budget would hold a never-ready pane for several times the number the
+# caller's refusal then names.
 #
 # The default 5s budget is three times the longest canonical window measured on
 # a real pane (1.64s for a `sleep 1`) and matches the worktree-settle budget
@@ -240,14 +257,13 @@ fm_tmux_pane_input_mode() {  # <target> -> raw|canonical|unknown
 # pane ready again in under one 0.05s poll.
 fm_tmux_wait_pane_input_ready() {  # <target> [timeout-seconds] [poll-seconds]
   local target=$1 timeout=${2:-${FM_PANE_READY_TIMEOUT:-5}} poll=${3:-${FM_PANE_READY_POLL:-0.05}}
-  local mode waited=0 polls
-  polls=$(awk -v t="$timeout" -v p="$poll" 'BEGIN { n = t / p; printf "%d", (n < 1 ? 1 : n) }' 2>/dev/null) \
-    || polls=100
+  local mode start
+  start=$(fm_tmux_clock_seconds)
   while :; do
     mode=$(fm_tmux_pane_input_mode "$target")
     [ "$mode" = canonical ] || return 0
-    waited=$((waited + 1))
-    [ "$waited" -lt "$polls" ] || return 1
+    awk -v s="$start" -v n="$(fm_tmux_clock_seconds)" -v t="$timeout" \
+      'BEGIN { exit !(n - s < t) }' || return 1
     sleep "$poll"
   done
 }
@@ -348,16 +364,6 @@ fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
   # Enter, so only a clean idle-to-busy transition may confirm a submit.
   baseline_state=$(fm_pane_busy_state "$target")
   [ "$baseline_state" = idle ] && baseline_idle=1
-  # Readiness gate, ahead of the single literal send: a pane that is not reading
-  # input yet buffers the line in the kernel and silently discards it past
-  # MAX_CANON, so typing into one loses long text outright. `send-failed` is the
-  # existing verdict for "the text did not go in", so the vocabulary and the
-  # retry contract below are unchanged; only the named reason on stderr is new.
-  if ! fm_tmux_wait_pane_input_ready "$target"; then
-    echo "error: pane $target was still busy after ${FM_PANE_READY_TIMEOUT:-5}s and never started reading input; refusing to type ${#text} bytes it would silently discard" >&2
-    printf 'send-failed'
-    return 0
-  fi
   tmux send-keys -t "$target" -l "$text" 2>/dev/null || { printf 'send-failed'; return 0; }
   sleep "$settle"
   fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$baseline_idle"

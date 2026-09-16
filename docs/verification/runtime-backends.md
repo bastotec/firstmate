@@ -147,11 +147,13 @@ Observed output:
 
 ```text
 ok - fm_backend_tmux_send_literal: a 1634-byte launch command starts a worker on a busy pane
-ok - fm_backend_tmux_send_text_submit: a 1634-byte command starts a worker on a busy pane
 ok - pane that never becomes ready refuses loudly and names the reason
 ok - fm_tmux_wait_pane_input_ready: unreadable tty mode stays permissive
 ok - fm_tmux_wait_pane_input_ready: a ready pane returns without spending the budget
 ```
+
+The gate sits on the launch path only, in `fm_backend_tmux_send_literal`.
+`fm_tmux_submit_core` keeps sending unconditionally: its callers (steering messages, daemon injection, the inbox doorbell, `fm-control.sh exit`) send short text a busy pane buffers and delivers correctly, so there is no truncation there to prevent, and refusing to deliver an exit to a busy worker is exactly when it needs to land.
 
 Measured boundary behind those cases, same host and tmux version: a canonical-mode pane took 1023 payload bytes plus the newline intact and lost the entire line at 1024, while a pane at its prompt took 4088 bytes in one send intact.
 The readiness read tries BSD `stty -f` and GNU `stty -F`, so it works on both platforms; the boundary value itself is verified on macOS only, and Linux sizes its own buffer differently.
@@ -162,6 +164,11 @@ Splitting the text across several `tmux send-keys -l` calls is the obvious fix a
 The limit applies to the line the kernel accumulates, not to each write, so a canonical-mode pane loses the command whichever way the bytes arrive.
 Measured on the same host with the same 1117-byte payload: 400, 200, and 100 bytes per send, each with and without pauses between sends, lost the whole command every time, exactly as the single call did.
 Waiting for the pane to read input itself is what makes the send land, which is why the gate waits on readiness rather than reshaping the write.
+
+This supersedes the finding reported alongside the 2026-09-15 incident, that sending the identical command in roughly 400-byte chunks worked first time.
+That observation was real; what it measured was misattributed.
+The pane it was tried on was idle, and an idle pane is not subject to the limit at all - 4088 bytes in a single send arrive intact there.
+The command succeeded because of the pane's state, not because the text was split, which is why repeating the split against a busy pane reproduces the loss.
 
 The other session providers deliver text through their own tool rather than through `tmux send-keys`, and none of them is verified here.
 herdr was not exercised because doing so requires driving Herdr lifecycle, which needs the guarded lab; zellij and orca are not installed on this host; cmux was not exercised.

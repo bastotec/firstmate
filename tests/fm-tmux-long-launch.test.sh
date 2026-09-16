@@ -152,33 +152,10 @@ test_long_launch_starts_a_worker() {
   pass "fm_backend_tmux_send_literal: a ${#cmd}-byte launch command starts a worker on a busy pane"
 }
 
-# --- the submit path carries the same guarantee -------------------------------
-
-test_long_submit_starts_a_worker() {
-  local dir window marker payload cmd verdict
-  dir="$TMP_ROOT/submit-worker"
-  mkdir -p "$dir"
-  window="submit-busy"
-  marker="$dir/marker"
-  payload="$dir/payload"
-  cmd=$(long_launch_command "$marker" "$payload" 1400)
-
-  busy_pane "$window" 2
-
-  verdict=$(fm_backend_tmux_send_text_submit "$SESSION:$window" "$cmd" 3 0.2 0.3 2>/dev/null)
-  [ "$verdict" != send-failed ] \
-    || fail "the submit path refused a pane that does become ready (verdict $verdict)"
-  wait_for_file "$marker" 120 \
-    || fail "no worker started: the submit path lost a ${#cmd}-byte command on a busy pane"
-  cmp -s "$payload" "$payload.expected" \
-    || fail "submit path started a worker but the received command was not byte-identical"
-  pass "fm_backend_tmux_send_text_submit: a ${#cmd}-byte command starts a worker on a busy pane"
-}
-
 # --- a pane that never becomes ready must refuse loudly, not silently ---------
 
 test_never_ready_pane_refuses_loudly() {
-  local dir window cmd err status verdict
+  local dir window cmd err status
   dir="$TMP_ROOT/never-ready"
   mkdir -p "$dir"
   window="never-ready"
@@ -207,14 +184,6 @@ test_never_ready_pane_refuses_loudly() {
     || fail "refusal did not name the real reason, got: $(cat "$err")"
   grep -q "$window" "$err" \
     || fail "refusal did not name the pane, got: $(cat "$err")"
-
-  # The submit path reports the same refusal through its existing vocabulary.
-  verdict=$(FM_PANE_READY_TIMEOUT=0.5 fm_backend_tmux_send_text_submit \
-    "$SESSION:$window" "$cmd" 3 0.2 0.3 2>"$err.submit")
-  [ "$verdict" = send-failed ] \
-    || fail "submit path should report send-failed for a never-ready pane, got '$verdict'"
-  grep -q 'never started reading input' "$err.submit" \
-    || fail "submit refusal did not name the real reason, got: $(cat "$err.submit")"
   pass "pane that never becomes ready refuses loudly and names the reason"
 }
 
@@ -259,7 +228,6 @@ test_ready_pane_returns_immediately() {
 }
 
 test_long_launch_starts_a_worker
-test_long_submit_starts_a_worker
 test_never_ready_pane_refuses_loudly
 test_unreadable_mode_is_treated_as_ready
 test_ready_pane_returns_immediately
