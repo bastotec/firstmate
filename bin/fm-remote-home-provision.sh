@@ -4,7 +4,6 @@
 # Usage:
 #   fm-remote-home-provision.sh < manifest
 #   fm-remote-home-provision.sh --migration <id> <sha256> < migration-json
-#   fm-remote-home-provision.sh --migration-verify <id> <sha256>
 # Migration stages an absent home, verifies typed durable records, then publishes
 # it atomically; its receiver/data contract is in fm-home-migration-lib.sh.
 # An existing destination must match the exact migration receipt, never a seed.
@@ -68,8 +67,9 @@ provision_file_sha256() { # <file>
 }
 
 case "${1:-}" in
-  --migration|--migration-verify)
+  --migration)
     [ "$#" -eq 3 ] || die 'migration requires identity and SHA-256 digest'
+    shift
     # shellcheck source=bin/fm-home-migration-lib.sh
     . "$SCRIPT_DIR/fm-home-migration-lib.sh"
     fm_migration_receive "$@"

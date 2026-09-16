@@ -169,8 +169,8 @@ if ($op eq 'pack' || $op eq 'classify') {
 PERL
 }
 
-fm_migration_receive() { # --migration|--migration-verify <id> <sha256>
-  local action=$1 id=$2 digest=$3 parent lock_root lock_dir temp='' stage actual
+fm_migration_receive() { # <id> <sha256>
+  local id=$1 digest=$2 parent lock_root lock_dir temp stage actual dropped
   case "$id" in ''|-*|*[!A-Za-z0-9._-]*) die 'invalid migration identity' ;; esac
   case "$digest" in *[!a-f0-9]*|'') die 'invalid migration digest' ;; esac
   [ "${#digest}" -eq 64 ] || die 'invalid migration digest length'
@@ -188,19 +188,16 @@ fm_migration_receive() { # --migration|--migration-verify <id> <sha256>
   . "$SCRIPT_DIR/fm-wake-lib.sh"
   fm_lock_try_acquire "$lock_dir" || die 'remote provisioning already in progress'
   # Failed staging is retained and a populated home is never removed in any
-  # migration failure path; only a completed publication or verification clears
-  # its own staging.
+  # migration failure path; only a completed receipt clears its own staging.
   # The trap releases only this owned lock.
   trap 'fm_lock_release "$lock_dir" || true' EXIT
   umask 077
-  if [ "$action" = --migration ]; then
-    temp=$(mktemp -d "$parent/.fm-migration-$id.XXXXXX") || die 'cannot stage migration'
-    head -c "$((FM_MIGRATION_MAX_BYTES + 1))" > "$temp/bundle.json"
-    [ "$(wc -c < "$temp/bundle.json" | tr -d ' ')" -le "$FM_MIGRATION_MAX_BYTES" ] \
-      || die 'migration exceeds its payload bound'
-    actual=$(provision_file_sha256 "$temp/bundle.json") || die 'cannot digest the migration payload'
-    [ "$actual" = "$digest" ] || die 'migration transport digest mismatch'
-  fi
+  temp=$(mktemp -d "$parent/.fm-migration-$id.XXXXXX") || die 'cannot stage migration'
+  head -c "$((FM_MIGRATION_MAX_BYTES + 1))" > "$temp/bundle.json"
+  [ "$(wc -c < "$temp/bundle.json" | tr -d ' ')" -le "$FM_MIGRATION_MAX_BYTES" ] \
+    || die 'migration exceeds its payload bound'
+  actual=$(provision_file_sha256 "$temp/bundle.json") || die 'cannot digest the migration payload'
+  [ "$actual" = "$digest" ] || die 'migration transport digest mismatch'
   if [ -e "$FM_HOME" ] || [ -L "$FM_HOME" ]; then
     [ -d "$FM_HOME" ] && [ ! -L "$FM_HOME" ] \
       && [ -d "$FM_HOME/.fm-migration" ] && [ ! -L "$FM_HOME/.fm-migration" ] \
@@ -210,24 +207,31 @@ fm_migration_receive() { # --migration|--migration-verify <id> <sha256>
     if [ "$(cat "$FM_HOME/.fm-migration/digest")" = "$digest" ]; then
       fm_migration_data check "$FM_HOME" "$id" "$FM_HOME/.fm-migration/bundle.json" || die 'staged durable data no longer matches; reconcile on this host'
     else
-      # This placement is staged, never launched, and not yet a published route,
-      # so a newer snapshot of the same identity re-lands its durable records
-      # here. Work the source packed after an interrupted attempt therefore
-      # crosses on the rerun instead of leaving it holding a digest this host
-      # will never accept again.
-      [ "$action" = --migration ] || die 'staged migration predates this payload; resend it'
+      # A newer snapshot of the same identity re-lands its durable records here,
+      # so work the source packed after an interrupted attempt crosses on the
+      # rerun instead of leaving it holding a digest this host will never accept
+      # again. A snapshot that has stopped carrying a record this home already
+      # holds is refused by name rather than merged over it: the receiver adds
+      # and replaces records, and never deletes one on this host.
+      jq -r '.records[].path' "$FM_HOME/.fm-migration/bundle.json" > "$temp/published.paths" \
+        || die 'cannot read the records this home already carries'
+      jq -r '.records[].path' "$temp/bundle.json" > "$temp/incoming.paths" \
+        || die 'cannot read the records this payload carries'
+      dropped=$(LC_ALL=C comm -23 <(LC_ALL=C sort "$temp/published.paths") <(LC_ALL=C sort "$temp/incoming.paths") | tr '\n' ' ')
+      dropped=${dropped% }
+      [ -z "$dropped" ] \
+        || die "this payload no longer carries records this home holds, and nothing is deleted here: $dropped"
       fm_migration_data unpack "$FM_HOME" "$id" "$temp/bundle.json" || die 'cannot refresh migration records'
       fm_migration_data check "$FM_HOME" "$id" "$temp/bundle.json" || die 'migration verification failed'
       cp "$temp/bundle.json" "$FM_HOME/.fm-migration/bundle.json"
       printf '%s\n' "$digest" > "$FM_HOME/.fm-migration/digest"
     fi
-    [ -z "$temp" ] || rm -rf -- "$temp"
+    rm -rf -- "$temp"
     printf 'verified-migration: %s %s\n' "$id" "$digest"
     fm_lock_release "$lock_dir"
     trap - EXIT
     return 0
   fi
-  [ "$action" = --migration ] || die 'migration home not yet staged'
   stage="$temp/home"
   # Decode and validate ALL records before cloning any project. This staging
   # tree is private and absent, not the existing destination home.

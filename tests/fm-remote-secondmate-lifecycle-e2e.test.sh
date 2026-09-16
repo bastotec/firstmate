@@ -516,6 +516,32 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   # A home the command refuses locally must stay usable: the refusal names what
   # it could not carry, and the archive guard that stops a frozen home starting
   # a session must not be left behind by a migration that never staged anything.
+  # Records only ever arrive or change while the source is frozen, so a snapshot
+  # that has stopped carrying one the host already holds is a signal, not a
+  # deletion instruction: it is refused by name and the host keeps its bytes.
+  migration_source drop-work
+  rc=0
+  FM_FAKE_SSH_MODE=migration-stage-unknown migrate drop-work > "$TMP_ROOT/migrate.out" 2>&1 || rc=$?
+  [ "$rc" = 255 ] || fail "staging unknown was not SSH255: $(cat "$TMP_ROOT/migrate.out")"
+  assert_present "$TMP_ROOT/migrated-drop-work/data/report/report.md" \
+    "unknown staging did not publish the remote home: $(cat "$TMP_ROOT/migrate.out")"
+  cp "$TMP_ROOT/source-drop-work/data/report/report.md" "$TMP_ROOT/report.published"
+  rm "$TMP_ROOT/source-drop-work/data/report/report.md"
+  if migrate drop-work > "$TMP_ROOT/migrate.out" 2>&1; then fail 'a snapshot that drops a published record was accepted'; fi
+  assert_grep 'data/report/report.md' "$TMP_ROOT/migrate.out" \
+    "the refusal did not name the dropped record: $(cat "$TMP_ROOT/migrate.out")"
+  cmp -s "$TMP_ROOT/report.published" "$TMP_ROOT/migrated-drop-work/data/report/report.md" \
+    || fail 'the refused rerun changed the published home instead of leaving it alone'
+  assert_grep 'drop-work - Persistent responsibility (home:' "$PARENT/data/secondmates.md" \
+    'the refused rerun switched the route'
+  printf 'report rewritten before the next attempt\n' > "$TMP_ROOT/source-drop-work/data/report/report.md"
+  out=$(migrate drop-work 2>&1) || fail "a rerun that only changes record bytes did not converge: $out"
+  cmp -s "$TMP_ROOT/source-drop-work/data/report/report.md" "$TMP_ROOT/migrated-drop-work/data/report/report.md" \
+    || fail 'a rerun that only changes record bytes did not re-land them'
+  assert_grep 'drop-work - Persistent responsibility (host:' "$PARENT/data/secondmates.md" \
+    'the converged rerun did not switch the route'
+  pass 'a rerun that drops a published record is refused by name while one that only changes bytes converges'
+
   migration_source guard-work
   lock_session() {
     FM_HOME="$TMP_ROOT/source-guard-work" FM_STATE_OVERRIDE="$TMP_ROOT/source-guard-work/state" \

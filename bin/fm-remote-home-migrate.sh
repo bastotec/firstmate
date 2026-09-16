@@ -210,7 +210,6 @@ DIGEST=$(fm_inherit_sha256 "$JOURNAL/bundle.json")
 if [ "$PHASE" = snapshot ]; then
   REMOTE_STAGED=1
   remote --stdin "$ID" fm-remote-home-provision.sh --migration "$ID" "$DIGEST" < "$JOURNAL/bundle.json" || exit $?
-  remote "$ID" fm-remote-home-provision.sh --migration-verify "$ID" "$DIGEST" || exit $?
   # Byte-for-byte check that the staged snapshot still matches before switching.
   fm_migration_data pack "$SOURCE" "$STATE" "$ID" "$REMOTE_HOME" > "$JOURNAL/recheck.json"
   cmp -s "$JOURNAL/data.json" "$JOURNAL/recheck.json" \
