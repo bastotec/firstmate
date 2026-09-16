@@ -32,8 +32,8 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | --- | --- | --- |
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
 | `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. |
-| `relaunch` | Replace the running agent with a new one in the same endpoint and worktree, on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the recorded endpoint, and the durable record names the harness that is actually running. |
-| `recover-missing` | Recreate the exact recorded terminal for a task whose tmux endpoint is missing - the window alone, or the whole session it lived in - then hand the launch to the existing owner (`fm-spawn.sh --relaunch`) on the recorded harness, model, and effort. | The backend's recovery-grade classifier proves the agent was missing, an unavailable or otherwise-owned local copy refuses rather than repairing, and the new agent is alive on the exact recreated terminal. |
+| `relaunch` | Replace the running agent with a new one in the same endpoint and worktree, on the exact recorded adapter or an explicitly chosen harness, model, effort, and account slot. | The new agent is alive on the recorded endpoint, and the durable record names the harness that is actually running. |
+| `recover-missing` | Recreate the exact recorded terminal for a task whose tmux endpoint is missing - the window alone, or the whole session it lived in - then hand the launch to the existing owner (`fm-spawn.sh --relaunch`) on the recorded harness, model, effort, and account slot. | The backend's recovery-grade classifier proves the agent was missing, an unavailable or otherwise-owned local copy refuses rather than repairing, and the new agent is alive on the exact recreated terminal. |
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
 Interrupt never rewrites busy state as proof of its own success.
@@ -59,11 +59,12 @@ It is not deterministic across the verified adapters: codex, grok, and gemini re
 `relaunch` and `recover-missing` are the only verbs that change durable records, so each runs as a transaction with a journal at `state/<id>.control-relaunch`, the prior record preserved beside it, and a ship or scout's prior instructions preserved when a progress note is appended.
 
 1. **Resolve the profile.**
-   An explicit `--harness`, `--model`, or `--effort` wins.
+   An explicit `--harness`, `--model`, `--effort`, or `--account-slot` wins.
    Otherwise a `kind=secondmate` task re-resolves its durable `config/secondmate-harness` pin, including that file's optional model and effort tokens, exactly as every other respawn does - so setting the pin and relaunching is the ordinary way to move a secondmate's runtime.
    A ship or scout keeps the harness already recorded for it, because that harness comes from firstmate's dispatch-profile judgment at intake and must not be silently re-read from configuration.
    A recorded raw-command basename that differs from its resolved adapter cannot reproduce the command actually running, so relaunch refuses before the checkpoint unless the caller passes an explicit `--harness` to choose the replacement runtime deliberately.
-   A harness change resets model and effort unless they are named too, because a model chosen for one adapter does not transfer to another.
+   A harness change resets model, effort, and any recorded account slot unless they are named too, because neither a model nor a subscription profile chosen for one adapter transfers to another.
+   `--account-slot` applies to ship and scout workers only, and it re-resolves against the home-local registry owned by [configuration.md](configuration.md#account-slots-configaccount-slotsjson) here, before anything is stopped.
 2. **Safe checkpoint.**
    The recorded worktree must exist and be a worktree root; its head and dirty state are recorded.
    For a `kind=secondmate` task, the home's identity marker must match and its child records must be readable, so a relaunch can never strand child work behind an unreadable home.
@@ -81,7 +82,7 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 `recover-missing` runs the same transaction for a task whose terminal is gone rather than agent-free, which is the one state `relaunch` cannot act on: it refuses a missing endpoint, and `fm-spawn.sh --relaunch` adopts only a surviving endpoint.
 It differs from the steps above in exactly three places.
 
-- No profile flags. `--harness`, `--model`, and `--effort` are refused; a recovery continues the same run, and choosing a different runtime is what `relaunch` is for.
+- No profile flags. `--harness`, `--model`, `--effort`, and `--account-slot` are refused; a recovery continues the same run, and choosing a different runtime or account is what `relaunch` is for.
   Only `--note`/`--note-file` apply, and a ship or scout still requires one for the same reason a relaunch does.
   Nothing is re-resolved from configuration either: every identity axis comes from the task's own durable record, so a secondmate whose `config/secondmate-harness` pin has since changed is recovered on the harness, model, and effort it actually recorded.
   Picking the changed pin up is a `relaunch`, which is the verb that deliberately re-resolves it.
@@ -92,6 +93,21 @@ It differs from the steps above in exactly three places.
   The checkpoint still records what it found, so the journal says whether the rescued copy was dirty.
 - No stop step. Nothing is running, so step 4 is replaced by recreating the window under the recorded `fm-<id>` name in the recorded session and worktree, then waiting on a bounded budget for the new terminal to hold an agent-free state before step 5 hands it to the same launch owner.
   A login shell that is still running its rc files reads `ambiguous` while each of them owns the pane, and the launch owner takes one un-retried state read that must be `dead`, so the state has to hold rather than merely be observed once.
+
+#### A signed-out account slot with a missing terminal
+
+One combination cannot be brought back through either verb.
+It happens when a worker was launched on an account slot, that slot's store no longer holds a usable credential - for example after signing out of that account under the store - and then the worker's terminal or its whole session is gone.
+
+- `recover-missing` refuses while resolving the recorded slot, before it reads the endpoint, reporting that the slot's store holds no vendor-managed credential.
+- `relaunch` refuses the same way without flags. With `--account-slot default` it gets past the slot and then refuses because the terminal is gone and there is no agent to stop.
+
+These refusals are intended, not a bug.
+The worker's local copy and its uncommitted work are untouched, and each verb stops rather than guessing which account a rescued worker should spend.
+There are two ways out:
+
+1. Sign in again under that slot's store, so the recorded slot resolves, then run `recover-missing`.
+2. Remove the `account_slot=` line from the task's `state/<id>.meta` record by hand, then run `recover-missing`. The worker comes back on the harness's normal credentials instead of a slot.
 
 ### Failure and rollback
 

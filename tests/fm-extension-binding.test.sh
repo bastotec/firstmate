@@ -102,6 +102,7 @@ extension_test_cleanup() {
     (
       # worker.pid names the serving child; the copied remote helper stops its
       # known isolated supervisor tree so it cannot respawn during teardown.
+      # shellcheck source=/dev/null
       . "$REMOTE_ROOT/bin/fm-remote-job-lib.sh"
       fm_remote_job_stop_worker_tree "$(cat "$TMP_ROOT/remote-jobs/worker.pid")"
     ) 2>/dev/null || true
@@ -1925,7 +1926,7 @@ for transfer_case in traversal symlink hash size duplicate unexpected; do
     traversal) transfer_error="path-unsafe" ;;
     symlink) transfer_error="package-invalid" ;;
     hash) transfer_error=integrity-mismatch ;;
-    size|duplicate) transfer_error=schema-invalid ;;
+    size|duplicate) transfer_error="schema-invalid" ;;
     unexpected) transfer_error="package-invalid" ;;
   esac
   expect_failure "$transfer_error" remote_receive_file_direct "$bad_transfer" ext-remote

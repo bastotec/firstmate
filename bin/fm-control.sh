@@ -6,6 +6,7 @@
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
+#                                         [--account-slot <id|default>]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> recover-missing
 #                                         (--note <text> | --note-file <path>)
@@ -153,6 +154,7 @@ fi
 }
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 [ -d "$STATE" ] || {
   echo "error: state dir '$STATE' is missing; fm-control cannot resolve tasks for FM_HOME '$FM_HOME'" >&2
   exit 1
@@ -168,6 +170,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-account-slot-lib.sh
+. "$SCRIPT_DIR/fm-account-slot-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -225,9 +229,11 @@ fi
 NEW_HARNESS=
 NEW_MODEL=
 NEW_EFFORT=
+NEW_ACCOUNT_SLOT=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+ACCOUNT_SLOT_SET=0
 NOTE=
 NOTE_SET=0
 control_want_value=
@@ -240,6 +246,7 @@ for control_arg in "$@"; do
       harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
+      account_slot) NEW_ACCOUNT_SLOT=$control_arg; ACCOUNT_SLOT_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
@@ -257,6 +264,8 @@ for control_arg in "$@"; do
     --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
+    --account-slot) control_want_value=account_slot ;;
+    --account-slot=*) NEW_ACCOUNT_SLOT=${control_arg#--account-slot=}; ACCOUNT_SLOT_SET=1 ;;
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
@@ -277,19 +286,20 @@ case "$VERB" in
   relaunch) ;;
   recover-missing)
     # A recovery recreates the recorded terminal and continues the SAME run, so
-    # it carries the recorded harness, model, and effort through unchanged.
-    # Choosing a different runtime is what 'relaunch' is for.
-    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] \
-      || die "--harness, --model, and --effort apply to 'relaunch' only; 'recover-missing' continues the recorded runtime"
+    # it carries the recorded harness, model, effort, and account slot through
+    # unchanged. Choosing a different runtime is what 'relaunch' is for.
+    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$ACCOUNT_SLOT_SET" = 0 ] \
+      || die "--harness, --model, --effort, and --account-slot apply to 'relaunch' only; 'recover-missing' continues the recorded runtime"
     ;;
   *)
-    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-      || die "--harness, --model, and --effort apply to 'relaunch' only, and --note to 'relaunch' or 'recover-missing' only"
+    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$ACCOUNT_SLOT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
+      || die "--harness, --model, --effort, and --account-slot apply to 'relaunch' only, and --note to 'relaunch' or 'recover-missing' only"
     ;;
 esac
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
+[ "$ACCOUNT_SLOT_SET" = 0 ] || [ -n "$NEW_ACCOUNT_SLOT" ] || die "--account-slot requires a non-empty value"
 case "$NEW_EFFORT" in
   ''|default|low|medium|high|xhigh|max|ultra) ;;
   *) die "--effort must be one of default, low, medium, high, xhigh, max, ultra" ;;
@@ -611,6 +621,8 @@ PRIOR_EFFORT=
 TARGET_HARNESS=$HARNESS
 TARGET_MODEL=
 TARGET_EFFORT=
+PRIOR_ACCOUNT_SLOT=
+TARGET_ACCOUNT_SLOT=
 
 journal_write() {  # <phase> [extra-line]...
   local phase=$1
@@ -627,9 +639,11 @@ journal_write() {  # <phase> [extra-line]...
     echo "from_harness=$PRIOR_RECORDED_HARNESS"
     echo "from_model=$PRIOR_MODEL"
     echo "from_effort=$PRIOR_EFFORT"
+    echo "from_account_slot=$PRIOR_ACCOUNT_SLOT"
     echo "to_harness=$TARGET_HARNESS"
     echo "to_model=$TARGET_MODEL"
     echo "to_effort=$TARGET_EFFORT"
+    echo "to_account_slot=$TARGET_ACCOUNT_SLOT"
     local line
     for line in "$@"; do
       echo "$line"
@@ -736,6 +750,7 @@ resolve_relaunch_profile() {
   PRIOR_RECORDED_HARNESS=$RECORDED_HARNESS
   PRIOR_MODEL=$(fm_meta_get "$META" model)
   PRIOR_EFFORT=$(fm_meta_get "$META" effort)
+  PRIOR_ACCOUNT_SLOT=$(fm_meta_get "$META" account_slot)
   [ -n "$PRIOR_MODEL" ] || PRIOR_MODEL=default
   [ -n "$PRIOR_EFFORT" ] || PRIOR_EFFORT=default
   if [ "$HARNESS_SET" = 0 ] \
@@ -818,6 +833,31 @@ resolve_relaunch_profile() {
   fi
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
+  fi
+  if [ "$KIND" = secondmate ] && [ "$ACCOUNT_SLOT_SET" = 1 ]; then
+    die "--account-slot does not apply to persistent secondmate agents"
+  fi
+  if [ "$ACCOUNT_SLOT_SET" = 1 ]; then
+    if [ "$NEW_ACCOUNT_SLOT" = default ]; then
+      TARGET_ACCOUNT_SLOT=
+    else
+      TARGET_ACCOUNT_SLOT=$NEW_ACCOUNT_SLOT
+    fi
+  elif [ "$TARGET_HARNESS" = "$PRIOR_HARNESS" ]; then
+    TARGET_ACCOUNT_SLOT=$PRIOR_ACCOUNT_SLOT
+  else
+    TARGET_ACCOUNT_SLOT=
+  fi
+  if [ -n "$TARGET_ACCOUNT_SLOT" ]; then
+    case "$TARGET_HARNESS" in
+      claude|codex) ;;
+      *) die "account slots are supported only for claude and codex workers" ;;
+    esac
+    # A relaunch re-resolves the local binding before touching the old worker
+    # or publishing its progress note, so a slot that is gone or signed out
+    # refuses while the current agent is still running.
+    fm_account_slot_resolve "$CONFIG" "$TARGET_ACCOUNT_SLOT" "$TARGET_HARNESS" \
+      || die "$FM_ACCOUNT_SLOT_ERROR"
   fi
 }
 
@@ -969,6 +1009,11 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
+  if [ -n "$TARGET_ACCOUNT_SLOT" ]; then
+    spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
+  elif [ "$ACCOUNT_SLOT_SET" = 1 ] || [ -n "$PRIOR_ACCOUNT_SLOT" ]; then
+    spawn_args+=(--account-slot default)
+  fi
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
@@ -985,7 +1030,7 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
-  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
+  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_ACCOUNT_SLOT:+ account_slot=$TARGET_ACCOUNT_SLOT} backend=$BACKEND endpoint=$T worktree=$WT"
 }
 
 do_recover_missing() {
@@ -1085,6 +1130,10 @@ do_recover_missing() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
+  # A recovery continues the recorded runtime, and the account slot is part of
+  # it: without this the replacement worker would come back on the ambient
+  # account instead of the subscription the record names.
+  [ -z "$TARGET_ACCOUNT_SLOT" ] || spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
@@ -1101,7 +1150,7 @@ do_recover_missing() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=recreated"
   RELAUNCH_ACTIVE=0
-  echo "recovered $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$wt"
+  echo "recovered $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_ACCOUNT_SLOT:+ account_slot=$TARGET_ACCOUNT_SLOT} backend=$BACKEND endpoint=$T worktree=$wt"
 }
 
 # --- verbs ------------------------------------------------------------------

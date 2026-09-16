@@ -72,6 +72,7 @@ LOCKS=()
 FROZE_HERE=0
 REMOTE_STAGED=0
 cleanup() { local lock; for lock in ${LOCKS[@]+"${LOCKS[@]}"}; do fm_lock_release "$lock" || true; done; }
+# shellcheck disable=SC2329 # Invoked by the EXIT trap below.
 unwind() {
   local status=$?
   if [ "$status" -ne 0 ] && [ "$FROZE_HERE" = 1 ] && [ "$REMOTE_STAGED" = 0 ]; then
