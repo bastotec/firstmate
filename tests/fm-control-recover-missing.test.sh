@@ -13,8 +13,10 @@
 #      durable record and the instructions byte-identical: a live or ambiguous
 #      endpoint, an absent or dirty local copy, and a pool slot claimed by
 #      another task or carrying an unreadable claim.
-#   3. The runtime is not switchable here: --harness/--model/--effort belong to
-#      `relaunch`, and recovery continues the recorded profile.
+#   3. The runtime is not switchable here: --harness/--model/--effort and
+#      --account-slot belong to `relaunch`, and recovery continues the recorded
+#      profile - including the subscription account the record names, so a
+#      rescue never quietly falls back to the ambient one.
 #   4. The backends recovery refuses, and what it tells the operator when the
 #      launch handoff fails after the terminal is already back.
 set -u
@@ -249,6 +251,24 @@ pool_slot_worktree() {  # <case-dir>
   mkdir -p "$pool/1"
   printf '{}\n' > "$pool/treehouse-state.json"
   printf '%s\n' "$pool/1/checkout"
+}
+
+# A home whose account-slot registry binds one claude slot to a local
+# credential store. fm_account_slot_resolve reads the registry and the store
+# alone - no quota evidence is consulted for an explicitly recorded slot - so
+# this fixture stays to the local binding the rescue actually re-resolves.
+configure_recover_slots() { # <case-dir>
+  local home="$1/home" claude_store="$1/claude-profile"
+  mkdir -p "$home/config" "$claude_store"
+  chmod 700 "$home/config" "$claude_store"
+  printf '{}\n' > "$claude_store/.credentials.json"
+  chmod 600 "$claude_store/.credentials.json"
+  cat > "$home/config/account-slots.json" <<JSON
+{"version":1,"slots":{
+  "claude-a":{"harness":"claude","storePath":"$claude_store","expectedAccountId":"test-account"}
+}}
+JSON
+  chmod 600 "$home/config/account-slots.json"
 }
 
 run_control() {  # <case-dir> <args...>
@@ -619,7 +639,7 @@ test_recover_missing_rejects_runtime_switch_flags() {
   add_ship_task "$dir" rm9
   make_endpoint_missing "$dir"
 
-  for flag in "--harness codex" "--model opus" "--effort high"; do
+  for flag in "--harness codex" "--model opus" "--effort high" "--account-slot claude-a"; do
     # shellcheck disable=SC2086 # the flag pair is deliberately split.
     out=$(run_control "$dir" rm9 recover-missing --note "recover" $flag); rc=$?
     expect_code 1 "$rc" "recover-missing must reject '$flag'"$'\n'"$out"
@@ -808,6 +828,46 @@ test_recover_missing_refuses_an_untracked_source_file() {
   pass "fm-control recover-missing: untracked work that is not a spawn leftover still refuses"
 }
 
+test_recover_missing_preserves_the_recorded_account_slot() {
+  local dir out rc
+  dir=$(new_case account-slot rm20)
+  add_ship_task "$dir" rm20
+  configure_recover_slots "$dir"
+  printf 'account_slot=claude-a\n' >> "$dir/home/state/rm20.meta"
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" rm20 recover-missing --note "the terminal was closed out from under it"); rc=$?
+  expect_code 0 "$rc" "recovering a slotted task should succeed"$'\n'"$out"
+  assert_contains "$out" "account_slot=claude-a" "the outcome should name the account the rescue continued on"
+  assert_equals claude-a "$(meta_field "$dir" rm20 account_slot)" "recovery dropped the recorded account slot"
+  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$dir/claude-profile'" \
+    "the recovered launch did not bind the recorded slot's store"
+  assert_not_contains "$out" "$dir/claude-profile" "the outcome leaked the account's credential path"
+  assert_not_contains "$out" "test-account" "the outcome leaked the account identity"
+  assert_not_contains "$(cat "$dir/home/state/rm20.control-relaunch")" "$dir/claude-profile" \
+    "the transaction journal leaked the account's credential path"
+  assert_not_contains "$(cat "$dir/home/state/rm20.control-relaunch")" "test-account" \
+    "the transaction journal leaked the account identity"
+  pass "fm-control recover-missing: the recorded account slot survives the rescue, by logical id alone"
+}
+
+test_recover_missing_refuses_a_slot_its_home_no_longer_binds() {
+  local dir out rc
+  dir=$(new_case account-slot-gone rm21)
+  add_ship_task "$dir" rm21
+  configure_recover_slots "$dir"
+  printf 'account_slot=claude-a\n' >> "$dir/home/state/rm21.meta"
+  rm -f "$dir/home/config/account-slots.json"
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" rm21 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "a recovery whose account binding is gone must refuse"$'\n'"$out"
+  assert_contains "$out" "config/account-slots.json is missing" "the refusal should name the missing local binding"
+  [ ! -s "$dir/fake/created-windows" ] || fail "a refused recovery must not create a terminal"
+  assert_equals claude-a "$(meta_field "$dir" rm21 account_slot)" "a refusal must leave the durable record untouched"
+  pass "fm-control recover-missing: an unbindable account slot refuses instead of falling back to the ambient account"
+}
+
 test_recover_missing_recreates_a_gone_session_before_the_window
 test_recover_missing_does_not_recreate_a_session_that_is_still_alive
 test_recover_missing_refuses_when_the_session_cannot_be_recreated
@@ -831,4 +891,6 @@ test_recover_missing_refusal_names_the_postcondition_it_cannot_prove
 test_recover_missing_refuses_a_basename_harness_without_naming_a_rejected_flag
 test_recover_missing_rejects_runtime_switch_flags
 test_recover_missing_requires_a_note_for_a_ship_task
+test_recover_missing_preserves_the_recorded_account_slot
+test_recover_missing_refuses_a_slot_its_home_no_longer_binds
 echo "PASS: fm-control-recover-missing"
