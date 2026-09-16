@@ -222,8 +222,11 @@
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
 #   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo
-#   applies to every pair. A ship batch therefore carries one delivery contract, and each
-#   pair still checks it against its own brief; a batch spanning modes is two invocations.
+#   applies to every pair. --account-slot is the exception: it is single-task only, and
+#   a batch of more than one pair refuses it, because one slot is one subscription and
+#   every worker needs its own resolved slot. A ship batch therefore carries one delivery
+#   contract, and each pair still checks it against its own brief; a batch spanning modes
+#   is two invocations.
 #   If config/crew-dispatch.json exists, shared --harness is required for crewmate
 #   and scout batches. The loop lives here, in bash, so callers never hand-write a
 #   multi-task shell loop (the tool shell is zsh, which does not word-split unquoted

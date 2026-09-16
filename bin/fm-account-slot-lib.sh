@@ -231,7 +231,7 @@ fm_account_slot_resolve() { # <config-dir> <slot> [harness]
 }
 
 fm_account_slot_probe() { # <config-dir> <slot>
-  local config=$1 slot=$2 harness path raw rc now selector
+  local config=$1 slot=$2 harness path raw rc now selector verdict
   FM_ACCOUNT_SLOT_ERROR=
   fm_account_slot_resolve "$config" "$slot" || return 1
   harness=$FM_ACCOUNT_SLOT_HARNESS
@@ -273,12 +273,13 @@ fm_account_slot_probe() { # <config-dir> <slot>
     return 1
   fi
   now=$(date +%s)
-  if ! jq -e --arg provider "$harness" \
+  verdict=$(jq -r --arg provider "$harness" \
       --arg account_id "$FM_ACCOUNT_SLOT_EXPECTED_ACCOUNT_ID" \
       --argjson now "$now" --argjson max_age 900 --argjson future 60 '
     def epoch: (sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null);
     def recent($v): ($v | type) == "string" and (($v | epoch) as $t | $t != null and $t <= ($now + $future) and $t >= ($now - $max_age));
     def isolated_sources($p): if $p == "claude" then ["oauth-file","keychain"] else ["oauth"] end;
+    def sound:
     .schemaVersion == 5 and (.providers | type) == "array" and (.providers | length) == 1 and
     recent(.generatedAt) and
     (.providers[0] as $p |
@@ -286,10 +287,8 @@ fm_account_slot_probe() { # <config-dir> <slot>
       ($p.state | type) == "object" and $p.state.status == "fresh" and $p.state.stale == false and
       ($p.account | type) == "object" and
       (($p.account.identityStatus? == null) or $p.account.identityStatus == "verified") and
-      $p.account.accountId == $account_id and
       ([ $p.attempts[]? | select(.status == "success") ] as $succeeded |
-        any($succeeded[]; . as $a | (isolated_sources($provider) | index($a.source)) != null) and
-        all($succeeded[]; . as $a | ($a.accountId? == null) or $a.accountId == $account_id)) and
+        any($succeeded[]; . as $a | (isolated_sources($provider) | index($a.source)) != null)) and
       ($p.quotaSemantics | type) == "object" and
       ($p.quotaSemantics.status as $s | (["known","partial","unknown"] | index($s)) != null) and
       ($p.quotaSemantics.effectiveAvailability | type) == "array" and
@@ -304,8 +303,21 @@ fm_account_slot_probe() { # <config-dir> <slot>
           ((.selection.status == "known" and (.selection.spendPriority | type) == "number") or
            (.selection.status == "unknown" and (.selection | has("spendPriority") | not))))
       )
-    )
-  ' "$raw" >/dev/null 2>&1; then
+    );
+    def matches_expected_identity:
+    (.providers[0] as $p |
+      $p.account.accountId == $account_id and
+      all($p.attempts[]? | select(.status == "success"); (.accountId? == null) or .accountId == $account_id));
+    if (try sound catch false) | not then "evidence"
+    elif (try matches_expected_identity catch false) | not then "identity"
+    else "ok" end
+  ' "$raw" 2>/dev/null) || verdict=evidence
+  if [ "$verdict" = identity ]; then
+    rm -f "$raw"
+    fm_account_slot_fail "slot '$slot' quota evidence reports a different account than the expectedAccountId configured for it"
+    return 1
+  fi
+  if [ "$verdict" != ok ]; then
     rm -f "$raw"
     fm_account_slot_fail "slot '$slot' returned stale, mismatched, or malformed quota evidence"
     return 1

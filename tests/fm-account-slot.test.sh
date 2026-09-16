@@ -340,9 +340,31 @@ for mode in mismatch wrong-source stale; do
       "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null 2>"$TMP_ROOT/$mode.err"; then
     fail "$mode quota evidence was accepted"
   fi
+done
+for mode in wrong-source stale; do
   assert_contains "$(cat "$TMP_ROOT/$mode.err")" "stale, mismatched, or malformed quota evidence" "$mode refusal was not concrete"
 done
 pass "rejects stale, wrong-source, and mismatched-account evidence"
+
+# A mistyped expectedAccountId and a stale document are different operator
+# problems - edit the registry versus refresh or reinstall the producer - so
+# they must not share one reason. Both still name only the logical slot.
+identity_reason=$(cat "$TMP_ROOT/mismatch.err")
+stale_reason=$(cat "$TMP_ROOT/stale.err")
+assert_contains "$identity_reason" "expectedAccountId" "an identity mismatch did not name the setting the operator must correct"
+assert_not_contains "$identity_reason" "stale, mismatched, or malformed quota evidence" "an identity mismatch was reported as stale or malformed evidence"
+[ "$identity_reason" != "$stale_reason" ] \
+  || fail "an identity mismatch and a stale document produced the same reason"
+for secret in claude-account-a claude-account-b wrong-account private@example.invalid "$HOME_DIR/profiles/claude-a" /private/credential; do
+  assert_not_contains "$identity_reason" "$secret" "identity mismatch refusal leaked an account identity or credential path"
+done
+if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+    FAKE_ATTEMPTS='[{"source":"oauth-file","status":"success","accountId":"claude-account-b"}]' \
+    "$ROOT/bin/fm-account-slot.sh" probe claude-a >/dev/null 2>"$TMP_ROOT/attempt-identity.err"; then
+  fail "a successful attempt naming another account was accepted"
+fi
+assert_contains "$(cat "$TMP_ROOT/attempt-identity.err")" "expectedAccountId" "a cross-account attempt was not reported as an identity mismatch"
+pass "reports an identity mismatch as its own reason, never as stale or malformed evidence"
 
 : > "$CALLS"
 PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
