@@ -1229,6 +1229,34 @@ SH
   mv "$case_dir/inherited-registry" "$case_dir/home/config/account-slots.json"
   chmod 600 "$case_dir/home/config/account-slots.json"
   pass "bootstrap validates account-slot registries and references without probing providers or gating on quota-axi"
+
+  # jq ships in a system BASE_PATH dir on many hosts, so mask it the same way the
+  # json-backend case does to keep this assertion host-independent.
+  local no_jq="$case_dir/no-jq.bash"
+  cat > "$no_jq" <<'SH'
+command() {
+  if [ "${1:-}" = -v ] && [ "${2:-}" = jq ]; then
+    return 1
+  fi
+  builtin command "$@"
+}
+jq() {
+  return 127
+}
+SH
+  out=$(PATH="$fakebin:$BASE_PATH" BASH_ENV="$no_jq" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "MISSING: jq (install:" "a valid registry on a host without jq lost the only jq install instruction"
+  assert_not_contains "$out" "CREW_DISPATCH: invalid config/account-slots.json" \
+    "a missing jq prerequisite was reported as invalid account-slot configuration"
+  mv "$case_dir/home/config/crew-dispatch.json" "$case_dir/registry-only-dispatch"
+  out=$(PATH="$fakebin:$BASE_PATH" BASH_ENV="$no_jq" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "MISSING: jq (install:" "a registry with no dispatch rules on a host without jq lost the jq install instruction"
+  assert_not_contains "$out" "CREW_DISPATCH: invalid config/account-slots.json" \
+    "a missing jq prerequisite was reported as invalid account-slot configuration"
+  mv "$case_dir/registry-only-dispatch" "$case_dir/home/config/crew-dispatch.json"
+  pass "reports an absent jq as the missing prerequisite it is, never as invalid slot configuration"
 }
 
 test_bootstrap_reporting

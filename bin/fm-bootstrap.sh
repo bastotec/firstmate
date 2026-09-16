@@ -1104,19 +1104,22 @@ EOF
 }
 
 crew_dispatch_validate() {
-  local file err
+  local file err registry
   file="$CONFIG/crew-dispatch.json"
-  if [ -e "$CONFIG/account-slots.json" ] || [ -L "$CONFIG/account-slots.json" ]; then
+  registry="$CONFIG/account-slots.json"
+  if [ -e "$registry" ] || [ -L "$registry" ] || [ -f "$file" ]; then
+    if ! command -v jq >/dev/null 2>&1; then
+      echo "MISSING: jq (install: $(install_cmd jq))"
+      return 0
+    fi
+  fi
+  if [ -e "$registry" ] || [ -L "$registry" ]; then
     if ! fm_account_slot_validate_registry "$CONFIG"; then
       echo "CREW_DISPATCH: invalid config/account-slots.json - $FM_ACCOUNT_SLOT_ERROR"
       return 0
     fi
   fi
   [ -f "$file" ] || return 0
-  if ! command -v jq >/dev/null 2>&1; then
-    echo "MISSING: jq (install: $(install_cmd jq))"
-    return 0
-  fi
   if ! jq -e . "$file" >/dev/null 2>&1; then
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON"
     return 0
