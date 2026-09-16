@@ -479,7 +479,7 @@ CLAUDE_CONFIG_DIR=<storePath> quota-axi --provider claude --full --json --no-cre
 CODEX_HOME=<storePath> quota-axi --provider codex --full --json --no-credential-refresh | jq -r '.providers[0].account.accountId'
 ```
 
-A slot whose `expectedAccountId` does not match what its store reports is refused by its own reason naming that identity mismatch, distinct from the stale or malformed evidence reason, so a mistyped id is never mistaken for producer drift.
+A slot whose `expectedAccountId` does not match what its store reports is refused by its own reason naming that identity mismatch, distinct from the stale or malformed evidence reason, so a mistyped id is never mistaken for producer drift; a document whose account carries no string `accountId` is that malformed evidence, not a mismatch.
 Canonical store paths must be unique absolute existing directories owned by the current user, directly named rather than symlinked, and have no group or world permissions.
 The registry and every vendor credential file that is present must be readable, current-user-owned, non-symlink regular files with one hard link and no group or world permissions; a credential file that is present but insecure is a reported configuration error, not a quietly unavailable slot.
 A slot with no credential in its store - after `claude` or `codex logout`, say - is that one slot being unavailable; it never invalidates the registry or blocks routing to the home's other slots.
