@@ -91,6 +91,21 @@ It differs from the steps above in exactly three places.
 - No stop step. Nothing is running, so step 4 is replaced by recreating the window under the recorded `fm-<id>` name in the recorded session and worktree, then waiting on a bounded budget for the new terminal to hold an agent-free state before step 5 hands it to the same launch owner.
   A login shell that is still running its rc files reads `ambiguous` while each of them owns the pane, and the launch owner takes one un-retried state read that must be `dead`, so the state has to hold rather than merely be observed once.
 
+#### A signed-out account slot with a missing terminal
+
+One combination cannot be brought back through either verb.
+It happens when a worker was launched on an account slot, that slot's store no longer holds a usable credential - for example after signing out of that account under the store - and then the worker's terminal or its whole session is gone.
+
+- `recover-missing` refuses while resolving the recorded slot, before it reads the endpoint, reporting that the slot's store holds no vendor-managed credential.
+- `relaunch` refuses the same way without flags. With `--account-slot default` it gets past the slot and then refuses because the terminal is gone and there is no agent to stop.
+
+These refusals are intended, not a bug.
+The worker's local copy and its uncommitted work are untouched, and each verb stops rather than guessing which account a rescued worker should spend.
+There are two ways out:
+
+1. Sign in again under that slot's store, so the recorded slot resolves, then run `recover-missing`.
+2. Remove the `account_slot=` line from the task's `state/<id>.meta` record by hand, then run `recover-missing`. The worker comes back on the harness's normal credentials instead of a slot.
+
 ### Failure and rollback
 
 - A refusal **before** the agent is stopped leaves the durable record and the instructions byte-identical.
