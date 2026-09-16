@@ -160,7 +160,7 @@ fm_backend_tmux_send_text_line() {  # <target> <text>
 #
 # The gate samples the mode once and cannot hold it, so it closes the measured
 # cause without making the send atomic - see docs/verification/runtime-backends.md
-# "Readiness is sampled, not held" for what remains.
+# "Known limitation: readiness is sampled, not held" for what remains.
 #
 # Exit status 2 is the gate refusing a busy pane, and is distinct from 1 so
 # callers can tell it from `tmux send-keys` itself failing - a dead server or a

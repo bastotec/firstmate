@@ -100,6 +100,15 @@ A second, baseline-gated conversion covers harnesses whose mid-turn screen the c
 Without that baseline, an `unknown` verdict is preserved untouched, so a busy-looking pane can never convert an unread composer into a confirmation.
 `tests/fm-tmux-submit-busy.test.sh` covers busy and idle panes with proven, ambiguous, and cleared composers.
 
+### Launch command delivery
+
+A spawn's launch command is long enough to hit a limit a short steer never does.
+A pane whose shell is still running something has its tty in canonical mode, where the kernel buffers the line and silently discards the whole thing past its buffer limit - which is how a ~1117-byte launch command vanished and left no worker started.
+The literal send on the launch path therefore waits for the pane to start reading input before typing, bounded by `FM_PANE_READY_TIMEOUT` (5 seconds), and refuses by name rather than typing a line the pane would drop.
+`bin/fm-spawn.sh` records that refusal as a `failed:` status line naming the reason and exits nonzero instead of sending Enter, so a truncated launch is a reported failure rather than a worker that silently never starts.
+The gate samples the pane's mode and cannot hold it, so it closes the measured cause without making the send atomic.
+[`verification/runtime-backends.md`](verification/runtime-backends.md#pane-input-readiness) owns the measured boundary, that remaining limitation, and why splitting the send into chunks is not the fix.
+
 ## Limits and regression entry points
 
 - tmux is the reference path and supports secondmate homes.
@@ -114,6 +123,7 @@ tests/fm-cursor-harness.test.sh
 tests/fm-muse-harness.test.sh
 tests/fm-omp-harness.test.sh
 tests/fm-tmux-submit-busy.test.sh
+tests/fm-tmux-long-launch.test.sh
 tests/fm-bootstrap.test.sh
 ```
 
