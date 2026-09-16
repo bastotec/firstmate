@@ -149,6 +149,7 @@ Observed output:
 ok - fm_backend_tmux_send_literal: a 1634-byte launch command starts a worker on a busy pane
 ok - pane that never becomes ready refuses loudly and names the reason
 ok - text the pane silently discarded is refused, not reported as delivered
+ok - an identical earlier send on the pane does not confirm a discarded one
 ok - fm_tmux_wait_pane_input_ready: unreadable tty mode stays permissive
 ok - fm_tmux_wait_pane_input_ready: a ready pane returns without spending the budget
 ```
@@ -163,11 +164,16 @@ The readiness read tries BSD `stty -f` and GNU `stty -F`, so it works on both pl
 
 The gate reads the pane's mode once and types immediately after; it does not make the send atomic.
 A pane draining a queue of earlier buffered lines oscillates between canonical and raw - the shell flips to raw for its line editor, consumes one line, flips back to canonical while that line runs, and so on - so a sample taken in one of those raw windows can be followed by a flip back to canonical before the text lands.
-The gate cannot close that race, so `fm_backend_tmux_send_literal` does not assume the send landed: it captures the pane with `tmux capture-pane -p -J`, strips whitespace from both sides of the comparison so wrapped and padded rows do not matter, and requires the last 60 characters of what it sent to be on the pane, retrying the check once for rendering.
+The gate cannot close that race, so `fm_backend_tmux_send_literal` does not assume the send landed: it captures the pane with `tmux capture-pane -p -J -S -200`, strips whitespace from both sides of the comparison so wrapped and padded rows do not matter, and requires the last 60 characters of what it sent to APPEAR on the pane.
 
 The tail is the probe because the limit drops the END of the line.
 Measured on the same host: a 1417-byte command typed into a canonical pane echoed 1221 bytes and stopped, so its opening marker was on the pane and its closing marker was not; the identical command into a pane at its prompt rendered whole, closing marker included, at 80 columns as well as 200.
-A pane that cannot be captured at all is reported as unconfirmed rather than as delivered.
+
+It has to be the tail arriving rather than the tail being present, because `relaunch` adopts the recorded window without clearing it and re-sends a byte-identical launch command - the previous launch's own tail is still on that pane, and a present-or-absent test would read it as proof that a discarded line landed.
+So the probe is counted before the send and confirmation requires the count to rise; the capture reaches 200 lines into the scrollback so that typing a line long enough to push earlier rows off the visible screen cannot make the earlier occurrence disappear mid-check.
+
+Confirmation is polled on the same budget the readiness wait spends (`FM_PANE_READY_TIMEOUT`, 5s by default), not on a fixed short sleep: a send that landed still has to render, and a login shell re-highlighting a couple of thousand bytes takes an ordinary amount of time.
+A pane that cannot be captured, before or after the send, is reported as unconfirmed rather than as delivered.
 
 So the race remains possible and is no longer silent: the send refuses with status 3, `bin/fm-spawn.sh` records `launch command not delivered: the command did not reach window <T> whole, so delivery could not be confirmed`, and no Enter is sent - the partial text stays unsubmitted in the pane.
 

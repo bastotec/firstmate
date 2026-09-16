@@ -215,7 +215,7 @@ test_unlanded_text_is_refused_not_reported_delivered() {
   (
     # shellcheck disable=SC2329
     fm_tmux_wait_pane_input_ready() { return 0; }
-    fm_backend_tmux_send_literal "$SESSION:$window" "$cmd"
+    FM_PANE_READY_TIMEOUT=1 fm_backend_tmux_send_literal "$SESSION:$window" "$cmd"
   ) 2>"$err" || status=$?
   [ "$status" -eq 3 ] \
     || fail "text the pane discarded must be refused as undelivered, got status $status"
@@ -224,6 +224,68 @@ test_unlanded_text_is_refused_not_reported_delivered() {
   grep -q "$window" "$err" \
     || fail "refusal did not name the pane, got: $(cat "$err")"
   pass "text the pane silently discarded is refused, not reported as delivered"
+}
+
+# --- the previous launch's own text must not confirm a lost one ---------------
+
+test_earlier_identical_send_does_not_confirm_a_lost_one() {
+  local dir window cmd err status i
+  dir="$TMP_ROOT/relaunch-echo"
+  mkdir -p "$dir"
+  window="relaunch-echo"
+  err="$dir/stderr"
+  cmd=$(long_launch_command "$dir/marker" "$dir/payload" 1400)
+
+  # The relaunch path adopts the recorded window without clearing it and re-sends
+  # a byte-identical launch command, so the previous launch's own tail is still on
+  # the pane. First put it there, exactly as a successful launch would.
+  tmux new-window -d -t "$SESSION" -n "$window" "/bin/bash --noprofile --norc -i" \
+    || fail "could not create window $window"
+  i=0
+  while [ "$i" -lt 100 ]; do
+    [ "$(probe_mode "$SESSION:$window")" = raw ] && break
+    sleep 0.05
+    i=$((i + 1))
+  done
+  fm_backend_tmux_send_literal "$SESSION:$window" "$cmd" \
+    || fail "the first send into a ready pane should be confirmed"
+  fm_backend_tmux_send_key "$SESSION:$window" Enter
+  wait_for_file "$dir/marker" 120 \
+    || fail "fixture's first launch did not start a worker"
+
+  # Now the same command again, into the same window, while it is busy: the
+  # canonical-mode limit discards it, and the tail left by the first send is the
+  # only one on the pane.
+  tmux send-keys -t "$SESSION:$window" -l "sleep 4"
+  tmux send-keys -t "$SESSION:$window" Enter
+  i=0
+  while [ "$i" -lt 100 ]; do
+    [ "$(probe_mode "$SESSION:$window")" = canonical ] && break
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ "$(probe_mode "$SESSION:$window")" = canonical ] \
+    || fail "relaunch fixture did not reach canonical mode"
+
+  # Without this the case would pass for the wrong reason: the point is that the
+  # earlier send's tail IS on the pane when the second one is discarded.
+  local tail_probe
+  tail_probe=$(printf '%s' "$cmd" | tr -d '[:space:]')
+  tail_probe=${tail_probe: -60}
+  case "$(tmux capture-pane -p -J -S -200 -t "$SESSION:$window" | tr -d '[:space:]')" in
+    *"$tail_probe"*) ;;
+    *) fail "relaunch fixture does not hold the earlier send's tail, so it proves nothing" ;;
+  esac
+
+  status=0
+  (
+    # shellcheck disable=SC2329
+    fm_tmux_wait_pane_input_ready() { return 0; }
+    FM_PANE_READY_TIMEOUT=1 fm_backend_tmux_send_literal "$SESSION:$window" "$cmd"
+  ) 2>"$err" || status=$?
+  [ "$status" -eq 3 ] \
+    || fail "the earlier send's own tail must not confirm a discarded re-send, got status $status"
+  pass "an identical earlier send on the pane does not confirm a discarded one"
 }
 
 # --- an unreadable tty must stay permissive -----------------------------------
@@ -269,5 +331,6 @@ test_ready_pane_returns_immediately() {
 test_long_launch_starts_a_worker
 test_never_ready_pane_refuses_loudly
 test_unlanded_text_is_refused_not_reported_delivered
+test_earlier_identical_send_does_not_confirm_a_lost_one
 test_unreadable_mode_is_treated_as_ready
 test_ready_pane_returns_immediately
