@@ -1,0 +1,15 @@
+== the worker's mid-work local copy ==
+ M README.md
+A  staged.txt
+?? new-source.sh
+
+== the terminal window is gone ==
+  window: placeholder
+
+== $ bin/fm-control.sh live3 recover-missing --note '...'   (tool at f659839, before the fix) ==
+error: worktree /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.kM4WH0/wt has uncommitted changes; refusing to recover rather than cleaning it
+exit=1
+
+== the endpoint afterwards ==
+  window: placeholder
+S3 exit=1

@@ -1,0 +1,20 @@
+== the slot is dirty and claimed by another task ==
+   M README.md
+  ?? new-source.sh
+  .fm-slot-owner: task=someone-else home=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.JN7HyA/home 
+
+== $ bin/fm-control.sh live5 recover-missing --note '...' ==
+  error: task live5's recorded pool slot /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.JN7HyA/pool/1/checkout is currently claimed by task someone-else; refusing to recover and tangle ownership
+  exit=1
+  record and instructions unchanged
+  the other task's slot claim is untouched
+  endpoint after the refusal: placeholder 
+
+== the same slot, claimed by THIS task, still recovers while dirty ==
+  warning: /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.JN7HyA/home/data/live5/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+  recovered live5 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-live5 worktree=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.JN7HyA/pool/1/checkout
+  exit=0
+   M README.md
+  ?? new-source.sh
+  .fm-slot-owner: task=live5 home=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.JN7HyA/home 
+  pane command: claude

@@ -1,0 +1,38 @@
+== the worker's mid-work local copy ==
+ M README.md
+A  staged.txt
+?? new-source.sh
+
+== the terminal window is gone ==
+  window: placeholder
+
+== $ bin/fm-control.sh live1 recover-missing --note '...' ==
+warning: /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.WITySh/home/data/live1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered live1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-live1 worktree=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.WITySh/wt
+exit=0
+
+== the endpoint afterwards ==
+  window: placeholder
+  window: fm-live1
+  pane command: claude
+  pane cwd:     /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live.WITySh/wt
+
+== the mid-work copy afterwards ==
+ M README.md
+A  staged.txt
+?? new-source.sh
+RESULT: local copy byte-identical (status, HEAD and every file)
+
+== what the rescue itself put in the local copy ==
+  files now in the copy: .claude .git README.md new-source.sh run.sh staged.txt 
+  harness wiring written by the launch owner:
+    .claude/settings.local.json
+  git-excluded, so it never shows as local change:
+    7:.claude/settings.local.json
+
+== journal ==
+phase=complete
+worktree_head=e07dd5cbc1b2a311a410620312b2fcf4fe3b967a
+worktree_dirty=yes
+exit_result=recreated
+S1 exit=0

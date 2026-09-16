@@ -1,0 +1,35 @@
+== the worker's mid-work local copy ==
+ M README.md
+A  staged.txt
+?? new-source.sh
+
+== the terminal server dies ==
+  no server running on /private/tmp/tmux-501/fmlive-13103-23384
+
+== relaunch cannot take over a missing endpoint ==
+  error: task live2's recorded endpoint is gone, so there is no agent to stop; reconcile the task before any further control action
+  error: relaunch of live2 failed while stopping the old agent and its state is 'missing'; the durable record and progress note were retained for recovery
+  exit=1
+
+== $ bin/fm-control.sh live2 recover-missing --note '...' ==
+warning: /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.zoYjDO/home/data/live2/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered live2 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmlive:fm-live2 worktree=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.zoYjDO/wt
+exit=0
+
+== the endpoint afterwards ==
+  session: fmlive
+  window: zsh
+  window: fm-live2
+  pane command: claude
+
+== the mid-work copy afterwards ==
+ M README.md
+A  staged.txt
+?? new-source.sh
+RESULT: local copy byte-identical (status, HEAD and every file)
+
+== journal ==
+phase=complete
+worktree_dirty=yes
+exit_result=recreated
+S2 exit=0

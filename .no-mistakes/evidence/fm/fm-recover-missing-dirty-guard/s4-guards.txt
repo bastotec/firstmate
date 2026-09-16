@@ -1,0 +1,26 @@
+=== 4a. the endpoint holds a bare shell (agent gone, terminal alive) ===
+  error: task live4's endpoint reads 'dead'; recover-missing requires a positively missing endpoint and no agent owning the task
+  exit=1
+  record, instructions and the dirty copy all unchanged
+
+=== 4b. an agent is still running at the endpoint ===
+  pane command: 2.1.273
+  error: task live4's endpoint reads 'alive'; recover-missing requires a positively missing endpoint and no agent owning the task
+  exit=1
+  record, instructions and the dirty copy all unchanged
+
+=== 4c. the local copy itself is gone ===
+  error: task live4's recorded worktree '/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.8U6e3b/wt' is absent; refusing to recover without the local copy its work lives in
+  exit=1
+  record, instructions and the dirty copy all unchanged
+  endpoint after the refusal: placeholder 
+
+=== 4d. the dirty copy is a Treehouse pool slot another task now claims ===
+  warning: /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.8U6e3b/home/data/live4/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+  error: relaunch did not yield an isolated worktree (resolved '/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.8U6e3b/pool/1/checkout'; worktree root '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live.8U6e3b/pool/1/checkout'; spawning project '/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live.8U6e3b/pool'); refusing to launch to avoid tangling the primary checkout. Inspect target fmlive:fm-live4
+  error: the replacement agent for live4 could not be launched on claude
+  error: live4's terminal was recreated but the replacement did not launch; no agent was ever stopped, its work plus the recorded progress note are preserved at /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-live.8U6e3b/pool/1/checkout, and the recreated terminal now holds a bare shell - retry with 'relaunch', which is the verb for an agent-free endpoint
+  exit=1
+  !! something changed
+  the other task's slot claim is untouched
+  endpoint after the refusal: placeholder fm-live4 
