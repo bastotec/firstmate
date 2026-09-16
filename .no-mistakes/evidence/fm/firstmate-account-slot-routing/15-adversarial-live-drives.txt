@@ -1,0 +1,47 @@
+Adversarial drives against the live four-slot home
+==================================================
+
+Same real home and real quota-axi producer as 14-live-four-slot-probe-after-fixes.txt.
+Each case is a configuration an operator could really have; the question is
+whether routing fails closed and says why without naming an account.
+
+--- a slot rebound to a DIFFERENT account identity than its store signs in as ---
+$ fm-account-slot.sh probe-all claude-a claude-b
+  claude-a	available
+  claude-b	UNAVAILABLE  slot 'claude-b' returned stale, mismatched, or malformed quota evidence
+The healthy sibling still routes. The refusal names the logical slot only.
+
+--- a slot store with no vendor credential at all ---
+$ fm-account-slot.sh probe-all codex-a codex-b
+  codex-a	available
+  codex-b	UNAVAILABLE  slot 'codex-b' is unavailable: its store holds no vendor-managed credential
+
+--- ambient credentials exported by the caller must not serve any slot ---
+$ ANTHROPIC_API_KEY=... OPENAI_API_KEY=... CODEX_API_KEY=... \
+  CLAUDE_CONFIG_DIR=/nonexistent CODEX_HOME=/nonexistent \
+  fm-account-slot.sh probe-all claude-a codex-a
+  claude-a	available
+  codex-a	available
+what the producer actually received:
+  PROBE argv=[--provider claude --profile-only --full --json --no-credential-refresh] profile-only=yes CLAUDE_CONFIG_DIR=<LAB>/profiles/claude-a CODEX_HOME=<unset> ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+  PROBE argv=[--provider codex --profile-only --full --json --no-credential-refresh] profile-only=yes CLAUDE_CONFIG_DIR=<unset> CODEX_HOME=<LAB>/profiles/codex-a ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+The caller's ambient keys and store overrides were stripped; each probe saw only
+its own slot store.
+
+--- refusals ---
+$ fm-account-slot.sh probe-all nope-a
+  -> error: slot 'nope-a' is not configured in this home   (exit 1)
+$ fm-account-slot.sh probe-all default
+  -> error: slot 'default' is not configured in this home   (exit 1)
+$ fm-account-slot.sh probe default
+  -> error: account slot 'default' is reserved for clearing an account selection   (exit 1)
+$ fm-account-slot.sh probe claude-a claude-b
+  -> usage: fm-account-slot.sh probe <slot>   (exit 2)
+$ fm-account-slot.sh probe-all
+  -> usage: fm-account-slot.sh probe-all <slot>...   (exit 2)
+
+--- dispatch rules that reference slots wrongly ---
+$ a claude profile pointed at a codex slot
+  -> error: slot reference is missing or belongs to another harness: codex-a
+$ the same slot listed twice for one effective tuple
+  -> error: config/crew-dispatch.json is invalid - accountSlots entries must be unique

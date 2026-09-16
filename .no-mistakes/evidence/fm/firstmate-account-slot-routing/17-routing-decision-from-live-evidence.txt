@@ -1,0 +1,29 @@
+The routing decision an agent makes from the live evidence
+==========================================================
+
+The quota-array-dispatch skill expands a slotted profile into one
+(harness, model, effort, accountSlot) candidate per slot, drops any tuple whose
+probe came back unavailable, and ranks the rest on spendPriority.
+Driven on the live probe-all output from the real producer:
+
+--- expanded candidate set, the rule from docs/examples/crew-dispatch.json ---
+  (claude, claude-sonnet-5, high, claude-a)   spendPriority=-1.0945  10% projected_exhaustion
+  (claude, claude-sonnet-5, high, claude-b)   spendPriority=-1.0945  10% projected_exhaustion
+  (codex, gpt-5.5, high, codex-a)   spendPriority=-1.8464  0% exhausted_now
+  (codex, gpt-5.5, high, codex-b)   spendPriority=-1.8464  0% exhausted_now
+
+--- the winning slot per harness, and the spawn call it produces ---
+  fm-spawn.sh <id> <project> --mode no-mistakes --yolo off --harness claude --model claude-sonnet-5 --effort high --account-slot claude-b
+  fm-spawn.sh <id> <project> --mode no-mistakes --yolo off --harness codex --model gpt-5.5 --effort high --account-slot codex-b
+
+Both paid subscription families are reachable: a Claude worker and a Codex
+worker each get their own account, chosen from live quota, with no account
+identity anywhere in the decision record.
+
+Caveat on this host: it holds ONE Claude subscription and ONE Codex
+subscription, so claude-a/claude-b and codex-a/codex-b are two isolated stores
+per provider signed in to the same account. That exercises every slot-isolation,
+identity-binding and ranking path end to end, but the two slots of a provider
+report identical quota, so a real preference between two DIFFERENT subscriptions
+of the same provider could not be observed here. Providing a second Claude and a
+second Codex subscription and re-running the same probe-all would show it.

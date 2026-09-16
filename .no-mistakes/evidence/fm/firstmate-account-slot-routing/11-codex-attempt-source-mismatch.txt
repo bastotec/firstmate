@@ -1,0 +1,26 @@
+Both Codex subscriptions drop out of routing against the real producer
+=======================================================================
+
+Live probe-all result (see 09-live-four-slot-probe-real-producer.txt):
+  codex-a  unavailable  "returned stale, mismatched, or malformed quota evidence"
+  codex-b  unavailable  "returned stale, mismatched, or malformed quota evidence"
+
+Cause, isolated on the same real document:
+
+--- providers[0].attempts of the real codex quota document ---
+[{"source":"oauth","status":"success"}]
+
+--- the acceptance predicate from bin/fm-account-slot-lib.sh, replayed ---
+real document, attempts[0].source = "oauth"      -> REJECT
+same document, attempts[0].source = "auth-json"  -> ACCEPT
+
+isolated_sources("codex") in bin/fm-account-slot-lib.sh is ["auth-json"].
+That spelling comes from the `quota-axi auth` report, which is a DIFFERENT
+vocabulary from the quota document`s providers[].attempts[].source. Both,
+measured on this host from quota-axi 0.1.42:
+
+  $ quota-axi auth --json                 -> codex sources: auth-json, pi:openai-codex, cli-rpc
+  $ quota-axi --provider codex --full --json -> codex attempts: [{"source":"oauth","status":"success"}]
+
+Claude is unaffected: its two vocabularies agree on oauth-file / keychain,
+which is why claude-a and claude-b come back available.

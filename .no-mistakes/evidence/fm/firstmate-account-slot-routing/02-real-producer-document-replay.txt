@@ -1,0 +1,49 @@
+# The quota documents below are the ones the REAL installed quota-axi 0.1.42
+# produced on this host; only the --help capability line is stood in for the
+# unreleased --profile-only flag, so the capability gate is not what is tested.
+
+## A) Real producer documents, replayed verbatim
+$ fm-account-slot.sh probe-all claude-a claude-b codex-a codex-b
+{
+  "slots": [
+    {
+      "accountSlot": "claude-a",
+      "availability": {
+        "status": "unavailable",
+        "reason": "slot 'claude-a' returned stale, mismatched, or malformed quota evidence"
+      }
+    },
+    {
+      "accountSlot": "claude-b",
+      "availability": {
+        "status": "unavailable",
+        "reason": "slot 'claude-b' returned stale, mismatched, or malformed quota evidence"
+      }
+    },
+    {
+      "accountSlot": "codex-a",
+      "availability": {
+        "status": "unavailable",
+        "reason": "slot 'codex-a' returned stale, mismatched, or malformed quota evidence"
+      }
+    },
+    {
+      "accountSlot": "codex-b",
+      "availability": {
+        "status": "unavailable",
+        "reason": "slot 'codex-b' returned stale, mismatched, or malformed quota evidence"
+      }
+    }
+  ]
+}
+
+## B) Same documents with generatedAt truncated to whole seconds
+#     (real: "2026-09-16T02:03:59.118Z")
+$ fm-account-slot.sh probe-all claude-a codex-a
+{"accountSlot":"claude-a","status":"available","reason":null}
+{"accountSlot":"codex-a","status":"unavailable","reason":"slot 'codex-a' returned stale, mismatched, or malformed quota evidence"}
+
+## C) Whole-second timestamp AND the codex attempt source respelled auth-json
+$ fm-account-slot.sh probe-all claude-a codex-a
+{"accountSlot":"claude-a","status":"available","reason":null,"pct":41}
+{"accountSlot":"codex-a","status":"available","reason":null,"pct":0}

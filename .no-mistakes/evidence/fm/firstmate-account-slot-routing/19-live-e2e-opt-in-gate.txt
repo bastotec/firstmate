@@ -1,0 +1,31 @@
+The repo's own opt-in live check, and the one thing this host cannot provide
+===========================================================================
+
+tests/fm-account-slot-live-e2e.test.sh is the change's own end-to-end check
+against real subscriptions.
+
+--- default: the gate is closed ---
+$ bash tests/fm-account-slot-live-e2e.test.sh
+skip: live: opt-in; set FM_ACCOUNT_SLOT_LIVE_E2E=1 to run
+(exit 0)
+
+--- opted in, against the provisioned four-slot lab home ---
+$ FM_ACCOUNT_SLOT_LIVE_E2E=1 FM_HOME=<lab> bash tests/fm-account-slot-live-e2e.test.sh
+not ok - each provider's two slots must name distinct expected identities (expected '2	2', got '1	1')
+(exit 1)
+
+This is the check doing its job, not a product failure. It requires two DIFFERENT
+Claude subscriptions and two DIFFERENT Codex subscriptions. This host holds one
+of each, so the lab's claude-a/claude-b and codex-a/codex-b are two isolated
+stores per provider signed in to the same account, and the check correctly
+refuses to call that a two-subscription verification.
+
+Everything the check would otherwise assert - four isolated profile-only probes,
+two per provider, four fresh sanitized provider rows, and no account or
+provenance field in the output - was driven directly against the same real
+producer in 14-live-four-slot-probe-after-fixes.txt.
+
+To close this gap: sign a second Claude subscription into a second
+CLAUDE_CONFIG_DIR and a second Codex subscription into a second CODEX_HOME,
+point claude-b and codex-b at those stores with their own expectedAccountId, and
+re-run the command above.

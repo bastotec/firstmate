@@ -1,0 +1,30 @@
+Four-slot account routing driven against the real quota-axi 0.1.42 producer
+==========================================================================
+
+Home: isolated lab home, four slots (claude-a, claude-b, codex-a, codex-b),
+each with its own 0700 store holding a real vendor credential.
+quota-axi 0.1.42 does not advertise --profile-only, so a thin shim adds that
+one flag to --help and forwards every probe to the REAL binary unchanged.
+The quota documents below are produced by the real producer reading the real
+subscriptions.
+
+--- $ bin/fm-account-slot.sh validate ---
+account slots valid
+
+--- $ bin/fm-account-slot.sh probe-all claude-a claude-b codex-a codex-b ---
+{"accountSlot":"claude-a","status":"available","reason":null,"percentRemaining":25,"runway":"projected_exhaustion","spendPriority":-0.9655}
+{"accountSlot":"claude-b","status":"available","reason":null,"percentRemaining":25,"runway":"projected_exhaustion","spendPriority":-0.9654}
+{"accountSlot":"codex-a","status":"unavailable","reason":"slot 'codex-a' returned stale, mismatched, or malformed quota evidence","percentRemaining":null,"runway":null,"spendPriority":null}
+{"accountSlot":"codex-b","status":"unavailable","reason":"slot 'codex-b' returned stale, mismatched, or malformed quota evidence","percentRemaining":null,"runway":null,"spendPriority":null}
+
+--- what the producer was actually asked, per slot ---
+PROBE argv=[--provider claude --profile-only --full --json --no-credential-refresh] CLAUDE_CONFIG_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-slot-live.2xmO22/profiles/claude-a CODEX_HOME=<unset> ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+PROBE argv=[--provider claude --profile-only --full --json --no-credential-refresh] CLAUDE_CONFIG_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-slot-live.2xmO22/profiles/claude-b CODEX_HOME=<unset> ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+PROBE argv=[--provider codex --profile-only --full --json --no-credential-refresh] CLAUDE_CONFIG_DIR=<unset> CODEX_HOME=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-slot-live.2xmO22/profiles/codex-a ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+PROBE argv=[--provider codex --profile-only --full --json --no-credential-refresh] CLAUDE_CONFIG_DIR=<unset> CODEX_HOME=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-slot-live.2xmO22/profiles/codex-b ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+PROBE argv=[--provider claude --profile-only --full --json --no-credential-refresh] CLAUDE_CONFIG_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-slot-live.2xmO22/profiles/claude-a CODEX_HOME=<unset> ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+PROBE argv=[--provider claude --profile-only --full --json --no-credential-refresh] CLAUDE_CONFIG_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-slot-live.2xmO22/profiles/claude-b CODEX_HOME=<unset> ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+
+--- privacy check on the emitted document ---
+grep for account email / account ids / store paths: 0 hit(s)
+account/attempts/email/storePath/source keys anywhere: none

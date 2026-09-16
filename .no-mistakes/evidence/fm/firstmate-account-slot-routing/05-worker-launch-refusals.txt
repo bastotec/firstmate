@@ -1,0 +1,25 @@
+## a slot this home does not configure
+$ fm-spawn.sh refuse-a1 <project> --mode no-mistakes --yolo off --harness claude --account-slot claude-z
+  error: slot 'claude-z' is not configured in this home
+  exit=1 launched=no task_record=absent
+
+## a slot that belongs to the other provider
+$ fm-spawn.sh refuse-b2 <project> --mode no-mistakes --yolo off --harness codex --account-slot claude-a
+  error: slot 'claude-a' does not belong to harness 'codex'
+  exit=1 launched=no task_record=absent
+
+## a raw launch command instead of a canonical harness
+$ fm-spawn.sh refuse-c3 <project> --mode no-mistakes --yolo off --harness bash -lc true --account-slot claude-a
+  error: --account-slot requires a canonical claude or codex harness, not a raw launch command
+  exit=1 launched=no task_record=absent
+
+## a provider with no account-slot support
+$ fm-spawn.sh refuse-d4 <project> --mode no-mistakes --yolo off --harness grok --account-slot claude-a
+  error: account slots are supported only for claude and codex workers
+  exit=1 launched=no task_record=absent
+
+## a slot whose subscription is signed out
+$ fm-spawn.sh refuse-e5 <project> --mode no-mistakes --yolo off --harness claude --account-slot claude-a
+  error: slot 'claude-a' is unavailable: its store holds no vendor-managed credential
+  exit=1 launched=no task_record=absent
+

@@ -1,0 +1,42 @@
+Operator-facing diagnostics and the capability gate
+===================================================
+
+--- 1. the valid four-slot home, real jq, quota-axi that advertises every probe flag ---
+$ fm-bootstrap.sh
+  <silent - no actionable problem>
+
+--- 2. the SAME valid home on a host where jq is not installed ---
+$ fm-bootstrap.sh
+  MISSING: jq (install: brew install jq  # or the platform's package manager)
+A missing prerequisite is reported as a missing prerequisite with its install
+command, not as invalid slot configuration.
+
+--- 3. a genuinely malformed registry, jq present ---
+$ fm-bootstrap.sh
+  CREW_DISPATCH: invalid config/account-slots.json - config/account-slots.json is invalid - version must be 1
+--- 4. a home that configures no account slots at all ---
+$ fm-bootstrap.sh
+  <silent - no actionable problem>
+$ fm-account-slot.sh validate
+  -> error: config/account-slots.json is missing
+
+--- 5. a secondmate that inherited slotted dispatch rules but has no registry of its own ---
+$ fm-bootstrap.sh
+  <silent - inherited rules it cannot resolve are not a misconfiguration; the slot is refused at spawn>
+
+--- 6. the capability gate, against the REAL quota-axi 0.1.42 on PATH ---
+$ fm-account-slot.sh probe-all claude-a
+  -> error: quota-axi does not support --profile-only; install a published release that advertises that flag
+0.1.42 is the latest published release and does not advertise --profile-only, so
+routing refuses and names the flag rather than reporting the accounts as
+unavailable. Every probe above therefore ran through a shim that adds that one
+flag to --help and strips it before calling the real binary.
+
+--- 7. how the gate reads different --help renderings ---
+  bracketed usage synopsis             ACCEPT
+  comma-separated flag list            ACCEPT
+  one flag per line, --flag=VALUE      ACCEPT
+  pipe-separated synopsis              ACCEPT
+  --json spelled only as --json-lines  REFUSE - quota-axi does not support --json; install a published release that advertises that flag
+  real 0.1.42 help                     REFUSE - quota-axi does not support --profile-only; install a published release that advertises that flag
+A flag that merely starts another flag's spelling still does not satisfy the gate.

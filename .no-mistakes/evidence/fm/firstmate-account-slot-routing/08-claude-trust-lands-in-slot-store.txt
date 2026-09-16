@@ -1,0 +1,12 @@
+## Claude workspace trust is registered inside the selected slot store, not the ambient one
+$ env -u CLAUDE_CONFIG_DIR -u ANTHROPIC_API_KEY CLAUDE_CONFIG_DIR=<slot-store> HOME=<throwaway> bin/fm-claude-trust.sh <worktree> <project>
+  trusted: <lab>/trust/wt
+  trusted (project root): <lab>/trust/project
+
+  slot store contents:
+    .claude.json
+  trusted project keys recorded in the slot store:
+    <lab>/trust/project
+    <lab>/trust/wt
+  ambient (throwaway HOME) config written?
+    no

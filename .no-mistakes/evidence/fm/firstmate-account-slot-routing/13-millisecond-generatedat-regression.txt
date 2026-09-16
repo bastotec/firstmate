@@ -1,0 +1,21 @@
+Millisecond generatedAt regression (the defect this round fixed)
+=================================================================
+
+quota-axi 0.1.42 always stamps generatedAt with milliseconds:
+  "generatedAt": "2026-09-16T02:39:43.848Z"
+jq 1.7.1's fromdateiso8601 throws on the fractional part, so the freshness
+gate read every real document as stale and every slot dropped out of routing.
+
+Before the fix (bin/fm-account-slot-lib.sh:279 reverted to the pre-023281c line):
+  $ bash tests/fm-account-slot.test.sh
+  not ok - a fresh millisecond-stamped document was reported unavailable
+         (unexpected: '"status":"unavailable"')
+
+After the fix (working tree at 023281c):
+  $ bash tests/fm-account-slot.test.sh
+  ok - accepts the millisecond generatedAt the published producer emits
+  all fm-account-slot tests passed
+
+Confirmed live, not only in the fixture: the four-slot probe in
+09-live-four-slot-probe-real-producer.txt returns claude-a and claude-b as
+available from documents the real producer stamped .848Z and .504Z.

@@ -1,0 +1,54 @@
+Four-slot account routing against the real quota-axi 0.1.42 producer - AFTER the fixes
+======================================================================================
+
+This is the scenario that failed in round 1 (millisecond generatedAt) and again
+in round 2 (Codex attempts[].source spelling). Both are now fixed.
+
+Home: isolated lab home, four slots (claude-a, claude-b, codex-a, codex-b), each
+with its own 0700 store holding a real vendor credential. quota-axi 0.1.42 does
+not advertise --profile-only, so a thin shim adds that one flag to --help and
+strips it before forwarding to the REAL binary. Everything below - credentials,
+quota documents, percentages, runway - comes from the real producer reading the
+real paid subscriptions.
+
+--- $ bin/fm-account-slot.sh validate ---
+account slots valid
+
+--- $ bin/fm-account-slot.sh probe-all claude-a claude-b codex-a codex-b ---
+slot      status       percentRemaining  runway                spendPriority
+claude-a  available    14                projected_exhaustion  -1.0472
+claude-b  available    14                projected_exhaustion  -1.0472
+codex-a   available    0                 exhausted_now         -1.8497
+codex-b   available    0                 exhausted_now         -1.8496
+
+All four subscriptions are routable. The deciding agent gets a non-empty
+candidate set with a live quota row per slot, which is what round 1 and round 2
+could not produce. Codex reads 0% / exhausted_now: that is the real current
+state of those subscriptions, not a refusal - the slots are available and
+rankable.
+
+--- the generatedAt the real producer emitted this run ---
+2026-09-16T03:12:51.614Z   (millisecond precision - the round-1 defect)
+
+--- what the real producer was actually asked, per slot ---
+PROBE argv=[--provider claude --profile-only --full --json --no-credential-refresh] profile-only=yes CLAUDE_CONFIG_DIR=<LAB>/profiles/claude-a CODEX_HOME=<unset> ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+PROBE argv=[--provider claude --profile-only --full --json --no-credential-refresh] profile-only=yes CLAUDE_CONFIG_DIR=<LAB>/profiles/claude-b CODEX_HOME=<unset> ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+PROBE argv=[--provider codex --profile-only --full --json --no-credential-refresh] profile-only=yes CLAUDE_CONFIG_DIR=<unset> CODEX_HOME=<LAB>/profiles/codex-a ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+PROBE argv=[--provider codex --profile-only --full --json --no-credential-refresh] profile-only=yes CLAUDE_CONFIG_DIR=<unset> CODEX_HOME=<LAB>/profiles/codex-b ANTHROPIC_API_KEY=<unset> OPENAI_API_KEY=<unset> CODEX_API_KEY=<unset> CLAUDE_CODE_OAUTH_TOKEN=<unset>
+
+Each probe saw only its own slot store, and every ambient API-key variable was
+unset for the call, so no slot could be served by an ambient credential.
+
+--- privacy check on the emitted document ---
+every key present anywhere in the emitted document:
+accountSlot, aheadWindowIds, behindWindowIds, boundConflict, boundedBy, 
+description, effectiveAvailability, effectivePercentRemaining, 
+exhaustedWindowIds, generatedAt, limitingWindowId, limitingWindowIds, 
+liveWindowIds, onPaceWindowIds, pace, projectedExhaustedAt, 
+projectionConfidence, provider, providers, quotaSemantics, runway, 
+schemaVersion, scope, selection, slots, spendPriority, stale, state, status, 
+unknownWindowIds, unmeasurableWindowIds, usableRunwaySeconds, 
+worstReservePercentPoints, worstReserveWindowId
+
+keys that would leak identity or provenance (account, attempts, source, email, storePath): none
+grep for the two real accountIds, the account email, and the store paths: 0 hit(s) each

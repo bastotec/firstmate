@@ -1,0 +1,18 @@
+## Doctor on a home whose four subscription slots are valid
+$ FM_HOME=<home> bin/fm-bootstrap.sh   # (only account-slot/crew-dispatch lines shown)
+(no account-slot or jq diagnostic - configuration accepted)
+
+## Same valid home on a host without jq
+$ FM_HOME=<home> bin/fm-bootstrap.sh
+MISSING: jq (install: brew install jq  # or the platform's package manager)
+
+## A dispatch rule naming a slot this home does not configure
+$ FM_HOME=<home> bin/fm-bootstrap.sh
+CREW_DISPATCH: invalid account slot routing - slot reference is missing or belongs to another harness: claude-z
+
+## A home that configures no account slots at all (behavior must be unchanged)
+$ FM_HOME=<home> bin/fm-bootstrap.sh
+(no account-slot diagnostic)
+$ FM_HOME=<home> bin/fm-account-slot.sh validate
+error: config/account-slots.json is missing
+exit=1

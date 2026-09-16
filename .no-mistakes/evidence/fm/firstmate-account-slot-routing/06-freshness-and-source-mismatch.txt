@@ -1,0 +1,23 @@
+# Why every slot reads unavailable against real producer output
+
+## 1. generatedAt carries milliseconds; the freshness gate cannot parse that
+$ quota-axi --provider claude --full --json --no-credential-refresh | jq -r .generatedAt   (three consecutive real reads)
+2026-09-16T02:08:27.579Z
+2026-09-16T02:08:28.620Z
+2026-09-16T02:08:29.768Z
+
+# bin/fm-account-slot-lib.sh:279  def epoch: try fromdateiso8601 catch null;
+$ echo "\"2026-09-16T02:08:05.951Z\"" | jq "try fromdateiso8601 catch \"PARSE-ERROR\""    # what the producer emits
+"PARSE-ERROR"
+$ echo "\"2026-09-16T02:08:05Z\"" | jq "try fromdateiso8601 catch \"PARSE-ERROR\""        # what every test fixture emits
+1789524485
+# jq on this host: jq-1.7.1-apple
+
+## 2. the codex attempt source the installed release reports
+$ quota-axi --provider codex --full --json --no-credential-refresh | jq -c ".providers[0].attempts"
+[{"source":"oauth","status":"success"}]
+# bin/fm-account-slot-lib.sh:281  isolated_sources("codex") == ["auth-json"]
+
+## for reference, the claude attempt sources the installed release reports
+[{"source":"keychain","status":"skipped"},{"source":"oauth-file","status":"failed"}]
+# bin/fm-account-slot-lib.sh:281  isolated_sources("claude") == ["oauth-file","keychain"]

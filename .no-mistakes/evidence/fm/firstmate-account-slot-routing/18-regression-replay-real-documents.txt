@@ -1,0 +1,19 @@
+Regression replay: the two defects, on the producer documents that exposed them
+==============================================================================
+
+Real documents captured from quota-axi 0.1.42 on this host:
+  claude generatedAt = 2026-09-16T03:12:21.055Z   attempts = [{"source":"keychain","status":"skipped"},{"source":"oauth-file","status":"success"},{"source":"oauth-profile","status":"success"}]
+  codex  generatedAt = 2026-09-16T03:12:22.083Z   attempts = [{"source":"oauth","status":"success"}]
+
+Defect 1 (round 1) - the freshness gate could not parse a fractional-second
+generatedAt, so every real document read as not-fresh.
+  predicate BEFORE the fix (bare fromdateiso8601), real claude document : REJECT
+  predicate AFTER  the fix (fraction stripped),   real claude document : ACCEPT
+
+Defect 2 (round 2) - the Codex allow-list held the `quota-axi auth` source
+spelling, not the one the quota document itself emits.
+  allow-list BEFORE the fix ["auth-json"], real codex document : REJECT
+  allow-list AFTER  the fix ["oauth"],     real codex document : ACCEPT
+
+Each predicate rejects before its fix and accepts after, on the untouched real
+document. The end-to-end consequence is in 14-live-four-slot-probe-after-fixes.txt.

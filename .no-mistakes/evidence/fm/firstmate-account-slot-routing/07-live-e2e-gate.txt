@@ -1,0 +1,9 @@
+## the opt-in live four-profile check, default (not opted in)
+$ bash tests/fm-account-slot-live-e2e.test.sh
+skip: live: opt-in; set FM_ACCOUNT_SLOT_LIVE_E2E=1 to run
+exit=0
+
+## opted in, on this host, against the real installed quota-axi and a four-slot home
+$ FM_ACCOUNT_SLOT_LIVE_E2E=1 FM_HOME=<home> bash tests/fm-account-slot-live-e2e.test.sh
+not ok - quota-axi does not support --profile-only; install a published release that advertises that flag
+exit=1

@@ -1,0 +1,19 @@
+# Real installed vendor tool on this host
+$ quota-axi --version
+0.1.42
+$ quota-axi --help | grep -c -- --profile-only
+0
+
+# A home configured with two Claude and two Codex subscription profiles
+$ FM_HOME=<home> bin/fm-account-slot.sh validate
+account slots valid
+exit=0
+
+# Automatic routing asked to rank all four slots, against the REAL quota-axi
+$ FM_HOME=<home> bin/fm-account-slot.sh probe-all claude-a claude-b codex-a codex-b
+error: quota-axi does not support --profile-only; install a published release that advertises that flag
+exit=1
+
+$ FM_HOME=<home> bin/fm-account-slot.sh probe codex-b
+error: quota-axi does not support --profile-only; install a published release that advertises that flag
+exit=1

@@ -1,0 +1,29 @@
+Adversarial drives against the live four-slot home
+==================================================
+
+$ bin/fm-account-slot.sh probe-all claude-a codex-a   # real quota-axi 0.1.42, no shim
+error: quota-axi does not support --profile-only; install a published release that advertises that flag
+exit 1   (refuses instead of silently probing with a flag it never verified)
+
+$ bin/fm-account-slot.sh probe-all claude-a claude-z
+error: slot 'claude-z' is not configured in this home
+exit 1   (an unknown ID refuses the whole call before any provider is probed)
+
+$ bin/fm-account-slot.sh probe default
+error: account slot 'default' is reserved for clearing an account selection
+exit 1
+
+# claude-a's expectedAccountId repointed at an identity the store does not hold
+$ bin/fm-account-slot.sh probe-all claude-a claude-b
+{"accountSlot":"claude-a","status":"unavailable","reason":"slot 'claude-a' returned stale, mismatched, or malformed quota evidence"}
+{"accountSlot":"claude-b","status":"available"}
+         (a wrong account is never spent, and the healthy sibling still routes)
+
+$ chmod 755 <claude-b store>; bin/fm-account-slot.sh validate
+error: slot 'claude-b' storePath must have no group or world permissions
+exit 1
+
+# a claude dispatch rule naming a codex slot
+$ bin/fm-account-slot.sh validate
+error: slot reference is missing or belongs to another harness: codex-a
+exit 1
