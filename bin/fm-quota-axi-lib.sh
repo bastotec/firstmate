@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034 # FM_QUOTA_AXI_* are output globals for sourcing callers.
 # Shared quota-axi compatibility floor for the bootstrap diagnostic.
 # Usage: . bin/fm-quota-axi-lib.sh
 #

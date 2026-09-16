@@ -589,7 +589,9 @@ fi
 exec "${FM_REAL_ID:?}" "$@"
 SH
 chmod +x "$OWNERBIN/id"
-if PATH="$OWNERBIN:$FAKEBIN:$PATH" FM_REAL_ID="$(command -v id)" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
+# Resolve the real id before PATH puts the wrapper first, or it execs itself.
+REAL_ID=$(command -v id)
+if PATH="$OWNERBIN:$FAKEBIN:$PATH" FM_REAL_ID="$REAL_ID" FAKE_CALLS="$CALLS" FM_HOME="$HOME_DIR" \
     "$ROOT/bin/fm-account-slot.sh" validate >/dev/null 2>"$TMP_ROOT/owner.err"; then
   fail "registry owner mismatch was accepted"
 fi

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034 # FM_ACCOUNT_SLOT_* are output globals for sourcing callers.
 # fm-account-slot-lib.sh - strict home-local account-slot validation and probes.
 #
 # Sourced, never executed. The public interface is bin/fm-account-slot.sh.
@@ -10,7 +11,6 @@
 set -u
 
 FM_ACCOUNT_SLOT_ERROR=
-FM_ACCOUNT_SLOT_ID=
 FM_ACCOUNT_SLOT_HARNESS=
 FM_ACCOUNT_SLOT_STORE_PATH=
 FM_ACCOUNT_SLOT_EXPECTED_ACCOUNT_ID=
@@ -219,11 +219,11 @@ fm_account_slot_resolve() { # <config-dir> <slot> [harness]
     .slots[$slot] as $s |
     if $s == null then empty
     elif $harness != "" and $s.harness != $harness then "HARNESS_MISMATCH"
-    else [$slot,$s.harness,$s.storePath] | @tsv end
+    else [$s.harness,$s.storePath] | @tsv end
   ' "$registry") || { fm_account_slot_fail "slot '$slot' cannot be read"; return 1; }
   [ -n "$row" ] || { fm_account_slot_fail "slot '$slot' is not configured in this home"; return 1; }
   [ "$row" != HARNESS_MISMATCH ] || { fm_account_slot_fail "slot '$slot' does not belong to harness '$harness'"; return 1; }
-  IFS=$'\t' read -r FM_ACCOUNT_SLOT_ID FM_ACCOUNT_SLOT_HARNESS FM_ACCOUNT_SLOT_STORE_PATH <<< "$row"
+  IFS=$'\t' read -r FM_ACCOUNT_SLOT_HARNESS FM_ACCOUNT_SLOT_STORE_PATH <<< "$row"
   FM_ACCOUNT_SLOT_EXPECTED_ACCOUNT_ID=$(jq -r --arg slot "$slot" '.slots[$slot].expectedAccountId // empty' "$registry") \
     || { fm_account_slot_fail "slot '$slot' expected account identity cannot be read"; return 1; }
   fm_account_slot_credential_present "$FM_ACCOUNT_SLOT_HARNESS" "$FM_ACCOUNT_SLOT_STORE_PATH" \
