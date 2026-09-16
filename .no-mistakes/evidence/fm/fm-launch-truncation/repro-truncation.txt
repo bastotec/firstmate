@@ -1,0 +1,18 @@
+tmux: tmux 3.6a   host: Darwin 25.6.0 arm64
+
+launch command length: 1238 bytes (report says ~1117)
+
+== A: pre-fix path (plain tmux send-keys -l, no readiness gate) ==
+   pane tty line discipline at send time: canonical
+   RESULT: NO WORKER STARTED - the command vanished silently
+   pane after the busy command finished, as an operator would see it:
+     | fghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcde
+     | fghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcde
+     | fghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcde
+     | fghijabcdefghijabcdefghijabcdefghi
+
+== B: shipped path (fm_backend_tmux_send_literal, readiness gate) ==
+   pane tty line discipline at send time: canonical
+   gated send returned status 0
+   RESULT: worker started (marker written by the launched process)
+   RESULT: worker received the command byte-identical to what was sent

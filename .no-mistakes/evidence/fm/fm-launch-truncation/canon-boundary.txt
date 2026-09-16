@@ -1,0 +1,14 @@
+Canonical-mode line boundary on this host (tmux 3.6a, Darwin 25.6.0 arm64).
+Busy pane (interactive bash running `sleep 4`), one literal send of N bytes,
+3 repeats each. LANDED = the command's own prefix ran and wrote a marker.
+
+ 1000 bytes: LANDED LANDED LANDED
+ 1023 bytes: LANDED LANDED LANDED
+ 1024 bytes: LOST LOST LOST
+ 1025 bytes: LOST LOST LOST
+ 1097 bytes: LOST LOST LOST
+ 1200 bytes: LOST LOST LOST
+ 1238 bytes: LOST LOST LOST
+ 1400 bytes: LOST LOST LOST
+ 2000 bytes: LOST LOST LOST
+

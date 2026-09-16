@@ -1,0 +1,3 @@
+pane line discipline while the send is made: canonical
+fm_backend_tmux_send_text_line status on a busy pane: 0 (0 = not refused)
+result: short send delivered once the pane freed up

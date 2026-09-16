@@ -1,0 +1,4 @@
+ok - fm_backend_tmux_send_literal: a 1634-byte launch command starts a worker on a busy pane
+ok - pane that never becomes ready refuses loudly and names the reason
+ok - fm_tmux_wait_pane_input_ready: unreadable tty mode stays permissive
+ok - fm_tmux_wait_pane_input_ready: a ready pane returns without spending the budget

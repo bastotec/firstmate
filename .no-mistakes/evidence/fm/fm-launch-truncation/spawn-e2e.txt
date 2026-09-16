@@ -1,0 +1,33 @@
+########## OK MODE ##########
+=== MODE=ok   FM_PANE_READY_TIMEOUT=5
+--- fm-spawn.sh exit status: 0
+--- fm-spawn.sh output (what the operator sees):
+    spawned e2e-ok-z1 harness=codex kind=ship mode=no-mistakes yolo=off window=firstmate:fm-e2e-ok-z1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-spawn-e2e.06k3MA/slot
+--- state/e2e-ok-z1.status (what recovery and the crew board read):
+    (no status file)
+--- pane tail (what an operator sees in the window):
+    bash-3.2$ export FM_TASK_ID=e2e-ok-z1
+    bash-3.2$ env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI codex --dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\
+    000gn/T/fm-spawn-e2e.06k3MA/home/state/e2e-ok-z1.turn-ended'\"]" "$('/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2KV11G8XX
+    ief < '/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T//fm-spawn-e2e.06k3MA/home/data/e2e-ok-z1/launch-brief.md')"
+--- harness marker (written by the launched process itself):
+    codex really started
+    cwd=/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-spawn-e2e.06k3MA/slot
+    argv it received: 2721 bytes, first 90: argv: [--dangerously-bypass-approvals-and-sandbox] [-c] [notify=["bash","-c","touch '/priv
+--- host ~/.treehouse untouched: 0 entries under the sandboxed HOME
+
+########## BUSY MODE (pane never reads input) ##########
+=== MODE=busy   FM_PANE_READY_TIMEOUT=2
+--- fm-spawn.sh exit status: 1
+--- fm-spawn.sh output (what the operator sees):
+    error: pane firstmate:fm-e2e-busy-z1 was still busy after 2s and never started reading input; refusing to type 509 bytes it would silently discard
+    error: task e2e-busy-z1's launch command was not delivered: window firstmate:fm-e2e-busy-z1 was still busy and never started reading input; no agent was started, inspect window firstmate:fm-e2e-busy-z1
+--- state/e2e-busy-z1.status (what recovery and the crew board read):
+    failed: launch command not delivered: window firstmate:fm-e2e-busy-z1 was still busy and never started reading input
+--- pane tail (what an operator sees in the window):
+    bastotecnologia@MacBook-Pro-2 project % treehouse get
+    export GOTMPDIR=/tmp/fm-e2e-busy-z1/gotmp
+    export FM_TASK_ID=e2e-busy-z1
+--- harness marker (written by the launched process itself):
+    (no worker started)
+--- host ~/.treehouse untouched: 0 entries under the sandboxed HOME

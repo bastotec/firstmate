@@ -1,0 +1,10 @@
+tmux tmux 3.6a on Darwin 25.6.0 arm64; one 1238-byte command, three repeats per row
+
+pane state / send shape                          result x3
+------------------------------------------------ ---------
+busy pane, one send (the reported failure)       LOST LOST LOST
+busy pane, 400-byte chunks (the claimed fix)     LOST LOST LOST
+busy pane, 400-byte chunks with pauses           LOST LOST LOST
+busy pane, 200-byte chunks                       LOST LOST LOST
+busy pane, 100-byte chunks                       LOST LOST LOST
+IDLE pane, one send (what the report measured)   LANDED LANDED LANDED
