@@ -1,0 +1,26 @@
+ok - validates a strict four-slot registry and dispatch cross-references
+ok - duplicate effective tuples are ambiguous within one candidate set, not across unrelated rules
+ok - probes Claude through one isolated profile and emits only sanitized quota evidence
+ok - probes Codex through one isolated profile
+ok - matches each slot against its own configured expectedAccountId
+ok - accepts the millisecond generatedAt the published producer emits
+ok - a Claude slot is available through its own store-scoped keychain item, never the ambient one
+ok - probe-all probes only the slots it is asked for
+ok - treats a missing vendor credential as one unavailable slot, not an invalid registry
+ok - reports a present but insecure vendor credential as configuration, not silent unavailability
+ok - one slug rule governs every configured slot ID
+ok - deduplicates slot probes within one decision
+ok - continues after an unavailable slot and emits one privacy verdict
+ok - rejects stale, wrong-source, and mismatched-account evidence
+ok - reports an identity mismatch as its own reason, never as stale or malformed evidence
+ok - classifies a missing or non-string account identity as producer drift, not an identity mismatch
+ok - provenance reads successful attempts only and refuses zero-success or cross-account evidence
+ok - reads the Codex source vocabulary the quota document itself uses, and still refuses the ambient one
+ok - requires exactly one JSON root from every quota probe
+ok - gates automatic quota ranking on every flag the probe sends and names the missing one
+ok - reads a flag from any usual help rendering without accepting a longer flag that merely starts with it
+ok - reserves default as the account-slot clear sentinel
+ok - rejects malformed dispatch JSON before any quota probe
+ok - rejects malformed registries and duplicate canonical profile paths
+ok - rejects unsafe owner, mode, symlink, and hardlink states through the public validator
+all fm-account-slot tests passed

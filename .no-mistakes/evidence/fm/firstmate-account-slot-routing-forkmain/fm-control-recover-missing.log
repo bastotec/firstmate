@@ -1,0 +1,26 @@
+ok - fm-control recover-missing: a whole gone session is recreated under its recorded name, then the task window
+ok - fm-control recover-missing: a surviving session is left untouched and only the window comes back
+ok - fm-control recover-missing: a session that cannot be recreated refuses and leaves everything in place
+ok - fm-control recover-missing: a secondmate's recorded harness, model and effort survive a differing configured pin
+ok - fm-control recover-missing: a copy full of uncommitted work is rescued with every change left untouched
+ok - fm-control recover-missing: the checkpoint still records the rescued copy's dirty state
+ok - fm-control recover-missing: a missing terminal is recreated under its recorded handle and relaunched
+ok - fm-control recover-missing: a recreated terminal whose shell is still starting is waited out, not handed over
+ok - fm-control recover-missing: a recreated terminal that never goes agent-free refuses instead of launching into it
+ok - fm-control recover-missing: a live endpoint refuses and changes nothing
+ok - fm-control recover-missing: an ambiguous endpoint refuses and changes nothing
+ok - fm-control recover-missing: an unavailable local copy refuses rather than reallocating one
+ok - fm-control recover-missing: a pool slot claimed by another task refuses rather than tangling ownership
+ok - fm-control recover-missing: an unreadable pool-slot claim refuses rather than risking a conflict
+ok - fm-control recover-missing: a task's own pool slot recovers with its claim untouched
+ok - fm-control recover-missing: a failed recreation rolls the progress note back so retries do not stack
+ok - fm-control recover-missing: an unreadable endpoint after a failed recreation claims no terminal exists
+ok - fm-control recover-missing: a failed launch handoff reports the bare shell it left, not a stop that never happened
+ok - fm-control recover-missing: a backend that cannot recreate the recorded endpoint refuses before anything changes
+ok - fm-control recover-missing: an unclassifiable backend refuses on the postcondition recovery actually needs
+ok - fm-control recover-missing: an unreconstructable recorded harness refuses without naming a flag the verb rejects
+ok - fm-control recover-missing: runtime-switch flags belong to relaunch and are refused here
+ok - fm-control recover-missing: a ship task's recovery requires the progress note
+ok - fm-control recover-missing: the recorded account slot survives the rescue, by logical id alone
+ok - fm-control recover-missing: an unbindable account slot refuses instead of falling back to the ambient account
+PASS: fm-control-recover-missing

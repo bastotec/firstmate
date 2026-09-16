@@ -1,0 +1,94 @@
+## S1: home copies shipped docs/examples/crew-dispatch.json, no config/account-slots.json
+example profiles carry accountSlots: false
+example identical to base (pre-account-slot) version
+--- bootstrap at BASE 28a1bed:
+BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json
+BOOTSTRAP_INFO: crew dispatch rule: The task depends on fresh news, current events, live public facts, or recent market and product changes. -> grok
+BOOTSTRAP_INFO: crew dispatch rule: The task is a trivial mechanical edit such as a rote rename, formatting sweep, targeted typo fix, or simple file gathering. -> claude/haiku/low
+BOOTSTRAP_INFO: crew dispatch rule: The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind. -> quota-balanced[claude/claude-sonnet-5/high, codex/gpt-5.5/high]
+BOOTSTRAP_INFO: crew dispatch default: quota-balanced[codex/gpt-5.5/medium, pi/anthropic/claude-sonnet-5/medium]
+[bootstrap done]
+--- bootstrap at TARGET 93e7431:
+BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json
+BOOTSTRAP_INFO: crew dispatch rule: The task depends on fresh news, current events, live public facts, or recent market and product changes. -> grok
+BOOTSTRAP_INFO: crew dispatch rule: The task is a trivial mechanical edit such as a rote rename, formatting sweep, targeted typo fix, or simple file gathering. -> claude/haiku/low
+BOOTSTRAP_INFO: crew dispatch rule: The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind. -> quota-balanced[claude/claude-sonnet-5/high, codex/gpt-5.5/high]
+BOOTSTRAP_INFO: crew dispatch default: quota-balanced[codex/gpt-5.5/medium, pi/anthropic/claude-sonnet-5/medium]
+[bootstrap done]
+RESULT: bootstrap dispatch output identical before/after
+
+## S2: slotted rule copied without a registry -> bootstrap silent (inheritance case), probe-all refuses
+BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json
+BOOTSTRAP_INFO: crew dispatch rule: The task depends on fresh news, current events, live public facts, or recent market and product changes. -> grok
+BOOTSTRAP_INFO: crew dispatch rule: The task is a trivial mechanical edit such as a rote rename, formatting sweep, targeted typo fix, or simple file gathering. -> claude/haiku/low
+BOOTSTRAP_INFO: crew dispatch rule: The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind. -> quota-balanced[claude/claude-sonnet-5/high, codex/gpt-5.5/high]
+BOOTSTRAP_INFO: crew dispatch default: quota-balanced[codex/gpt-5.5/medium, pi/anthropic/claude-sonnet-5/medium]
+[bootstrap done]
+$ env FM_HOME=<lab>/h2 bin/fm-account-slot.sh probe-all claude-primary claude-secondary
+error: config/account-slots.json is missing
+[exit 1]
+
+## S3: four-slot registry (2 claude + 2 codex), stores with no credential, real quota-axi 0.1.42
+[{"harness":"claude","model":"claude-sonnet-5","effort":"high","accountSlots":["claude-primary","claude-secondary"]},{"harness":"codex","model":"gpt-5.5","effort":"high","accountSlots":["codex-primary","codex-secondary"]}]
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh validate
+account slots valid
+[exit 0]
+
+BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json
+BOOTSTRAP_INFO: crew dispatch rule: The task depends on fresh news, current events, live public facts, or recent market and product changes. -> grok
+BOOTSTRAP_INFO: crew dispatch rule: The task is a trivial mechanical edit such as a rote rename, formatting sweep, targeted typo fix, or simple file gathering. -> claude/haiku/low
+BOOTSTRAP_INFO: crew dispatch rule: The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind. -> quota-balanced[claude/claude-sonnet-5/high, codex/gpt-5.5/high]
+BOOTSTRAP_INFO: crew dispatch default: quota-balanced[codex/gpt-5.5/medium, pi/anthropic/claude-sonnet-5/medium]
+[bootstrap done]
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh probe-all claude-primary claude-secondary codex-primary codex-secondary codex-primary
+{"slots":[{"accountSlot":"claude-primary","availability":{"status":"unavailable","reason":"slot 'claude-primary' is unavailable: its store holds no vendor-managed credential"}},{"accountSlot":"claude-secondary","availability":{"status":"unavailable","reason":"slot 'claude-secondary' is unavailable: its store holds no vendor-managed credential"}},{"accountSlot":"codex-primary","availability":{"status":"unavailable","reason":"slot 'codex-primary' is unavailable: its store holds no vendor-managed credential"}},{"accountSlot":"codex-secondary","availability":{"status":"unavailable","reason":"slot 'codex-secondary' is unavailable: its store holds no vendor-managed credential"}}]}
+[exit 0]
+
+## S4 adversarial: codex slot routed to a claude profile
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh validate
+error: slot reference is missing or belongs to another harness: codex-primary
+[exit 1]
+
+CREW_DISPATCH: invalid account slot routing - slot reference is missing or belongs to another harness: codex-primary
+[bootstrap done]
+## S4b adversarial: same slot twice in one effective tuple / accountSlots on grok
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh validate
+account slots valid
+[exit 0]
+
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh validate
+error: config/crew-dispatch.json is invalid - accountSlots are supported only for claude and codex profiles
+[exit 1]
+
+## S5 adversarial: store dir readable by group/world
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh validate
+error: slot 'claude-primary' storePath must have no group or world permissions
+[exit 1]
+
+## S6 adversarial: two slots share one store; reserved slot id 'default'; unknown slot
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh validate
+error: slot 'claude-secondary' duplicates another slot's canonical storePath
+[exit 1]
+
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh probe default
+error: account slot 'default' is reserved for clearing an account selection
+[exit 1]
+
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh probe-all claude-primary nope
+error: slot 'nope' is not configured in this home
+[exit 1]
+
+## S7 adversarial: registry file group-readable; credential file symlinked out of store
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh validate
+error: config/account-slots.json must have no group or world permissions
+[exit 1]
+
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh validate
+error: slot 'codex-primary' credential file must be a non-symlink regular file
+[exit 1]
+
+## S8: a signed-in store whose quota probe fails (fake credential, real quota-axi) is reported unavailable without identity/paths
+$ env FM_HOME=<lab>/h3 bin/fm-account-slot.sh probe-all codex-primary codex-secondary
+{"slots":[{"accountSlot":"codex-primary","availability":{"status":"unavailable","reason":"slot 'codex-primary' returned stale, mismatched, or malformed quota evidence"}},{"accountSlot":"codex-secondary","availability":{"status":"unavailable","reason":"slot 'codex-secondary' is unavailable: its store holds no vendor-managed credential"}}]}
+[exit 0]
+
