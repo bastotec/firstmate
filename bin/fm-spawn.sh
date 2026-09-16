@@ -405,6 +405,10 @@ resolve_directory_input() {
 }
 
 FM_HOME=$(resolve_directory_input FM_HOME "$FM_HOME") || exit 1
+if [ -e "$FM_HOME/.fm-home-migration" ] || [ -L "$FM_HOME/.fm-home-migration" ]; then
+  echo 'error: frozen migration archives cannot spawn work' >&2
+  exit 1
+fi
 if [ -n "${FM_STATE_OVERRIDE:-}" ]; then
   FM_STATE_OVERRIDE=$(resolve_directory_input FM_STATE_OVERRIDE "$FM_STATE_OVERRIDE") || exit 1
 fi
@@ -2249,6 +2253,10 @@ path_is_ancestor_of() {
 validate_firstmate_home_for_spawn() {
   local id=$1 home=$2 abs_home abs_active_home abs_root marker_id
   abs_home=$(resolved_existing_dir "$home") || return 1
+  if [ -e "$abs_home/.fm-home-migration" ] || [ -L "$abs_home/.fm-home-migration" ]; then
+    echo 'error: a frozen migration archive cannot be launched locally' >&2
+    return 1
+  fi
   abs_active_home=$(resolved_existing_dir "$FM_HOME")
   abs_root=$(resolved_existing_dir "$FM_ROOT")
   if [ "$abs_home" = "/" ]; then
@@ -4279,7 +4287,16 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   LAUNCH="$LAUNCH_ENV_PREFIX /bin/sh -c $(shell_quote "$LAUNCH")"
 fi
 sleep 0.3
-spawn_send_literal "$T" "$LAUNCH"
+# A refused literal send is the whole point of the readiness gate: the pane was
+# still busy, so the launch command would have been typed into a kernel line
+# buffer that discards it whole and reports nothing. Fail here, naming that
+# reason, rather than sending Enter into a pane holding no command and leaving
+# recovery to report later that no running agent could be confirmed.
+if ! spawn_send_literal "$T" "$LAUNCH"; then
+  printf 'failed: %s\n' "launch command not delivered: window $T was still busy and never started reading input" >> "$STATE/$ID.status"
+  echo "error: task $ID's launch command was not delivered because window $T was still busy and never started reading input; no agent was started, inspect window $T" >&2
+  exit 1
+fi
 sleep 0.3
 if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   HERDR_PROJECTION_ABORT_CLEANUP=0

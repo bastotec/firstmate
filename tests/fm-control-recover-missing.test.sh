@@ -11,8 +11,10 @@
 #      its endpoint, worktree, and instructions - now carrying the note.
 #   2. Every refusal the operation promises, each of which must leave the
 #      durable record and the instructions byte-identical: a live or ambiguous
-#      endpoint, an absent or dirty local copy, and a pool slot claimed by
-#      another task or carrying an unreadable claim.
+#      endpoint, an absent local copy, and a pool slot claimed by another task
+#      or carrying an unreadable claim. Uncommitted work is deliberately NOT
+#      among them: it is the normal state of a task worth rescuing, and the
+#      rescue must leave every such change exactly where it found it.
 #   3. The runtime is not switchable here: --harness/--model/--effort and
 #      --account-slot belong to `relaunch`, and recovery continues the recorded
 #      profile - including the subscription account the record names, so a
@@ -102,7 +104,11 @@ case "${1:-}" in
     printf '╭────╮\n│    │\n╰────╯\n'
     exit 0 ;;
   new-window)
-    [ -z "${FM_FAKE_NEW_WINDOW_FAIL:-}" ] || { echo "can't create window" >&2; exit 1; }
+    if [ -n "${FM_FAKE_NEW_WINDOW_FAIL:-}" ]; then
+      [ -z "${FM_FAKE_LOSE_SERVER:-}" ] || : > "$D/server-lost"
+      echo "can't create window" >&2
+      exit 1
+    fi
     name=
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -156,6 +162,12 @@ case "${1:-}" in
       esac
     done
     ses=${ses#=}
+    if [ -f "$D/server-lost" ]; then
+      # Not one of the wordings the classifier reads as a gone session, so the
+      # endpoint reads `unreadable`: nothing is proven about the window.
+      echo "lost server" >&2
+      exit 1
+    fi
     if ! grep -qxF "$ses" "$D/sessions" 2>/dev/null; then
       # Exactly what real tmux writes when the whole session is gone; the
       # recovery-grade classifier reads this as `missing`.
@@ -285,6 +297,7 @@ run_control() {  # <case-dir> <args...>
     FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_FAKE_NEW_WINDOW_FAIL="${FM_FAKE_NEW_WINDOW_FAIL:-}" \
     FM_FAKE_NEW_SESSION_FAIL="${FM_FAKE_NEW_SESSION_FAIL:-}" \
+    FM_FAKE_LOSE_SERVER="${FM_FAKE_LOSE_SERVER:-}" \
     FM_FAKE_SHELL_BUSY_READS="${FM_FAKE_SHELL_BUSY_READS:-0}" \
     "$CONTROL" "$@" 2>&1
 }
@@ -365,6 +378,17 @@ test_recover_missing_refuses_a_terminal_that_never_settles() {
     "the refusal should name what it waited for"
   ! grep -Fq "encode launch-brief" "$dir/fake/literal" \
     || fail "an unsettled terminal must never be handed to the launch owner"
+  # The terminal IS back - only the handover failed - so the rollback must not
+  # tell the operator the recreation never happened. The pane was just measured
+  # as NOT agent-free, so the only advice the operator gets is the refusal's own
+  # qualified line; the rollback must not duplicate it with an unqualified one.
+  assert_grep "fm-rm22" "$dir/fake/created-windows" "the terminal should already have been recreated"
+  assert_contains "$out" "recreated the terminal but could not hand it over" \
+    "the rollback must admit the terminal now exists"
+  assert_contains "$out" "once its shell is idle bring the worker up with 'relaunch'" \
+    "the refusal should keep the qualified advice for the pane it measured as busy"
+  [ "$(grep -c "relaunch'" <<<"$out")" = 1 ] \
+    || fail "the rollback must not repeat the refusal's relaunch advice unqualified"
   pass "fm-control recover-missing: a recreated terminal that never goes agent-free refuses instead of launching into it"
 }
 
@@ -429,24 +453,6 @@ test_recover_missing_refuses_an_absent_local_copy() {
     "the refusal should name the missing local copy"
   assert_nothing_changed "$dir" rm4 "$meta_before" "$brief_before"
   pass "fm-control recover-missing: an unavailable local copy refuses rather than reallocating one"
-}
-
-test_recover_missing_refuses_a_dirty_local_copy() {
-  local dir out rc meta_before brief_before
-  dir=$(new_case dirty rm5)
-  add_ship_task "$dir" rm5
-  make_endpoint_missing "$dir"
-  meta_before=$(cat "$dir/home/state/rm5.meta")
-  brief_before=$(cat "$dir/home/data/rm5/brief.md")
-  : > "$dir/wt/dirty.txt"
-  git -C "$dir/wt" add dirty.txt
-
-  out=$(run_control "$dir" rm5 recover-missing --note "recover"); rc=$?
-  expect_code 1 "$rc" "a dirty local copy must refuse"$'\n'"$out"
-  assert_contains "$out" "uncommitted changes; refusing to recover rather than cleaning it" \
-    "the refusal should say it will not clean the copy"
-  assert_nothing_changed "$dir" rm5 "$meta_before" "$brief_before"
-  pass "fm-control recover-missing: a dirty local copy refuses rather than resetting it"
 }
 
 test_recover_missing_refuses_a_pool_slot_owned_by_another_task() {
@@ -516,6 +522,10 @@ test_failed_recreation_rolls_the_progress_note_back() {
   out=$(FM_FAKE_NEW_WINDOW_FAIL=1 run_control "$dir" rm11 recover-missing --note "first attempt"); rc=$?
   expect_code 1 "$rc" "a failed recreation must refuse"$'\n'"$out"
   assert_contains "$out" "failed while recreating the terminal" "the refusal should name the phase it failed in"
+  # Nothing was created here: the window never appeared, so the endpoint still
+  # reads missing and the rollback must not claim a terminal is back.
+  assert_not_contains "$out" "recreated the terminal" \
+    "a recreation that created nothing must not claim a terminal now exists"
   [ "$(cat "$dir/home/data/rm11/brief.md")" = "$brief_before" ] \
     || fail "a failed recreation must roll the progress note back out of the instructions"
   [ "$(cat "$dir/home/state/rm11.meta")" = "$meta_before" ] \
@@ -528,6 +538,25 @@ test_failed_recreation_rolls_the_progress_note_back() {
   assert_no_grep "first attempt" "$dir/home/data/rm11/brief.md" \
     "the rolled-back attempt's note must not survive into the retry"
   pass "fm-control recover-missing: a failed recreation rolls the progress note back so retries do not stack"
+}
+
+test_unreadable_endpoint_after_a_failed_recreation_claims_nothing() {
+  local dir out rc
+  dir=$(new_case recreate-unreadable rm23)
+  add_ship_task "$dir" rm23
+  make_endpoint_missing "$dir"
+
+  # The window creation fails and the session provider then goes unreachable,
+  # so the rollback's own read comes back `unreadable`. Nothing proves a window
+  # exists, so it must not tell the operator one was recreated.
+  out=$(FM_FAKE_NEW_WINDOW_FAIL=1 FM_FAKE_LOSE_SERVER=1 \
+    run_control "$dir" rm23 recover-missing --note "first attempt"); rc=$?
+  expect_code 1 "$rc" "a failed recreation must refuse"$'\n'"$out"
+  assert_contains "$out" "failed while recreating the terminal" \
+    "an endpoint that proves nothing must keep the nothing-created wording"
+  assert_not_contains "$out" "recreated the terminal" \
+    "an unreadable endpoint must not be reported as a recreated terminal"
+  pass "fm-control recover-missing: an unreadable endpoint after a failed recreation claims no terminal exists"
 }
 
 test_launch_failure_never_claims_an_agent_was_stopped() {
@@ -748,14 +777,12 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate() {
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
   printf 'sm9\n' > "$dir/smhome/.fm-secondmate-home"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
-  # Recovery refuses a dirty local copy, so the secondmate home has to be a
-  # committed checkout rather than the scratch tree a relaunch case can get
-  # away with. The identity is inline because tests/git-config-helpers.sh takes
-  # the host's global and system config away from every fixture: a bare commit
-  # is then left with Git's own <user>@<hostname> guess, which a developer
-  # machine supplies and a CI runner whose hostname carries no domain does not.
-  # Without it the commit fails, the two staged files stay staged, and this case
-  # fails on the dirty-copy refusal instead of exercising the profile freeze.
+  # Commit the seeded home so this case exercises the profile freeze against a
+  # settled checkout rather than incidental fixture dirt. The identity is inline
+  # because tests/git-config-helpers.sh takes the host's global and system
+  # config away from every fixture: a bare commit is then left with Git's own
+  # <user>@<hostname> guess, which a developer machine supplies and a CI runner
+  # whose hostname carries no domain does not.
   git -C "$dir/smhome" add -A
   git -C "$dir/smhome" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
     commit --quiet -m "secondmate home" \
@@ -791,41 +818,65 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate() {
   pass "fm-control recover-missing: a secondmate's recorded harness, model and effort survive a differing configured pin"
 }
 
-# --- 6. which local-copy dirt actually blocks a rescue -----------------------
+# --- 6. the rescue runs on the mid-work copy it exists for -------------------
 
-test_recover_missing_accepts_a_worktree_holding_only_spawn_leftovers() {
-  local dir out rc
-  dir=$(new_case spawn-dirt rm19)
+# The reason this verb exists is a worker whose terminal died mid-task, so its
+# local copy is dirty by definition. Recovery only recreates the terminal beside
+# that work: it must succeed on every shape of uncommitted change, and every one
+# of them must still be there, byte for byte, afterwards.
+test_recover_missing_preserves_uncommitted_work() {
+  local dir out rc modified_before untracked_before staged_before status_before
+  dir=$(new_case uncommitted rm19)
   add_ship_task "$dir" rm19
   make_endpoint_missing "$dir"
-  # What a previous incarnation's own spawn leaves behind. These are not the
-  # task's work, and refusing them would block recovery for exactly the tasks
-  # this verb exists to rescue.
-  mkdir -p "$dir/wt/.claude"
-  printf '{}\n' > "$dir/wt/.claude/settings.local.json"
 
-  out=$(run_control "$dir" rm19 recover-missing --note "recover"); rc=$?
-  expect_code 0 "$rc" "a worktree dirty only with spawn leftovers should recover"$'\n'"$out"
+  # All three shapes at once: an edited tracked file, brand-new untracked work,
+  # and a staged change waiting to be committed.
+  printf '# README\nthe worker was halfway through this line\n' > "$dir/wt/README.md"
+  printf 'work in progress\nsecond line\n' > "$dir/wt/new-source.sh"
+  printf 'staged change\n' > "$dir/wt/staged.txt"
+  git -C "$dir/wt" add staged.txt
+  modified_before=$(cat "$dir/wt/README.md")
+  untracked_before=$(cat "$dir/wt/new-source.sh")
+  staged_before=$(cat "$dir/wt/staged.txt")
+  status_before=$(git -C "$dir/wt" status --porcelain)
+
+  out=$(run_control "$dir" rm19 recover-missing --note "the terminal died mid-task"); rc=$?
+  expect_code 0 "$rc" "a mid-work local copy is exactly what this verb rescues"$'\n'"$out"
+  assert_contains "$out" "recovered rm19 harness=claude" "the rescue should complete"
   assert_grep "fm-rm19" "$dir/fake/created-windows" "the terminal should have been recreated"
-  pass "fm-control recover-missing: a worktree holding only the previous spawn's own leftovers still recovers"
+  assert_grep "encode launch-brief" "$dir/fake/literal" \
+    "the launch should have been handed to the existing owner"
+
+  [ "$(cat "$dir/wt/README.md")" = "$modified_before" ] \
+    || fail "the edited tracked file must survive the rescue unmodified"
+  [ "$(cat "$dir/wt/new-source.sh")" = "$untracked_before" ] \
+    || fail "untracked work in progress must survive the rescue unmodified"
+  [ "$(cat "$dir/wt/staged.txt")" = "$staged_before" ] \
+    || fail "a staged change must survive the rescue unmodified"
+  [ "$(git -C "$dir/wt" status --porcelain)" = "$status_before" ] \
+    || fail "the rescue must leave the index and working tree exactly as it found them"$'\n'"before:"$'\n'"$status_before"$'\n'"after:"$'\n'"$(git -C "$dir/wt" status --porcelain)"
+  [ "$(meta_field "$dir" rm19 worktree)" = "$dir/wt" ] \
+    || fail "the rescue must reuse the recorded local copy, never reallocate one"
+  pass "fm-control recover-missing: a copy full of uncommitted work is rescued with every change left untouched"
 }
 
-test_recover_missing_refuses_an_untracked_source_file() {
-  local dir out rc meta_before brief_before
-  dir=$(new_case untracked-src rm20)
+# The checkpoint no longer gates on dirt, but it still has to SAY what it found,
+# so the journal records which state the rescued copy was in.
+test_recover_missing_records_the_dirty_state_it_found() {
+  local dir out rc
+  dir=$(new_case dirty-journal rm20)
   add_ship_task "$dir" rm20
   make_endpoint_missing "$dir"
-  meta_before=$(cat "$dir/home/state/rm20.meta")
-  brief_before=$(cat "$dir/home/data/rm20/brief.md")
-  # Untracked, but real unlanded work rather than a spawn leftover.
   printf 'work in progress\n' > "$dir/wt/new-source.sh"
 
   out=$(run_control "$dir" rm20 recover-missing --note "recover"); rc=$?
-  expect_code 1 "$rc" "an untracked source file must refuse"$'\n'"$out"
-  assert_contains "$out" "uncommitted changes; refusing to recover rather than cleaning it" \
-    "the refusal should say it will not clean the copy"
-  assert_nothing_changed "$dir" rm20 "$meta_before" "$brief_before"
-  pass "fm-control recover-missing: untracked work that is not a spawn leftover still refuses"
+  expect_code 0 "$rc" "a dirty copy should recover"$'\n'"$out"
+  [ "$(journal_field "$dir" rm20 worktree_dirty)" = yes ] \
+    || fail "the journal should record the rescued copy as dirty, got '$(journal_field "$dir" rm20 worktree_dirty)'"
+  [ "$(journal_field "$dir" rm20 phase)" = complete ] \
+    || fail "the transaction journal should end complete"
+  pass "fm-control recover-missing: the checkpoint still records the rescued copy's dirty state"
 }
 
 test_recover_missing_preserves_the_recorded_account_slot() {
@@ -872,19 +923,19 @@ test_recover_missing_recreates_a_gone_session_before_the_window
 test_recover_missing_does_not_recreate_a_session_that_is_still_alive
 test_recover_missing_refuses_when_the_session_cannot_be_recreated
 test_recover_missing_freezes_the_recorded_profile_for_a_secondmate
-test_recover_missing_accepts_a_worktree_holding_only_spawn_leftovers
-test_recover_missing_refuses_an_untracked_source_file
+test_recover_missing_preserves_uncommitted_work
+test_recover_missing_records_the_dirty_state_it_found
 test_recover_missing_recreates_the_terminal_and_launches_the_replacement
 test_recover_missing_waits_for_the_recreated_shell_to_settle
 test_recover_missing_refuses_a_terminal_that_never_settles
 test_recover_missing_refuses_a_live_endpoint
 test_recover_missing_refuses_an_ambiguous_endpoint
 test_recover_missing_refuses_an_absent_local_copy
-test_recover_missing_refuses_a_dirty_local_copy
 test_recover_missing_refuses_a_pool_slot_owned_by_another_task
 test_recover_missing_refuses_an_unreadable_pool_slot_claim
 test_recover_missing_keeps_its_own_pool_slot
 test_failed_recreation_rolls_the_progress_note_back
+test_unreadable_endpoint_after_a_failed_recreation_claims_nothing
 test_launch_failure_never_claims_an_agent_was_stopped
 test_recover_missing_refuses_a_backend_it_cannot_recreate_on
 test_recover_missing_refusal_names_the_postcondition_it_cannot_prove
