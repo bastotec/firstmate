@@ -420,6 +420,7 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   printf '001.msg\t1\t1756000000\n' > "$PARENT/state/move-work.inbox/.ring-state"
   printf '001.msg\n' > "$PARENT/state/move-work.inbox/.escalated"
   : > "$PARENT/state/move-work.inbox/.staging.Ab3xZ9"
+  : > "$PARENT/state/move-work.inbox/.dedup.Cd4yW1"
   out=$(migrate move-work 2>&1) || fail "migration recovery failed: $out"
   assert_grep 'move-work - Persistent responsibility (host:' "$PARENT/data/secondmates.md" 'successful migration did not switch route'
   for path in data/backlog.md data/learnings.md data/report/report.md state/inbox/note.md; do
@@ -429,7 +430,7 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   cmp -s "$PARENT/state/move-work.inbox/001.msg" "$TMP_ROOT/migrated-move-work/state/parent-route/move-work.inbox/001.msg" || fail 'pending steer bytes/correlation lost'
   cmp -s "$PARENT/state/move-work.inbox/002.msg" "$TMP_ROOT/migrated-move-work/state/parent-route/move-work.inbox/002.msg" \
     || fail 'a steer queued after the first snapshot did not cross on the rerun'
-  for artifact in .ring-state .escalated .staging.Ab3xZ9; do
+  for artifact in .ring-state .escalated .staging.Ab3xZ9 .dedup.Cd4yW1; do
     assert_absent "$TMP_ROOT/migrated-move-work/state/parent-route/move-work.inbox/$artifact" \
       'watcher inbox bookkeeping was transferred as a durable record'
   done
@@ -482,6 +483,39 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   assert_absent "$TMP_ROOT/migrated-local-project" 'refused local-only project was provisioned'
   assert_grep 'local-project - Persistent responsibility (home:' "$PARENT/data/secondmates.md" \
     'local-only refusal switched the route'
+  assert_absent "$TMP_ROOT/source-local-project/.fm-home-migration" 'local-only refusal left the source frozen'
+  assert_absent "$PARENT/data/local-project/migration" 'local-only refusal retained its journal'
+
+  # A home the command refuses locally must stay usable: the refusal names what
+  # it could not carry, and the archive guard that stops a frozen home starting
+  # a session must not be left behind by a migration that never staged anything.
+  migration_source guard-work
+  lock_session() {
+    FM_HOME="$TMP_ROOT/source-guard-work" FM_STATE_OVERRIDE="$TMP_ROOT/source-guard-work/state" \
+      bash -c 'exec -a codex bash "$0"' "$ROOT/bin/fm-lock.sh"
+  }
+  printf 'x=1\n' > "$TMP_ROOT/source-guard-work/config/x-mode.env"
+  if migrate guard-work > "$TMP_ROOT/migrate.out" 2>&1; then fail 'migration accepted an unclassifiable config file'; fi
+  assert_grep 'unclassified config: config/x-mode.env' "$TMP_ROOT/migrate.out" \
+    "the refusal did not name the config file it could not carry: $(cat "$TMP_ROOT/migrate.out")"
+  assert_absent "$TMP_ROOT/source-guard-work/.fm-home-migration" 'an unclassifiable config file froze the source'
+  assert_absent "$PARENT/data/guard-work/migration" 'an unclassifiable config file left a migration journal'
+  lock_session > "$TMP_ROOT/lock.out" 2>&1 || fail "the refused home can no longer start a session: $(cat "$TMP_ROOT/lock.out")"
+  rm "$TMP_ROOT/source-guard-work/state/.lock" "$TMP_ROOT/source-guard-work/config/x-mode.env"
+  # The same holds for a refusal that lands after the freeze: nothing has been
+  # staged on the host yet, so the freeze and its journal are unwound.
+  mkdir -p "$PARENT/state/guard-work.inbox"
+  printf 'not a durable record\n' > "$PARENT/state/guard-work.inbox/scratch"
+  if migrate guard-work > "$TMP_ROOT/migrate.out" 2>&1; then fail 'migration accepted an unclassified inbox artifact'; fi
+  assert_grep 'unclassified inbox artifact: scratch' "$TMP_ROOT/migrate.out" \
+    "the snapshot refusal did not name the artifact: $(cat "$TMP_ROOT/migrate.out")"
+  assert_absent "$TMP_ROOT/migrated-guard-work" 'a refused migration provisioned the remote home'
+  assert_absent "$TMP_ROOT/source-guard-work/.fm-home-migration" 'a refusal before any remote staging left the source frozen'
+  assert_absent "$PARENT/data/guard-work/migration" 'a refusal before any remote staging retained its journal'
+  assert_grep 'guard-work - Persistent responsibility (home:' "$PARENT/data/secondmates.md" 'a refused migration switched the route'
+  lock_session > "$TMP_ROOT/lock.out" 2>&1 || fail "an unwound refusal left the home unable to start: $(cat "$TMP_ROOT/lock.out")"
+  rm "$TMP_ROOT/source-guard-work/state/.lock" "$PARENT/state/guard-work.inbox/scratch"
+  pass 'a local refusal names its cause and leaves the source unfrozen and startable'
 
   migration_source project-work direct-PR
   alpha_head=$(git -C "$TMP_ROOT/source-project-work/projects/alpha" rev-parse HEAD) \

@@ -13,6 +13,9 @@
 # nested mate, active process source, away daemon, or live session refuses.
 # The local home is frozen before snapshotting and remains a non-running archive
 # even on rollback. Its treehouse lease, projects, and all unlanded work remain.
+# A refusal that lands before anything has been staged on the host unwinds the
+# freeze and the journal this invocation created: nothing crossed, so the home
+# must stay startable. Once staging has begun, nothing local is ever unwound.
 # State evidence is not executable on the new machine; fm-home-migration-lib.sh
 # owns the transfer boundary. Secrets embedded in ordinary prose are not detected:
 # the operator must inspect durable records before authorizing their transfer.
@@ -64,8 +67,21 @@ REG="$DATA/secondmates.md"
 META="$STATE/$ID.meta"
 JOURNAL="$DATA/$ID/migration"
 LOCKS=()
+FROZE_HERE=0
+REMOTE_STAGED=0
 cleanup() { local lock; for lock in ${LOCKS[@]+"${LOCKS[@]}"}; do fm_lock_release "$lock" || true; done; }
-trap cleanup EXIT
+unwind() {
+  local status=$?
+  if [ "$status" -ne 0 ] && [ "$FROZE_HERE" = 1 ] && [ "$REMOTE_STAGED" = 0 ]; then
+    if [ -f "$SOURCE/.fm-home-migration" ] && [ ! -L "$SOURCE/.fm-home-migration" ] \
+      && [ "$(cat "$SOURCE/.fm-home-migration")" = "$JOURNAL" ]; then
+      rm -f "$SOURCE/.fm-home-migration"
+    fi
+    rm -rf -- "$JOURNAL"
+  fi
+  cleanup
+}
+trap unwind EXIT
 lock() { fm_lock_try_acquire "$1" || die "migration lock unavailable: $1"; LOCKS+=("$1"); }
 for dir in "$DATA" "$STATE" "$DATA/$ID" "$SOURCE/data" "$SOURCE/state" "$SOURCE/config" "$SOURCE/projects"; do
   [ -d "$dir" ] && [ ! -L "$dir" ] && [ "$(cd "$dir" && pwd -P)" = "$dir" ] || die "unsafe operational directory: $dir"
@@ -98,6 +114,8 @@ for dir in procevent when; do
   [ ! -d "$SOURCE/state/$dir" ] || [ -z "$(find "$SOURCE/state/$dir" -type f -print)" ] || die "active $dir registrations remain"
 done
 [ ! -e "$SOURCE/state/.afk" ] && [ ! -e "$SOURCE/state/.afk-contract" ] || die 'leave away/quiet mode before migration'
+fm_migration_data classify "$SOURCE" \
+  || die 'source configuration cannot cross as reported above; nothing was frozen'
 # Probe the SOURCE home's own code for the archive guard, because that code is
 # what has to refuse a session once the home is frozen. A pre-guard copy reads
 # the probe word as an ordinary acquire, so the probe is pointed at a throwaway
@@ -130,6 +148,7 @@ else
   [ ! -e "$SOURCE/.fm-home-migration" ] && [ ! -L "$SOURCE/.fm-home-migration" ] || die 'source already frozen by another migration'
   umask 077
   mkdir "$JOURNAL"
+  FROZE_HERE=1
   printf '%s\n' "$SOURCE" > "$JOURNAL/source"
   printf '%s\n' "$HOST" > "$JOURNAL/host"
   printf '%s\n' "$REMOTE_ROOT" > "$JOURNAL/root"
@@ -184,6 +203,7 @@ if [ "$PHASE" != cutover ]; then
 fi
 DIGEST=$(fm_inherit_sha256 "$JOURNAL/bundle.json")
 if [ "$PHASE" != cutover ]; then
+  REMOTE_STAGED=1
   remote --stdin "$ID" fm-remote-home-provision.sh --migration "$ID" "$DIGEST" < "$JOURNAL/bundle.json" || exit $?
   remote "$ID" fm-remote-home-provision.sh --migration-verify "$ID" "$DIGEST" || exit $?
   # Byte-for-byte check that the staged snapshot still matches before switching.

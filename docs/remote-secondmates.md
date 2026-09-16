@@ -167,6 +167,9 @@ The second mate must have persisted its work and exited through the ordinary [co
 The command refuses while the home still holds any child work record, a registered state check, in-flight backlog work, a nested secondmate route, an armed process-event source or condition watch, an away or quiet posture, or a live session.
 Only the tmux and Herdr runtimes can prove a stopped agent, so a home on another runtime is refused rather than assumed idle.
 The host is gated on the same read-only [`bin/fm-remote-doctor.sh`](../bin/fm-remote-doctor.sh) readiness the seed uses, and migration never runs `--fix`: an account-level gap is reported with the doctor's own text and no route is switched.
+A file under `config/` that is not in the classified non-secret set is named and refused during the preconditions, before anything is frozen; widening that set is a separate decision because the cost of guessing wrong is a credential on another machine.
+Any refusal that lands before the host has staged anything - an unready host, an unmigratable project, a record the snapshot cannot carry - unwinds the freeze marker and the journal that run created, so a home the command declined to move stays startable.
+Once staging has begun nothing local is unwound: the journal and the archive are retained for reconciliation.
 
 What crosses is durable records only.
 [`bin/fm-home-migration-lib.sh`](../bin/fm-home-migration-lib.sh) owns that transfer boundary: it carries bounded regular files, verifies every record against its own digest at the receiving host, and refuses traversal, links, special files, oversized payloads, and any `config/` file outside the classified non-secret set.
