@@ -18,7 +18,7 @@ FM_QUOTA_AXI_MIN=0.1.29
 # fm_quota_axi_probe_argv builds the probe's argv from it and
 # fm_quota_axi_probe_capability requires quota-axi --help to advertise every
 # entry, so the probe can never send a flag the gate did not verify.
-FM_QUOTA_AXI_PROBE_FLAGS=(--provider --profile-only --full --json --no-credential-refresh)
+FM_QUOTA_AXI_PROBE_FLAGS=(--provider --full --json --no-credential-refresh)
 
 FM_QUOTA_AXI_CAPABILITY_ERROR=
 

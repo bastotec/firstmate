@@ -1183,7 +1183,7 @@ JSON
   cat > "$fakebin/quota-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then printf '%s\n' 'quota-axi 0.1.42'; exit 0; fi
-if [ "${1:-}" = --help ]; then printf '%s\n' 'flags: --profile-only'; exit 0; fi
+if [ "${1:-}" = --help ]; then printf '%s\n' 'flags: --tui'; exit 0; fi
 exit 0
 SH
   chmod +x "$fakebin/quota-axi"
@@ -1197,12 +1197,12 @@ SH
   chmod +x "$fakebin/quota-axi"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_not_contains "$out" "CREW_DISPATCH:" "bootstrap reported valid slot configuration as invalid because quota-axi lacks --profile-only"
+  assert_not_contains "$out" "CREW_DISPATCH:" "bootstrap reported valid slot configuration as invalid because quota-axi does not advertise a probe flag"
 
   cat > "$fakebin/quota-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then printf '%s\n' 'quota-axi 0.1.42'; exit 0; fi
-if [ "${1:-}" = --help ]; then printf '%s\n' 'flags: --profile-only'; exit 0; fi
+if [ "${1:-}" = --help ]; then printf '%s\n' 'flags: --tui'; exit 0; fi
 exit 0
 SH
   chmod +x "$fakebin/quota-axi"
