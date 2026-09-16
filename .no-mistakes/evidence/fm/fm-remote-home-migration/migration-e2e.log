@@ -1,0 +1,8 @@
+ok - migration refuses children and doctor gaps, converges a rerun that finds new steering, preserves exact durable bytes and correlations, excludes secrets, and relaunches the same identity
+ok - known launch failure restores route while preserving both stopped copies, and its rerun retries the launch without re-landing records
+ok - unknown launch preserves remote placement and converges without duplicates or touching the local sibling
+ok - a snapshot past the ordinary remote job ceiling stages, reaches the worker, and completes
+ok - a rerun that drops a published record is refused by name while one that only changes bytes converges
+ok - a local refusal names its cause and leaves the source unfrozen and startable
+ok - migration clones registered project origins on the host and refuses a local-only project
+ALL TESTS PASSED

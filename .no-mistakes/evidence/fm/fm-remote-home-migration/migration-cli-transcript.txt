@@ -1,0 +1,130 @@
+$ fm-remote-home-seed.sh --migrate <id> <local-home> remote-mac <remote-root> <remote-home>
+Real CLI drive; SSH is the deterministic fixture transport, the remote-side
+firstmate scripts and the Herdr session fixture really run.
+
+### 1. refusal - a retained child work record blocks cutover
+error: child work records remain; finish and land children first
+remote home created? no
+source frozen?       no
+
+### 2. refusal - the read-only remote doctor gates the host
+check gui-session=human: no Aqua login session exists for uid 501
+action: gui-session: log that account in once at the console
+error: this host is not ready for a remote second mate; unresolved: gui-session
+remote prerequisites unresolved; no route switched
+doctor ever invoked with --fix? 0
+
+### 3. refusal - a config file the transfer rule cannot classify
+unclassified config: config/x-mode.env
+error: source configuration cannot cross as reported above; nothing was frozen
+
+### 4. success - the same command, host ready, mate stopped
+check herdr=ok: /usr/bin/herdr
+ok: remote second-mate readiness confirmed on this host
+provisioned: <TMP>/.fm-migration-evid-work.ZZwD1B/home projects=0
+verified-migration: evid-work 98dbe5fe13ddc671549f669d885863772b29e225da4b16bf9be60e733b35b0d2
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: remote secondmate evid-work sync skipped before launch: error: remote secondmate home sync skipped: dirty working tree
+spawned evid-work harness=codex kind=secondmate mode=secondmate yolo=off window=remote:evid-work worktree=<TMP>/migrated-evid-work remote=remote-mac backend=herdr
+migrated: evid-work remote=remote-mac:<TMP>/migrated-evid-work archive=<TMP>/source-evid-work
+
+### 5. the parent route now points at the host (was: home: <local>)
+- evid-work - Persistent responsibility (host: remote-mac; root: <TMP>/remote-root; home: <TMP>/migrated-evid-work; scope: exact selected work; projects: ; added 2026-08-02)
+
+### 6. remote home contents after cutover
+(the 1162 files of the freshly cloned firstmate checkout - .git/, bin/, docs/,
+tests/, .agents/ and harness dotdirs - are elided here; what follows is
+everything the migration itself placed in the home)
+.fm-migration/bundle.json
+.fm-migration/digest
+.fm-migration/original-charter.md
+.fm-migration/original-parent
+.fm-migration/state/inbox/note.md
+.fm-migration/state/old.status
+.fm-secondmate-home
+.fm-secondmate-parent
+.gitattributes
+.gitignore
+.greptile/rules.md
+.grok/hooks/fm-primary-cd-check.json
+.grok/hooks/fm-primary-pretool-check.json
+.grok/hooks/fm-primary-sessionstart-nudge.json
+.grok/hooks/fm-primary-turnend-guard.json
+.no-mistakes.yaml
+.omp/extensions/fm-primary-omp-watch.ts
+.omp/extensions/fm-primary-turnend-guard.ts
+.omp/fm-worker-overlay.yml
+.opencode/plugins/fm-primary-cd-check.js
+.opencode/plugins/fm-primary-pretool-check.js
+.opencode/plugins/fm-primary-sessionstart-nudge.js
+.opencode/plugins/fm-primary-turnend-guard.js
+.opencode/plugins/fm-primary-watch-arm.js
+.opencode/plugins/lib/fm-operational-input.js
+.opencode/plugins/package.json
+.pi/extensions/fm-branch-supervision.ts
+.pi/extensions/fm-calm.ts
+.pi/extensions/fm-primary-pi-watch.ts
+.pi/extensions/fm-primary-turnend-guard.ts
+.pi/extensions/lib/fm-async-exec.ts
+.pi/extensions/lib/fm-branch-dispatch.ts
+.pi/extensions/lib/fm-branch-model-picker.ts
+.pi/extensions/lib/fm-calm-assistant-layout.ts
+.pi/extensions/lib/fm-calm-operational-user-layout.ts
+.pi/extensions/lib/fm-calm-visibility.ts
+.pi/extensions/lib/fm-calm-working-ship.ts
+.pi/extensions/lib/fm-native-contract.ts
+.pi/extensions/lib/fm-operational-input.ts
+.pi/extensions/lib/fm-sessionstart-supervisor.mjs
+.tasks.toml
+AGENTS.md
+CLAUDE.md
+CONTRIBUTING.md
+GROK_BOT.md
+LICENSE
+README.md
+VISION.md
+assets/banner.png
+config/.fm-inherit-backend.generation
+config/.fm-inherit-backlog-backend.generation
+config/.fm-inherit-claude-permission-mode.generation
+config/.fm-inherit-crew-dispatch.json.generation
+config/.fm-inherit-crew-harness.generation
+config/.fm-inherit-herdr-presentation-spaces.generation
+config/.fm-inherit-launch-env-allowlist.generation
+config/.fm-inherit-startup-memory-budget.generation
+config/.fm-inherit-trace-context.generation
+config/backend
+config/crew-harness
+data/.fm-inherit-captain-shared.md.generation
+data/backlog.md
+data/charter.md
+data/learnings.md
+data/projects.md
+data/report/report.md
+skills/stow/SKILL.md
+state/inbox/note.md
+state/parent-route/evid-work.meta
+state/parent-route/home-summary.json
+
+
+### 7. credentials stay local, never cross
+  .env                             local=present  remote=absent
+  config/cmux-socket-password      local=present  remote=absent
+  data/credentials/token           local=present  remote=absent
+
+### 8. durable records crossed byte-exact
+  data/backlog.md              byte-identical
+  data/learnings.md            byte-identical
+  data/report/report.md        byte-identical
+  state/inbox/note.md          byte-identical
+
+### 9. the preserved local home is a non-running archive
+error: this home is a frozen migration archive; no session may start
+archive still holds its records: 5 files under data/
+
+### 10. the same identity relaunched on Herdr fm-remote
+harness=codex
+kind=secondmate
+home=<TMP>/migrated-evid-work
+remote_host=remote-mac
+remote_herdr_session=fm-remote

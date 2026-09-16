@@ -1,0 +1,8 @@
+run 1: not ok - merge-outcome-committed: watcher failed: <empty stderr>
+run 2: not ok - merged retirement watcher failed: <empty stderr>
+run 3 (earlier, batch): not ok - post-registration-removal restart failed: <empty stderr>
+
+A different case fails on every run and stderr is always empty, which is the
+signature of run_watcher_bounded()'s alarm(10) watchdog (tests/fm-pr-check-security.test.sh:639)
+killing a slow watcher, not a product refusal. All three cases exist unchanged
+at the base commit 8b10b61.
