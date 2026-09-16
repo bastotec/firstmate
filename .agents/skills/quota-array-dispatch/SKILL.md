@@ -42,10 +42,11 @@ Firstmate can optionally arm `bin/fm-procevent-quota.sh` for a recurring mid-tas
 When a matched profile contains `accountSlots`, expand it into one `(harness, model, effort, accountSlot)` candidate per logical slot before applying the gates below.
 A single profile with two slots is therefore a quota-aware choice even though the profile itself is not an array.
 Use `bin/fm-account-slot.sh probe-all <slot>...` once with the distinct referenced logical slots.
-That public helper validates the current home's registry, requires quota-axi's advertised `--profile-only` capability, probes sequentially with credential refresh disabled, verifies configured identity and provenance, and emits only sanitized quota evidence plus logical slot IDs.
-Without that capability there is no automatic slot selection at all: `probe-all` refuses, and you must pick a slot by explicit captain instruction or leave the profile unslotted.
+That public helper validates the current home's registry, requires quota-axi's help to advertise every flag the probe sends, probes sequentially with credential refresh disabled, verifies configured identity and provenance, and emits only sanitized quota evidence plus logical slot IDs.
+Without that capability there is no automatic slot selection at all: `probe-all` refuses and names the missing flag, and you must pick a slot by explicit captain instruction or leave the profile unslotted.
 Malformed registry data, references, duplicate tuples, and missing requested IDs refuse the whole candidate set.
-After that global validation, an individual slot whose isolated probe is unavailable emits only its logical ID with `availability.status=unavailable`; exclude that tuple and continue evaluating healthy later slots.
+After that global validation, an individual slot whose isolated probe is unavailable emits its logical ID with `availability.status=unavailable` and `availability.reason`; exclude that tuple and continue evaluating healthy later slots.
+Carry those reasons into the decision record so a reduced or empty candidate set always states why, and say so plainly instead of reporting no candidates without cause.
 Never run the ordinary provider snapshot for a slotted tuple, and never put account identity, credential paths, source attempts, or raw full JSON into candidate accounting.
 If the selected candidate set also contains legacy ambient profiles, take the default TOON once for those profiles only.
 Duplicate effective tuples are malformed configuration.

@@ -8,9 +8,11 @@
 # FM_HOME selects the home. FM_CONFIG_OVERRIDE selects its exact config
 # directory. probe-all requires at least one slot ID, de-duplicates the names it
 # is given, validates the registry and references as one configuration, then
-# probes sequentially. A valid but unavailable slot emits only its logical ID
-# plus availability.status=unavailable and does not stop later slots; malformed
-# configuration and missing requested IDs still refuse.
+# probes sequentially. A valid but unavailable slot emits only its logical ID,
+# availability.status=unavailable, and availability.reason - the probe's own
+# refusal, which names logical slot IDs and missing prerequisites but never
+# account identity, credential sources, or store paths - and does not stop later
+# slots; malformed configuration and missing requested IDs still refuse.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,8 +48,7 @@ case "${1:-}" in
     [ "$#" -gt 0 ] || { echo "usage: fm-account-slot.sh probe-all <slot>..." >&2; exit 2; }
     fm_account_slot_validate_registry "$CONFIG" || die_slot
     fm_account_slot_validate_dispatch "$CONFIG" || die_slot
-    fm_quota_axi_supports_profile_only \
-      || { FM_ACCOUNT_SLOT_ERROR="quota-axi does not support --profile-only; install a published release that advertises that flag"; die_slot; }
+    fm_quota_axi_probe_capability || { FM_ACCOUNT_SLOT_ERROR=$FM_QUOTA_AXI_CAPABILITY_ERROR; die_slot; }
     slots=
     for slot in "$@"; do
       case $'\n'"$slots"$'\n' in *$'\n'"$slot"$'\n'*) continue ;; esac
@@ -65,7 +66,8 @@ case "${1:-}" in
     while IFS= read -r slot; do
       [ -n "$slot" ] || continue
       if ! fm_account_slot_probe "$CONFIG" "$slot" >> "$tmp"; then
-        jq -cn --arg slot "$slot" '{accountSlot:$slot,availability:{status:"unavailable"}}' >> "$tmp" \
+        jq -cn --arg slot "$slot" --arg reason "$FM_ACCOUNT_SLOT_ERROR" \
+          '{accountSlot:$slot,availability:{status:"unavailable",reason:$reason}}' >> "$tmp" \
           || { FM_ACCOUNT_SLOT_ERROR="sanitized unavailable evidence could not be emitted"; die_slot; }
       fi
     done <<< "$slots"

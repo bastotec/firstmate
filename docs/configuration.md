@@ -485,10 +485,12 @@ Every worker uses exactly one selected profile: Claude receives one `CLAUDE_CONF
 A slotted launch unsets both store variables and that vendor's ambient API-key and token variables first, so the selected store is the worker's only credential source; the isolated quota probe unsets the same names.
 Provisioning a slot is `claude` or `codex login` under that store, plus - for Codex only - answering the harness's one-time directory trust dialog once per repository, because Codex records that decision inside the active `CODEX_HOME`.
 Spawn pre-registers Claude workspace trust into the selected Claude store, while a Codex slot uses the existing post-spawn trust step in `AGENTS.md`; Firstmate keeps no trust store of its own for Codex.
-Automatic quota-ranked slot selection remains unavailable unless the installed `quota-axi --help` advertises `--profile-only`; `probe` and `probe-all` refuse rather than falling back to an ambient or combined provider read, and there is no automatic selection without that evidence.
+Automatic quota-ranked slot selection remains unavailable unless the installed `quota-axi --help` advertises every flag the probe sends - `--provider`, `--profile-only`, `--full`, `--json`, and `--no-credential-refresh` - so the request can never outrun the measured producer contract.
+`probe` and `probe-all` refuse by naming the first missing flag rather than falling back to an ambient or combined provider read, and there is no automatic selection without that evidence.
 An explicit `--account-slot` launch or relaunch needs no quota evidence: it resolves the home-local binding and routes to it.
 `probe-all` takes the slot IDs a pending decision actually references, and refuses malformed registry data, references, and missing requested IDs before probing.
-Once configuration is valid, one unavailable isolated slot produces only its logical ID and `availability.status=unavailable`, allowing healthy later slots to remain candidates without exposing the unavailable probe's error, identity, or paths.
+Once configuration is valid, one unavailable isolated slot produces its logical ID, `availability.status=unavailable`, and `availability.reason` carrying that probe's own refusal, so healthy later slots remain candidates and a reduced or empty candidate set is never unexplained.
+That reason names only logical slot IDs, config files, and missing prerequisites; account identity, credential sources, and store paths stay out of it.
 An explicit single-slot `probe` keeps refusal semantics.
 
 ## Toolchain
