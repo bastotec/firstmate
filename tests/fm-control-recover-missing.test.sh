@@ -347,6 +347,14 @@ test_recover_missing_refuses_a_terminal_that_never_settles() {
     "the refusal should name what it waited for"
   ! grep -Fq "encode launch-brief" "$dir/fake/literal" \
     || fail "an unsettled terminal must never be handed to the launch owner"
+  # The terminal IS back - only the handover failed - so the rollback must not
+  # tell the operator the recreation never happened; the bare shell it left
+  # behind reads `dead` once its rc files finish, which is relaunch's input.
+  assert_grep "fm-rm22" "$dir/fake/created-windows" "the terminal should already have been recreated"
+  assert_contains "$out" "recreated the terminal but could not hand it over" \
+    "the rollback must admit the terminal now exists"
+  assert_contains "$out" "retry with 'relaunch'" \
+    "the rollback should name the verb that acts on the bare shell it left behind"
   pass "fm-control recover-missing: a recreated terminal that never goes agent-free refuses instead of launching into it"
 }
 
@@ -480,6 +488,10 @@ test_failed_recreation_rolls_the_progress_note_back() {
   out=$(FM_FAKE_NEW_WINDOW_FAIL=1 run_control "$dir" rm11 recover-missing --note "first attempt"); rc=$?
   expect_code 1 "$rc" "a failed recreation must refuse"$'\n'"$out"
   assert_contains "$out" "failed while recreating the terminal" "the refusal should name the phase it failed in"
+  # Nothing was created here: the window never appeared, so the endpoint still
+  # reads missing and the rollback must not send the operator to 'relaunch'.
+  assert_not_contains "$out" "retry with 'relaunch'" \
+    "a recreation that created nothing must not claim a terminal now exists"
   [ "$(cat "$dir/home/data/rm11/brief.md")" = "$brief_before" ] \
     || fail "a failed recreation must roll the progress note back out of the instructions"
   [ "$(cat "$dir/home/state/rm11.meta")" = "$meta_before" ] \
