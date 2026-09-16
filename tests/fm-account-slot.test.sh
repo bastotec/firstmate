@@ -54,7 +54,17 @@ if [ "${1:-}" = --help ]; then
     [ "$flag" != "${FAKE_OMIT_FLAG:-}" ] || continue
     advertised="${advertised:+$advertised }$flag"
   done
-  printf '%s\n' "flags: $advertised"
+  case "${FAKE_HELP_SHAPE:-list}" in
+    synopsis)
+      bracketed=
+      for flag in $advertised; do bracketed="${bracketed:+$bracketed }[$flag]"; done
+      printf '%s\n' "usage: quota-axi $bracketed"
+      ;;
+    alternation) printf '%s\n' "quota-axi (${advertised// /|})" ;;
+    indented) printf '%s\n' "options:"; for flag in $advertised; do printf '  %s=VALUE\n' "$flag"; done ;;
+    longer) printf '%s\n' "flags: ${advertised//--json/--json-lines}" ;;
+    *) printf '%s\n' "flags: $advertised" ;;
+  esac
   exit 0
 fi
 if [ "${1:-}" = --version ]; then printf '%s\n' 'quota-axi 0.1.42'; exit 0; fi
@@ -369,6 +379,22 @@ for missing in --provider --profile-only --full --json --no-credential-refresh; 
   assert_contains "$(cat "$TMP_ROOT/capability-single.err")" "$missing" "single-slot capability refusal did not name the absent flag"
 done
 pass "gates automatic quota ranking on every flag the probe sends and names the missing one"
+
+for shape in list synopsis alternation indented; do
+  : > "$CALLS"
+  PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_HELP_SHAPE="$shape" FM_HOME="$HOME_DIR" \
+    "$ROOT/bin/fm-account-slot.sh" probe-all claude-a >/dev/null 2>"$TMP_ROOT/shape-$shape.err" \
+    || fail "a capable quota-axi whose help renders flags as '$shape' was refused: $(cat "$TMP_ROOT/shape-$shape.err")"
+  assert_equals 1 "$(wc -l < "$CALLS" | tr -d ' ')" "the '$shape' help shape did not reach a quota probe"
+done
+: > "$CALLS"
+if PATH="$FAKEBIN:$PATH" FAKE_CALLS="$CALLS" FAKE_HELP_SHAPE=longer FM_HOME="$HOME_DIR" \
+    "$ROOT/bin/fm-account-slot.sh" probe-all claude-a >/dev/null 2>"$TMP_ROOT/shape-longer.err"; then
+  fail "a quota-axi advertising only --json-lines satisfied the --json prerequisite"
+fi
+assert_contains "$(cat "$TMP_ROOT/shape-longer.err")" "--json" "longer-flag refusal did not name the absent flag"
+assert_equals 0 "$(wc -l < "$CALLS" | tr -d ' ')" "probe-all probed a quota-axi that never advertised --json"
+pass "reads a flag from any usual help rendering without accepting a longer flag that merely starts with it"
 
 cp "$HOME_DIR/config/account-slots.json" "$TMP_ROOT/valid-registry"
 cp "$HOME_DIR/config/crew-dispatch.json" "$TMP_ROOT/valid-dispatch"

@@ -82,7 +82,7 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 `recover-missing` runs the same transaction for a task whose terminal is gone rather than agent-free, which is the one state `relaunch` cannot act on: it refuses a missing endpoint, and `fm-spawn.sh --relaunch` adopts only a surviving endpoint.
 It differs from the steps above in exactly three places.
 
-- No profile flags. `--harness`, `--model`, and `--effort` are refused; a recovery continues the same run, and choosing a different runtime is what `relaunch` is for.
+- No profile flags. `--harness`, `--model`, `--effort`, and `--account-slot` are refused; a recovery continues the same run, and choosing a different runtime or account is what `relaunch` is for.
   Only `--note`/`--note-file` apply, and a ship or scout still requires one for the same reason a relaunch does.
   Nothing is re-resolved from configuration either: every identity axis comes from the task's own durable record, so a secondmate whose `config/secondmate-harness` pin has since changed is recovered on the harness, model, and effort it actually recorded.
   Picking the changed pin up is a `relaunch`, which is the verb that deliberately re-resolves it.
