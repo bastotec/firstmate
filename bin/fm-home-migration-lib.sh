@@ -13,9 +13,9 @@
 # Perl's core JSON::PP, MIME::Base64, Digest::SHA, and File::Find avoid a new
 # dependency and reject traversal, links, special files, duplicate destinations,
 # unknown config, oversized payloads, and digest mismatches before publication.
-# fm_migration_data classify reports the same config refusal as pack from the
-# migrate preconditions, so an unclassifiable file is named before the source is
-# frozen rather than after.
+# fm_migration_data classify is pack's own config walk stopped at the rule, run
+# from the migrate preconditions so an unclassifiable file is named before the
+# source is frozen rather than after.
 # fm_migration_receive runs only inside fm-remote-home-provision.sh and takes its
 # serialization key and file digests from that script's own helpers, so a seed
 # and a migration racing for one remote home cannot pick different lock paths.
@@ -69,8 +69,11 @@ sub allowed {
     return 1 if $p =~ m{\Astate/parent-route/\Q$who\E\.inbox/(?:[0-9]+\.msg|handled/[0-9]+\.msg)\z};
     return 0;
 }
-if ($op eq 'pack') {
-    die "unsafe identity\n" unless $id =~ /\A[A-Za-z0-9_-][A-Za-z0-9._-]*\z/;
+if ($op eq 'pack' || $op eq 'classify') {
+    # classify walks config/ under the one rule pack applies and stops there, so
+    # the pre-freeze refusal and the snapshot can never disagree about a file.
+    my $only_config = $op eq 'classify';
+    die "unsafe identity\n" unless $only_config || $id =~ /\A[A-Za-z0-9_-][A-Za-z0-9._-]*\z/;
     my (@records, @excluded);
     my %seen;
     my $add = sub {
@@ -80,7 +83,7 @@ if ($op eq 'pack') {
         $bytes = readfile($src) unless defined $bytes;
         push @records, {path => $dest, bytes => encode_base64($bytes, ''), sha256 => sha256_hex($bytes)};
     };
-    for my $dir (qw(data config state)) {
+    for my $dir ($only_config ? ('config') : qw(data config state)) {
         next unless -e "$home/$dir" || -l "$home/$dir";
         die "unsafe directory: $dir\n" unless -d "$home/$dir" && !-l "$home/$dir";
         find({no_chdir => 1, wanted => sub {
@@ -96,6 +99,7 @@ if ($op eq 'pack') {
             return if S_ISDIR($s[2]);
             die "unsafe artifact: $rel\n" unless S_ISREG($s[2]) && $s[3] == 1;
             if ($dir eq 'config') { die "unclassified config: $rel\n" unless $config{substr($rel, 7)}; }
+            return if $only_config;
             my $dest = $dir eq 'state' ? '.fm-migration/' . $rel : $rel;
             my $bytes = readfile($src);
             if ($rel eq 'data/charter.md') {
@@ -107,6 +111,7 @@ if ($op eq 'pack') {
             $add->($src, $rel, $bytes) if $rel =~ m{\Astate/(?:inbox/|pending-replies/)};
         }}, "$home/$dir");
     }
+    if (!$only_config) {
     $add->("$home/.fm-secondmate-parent", '.fm-migration/original-parent');
     my $inbox = "$arg/$id.inbox";
     if (-e $inbox || -l $inbox) {
@@ -125,20 +130,6 @@ if ($op eq 'pack') {
         records => [sort {$a->{path} cmp $b->{path}} @records], excluded => [sort @excluded]});
     die "migration exceeds its payload bound\n" if length($json) > $limit;
     print $json;
-} elsif ($op eq 'classify') {
-    # argv: operation, source home. Reports every config/ entry that could not
-    # cross, before any caller has changed the source.
-    if (-e "$home/config" || -l "$home/config") {
-        die "unsafe directory: config\n" unless -d "$home/config" && !-l "$home/config";
-        find({no_chdir => 1, wanted => sub {
-            my $src = $File::Find::name;
-            my $rel = substr($src, length($home) + 1);
-            my @s = lstat($src); die "cannot inspect $src\n" unless @s;
-            if (secret($rel)) { $File::Find::prune = 1 if S_ISDIR($s[2]); return; }
-            die "unsafe path: $rel\n" unless safe($rel);
-            return if S_ISDIR($s[2]);
-            die "unclassified config: $rel\n" unless $config{substr($rel, 7)};
-        }}, "$home/config");
     }
 } elsif ($op eq 'unpack' || $op eq 'check') {
     # argv: operation, destination home, identity, bundle filename

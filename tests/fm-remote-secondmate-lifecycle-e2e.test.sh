@@ -340,7 +340,8 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
     fi
     printf '%s\n' "$id" > "$source/.fm-secondmate-home"
     printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$PARENT" > "$source/.fm-secondmate-parent"
-    printf 'Persistent charter. Replies: %s/state/%s.status; home %s\n' "$PARENT" "$id" "$source" > "$source/data/charter.md"
+    printf 'Persistent charter. Replies: %s/state/%s.status; steer: %s/state/%s.inbox\nFor posterity: this mate was first set up under %s and that is where its early reports were written.\n' \
+      "$PARENT" "$id" "$PARENT" "$id" "$source" > "$source/data/charter.md"
     cp "$source/data/charter.md" "$PARENT/data/$id/brief.md"
     printf '## In flight\n\n## Queued\n\n- [ ] preserve - Open decision\n  A durable unlanded record.\n\n## Done\n' > "$source/data/backlog.md"
     printf 'memory\000binary-safe\n' > "$source/data/learnings.md"
@@ -436,7 +437,16 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   done
   cmp -s "$TMP_ROOT/correlation.before" "$PARENT/state/pending-replies/0123456789abcdef" || fail 'parent correlation changed'
   cmp -s "$TMP_ROOT/source-move-work/data/charter.md" "$TMP_ROOT/migrated-move-work/.fm-migration/original-charter.md" || fail 'original charter lost'
-  assert_grep "$TMP_ROOT/migrated-move-work/state/parent-replies.status" "$TMP_ROOT/migrated-move-work/data/charter.md" 'active charter retained local reply address'
+  # The active charter re-points exactly the two live parent addresses and is
+  # byte-identical everywhere else, so prose naming the old home as history
+  # survives the move unrewritten.
+  sed -e "s#$PARENT/state/move-work.status#$TMP_ROOT/migrated-move-work/state/parent-replies.status#g" \
+      -e "s#$PARENT/state/move-work.inbox#$TMP_ROOT/migrated-move-work/state/parent-route/move-work.inbox#g" \
+      "$TMP_ROOT/source-move-work/data/charter.md" > "$TMP_ROOT/charter.expected"
+  cmp -s "$TMP_ROOT/charter.expected" "$TMP_ROOT/migrated-move-work/data/charter.md" \
+    || fail 'the active charter re-points more or less than the two parent addresses'
+  grep -q "$TMP_ROOT/source-move-work" "$TMP_ROOT/migrated-move-work/data/charter.md" \
+    || fail 'charter prose naming the old home as history was rewritten'
   for path in .env config/cmux-socket-password data/credentials; do
     assert_absent "$TMP_ROOT/migrated-move-work/$path" 'credential transferred'
     assert_present "$TMP_ROOT/source-move-work/$path" 'excluded credential removed locally'
@@ -457,7 +467,24 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   cmp -s "$PARENT/data/fail-work/migration/meta.before" "$PARENT/state/fail-work.meta" || fail 'rollback did not restore endpoint records'
   assert_present "$TMP_ROOT/source-fail-work/.fm-home-migration" 'rollback allowed unsafe local restart'
   assert_present "$TMP_ROOT/migrated-fail-work/data/backlog.md" 'rollback discarded remote durable data'
-  pass 'known launch failure restores route while preserving both stopped copies'
+  # The published home is the newer copy once a placement exists on the host, so
+  # a rerun after the rollback retries the launch and must not re-land the frozen
+  # source's older records over it, even with steering queued since.
+  printf -- '- [ ] landed on the host after the move\n' >> "$TMP_ROOT/migrated-fail-work/data/backlog.md"
+  printf 'memory written on the host\n' > "$TMP_ROOT/migrated-fail-work/data/learnings.md"
+  printf 'report written on the host\n' > "$TMP_ROOT/migrated-fail-work/data/report/report.md"
+  printf 'note written on the host\n' > "$TMP_ROOT/migrated-fail-work/state/inbox/note.md"
+  mkdir -p "$PARENT/state/fail-work.inbox"
+  printf 'schema=fm-task-inbox.v1\n\nsteer queued after the rollback\n' > "$PARENT/state/fail-work.inbox/001.msg"
+  cp -R "$TMP_ROOT/migrated-fail-work" "$TMP_ROOT/remote-before-rerun"
+  out=$(migrate fail-work 2>&1) || fail "the rerun after a rollback did not converge: $out"
+  for path in data/backlog.md data/learnings.md data/report/report.md state/inbox/note.md; do
+    cmp -s "$TMP_ROOT/remote-before-rerun/$path" "$TMP_ROOT/migrated-fail-work/$path" \
+      || fail "the rerun after a rollback re-landed the frozen source over the published home: $path"
+  done
+  assert_grep 'fail-work - Persistent responsibility (host:' "$PARENT/data/secondmates.md" \
+    'the rerun after a rollback did not re-publish the remote route'
+  pass 'known launch failure restores route while preserving both stopped copies, and its rerun retries the launch without re-landing records'
 
   migration_source unknown-work
   rc=0

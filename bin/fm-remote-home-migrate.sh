@@ -25,7 +25,9 @@
 # Registry replacement is atomic under its ordinary lock. Normal fm-spawn owns
 # launch, metadata and reply monitoring. A known failed launch rolls the route
 # back ONLY after the remote endpoint is proved dead/missing. All copies remain
-# for reconciliation and the local archive stays stopped. SSH255 or unreadable
+# for reconciliation and the local archive stays stopped; rerunning then retries
+# the launch against the published home rather than re-sending records to it.
+# SSH255 or unreadable
 # completion preserves the remote route if cutover happened, and never launches
 # locally. Reruns on that same route converge through the normal launch owner.
 set -eu
@@ -169,13 +171,16 @@ remote() { FM_DATA_OVERRIDE="$JOURNAL/route" "$SCRIPT_DIR/fm-on.sh" "$@"; }
 remote "$ID" fm-remote-doctor.sh || { rc=$?; printf 'remote prerequisites unresolved; no route switched\n' >&2; exit "$rc"; }
 PHASE=$(cat "$JOURNAL/phase")
 if [ "$PHASE" = complete ]; then printf 'already-migrated: %s archive=%s\n' "$ID" "$SOURCE"; exit 0; fi
-# Re-snapshot on every pre-cutover run rather than only on the first one. The
-# parent can still queue a steer for the stopped mate between attempts, and that
-# is real work: an attempt that ended before cutover must carry it across on the
-# rerun instead of failing the pre-cutover comparison against a stale snapshot
-# identically forever. An unchanged source packs byte-identically, so a rerun
-# that changes nothing keeps the same digest and the same idempotent staging.
-if [ "$PHASE" != cutover ]; then
+# Re-snapshot on every run that has published nothing yet, rather than only on
+# the first one. The parent can still queue a steer for the stopped mate between
+# attempts, and that is real work: an attempt that ended in the snapshot phase
+# must carry it across on the rerun instead of failing the pre-cutover comparison
+# against a stale snapshot identically forever. An unchanged source packs
+# byte-identically, so a rerun that changes nothing keeps the same digest and the
+# same idempotent staging. Once a placement has been published the remote copy is
+# the newer one: a cutover or rolled-back rerun retries the launch against it and
+# never re-lands the frozen source's older records over it.
+if [ "$PHASE" = snapshot ]; then
   fm_migration_data pack "$SOURCE" "$STATE" "$ID" "$REMOTE_HOME" > "$JOURNAL/data.next"
   {
     printf 'schema=fm-remote-home-provision.v1\nid_b64=%s\n' "$(printf '%s' "$ID" | base64 | tr -d '\n')"
@@ -202,7 +207,7 @@ if [ "$PHASE" != cutover ]; then
   mv "$JOURNAL/bundle.tmp" "$JOURNAL/bundle.json"
 fi
 DIGEST=$(fm_inherit_sha256 "$JOURNAL/bundle.json")
-if [ "$PHASE" != cutover ]; then
+if [ "$PHASE" = snapshot ]; then
   REMOTE_STAGED=1
   remote --stdin "$ID" fm-remote-home-provision.sh --migration "$ID" "$DIGEST" < "$JOURNAL/bundle.json" || exit $?
   remote "$ID" fm-remote-home-provision.sh --migration-verify "$ID" "$DIGEST" || exit $?

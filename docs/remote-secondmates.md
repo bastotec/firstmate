@@ -183,6 +183,7 @@ That snapshot is re-taken on every run before cutover, so a steer the parent que
 An unchanged source packs to the same bytes, so a rerun that changes nothing re-sends the same payload and the host recognizes what it already staged.
 The route switch itself happens under the ordinary registry lock, after which the normal [`bin/fm-spawn.sh`](../bin/fm-spawn.sh) launch owner starts the same identity on that host in `fm-remote`.
 A launch failure the command can prove - a remote endpoint that reads back dead or missing - restores the original route and endpoint record, and both copies are kept.
+Rerunning after that rollback retries the launch against the home already on the host: once a placement has been published the remote copy is the newer one, so the frozen source's records are never re-sent over it, and steering queued since the rollback reaches the mate through the ordinary steering path after it starts.
 SSH exit 255 or an unreadable probe is unknown rather than failed: the remote placement is preserved, nothing is launched locally, and rerunning the identical command converges through the normal launch owner instead of creating a second endpoint.
 
 A migration that fails on the host after staging began leaves that attempt's staging directory next to the remote home, named `.fm-migration-<id>.XXXXXX`, and a retried attempt creates its own rather than reusing or clearing an earlier one.
