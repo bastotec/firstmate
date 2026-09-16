@@ -158,80 +158,19 @@ fm_backend_tmux_send_text_line() {  # <target> <text>
 # bounded wait, and treats an unreadable tty as ready so this can only ever hold
 # back a pane it positively measured as busy.
 #
-# fm_backend_tmux_pane_probe_count: how many times <probe> appears on <target>'s
-# pane, whitespace removed from both sides of the comparison so wrapped rows and
-# padding cannot hide a match. Nonzero, printing nothing, when the pane cannot be
-# captured at all.
+# The gate samples the mode once and cannot hold it, so it closes the measured
+# cause without making the send atomic - see docs/verification/runtime-backends.md
+# "Readiness is sampled, not held" for what remains.
 #
-# A window of scrollback is included deliberately. The check below compares a
-# count taken before a send against counts taken after it, and typing a long line
-# pushes earlier rows off the visible screen - without the scrollback an earlier
-# occurrence would vanish mid-check and read as "nothing new arrived".
-fm_backend_tmux_pane_probe_count() {  # <target> <probe>
-  local seen n=0
-  seen=$(tmux capture-pane -p -J -S -200 -t "$1" 2>/dev/null) || return 1
-  seen=$(printf '%s' "$seen" | tr -d '[:space:]')
-  while :; do
-    case "$seen" in
-      *"$2"*) n=$((n + 1)); seen=${seen#*"$2"} ;;
-      *) break ;;
-    esac
-  done
-  printf '%s' "$n"
-}
-
-# The gate samples the mode once and cannot hold it, so the send is confirmed
-# afterwards rather than assumed: the TAIL of the text must APPEAR ON the pane.
-# The tail is the probe precisely because the canonical-mode limit drops the END
-# of the line, so a tail that arrived proves the whole line landed.
-#
-# It must be the tail ARRIVING, not the tail being present, because the relaunch
-# path re-sends a byte-identical launch command into a window it adopted without
-# clearing - the previous launch's own tail is still on that pane, and a
-# present-or-absent test would read it as confirmation of a line that was in fact
-# discarded. So the probe is counted BEFORE the send and confirmation requires
-# the count to rise.
-#
-# Confirmation is polled to the same budget the readiness wait spends, because a
-# send that landed still has to render: a login shell re-highlighting a couple of
-# thousand bytes takes an ordinary amount of time, and treating that as a lost
-# command would abort spawns that worked. The text is never retyped, since
-# partial text may already be in the pane and retyping would duplicate it. A pane
-# that cannot be captured is reported as unconfirmed rather than as delivered,
-# because an unverifiable send is exactly the silence this refusal exists to
-# remove. Refusing leaves any partial text unsubmitted in the pane, which is
-# safe: bin/fm-spawn.sh exits before it sends Enter.
-#
-# The baseline is taken before the send but an unreadable pane does not refuse
-# there: a target that is simply gone must be reported as the send failing, which
-# is what `tmux send-keys` on the next line says, not as an unconfirmed delivery.
-#
-# Exit statuses are distinct so callers can name the real reason: 2 is the gate
-# refusing a busy pane, 3 is text that did not land or could not be confirmed,
-# and 1 is `tmux send-keys` itself failing - a dead server or a killed session
-# is not a line-discipline problem and must not be reported as one.
+# Exit status 2 is the gate refusing a busy pane, and is distinct from 1 so
+# callers can tell it from `tmux send-keys` itself failing - a dead server or a
+# killed session is not a line-discipline problem and must not be reported as one.
 fm_backend_tmux_send_literal() {  # <target> <text>
-  local probe baseline seen deadline_ms
   if ! fm_tmux_wait_pane_input_ready "$1"; then
     echo "error: pane $1 was still busy after ${FM_PANE_READY_TIMEOUT:-5}s and never started reading input; refusing to type ${#2} bytes it would silently discard" >&2
     return 2
   fi
-  probe=$(printf '%s' "$2" | tr -d '[:space:]')
-  probe=${probe: -60}
-  baseline=$(fm_backend_tmux_pane_probe_count "$1" "$probe") || baseline=0
-  tmux send-keys -t "$1" -l "$2" || return 1
-  deadline_ms=$(( $(fm_timing_now_ms) + $(fm_tmux_pane_ready_budget_ms) ))
-  while :; do
-    if ! seen=$(fm_backend_tmux_pane_probe_count "$1" "$probe"); then
-      echo "error: pane $1 could not be captured after typing ${#2} bytes, so delivery is unconfirmed; refusing rather than submitting a command that may have arrived truncated" >&2
-      return 3
-    fi
-    [ "$seen" -gt "$baseline" ] && return 0
-    [ "$(fm_timing_now_ms)" -lt "$deadline_ms" ] || break
-    sleep 0.05
-  done
-  echo "error: the end of the ${#2} bytes typed into pane $1 never reached it within ${FM_PANE_READY_TIMEOUT:-5}s, which is the canonical-mode line limit discarding the line; refusing rather than submitting a truncated command" >&2
-  return 3
+  tmux send-keys -t "$1" -l "$2"
 }
 
 # fm_backend_tmux_kill: remove one explicitly named task window, best-effort.
