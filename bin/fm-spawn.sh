@@ -4205,17 +4205,19 @@ sleep 0.3
 # A refused literal send means the launch command is not in the terminal, so
 # sending Enter would submit an empty line and leave recovery to report later
 # that no running agent could be confirmed. Fail here instead, naming the reason
-# the refusal actually has. Only tmux's readiness gate, which signs its refusal
-# with status 2, means the pane's kernel line buffer would have discarded the
-# command; every other non-zero status is the backend's own send failing, which
-# on a dead server or a killed session has nothing to do with a busy pane.
+# the refusal actually has. tmux signs its two refusals apart - status 2 is the
+# pane never reading input, status 3 is text that did not land whole or could
+# not be confirmed - and every other non-zero status is the backend's own send
+# failing, which on a dead server or a killed session has nothing to do with the
+# terminal's line limit.
 LAUNCH_SEND_STATUS=0
 spawn_send_literal "$T" "$LAUNCH" || LAUNCH_SEND_STATUS=$?
 if [ "$LAUNCH_SEND_STATUS" -ne 0 ]; then
-  LAUNCH_SEND_REASON="the $BACKEND backend refused the literal send to $T"
-  if [ "$BACKEND" = tmux ] && [ "$LAUNCH_SEND_STATUS" -eq 2 ]; then
-    LAUNCH_SEND_REASON="window $T was still busy and never started reading input"
-  fi
+  case "$BACKEND:$LAUNCH_SEND_STATUS" in
+    tmux:2) LAUNCH_SEND_REASON="window $T was still busy and never started reading input" ;;
+    tmux:3) LAUNCH_SEND_REASON="the command did not reach window $T whole, so delivery could not be confirmed" ;;
+    *) LAUNCH_SEND_REASON="the $BACKEND backend refused the literal send to $T" ;;
+  esac
   printf 'failed: %s\n' "launch command not delivered: $LAUNCH_SEND_REASON" >> "$STATE/$ID.status"
   echo "error: task $ID's launch command was not delivered: $LAUNCH_SEND_REASON; no agent was started, inspect window $T" >&2
   exit 1

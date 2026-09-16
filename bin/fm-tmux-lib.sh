@@ -248,8 +248,8 @@ fm_tmux_pane_input_mode() {  # <target> -> raw|canonical|unknown
 # bin/fm-spawn.sh already spends. A ready pane costs one poll, which is the
 # common case: the `export` lines the spawn path sends before launch leave the
 # pane ready again in under one 0.05s poll.
-fm_tmux_wait_pane_input_ready() {  # <target> [timeout-seconds] [poll-seconds]
-  local target=$1 timeout=${2:-${FM_PANE_READY_TIMEOUT:-5}} poll=${3:-${FM_PANE_READY_POLL:-0.05}}
+fm_tmux_wait_pane_input_ready() {  # <target> [timeout-seconds]
+  local target=$1 timeout=${2:-${FM_PANE_READY_TIMEOUT:-5}}
   local mode budget_ms deadline_ms
   budget_ms=$(awk -v t="$timeout" 'BEGIN { printf "%d", (t > 0 ? t * 1000 : 0) }' 2>/dev/null)
   case "$budget_ms" in ''|*[!0-9]*) budget_ms=5000 ;; esac
@@ -258,7 +258,7 @@ fm_tmux_wait_pane_input_ready() {  # <target> [timeout-seconds] [poll-seconds]
     mode=$(fm_tmux_pane_input_mode "$target")
     [ "$mode" = canonical ] || return 0
     [ "$(fm_timing_now_ms)" -lt "$deadline_ms" ] || return 1
-    sleep "$poll"
+    sleep 0.05
   done
 }
 

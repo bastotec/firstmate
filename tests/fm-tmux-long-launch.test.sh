@@ -195,6 +195,37 @@ test_never_ready_pane_refuses_loudly() {
   pass "pane that never becomes ready refuses loudly and names the reason"
 }
 
+# --- text the pane did not take must refuse, not report success ---------------
+
+test_unlanded_text_is_refused_not_reported_delivered() {
+  local dir window cmd err status
+  dir="$TMP_ROOT/unlanded"
+  mkdir -p "$dir"
+  window="unlanded"
+  err="$dir/stderr"
+  cmd=$(long_launch_command "$dir/marker" "$dir/payload" 1400)
+
+  # The readiness gate samples the mode once and cannot hold it, so the pane can
+  # be canonical again by the time the text is written. Shadowing the gate makes
+  # that race deterministic: it reports ready while the pane is measurably busy,
+  # which is exactly the state the reported failure was typed into.
+  busy_pane "$window" 4
+
+  status=0
+  (
+    # shellcheck disable=SC2329
+    fm_tmux_wait_pane_input_ready() { return 0; }
+    fm_backend_tmux_send_literal "$SESSION:$window" "$cmd"
+  ) 2>"$err" || status=$?
+  [ "$status" -eq 3 ] \
+    || fail "text the pane discarded must be refused as undelivered, got status $status"
+  grep -q 'never reached it' "$err" \
+    || fail "refusal did not name the truncation, got: $(cat "$err")"
+  grep -q "$window" "$err" \
+    || fail "refusal did not name the pane, got: $(cat "$err")"
+  pass "text the pane silently discarded is refused, not reported as delivered"
+}
+
 # --- an unreadable tty must stay permissive -----------------------------------
 
 test_unreadable_mode_is_treated_as_ready() {
@@ -237,5 +268,6 @@ test_ready_pane_returns_immediately() {
 
 test_long_launch_starts_a_worker
 test_never_ready_pane_refuses_loudly
+test_unlanded_text_is_refused_not_reported_delivered
 test_unreadable_mode_is_treated_as_ready
 test_ready_pane_returns_immediately

@@ -158,15 +158,44 @@ fm_backend_tmux_send_text_line() {  # <target> <text>
 # bounded wait, and treats an unreadable tty as ready so this can only ever hold
 # back a pane it positively measured as busy.
 #
-# Exit status 2 is the gate refusing, and is distinct from 1 so callers can tell
-# a busy pane from `tmux send-keys` itself failing - a dead server or a killed
-# session is not a line-discipline problem and must not be reported as one.
+# The gate samples the mode once and cannot hold it, so the send is confirmed
+# afterwards rather than assumed: the pane is captured and the TAIL of the text
+# must be on it. The tail is the probe precisely because the canonical-mode
+# limit drops the END of the line, so a present tail proves the whole line
+# landed. The check is retried once because rendering takes a beat; the text is
+# never retyped, since partial text may already be in the pane and retyping
+# would duplicate it. A pane that cannot be captured is reported as unconfirmed
+# rather than as delivered, because an unverifiable send is exactly the silence
+# this refusal exists to remove. Refusing leaves any partial text unsubmitted in
+# the pane, which is safe: bin/fm-spawn.sh exits before it sends Enter.
+#
+# Exit statuses are distinct so callers can name the real reason: 2 is the gate
+# refusing a busy pane, 3 is text that did not land or could not be confirmed,
+# and 1 is `tmux send-keys` itself failing - a dead server or a killed session
+# is not a line-discipline problem and must not be reported as one.
 fm_backend_tmux_send_literal() {  # <target> <text>
+  local probe seen checks=0
   if ! fm_tmux_wait_pane_input_ready "$1"; then
     echo "error: pane $1 was still busy after ${FM_PANE_READY_TIMEOUT:-5}s and never started reading input; refusing to type ${#2} bytes it would silently discard" >&2
     return 2
   fi
-  tmux send-keys -t "$1" -l "$2"
+  tmux send-keys -t "$1" -l "$2" || return 1
+  probe=$(printf '%s' "$2" | tr -d '[:space:]')
+  probe=${probe: -60}
+  while :; do
+    if ! seen=$(tmux capture-pane -p -J -t "$1" 2>/dev/null); then
+      echo "error: pane $1 could not be captured after typing ${#2} bytes, so delivery is unconfirmed; refusing rather than submitting a command that may have arrived truncated" >&2
+      return 3
+    fi
+    case "$(printf '%s' "$seen" | tr -d '[:space:]')" in
+      *"$probe"*) return 0 ;;
+    esac
+    checks=$((checks + 1))
+    [ "$checks" -lt 2 ] || break
+    sleep 0.2
+  done
+  echo "error: the end of the ${#2} bytes typed into pane $1 never reached it, which is the canonical-mode line limit discarding the line; refusing rather than submitting a truncated command" >&2
+  return 3
 }
 
 # fm_backend_tmux_kill: remove one explicitly named task window, best-effort.
