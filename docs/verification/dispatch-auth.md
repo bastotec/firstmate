@@ -169,6 +169,7 @@ Observed source statuses are `available`, `expired` (with an `error` slug), and 
 
 Neither this per-source shape nor `state.authStatus` exists before quota-axi 0.1.16.
 `bin/fm-bootstrap.sh` enforces the current compatibility floor through `bin/fm-quota-axi-lib.sh`.
+These are this report's source names; the quota document spells its own `attempts[].source` differently for Codex, so do not carry these spellings into the account-slot probe (see "Account-slot probe evidence vocabulary").
 
 Grok also reports `credits.remaining: 0` alongside `percentRemaining: 41` on a healthy account.
 That zero is a prepaid balance, not the subscription window, and is never headroom.
@@ -194,6 +195,32 @@ After a published quota-axi advertises the required capability and two Claude pl
 ```sh
 FM_ACCOUNT_SLOT_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-account-slot-live-e2e.test.sh
 ```
+
+## Account-slot probe evidence vocabulary
+
+Verified 2026-09-16 against the same quota-axi 0.1.42, captured with `quota-axi --provider <provider> --full --json --no-credential-refresh` and account values elided.
+
+The probe reads the quota document's own `providers[].attempts[].source`, which is not the `quota-axi auth --json` vocabulary recorded above.
+The two single-provider documents' `providers[0]` entries, side by side:
+
+```json
+[
+  { "provider": "claude", "attempts": [
+      { "source": "keychain", "status": "skipped" },
+      { "source": "oauth-file", "status": "success" },
+      { "source": "oauth-profile", "status": "success" } ] },
+  { "provider": "codex", "attempts": [
+      { "source": "oauth", "status": "success" } ] }
+]
+```
+
+Claude's two accepted spellings match the auth report, but Codex's store-scoped credential is `oauth` here and `auth-json` there for the same `auth.json` file.
+Treating the two as one vocabulary makes every Codex slot read as unavailable and silently drops both Codex subscriptions out of routing, so they must stay separate.
+`bin/fm-account-slot-lib.sh` therefore accepts `oauth-file` or `keychain` for Claude and `oauth` for Codex, among successful attempts only, and binds every successful attempt that names an account to the slot's `expectedAccountId`.
+An additional successful source such as Claude's `oauth-profile` is not by itself provenance under that rule, and the ambient `pi:openai-codex` fallback is never accepted for a Codex slot.
+
+`generatedAt` carries milliseconds (`2026-09-16T03:40:05.942Z`), which the freshness gate strips before parsing, and `state` carries `refreshedAt` and `sourcesTried` beside the `status`/`stale` pair the gate requires.
+`tests/fm-account-slot.test.sh` pins both source vocabularies and the millisecond timestamp.
 
 ## Claude slot credential storage
 
@@ -284,7 +311,7 @@ Re-run the two commands above and update this section and the pinned version tog
 It asserts that the script accepts no harness, model, or provider input, never calls `quota-axi`, exits alike for every probe result because it renders no verdict, invokes only the two fixed non-destructive argv forms with stdin closed, holds a real bound even when the configured bound is zero or malformed, and never echoes raw vendor output.
 `tests/fm-spawn-dispatch-profile.test.sh` owns spawn's deterministic profile and harness refusals.
 `tests/fm-bootstrap.test.sh` owns the quota-axi version-floor diagnostic.
-`tests/fm-account-slot.test.sh` owns portable registry, owner-comparator, mode, symlink, hardlink, identity-field, provenance, single-document, mixed-availability, capability-gate, unavailability-reason, and sanitized-probe coverage.
+`tests/fm-account-slot.test.sh` owns portable registry, owner-comparator, mode, symlink, hardlink, identity-field, provenance, source-vocabulary, timestamp-precision, single-document, mixed-availability, capability-gate, unavailability-reason, and sanitized-probe coverage.
 `tests/fm-account-slot-live-e2e.test.sh` is the opt-in prompt-free four-profile producer check; it skips unless enabled and fails when enabled without every probe flag advertised or without two distinct configured profiles for each supported harness.
 `tests/fm-quota-array-dispatch-live-e2e.test.sh` drives the public Pi skill-loading interface against one fake schema-5 snapshot per case, served as quota-axi's default TOON.
 It covers TOON-first `spendPriority` ranking among candidates that pass eligibility, reasoning-class, and runway-feasibility gates, explicit accounting for unmeasurable runway, the strongest-reasoning constraint, and the runway feasibility floor over a higher `spendPriority`.
