@@ -1,0 +1,118 @@
+
+========== A. delivery task: pr= armed by the merge poll while the recreated shell settles ==========
+--- durable record before recover-missing (tail) ---
+yolo=off
+tasktmp=/tmp/fm-dr1
+model=default
+effort=default
+
+$ fm-control.sh dr1 recover-missing --note 'terminal died overnight'
+error: task dr1's recreated terminal did not settle to an agent-free shell within 0.05s (endpoint reads 'ambiguous'); the terminal exists now, so once its shell is idle bring the worker up with 'relaunch'
+error: dr1's missing-endpoint recovery recreated the terminal but could not hand it over; its agent was never touched, so the progress note was rolled back and its work is preserved at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-race-9747/wt
+exit=1
+--- durable record after the refusal (tail) ---
+tasktmp=/tmp/fm-dr1
+model=default
+effort=default
+pr=https://github.com/o/r/pull/7
+--- pr= line present after the refusal? ---
+YES - the merge poll's pr= line survived the rollback
+--- instructions rolled back byte-exact? ---
+YES - progress note removed, brief identical to before
+--- journal record for the failed phase ---
+rollback=instructions-restored
+
+========== B. adversarial: the operator-facing record snapshot cannot be written ==========
+snapshot destination: -r--r--r--@ /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-snapfail-9111/home/state/dr2.control-relaunch.meta-prior
+$ fm-control.sh dr2 recover-missing --note 'snapshot dest is unwritable'
+warning: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-snapfail-9111/home/data/dr2/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+recovered dr2 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmses:fm-dr2 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-snapfail-9111/wt
+exit=0
+terminal recreated: YES
+--- journal phases ---
+  v1
+  task=dr2
+  phase=complete
+  ts=2026-09-17T23:12:07Z
+  backend=tmux
+  endpoint=fmses:fm-dr2
+  worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-snapfail-9111/wt
+  kind=ship
+  from_harness=claude
+  from_model=default
+  from_effort=default
+  from_account_slot=
+  to_harness=claude
+  to_model=default
+  to_effort=default
+  to_account_slot=
+  worktree_head=351c91a6c6b71662931eeb4dc92bafa501135e5a
+  worktree_dirty=no
+  note_file=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-snapfail-9111/home/state/dr2.control-relaunch.note
+  exit_result=recreated
+
+========== C. adversarial: same unwritable snapshot on the relaunch verb ==========
+snapshot destination: -r--r--r--@ /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-relaunch-4783/home/state/dr3.control-relaunch.meta-prior
+$ fm-control.sh dr3 relaunch --note 'context ran out'
+error: exit-delivered dr3 interrupt=not-needed exit-command=delivered agent-state=alive exit=unconfirmed; the agent did not stop within 0.05s
+error: relaunch of dr3 failed while stopping the old agent, which is still running; its original instructions were restored
+exit=1
+--- journal phases ---
+  v1
+  task=dr3
+  phase=failed:stopping
+  ts=2026-09-17T23:12:12Z
+  backend=tmux
+  endpoint=fmses:fm-dr3
+  worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-relaunch-4783/wt
+  kind=ship
+  from_harness=claude
+  from_model=default
+  from_effort=default
+  from_account_slot=
+  to_harness=claude
+  to_model=default
+  to_effort=default
+  to_account_slot=
+  rollback=instructions-restored-agent-alive
+
+========== D. docs check: what the launch-failure arm actually journals ==========
+$ fm-control.sh dr4 recover-missing --note 'carry this forward'
+warning: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-launchfail-28102/home/data/dr4/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: task dr4's endpoint is in '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-launchfail-28102/proj', not its recorded worktree '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-launchfail-28102/wt'; refusing to relaunch an agent outside the copy holding its work
+error: the replacement agent for dr4 could not be launched on claude
+error: dr4's terminal was recreated but the replacement did not launch; no agent was ever stopped, its work plus the recorded progress note are preserved at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.kL6oTR/drive-launchfail-28102/wt, and the recreated terminal now holds a bare shell - retry with 'relaunch', which is the verb for an agent-free endpoint
+exit=1
+--- journal record for the failed phase ---
+rollback=prior-record-kept
+durable record: unchanged (kept, not restored)
+
+========== done ==========
+
+=== docs/agent-control.md:115 - a launch failure AFTER the agent is stopped ===
+$ fm-control.sh rl13 relaunch --harness codex --note 'carry this forward'
+warning: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-relaunch.eLPf91/doc-6867/home/data/rl13/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: task rl13's endpoint is in '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-relaunch.eLPf91/doc-6867/proj', not its recorded worktree '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-relaunch.eLPf91/doc-6867/wt'; refusing to relaunch an agent outside the copy holding its work
+error: the replacement agent for rl13 could not be launched on codex
+error: rl13's agent was stopped but the replacement did not launch; no agent is running, and its work plus the recorded progress note are preserved at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-relaunch.eLPf91/doc-6867/wt
+exit=1
+--- journal: phase and rollback label ---
+phase=failed:launching
+rollback=prior-record-kept
+--- durable record: restored from a snapshot, or simply kept? ---
+byte-identical to the pre-relaunch record (kept / stands)
+--- progress note kept for a later recovery? ---
+YES
+
+=== the operator-facing record snapshot is still written beside the journal ===
+exit=0
+  dr9.busy-gen
+  dr9.busy-state
+  dr9.control-relaunch
+  dr9.control-relaunch.brief-prior
+  dr9.control-relaunch.meta-prior
+  dr9.control-relaunch.note
+  dr9.meta
+  home-summary.json
+--- snapshot content matches the pre-recovery record? ---
+snapshot present and consistent with the record (ignoring lines the launch rewrote)

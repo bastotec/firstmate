@@ -1,0 +1,52 @@
+=== BASELINE (base commit d203a82b code) ===
+========== A. delivery task: pr= armed by the merge poll while the recreated shell settles ==========
+--- durable record before recover-missing (tail) ---
+yolo=off
+tasktmp=/tmp/fm-dr1
+model=default
+effort=default
+
+$ fm-control.sh dr1 recover-missing --note 'terminal died overnight'
+error: task dr1's recreated terminal did not settle to an agent-free shell within 0.05s (endpoint reads 'ambiguous'); the terminal exists now, so once its shell is idle bring the worker up with 'relaunch'
+error: dr1's missing-endpoint recovery recreated the terminal but could not hand it over; its agent was never touched, so the progress note was rolled back and its work is preserved at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.AqaOjq/drive-race-23669/wt
+exit=1
+--- durable record after the refusal (tail) ---
+yolo=off
+tasktmp=/tmp/fm-dr1
+model=default
+effort=default
+--- pr= line present after the refusal? ---
+NO - the rollback reverted another writer's locked record write
+--- instructions rolled back byte-exact? ---
+YES - progress note removed, brief identical to before
+--- journal record for the failed phase ---
+rollback=prior-record-and-instructions-restored
+
+========== B. adversarial: the operator-facing record snapshot cannot be written ==========
+
+
+========== C. relaunch with an unwritable record snapshot destination ==========
+snapshot destination: -r--r--r--@ /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-relaunch.9iAkyb/drive-snapfail-4351/home/state/rl1.control-relaunch.meta-prior
+$ fm-control.sh rl1 relaunch --note 'context ran out'
+cp: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-relaunch.9iAkyb/drive-snapfail-4351/home/state/rl1.control-relaunch.meta-prior: Permission denied
+error: could not preserve task rl1's durable record before relaunching
+exit=1
+--- journal phase ---
+grep: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-relaunch.9iAkyb/drive-snapfail-4351/home/state/rl1.control-relaunch: No such file or directory
+--- durable record (tail) ---
+tasktmp=/tmp/fm-rl1
+model=default
+effort=default
+
+=== BASELINE: scenario B (recover-missing, unwritable snapshot destination) ===
+========== B. adversarial: the operator-facing record snapshot cannot be written ==========
+snapshot destination: -r--r--r--@ /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.VhsoBf/drive-snapfail-2750/home/state/dr2.control-relaunch.meta-prior
+$ fm-control.sh dr2 recover-missing --note 'snapshot dest is unwritable'
+cp: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.VhsoBf/drive-snapfail-2750/home/state/dr2.control-relaunch.meta-prior: Permission denied
+error: could not preserve task dr2's durable record before recovery
+exit=1
+terminal recreated: NO
+--- journal phases ---
+cut: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-control-recover-missing.VhsoBf/drive-snapfail-2750/home/state/dr2.control-relaunch: No such file or directory
+
+========== C. adversarial: same unwritable snapshot on the relaunch verb ==========

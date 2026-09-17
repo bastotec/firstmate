@@ -1,0 +1,6 @@
+=== new test run against BASE code (expected: fail) ===
+not ok - a refused recovery must not revert a record write it never made
+
+=== same test against the change under test (expected: pass) ===
+ok - fm-control recover-missing: a failed recreation leaves a concurrent record write alone
+ok - fm-control recover-missing: a failed recreation rolls the progress note back so retries do not stack
