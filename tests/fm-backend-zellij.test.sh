@@ -752,11 +752,16 @@ test_kill_resolves_tab_and_closes_by_id() {
   dir="$TMP_ROOT/kill"; mkdir -p "$dir/responses"
   zellij_pane_response "$dir" 1 7 3
   printf '[{"id":7,"tab_id":3,"is_plugin":false}]\n' > "$dir/responses/2.out"
+  # 2.out answers the close itself; 3.out is the confirmation listing, with the
+  # pane gone - what makes this a confirmed kill rather than an unconfirmed one.
+  printf '[]\n' > "$dir/responses/3.out"
   fb=$(make_zellij_fakebin "$dir")
   PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
     FM_ZELLIJ_SESSION_LIST="firstmate" \
     bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT"
-  expect_code 0 $? "kill should succeed (best-effort)"
+  expect_code 0 $? "a close the listing confirms should report the endpoint gone"
+  [ "$(grep -acF -- $'\x1f''list-panes'$'\x1f''--json' "$dir/log")" = 2 ] \
+    || fail "kill should read the pane listing twice - once to resolve the tab, once after the close to confirm it landed: $(cat -v "$dir/log")"
   zellij_assert_call_order "$dir/log" $'\x1f''list-panes'$'\x1f''--json' $'\x1f''close-tab-by-id' \
     "kill did not verify the pane before close-tab-by-id"
   assert_contains "$(cat "$dir/log")" $'\x1f''close-tab-by-id'$'\x1f''3' \
@@ -768,11 +773,12 @@ test_kill_falls_back_to_close_pane_when_tab_lookup_empty() {
   local dir fb
   dir="$TMP_ROOT/kill-fallback"; mkdir -p "$dir/responses"
   printf '[]\n' > "$dir/responses/1.out"
+  printf '[]\n' > "$dir/responses/3.out"
   fb=$(make_zellij_fakebin "$dir")
   PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
     FM_ZELLIJ_SESSION_LIST="firstmate" \
     bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT"
-  expect_code 0 $? "kill must stay best-effort even when the tab lookup comes up empty"
+  expect_code 0 $? "a confirmed close-pane fallback should report the endpoint gone"
   zellij_assert_call_order "$dir/log" $'\x1f''list-panes'$'\x1f''--json' $'\x1f''close-pane' \
     "kill did not verify the pane before close-pane fallback"
   assert_contains "$(cat "$dir/log")" $'\x1f''close-pane'$'\x1f''--pane-id'$'\x1f''7' \
@@ -785,11 +791,12 @@ test_kill_closes_recorded_tab_when_pane_already_gone() {
   dir="$TMP_ROOT/kill-recorded-tab"; mkdir -p "$dir/responses"
   printf '[]\n' > "$dir/responses/1.out"
   printf '[{"tab_id":3,"name":"fm-zghost"}]\n' > "$dir/responses/2.out"
+  printf '[]\n' > "$dir/responses/4.out"
   fb=$(make_zellij_fakebin "$dir")
   PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
     FM_ZELLIJ_SESSION_LIST="firstmate" \
     bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7 3 fm-zghost' "$ROOT"
-  expect_code 0 $? "kill must stay best-effort even when only the recorded tab id is usable"
+  expect_code 0 $? "a confirmed recorded-tab close should report the endpoint gone"
   zellij_assert_call_order "$dir/log" $'\x1f''list-panes'$'\x1f''--json' $'\x1f''list-tabs'$'\x1f''--json' \
     "kill did not verify the recorded tab id by label before closing it"
   zellij_assert_call_order "$dir/log" $'\x1f''list-tabs'$'\x1f''--json' $'\x1f''close-tab-by-id' \
@@ -810,7 +817,7 @@ test_kill_skips_recorded_tab_when_label_mismatches() {
   PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
     FM_ZELLIJ_SESSION_LIST="firstmate" \
     bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7 3 fm-zghost' "$ROOT"
-  expect_code 0 $? "kill must stay best-effort when the recorded tab id no longer belongs to the task"
+  expect_code 0 $? "an id that no longer carries this task's label is a gone endpoint, not an unconfirmed kill"
   zellij_assert_call_order "$dir/log" $'\x1f''list-panes'$'\x1f''--json' $'\x1f''list-tabs'$'\x1f''--json' \
     "kill did not verify the recorded tab id by label"
   assert_not_contains "$(cat "$dir/log")" $'\x1f''close-tab-by-id' \
@@ -827,7 +834,7 @@ test_kill_is_noop_when_session_absent() {
   PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
     FM_ZELLIJ_SESSION_LIST="" \
     bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT"
-  expect_code 0 $? "kill must stay best-effort (never fail) even when the session is already gone"
+  expect_code 0 $? "an already-absent session is ordinary idempotent cleanup, not a refusal"
   pass "fm_backend_zellij_kill: never fails when the target session no longer exists"
 }
 
@@ -850,6 +857,9 @@ test_teardown_passes_recorded_tab_id_to_zellij_kill() {
     "decision_keys="
   printf '[]\n' > "$dir/responses/1.out"
   printf '[{"tab_id":3,"name":"fm-zghost"}]\n' > "$dir/responses/2.out"
+  # 4.out is the listing the close is confirmed against; without a pane gone
+  # there, cleanup refuses rather than removing the task's durable records.
+  printf '[]\n' > "$dir/responses/4.out"
   fb=$(make_zellij_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" FM_ZELLIJ_SESSION_LIST="firstmate" \
@@ -896,6 +906,9 @@ test_forced_secondmate_teardown_kills_zellij_children_with_child_home_tag() {
   zellij_pane_response "$dir" 1 7 4
   zellij_tab_response "$dir" 2 4 "$child_title"
   printf '[]\n' > "$dir/responses/3.out"
+  # The child's close is confirmed against 4.out before any of that child's
+  # durable identity records may be erased.
+  printf '[]\n' > "$dir/responses/4.out"
   fb=$(make_zellij_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_ROOT_OVERRIDE="$ROOT" \

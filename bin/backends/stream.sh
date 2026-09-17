@@ -652,9 +652,21 @@ fm_backend_stream_agent_state() {  # <target>
   printf 'ambiguous'
 }
 
+# Return contract: bin/fm-backend.sh's fm_backend_kill header owns it. This is
+# the adapter the contract was written from: the hub already distinguishes a
+# kill the endpoint's own agent acknowledged from one it only presumed, and
+# every unacknowledged answer here is the contract's unconfirmed result.
+# A target this home cannot address - a malformed string, or one tagged for a
+# hub other than the configured one - is unconfirmed too rather than gone: a
+# worker on a hub that cannot be reached is a worker nothing has proved
+# stopped.
 fm_backend_stream_kill() {  # <target> [unused] [expected-label]
   local target=$1 expected=${3:-} task out
-  fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || return 0
+  fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || {
+    echo "error: '$target' does not address an endpoint on this home's stream hub, so nothing" \
+         "could be closed or confirmed gone; the worker may still be running" >&2
+    return 2
+  }
   # One read answers both questions this needs: whose task this id names, and
   # whether the hub already watched the worker go. A read that FAILS answers
   # neither, so it is reported rather than taken for a stop - a hub that cannot
@@ -663,7 +675,7 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
   task=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
     echo "error: the stream hub could not say what $FM_BACKEND_STREAM_ENDPOINT is;" \
          "the worker may still be running" >&2
-    return 1
+    return 2
   }
   if [ -n "$expected" ]; then
     # A mismatched label means the id names something other than this task, so
@@ -677,7 +689,7 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
   out=$(fm_backend_stream_api DELETE "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
     echo "error: the stream hub refused or never answered the kill for" \
          "$FM_BACKEND_STREAM_ENDPOINT; the worker may still be running" >&2
-    return 1
+    return 2
   }
   # The hub answers whether the owning agent actually took the kill. A record
   # it closed on its own says nothing about the worker's process, and reporting
@@ -686,7 +698,7 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
     false)
       echo "error: the stream hub closed its record for $FM_BACKEND_STREAM_ENDPOINT," \
            "but its agent never acknowledged the kill; the worker may still be running" >&2
-      return 1
+      return 2
       ;;
   esac
 }

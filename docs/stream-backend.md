@@ -129,8 +129,7 @@ An endpoint carries `closed_by`: `agent` when its own agent reported the worker 
 A kill against an endpoint already closed by its agent reports success without asking again - that agent watched the worker exit, which is the best evidence there will ever be - while every other outcome, `closed_by: hub` included, reports an unconfirmed stop.
 A close record moves from presumption to fact and never the reverse: a `hub` close is what the hub assumed about a worker it could not reach, so when that agent comes back and reports its own worker's exit, its report takes the record over - attribution and exit code together - and the endpoint then reads as one the agent closed.
 A hub close can never take over an agent's, and it never overwrites the exit code an agent recorded, which is what keeps an unacknowledged kill from ever claiming confirmation.
-Today that is where the distinction stops, because every caller of the shared `fm_backend_kill` discards its status and its stderr, so firstmate's teardown proceeds as it would after any other kill.
-Making those call sites honour a refused kill is a cross-backend change and is follow-up work.
+That distinction now reaches every caller: an unacknowledged kill is the shared kill contract's unconfirmed result, `fm_backend_kill` in `bin/fm-backend.sh` owns it, and cleanup keeps the task's durable records rather than recording a worker as gone that nothing has stopped.
 
 ## When the hub has not heard from an agent
 

@@ -156,18 +156,76 @@ if fm_backend_tmux_resolve_bare_selector "no-such-window-xyz" 2>/dev/null; then
 fi
 pass "real tmux: fm_backend_tmux_resolve_bare_selector fails for a window that does not exist"
 
-# --- kill and recovery-grade missing-window classification ------------------
+# --- kill: the shared contract's three outcomes against a real server -------
+# bin/fm-backend.sh's fm_backend_kill header owns the contract. The verdict
+# comes from what tmux itself reports, so it is proven here rather than
+# against a stub that could only confirm the assumption written into it.
 
-fm_backend_tmux_kill "$TARGET"
+# UNCONFIRMED, and provably not vacuous: a second real window, with the
+# server's own socket made unreadable, so both the close and the follow-up
+# inventory fail the one way that cannot tell a removed window from an
+# unreachable server ("Permission denied" - not one of the definitive
+# missing-session answers). The window is still there afterwards.
+if [ "$(id -u)" = 0 ]; then
+  echo "skip - running as root: an unreadable socket cannot be constructed"
+else
+  UNREADABLE_WINDOW="fm-smoke-unreadable"
+  fm_backend_tmux_create_task "$SESSION" "$UNREADABLE_WINDOW" "$HOME" >/dev/null \
+    || fail "could not create the window for the unreadable-server case"
+  SOCKET_PATH=$(tmux display-message -p '#{socket_path}') \
+    || fail "could not read the real tmux socket path"
+  chmod 000 "$SOCKET_PATH" || fail "could not make the tmux socket unreadable"
+  set +e
+  out=$(fm_backend_kill tmux "$SESSION:$UNREADABLE_WINDOW" 2>&1)
+  rc=$?
+  set -e
+  chmod 700 "$SOCKET_PATH" || fail "could not restore the tmux socket"
+  [ "$rc" -eq 2 ] || fail "a kill against an unreadable server must report unconfirmed (2), got $rc: $out"
+  case "$out" in
+    *"may still be running"*) : ;;
+    *) fail "an unconfirmed kill should say the worker may still be running: $out" ;;
+  esac
+  tmux list-windows -t "$SESSION" -F '#{window_name}' | grep -qx "$UNREADABLE_WINDOW" \
+    || fail "the unconfirmed case is vacuous: the window was actually removed"
+  [ "$(fm_backend_kill_verdict "$rc")" = unconfirmed ] \
+    || fail "fm_backend_kill_verdict did not name status $rc unconfirmed"
+  fm_backend_kill tmux "$SESSION:$UNREADABLE_WINDOW" >/dev/null 2>&1 \
+    || fail "the same window must be removable once the server is readable again"
+  pass "real tmux: a kill whose server cannot be read reports unconfirmed and leaves the window running"
+fi
+
+# GONE, this call's own removal: confirmed from the session inventory.
+set +e
+out=$(fm_backend_kill tmux "$TARGET" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || fail "a kill that removed the window must report gone (0), got $rc: $out"
+[ -z "$out" ] || fail "a confirmed kill should say nothing, got: $out"
 if tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -qx "$WINDOW"; then
   fail "fm_backend_tmux_kill did not remove the window"
 fi
 state=$(fm_backend_agent_state tmux "$TARGET")
 [ "$state" = missing ] \
   || fail "a real missing window in a readable session should classify as missing, got '$state'"
-# Best-effort contract: killing an already-gone window must not error.
-fm_backend_tmux_kill "$TARGET" || fail "fm_backend_tmux_kill on an already-dead target must stay best-effort (never fail)"
-pass "real tmux: kill removes the window and the readable session inventory authoritatively classifies it missing"
+
+# GONE, already absent: ordinary idempotent cleanup, never a refusal.
+set +e
+out=$(fm_backend_kill tmux "$TARGET" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || fail "a kill against an already-gone window must stay a success, got $rc: $out"
+[ -z "$out" ] || fail "an already-gone window should say nothing, got: $out"
+
+# UNSUPPORTED: no adapter could ever have been asked, which is neither of the
+# two answers above.
+set +e
+out=$(fm_backend_kill nosuchbackend "$TARGET" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 1 ] || fail "a backend with no kill implementation must report unsupported (1), got $rc: $out"
+[ "$(fm_backend_kill_verdict "$rc")" = unsupported ] \
+  || fail "fm_backend_kill_verdict did not name status $rc unsupported"
+pass "real tmux: kill reports gone for the window it removed and for one already absent, and unsupported for a backend with no implementation"
 
 cleanup_all
 trap - EXIT

@@ -2937,8 +2937,53 @@ preflight_firstmate_home_herdr_children() {  # <home>
   done
 }
 
+# require_task_endpoint_gone: apply the shared kill contract
+# (bin/fm-backend.sh's fm_backend_kill) to this task's own endpoint. Teardown
+# removes durable records that assert a worker is gone, so only a
+# confirmed-gone endpoint may reach them: a kill nothing proved landed stops
+# here with the adapter's own reason and every record intact, so a later rerun
+# can retry the close once the backend can answer for it.
+#
+# Deliberately not bypassed by --force. Discard authority is authority over
+# this task's unlanded WORK, never a reason to record a worker as stopped that
+# nothing has stopped - the same boundary the Herdr structured-presence gate
+# (fm_backend_herdr_endpoint_confirmed_gone) has always held here. The adapter has already written its one explanatory line to
+# stderr by the time this runs; this adds what the refusal means for the
+# records, and does not restate it.
+require_task_endpoint_gone() {  # <kill-status>
+  case "$(fm_backend_kill_verdict "$1")" in
+    gone) return 0 ;;
+    unconfirmed)
+      echo "error: the endpoint $T for $ID is not confirmed gone after its kill; retaining every durable task record - rerun cleanup once the worker can be proved stopped" >&2
+      ;;
+    *)
+      echo "error: the endpoint $T for $ID could not be killed at all; retaining every durable task record - rerun cleanup once the worker can be proved stopped" >&2
+      ;;
+  esac
+  return 1
+}
+
+# require_child_endpoint_gone: apply the shared kill contract
+# (bin/fm-backend.sh's fm_backend_kill) to one child endpoint during forced
+# firstmate-home cleanup. Only a confirmed-gone endpoint lets this sweep go on
+# to erase that child's durable identity records; a kill nothing proved landed
+# stops the sweep with the adapter's own reason, exactly as this sweep's own
+# Herdr branch already does with fm_backend_herdr_endpoint_confirmed_gone.
+require_child_endpoint_gone() {  # <child-id> <child-target> <kill-status>
+  case "$(fm_backend_kill_verdict "$3")" in
+    gone) return 0 ;;
+    unconfirmed)
+      echo "error: the endpoint $2 for child $1 is not confirmed gone after its kill; retaining that child's durable identity records and stopping forced cleanup" >&2
+      ;;
+    *)
+      echo "error: the endpoint $2 for child $1 could not be killed at all; retaining that child's durable identity records and stopping forced cleanup" >&2
+      ;;
+  esac
+  return 1
+}
+
 cleanup_firstmate_home_children() {
-  local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc child_busy_gen child_owner_rc
+  local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc child_busy_gen child_owner_rc child_kill_rc
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
   for child_meta in "$sub_state"/*.meta; do
@@ -2975,9 +3020,13 @@ cleanup_firstmate_home_children() {
       elif [ "$child_backend" = zellij ]; then
         # Zellij titles are scoped by the owning home tag, so forced secondmate
         # cleanup must verify child tabs as that child home, not the parent.
-        ( unset FM_ROOT_OVERRIDE; FM_HOME=$home FM_ROOT=$home fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" ) 2>/dev/null || true
+        ( unset FM_ROOT_OVERRIDE; FM_HOME=$home FM_ROOT=$home fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" ) \
+          && child_kill_rc=0 || child_kill_rc=$?
+        require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" || return 1
       else
-        fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" 2>/dev/null || true
+        fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" \
+          && child_kill_rc=0 || child_kill_rc=$?
+        require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" || return 1
       fi
     fi
     if [ "$child_kind" = secondmate ]; then
@@ -3313,7 +3362,11 @@ if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
       "$WT/.opencode/plugins/fm-busy-state.js" \
       "$WT/.fm-grok-turnend" "$WT/.fm-kimi-turnend"
   fi
-  [ -z "$T_ORCA" ] || fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
+  if [ -n "$T_ORCA" ]; then
+    fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" \
+      && TASK_KILL_RC=0 || TASK_KILL_RC=$?
+    require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
+  fi
   fm_backend_remove_worktree "$BACKEND" "$ORCA_WORKTREE_ID"
 elif [ "$KIND" != secondmate ] && ! teardown_owns_worktree; then
   :
@@ -3391,7 +3444,9 @@ elif [ "$BACKEND" = herdr ]; then
     echo "warning: herdr session presentation lock path is unavailable; skipping the pane close rather than closing unlocked" >&2
   fi
 elif [ "$BACKEND" != orca ]; then
-  fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
+  fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" \
+    && TASK_KILL_RC=0 || TASK_KILL_RC=$?
+  require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
 fi
 if [ "$HERDR_PRESENTATION_RETIRE_CANDIDATE" = 1 ]; then
   if [ "$(fm_backend_herdr_pane_agent_state "$HERDR_PRESENTATION_SESSION" "$HERDR_PRESENTATION_PANE")" = dead ]; then

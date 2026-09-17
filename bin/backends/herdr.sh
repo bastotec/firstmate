@@ -3329,10 +3329,22 @@ fm_backend_herdr_kill_serialized() {  # <session> <pane>
   fm_backend_herdr_explicit_close_pane_confirmed "$session" "$pane" || true
 }
 
+# Return contract: bin/fm-backend.sh's fm_backend_kill header owns it.
+# Herdr is the one backend that already had a structured presence read
+# (fm_backend_herdr_pane_presence_state), so every verdict here comes from it:
+# only a `pane_not_found` answer proves the pane gone, while an unreachable
+# server, an unparseable answer, and a still-present pane are all the same
+# unconfirmed result. A close this function refuses to make - the unlocked-pane
+# refusal below - is unconfirmed too, never a quiet success.
 fm_backend_herdr_kill() {  # <target>
-  fm_backend_herdr_target_ready "$1" || return 0
+  fm_backend_herdr_parse_target "$1" || return 1
   local session=$FM_BACKEND_HERDR_SESSION pane=$FM_BACKEND_HERDR_PANE
-  local lock_path attempt=0 lock_held=0
+  local lock_path attempt=0 lock_held=0 confirmed=0
+  if ! fm_backend_herdr_target_ready "$1"; then
+    echo "error: the herdr server for session $session could not be reached, so pane $pane" \
+         "could not be closed or confirmed gone; the worker may still be running" >&2
+    return 2
+  fi
   if ! declare -F fm_lock_try_acquire >/dev/null 2>&1; then
     # shellcheck source=bin/fm-wake-lib.sh
     . "$FM_BACKEND_HERDR_ROOT/bin/fm-wake-lib.sh"
@@ -3349,10 +3361,22 @@ fm_backend_herdr_kill() {  # <target>
   fi
   if [ "$lock_held" = 1 ]; then
     fm_backend_herdr_kill_serialized "$session" "$pane"
+    # Confirmed under the same lock the close ran under, so no other holder can
+    # change what this reads. It is the same structured read teardown's own
+    # gate uses, which is why a pane the close never removed - and one that was
+    # already absent before it - read the same way here as they do there.
+    if fm_backend_herdr_endpoint_confirmed_gone "$1"; then
+      confirmed=1
+    fi
     fm_lock_release "$lock_path" || true
   else
-    echo "warning: herdr task kill could not acquire its session presentation lock; refusing an unlocked pane close" >&2
+    echo "error: herdr task kill could not acquire its session presentation lock, so pane $pane" \
+         "was left open rather than closed unlocked; the worker may still be running" >&2
+    return 2
   fi
+  [ "$confirmed" = 1 ] && return 0
+  echo "error: herdr pane $pane is not confirmed gone after its close; the worker may still be running" >&2
+  return 2
 }
 
 # fm_backend_herdr_endpoint_confirmed_gone: gate durable-record removal on

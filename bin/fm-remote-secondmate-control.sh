@@ -153,7 +153,7 @@ cmd_route() {
 
 cmd_launch() {
   local id=$1 harness=$2 model=$3 effort=$4 selected_backend=$5 traceparent=${6:-}
-  local current meta out herdr_session
+  local current meta out herdr_session kill_out
 
   validate_id "$id"
   validate_home "$id"
@@ -180,8 +180,13 @@ cmd_launch() {
         return 0
         ;;
       dead)
-        fm_backend_kill "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" 2>/dev/null \
-          || die "could not remove the confirmed agent-less endpoint"
+        # The shared kill contract (bin/fm-backend.sh's fm_backend_kill) is
+        # what stands between this and a duplicate launch: only a
+        # confirmed-gone endpoint frees this id, and the adapter's own reason
+        # is carried into the refusal rather than discarded with its stderr.
+        if ! kill_out=$(fm_backend_kill "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" 2>&1); then
+          die "the agent-less endpoint $REMOTE_ENDPOINT_TARGET was not confirmed gone, so this launch would risk a duplicate: $(printf '%s' "$kill_out" | head -n 1)"
+        fi
         ;;
       missing) ;;
       *) die "remote endpoint state is $current; refusing duplicate launch" ;;

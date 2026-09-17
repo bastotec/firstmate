@@ -284,7 +284,25 @@ fm_backend_orca_send_text_submit() {  # <terminal-id> <text> <retries> <enter-sl
     "$terminal" "$retries" "$sleep_s"
 }
 
+# Return contract: bin/fm-backend.sh's fm_backend_kill header owns it.
+# Orca is the one backend with no read that separates a closed terminal from
+# an unreachable runtime: `orca terminal read` fails the same way for both, so
+# it cannot serve as the follow-up confirmation the other adapters use. What
+# Orca does give is a typed answer to the close itself, and an accepted
+# `terminal close` is a positive acknowledgement rather than a confirmation by
+# omission - so that answer is the verdict here, and a refused, failed, or
+# unattemptable close is unconfirmed.
 fm_backend_orca_kill() {  # <terminal-id>
-  fm_backend_orca_tool_check || return 0
-  orca terminal close --terminal "$1" --json >/dev/null 2>&1 || true
+  local terminal=${1:-}
+  [ -n "$terminal" ] || return 1
+  fm_backend_orca_tool_check || {
+    echo "error: the Orca CLI is unavailable, so terminal $terminal could not be closed or" \
+         "confirmed gone; the worker may still be running" >&2
+    return 2
+  }
+  orca terminal close --terminal "$terminal" --json >/dev/null 2>&1 || {
+    echo "error: 'orca terminal close' did not accept the close for terminal $terminal;" \
+         "the worker may still be running" >&2
+    return 2
+  }
 }

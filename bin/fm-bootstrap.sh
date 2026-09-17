@@ -739,7 +739,7 @@ secondmate_liveness_one_timed() {  # <meta> <id> <label>
 # secondmate_note_respawned so a concurrent sweep can collect them after wait.
 secondmate_liveness_one() {  # <meta> <id>
   local meta=$1 id=$2
-  local window harness backend target agent_state out cause remote_host remote_rc readiness_reason route_out remote_backend
+  local window harness backend target agent_state out cause remote_host remote_rc readiness_reason route_out remote_backend kill_out
   window=$(fm_meta_get "$meta" window)
   [ -n "$window" ] || return 0
   harness=$(fm_meta_get "$meta" harness)
@@ -830,7 +830,15 @@ secondmate_liveness_one() {  # <meta> <id>
     dead|missing)
       if [ "$agent_state" = dead ]; then
         cause="confirmed agent absence on existing endpoint"
-        fm_backend_kill "$backend" "$target" 2>/dev/null || true
+        # A relaunch onto an endpoint that was not proved gone is how a second
+        # agent gets started beside a first one that may still be running, so
+        # the shared kill contract (bin/fm-backend.sh's fm_backend_kill) gates
+        # the respawn rather than being discarded. The adapter's own reason is
+        # captured and reported with the skip.
+        if ! kill_out=$(fm_backend_kill "$backend" "$target" 2>&1); then
+          echo "SECONDMATE_LIVENESS: secondmate $id: skipped: the existing endpoint was not confirmed gone, so no relaunch was attempted (backend=$backend): $(first_line "$kill_out")"
+          return 0
+        fi
       else
         cause="recorded endpoint confidently missing"
       fi

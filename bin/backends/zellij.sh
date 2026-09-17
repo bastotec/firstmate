@@ -579,17 +579,53 @@ fm_backend_zellij_send_text_submit() {  # <target> <text> <retries> <enter-sleep
     "$target" "$retries" "$sleep_s" "$expected_label"
 }
 
-# fm_backend_zellij_kill: remove the task's tab, best-effort (mirrors
-# tmux-kill-window's/herdr-pane-close's `|| true` contract). Verified: unlike
-# herdr, closing a zellij tab's only PANE does NOT close the tab itself (an
-# empty tab survives in list-tabs); `close-tab-by-id` on a live tab DOES
-# cleanly remove both the pane and the tab in one call, verified to need no
-# separate pane-close first. The owning tab id is looked up fresh from the
-# pane id when possible via fm_backend_zellij_tab_for_pane; teardown also
-# passes the recorded tab id and expected tab label for already-empty ghost
-# tabs. Any tab id is verified against the expected label when one is provided.
+# fm_backend_zellij_pane_presence: classify one recorded pane as
+# dead|present|unknown from a structured `list-panes --json` read, never from
+# a close command's own exit status. fm_backend_zellij_pane_exists cannot
+# serve here: it answers false for an unreachable CLI exactly as it does for a
+# closed pane, and only one of those is proof. A listing that does not run, or
+# that does not parse as an array, is `unknown`.
+fm_backend_zellij_pane_presence() {  # <session> <pane_id> -> dead|present|unknown
+  local session=$1 pane_id=$2 panes matches
+  panes=$(fm_backend_zellij_cli "$session" action list-panes --json 2>/dev/null) || {
+    printf 'unknown'
+    return 0
+  }
+  matches=$(printf '%s' "$panes" | jq -r --argjson p "$pane_id" '
+    select(type == "array")
+    | [.[] | select(.id == $p and .is_plugin == false)] | length
+  ' 2>/dev/null) || matches=
+  case "$matches" in
+    0) printf 'dead' ;;
+    1) printf 'present' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+# fm_backend_zellij_kill: remove the task's tab. Verified: unlike herdr,
+# closing a zellij tab's only PANE does NOT close the tab itself (an empty tab
+# survives in list-tabs); `close-tab-by-id` on a live tab DOES cleanly remove
+# both the pane and the tab in one call, verified to need no separate
+# pane-close first. The owning tab id is looked up fresh from the pane id when
+# possible via fm_backend_zellij_tab_for_pane; teardown also passes the
+# recorded tab id and expected tab label for already-empty ghost tabs. Any tab
+# id is verified against the expected label when one is provided.
+#
+# Return contract: bin/fm-backend.sh's fm_backend_kill header owns it.
+# Zellij's close actions report nothing about what they closed, so the verdict
+# comes from the presence read above. Two answers are a genuine gone rather
+# than an unconfirmed one: a session listing that runs and omits this session,
+# and an expected label no live tab in the session carries any more - that id
+# no longer names this task, the same reading the stream adapter takes on a
+# label mismatch, so closing whatever holds it now would destroy a stranger's
+# endpoint.
 fm_backend_zellij_kill() {  # <target> [tab_id] [expected_label]
-  fm_backend_zellij_parse_target "$1" || return 0
+  fm_backend_zellij_parse_target "$1" || return 1
+  if ! command -v zellij >/dev/null 2>&1; then
+    echo "error: the zellij CLI is unavailable, so $1 could not be closed or confirmed gone;" \
+         "the worker may still be running" >&2
+    return 2
+  fi
   fm_backend_zellij_session_exists "$FM_BACKEND_ZELLIJ_SESSION" || return 0
   local tab_id fallback_tab_id=${2:-} expected_label=${3:-}
   tab_id=$(fm_backend_zellij_tab_for_pane "$FM_BACKEND_ZELLIJ_SESSION" "$FM_BACKEND_ZELLIJ_PANE" 2>/dev/null)
@@ -610,7 +646,22 @@ fm_backend_zellij_kill() {  # <target> [tab_id] [expected_label]
     fm_backend_zellij_cli "$FM_BACKEND_ZELLIJ_SESSION" action close-tab-by-id "$tab_id" >/dev/null 2>&1 || true
   elif [ -z "$expected_label" ]; then
     fm_backend_zellij_cli "$FM_BACKEND_ZELLIJ_SESSION" action close-pane --pane-id "$FM_BACKEND_ZELLIJ_PANE" >/dev/null 2>&1 || true
+  else
+    return 0
   fi
+  case "$(fm_backend_zellij_pane_presence "$FM_BACKEND_ZELLIJ_SESSION" "$FM_BACKEND_ZELLIJ_PANE")" in
+    dead) return 0 ;;
+    present)
+      echo "error: zellij pane $FM_BACKEND_ZELLIJ_PANE is still listed after its close;" \
+           "the worker may still be running" >&2
+      return 2
+      ;;
+    *)
+      echo "error: zellij could not say whether pane $FM_BACKEND_ZELLIJ_PANE is gone after its close;" \
+           "the worker may still be running" >&2
+      return 2
+      ;;
+  esac
 }
 
 # fm_backend_zellij_list_live: recovery/orphan discovery. Lists every tab in

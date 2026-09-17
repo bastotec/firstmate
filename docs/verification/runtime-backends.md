@@ -366,6 +366,62 @@ Valid cleanup removed only the exact task-bound target and left the control wind
 The metadata-only validation covers tmux, Herdr, Zellij, Orca, and cmux before backend dispatch.
 Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that backend cleanup boundary; their harness-specific hook files, tokens, transcript bindings, and session-log sidecars are cleaned only after it, so no harness needs a separate endpoint parser.
 
+### Endpoint kill confirmation
+
+`fm_backend_kill` in `bin/fm-backend.sh` owns the contract; this records what each adapter can actually prove, because a backend that cannot prove a kill landed must say so rather than be treated as confirmed by omission.
+
+- tmux confirms from a successful `list-windows` inventory that omits the exact window, and from a definitive missing-session or no-server answer.
+  Every other inventory failure is unconfirmed: `kill-window` exits nonzero for an already-gone window exactly as it does for an unreachable server, so its own status is never the verdict.
+- Herdr confirms from `pane get`'s structured `pane_not_found`, read under the same presentation lock the close ran under.
+  A refused lock, an unreachable server, a still-present pane, and an unparseable answer are unconfirmed.
+- Zellij confirms from an `action list-panes --json` listing that omits the pane, from a `list-sessions` run that omits the session, and from an expected task label no live tab in that session carries any more.
+  An absent zellij CLI and a listing that does not run or does not parse are unconfirmed.
+- cmux confirms from a `workspace list --json` listing that omits the workspace.
+  `close-workspace` answers `OK` whether or not it closed anything (see [Closing the last workspace in a window](../cmux-backend.md)), so its status is never the verdict, and an unreadable cmux is unconfirmed.
+- Orca has no read that separates a closed terminal from an unreachable runtime, so its own typed answer to `orca terminal close` is the verdict: an accepted close is confirmed, and a refused close or an absent CLI is unconfirmed.
+- stream confirms only from the endpoint's own agent, either a record it closed after watching the worker exit or a kill the hub reports it took.
+  A hub that cannot answer, a record the hub closed by itself, and a target this home cannot address are unconfirmed ([stream-backend.md](../stream-backend.md)).
+
+Verified on 2026-09-17 with tmux 3.6 on Linux 7.0.0.
+The tmux verdict comes from tmux's own output, so it is proven against a real server rather than a stub: the unconfirmed case makes the real socket unreadable, which fails both the close and the follow-up inventory the one way that cannot tell a removed window from an unreachable server, and then asserts the window is still there.
+
+```sh
+bin/fm-test-run.sh tests/fm-backend-tmux-smoke.test.sh tests/fm-teardown-endpoint-safety.test.sh
+```
+
+Observed output, bounded to the kill-contract cases:
+
+```text
+ok - real tmux: a kill whose server cannot be read reports unconfirmed and leaves the window running
+ok - real tmux: kill reports gone for the window it removed and for one already absent, and unsupported for a backend with no implementation
+ok - fm-teardown: an unconfirmed endpoint kill keeps every durable record, while an already-absent endpoint and a confirmed kill both stay successful
+```
+
+The cleanup case runs against the same real tmux server and suppresses only the close, reproducing a backend that accepts a close and performs none - the shape cmux documents.
+It asserts the window really did survive before asserting the records did, so the refusal cannot go vacuous.
+
+Each adapter's own answer is pinned beside it, against the real hub and real agents for stream and against each backend's canned protocol responses for the rest:
+
+```sh
+bin/fm-test-run.sh tests/fm-backend-herdr.test.sh tests/fm-backend-zellij.test.sh \
+  tests/fm-backend-cmux.test.sh tests/fm-backend-orca.test.sh tests/fm-backend-stream.test.sh
+```
+
+Observed output, bounded to the kill-contract cases:
+
+```text
+ok - fm_backend_herdr_kill: a close that failed and one that left the pane standing both report unconfirmed
+ok - fm_backend_herdr_kill: an unavailable session lock defers the pane close and reports it unconfirmed
+ok - fm_backend_zellij_kill: resolves the owning tab id fresh and calls close-tab-by-id (never a bare close-pane)
+ok - fm_backend_zellij_kill: never fails when the target session no longer exists
+ok - fm_backend_cmux_kill: a close that failed, one that silently closed nothing, and one nothing could confirm all report unconfirmed
+ok - fm_backend_orca_kill: reports gone for a close Orca accepted and unconfirmed for one it refused
+ok - stream: only a close the endpoint's own agent reported counts as a stop
+ok - stream: a kill the hub cannot answer is reported as unconfirmed
+```
+
+One unrelated case in the Herdr suite needs a real long-running binary reachable under the name `pi`, which a multi-call coreutils `sleep` refuses, so on such a build that suite stops before its kill cases and they must be run on their own.
+
 ## Claude workspace trust
 
 Verified 2026-09-03 on Claude Code 2.1.259.

@@ -2776,6 +2776,9 @@ test_kill_emptying_non_focused_uses_pane_death() {
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/8.out"
   printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","active_tab_id":"w1:t1","focused":true}]}}' > "$resp/9.out"
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w1:t1","focused":true}]}}' > "$resp/10.out"
+  # The structured read the kill's own verdict comes from: only this
+  # pane_not_found lets it report the endpoint gone.
+  printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/11.out"
   make_death_lab "$dir" "$bgpid"
   fb=$(make_herdr_fakebin "$dir")
   out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
@@ -2804,7 +2807,7 @@ test_kill_emptying_non_focused_uses_pane_death() {
       fm_backend_herdr_kill fmtest:w2:p2
     ' "$ROOT" 2>&1)
   status=$?
-  [ "$status" -eq 0 ] || fail "an emptying non-focused kill should stay best-effort: $out"
+  [ "$status" -eq 0 ] || fail "an emptying non-focused kill whose pane is confirmed gone should report it gone: $out"
   [ "$(cat "$lock_log")" = "$(printf 'acquire\nrelease')" ] \
     || fail "the generic kill did not hold one presentation lock across its complete mutation: $(cat "$lock_log")"
   [ ! -e "$lock_held" ] || fail "the generic kill retained its presentation lock"
@@ -2821,6 +2824,9 @@ test_kill_focused_workspace_stays_plain_close() {
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w2:t2","focused":true}]}}' > "$resp/2.out"
   printf '%s\n' '{"result":{"pane":{"pane_id":"w2:p2","tab_id":"w2:t2","workspace_id":"w2"}}}' > "$resp/3.out"
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/5.out"
+  # The kill's own verdict comes from this second structured read, taken under
+  # the same lock the close ran under.
+  printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/6.out"
   sleep 300 & bgpid=$!
   make_death_lab "$dir" "$bgpid"
   fb=$(make_herdr_fakebin "$dir")
@@ -2836,7 +2842,7 @@ test_kill_focused_workspace_stays_plain_close() {
       fm_backend_herdr_kill fmtest:w2:p2
     ' "$ROOT" 2>&1)
   status=$?
-  [ "$status" -eq 0 ] || fail "a focused-workspace kill should stay best-effort: $out"
+  [ "$status" -eq 0 ] || fail "a focused-workspace kill whose pane is confirmed gone should report it gone: $out"
   assert_contains "$(cat "$log")" $'pane\x1fclose\x1fw2:p2' "a focused-workspace kill did not use the plain close"
   assert_not_contains "$(cat "$log")" $'pane\x1fprocess-info' "a focused-workspace kill ran the idle-shell proof"
   kill -0 "$bgpid" 2>/dev/null || fail "a focused-workspace kill signaled the pane's shell"
@@ -2869,10 +2875,12 @@ test_kill_refuses_when_presentation_lock_is_unavailable() {
       fm_backend_herdr_kill fmtest:w2:p2
     ' 2>&1)
     status=$?
-    [ "$status" -eq 0 ] || fail "$mode presentation lock refusal changed best-effort kill status: $status"
+    [ "$status" -eq 2 ] || fail "$mode presentation lock refusal must report an unconfirmed kill, got status $status"
     [ ! -s "$dir/cli.log" ] || fail "$mode presentation lock refusal still mutated Herdr: $(cat "$dir/cli.log")"
-    assert_contains "$out" "refusing an unlocked pane close" \
+    assert_contains "$out" "was left open rather than closed unlocked" \
       "$mode presentation lock refusal did not report the deferred close"
+    assert_contains "$out" "may still be running" \
+      "$mode presentation lock refusal did not say the worker may still be running"
     attempts=$(wc -l < "$dir/attempts" | tr -d ' ')
     if [ "$mode" = contended ]; then
       [ "$attempts" = 50 ] || fail "contended presentation lock did not use the bounded wait: $attempts attempts"
@@ -2880,7 +2888,7 @@ test_kill_refuses_when_presentation_lock_is_unavailable() {
       [ "$attempts" = 0 ] || fail "unresolved presentation lock path attempted acquisition: $attempts"
     fi
   done
-  pass "fm_backend_herdr_kill: unavailable session locks defer every pane close"
+  pass "fm_backend_herdr_kill: an unavailable session lock defers the pane close and reports it unconfirmed"
 }
 
 test_endpoint_confirmed_gone_gates_on_structured_presence() {
@@ -3652,12 +3660,17 @@ test_send_key_normalizes_and_targets_pane() {
   pass "fm_backend_herdr_send_key: normalizes the key and targets the right pane"
 }
 
-test_kill_is_best_effort() {
-  local dir log resp fb
+# A pane close that failed, and one whose result nothing could read, are the
+# same thing to the layer above (bin/fm-backend.sh's fm_backend_kill owns the
+# contract): nothing proved the worker stopped. The verdict never comes from
+# the close call's own status, which is why the second case below - a close
+# that succeeded over a pane that is still there - reports the same thing.
+test_kill_reports_unconfirmed_when_the_pane_is_not_proved_gone() {
+  local dir log resp fb out
   dir="$TMP_ROOT/kill"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
   printf '1\n' > "$resp/1.exit"
   fb=$(make_herdr_fakebin "$dir")
-  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
     bash -c '
       . "$0/bin/backends/herdr.sh"
       fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
@@ -3665,10 +3678,29 @@ test_kill_is_best_effort() {
       fm_lock_try_acquire() { return 0; }
       fm_lock_release() { return 0; }
       fm_backend_herdr_kill default:w1:p2
-    ' "$ROOT"
-  expect_code 0 $? "kill must be best-effort (never fail even when the pane close call itself fails)"
+    ' "$ROOT" 2>&1)
+  expect_code 2 $? "a pane close nothing could confirm must report unconfirmed, not success"
+  assert_contains "$out" "may still be running" \
+    "an unconfirmed herdr close should say the worker may still be running"
+
+  dir="$TMP_ROOT/kill-present"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  # 1 is the close, answered successfully; 2 and 3 are the structured reads,
+  # and both still see the exact pane.
+  printf '%s\n' '{"result":{"pane":{"pane_id":"w1:p2"}}}' > "$resp/2.out"
+  printf '%s\n' '{"result":{"pane":{"pane_id":"w1:p2"}}}' > "$resp/3.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '
+      . "$0/bin/backends/herdr.sh"
+      fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+      fm_backend_herdr_presentation_session_lock_path() { printf "/tmp/fm-herdr-test-lock"; }
+      fm_lock_try_acquire() { return 0; }
+      fm_lock_release() { return 0; }
+      fm_backend_herdr_kill default:w1:p2
+    ' "$ROOT" 2>&1)
+  expect_code 2 $? "a close that succeeded over a pane still present must report unconfirmed"
   assert_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''close'$'\x1f''w1:p2' "kill did not call pane close on the right pane"
-  pass "fm_backend_herdr_kill: calls pane close and stays best-effort on failure"
+  pass "fm_backend_herdr_kill: a close that failed and one that left the pane standing both report unconfirmed"
 }
 
 test_current_path_reads_cwd() {
@@ -5337,7 +5369,7 @@ test_capture_calls_pane_read
 test_capture_works_around_small_lines_bug
 test_capture_preserves_pane_read_failure
 test_send_key_normalizes_and_targets_pane
-test_kill_is_best_effort
+test_kill_reports_unconfirmed_when_the_pane_is_not_proved_gone
 test_current_path_reads_cwd
 test_busy_state_working_maps_to_busy
 test_busy_state_done_and_blocked_map_to_idle

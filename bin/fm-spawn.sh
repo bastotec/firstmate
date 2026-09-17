@@ -990,6 +990,17 @@ parse_orca_worktree_result() {
   fi
 }
 
+# report_unclosed_launch_endpoint: say plainly that an endpoint this spawn
+# launched could not be closed. Both cleanup paths below close an endpoint
+# whose launch failed, at the one moment when neither the abort trap nor a
+# later cleanup owns it yet - so a close that nothing proved landed leaves an
+# autonomous agent running outside task control, and the shared kill contract
+# (bin/fm-backend.sh's fm_backend_kill) is what makes that observable instead
+# of discarded. The adapter has already written its own reason to stderr.
+report_unclosed_launch_endpoint() {  # <backend> <target>
+  echo "error: the $1 endpoint $2 launched for $ID could not be confirmed closed; a worker may still be running there and needs to be stopped by hand" >&2
+}
+
 spawn_abort_cleanup() {
   local status=$?
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] \
@@ -1037,7 +1048,10 @@ spawn_abort_cleanup() {
   if [ "$ORCA_ABORT_CLEANUP" = 1 ]; then
     ORCA_ABORT_CLEANUP=0
     if [ -n "${ORCA_TERMINAL:-}" ]; then
-      fm_backend_kill orca "$ORCA_TERMINAL" 2>/dev/null || true
+      if ! fm_backend_kill orca "$ORCA_TERMINAL"; then
+        report_unclosed_launch_endpoint orca "$ORCA_TERMINAL"
+        status=1
+      fi
     fi
     if [ -n "${ORCA_WORKTREE_ID:-}" ]; then
       if ! fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
@@ -3305,12 +3319,13 @@ rovo_spawn_fail() {  # <detail>
 # for the record's own teardown, which owns worktree deletion.
 rovo_endpoint_cleanup() {
   if [ "$BACKEND" = orca ]; then
-    fm_backend_kill orca "$T" 2>/dev/null || true
+    fm_backend_kill orca "$T" || report_unclosed_launch_endpoint orca "$T"
     return 0
   fi
   local tab_id=
   [ "$BACKEND" = zellij ] && tab_id=$ZELLIJ_TAB_ID
-  fm_backend_kill "$BACKEND" "$T" "$tab_id" "fm-$ID" 2>/dev/null || true
+  fm_backend_kill "$BACKEND" "$T" "$tab_id" "fm-$ID" \
+    || report_unclosed_launch_endpoint "$BACKEND" "$T"
 }
 
 # agy carries its brief on the launch command, so it needs no delivery gate,

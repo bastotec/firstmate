@@ -352,15 +352,30 @@ test_send_key_refuses_escape_until_supported() {
   pass "fm_backend_orca_send_key: refuses Escape instead of mapping it to interrupt"
 }
 
-test_kill_is_best_effort_close() {
-  orca_case kill
-  printf '1\n' > "$RESP/1.exit"
+# Orca has no read that separates a closed terminal from an unreachable
+# runtime, so its own typed answer to the close is the whole verdict
+# (bin/fm-backend.sh's fm_backend_kill owns the contract): an accepted close
+# reports the endpoint gone, and a refused one reports unconfirmed rather than
+# being discarded.
+test_kill_reports_the_close_orca_answered() {
+  local out
+  orca_case kill-accepted
   PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_kill term-123' "$ROOT"
-  expect_code 0 $? "kill should stay best-effort when Orca close fails"
+  expect_code 0 $? "an accepted Orca close should report the endpoint gone"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-123'$'\x1f''--json' \
     "kill did not call orca terminal close"
-  pass "fm_backend_orca_kill: calls terminal close and stays best-effort"
+
+  orca_case kill-refused
+  printf '1\n' > "$RESP/1.exit"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_kill term-123' "$ROOT" 2>&1 )
+  expect_code 2 $? "a close Orca did not accept must report unconfirmed, not success"
+  assert_contains "$out" "may still be running" \
+    "an unconfirmed Orca close should say the worker may still be running"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-123'$'\x1f''--json' \
+    "kill did not attempt orca terminal close before reporting"
+  pass "fm_backend_orca_kill: reports gone for a close Orca accepted and unconfirmed for one it refused"
 }
 
 test_remove_worktree_refuses_empty_id() {
@@ -1341,7 +1356,7 @@ test_send_helpers_reject_orca_error_json
 test_send_key_enter_and_interrupt
 test_send_key_refuses_unknown_key
 test_send_key_refuses_escape_until_supported
-test_kill_is_best_effort_close
+test_kill_reports_the_close_orca_answered
 test_remove_worktree_refuses_empty_id
 test_remove_worktree_rejects_orca_error_json
 test_worktree_path_resolves_id

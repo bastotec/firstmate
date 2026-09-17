@@ -611,12 +611,40 @@ fm_backend_cmux_window_of_workspace() {  # <workspace_id> -> "<window_id> <count
 # target is the last one in its window a throwaway sibling is created first,
 # leaving that window a fresh default workspace (never an fm-<home>- title, so
 # recovery/list_live ignore it) - cmux's own "closed the last tab" outcome.
+# fm_backend_cmux_workspace_presence: classify one workspace as
+# dead|present|unknown from a structured `workspace list --json` read. This is
+# what makes the silent no-op above observable: `close-workspace` answers `OK`
+# whether or not it closed anything, so the close's own status can never be
+# the verdict. A listing that does not run, or that does not parse as an
+# array, is `unknown` - an unreachable cmux cannot tell a closed workspace
+# from one it simply could not see.
+fm_backend_cmux_workspace_presence() {  # <workspace_id> -> dead|present|unknown
+  local wsid=$1 out matches
+  out=$(fm_backend_cmux_cli workspace list --json --id-format uuids 2>/dev/null) || {
+    printf 'unknown'
+    return 0
+  }
+  matches=$(printf '%s' "$out" | jq -r --arg id "$wsid" '
+    select((.workspaces | type) == "array")
+    | [.workspaces[] | select(.id == $id)] | length
+  ' 2>/dev/null) || matches=
+  case "$matches" in
+    0) printf 'dead' ;;
+    1) printf 'present' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+# Return contract: bin/fm-backend.sh's fm_backend_kill header owns it. An
+# expected label that no longer resolves means the id names something other
+# than this task, which is a gone endpoint rather than an unconfirmed kill -
+# the same reading the stream adapter takes on a label mismatch.
 fm_backend_cmux_kill() {  # <target> [unused] [expected-label]
   local expected_label=${3:-} wsid wininfo win count
   if [ -n "$expected_label" ]; then
     fm_backend_cmux_target_ready "$1" "$expected_label" || return 0
   else
-    fm_backend_cmux_parse_target "$1" || return 0
+    fm_backend_cmux_parse_target "$1" || return 1
   fi
   wsid=$FM_BACKEND_CMUX_WORKSPACE
   wininfo=$(fm_backend_cmux_window_of_workspace "$wsid")
@@ -626,6 +654,18 @@ fm_backend_cmux_kill() {  # <target> [unused] [expected-label]
     fm_backend_cmux_cli new-workspace --window "$win" --focus false --id-format uuids >/dev/null 2>&1 || true
   fi
   fm_backend_cmux_cli close-workspace --workspace "$wsid" >/dev/null 2>&1 || true
+  case "$(fm_backend_cmux_workspace_presence "$wsid")" in
+    dead) return 0 ;;
+    present)
+      echo "error: cmux workspace $wsid is still listed after its close; the worker may still be running" >&2
+      return 2
+      ;;
+    *)
+      echo "error: cmux could not say whether workspace $wsid is gone after its close;" \
+           "the worker may still be running" >&2
+      return 2
+      ;;
+  esac
 }
 
 # fm_backend_cmux_list_live: recovery/orphan discovery. Lists every workspace
