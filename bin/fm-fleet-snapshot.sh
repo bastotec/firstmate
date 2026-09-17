@@ -266,7 +266,8 @@ Each local per-task current-state read is bounded by FM_SNAPSHOT_CREW_STATE_TIME
 (default 10 seconds); a read that hits the bound reports state unknown. Local task
 observations run concurrently, up to FM_SNAPSHOT_LOCAL_READ_CONCURRENCY (default 8).
 Every local task with a recorded endpoint carries endpoint.agent_state, the
-recovery-grade process verdict. Remote secondmate endpoint liveness is probed
+recovery-grade process verdict, probed under the same per-task bound; a probe
+that hits the bound reports unreadable. Remote secondmate endpoint liveness is probed
 only when FM_SNAPSHOT_REMOTE_AGENT_STATE=1, concurrently with the ledger reads
 and under the same FM_SNAPSHOT_BUDGET.
 Terminal contradiction evidence uses
@@ -655,7 +656,10 @@ prefetch_task_observations() {  # <meta> <id>
       else
         endpoint_exists=false
       fi
-      agent_state=$(fm_backend_agent_state "$backend" "$target" 2>/dev/null) || agent_state=unreadable
+      # shellcheck disable=SC2016 # Positional parameters expand inside the child bash, not here.
+      agent_state=$(fm_run_timed "$FM_SNAPSHOT_CREW_STATE_TIMEOUT" bash -c \
+        '. "$1"; fm_backend_agent_state "$2" "$3"' \
+        fm-agent-state "$SCRIPT_DIR/fm-backend.sh" "$backend" "$target" 2>/dev/null) || agent_state=unreadable
       case "$agent_state" in
         alive|dead|missing|ambiguous|unreadable|unverified) : ;;
         *) agent_state=unreadable ;;

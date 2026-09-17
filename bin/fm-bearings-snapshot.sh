@@ -35,8 +35,10 @@
 # workers by their local endpoint.agent_state, second mates by their record's
 # agent_state (remote homes probed on their own host, requested here through
 # FM_SNAPSHOT_REMOTE_AGENT_STATE=1), and second-mate workers by the
-# endpoint.agent_state in their home ledger - each with where it runs. An agent
-# whose process could not be confirmed stays out and is counted in omitted[].
+# endpoint.agent_state in their home ledger - each with where it runs. A
+# second-mate worker counts only while its home ledger is current: generated at
+# most 2 x FM_HOME_SUMMARY_INTERVAL seconds ago, whatever the ledger source. An
+# agent whose process could not be confirmed stays out and is counted in omitted[].
 # Captain-hold placement follows the canonical snapshot's hold_bucket and
 # nothing else; this wrapper never inspects hold reason or body prose. The
 # buckets are total and mutually exclusive, so every captain hold appears in
@@ -83,7 +85,6 @@
 #   --include-prs    ALSO do live GitHub open-PR discovery + checks
 #   --fields <list>  opt in to dropped surfaces: bodies,paths,actions,endpoints
 #   --all-in-flight  include every in-flight task
-#   --all-running    include every running agent
 #   --all-decisions  include every open decision and captain hold in the bounded snapshot
 #   --all-secondmates include every aggregated secondmate record
 #   --all-landed     include every landed record from every home (default: bounded)
@@ -111,7 +112,6 @@ FLEET="$SCRIPT_DIR/fm-fleet-snapshot.sh"
 FM_BEARINGS_LANDED=${FM_BEARINGS_LANDED:-6}
 FM_BEARINGS_LANDED_PER_HOME=${FM_BEARINGS_LANDED_PER_HOME:-$FM_BEARINGS_LANDED}
 FM_BEARINGS_IN_FLIGHT=${FM_BEARINGS_IN_FLIGHT:-20}
-FM_BEARINGS_RUNNING=${FM_BEARINGS_RUNNING:-30}
 FM_BEARINGS_DECISIONS=${FM_BEARINGS_DECISIONS:-20}
 FM_BEARINGS_SECONDMATES=${FM_BEARINGS_SECONDMATES:-20}
 FM_BEARINGS_GATES=${FM_BEARINGS_GATES:-20}
@@ -122,13 +122,14 @@ FM_BEARINGS_PR_REPOS=${FM_BEARINGS_PR_REPOS:-10}
 FM_BEARINGS_PR_LIMIT=${FM_BEARINGS_PR_LIMIT:-20}
 FM_BEARINGS_PR_TIMEOUT=${FM_BEARINGS_PR_TIMEOUT:-20}
 case "$FM_BEARINGS_PR_TIMEOUT" in ''|*[!0-9]*|0) FM_BEARINGS_PR_TIMEOUT=20 ;; esac
+FM_HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
+case "$FM_HOME_SUMMARY_INTERVAL" in ''|*[!0-9]*|0) FM_HOME_SUMMARY_INTERVAL=300 ;; esac
 validate_bound() {  # <name> <value>
   case "$2" in ''|*[!0-9]*|0) echo "fm-bearings-snapshot: $1 must be a positive integer" >&2; exit 2 ;; esac
 }
 validate_bound FM_BEARINGS_LANDED "$FM_BEARINGS_LANDED"
 validate_bound FM_BEARINGS_LANDED_PER_HOME "$FM_BEARINGS_LANDED_PER_HOME"
 validate_bound FM_BEARINGS_IN_FLIGHT "$FM_BEARINGS_IN_FLIGHT"
-validate_bound FM_BEARINGS_RUNNING "$FM_BEARINGS_RUNNING"
 validate_bound FM_BEARINGS_DECISIONS "$FM_BEARINGS_DECISIONS"
 validate_bound FM_BEARINGS_SECONDMATES "$FM_BEARINGS_SECONDMATES"
 validate_bound FM_BEARINGS_GATES "$FM_BEARINGS_GATES"
@@ -141,8 +142,7 @@ validate_bound FM_BEARINGS_PR_LIMIT "$FM_BEARINGS_PR_LIMIT"
 usage() {
   cat <<'EOF'
 usage: fm-bearings-snapshot.sh [--json] [--include-prs] [--fields <list>]
-                               [--all-in-flight] [--all-running]
-                               [--all-decisions]
+                               [--all-in-flight] [--all-decisions]
                                [--all-secondmates] [--all-landed]
                                [--all-reports] [--all-queued]
                                [--all-recorded-prs] [--all-unhealthy]
@@ -174,10 +174,11 @@ For every registered secondmate, readable structured facts from its own home are
   distinguish live and cached ledgers; a home without either is explicitly unreadable.
 running lists only agents whose process is verified alive: main-home workers,
   second mates (remote ones probed on their own host), and second-mate workers
-  from their home ledger. where is "this Mac" or "this machine" for local agents
+  from their home ledger while it is current (generated at most
+  2 x FM_HOME_SUMMARY_INTERVAL seconds ago). where is "this Mac" or "this machine" for local agents
   and the registered SSH host for a remote home's agents; agents whose liveness
   could not be confirmed stay out and are counted in omitted[].
-Opt-in surfaces: --fields bodies|paths|actions|endpoints, --all-in-flight, --all-running,
+Opt-in surfaces: --fields bodies|paths|actions|endpoints, --all-in-flight,
   --all-decisions (all open decisions and captain holds in the bounded snapshot),
   --all-secondmates, --all-landed, --all-reports, --all-queued, --all-recorded-prs,
   --all-unhealthy, --all-pr-repos, --include-prs (adds candidate_prs).
@@ -190,7 +191,6 @@ INCLUDE_PRS=0
 ALL_REPORTS=0
 ALL_QUEUED=0
 ALL_IN_FLIGHT=0
-ALL_RUNNING=0
 ALL_DECISIONS=0
 ALL_SECONDMATES=0
 ALL_LANDED=0
@@ -205,7 +205,6 @@ while [ $# -gt 0 ]; do
     --all-reports) ALL_REPORTS=1 ;;
     --all-queued) ALL_QUEUED=1 ;;
     --all-in-flight) ALL_IN_FLIGHT=1 ;;
-    --all-running) ALL_RUNNING=1 ;;
     --all-decisions) ALL_DECISIONS=1 ;;
     --all-secondmates) ALL_SECONDMATES=1 ;;
     --all-landed) ALL_LANDED=1 ;;
@@ -369,7 +368,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson landed_n "$FM_BEARINGS_LANDED" \
   --argjson landed_per_home_n "$FM_BEARINGS_LANDED_PER_HOME" \
   --argjson in_flight_n "$FM_BEARINGS_IN_FLIGHT" \
-  --argjson running_n "$FM_BEARINGS_RUNNING" \
+  --arg summary_interval "$FM_HOME_SUMMARY_INTERVAL" \
   --arg local_where "$LOCAL_WHERE" \
   --argjson decisions_n "$FM_BEARINGS_DECISIONS" \
   --argjson secondmates_n "$FM_BEARINGS_SECONDMATES" \
@@ -379,7 +378,6 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson unhealthy_n "$FM_BEARINGS_UNHEALTHY" \
   --argjson include_prs "$INCLUDE_PRS" \
   --argjson all_in_flight "$ALL_IN_FLIGHT" \
-  --argjson all_running "$ALL_RUNNING" \
   --argjson all_decisions "$ALL_DECISIONS" \
   --argjson all_secondmates "$ALL_SECONDMATES" \
   --argjson all_landed "$ALL_LANDED" \
@@ -413,6 +411,9 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   def nonblank_or($fallback):
     if (type == "string" and test("[^[:space:]]")) then . else $fallback end;
   def confirmed_agent_state: . == "alive" or . == "dead" or . == "missing";
+  def ledger_current:
+    (.freshness.age_seconds | type) == "number"
+      and .freshness.age_seconds <= (($summary_interval | tonumber) * 2);
   def projected_deferred_hold:
     .hold_bucket != null and .hold_bucket != "live";
   def bounded_blocker_note($n):
@@ -554,7 +555,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
                state:$m.bearings_state, doing:($m | mate_doing),
                freshness:($m.freshness.status // "unknown")}
             else empty end),
-           ($m.endpoints[]?
+           (if ($m | ledger_current) then $m.endpoints[]? else empty end
             | select(.endpoint.agent_state == "alive")
             | . as $e
             | ([$m.active_children[]? | select(.id == $e.id)][0] // {}) as $c
@@ -570,9 +571,11 @@ MODEL=$(printf '%s' "$SNAP" | jq \
      + [ $secondmate_views[]
          | select(.agent_state != null and .agent_state != "not_checked"
                   and (.agent_state | confirmed_agent_state | not)) ]
-     + [ $secondmate_views[] | .endpoints[]?
-         | select(.endpoint.exists == true
-                  and ((.endpoint.agent_state // "not_checked") | confirmed_agent_state | not)) ]
+     + [ $secondmate_views[] as $m | $m.endpoints[]?
+         | select(if ($m | ledger_current) then
+                    .endpoint.exists == true
+                      and ((.endpoint.agent_state // "not_checked") | confirmed_agent_state | not)
+                  else .endpoint.exists == true or .endpoint.agent_state == "alive" end) ]
      | length) as $running_unconfirmed
   | ([ .backlog.records[]
          | . as $record
@@ -660,7 +663,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
       generated: $now,
       prs: $prs,
       in_flight: (if $all_in_flight == 1 then $in_flight_all else $in_flight_all[:$in_flight_n] end),
-      running: (if $all_running == 1 then $running_all else $running_all[:$running_n] end),
+      running: $running_all,
       secondmates: (if $all_secondmates == 1 then $secondmates_all else $secondmates_all[:$secondmates_n] end),
       secondmate_reconcile: [ (.secondmate_current.records // [])[]
         | select(.reconcile_inventory != null)
@@ -696,7 +699,6 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | if $n > 0 then {surface:("main in-flight backlog item(s) have no child metadata: \($n)"), reveal:"inspect main data/backlog.md In flight vs state/*.meta"} else empty end),
         ((($snap.main_inventory.unstructured_current_count // 0)) as $n
          | if $n > 0 then {surface:("main unstructured current backlog row(s): \($n)"), reveal:"inspect main data/backlog.md In flight and Queued free-form rows"} else empty end),
-        (if $all_running == 0 and ($running_all | length) > $running_n then {surface:("running showing \($running_n) of \($running_all | length)"), reveal:"--all-running"} else empty end),
         (if $running_unconfirmed > 0 then {surface:("agents left out of running because their process could not be confirmed: \($running_unconfirmed)"), reveal:"--fields endpoints"} else empty end),
         (if $all_in_flight == 0 and ($in_flight_all | length) > $in_flight_n then {surface:("in_flight showing \($in_flight_n) of \($in_flight_all | length)"), reveal:"--all-in-flight"} else empty end),
         (($snap.secondmate_current.records // [])[] as $m

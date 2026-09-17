@@ -3405,6 +3405,8 @@ EOF
   make_liveness_tmux "$fakebin"
   where=$(local_where)
   export FAKE_TMUX_WINDOWS="fm-live-ship fm-idle-ship fm-live-helper fm-live-child fm-idle-child"
+  # The local ledger is generated at this epoch by refresh_local_secondmate_ledgers.
+  export FM_SNAPSHOT_NOW_EPOCH=1783792800
 
   json=$(run "$home" "$fakebin" --json) || fail "bearings failed on the liveness fixture"
   printf '%s' "$json" | jq -e --arg where "$where" '
@@ -3425,16 +3427,23 @@ EOF
   printf '%s\n' "$toon" | grep -q '^running\[3\]{id,kind,parent,where,name,state,doing,freshness}:' \
     || fail "TOON did not carry the running table: $toon"
 
-  json=$(FM_BEARINGS_RUNNING=1 run "$home" "$fakebin" --json)
+  # A local ledger older than 2 x FM_HOME_SUMMARY_INTERVAL no longer vouches
+  # for its workers; the mate itself is still probed directly.
+  json=$(FM_SNAPSHOT_NOW_EPOCH=1783793401 run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
-    (.running | length) == 1
-      and (.omitted | any(.surface == "running showing 1 of 3" and .reveal == "--all-running"))
-  ' >/dev/null || fail "the running bound was not disclosed: $json"
-  json=$(FM_BEARINGS_RUNNING=1 run "$home" "$fakebin" --json --all-running)
-  printf '%s' "$json" | jq -e '(.running | length) == 3' >/dev/null \
-    || fail "--all-running did not reveal every running agent: $json"
-  unset FAKE_TMUX_WINDOWS
-  pass "running lists only verified live local agents, children included, with where they run"
+    ([.running[].id] | sort) == ["helper", "live-ship"]
+      and (.omitted | any(.surface == "agents left out of running because their process could not be confirmed: 2"))
+  ' >/dev/null || fail "a stale local ledger still marked its workers running: $json"
+  json=$(FM_SNAPSHOT_NOW_EPOCH=1783793401 FM_HOME_SUMMARY_INTERVAL=0 run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '[.running[].id] | sort == ["helper", "live-ship"]' >/dev/null \
+    || fail "an invalid FM_HOME_SUMMARY_INTERVAL did not fall back to 300: $json"
+  json=$(FM_SNAPSHOT_NOW_EPOCH=1783793401 FM_HOME_SUMMARY_INTERVAL=301 run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.running[].id] | sort) == ["helper", "helper/child-live", "live-ship"]
+      and (.omitted | all(.surface | startswith("agents left out of running") | not))
+  ' >/dev/null || fail "a ledger within 2 x FM_HOME_SUMMARY_INTERVAL was not treated as current: $json"
+  unset FAKE_TMUX_WINDOWS FM_SNAPSHOT_NOW_EPOCH
+  pass "running lists only verified live local agents, children only from a current ledger, with where they run"
 }
 
 test_running_probes_remote_second_mates_on_their_own_host() {
@@ -3471,6 +3480,15 @@ test_running_probes_remote_second_mates_on_their_own_host() {
   ' >/dev/null || fail "remote liveness did not come from the remote host verdict and ledger: $json"
   [ "$(awk -F '\t' '$2 == "fm-remote-secondmate-control.sh"' "$parent/ledger-calls.log" | wc -l | tr -d ' ')" -eq 2 ] \
     || fail "each remote home was not probed exactly once: $(cat "$parent/ledger-calls.log")"
+
+  json=$(run_remote_ledger_bearings "$parent" "$fakebin" 1601)
+  printf '%s' "$json" | jq -e '
+    [.running[].id] == ["ledger-1"]
+      and (.omitted | any(.surface == "agents left out of running because their process could not be confirmed: 3"))
+  ' >/dev/null || fail "a stale remote ledger still marked its workers running: $json"
+  json=$(FM_HOME_SUMMARY_INTERVAL=301 run_remote_ledger_bearings "$parent" "$fakebin" 1601)
+  printf '%s' "$json" | jq -e '([.running[].id] | sort) == ["ledger-1", "ledger-1/remote-child"]' >/dev/null \
+    || fail "a remote ledger within 2 x FM_HOME_SUMMARY_INTERVAL was not treated as current: $json"
 
   printf 'dead\n' > "$home1/state/fake-agent-state"
   json=$(run_remote_ledger_bearings "$parent" "$fakebin" 1100)

@@ -156,7 +156,7 @@ Every `/bearings` chat response renders EXACTLY these four sections, in THIS ord
 ### Running-agents table
 
 Underway always opens with a table of every agent whose process is running right now, across this home and every second mate home, because that is the live work the section exists to show.
-Build it only from the snapshot's `running` rows, in their order; the snapshot already keeps out every agent that merely has a record, so never add a row from `in_flight`, `secondmates`, or backlog state, and never drop a `running` row because its work looks idle or finished.
+Build it only from the snapshot's `running` rows, in their order; the snapshot already keeps out every agent that merely has a record, and every second mate's worker whose home report is out of date, so never add a row from `in_flight`, `secondmates`, or backlog state, and never drop a `running` row because its work looks idle or finished.
 
 | Agent | Where | Right now |
 |---|---|---|
