@@ -748,6 +748,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+
+def _abandon_startup(pty, hub, options, endpoint_id: str) -> None:
+    """End a worker whose startup never reached readiness, record and all.
+
+    The registration may have been recorded before startup ran out, so the
+    endpoint is closed on the way out. A live endpoint nobody owns would refuse
+    the next attempt at the same task with duplicate_label.
+    """
+    pty.close()
+    pty.release()
+    try:
+        hub.call("POST", "/v1/agent/frames", {
+            "machine": options.machine,
+            "frames": [{"endpoint_id": endpoint_id, "closed": True, "exit_code": None}],
+        })
+    except RuntimeError:
+        pass
+
 def main(argv: list) -> int:
     parser = build_parser()
     options = parser.parse_args(argv)
@@ -838,19 +856,16 @@ def main(argv: list) -> int:
         # ask how this endpoint is doing - which would otherwise be answered
         # "no state frame yet", i.e. unreadable, for a worker that is fine.
         agent.publish_initial_state()
+    except Superseded as exc:
+        # Standing down protects work in progress, and there is none here: the
+        # spawn has not returned, nothing has been asked of this worker, and
+        # firstmate has never learned the task exists. Leaving the pty alive
+        # would leak a process nobody supervises and nobody can find, so this
+        # loser stops its worker where a mid-task loser would not.
+        _abandon_startup(pty, hub, options, endpoint_id)
+        raise SystemExit("fm-stream-agent: %s" % exc)
     except RuntimeError as exc:
-        pty.close()
-        pty.release()
-        # The registration may have been recorded before startup ran out, so
-        # the endpoint is closed on the way out. A live endpoint nobody owns
-        # would refuse the next attempt at the same task with duplicate_label.
-        try:
-            hub.call("POST", "/v1/agent/frames", {
-                "machine": options.machine,
-                "frames": [{"endpoint_id": endpoint_id, "closed": True, "exit_code": None}],
-            })
-        except RuntimeError:
-            pass
+        _abandon_startup(pty, hub, options, endpoint_id)
         raise SystemExit("fm-stream-agent: %s" % exc)
 
     if options.ready_file:

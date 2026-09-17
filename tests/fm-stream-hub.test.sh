@@ -825,6 +825,88 @@ test_a_worker_that_loses_its_name_keeps_its_worker() {
   pass "hub: the agent that loses a name contest stands down and keeps its worker"
 }
 
+test_a_silent_record_is_contested_even_when_nothing_reaped() {
+  # The hub only notices silence when something asks it to - a registration or
+  # a fleet listing. A hub nobody is watching notices nothing, so an agent that
+  # went quiet long enough for its name to be freed must still be contested
+  # when it comes back, on the silence itself rather than on a marker that only
+  # gets written when something happens to look.
+  start_hub reapgap
+  local first second out
+  first=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  second=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$first" \
+    '{endpoint_id: $id, machine: "box-a", label: "gap", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the first endpoint should register"
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$first" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "its agent should be heard from"
+  # Nothing reads the fleet from here on, so the only thing that ever reaps is
+  # the registration below. That is the whole point of the case.
+  sleep 11
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$second" \
+    '{endpoint_id: $id, machine: "box-a", label: "gap", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the retry should claim the name the silence freed"
+  # The first agent heals before the retry's agent has said anything, so it
+  # keeps the name and the hub stops presuming anything about it.
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$first" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "the agent that came back should keep the name"
+  # Then it goes quiet again - long enough to lose the name - with nothing
+  # registering and nobody watching, so no reap ever records that.
+  sleep 11
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$second" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "the retry's agent should take the name off a silent record"
+  out=$(publish POST /v1/agent/frames "$(jq -nc --arg id "$first" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')")
+  assert_equals "$(api_code)" 410 \
+    "a record that was silent long enough to lose its name must not publish uncontested"
+  assert_equals "$(printf '%s' "$out" | jq -r '.error')" endpoint_superseded \
+    "it should be told the name is served by another endpoint"
+  pass "hub: a record silent long enough to lose its name is contested whether or not anything reaped"
+}
+
+test_a_superseded_agent_still_closes_its_own_record() {
+  # Losing the name is not permission to leave a record open. A close says
+  # something about the record the agent already holds rather than claiming the
+  # identity, so the contest must not refuse it - otherwise the listing reports
+  # a live worker for a process that was deliberately stopped.
+  start_hub closeout
+  local first second out
+  first=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  second=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$first" \
+    '{endpoint_id: $id, machine: "box-a", label: "closing", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the first endpoint should register"
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$first" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "its agent should be heard from"
+  wait_until_quiet "$first" || fail "the first endpoint never went quiet"
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$second" \
+    '{endpoint_id: $id, machine: "box-a", label: "closing", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the retry should claim the freed name"
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$second" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "the retry's agent should take the name"
+  out=$(publish POST /v1/agent/frames "$(jq -nc --arg id "$first" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')")
+  assert_equals "$(api_code)" 410 "the superseded agent must not publish"
+  assert_equals "$(printf '%s' "$out" | jq -r '.error')" endpoint_superseded \
+    "it should be told the name is served by another endpoint"
+  # It stops its worker and says so. That close has to land.
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$first" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, closed: true, exit_code: null}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "a superseded agent must still be able to close its own record"
+  assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$first" \
+    '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
+    0 "the closed record must not be listed as a live worker"
+  assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$second" \
+    '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
+    1 "the worker that holds the name should still be the live one"
+  pass "hub: an agent that lost its name can still close out the record it holds"
+}
+
 test_no_terminal_content_is_persisted_to_disk() {
   start_hub persistence
   local endpoint hits
@@ -1018,6 +1100,8 @@ test_a_returning_agent_whose_name_was_taken_is_refused
 test_a_name_contest_is_settled_by_which_agent_is_heard_from
 test_a_publishing_worker_keeps_its_name_against_an_empty_record
 test_a_worker_that_loses_its_name_keeps_its_worker
+test_a_silent_record_is_contested_even_when_nothing_reaped
+test_a_superseded_agent_still_closes_its_own_record
 test_no_terminal_content_is_persisted_to_disk
 test_malformed_and_unknown_requests_are_refused
 test_the_viewer_is_static_and_carries_no_terminal_content

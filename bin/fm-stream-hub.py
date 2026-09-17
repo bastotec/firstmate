@@ -988,16 +988,21 @@ class Hub:
         """The owning agent is heard from, and its claim to the name is tested.
 
         Two records can only share one machine and label while the hub has
-        given up on one of them, so the claim is tested at exactly the two
-        moments that shape can be entered from: a record the hub had presumed
-        gone speaking again, and a record speaking for the very first time.
-        Testing both is what makes the rule the same rule whichever agent
-        speaks first - there is no order of events that leaves two open
-        records answering to one name, and none that decides it one way and
-        its mirror the other.
+        stopped hearing from one of them, so the claim is tested whenever this
+        endpoint could be that one: it is marked presumed gone, it has never
+        been heard from, or it has in fact been silent long enough for its name
+        to have been freed. The last is the same elapsed silence that frees a
+        name in the first place, read here rather than taken from the marker
+        that stands for it - the marker is only written when something happens
+        to reap, so a quiet hub would otherwise let a record back in
+        uncontested. Testing all three is what makes the rule the same rule
+        whichever agent speaks first: no order of events leaves two open
+        records answering to one name, and none decides it one way and its
+        mirror the other.
         """
         with self.lock:
-            contested = endpoint.presumed_gone or not endpoint.heard_from
+            contested = (endpoint.presumed_gone or not endpoint.heard_from
+                         or endpoint.agent_silent_for() > AGENT_SILENCE_PRESUMED_SECS)
             if contested:
                 for other in self.endpoints.values():
                     if other is endpoint or other.closed_at:
@@ -1472,7 +1477,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     raise HubError(HTTPStatus.FORBIDDEN, "endpoint_owned_elsewhere",
                                    "endpoint %s belongs to machine %s"
                                    % (endpoint.endpoint_id, endpoint.machine))
-                hub.agent_spoke(endpoint)
+                # A record announcing its own death takes no name from anyone,
+                # so a closing frame is never subject to the contest. An agent
+                # that has lost its name must still be able to close out the
+                # record it already holds, or supersession would leave an open
+                # endpoint with nothing behind it.
+                closing = bool(frame.get("closed"))
+                if not closing:
+                    hub.agent_spoke(endpoint)
                 if frame.get("b64"):
                     try:
                         endpoint.feed(base64.b64decode(frame["b64"], validate=True))
@@ -1482,7 +1494,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 state = frame.get("state")
                 if isinstance(state, dict):
                     endpoint.publish_state(state)
-                if frame.get("closed"):
+                if closing:
                     endpoint.mark_closed(frame.get("exit_code"), "agent")
                 accepted += 1
             self._json(HTTPStatus.OK, {"ok": True, "accepted": accepted})
