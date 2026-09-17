@@ -967,6 +967,47 @@ test_a_stood_down_agent_still_closes_the_record_it_holds() {
   pass "hub: a stood-down agent still closes the record it holds"
 }
 
+test_a_forced_close_cannot_erase_the_exit_code_the_agent_reported() {
+  # A close record is one statement about one event: who closed it and what
+  # that close found. The hub's close is a presumption and carries nothing, so
+  # when it lands AFTER the owning agent has already reported the real exit it
+  # must leave the whole record alone - not keep the agent's name on it while
+  # blanking the exit code the agent brought back.
+  # A short acknowledgement window, because the case needs the hub to still be
+  # waiting on a kill when the agent's close arrives, then give up.
+  start_hub exitcode --command-ack-secs 4
+  local endpoint agent body waited=0
+  endpoint=$(start_agent box-a finisher)
+  agent=$(agent_pid_for box-a finisher)
+  [ -n "$agent" ] || fail "the agent should be running"
+  # The agent cannot take the kill, so the hub queues it and waits - which is
+  # the window this case needs.
+  kill -STOP "$agent" || fail "could not pause the agent"
+  body="$CASE_DIR/delete-body"
+  ( view DELETE "/v1/tasks/$endpoint" > "$body" 2>/dev/null ) &
+  local deleter=$!
+  # While that kill is still outstanding, the worker ends and its agent reports
+  # the exit it watched. This is the ordering that matters: the FACT lands
+  # first, and the hub's presumption arrives afterwards.
+  sleep 0.5
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$endpoint" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, closed: true, exit_code: 7}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "the owning agent should be able to close its own record"
+  wait "$deleter" 2>/dev/null
+  kill -CONT "$agent" 2>/dev/null || true
+  assert_equals "$(printf '%s' "$(cat "$body" 2>/dev/null)" | jq -r '.delivered')" false \
+    "a kill the paused agent never took must not be reported as delivered"
+  # The hub gave up and closed its record. That presumption may not overwrite
+  # any part of the close the agent had already established.
+  local task
+  task=$(view GET "/v1/tasks/$endpoint")
+  assert_equals "$(printf '%s' "$task" | jq -r '.task.closed_by')" agent \
+    "the agent's close must keep the attribution"
+  assert_equals "$(printf '%s' "$task" | jq -r '.task.exit_code')" 7 \
+    "the agent's exit code must survive the hub's later presumption"
+  pass "hub: a forced close cannot erase the exit code the owning agent reported"
+}
+
 test_no_terminal_content_is_persisted_to_disk() {
   start_hub persistence
   local endpoint hits
@@ -1163,6 +1204,7 @@ test_a_worker_that_loses_its_name_keeps_its_worker
 test_a_silent_record_is_contested_even_when_nothing_reaped
 test_a_superseded_agent_still_closes_its_own_record
 test_a_stood_down_agent_still_closes_the_record_it_holds
+test_a_forced_close_cannot_erase_the_exit_code_the_agent_reported
 test_no_terminal_content_is_persisted_to_disk
 test_malformed_and_unknown_requests_are_refused
 test_the_viewer_is_static_and_carries_no_terminal_content
