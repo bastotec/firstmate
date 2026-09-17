@@ -111,6 +111,112 @@ FM_TEST_OWNER_IDENTITY=$(fm_test_pid_identity "$$") || {
   return 1
 }
 
+# --- helper processes a suite starts ----------------------------------------
+#
+# Registration goes through a `$$`-keyed file for exactly the reason the temp
+# roots do. A suite starts its helpers from inside a command substitution
+# (`endpoint=$(start_agent box-a worker)`), and a shell-variable append there
+# dies with the subshell and never reaches the caller. A suite that tracked
+# helper pids in a plain string was therefore tracking nothing: every publisher
+# it started outlived it, and those orphans do not exit on their own, because an
+# agent deliberately survives its hub going away rather than taking a live
+# worker down with it.
+
+FM_TEST_HELPER_PID_REGISTRY=$(mktemp "${TMPDIR:-/tmp}/.fm-test-helpers.$$.XXXXXX") || return 1
+
+fm_test_track_helper_pid() {  # <pid>
+  case ${1:-} in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  printf '%s\n' "$1" >> "$FM_TEST_HELPER_PID_REGISTRY"
+}
+
+# fm_test_reap_helper_pids - stop every helper registered so far. Safe to call
+# between cases as well as from an EXIT trap.
+fm_test_reap_helper_pids() {
+  local pid
+  [ -f "$FM_TEST_HELPER_PID_REGISTRY" ] || return 0
+  while IFS= read -r pid; do
+    [ -n "$pid" ] && fm_test_kill_foreign_pids "$pid"
+  done < "$FM_TEST_HELPER_PID_REGISTRY"
+  : > "$FM_TEST_HELPER_PID_REGISTRY"
+}
+
+# fm_test_pid_is_foreign <pid> [reason-var] - is this pid safe for the suite to
+# signal? It owns the rule; the two callers below differ only in what they do
+# with a no.
+#
+# The rule is ANCESTRY, not the process group. A non-interactive shell has no
+# job control, so every helper a case starts in the background shares the
+# suite's own process group - group identity cannot tell a publisher the case
+# just launched from the shell that launched the case. Ancestry can: the harness
+# and shells running the suite are above it, and nothing a case resolves ever
+# is.
+fm_test_pid_is_foreign() {  # <pid> [reason-var]
+  local pid=$1 reason_var=${2:-} reason='' cursor ppid hops
+  while :; do
+    case $pid in
+      '' | *[!0-9]*) reason="'$pid' is not a pid"; break ;;
+    esac
+    if [ "$pid" = "$$" ]; then reason="it is this test process"; break; fi
+    if [ "$pid" = 1 ]; then reason="it is pid 1"; break; fi
+    if ! ps -o pid= -p "$pid" >/dev/null 2>&1; then
+      reason="pid $pid is already gone"
+      break
+    fi
+    cursor=$$
+    hops=0
+    while [ "$cursor" -gt 1 ] && [ "$hops" -lt 64 ]; do
+      ppid=$(ps -o ppid= -p "$cursor" 2>/dev/null | tr -d ' ')
+      [ -n "$ppid" ] || break
+      if [ "$ppid" = "$pid" ]; then
+        reason="pid $pid is an ancestor of this test process, so it is the harness or shell running the suite, not the process the case meant to resolve"
+        break 2
+      fi
+      cursor=$ppid
+      hops=$((hops + 1))
+    done
+    return 0
+  done
+  [ -z "$reason_var" ] || printf -v "$reason_var" '%s' "$reason"
+  return 1
+}
+
+# fm_test_kill_foreign_pid <pid> <what> - SIGKILL one pid a case depends on
+# having killed, failing the suite rather than delivering a signal it cannot
+# prove is safe.
+#
+# A case that resolves a pid by matching a command line is one careless pattern
+# away from selecting the wrong process, and the wrong process here is a live
+# worker's harness or the suite running right now. Firstmate passes a task's
+# whole brief on the harness command line, so a harness whose brief merely
+# QUOTES a script's filename already matches any pattern built from that
+# filename alone. Every resolver that feeds this helper requires a second,
+# per-run-unique conjunct for that reason; this is the backstop for the day one
+# of them loses it.
+fm_test_kill_foreign_pid() {  # <pid> <what>
+  local pid=$1 what=$2 why=
+  fm_test_pid_is_foreign "$pid" why || fail "$what: refusing to signal - $why"
+  kill -9 "$pid" 2>/dev/null || fail "$what: could not signal pid $pid"
+}
+
+# fm_test_kill_foreign_pids <pid...> - best-effort cleanup of helpers a suite
+# started. Cleanup runs while the suite is already unwinding, so an unsafe pid
+# is skipped and reported rather than failing.
+fm_test_kill_foreign_pids() {  # <pid...>
+  local pid why
+  for pid in "$@"; do
+    if fm_test_pid_is_foreign "$pid" why; then
+      kill -9 "$pid" 2>/dev/null || true
+    elif [ -n "$why" ]; then
+      case $why in
+        *"already gone"* | *"not a pid"*) ;;
+        *) printf '# cleanup: left pid %s alone - %s\n' "$pid" "$why" >&2 ;;
+      esac
+    fi
+  done
+}
+
 # --- process-event runner reaping -------------------------------------------
 #
 # A process-event runner is detached into its own process group and reparents to
@@ -167,6 +273,8 @@ fm_test_cleanup() {
   for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"; do
     [ -n "$d" ] && rm -rf "$d"
   done
+  fm_test_reap_helper_pids
+  rm -f "$FM_TEST_HELPER_PID_REGISTRY"
   if [ -f "$FM_TEST_CLEANUP_REGISTRY" ]; then
     while IFS= read -r d; do
       [ -n "$d" ] && rm -rf "$d"

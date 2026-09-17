@@ -31,6 +31,7 @@
     "docs/zellij-backend.md",
     "docs/orca-backend.md",
     "docs/cmux-backend.md",
+    "docs/stream-backend.md",
     "docs/remote-secondmates.md"
   ],
   "requiredOwnerPointers": [
@@ -100,6 +101,10 @@
     },
     {
       "source": "docs/codex-app-backend.md",
+      "target": "docs/verification/runtime-backends.md"
+    },
+    {
+      "source": "docs/stream-backend.md",
       "target": "docs/verification/runtime-backends.md"
     },
     {
@@ -506,6 +511,10 @@
     },
     {
       "path": "docs/zellij-backend.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/stream-backend.md",
       "audience": "operator-current"
     },
     {

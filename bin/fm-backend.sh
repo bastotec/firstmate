@@ -33,8 +33,8 @@
 # treats that as `tmux` (fm_backend_of_meta), and fm-spawn.sh does not write
 # `backend=tmux` for a default-backend task, so existing and newly spawned
 # default-path metas stay byte-identical. Only a task spawned on a non-tmux
-# spawn-capable backend, currently experimental herdr, zellij, orca, or cmux,
-# carries an explicit `backend=` line.
+# spawn-capable backend, currently experimental herdr, zellij, orca, cmux, or
+# stream, carries an explicit `backend=` line.
 #
 # Event-source framing (herdr-addendum "Events as the core abstraction"): a
 # backend's supervision surface is conceptually an EVENT SOURCE - it produces
@@ -65,9 +65,15 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # spawn-capable; unlike tmux/herdr/zellij it is also the worktree provider.
 # cmux is EXPERIMENTAL and spawn-capable, session-provider-only like
 # herdr/zellij - verified against the real 0.64.17 binary (docs/cmux-backend.md).
+# stream is EXPERIMENTAL and spawn-capable, session-provider-only like
+# herdr/zellij/cmux, but its "session host" is the fleet's own central hub
+# (bin/fm-stream-hub.py) rather than a third-party multiplexer. Each task's
+# pseudoterminal is owned by a thin agent on the machine that runs it, which is
+# what lets one surface watch endpoints on several machines at once
+# (docs/stream-backend.md).
 # codex-app remains deliberately absent; see docs/codex-app-backend.md.
-FM_BACKEND_KNOWN="tmux herdr zellij orca cmux"
-FM_BACKEND_SPAWN="tmux herdr zellij orca cmux"
+FM_BACKEND_KNOWN="tmux herdr zellij orca cmux stream"
+FM_BACKEND_SPAWN="tmux herdr zellij orca cmux stream"
 
 # fm_backend_list_contains: whitespace-delimited membership without relying on
 # shell word splitting. fm-backend.sh is normally sourced by bash scripts, but
@@ -299,13 +305,16 @@ fm_backend_validate_spawn() {  # <name>
 # docs/configuration.md "Toolchain" and bootstrap's COMMON list). This is the
 # single owner of the per-backend dependency delta, so bootstrap follows the
 # RESOLVED backend instead of demanding an inactive backend's tools. Each set is:
-#   - the session-provider CLI itself (tmux/herdr/zellij/orca/cmux);
-#   - jq, for the JSON-emitting experimental adapters (herdr, zellij, cmux) whose
-#     spawn/liveness paths parse the backend's JSON output (see each adapter's
-#     tool check, e.g. fm_backend_herdr_tool_check);
+#   - the session-provider CLI itself (tmux/herdr/zellij/orca/cmux); stream has
+#     no such CLI, because its session host is the fleet's own hub reached over
+#     HTTP, so that slot is python3 (the hub and each task's agent) plus curl
+#     (this adapter's HTTP client);
+#   - jq, for the JSON-emitting experimental adapters (herdr, zellij, cmux,
+#     stream) whose spawn/liveness paths parse the backend's JSON output (see
+#     each adapter's tool check, e.g. fm_backend_herdr_tool_check);
 #   - the treehouse worktree provider for every session-provider-only backend
-#     (tmux, herdr, zellij, cmux); orca owns its own task worktree and terminal,
-#     so it drops both treehouse and any other backend's session CLI.
+#     (tmux, herdr, zellij, cmux, stream); orca owns its own task worktree and
+#     terminal, so it drops both treehouse and any other backend's session CLI.
 # Prints a single space-separated line and returns 0 for a known backend; returns
 # 1 and prints nothing for an unknown backend.
 fm_backend_required_tools() {  # <backend>
@@ -314,6 +323,7 @@ fm_backend_required_tools() {  # <backend>
     herdr)  printf '%s' 'herdr jq treehouse' ;;
     zellij) printf '%s' 'zellij jq treehouse' ;;
     cmux)   printf '%s' 'cmux jq treehouse' ;;
+    stream) printf '%s' 'python3 curl jq treehouse' ;;
     orca)   printf '%s' 'orca' ;;
     *) return 1 ;;
   esac
@@ -391,6 +401,7 @@ fm_backend_endpoint_atom_valid() {  # <value>
 fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
   local meta=$1 id=$2 backend_count backend window worktree project binding_count binding
   local session pane recorded_session workspace tab terminal worktree_id surface
+  local hub_url endpoint_id hub_tag
   FM_BACKEND_VALIDATED_BACKEND=
   FM_BACKEND_VALIDATED_TARGET=
   [ -f "$meta" ] && [ ! -L "$meta" ] || {
@@ -528,6 +539,30 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
         return 1
       fi
       ;;
+    stream)
+      [ "$binding" = "$id" ] || {
+        echo "REFUSED: stream endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
+        return 1
+      }
+      hub_url=$(fm_backend_meta_exact_value "$meta" stream_hub) || hub_url=
+      endpoint_id=$(fm_backend_meta_exact_value "$meta" stream_endpoint_id) || endpoint_id=
+      case "$endpoint_id" in *[!0-9a-f]*) endpoint_id= ;; esac
+      # The window must agree with the RECORDED hub, not with whatever this
+      # home is configured for now: a record that only matched the current
+      # setting would start refusing the moment an operator repointed this home
+      # at another hub, and would accept an endpoint id against a hub it was
+      # never created on.
+      hub_tag=
+      if [ -n "$hub_url" ] && fm_backend_source stream >/dev/null 2>&1; then
+        hub_tag=$(fm_backend_stream_hub_tag "$hub_url" 2>/dev/null) || hub_tag=
+      fi
+      if [ -z "$hub_url" ] || [ -z "$endpoint_id" ] || [ -z "$hub_tag" ] \
+        || [ "$window" != "$hub_tag:$endpoint_id" ] \
+        || ! fm_backend_endpoint_atom_valid "$hub_tag"; then
+        echo "REFUSED: stream endpoint metadata for task $id is malformed or inconsistent; preserving task state." >&2
+        return 1
+      fi
+      ;;
   esac
   # shellcheck disable=SC2034 # Output globals are consumed by sourcing callers.
   FM_BACKEND_VALIDATED_BACKEND=$backend
@@ -636,6 +671,13 @@ fm_backend_source() {  # <name>
         _FM_BACKEND_CMUX_SOURCED=1
       fi
       ;;
+    stream)
+      if [ -z "${_FM_BACKEND_STREAM_SOURCED:-}" ]; then
+        # shellcheck source=/dev/null
+        . "$FM_BACKEND_LIB_DIR/backends/stream.sh" || return 1
+        _FM_BACKEND_STREAM_SOURCED=1
+      fi
+      ;;
   esac
 }
 
@@ -707,6 +749,7 @@ fm_backend_capture() {  # <backend> <target> <lines> [expected-label]
     zellij) fm_backend_zellij_capture "$@" ;;
     orca) fm_backend_orca_capture "$@" ;;
     cmux) fm_backend_cmux_capture "$@" ;;
+    stream) fm_backend_stream_capture "$@" ;;
     *) echo "error: no capture implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -722,6 +765,7 @@ fm_backend_send_key() {  # <backend> <target> <key> [expected-label]
     zellij) fm_backend_zellij_send_key "$@" ;;
     orca) fm_backend_orca_send_key "$@" ;;
     cmux) fm_backend_cmux_send_key "$@" ;;
+    stream) fm_backend_stream_send_key "$@" ;;
     *) echo "error: no send-key implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -739,6 +783,7 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
     zellij) fm_backend_zellij_send_text_submit "$@" ;;
     orca) fm_backend_orca_send_text_submit "$@" ;;
     cmux) fm_backend_cmux_send_text_submit "$@" ;;
+    stream) fm_backend_stream_send_text_submit "$@" ;;
     *) echo "error: no send-text implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -757,6 +802,7 @@ fm_backend_kill() {  # <backend> <target>
     zellij) fm_backend_zellij_kill "$@" ;;
     orca) fm_backend_orca_kill "$@" ;;
     cmux) fm_backend_cmux_kill "$@" ;;
+    stream) fm_backend_stream_kill "$@" ;;
     *) echo "error: no kill implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -819,6 +865,7 @@ fm_backend_composer_state() {  # <backend> <target> [expected-label] -> empty|pe
     herdr) fm_backend_herdr_composer_state "$@" ;;
     orca) fm_backend_orca_composer_state "$@" ;;
     cmux) fm_backend_cmux_composer_state "$@" ;;
+    stream) fm_backend_stream_composer_state "$@" ;;
     zellij) fm_backend_zellij_composer_state "$@" ;;
     *) printf 'unknown' ;;
   esac
@@ -869,6 +916,10 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
       fm_backend_source cmux || return 1
       fm_backend_cmux_target_ready "$target" "$expected_label"
       ;;
+    stream)
+      fm_backend_source stream || return 1
+      fm_backend_stream_target_ready "$target" "$expected_label"
+      ;;
     *)
       return 1
       ;;
@@ -892,15 +943,23 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # which verifies a registered agent against `pane process-info` and the real
 # process table, so a registration Herdr kept over a shell-only pane reads
 # `dead` here (issue #4115) - then maps a positively stopped session server to
-# `missing` only in this recovery-grade view. Zellij remains unverified because
+# `missing` only in this recovery-grade view. The stream adapter classifies the
+# foreground process group its owning AGENT published, through the same shared
+# process owner. Relaying adds one state the local backends do not have: a
+# silent agent makes the endpoint `unreadable`, never `dead`, because an
+# unreachable worker and a stopped one are indistinguishable from the hub and
+# only one of them authorizes recovery - unless the hub holds that agent's OWN
+# report that its worker exited, which is a recorded fact rather than a live
+# reading, does not go stale, and reads `dead`. Zellij remains unverified because
 # its secondmate ghost-tab and agent-process recovery path has not been
-# empirically validated. Orca and cmux do not support secondmate spawns.
+# empirically validated. Orca, cmux, and stream do not support secondmate spawns.
 fm_backend_agent_state() {  # <backend> <target>
   local backend=$1 target=$2
   fm_backend_source "$backend" || { printf 'unverified'; return 0; }
   case "$backend" in
     tmux) fm_backend_tmux_agent_state "$target" ;;
     herdr) fm_backend_herdr_agent_state "$target" ;;
+    stream) fm_backend_stream_agent_state "$target" ;;
     *) printf 'unverified' ;;
   esac
 }
