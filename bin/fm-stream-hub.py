@@ -1251,6 +1251,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _json(self, status, payload: dict) -> None:
         body = json.dumps(payload, sort_keys=True).encode("utf-8")
         self.send_response(int(status))
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
@@ -1267,7 +1269,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _body(self) -> dict:
-        self._body_consumed = True
         length = self.headers.get("Content-Length")
         if length is None:
             return {}
@@ -1279,6 +1280,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise HubError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "body_too_large",
                            "request body exceeds %d bytes" % MAX_BODY)
         raw = self.rfile.read(size) if size else b""
+        self._body_consumed = True
         if not raw:
             return {}
         try:

@@ -71,7 +71,7 @@ The bundled viewer page is served without a credential - it is static, and the t
 There is no TLS anywhere in this backend, and nothing in it will warn you about that.
 
 Every byte is in the clear: the bearer token on each request, every keystroke sent to a worker, and every byte of terminal output that worker produces.
-Anyone who can read the path can read all of it, and anyone who can read a `publish` token can register endpoints and type into your workers.
+Anyone who can read the path can read all of it; anyone who can read a `publish` token can register endpoints and publish forged frames for any of them, impersonating your workers, and anyone who can read a `control` token can type into those workers and close them.
 
 Loopback is the only setting where that is safe on its own.
 Cross-machine use means an SSH tunnel or an equivalent encrypted transport, which firstmate does not create, manage, or check for; a configured `https://` hub URL means only that something in front of the hub terminates TLS, not that the hub does.

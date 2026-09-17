@@ -217,7 +217,7 @@ test_a_viewing_token_cannot_steer_or_close_a_worker() {
   # leave the next poll on that connection parsing the refused request's body.
   local hostport=${URL#http://}
   assert_equals "$(python3 "$ROOT/tests/assets/stream-hub-keepalive-refusal.py" \
-    "${hostport%%:*}" "${hostport##*:}" "$endpoint" "$VIEW_ONLY_TOKEN" 2>&1)" clean \
+    "${hostport%%:*}" "${hostport##*:}" "$endpoint" "$VIEW_ONLY_TOKEN" "$VIEW_TOKEN" 2>&1)" clean \
     "a refused POST must leave the connection usable for the next request"
   view DELETE "/v1/tasks/$endpoint" >/dev/null
   assert_equals "$(api_code)" 200 "an operating credential should close a worker"
