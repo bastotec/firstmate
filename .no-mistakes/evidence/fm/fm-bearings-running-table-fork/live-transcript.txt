@@ -1,0 +1,219 @@
+== S1: live fleet, JSON running[] ==
+rc=0
+{
+  "running": [
+    {
+      "id": "live-ship",
+      "kind": "ship",
+      "parent": null,
+      "where": "this Mac",
+      "name": "Ship the live thing",
+      "state": "working",
+      "doing": "harness busy (claude-hook)",
+      "freshness": "fresh"
+    },
+    {
+      "id": "helper",
+      "kind": "secondmate",
+      "parent": null,
+      "where": "this Mac",
+      "name": "helper",
+      "state": "active_child_work",
+      "doing": "child-live: harness busy (claude-hook); child-idle: harness busy (claude-hook)",
+      "freshness": "fresh"
+    },
+    {
+      "id": "helper/child-live",
+      "kind": "ship",
+      "parent": "helper",
+      "where": "this Mac",
+      "name": "Child live work",
+      "state": "working",
+      "doing": "harness busy (claude-hook)",
+      "freshness": "fresh"
+    }
+  ],
+  "omitted": [
+    {
+      "surface": "backlog item bodies",
+      "reveal": "--fields bodies"
+    },
+    {
+      "surface": "task paths",
+      "reveal": "--fields paths"
+    },
+    {
+      "surface": "watch/steer actions",
+      "reveal": "--fields actions"
+    },
+    {
+      "surface": "healthy endpoint detail",
+      "reveal": "--fields endpoints"
+    },
+    {
+      "surface": "full scout-report inventory",
+      "reveal": "--all-reports"
+    },
+    {
+      "surface": "live PR discovery + checks",
+      "reveal": "--include-prs"
+    }
+  ]
+}
+== S1: default TOON output ==
+rc=0
+running[3]{id,kind,parent,where,name,state,doing,freshness}:
+  live-ship,ship,null,this Mac,Ship the live thing,working,harness busy (claude-hook),fresh
+  helper,secondmate,null,this Mac,helper,active_child_work,"child-live: harness busy (claude-hook); child-idle: harness busy (claude-hook)",fresh
+  helper/child-live,ship,helper,this Mac,Child live work,working,harness busy (claude-hook),fresh
+secondmates[1]{id,state,doing,provenance,freshness,age_seconds,contradiction,reason}:
+  helper,active_child_work,"child-live: harness busy (claude-hook); child-idle: harness busy (claude-hook)",structured-home,fresh,1,false,"-"
+== S2: stale ledger (now + 700s) ==
+rc=0
+{
+  "running": [
+    "live-ship",
+    "helper"
+  ],
+  "omitted": [
+    {
+      "surface": "backlog item bodies",
+      "reveal": "--fields bodies"
+    },
+    {
+      "surface": "task paths",
+      "reveal": "--fields paths"
+    },
+    {
+      "surface": "watch/steer actions",
+      "reveal": "--fields actions"
+    },
+    {
+      "surface": "healthy endpoint detail",
+      "reveal": "--fields endpoints"
+    },
+    {
+      "surface": "full scout-report inventory",
+      "reveal": "--all-reports"
+    },
+    {
+      "surface": "agents left out of running because their process could not be confirmed: 2",
+      "reveal": "--fields endpoints"
+    },
+    {
+      "surface": "live PR discovery + checks",
+      "reveal": "--include-prs"
+    }
+  ]
+}
+== S3: kill live-ship agent (pane falls back to a shell) ==
+rc=0
+{
+  "running": [
+    "helper",
+    "helper/child-live"
+  ],
+  "in_flight": [
+    "gone-ship",
+    "idle-ship",
+    "live-ship",
+    "helper/child-live",
+    "helper/child-idle"
+  ],
+  "omitted": [
+    {
+      "surface": "backlog item bodies",
+      "reveal": "--fields bodies"
+    },
+    {
+      "surface": "task paths",
+      "reveal": "--fields paths"
+    },
+    {
+      "surface": "watch/steer actions",
+      "reveal": "--fields actions"
+    },
+    {
+      "surface": "healthy endpoint detail",
+      "reveal": "--fields endpoints"
+    },
+    {
+      "surface": "full scout-report inventory",
+      "reveal": "--all-reports"
+    },
+    {
+      "surface": "live PR discovery + checks",
+      "reveal": "--include-prs"
+    }
+  ]
+}
+== S4: endpoints bound hides a live child -> disclosed ==
+rc=0
+{
+  "running": [
+    "helper"
+  ],
+  "omitted": [
+    {
+      "surface": "backlog item bodies",
+      "reveal": "--fields bodies"
+    },
+    {
+      "surface": "task paths",
+      "reveal": "--fields paths"
+    },
+    {
+      "surface": "watch/steer actions",
+      "reveal": "--fields actions"
+    },
+    {
+      "surface": "healthy endpoint detail",
+      "reveal": "--fields endpoints"
+    },
+    {
+      "surface": "full scout-report inventory",
+      "reveal": "--all-reports"
+    },
+    {
+      "surface": "agents left out of running because their process could not be confirmed: 1",
+      "reveal": "--fields endpoints"
+    },
+    {
+      "surface": "secondmate helper active children omitted by snapshot bound: 1",
+      "reveal": "raise FM_SNAPSHOT_SECONDMATE_CHILDREN"
+    },
+    {
+      "surface": "secondmate helper workers not checked for running by snapshot bound: 1",
+      "reveal": "raise FM_SNAPSHOT_SECONDMATE_CHILDREN"
+    },
+    {
+      "surface": "live PR discovery + checks",
+      "reveal": "--include-prs"
+    }
+  ]
+}
+== S5: canonical snapshot default does not probe remote; local agent_state present ==
+[
+  {
+    "id": "gone-ship",
+    "agent_state": "missing"
+  },
+  {
+    "id": "helper",
+    "agent_state": "alive"
+  },
+  {
+    "id": "idle-ship",
+    "agent_state": "dead"
+  },
+  {
+    "id": "live-ship",
+    "agent_state": "dead"
+  }
+]
+[
+  {
+    "id": "helper",
+    "agent_state": "alive"
+  }
+]

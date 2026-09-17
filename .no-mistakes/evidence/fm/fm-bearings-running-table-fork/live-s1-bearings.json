@@ -1,0 +1,132 @@
+{
+  "schema": "fm-bearings.v1",
+  "home": "fm-live-running.abYBEA/home",
+  "generated": "2026-09-17T15:47:23Z",
+  "prs": "not_requested (run: /bearings include PRs)",
+  "in_flight": [
+    {
+      "id": "gone-ship",
+      "kind": "ship",
+      "state": "working",
+      "repo": "firstmate",
+      "name": "Ship the closed thing",
+      "doing": "harness busy (claude-hook)"
+    },
+    {
+      "id": "idle-ship",
+      "kind": "ship",
+      "state": "working",
+      "repo": "firstmate",
+      "name": "Ship the shell-only thing",
+      "doing": "harness busy (claude-hook)"
+    },
+    {
+      "id": "live-ship",
+      "kind": "ship",
+      "state": "working",
+      "repo": "firstmate",
+      "name": "Ship the live thing",
+      "doing": "harness busy (claude-hook)"
+    },
+    {
+      "id": "helper/child-live",
+      "kind": "ship",
+      "state": "working",
+      "repo": "firstmate",
+      "name": "Child live work",
+      "doing": "harness busy (claude-hook)"
+    },
+    {
+      "id": "helper/child-idle",
+      "kind": "ship",
+      "state": "working",
+      "repo": "firstmate",
+      "name": "Child shell-only work",
+      "doing": "harness busy (claude-hook)"
+    }
+  ],
+  "running": [
+    {
+      "id": "live-ship",
+      "kind": "ship",
+      "parent": null,
+      "where": "this Mac",
+      "name": "Ship the live thing",
+      "state": "working",
+      "doing": "harness busy (claude-hook)",
+      "freshness": "fresh"
+    },
+    {
+      "id": "helper",
+      "kind": "secondmate",
+      "parent": null,
+      "where": "this Mac",
+      "name": "helper",
+      "state": "active_child_work",
+      "doing": "child-live: harness busy (claude-hook); child-idle: harness busy (claude-hook)",
+      "freshness": "fresh"
+    },
+    {
+      "id": "helper/child-live",
+      "kind": "ship",
+      "parent": "helper",
+      "where": "this Mac",
+      "name": "Child live work",
+      "state": "working",
+      "doing": "harness busy (claude-hook)",
+      "freshness": "fresh"
+    }
+  ],
+  "secondmates": [
+    {
+      "id": "helper",
+      "state": "active_child_work",
+      "doing": "child-live: harness busy (claude-hook); child-idle: harness busy (claude-hook)",
+      "provenance": "structured-home",
+      "freshness": "fresh",
+      "age_seconds": 0,
+      "contradiction": false,
+      "reason": "-"
+    }
+  ],
+  "secondmate_reconcile": [
+    {
+      "id": "helper",
+      "spawn_gen": null,
+      "host": null,
+      "kind": null,
+      "ids": []
+    }
+  ],
+  "decisions_open": [],
+  "landed": [],
+  "gates": [],
+  "reports": [],
+  "recorded_prs": [],
+  "omitted": [
+    {
+      "surface": "backlog item bodies",
+      "reveal": "--fields bodies"
+    },
+    {
+      "surface": "task paths",
+      "reveal": "--fields paths"
+    },
+    {
+      "surface": "watch/steer actions",
+      "reveal": "--fields actions"
+    },
+    {
+      "surface": "healthy endpoint detail",
+      "reveal": "--fields endpoints"
+    },
+    {
+      "surface": "full scout-report inventory",
+      "reveal": "--all-reports"
+    },
+    {
+      "surface": "live PR discovery + checks",
+      "reveal": "--include-prs"
+    }
+  ]
+}

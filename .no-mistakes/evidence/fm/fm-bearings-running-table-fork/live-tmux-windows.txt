@@ -1,0 +1,6 @@
+$ tmux list-windows -a
+fleet:fm-live-ship cmd=claude
+fleet:fm-idle-ship cmd=bash
+fleet:fm-helper cmd=claude
+mfleet:fm-child-live cmd=claude
+mfleet:fm-child-idle cmd=bash

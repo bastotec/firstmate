@@ -1,0 +1,116 @@
+{
+  "schema": "fm-bearings.v1",
+  "home": "fm-live-running.abYBEA/home",
+  "generated": "2026-09-17T15:47:29Z",
+  "prs": "not_requested (run: /bearings include PRs)",
+  "in_flight": [
+    {
+      "id": "gone-ship",
+      "kind": "ship",
+      "state": "working",
+      "repo": "firstmate",
+      "name": "Ship the closed thing",
+      "doing": "harness busy (claude-hook)"
+    },
+    {
+      "id": "idle-ship",
+      "kind": "ship",
+      "state": "working",
+      "repo": "firstmate",
+      "name": "Ship the shell-only thing",
+      "doing": "harness busy (claude-hook)"
+    },
+    {
+      "id": "live-ship",
+      "kind": "ship",
+      "state": "working",
+      "repo": "firstmate",
+      "name": "Ship the live thing",
+      "doing": "harness busy (claude-hook)"
+    },
+    {
+      "id": "helper/child-live",
+      "kind": "ship",
+      "state": "working",
+      "repo": "firstmate",
+      "name": "Child live work",
+      "doing": "harness busy (claude-hook)"
+    }
+  ],
+  "running": [
+    {
+      "id": "helper",
+      "kind": "secondmate",
+      "parent": null,
+      "where": "this Mac",
+      "name": "helper",
+      "state": "active_child_work",
+      "doing": "child-live: harness busy (claude-hook)",
+      "freshness": "fresh"
+    }
+  ],
+  "secondmates": [
+    {
+      "id": "helper",
+      "state": "active_child_work",
+      "doing": "child-live: harness busy (claude-hook)",
+      "provenance": "structured-home",
+      "freshness": "fresh",
+      "age_seconds": 1,
+      "contradiction": false,
+      "reason": "-"
+    }
+  ],
+  "secondmate_reconcile": [
+    {
+      "id": "helper",
+      "spawn_gen": null,
+      "host": null,
+      "kind": null,
+      "ids": []
+    }
+  ],
+  "decisions_open": [],
+  "landed": [],
+  "gates": [],
+  "reports": [],
+  "recorded_prs": [],
+  "omitted": [
+    {
+      "surface": "backlog item bodies",
+      "reveal": "--fields bodies"
+    },
+    {
+      "surface": "task paths",
+      "reveal": "--fields paths"
+    },
+    {
+      "surface": "watch/steer actions",
+      "reveal": "--fields actions"
+    },
+    {
+      "surface": "healthy endpoint detail",
+      "reveal": "--fields endpoints"
+    },
+    {
+      "surface": "full scout-report inventory",
+      "reveal": "--all-reports"
+    },
+    {
+      "surface": "agents left out of running because their process could not be confirmed: 1",
+      "reveal": "--fields endpoints"
+    },
+    {
+      "surface": "secondmate helper active children omitted by snapshot bound: 1",
+      "reveal": "raise FM_SNAPSHOT_SECONDMATE_CHILDREN"
+    },
+    {
+      "surface": "secondmate helper workers not checked for running by snapshot bound: 1",
+      "reveal": "raise FM_SNAPSHOT_SECONDMATE_CHILDREN"
+    },
+    {
+      "surface": "live PR discovery + checks",
+      "reveal": "--include-prs"
+    }
+  ]
+}

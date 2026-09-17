@@ -1,0 +1,30 @@
+schema: fm-bearings.v1
+home: fm-live-running.abYBEA/home
+generated: "2026-09-17T15:47:24Z"
+prs: "not_requested (run: /bearings include PRs)"
+in_flight[5]{id,kind,state,repo,name,doing}:
+  gone-ship,ship,working,firstmate,Ship the closed thing,harness busy (claude-hook)
+  idle-ship,ship,working,firstmate,Ship the shell-only thing,harness busy (claude-hook)
+  live-ship,ship,working,firstmate,Ship the live thing,harness busy (claude-hook)
+  helper/child-live,ship,working,firstmate,Child live work,harness busy (claude-hook)
+  helper/child-idle,ship,working,firstmate,Child shell-only work,harness busy (claude-hook)
+running[3]{id,kind,parent,where,name,state,doing,freshness}:
+  live-ship,ship,null,this Mac,Ship the live thing,working,harness busy (claude-hook),fresh
+  helper,secondmate,null,this Mac,helper,active_child_work,"child-live: harness busy (claude-hook); child-idle: harness busy (claude-hook)",fresh
+  helper/child-live,ship,helper,this Mac,Child live work,working,harness busy (claude-hook),fresh
+secondmates[1]{id,state,doing,provenance,freshness,age_seconds,contradiction,reason}:
+  helper,active_child_work,"child-live: harness busy (claude-hook); child-idle: harness busy (claude-hook)",structured-home,fresh,1,false,"-"
+secondmate_reconcile[1]{id,spawn_gen,host,kind,ids}:
+  helper,null,null,null,"[]"
+decisions_open: []
+landed: []
+gates: []
+reports: []
+recorded_prs: []
+omitted[6]{surface,reveal}:
+  backlog item bodies,"--fields bodies"
+  task paths,"--fields paths"
+  watch/steer actions,"--fields actions"
+  healthy endpoint detail,"--fields endpoints"
+  full scout-report inventory,"--all-reports"
+  live PR discovery + checks,"--include-prs"
