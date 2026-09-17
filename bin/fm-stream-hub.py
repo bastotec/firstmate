@@ -1175,16 +1175,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             parsed = urllib.parse.urlsplit(self.path)
             query = urllib.parse.parse_qs(parsed.query)
             path = parsed.path.rstrip("/") or "/"
-            if path == "/ui":
-                # Served without a credential, and only this document is. The
-                # page is static - no endpoint id, no machine name, no terminal
-                # content - and it is what reads the token out of the URL
-                # fragment a browser never sends to a server. Gating it would
-                # deadlock: the token cannot arrive before the page that reads
-                # it loads. Every data route below stays authenticated.
+            if method == "GET" and path == "/ui":
+                # A browser NAVIGATING to the viewer, and nothing else, is
+                # served without a credential. The page is static - no endpoint
+                # id, no machine name, no terminal content - and it is what
+                # reads the token out of the URL fragment a browser never sends
+                # to a server. Gating it would deadlock: the token cannot
+                # arrive before the page that reads it loads. Every other
+                # method and every data route stays authenticated.
                 self._text(HTTPStatus.OK, WEB_UI, "text/html; charset=utf-8")
-                return
-            self._route(method, path, query)
+            else:
+                self._route(method, path, query)
+            self._discard_body()
         except HubError as exc:
             self._discard_body()
             self._json(exc.status, {"ok": False, "error": exc.code, "message": exc.message})

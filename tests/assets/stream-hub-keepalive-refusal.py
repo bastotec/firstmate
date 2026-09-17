@@ -68,7 +68,20 @@ def refused_oversized_body():
     return listing_after(conn, control_token, "a refused oversized body")
 
 
-for check in (refused_send_box, refused_oversized_body):
+def refused_viewer_post():
+    """A POST to the viewer path: refused before any route reads a body."""
+    conn = http.client.HTTPConnection(host, int(port), timeout=15)
+    conn.request("POST", "/ui", body=json.dumps({"text": "x"}),
+                 headers={"Content-Type": "application/json"})
+    refusal = conn.getresponse()
+    page = refusal.read().decode("utf-8", "replace")
+    if refusal.status == 200:
+        return "a POST to the viewer path was answered with the page"
+    return listing_after(conn, view_token, "a refused POST to the viewer path") or (
+        "a refused viewer POST answered the page" if "EventSource" in page else "")
+
+
+for check in (refused_send_box, refused_oversized_body, refused_viewer_post):
     failure = check()
     if failure:
         print(failure)

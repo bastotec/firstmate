@@ -162,6 +162,19 @@ test_every_data_route_requires_a_token() {
   # no query parameter - and it must return the page.
   raw=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "$URL/ui" 2>/dev/null)
   assert_equals "$raw" 200 "a browser navigating to the viewer sends no credential and must get the page"
+  assert_contains "$(curl -sS -m 10 "$URL/ui" 2>/dev/null)" "EventSource" \
+    "the credential-free navigation should return the viewer itself"
+  # Only that navigation. A credential-free POST or DELETE to the same path must
+  # not reach the unauthenticated branch, so neither may answer with the page.
+  local body
+  for verb in POST DELETE; do
+    body=$(curl -sS -m 10 -X "$verb" -H 'Content-Type: application/json' \
+      --data-binary '{"text":"x"}' "$URL/ui" 2>/dev/null)
+    assert_not_contains "$body" "EventSource" \
+      "a credential-free $verb to the viewer path must not be answered with the page"
+    assert_contains "$body" "no_such_route" \
+      "a credential-free $verb to the viewer path should be refused as an unknown route"
+  done
   view GET /v1/health >/dev/null
   assert_equals "$(api_code)" 200 "a configured viewing token should be accepted"
   pass "hub: every data route requires a bearer token, and only the viewer page does not"
