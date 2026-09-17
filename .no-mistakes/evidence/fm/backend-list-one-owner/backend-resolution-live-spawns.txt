@@ -1,0 +1,25 @@
+===== D. resolved backend + worktree provider on a real spawn =====
+### no ambient signal at all: default tmux; treehouse provides the worktree
+$  bin/fm-spawn.sh axesdefault1 <project> claude --mode no-mistakes --yolo off
+warning: /tmp/fm-axes-live.e32xT4/axesdefault1/home/data/axesdefault1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned axesdefault1 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-axesdefault1 worktree=/tmp/fm-axes-live.e32xT4/axesdefault1/wt
+[exit 0]
+-- resolved backend in state/axesdefault1.meta: (no backend= field -> tmux, the documented compatibility default)
+-- worktree-provider calls: none
+
+### ambient zellij markers (ZELLIJ=0, ZELLIJ_SESSION_NAME): zellij is NEVER auto-detected
+$ ZELLIJ=0 ZELLIJ_SESSION_NAME=firstmate bin/fm-spawn.sh axeszellij1 <project> claude --mode no-mistakes --yolo off
+warning: /tmp/fm-axes-live.e32xT4/axeszellij1/home/data/axeszellij1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned axeszellij1 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-axeszellij1 worktree=/tmp/fm-axes-live.e32xT4/axeszellij1/wt
+[exit 0]
+-- resolved backend in state/axeszellij1.meta: (no backend= field -> tmux, the documented compatibility default)
+-- worktree-provider calls: none
+
+### ambient orca/stream markers: neither is EVER auto-detected
+$ ORCA_TERMINAL_ID=t1 ORCA_WORKTREE_ID=w1 STREAM_SESSION=s1 bin/fm-spawn.sh axesorca1 <project> claude --mode no-mistakes --yolo off
+warning: /tmp/fm-axes-live.e32xT4/axesorca1/home/data/axesorca1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned axesorca1 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-axesorca1 worktree=/tmp/fm-axes-live.e32xT4/axesorca1/wt
+[exit 0]
+-- resolved backend in state/axesorca1.meta: (no backend= field -> tmux, the documented compatibility default)
+-- worktree-provider calls: none
+

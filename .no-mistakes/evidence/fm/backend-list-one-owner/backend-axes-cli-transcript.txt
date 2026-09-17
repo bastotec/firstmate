@@ -1,0 +1,110 @@
+===== A. accepted backend list: ship spawn (--backend <name>) =====
+### ship spawn on backend=tmux
+$  fm-spawn.sh axes-tmux-1 projects/none claude --mode no-mistakes --yolo off --backend tmux
+/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/bin/fm-spawn.sh: line 2429: cd: /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/projects/none: No such file or directory
+[exit 1]
+
+### ship spawn on backend=herdr
+$  fm-spawn.sh axes-herdr-1 projects/none claude --mode no-mistakes --yolo off --backend herdr
+/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/bin/fm-spawn.sh: line 2429: cd: /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/projects/none: No such file or directory
+[exit 1]
+
+### ship spawn on backend=zellij
+$  fm-spawn.sh axes-zellij-1 projects/none claude --mode no-mistakes --yolo off --backend zellij
+/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/bin/fm-spawn.sh: line 2429: cd: /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/projects/none: No such file or directory
+[exit 1]
+
+### ship spawn on backend=orca
+$  fm-spawn.sh axes-orca-1 projects/none claude --mode no-mistakes --yolo off --backend orca
+error: backend=orca selected but the 'orca' CLI is not installed
+[exit 1]
+
+### ship spawn on backend=cmux
+$  fm-spawn.sh axes-cmux-1 projects/none claude --mode no-mistakes --yolo off --backend cmux
+/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/bin/fm-spawn.sh: line 2429: cd: /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/projects/none: No such file or directory
+[exit 1]
+
+### ship spawn on backend=stream
+$  fm-spawn.sh axes-stream-1 projects/none claude --mode no-mistakes --yolo off --backend stream
+/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/bin/fm-spawn.sh: line 2429: cd: /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/projects/none: No such file or directory
+[exit 1]
+
+### ship spawn on backend=codex-app
+$  fm-spawn.sh axes-codex-app-1 projects/none claude --mode no-mistakes --yolo off --backend codex-app
+error: unknown backend 'codex-app' (known: tmux herdr zellij orca cmux stream)
+[exit 1]
+
+### ship spawn on backend=bogus
+$  fm-spawn.sh axes-bogus-1 projects/none claude --mode no-mistakes --yolo off --backend bogus
+error: unknown backend 'bogus' (known: tmux herdr zellij orca cmux stream)
+[exit 1]
+
+===== B. secondmate axis (--secondmate) =====
+### secondmate spawn on backend=tmux
+$  fm-spawn.sh axes-sm-tmux projects/none claude --backend tmux --secondmate
+error: firstmate home does not exist or is not a directory: projects/none
+[exit 1]
+
+### secondmate spawn on backend=herdr
+$  fm-spawn.sh axes-sm-herdr projects/none claude --backend herdr --secondmate
+error: firstmate home does not exist or is not a directory: projects/none
+[exit 1]
+
+### secondmate spawn on backend=zellij
+$  fm-spawn.sh axes-sm-zellij projects/none claude --backend zellij --secondmate
+error: firstmate home does not exist or is not a directory: projects/none
+[exit 1]
+
+### secondmate spawn on backend=orca
+$  fm-spawn.sh axes-sm-orca projects/none claude --backend orca --secondmate
+error: backend=orca does not support --secondmate spawns yet
+[exit 1]
+
+### secondmate spawn on backend=cmux
+$  fm-spawn.sh axes-sm-cmux projects/none claude --backend cmux --secondmate
+error: backend=cmux does not support --secondmate spawns yet
+[exit 1]
+
+### secondmate spawn on backend=stream
+$  fm-spawn.sh axes-sm-stream projects/none claude --backend stream --secondmate
+error: backend=stream does not support --secondmate spawns yet
+[exit 1]
+
+===== C. selection / auto-detection axis =====
+### FM_BACKEND=bogus (env override validated)
+$ FM_BACKEND=bogus fm-spawn.sh axes-env-1 projects/none claude --mode no-mistakes --yolo off
+error: unknown backend 'bogus' (known: tmux herdr zellij orca cmux stream)
+[exit 1]
+
+### config/backend=zellij (explicit file selection)
+$  fm-spawn.sh axes-cfg-1 projects/none claude --mode no-mistakes --yolo off
+/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/bin/fm-spawn.sh: line 2429: cd: /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/projects/none: No such file or directory
+[exit 1]
+
+### config/backend=codex-app (rejected)
+$  fm-spawn.sh axes-cfg-2 projects/none claude --mode no-mistakes --yolo off
+error: unknown backend 'codex-app' (known: tmux herdr zellij orca cmux stream)
+[exit 1]
+
+### ambient HERDR_ENV=1, nothing configured (auto-detect)
+$ HERDR_ENV=1 fm-spawn.sh axes-auto-herdr projects/none claude --mode no-mistakes --yolo off
+NOTICE: auto-detected herdr runtime (HERDR_ENV=1) - spawning into the EXPERIMENTAL herdr backend. Set config/backend or pass --backend tmux to opt out.
+/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/bin/fm-spawn.sh: line 2429: cd: /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/projects/none: No such file or directory
+[exit 1]
+
+### ambient CMUX_WORKSPACE_ID, nothing configured (auto-detect)
+$ CMUX_WORKSPACE_ID=ws-1 fm-spawn.sh axes-auto-cmux projects/none claude --mode no-mistakes --yolo off
+NOTICE: auto-detected cmux runtime (CMUX_WORKSPACE_ID) - spawning into the EXPERIMENTAL cmux backend. Set config/backend or pass --backend tmux to opt out.
+/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/bin/fm-spawn.sh: line 2429: cd: /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/projects/none: No such file or directory
+[exit 1]
+
+### ambient TMUX, nothing configured (auto-detect, silent)
+$ TMUX=fake,1,0 fm-spawn.sh axes-auto-tmux projects/none claude --mode no-mistakes --yolo off
+/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/bin/fm-spawn.sh: line 2429: cd: /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/projects/none: No such file or directory
+[exit 1]
+
+### no ambient signal at all (default tmux)
+$  fm-spawn.sh axes-auto-default projects/none claude --mode no-mistakes --yolo off
+/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/bin/fm-spawn.sh: line 2429: cd: /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2RRQ4XZTHNXWZCE6Q52AKH5/projects/none: No such file or directory
+[exit 1]
+

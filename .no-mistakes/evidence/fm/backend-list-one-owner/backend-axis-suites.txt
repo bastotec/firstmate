@@ -1,0 +1,26 @@
+Targeted backend-axis suites (existing tests, this run):
+fm-backend.test.sh         28 ok assertions, exit 0
+fm-backend-orca.test.sh    51 ok assertions, exit 0
+fm-backend-stream.test.sh  29 ok assertions, exit 0
+fm-backend-cmux.test.sh    61 ok assertions, exit 0
+fm-backend-zellij.test.sh  64 ok assertions, exit 0
+
+Secondmate / worktree-lifecycle assertions that back docs/configuration.md's axis claims:
+ok - fm_backend_cmux_scoped_title: scopes a secondmate task title with the home marker plus root hash
+ok - fm-spawn.sh --backend orca --secondmate: refuses before secondmate-home mutation
+ok - fm-spawn.sh: refuses backend=cmux for --secondmate spawns (mirrors Orca's refusal; no secondmate launch design exists yet)
+ok - fm-teardown.sh --force: refuses partial Orca secondmate children before runtime dispatch
+ok - fm-teardown.sh --force: removes Orca secondmate children through Orca
+ok - stream: a secondmate spawn is refused until its launch semantics exist
+ok - fm_backend_orca_remove_worktree: refuses empty worktree ids
+ok - fm_backend_orca_remove_worktree: fails closed on ok:false JSON
+ok - fm_backend_orca_worktree_path: resolves an Orca worktree id to its path
+ok - Orca lifecycle helpers: register repo, create worktree, create terminal, parse stable ids
+ok - fm_backend_orca_worktree_create: removes created worktree when path is missing
+ok - fm-spawn.sh --backend orca: refuses non-isolated worktrees and closes implicit terminals
+
+Documentation-contract consumer (tests/fm-documentation-audiences.test.sh, exit 0):
+ok - documentation inventory classifies every maintained prose surface exactly once
+ok - classification, setup routing, and maintained-prose scope fail safely
+ok - required documentation owner pointers cannot silently disappear
+ok - local links resolve while dates, versions, commands, and incident prose remain semantically reviewed
