@@ -1,0 +1,2 @@
+ok - running lists only verified live local agents, children only from a current ledger, with where they run
+ok - running asks each remote host for its second mate's process and keeps unconfirmed agents out

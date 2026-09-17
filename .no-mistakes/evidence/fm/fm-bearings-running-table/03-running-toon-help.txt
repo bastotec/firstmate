@@ -1,0 +1,15 @@
+$ fm-bearings-snapshot.sh   (default TOON output, running section)
+running[3]{id,kind,parent,where,name,state,doing,freshness}:
+  live-ship,ship,null,this Mac,Fix the login redirect,working,harness busy (claude-hook),fresh
+  helper,secondmate,null,this Mac,helper,active_child_work,"child-live: harness busy (claude-hook); child-idle: harness busy (claude-hook)",fresh
+  helper/child-live,ship,helper,this Mac,Child live work,working,harness busy (claude-hook),fresh
+secondmates[1]{id,state,doing,provenance,freshness,age_seconds,contradiction,reason}:
+  helper,active_child_work,"child-live: harness busy (claude-hook); child-idle: harness busy (claude-hook)",structured-home,fresh,2,false,"-"
+secondmate_reconcile[1]{id,spawn_gen,host,kind,ids}:
+
+$ fm-bearings-snapshot.sh --help | grep -i running
+14:  running{id,kind,parent,where,name,state,doing,freshness},
+32:running lists only agents whose process is verified alive: main-home workers,
+
+$ fm-bearings-snapshot.sh --all-running
+exit=2

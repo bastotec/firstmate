@@ -1,0 +1,3 @@
+# FM_SNAPSHOT_CREW_STATE_TIMEOUT=1 with a tmux shim that hangs 20s on list-windows
+[{"id":"gone-ship","agent_state":"unreadable"},{"id":"helper","agent_state":"unreadable"},{"id":"idle-ship","agent_state":"unreadable"},{"id":"live-ship","agent_state":"unreadable"}]
+elapsed_seconds=2

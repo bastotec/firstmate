@@ -1,0 +1,38 @@
+# ledger generated_epoch backdated by 700s (limit 2 x 300 = 600s); watcher not refreshed
+$ fm-bearings-snapshot.sh --json | jq "{running_ids, omitted_running}"
+{
+  "running_ids": [
+    "live-ship",
+    "helper"
+  ],
+  "omitted_running": [
+    {
+      "surface": "agents left out of running because their process could not be confirmed: 2",
+      "reveal": "--fields endpoints"
+    }
+  ],
+  "helper_freshness": [
+    {
+      "id": "helper",
+      "freshness": "fresh",
+      "age_seconds": 704
+    }
+  ]
+}
+
+$ FM_HOME_SUMMARY_INTERVAL=400 (limit 800s) same ledger
+{
+  "running_ids": [
+    "live-ship",
+    "helper",
+    "helper/child-live"
+  ]
+}
+
+$ FM_HOME_SUMMARY_INTERVAL=0 (invalid -> 300)
+{
+  "running_ids": [
+    "live-ship",
+    "helper"
+  ]
+}

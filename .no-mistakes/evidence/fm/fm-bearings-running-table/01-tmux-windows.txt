@@ -1,0 +1,6 @@
+$ tmux list-windows -t fleet -F "#{window_name} #{pane_current_command}"
+fm-live-ship claude
+fm-idle-ship zsh
+fm-helper claude
+fm-child-live claude
+fm-child-idle zsh

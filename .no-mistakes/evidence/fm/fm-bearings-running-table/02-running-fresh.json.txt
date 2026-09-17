@@ -1,0 +1,43 @@
+$ fm-bearings-snapshot.sh --json | jq "{running, omitted_running: [.omitted[]|select(.surface|test(\"running\"))], in_flight_ids: [.in_flight[].id]}"
+{
+  "running": [
+    {
+      "id": "live-ship",
+      "kind": "ship",
+      "parent": null,
+      "where": "this Mac",
+      "name": "Fix the login redirect",
+      "state": "working",
+      "doing": "harness busy (claude-hook)",
+      "freshness": "fresh"
+    },
+    {
+      "id": "helper",
+      "kind": "secondmate",
+      "parent": null,
+      "where": "this Mac",
+      "name": "helper",
+      "state": "active_child_work",
+      "doing": "child-live: harness busy (claude-hook); child-idle: harness busy (claude-hook)",
+      "freshness": "fresh"
+    },
+    {
+      "id": "helper/child-live",
+      "kind": "ship",
+      "parent": "helper",
+      "where": "this Mac",
+      "name": "Child live work",
+      "state": "working",
+      "doing": "harness busy (claude-hook)",
+      "freshness": "fresh"
+    }
+  ],
+  "omitted_running": [],
+  "in_flight_ids": [
+    "gone-ship",
+    "idle-ship",
+    "live-ship",
+    "helper/child-live",
+    "helper/child-idle"
+  ]
+}

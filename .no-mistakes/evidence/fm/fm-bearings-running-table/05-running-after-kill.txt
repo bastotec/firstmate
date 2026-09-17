@@ -1,0 +1,14 @@
+# after tmux kill-window -t fleet:fm-live-ship
+{
+  "running_ids": [
+    "helper",
+    "helper/child-live"
+  ],
+  "in_flight_ids": [
+    "gone-ship",
+    "idle-ship",
+    "live-ship",
+    "helper/child-live",
+    "helper/child-idle"
+  ]
+}
