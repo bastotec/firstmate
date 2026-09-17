@@ -38,6 +38,14 @@
 # conflicting role is superseded rather than duplicated.
 # fm_ship_rule_one owns the mode-specific first ship safety rule shared by an
 # ordinary ship brief and the durable contract written during scout promotion.
+# fm_concurrent_work_section owns the worker's half of the parallel-work contract
+# (AGENTS.md section 7): firstmate names concurrent work touching this task's
+# area, and this section is what tells the worker that the notice is awareness
+# rather than a hold, when a rebase is its own to take, and that a genuine
+# semantic conflict goes back to firstmate. It is mode-independent and ship-only
+# - a scout delivers a report, so it has nothing to rebase or conflict with - and
+# both bin/fm-brief.sh and bin/fm-promote.sh render it so a promoted scout
+# receives it too.
 
 fm_brief_worker_role() {  # <state-dir> <task-id>
   local state=$1 task_id=$2
@@ -72,6 +80,17 @@ fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id>
       return 1
       ;;
   esac
+}
+
+fm_concurrent_work_section() {
+  cat <<'EOF'
+# Other work in flight
+You may not be the only worker on this project.
+When other work touches your area, firstmate names that work and what it touches - in the task above, or through the instruction inbox - and tells those workers about you.
+That notice is awareness, not a hold: keep going, and rebase onto the updated default branch once the other change lands rather than designing around it, waiting for it, or narrowing your own change to avoid it.
+Rebase only while the branch is yours to rewrite: before you start a validation run or between runs, never during an active run, because the pipeline owns your branch while it is running, and never after you have appended `done:` - a change that lands after that is firstmate's to rebase, not a reason to resume.
+Two edits in one file are an ordinary rebase; a genuine semantic conflict - two changes that cannot both be true - is firstmate's call, so append `needs-decision: {the two changes and why they cannot both hold}` and stop instead of resolving it yourself.
+EOF
 }
 
 # Return 0 when a Task subsection still consists only of its scaffold

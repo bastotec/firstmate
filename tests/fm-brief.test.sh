@@ -890,11 +890,13 @@ test_scout_and_secondmate_scaffold() {
 }
 
 # The cross-worker awareness contract (AGENTS.md section 7): a ship worker must
-# be told to rebase rather than design around concurrent work, and to hand a
-# genuine semantic conflict back instead of resolving it. Asserting the phrasing
-# that carries "not a hold" matters as much as the section heading, because a
-# reworded section that drops it would reintroduce the serializing bias the
-# dispatch rule forbids. Scouts and charters must NOT carry it: a report has
+# be told to rebase rather than design around concurrent work, when that rebase
+# is still its own to take, and to hand a genuine semantic conflict back instead
+# of resolving it. Asserting the phrasing that carries "not a hold" matters as
+# much as the section heading, because a reworded section that drops it would
+# reintroduce the serializing bias the dispatch rule forbids, and the timing
+# qualifier keeps a worker from rewriting its branch under an active pipeline run
+# or resuming after `done:`. Scouts and charters must NOT carry it: a report has
 # nothing to rebase, and a duplicated copy there would be a second owner.
 test_ship_brief_carries_cross_worker_awareness() {
   local home id mode brief
@@ -914,6 +916,10 @@ test_ship_brief_carries_cross_worker_awareness() {
       "$id: concurrent-work section no longer instructs a rebase"
     assert_grep "rather than designing around it" "$brief" \
       "$id: concurrent-work section no longer forbids designing around the other change"
+    assert_grep "never during an active run" "$brief" \
+      "$id: concurrent-work section no longer keeps the rebase out of an active validation run"
+    assert_grep "never after you have appended \`done:\`" "$brief" \
+      "$id: concurrent-work section no longer hands the post-done rebase to firstmate"
     assert_grep "two changes that cannot both be true" "$brief" \
       "$id: concurrent-work section lost the semantic-conflict definition"
     assert_grep "instead of resolving it yourself" "$brief" \

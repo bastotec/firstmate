@@ -63,10 +63,9 @@
 # Every scaffold also carries the steering-inbox receive-and-ack section:
 # process state/<id>.inbox/*.msg in order and acknowledge each by moving it to
 # handled/ (record, doorbell, and ladder owned by bin/fm-task-inbox-lib.sh).
-# Ship briefs also carry the "Other work in flight" section: firstmate names
-# concurrent work touching the task's area (AGENTS.md section 7), and that
-# section is the worker's own half of the contract - rebase rather than design
-# around it, and report a genuine semantic conflict instead of resolving it.
+# Ship briefs also carry the "Other work in flight" section, rendered from its
+# single owner fm_concurrent_work_section in bin/fm-dod-lib.sh, which
+# bin/fm-promote.sh renders too so a promoted scout receives it as well.
 # Scouts and charters omit it: a report has nothing to rebase or conflict with.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
@@ -221,19 +220,10 @@ The move IS the acknowledgement: without it firstmate rings again and eventually
 EOF
 INBOX_SECTION=${INBOX_SECTION%$'\n'}
 
-# The cross-worker awareness half of the parallel-work contract (AGENTS.md
-# section 7). Firstmate names concurrent work touching this task's area; this
-# section is what tells the worker to rebase rather than design around it, and
-# to hand a genuine semantic conflict back instead of resolving it. Ship-only:
-# a scout delivers a report, so it has nothing to rebase or conflict with.
-IFS= read -r -d '' CONCURRENT_SECTION <<'EOF' || true
-# Other work in flight
-You may not be the only worker on this project.
-When other work touches your area, firstmate names that work and what it touches - in the task above, or through the instruction inbox - and tells those workers about you.
-That notice is awareness, not a hold: keep going, and rebase onto the updated default branch once the other change lands rather than designing around it, waiting for it, or narrowing your own change to avoid it.
-Two edits in one file are an ordinary rebase; a genuine semantic conflict - two changes that cannot both be true - is firstmate's call, so append `needs-decision: {the two changes and why they cannot both hold}` and stop instead of resolving it yourself.
-EOF
-CONCURRENT_SECTION=${CONCURRENT_SECTION%$'\n'}
+# The cross-worker awareness half of the parallel-work contract comes from its
+# single owner in bin/fm-dod-lib.sh, so the promoted-scout path renders the same
+# text rather than a second copy of it.
+CONCURRENT_SECTION=$(fm_concurrent_work_section)
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
