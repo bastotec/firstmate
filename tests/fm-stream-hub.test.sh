@@ -454,6 +454,9 @@ test_an_endpoint_runs_the_operators_own_shell_and_a_dead_one_is_refused() {
   other_shell=""
   for candidate in /bin/dash /usr/bin/dash /bin/zsh /usr/bin/zsh /bin/sh; do
     [ -x "$candidate" ] || continue
+    # $0 is deliberately left unexpanded here: the probed candidate shell must
+    # expand it, since that is how the candidate identifies itself.
+    # shellcheck disable=SC2016
     case "$("$candidate" -c 'echo $0' 2>/dev/null)" in *bash*) continue ;; esac
     other_shell=$candidate
     break
