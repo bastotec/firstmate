@@ -109,13 +109,13 @@ The worker is still listed, its stream still runs, and input, status lines and k
 A state read answers `unreadable` rather than `dead` for the same reason: the hub cannot see the worker's process either way.
 The agent's next word to the hub takes the presumption back.
 Where two registrations answer to one machine and label, the contest is settled by which agent the hub has heard from, not by which record is newer: an agent that is publishing keeps the name against a record nothing stands behind, and loses it only to one the hub has heard from just as lately.
-An agent that loses stands down - it stops publishing and stops taking commands - but it does NOT stop its worker.
+An agent that loses stands down - it stops publishing state and stops taking commands - but it does NOT stop its worker, and when that worker eventually exits it still closes its own record out.
 Two records contesting one name tell the hub nothing about which holds the real work, and a worker left unsupervised can be recovered while a worker killed by mistake cannot.
 
 Standing down protects WORK IN PROGRESS, which is the reason behind the rule rather than the rule itself: a worker mid-task holds something the captain cares about, so when the hub cannot tell which record is real, the agent goes quiet rather than destroy it.
 An agent that loses the name during its own startup, before the endpoint is ready, has no work in progress to protect - nothing has been asked of that worker, the spawn has not returned, and firstmate has never learned the task exists - so keeping it alive would preserve nothing and leak a process nobody supervises and nobody can find.
 That loser stops its worker and closes its own record out.
-A close is a statement about the record an agent already holds rather than a claim on the identity, so it is never refused by the contest: no ordering of supersession and close leaves an open endpoint with no agent behind it.
+A close is a statement about the record an agent already holds rather than a claim on the identity, so nothing refuses it - not the hub's contest, not the agent's own stand-down, and not a spent startup budget: no ordering of supersession and close leaves an open endpoint with no agent behind it.
 A record nothing has been heard from for the full retention period is dropped; a kill against an endpoint the hub has forgotten reports an unconfirmed stop, because by then the hub knows nothing about that worker at all.
 
 There is one case with no way back: the agent speaks again to find another endpoint already answering to its machine and label, because the next attempt at that task claimed the name while it was out of touch.
