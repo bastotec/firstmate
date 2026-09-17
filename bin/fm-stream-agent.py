@@ -37,7 +37,10 @@ serve options:
   --status-path PATH     local state/<id>.status to append status lines to
   --ready-file PATH      write the durable endpoint id there once registered
   --rows N / --cols N    pseudoterminal geometry (default 40x200)
-  --state-interval SECS  how often to publish a state frame (default 5)
+  --state-interval SECS  how often to publish a state frame. Unset, it is
+                         derived from the hub's own staleness window so the two
+                         cannot drift apart; an explicit value is never
+                         overridden.
   --poll-secs SECS       how long each command long-poll waits (default 25)
 
 The agent exits when its endpoint's process exits, after telling the hub.
@@ -126,6 +129,10 @@ class Pty:
         self.rows = rows
         self.cols = cols
         self._closed = threading.Event()
+        # Every reap and every signal is taken under this lock, because holding
+        # an unreaped child is the only thing that makes its pid safe to name.
+        # See _signal_group for why that matters.
+        self._reap_lock = threading.RLock()
         self.exit_code = None
         master, slave = os.openpty()
         try:
@@ -144,6 +151,11 @@ class Pty:
         os.close(slave)
         self.master_fd = master
         self.pid = self.proc.pid
+        # The child called setsid(), so it leads its own process group and that
+        # group's id IS the child's pid. Recording it here fixes the signal
+        # target at the one moment it is provably ours, rather than asking the
+        # kernel again later, when the answer may describe a stranger.
+        self.pgid = self.pid
 
     def read(self, size: int = 65536) -> bytes:
         """One blocking read of the pty, b"" at end of file."""
@@ -161,7 +173,10 @@ class Pty:
         return os.write(self.master_fd, data)
 
     def alive(self) -> bool:
-        return self.proc.poll() is None
+        # poll() REAPS an exited child, which releases its pid for reuse, so it
+        # is taken under the same lock as the signal path rather than racing it.
+        with self._reap_lock:
+            return self.proc.poll() is None
 
     def foreground_processes(self) -> list:
         """The pty's foreground process group, as identity records.
@@ -208,6 +223,52 @@ class Pty:
                 return cwd
         return _process_cwd(str(self.pid))
 
+    def _signal_group(self, sig) -> bool:
+        """Signal the endpoint's process group, but only while it is still ours.
+
+        The liveness check and the signal share one lock, and every reap takes
+        the same lock, because that is what makes the group id safe to name. An
+        unreaped child - running or zombie - still holds its pid, so the group
+        recorded at spawn is still the group we created. Once anything calls
+        poll() and reaps it, the kernel may hand that pid to an unrelated
+        process, and signalling the group it now leads would kill a stranger.
+        On this fleet that stranger can be another worker's harness, so a
+        reaped endpoint is never signalled at all.
+
+        The cost is that a grandchild outliving a reaped direct child is not
+        signalled here. That is the safe side of the trade: those processes lose
+        their controlling terminal when the pty master closes, whereas naming a
+        pid we no longer own has no safe failure mode.
+        """
+        with self._reap_lock:
+            if self.proc.poll() is not None:
+                return False
+            own_pgrp = os.getpgrp()
+            own_sid = os.getsid(0)
+            if self.pgid in (own_pgrp, own_sid):
+                # Unreachable while the child's setsid() works: it moves the
+                # child into a brand-new session this agent is not part of. If
+                # it is ever reached, that isolation failed and signalling this
+                # group would take down this agent and whatever launched it, so
+                # refuse and say so rather than deliver it.
+                sys.stderr.write(
+                    "fm-stream-agent: REFUSING to signal process group %d - it is this "
+                    "agent's own process group (%d) or session (%d), so the endpoint's "
+                    "setsid did not take effect; the endpoint is not isolated\n"
+                    % (self.pgid, own_pgrp, own_sid))
+                sys.stderr.flush()
+                return False
+            try:
+                os.killpg(self.pgid, sig)
+            except OSError:
+                # The group is gone but the child is not yet reaped, so its pid
+                # is still ours to name.
+                try:
+                    self.proc.send_signal(sig)
+                except OSError:
+                    return False
+            return True
+
     def close(self, signal_name: str = "TERM") -> bool:
         """Signal the process group, wait for the reader, then release the fd.
 
@@ -216,34 +277,20 @@ class Pty:
         endpoint's pty when the kernel reuses that fd number, and would then
         publish one worker's output as another's.
         """
-        killed = False
-        if self.alive():
-            killed = True
-            sig = signal.SIGTERM if signal_name == "TERM" else signal.SIGKILL
-            try:
-                os.killpg(os.getpgid(self.pid), sig)
-            except OSError:
-                try:
-                    self.proc.send_signal(sig)
-                except OSError:
-                    pass
+        sig = signal.SIGTERM if signal_name == "TERM" else signal.SIGKILL
+        killed = self._signal_group(sig)
+        if killed:
             deadline = _now() + 3.0
             while _now() < deadline and self.alive():
                 time.sleep(0.05)
-            if self.alive():
-                try:
-                    os.killpg(os.getpgid(self.pid), signal.SIGKILL)
-                except OSError:
-                    try:
-                        self.proc.kill()
-                    except OSError:
-                        pass
+            self._signal_group(signal.SIGKILL)
         self._closed.set()
-        try:
-            self.proc.wait(timeout=2)
-        except Exception:
-            pass
-        self.exit_code = self.proc.poll()
+        with self._reap_lock:
+            try:
+                self.proc.wait(timeout=2)
+            except Exception:
+                pass
+            self.exit_code = self.proc.poll()
         return killed
 
     def release(self) -> None:
@@ -330,6 +377,7 @@ class Agent:
         # exit between doing the work and reporting it - and the hub would then
         # tell the caller the kill was never delivered when in fact it was.
         self.command_busy = threading.Event()
+        self._backoff = 2.0
 
     # --- publishing -------------------------------------------------------
 
@@ -369,6 +417,10 @@ class Agent:
                 "published_at": _now(),
             },
         }
+
+    def publish_initial_state(self) -> None:
+        """Make this endpoint reportable before anything is told it exists."""
+        self._post_frames([self.state_frame()])
 
     def state_loop(self) -> None:
         """Publish state on a heartbeat.
@@ -432,9 +484,15 @@ class Agent:
             try:
                 answer = self.hub.call("GET", path, timeout=self.options.poll_secs + 15)
             except RuntimeError as exc:
+                # Back off rather than spin. A hub outage must not take the
+                # worker down with it - the pty keeps running and this
+                # reconnects - but an agent whose hub is gone for good would
+                # otherwise poll a dead socket forever.
                 sys.stderr.write("fm-stream-agent: command poll failed: %s\n" % exc)
-                self.stop.wait(2.0)
+                self.stop.wait(self._backoff)
+                self._backoff = min(self._backoff * 2, 60.0)
                 continue
+            self._backoff = 2.0
             for command in answer.get("commands") or []:
                 self.command_busy.set()
                 try:
@@ -464,7 +522,6 @@ class Agent:
         reader.start()
         state.start()
         commands.start()
-        self._post_frames([self.state_frame()])
 
         def _signalled(signum, frame) -> None:  # noqa: ARG001
             self.stop.set()
@@ -550,6 +607,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list) -> int:
     parser = build_parser()
     options = parser.parse_args(argv)
+    # Remember whether the operator pinned the heartbeat, so deriving it from
+    # the hub below never overrides an explicit choice.
+    options.state_interval_explicit = any(
+        a == "--state-interval" or a.startswith("--state-interval=") for a in argv)
     if options.version:
         print(AGENT_VERSION)
         return 0
@@ -587,6 +648,20 @@ def main(argv: list) -> int:
                          "implements %d; update both ends"
                          % (options.hub, protocol, AGENT_PROTOCOL))
 
+    # The heartbeat is what keeps this endpoint readable, so it is derived from
+    # the hub's own staleness window rather than configured separately. Two
+    # independent numbers that have to line up eventually will not, and the
+    # failure is silent and total: every endpoint reads stale, so supervision
+    # refuses every verdict on a fleet that is working perfectly.
+    if not options.state_interval_explicit:
+        hub_max_age = health.get("state_max_age_secs")
+        try:
+            hub_max_age = float(hub_max_age)
+        except (TypeError, ValueError):
+            hub_max_age = 0.0
+        if hub_max_age > 0:
+            options.state_interval = max(0.5, min(options.state_interval, hub_max_age / 3.0))
+
     endpoint_id = os.urandom(16).hex()
     env = dict(os.environ)
     env["FM_STREAM_ENDPOINT_ID"] = endpoint_id
@@ -609,6 +684,13 @@ def main(argv: list) -> int:
         pty.release()
         raise SystemExit("fm-stream-agent: %s" % exc)
 
+    agent = Agent(options, hub, pty, endpoint_id)
+    # Publish the first state frame BEFORE announcing readiness. The ready file
+    # is what a spawn waits on, and the very next thing it may do is ask how
+    # this endpoint is doing - which would otherwise be answered "no state frame
+    # yet", i.e. unreadable, for a worker that is in fact perfectly fine.
+    agent.publish_initial_state()
+
     if options.ready_file:
         with open(options.ready_file, "w", encoding="utf-8") as fh:
             fh.write("%s %s\n" % (options.machine, endpoint_id))
@@ -616,7 +698,7 @@ def main(argv: list) -> int:
                      % (AGENT_VERSION, endpoint_id, options.machine, options.hub))
     sys.stderr.flush()
 
-    return Agent(options, hub, pty, endpoint_id).run()
+    return agent.run()
 
 
 if __name__ == "__main__":
