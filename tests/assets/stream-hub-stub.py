@@ -3,9 +3,9 @@
 
 The re-registration cases need a hub that keeps saying one exact thing, which
 the real hub cannot be asked to do: it is correct, so it forgets an endpoint
-only by restarting and refuses a credential only by being reconfigured, and
-neither holds still long enough to measure how an agent paces itself against
-it. This serves the agent's own routes and answers each one as a case dictates.
+only by restarting, and that does not hold still long enough to measure how an
+agent paces itself against it. This serves the agent's own routes and answers
+each one as a case dictates.
 
 It is deliberately not a hub. It holds no ring buffer, relays no command, and
 answers no subscriber route; anything asserting hub behaviour belongs against
@@ -16,7 +16,6 @@ test can measure rather than infer.
   --port N                 loopback port to bind (0 for an ephemeral one)
   --ready-file PATH        "<host> <port>" written there once bound
   --journal PATH           one line per request, appended
-  --protocol N             the protocol every health call reports
   --frames-ok-first N      let the first N frame posts through, forgetting the
                            endpoint on every frame after those
   --accept-registrations N how many registrations to accept (-1 for all)
@@ -69,11 +68,10 @@ class Stub(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's spelling
         path = self._record()
-        state = self.server.state
         if path == "/v1/health":
             self._json(200, {
                 "ok": True,
-                "protocol": state["protocol"],
+                "protocol": 2,
                 "version": "stub",
                 "state_max_age_secs": 10,
                 "command_ack_secs": 10,
@@ -136,7 +134,6 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--ready-file", default="")
     parser.add_argument("--journal", required=True)
-    parser.add_argument("--protocol", type=int, default=2)
     parser.add_argument("--frames-ok-first", type=int, default=1)
     parser.add_argument("--accept-registrations", type=int, default=-1)
     options = parser.parse_args()
@@ -146,7 +143,6 @@ def main() -> int:
         "lock": threading.Lock(),
         "started": time.monotonic(),
         "journal": options.journal,
-        "protocol": options.protocol,
         "frames_ok_first": options.frames_ok_first,
         "accept_registrations": options.accept_registrations,
         "registrations": 0,

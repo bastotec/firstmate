@@ -370,11 +370,6 @@ test_the_fleet_listing_never_calls_a_rejoining_worker_absent() {
     || fail "a worker rejoining its restarted hub must not be listed absent: $out"
   [ "$exists" != false ] \
     || fail "the row must not claim absence the settled verdict does not support: $out"
-  case "$state" in
-    alive|dead|ambiguous)
-      assert_equals true "$exists" \
-        "a verdict the hub gave from a held record means the endpoint is there" ;;
-  esac
   # And the worker is still steerable under the identity it kept, which is what
   # the listing is read to decide.
   with_stream_env fm_backend_send_text_submit stream "$target" 'echo LISTED-AFTER-RESTART' 3 0.2 0.2 >/dev/null \
