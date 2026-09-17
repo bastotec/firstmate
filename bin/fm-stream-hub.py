@@ -778,6 +778,10 @@ class Endpoint:
         self.cols = cols
         self.created_at = _now()
         self.closed_at = 0.0
+        # Set when the hub closed its own record without the owning agent
+        # confirming the kill. The process may still be running, so this is
+        # never proof of death and the label stays claimed.
+        self.forced_close = False
         self.exit_code = None
         self.screen = Screen(rows, cols, scrollback)
         self.ring = Ring(ring_bytes)
@@ -1000,11 +1004,12 @@ class Hub:
                 self.touch_machine(machine)
                 return existing
             for other in self.endpoints.values():
-                if other.closed_at:
+                if other.closed_at and not other.forced_close:
                     continue
                 if other.machine == machine and other.label == label:
                     raise HubError(HTTPStatus.CONFLICT, "duplicate_label",
-                                   "machine %s already has a live endpoint labelled %s"
+                                   "machine %s already has an endpoint labelled %s "
+                                   "whose worker is not known to have stopped"
                                    % (machine, label))
             endpoint = Endpoint(endpoint_id, machine, label, cwd, rows, cols,
                                 DEFAULT_RING_BYTES, DEFAULT_SCROLLBACK)
@@ -1455,21 +1460,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if tail == "" and method == "DELETE":
             self._require(CLASS_CONTROL, query)
             endpoint = hub.get(endpoint_id)
+            delivered = True
             try:
                 hub.submit_command(endpoint, "kill", {"signal": "TERM"})
             except HubError as exc:
                 if exc.code != "no_agent_ack":
                     raise
-                # An agent that never answers cannot be waited for, and a kill
-                # that leaves the endpoint live has killed nothing: the
-                # registration would go on refusing its own label as a
-                # duplicate for as long as the hub runs. The worker's own
-                # machine owns the process; this closes the hub's record of it.
+                # An agent that never answers cannot be waited for, so the hub
+                # stops carrying a record it can no longer steer. That is not
+                # proof the worker died: the answer says so, and the label
+                # stays claimed, because a label handed to a second worker
+                # while the first may still be running is the one outcome
+                # worse than a label nobody can reuse.
+                delivered = False
                 endpoint.mark_closed(None)
+                endpoint.forced_close = True
             self._json(HTTPStatus.OK, {
                 "ok": True,
                 "closed": endpoint.endpoint_id,
                 "machine": endpoint.machine,
+                "delivered": delivered,
             })
             return
 
@@ -1688,7 +1698,7 @@ WEB_UI = """<!DOCTYPE html>
 (function () {
   "use strict";
   var token = location.hash.slice(1);
-  var selected = null, source = null, decoder = null;
+  var selected = null, source = null, decoder = null, selectedClosed = false;
   var listEl = document.getElementById("list"), outEl = document.getElementById("out");
   var nameEl = document.getElementById("name"), metaEl = document.getElementById("meta");
   var lineEl = document.getElementById("line"), formEl = document.getElementById("form");
@@ -1762,7 +1772,8 @@ WEB_UI = """<!DOCTYPE html>
     selected = chosen;
     nameEl.textContent = ep.label;
     metaEl.textContent = ep.machine + (ep.closed_at ? " - closed" : "");
-    lineEl.disabled = !!ep.closed_at;
+    selectedClosed = !!ep.closed_at;
+    lineEl.disabled = selectedClosed;
     lineEl.placeholder = ep.closed_at ? "This worker has closed"
                                       : "Type a line for " + ep.label;
     outEl.textContent = "";
@@ -1815,7 +1826,7 @@ WEB_UI = """<!DOCTYPE html>
         outEl.textContent += decoder.decode(bytes, {stream: true});
         outEl.scrollTop = outEl.scrollHeight;
       }
-      if (record.closed) { lineEl.disabled = true; refresh(); }
+      if (record.closed) { selectedClosed = true; lineEl.disabled = true; refresh(); }
     };
     refresh();
   }
@@ -1837,8 +1848,11 @@ WEB_UI = """<!DOCTYPE html>
       outEl.scrollTop = outEl.scrollHeight;
     }).then(function () {
       if (selected !== chosen) { return; }
-      lineEl.disabled = false;
-      lineEl.focus();
+      // Whether the box is usable is the selected worker's business, not this
+      // request's: a send that lands after the worker closed must not reopen
+      // it under a placeholder saying it is gone.
+      lineEl.disabled = selectedClosed;
+      if (!selectedClosed) { lineEl.focus(); }
     });
   });
 

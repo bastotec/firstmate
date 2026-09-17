@@ -203,7 +203,7 @@ test_a_viewing_token_cannot_steer_or_close_a_worker() {
   # not let them type into a live terminal or kill the worker behind it, while
   # the operator's own credential still does both.
   start_hub steering
-  local endpoint
+  local endpoint out
   endpoint=$(start_agent box-a steerable "$CASE_DIR/state/steerable.status")
   view_only GET "/v1/tasks/$endpoint/capture?lines=5" >/dev/null
   assert_equals "$(api_code)" 200 "a viewing credential should still read the terminal"
@@ -232,8 +232,10 @@ test_a_viewing_token_cannot_steer_or_close_a_worker() {
   assert_equals "$(python3 "$ROOT/tests/assets/stream-hub-keepalive-refusal.py" \
     "${hostport%%:*}" "${hostport##*:}" "$endpoint" "$VIEW_ONLY_TOKEN" "$VIEW_TOKEN" 2>&1)" clean \
     "a refused POST must leave the connection usable for the next request"
-  view DELETE "/v1/tasks/$endpoint" >/dev/null
+  out=$(view DELETE "/v1/tasks/$endpoint")
   assert_equals "$(api_code)" 200 "an operating credential should close a worker"
+  assert_equals "$(printf '%s' "$out" | jq -r '.delivered')" true \
+    "a kill the owning agent took should be reported as delivered"
   pass "hub: steering needs the control class, and a viewing token holds none of it"
 }
 
@@ -532,17 +534,23 @@ test_a_kill_closes_an_endpoint_whose_agent_never_answers() {
     '{endpoint_id: $id, machine: "box-a", label: "abandoned", cwd: "/tmp"}')
   publish POST /v1/agent/endpoints "$payload" >/dev/null
   assert_equals "$(api_code)" 201 "the endpoint should register"
-  view DELETE "/v1/tasks/$endpoint" >/dev/null
+  out=$(view DELETE "/v1/tasks/$endpoint")
   assert_equals "$(api_code)" 200 "closing an endpoint with no agent behind it should answer"
+  # It says what it actually did: the record is closed, the worker is not known
+  # to have stopped.
+  assert_equals "$(printf '%s' "$out" | jq -r '.delivered')" false \
+    "a close the agent never acknowledged must not be reported as a delivered kill"
   out=$(view GET /v1/tasks)
   assert_equals "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
     '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
-    0 "the endpoint must be closed, not left live for the label to collide on"
-  # And the label is free again, which is the whole point of closing it.
+    0 "the endpoint must be closed rather than left steerable"
+  # And the label stays claimed, because that worker's process may still be
+  # running: two live workers under one name is worse than a stuck label.
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$(python3 -c 'import os; print(os.urandom(16).hex())')" \
     '{endpoint_id: $id, machine: "box-a", label: "abandoned", cwd: "/tmp"}')" >/dev/null
-  assert_equals "$(api_code)" 201 "the same label should register again once the endpoint is closed"
-  pass "hub: a kill closes an endpoint whose agent never answers"
+  assert_equals "$(api_code)" 409 \
+    "a label whose worker was never confirmed stopped must not be handed to a second endpoint"
+  pass "hub: a kill the agent never answers closes the record and says so"
 }
 
 test_no_terminal_content_is_persisted_to_disk() {
@@ -646,6 +654,12 @@ test_the_viewer_keeps_the_send_box_disabled_for_a_closed_worker() {
     || fail "the viewer harness failed: $state"
   assert_equals "$state" "send box disabled" \
     "a send that resolves after the operator picked a closed worker must not re-enable the box"
+  # Same contradiction from the other side: the worker the send was typed into
+  # is the one that closes, and the operator is still looking at it.
+  state=$(node "$ROOT/tests/assets/stream-viewer-harness.mjs" "$page" send-then-reselect) \
+    || fail "the viewer harness failed: $state"
+  assert_equals "$state" "send box disabled" \
+    "a send that resolves after its own worker closed must not re-enable the box"
   pass "hub: a resolved send never re-enables the box for a closed worker"
 }
 

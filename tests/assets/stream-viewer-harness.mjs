@@ -6,10 +6,14 @@
 // Usage: node stream-viewer-harness.mjs <viewer.html> frames <base64-frame>...
 //        node stream-viewer-harness.mjs <viewer.html> capture-refused
 //        node stream-viewer-harness.mjs <viewer.html> send-then-switch
+//        node stream-viewer-harness.mjs <viewer.html> send-then-reselect
 // "frames" prints what the viewer put on screen after those frames.
 // "capture-refused" answers the transcript fetch with a refusal and prints the
 // pane. "send-then-switch" leaves a send in flight, selects the closed second
-// worker, lets the send resolve, and prints whether the box is enabled.
+// worker, lets the send resolve, and prints whether the box is enabled;
+// "send-then-reselect" does the same while the worker that closes is the one
+// the send was typed into, which is the same contradiction reached from the
+// other side.
 import { readFileSync } from "node:fs";
 
 const html = readFileSync(process.argv[2], "utf8");
@@ -124,6 +128,21 @@ await settle();
 
 if (mode === "capture-refused") {
   process.stdout.write(out.textContent);
+  process.exit(0);
+}
+
+if (mode === "send-then-reselect") {
+  line.value = "echo hello";
+  form.listeners.submit({preventDefault: () => {}});
+  await settle();
+  // The worker the send went to closes, and the operator picks it again.
+  TASKS[0].closed_at = 1;
+  buttons[0].listeners.click();
+  await settle();
+  if (inputResolve) { inputResolve(); }
+  await settle();
+  await settle();
+  process.stdout.write(line.disabled ? "send box disabled" : "send box enabled");
   process.exit(0);
 }
 

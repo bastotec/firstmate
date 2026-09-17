@@ -8,7 +8,9 @@ before they are forwarded, which is how a hub that answers eventually but not
 promptly looks from a client's side. <stall-connection> narrows which ones are
 stalled, counting accepted connections from 1: "3" stalls only the third - a
 hub that is prompt until one particular call - and "3+" stalls the third and
-everything after it, a hub that goes slow and stays slow.
+everything after it, a hub that goes slow and stays slow. A delay of 0 drops
+the named connection instead of stalling it, which is how a hub that closes
+one connection outright looks from a client's side.
 """
 
 import itertools
@@ -49,6 +51,8 @@ class Handler(socketserver.BaseRequestHandler):
         if (not stall_connection
                 or index == stall_connection
                 or (stall_onwards and index > stall_connection)):
+            if delay <= 0:
+                return
             time.sleep(delay)
         try:
             upstream = socket.create_connection(target, timeout=30)

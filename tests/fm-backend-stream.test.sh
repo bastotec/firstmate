@@ -187,6 +187,28 @@ test_capture_is_bounded_by_the_requested_line_count() {
   pass "stream: capture returns only the requested tail through the dispatcher"
 }
 
+test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor() {
+  # The composer reads the cursor row and the screen out of one captured
+  # string. A blank screen is nothing but newlines, and a caller's command
+  # substitution eats every trailing one, so without framing that survives it
+  # the cursor digits arrive as the screen's only row and every verdict on a
+  # quiet endpoint is read off them.
+  start_case_hub composerframe
+  local target raw cursor screen
+  target=$(create_endpoint "fm-frame-$$")
+  raw=$(with_stream_env fm_backend_stream_composer_capture "$target") \
+    || fail "the composer capture should answer for a live endpoint"
+  cursor=${raw%%$'\n'*}
+  screen=${raw#*$'\n'}
+  screen=${screen#|}
+  case "$cursor" in
+    ''|*[!0-9]*) fail "the first line should be the cursor row, got '$cursor'" ;;
+  esac
+  assert_not_equals "$screen" "$cursor" \
+    "a blank screen must not read back as the cursor row"
+  pass "stream: the composer capture keeps a blank screen apart from the cursor row"
+}
+
 test_agent_state_reads_the_foreground_process_not_the_screen() {
   local target state
   start_case_hub agent-state
@@ -374,14 +396,14 @@ test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers() {
 
 test_a_create_that_times_out_leaves_nothing_behind() {
   # The half that matters most after a spawn is abandoned: the hub must not be
-  # left holding a live endpoint under that label. Nothing else can clear one -
-  # the agent is gone, and its registration would refuse every later attempt at
-  # the same task as a duplicate - so a failed create has to leave the fleet as
-  # it found it, and the operator's immediate retry has to work.
+  # left holding a live endpoint under that label. Only the agent knows the id
+  # it registered, so only the agent can close it - here the hub drops the one
+  # connection its first frame needs, which leaves the attempt refused with
+  # budget still on its clock to close what it registered.
   start_case_hub createtimeout --command-ack-secs 2
   local label out real_url target
   label="fm-slowhub-$$"
-  start_slow_stand_in 3
+  start_slow_stand_in_delay 0 3
   real_url=$URL
   URL=$SLOW_URL
   if out=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" 2>&1); then
@@ -401,6 +423,30 @@ test_a_create_that_times_out_leaves_nothing_behind() {
     *) fail "retrying the same task after a timed-out create should succeed, got '$target'" ;;
   esac
   pass "stream: a create that times out leaves no agent and no endpoint, and the retry succeeds"
+}
+
+test_a_failed_create_leaves_another_homes_endpoint_alone() {
+  # The machine name defaults to the hostname, so two homes on one box share
+  # it, and a task id can be spawned from either. A create that fails must
+  # never reach for an endpoint by machine and label: the one it would find is
+  # the OTHER home's running worker.
+  start_case_hub otherhome
+  local label endpoint payload out
+  label="fm-shared-$$"
+  # The other home's live endpoint, registered exactly as its agent would.
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  payload=$(jq -nc --arg id "$endpoint" --arg l "$label" \
+    '{endpoint_id: $id, machine: "box-test", label: $l, cwd: "/tmp"}')
+  out=$(with_stream_env fm_backend_stream_api POST /v1/agent/endpoints "$payload") \
+    || fail "the other home's endpoint should register: $out"
+  # This home now fails to create the same task: the hub refuses the duplicate
+  # label, so the agent abandons before it ever owns an endpoint.
+  out=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" 2>&1) \
+    && fail "a create colliding with a live endpoint should be refused, got '$out'"
+  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET /v1/tasks)" \
+    | jq -r --arg id "$endpoint" '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
+    1 "a failed create must leave the other home's live endpoint running"
+  pass "stream: a failed create never closes another home's endpoint under the same label"
 }
 
 test_a_hub_that_stays_slow_does_not_outlive_the_spawn() {
@@ -680,6 +726,7 @@ test_the_key_vocabulary_is_only_what_the_control_plane_permits() {
 test_create_yields_a_hub_bound_target_the_dispatcher_can_read
 test_send_reaches_the_endpoint_and_capture_reads_it_back
 test_capture_is_bounded_by_the_requested_line_count
+test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor
 test_agent_state_reads_the_foreground_process_not_the_screen
 test_agent_state_separates_missing_unreachable_and_partitioned
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
@@ -688,6 +735,7 @@ test_a_target_from_another_hub_is_refused
 test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error
 test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers
 test_a_create_that_times_out_leaves_nothing_behind
+test_a_failed_create_leaves_another_homes_endpoint_alone
 test_a_hub_that_stays_slow_does_not_outlive_the_spawn
 test_a_slow_but_answering_hub_still_spawns
 test_a_hung_process_probe_cannot_outlive_the_startup_budget

@@ -84,6 +84,13 @@ It lives only in each endpoint's bounded in-memory ring buffer, which exists so 
 The status return channel writes on the machine that owns the endpoint.
 A status line travels as a command to that endpoint's own agent, which appends it to the local `state/<id>.status`, so the record is written where it belongs and never crosses the network as a path.
 
+## Closing an endpoint whose agent does not answer
+
+`DELETE /v1/tasks/<id>` hands the kill to the endpoint's own agent and waits for it to acknowledge.
+The answer carries `delivered`: true when that agent took the kill, and false when it never answered and the hub closed only its own record.
+A `delivered: false` close is not proof the worker stopped - its process lives on the worker's machine, which the hub cannot reach - so `fm-spawn` and teardown report it as an unconfirmed stop rather than a successful one, and the endpoint's label stays claimed.
+A label nobody can reuse is recoverable; two live workers answering to one name is not.
+
 ## When the hub is down
 
 One hub means one blast radius, and it is worth being exact about its edges.

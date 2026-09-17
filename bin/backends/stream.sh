@@ -270,7 +270,7 @@ fm_backend_stream_machine() {
 # and never sent to the hub, which is what lets a worker on any machine report
 # into its own home's records.
 fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
-  local label=$1 cwd=$2 status_path=${3:-} tag machine ready endpoint token_file agent_log reason orphan
+  local label=$1 cwd=$2 status_path=${3:-} tag machine ready endpoint token_file agent_log reason
   tag=$(fm_backend_stream_hub_tag) || return 1
   machine=$(fm_backend_stream_machine) || return 1
   ready=$(mktemp "${TMPDIR:-/tmp}/fm-stream-ready.XXXXXX") || return 1
@@ -302,15 +302,10 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
   if [ ! -s "$ready" ]; then
     reason=$(tail -n 1 "$agent_log" 2>/dev/null)
     rm -f "$ready" "$token_file" "$agent_log"
-    # The attempt may have registered before it gave up, and a live endpoint
-    # nobody owns would refuse the next attempt at this same task as a
-    # duplicate label. Close it here, where its machine and label are still
-    # known; the hub closes its record even though the agent cannot answer.
-    orphan=$(fm_backend_stream_api GET /v1/tasks 2>/dev/null | jq -r \
-      --arg m "$machine" --arg l "$label" \
-      'first(.tasks[]? | select(.machine == $m and .label == $l and (.closed_at | not)) | .endpoint_id) // empty') \
-      || orphan=""
-    [ -n "$orphan" ] && fm_backend_stream_api DELETE "/v1/tasks/$orphan" >/dev/null 2>&1
+    # Nothing is closed from here. An attempt that registered before giving up
+    # closes its OWN endpoint id, which only the agent knows; matching by
+    # machine and label instead would eventually find a healthy worker another
+    # home registered under the same name and kill it.
     if [ -n "$reason" ]; then
       echo "error: the stream agent refused to start an endpoint for '$label': $reason" >&2
     else
@@ -452,12 +447,12 @@ fm_backend_stream_composer_capture() {  # <target> [expected-label] -> "<cursor-
     ''|*[!0-9]*) cursor=0 ;;
   esac
   screen=$(printf '%s' "$out" | jq -r '.screen // empty' 2>/dev/null)
-  # The cursor row and the screen are packed as "<cursor>\n<screen>". An
-  # all-blank screen renders as nothing but newlines, which a caller's command
-  # substitution strips entirely - so without a guaranteed separator the cursor
-  # digits would be read back as the screen's only row and every composer
-  # verdict on a blank endpoint would be taken from them.
-  printf '%s\n%s\n' "$cursor" "$screen"
+  # The cursor row and the screen are packed as "<cursor>\n|<screen>". The bar
+  # opens the screen half and is what survives: a caller reads this through a
+  # command substitution, which strips every trailing newline, so an all-blank
+  # screen would otherwise arrive as the cursor digits alone and each composer
+  # verdict on a blank endpoint would be read off them.
+  printf '%s\n|%s\n' "$cursor" "$screen"
 }
 
 # fm_backend_stream_composer_caps: static capability facts, not logic (see the
@@ -478,6 +473,7 @@ fm_backend_stream_composer_state() {  # <target> [expected-label] -> empty|pendi
   raw=$(fm_backend_stream_composer_capture "$1" "${2:-}") || { printf 'unknown'; return 0; }
   cursor=${raw%%$'\n'*}
   screen=${raw#*$'\n'}
+  screen=${screen#|}
   verdict=$(fm_composer_classify_screen "$(fm_backend_stream_composer_caps)" "$screen" "$cursor")
   [ "$verdict" != need-identity ] || verdict=unknown
   printf '%s' "$verdict"
@@ -575,14 +571,24 @@ fm_backend_stream_agent_state() {  # <target>
 }
 
 fm_backend_stream_kill() {  # <target> [unused] [expected-label]
-  local target=$1 expected=${3:-}
+  local target=$1 expected=${3:-} out
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || return 0
   if [ -n "$expected" ]; then
     # A mismatched label means the id names something other than this task, so
     # closing it would destroy a stranger's endpoint.
     fm_backend_stream_target_ready "$target" "$expected" || return 0
   fi
-  fm_backend_stream_api DELETE "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" >/dev/null 2>&1 || true
+  out=$(fm_backend_stream_api DELETE "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || return 0
+  # The hub answers whether the owning agent actually took the kill. A record
+  # it closed on its own says nothing about the worker's process, and reporting
+  # that as a stop would let a task be treated as gone while it still runs.
+  case "$(printf '%s' "$out" | jq -r '.delivered' 2>/dev/null)" in
+    false)
+      echo "error: the stream hub closed its record for $FM_BACKEND_STREAM_ENDPOINT," \
+           "but its agent never acknowledged the kill; the worker may still be running" >&2
+      return 1
+      ;;
+  esac
 }
 
 # fm_backend_stream_report_status: the status return channel (lifecycle point
