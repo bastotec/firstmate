@@ -278,7 +278,7 @@ args=()
 while IFS= read -r -d '' arg; do args+=("$arg"); done \
   < <(perl -MMIME::Base64=decode_base64 -e 'print decode_base64($ARGV[0])' "$4")
 printf '%s\t%s\n' "$remote_home" "${args[0]:-}" >> "$FM_TEST_LEDGER_CALL_LOG"
-if [ -f "$remote_home/state/slow-ledger-read" ]; then
+if [ "${args[0]:-}" = fm-remote-file.sh ] && [ -f "$remote_home/state/slow-ledger-read" ]; then
   active_marker="$FM_TEST_LEDGER_ACTIVE_DIR/collector-$$"
   : > "$active_marker"
   trap 'rm -f "$active_marker"' EXIT
@@ -304,11 +304,20 @@ case "${args[0]:-}" in
       cat "$remote_home/state/home-summary.json"
     fi
     ;;
+  fm-remote-secondmate-control.sh)
+    # The remote host's own agent verdict; absent means the probe gets no answer.
+    [ "${args[1]:-}" = state ] && [ -f "$remote_home/state/fake-agent-state" ] || exit 1
+    cat "$remote_home/state/fake-agent-state"
+    ;;
   *) exit 91 ;;
 esac
 SH
   chmod +x "$fb/fake-ssh"
   printf '%s\n' "$fb"
+}
+
+ledger_file_reads() {  # <call-log>
+  awk -F '\t' '$2 == "fm-remote-file.sh"' "$1" | wc -l | tr -d ' '
 }
 
 run_remote_ledger_bearings() {  # <parent-home> <fakebin> <epoch>
@@ -3145,7 +3154,7 @@ test_remote_ledgers_share_one_concurrent_budget_and_fall_back_to_cache() {
   : > "$parent/ledger-pids.log"
 
   json=$(run_remote_ledger_bearings "$parent" "$fakebin" 1100)
-  [ "$(wc -l < "$parent/ledger-calls.log" | tr -d ' ')" -eq 5 ] \
+  [ "$(ledger_file_reads "$parent/ledger-calls.log")" -eq 5 ] \
     || fail "a healthy snapshot did not issue exactly one remote file read per home"
   printf '%s' "$json" | jq -e '
     (.secondmates | length) == 5
@@ -3217,7 +3226,7 @@ EOF
     ([.secondmates[] | select(.id == "ledger-1" and .freshness == "cached" and .age_seconds == 100)] | length) == 1
       and ([.secondmates[] | select(.id != "ledger-1" and .freshness == "fresh")] | length) == 4
   ' >/dev/null || fail "a multi-document live ledger bypassed the valid cache: $json"
-  [ "$(wc -l < "$parent/ledger-calls.log" | tr -d ' ')" -eq 5 ] \
+  [ "$(ledger_file_reads "$parent/ledger-calls.log")" -eq 5 ] \
     || fail "rejecting a multi-document live ledger added remote reads"
   mv "$duplicate_base" "$TMP_ROOT/remote-ledger-home-1/state/home-summary.json"
 
@@ -3228,7 +3237,7 @@ EOF
     ([.secondmates[] | select(.id == "ledger-1" and .freshness == "cached")] | length) == 1
       and ([.secondmates[] | select(.id != "ledger-1" and .freshness == "fresh")] | length) == 4
   ' >/dev/null || fail "an unbounded primary ledger stream consumed the shared collector budget: $json"
-  [ "$(wc -l < "$parent/ledger-calls.log" | tr -d ' ')" -eq 5 ] \
+  [ "$(ledger_file_reads "$parent/ledger-calls.log")" -eq 5 ] \
     || fail "bounding one faulty primary ledger added remote reads"
   rm -f "$TMP_ROOT/remote-ledger-home-1/state/unbounded-ledger-read"
 
@@ -3278,7 +3287,7 @@ EOF
         and .age_seconds == 1000 and .provenance == "structured-home-cache")] | length) == 1
       and ([.omitted[] | select(.surface == "secondmate ledger-1 served from cached home ledger")] | length) == 1
   ' >/dev/null || fail "one slow home prevented four fresh rows or hid its cache disclosure: $json"
-  [ "$(wc -l < "$parent/ledger-calls.log" | tr -d ' ')" -eq 5 ] \
+  [ "$(ledger_file_reads "$parent/ledger-calls.log")" -eq 5 ] \
     || fail "the mixed-speed snapshot made more than one remote read per ledger home"
   pass "remote ledgers collect concurrently under one budget, reuse aged cache, and cancel wedged collectors"
 }
@@ -3301,11 +3310,214 @@ test_a_remote_home_without_any_ledger_is_explicitly_unreadable_without_remote_co
       and (.secondmates[0].reason | contains("home ledger is missing, unreadable, or invalid"))
       and (.omitted | any(.surface == "secondmate home(s) with unreadable structured state: 1"))
   ' >/dev/null || fail "a no-ledger remote home was not explicitly disclosed as unreadable: $json"
-  [ "$(wc -l < "$parent/ledger-calls.log" | tr -d ' ')" -eq 1 ] \
+  [ "$(ledger_file_reads "$parent/ledger-calls.log")" -eq 1 ] \
     || fail "a no-ledger remote home issued more than its single ledger read"
-  [ "$(awk -F '\t' 'NR == 1 { print $2 }' "$parent/ledger-calls.log")" = "fm-remote-file.sh" ] \
+  [ -z "$(awk -F '\t' '$2 != "fm-remote-file.sh" && $2 != "fm-remote-secondmate-control.sh"' "$parent/ledger-calls.log")" ] \
     || fail "a no-ledger remote home triggered remote summary computation: $(cat "$parent/ledger-calls.log")"
   pass "a missing remote ledger stays explicitly unreadable without remote summary computation"
+}
+
+# A tmux double whose process answers are fixed per window name: fm-live-* panes
+# run a verified harness, other panes hold only a shell, and the session
+# inventory lists only the windows named in FAKE_TMUX_WINDOWS.
+make_liveness_tmux() {  # <fakebin>
+  cat > "$1/tmux" <<'SH'
+#!/usr/bin/env bash
+target=
+prev=
+for arg in "$@"; do
+  [ "$prev" = -t ] && target=$arg
+  prev=$arg
+done
+window=${target#*:}
+listed() {
+  case " ${FAKE_TMUX_WINDOWS:-} " in *" $window "*) return 0 ;; esac
+  return 1
+}
+case "${1:-}" in
+  list-windows)
+    for w in ${FAKE_TMUX_WINDOWS:-}; do printf '%s\n' "$w"; done
+    ;;
+  display-message)
+    listed || exit 1
+    case "$*" in
+      *pane_current_command*)
+        case "$window" in fm-live-*) printf 'claude\n' ;; *) printf 'zsh\n' ;; esac
+        ;;
+      *pane_tty*) : ;;
+      *) printf '%%1\n' ;;
+    esac
+    ;;
+  capture-pane) printf 'all quiet\n> \n' ;;
+esac
+exit 0
+SH
+  chmod +x "$1/tmux"
+}
+
+local_where() {
+  case "$(uname -s)" in Darwin) printf 'this Mac\n' ;; *) printf 'this machine\n' ;; esac
+}
+
+test_running_lists_only_verified_live_local_agents() {
+  local home mate fakebin json toon where id win
+  home=$(make_home running-local)
+  mate="$TMP_ROOT/running-local-mate"
+  mkdir -p "$home/projects/wt" "$mate/data" "$mate/state" "$mate/config" "$mate/projects/wt" "$mate/bin"
+  printf '# Firstmate fixture\n' > "$mate/AGENTS.md"
+  printf 'helper\n' > "$mate/.fm-secondmate-home"
+  printf -- '- helper - fixture domain (home: %s; scope: fixture work; projects: firstmate; added 2026-07-11)\n' \
+    "$mate" > "$home/data/secondmates.md"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] live-ship - Ship the live thing (repo: firstmate) (kind: ship) (since 2026-07-11)
+- [ ] idle-ship - Ship the shell-only thing (repo: firstmate) (kind: ship) (since 2026-07-11)
+- [ ] gone-ship - Ship the closed thing (repo: firstmate) (kind: ship) (since 2026-07-11)
+
+## Queued
+
+## Done
+EOF
+  for id in live-ship idle-ship gone-ship; do
+    case "$id" in live-ship) win=fm-live-ship ;; idle-ship) win=fm-idle-ship ;; *) win=fm-gone-ship ;; esac
+    fm_write_meta "$home/state/$id.meta" "window=fleet:$win" "worktree=$home/projects/wt" \
+      "project=firstmate" "harness=claude" "kind=ship" "mode=no-mistakes"
+    record_claude_state "$home/state" "$id" busy
+  done
+  fm_write_meta "$home/state/helper.meta" "window=fleet:fm-live-helper" "worktree=$mate" \
+    "project=$mate" "harness=claude" "kind=secondmate" "mode=secondmate" "home=$mate" "projects=firstmate"
+  cat > "$mate/data/backlog.md" <<'EOF'
+## In flight
+- [ ] child-live - Child live work (repo: firstmate) (kind: ship) (since 2026-07-11)
+- [ ] child-idle - Child shell-only work (repo: firstmate) (kind: ship) (since 2026-07-11)
+
+## Queued
+
+## Done
+EOF
+  fm_write_meta "$mate/state/child-live.meta" "window=fleet:fm-live-child" "worktree=$mate/projects/wt" \
+    "project=firstmate" "harness=claude" "kind=ship" "mode=no-mistakes"
+  fm_write_meta "$mate/state/child-idle.meta" "window=fleet:fm-idle-child" "worktree=$mate/projects/wt" \
+    "project=firstmate" "harness=claude" "kind=ship" "mode=no-mistakes"
+  record_claude_state "$mate/state" child-live busy
+  record_claude_state "$mate/state" child-idle busy
+  fakebin=$(make_fakebin "$home")
+  make_liveness_tmux "$fakebin"
+  where=$(local_where)
+  export FAKE_TMUX_WINDOWS="fm-live-ship fm-idle-ship fm-live-helper fm-live-child fm-idle-child"
+  # The local ledger is generated at this epoch by refresh_local_secondmate_ledgers.
+  export FM_SNAPSHOT_NOW_EPOCH=1783792800
+
+  json=$(run "$home" "$fakebin" --json) || fail "bearings failed on the liveness fixture"
+  printf '%s' "$json" | jq -e --arg where "$where" '
+    ([.running[].id] | sort) == (["helper", "helper/child-live", "live-ship"] | sort)
+      and any(.running[]; .id == "live-ship" and .kind == "ship" and .parent == null
+        and .where == $where and .name == "Ship the live thing" and .state == "working")
+      and any(.running[]; .id == "helper" and .kind == "secondmate" and .parent == null
+        and .where == $where and .name == "helper" and .state == "active_child_work")
+      and any(.running[]; .id == "helper/child-live" and .parent == "helper"
+        and .where == $where and .name == "Child live work")
+      and (.omitted | all(.surface | startswith("agents left out of running") | not))
+  ' >/dev/null || fail "running did not list exactly the verified live local agents with where they run: $json"
+  printf '%s' "$json" | jq -e '
+    (.in_flight | any(.id == "idle-ship")) and (.in_flight | any(.id == "gone-ship"))
+  ' >/dev/null || fail "running liveness changed the existing Underway inventory: $json"
+
+  toon=$(run "$home" "$fakebin") || fail "bearings TOON failed on the liveness fixture"
+  printf '%s\n' "$toon" | grep -q '^running\[3\]{id,kind,parent,where,name,state,doing,freshness}:' \
+    || fail "TOON did not carry the running table: $toon"
+
+  # A local ledger older than 2 x FM_HOME_SUMMARY_INTERVAL no longer vouches
+  # for its workers; the mate itself is still probed directly.
+  json=$(FM_SNAPSHOT_NOW_EPOCH=1783793401 run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.running[].id] | sort) == ["helper", "live-ship"]
+      and (.omitted | any(.surface == "agents left out of running because their process could not be confirmed: 2"))
+  ' >/dev/null || fail "a stale local ledger still marked its workers running: $json"
+  json=$(FM_SNAPSHOT_NOW_EPOCH=1783793401 FM_HOME_SUMMARY_INTERVAL=0 run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '[.running[].id] | sort == ["helper", "live-ship"]' >/dev/null \
+    || fail "an invalid FM_HOME_SUMMARY_INTERVAL did not fall back to 300: $json"
+  json=$(FM_SNAPSHOT_NOW_EPOCH=1783793401 FM_HOME_SUMMARY_INTERVAL=301 run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.running[].id] | sort) == ["helper", "helper/child-live", "live-ship"]
+      and (.omitted | all(.surface | startswith("agents left out of running") | not))
+  ' >/dev/null || fail "a ledger within 2 x FM_HOME_SUMMARY_INTERVAL was not treated as current: $json"
+  # The ledger bounds its endpoint list; workers past the bound are disclosed
+  # and counted as unconfirmed instead of silently missing from running.
+  json=$(FM_SNAPSHOT_SECONDMATE_CHILDREN=1 run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.running[] | select(.parent == "helper")] | length) == 0
+      and (.omitted | any(.surface == "agents left out of running because their process could not be confirmed: 1"))
+      and (.omitted | any(.surface == "secondmate helper workers not checked for running by snapshot bound: 1"
+        and .reveal == "raise FM_SNAPSHOT_SECONDMATE_CHILDREN"))
+  ' >/dev/null || fail "workers past the ledger endpoint bound were dropped from running without disclosure: $json"
+  unset FAKE_TMUX_WINDOWS FM_SNAPSHOT_NOW_EPOCH
+  pass "running lists only verified live local agents, children only from a current ledger, with where they run"
+}
+
+test_running_probes_remote_second_mates_on_their_own_host() {
+  local parent fakebin json home1 home2 tmp
+  parent=$(make_home running-remote)
+  make_remote_ledger_fleet "$parent" 2
+  fakebin=$(make_remote_ledger_ssh "$parent/remote-ssh")
+  home1=$(cd "$TMP_ROOT/remote-ledger-home-1" && pwd -P)
+  home2=$(cd "$TMP_ROOT/remote-ledger-home-2" && pwd -P)
+  rm -f "$home1/state/slow-ledger-read" "$home2/state/slow-ledger-read" "$home2/state/fake-agent-state"
+  write_remote_home_summary "$home1" 1000
+  write_remote_home_summary "$home2" 1000
+  printf 'alive\n' > "$home1/state/fake-agent-state"
+  # Home 1 publishes one verified live worker and one endpoint from an older
+  # ledger without a process verdict.
+  tmp="$home1/state/home-summary.json.tmp"
+  jq '.active_children = [{id:"remote-child",kind:"ship",state:"working",name:"Remote child work",doing:"building",repo:"firstmate"}]
+      | .endpoints = [
+          {id:"remote-child",state:"working",source:"pane",endpoint:{target:"x:fm-remote-child",exists:true,agent_alive:"not_checked",agent_state:"alive",status:"unknown"}},
+          {id:"old-child",state:"working",source:"pane",endpoint:{target:"x:fm-old-child",exists:true,agent_alive:"not_checked",status:"unknown"}}]' \
+    "$home1/state/home-summary.json" > "$tmp" && mv "$tmp" "$home1/state/home-summary.json"
+  mkdir -p "$parent/ledger-active"
+  : > "$parent/ledger-calls.log"
+  : > "$parent/ledger-pids.log"
+
+  json=$(run_remote_ledger_bearings "$parent" "$fakebin" 1100) || fail "bearings failed on remote liveness"
+  printf '%s' "$json" | jq -e '
+    ([.running[].id] | sort) == ["ledger-1", "ledger-1/remote-child"]
+      and any(.running[]; .id == "ledger-1" and .kind == "secondmate" and .where == "host-1"
+        and .freshness == "fresh")
+      and any(.running[]; .id == "ledger-1/remote-child" and .parent == "ledger-1"
+        and .where == "host-1" and .name == "Remote child work" and .doing == "building")
+      and (.omitted | any(.surface == "agents left out of running because their process could not be confirmed: 2"))
+  ' >/dev/null || fail "remote liveness did not come from the remote host verdict and ledger: $json"
+  [ "$(awk -F '\t' '$2 == "fm-remote-secondmate-control.sh"' "$parent/ledger-calls.log" | wc -l | tr -d ' ')" -eq 2 ] \
+    || fail "each remote home was not probed exactly once: $(cat "$parent/ledger-calls.log")"
+
+  json=$(run_remote_ledger_bearings "$parent" "$fakebin" 1601)
+  printf '%s' "$json" | jq -e '
+    [.running[].id] == ["ledger-1"]
+      and (.omitted | any(.surface == "agents left out of running because their process could not be confirmed: 3"))
+  ' >/dev/null || fail "a stale remote ledger still marked its workers running: $json"
+  json=$(FM_HOME_SUMMARY_INTERVAL=301 run_remote_ledger_bearings "$parent" "$fakebin" 1601)
+  printf '%s' "$json" | jq -e '([.running[].id] | sort) == ["ledger-1", "ledger-1/remote-child"]' >/dev/null \
+    || fail "a remote ledger within 2 x FM_HOME_SUMMARY_INTERVAL was not treated as current: $json"
+
+  printf 'dead\n' > "$home1/state/fake-agent-state"
+  json=$(run_remote_ledger_bearings "$parent" "$fakebin" 1100)
+  printf '%s' "$json" | jq -e '
+    [.running[].id] == ["ledger-1/remote-child"]
+      and (.secondmates | length) == 2
+  ' >/dev/null || fail "a remote mate whose host reports it dead stayed in running: $json"
+
+  : > "$parent/ledger-calls.log"
+  json=$(FM_HOME="$parent" FM_ROOT_OVERRIDE="$ROOT" FM_SSH_BIN="$fakebin/fake-ssh" \
+    FM_TEST_LEDGER_CALL_LOG="$parent/ledger-calls.log" \
+    FM_SNAPSHOT_CACHE_DIR="$parent/state/summary-cache" FM_SNAPSHOT_NOW_EPOCH=1100 \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$json" | jq -e '
+    all(.secondmate_current.records[]; .agent_state == "not_checked")
+      and all(.tasks[]; .endpoint.agent_state == "not_checked")
+  ' >/dev/null || fail "the canonical snapshot probed remote agents without the opt-in: $json"
+  [ -z "$(awk -F '\t' '$2 == "fm-remote-secondmate-control.sh"' "$parent/ledger-calls.log")" ] \
+    || fail "the canonical default issued a remote agent probe"
+  pass "running asks each remote host for its second mate's process and keeps unconfirmed agents out"
 }
 
 test_task_teardown_during_metadata_capture_does_not_abort_snapshot
@@ -3367,3 +3579,5 @@ test_revealed_deferred_holds_show_their_deferral_reason
 test_pr_repository_cap_and_expansion
 test_per_repository_pr_cap_is_disclosed
 test_projection_and_toon_fail_closed
+test_running_lists_only_verified_live_local_agents
+test_running_probes_remote_second_mates_on_their_own_host

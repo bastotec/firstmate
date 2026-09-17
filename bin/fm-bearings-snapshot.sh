@@ -31,6 +31,14 @@
 # captain_decision because it has an open
 # captain hold still contributes each working child as its own Underway row;
 # the home row on secondmates[] keeps the decision and gate classification.
+# Running (running) lists only agents whose process is verified alive - main
+# workers by their local endpoint.agent_state, second mates by their record's
+# agent_state (remote homes probed on their own host, requested here through
+# FM_SNAPSHOT_REMOTE_AGENT_STATE=1), and second-mate workers by the
+# endpoint.agent_state in their home ledger - each with where it runs. A
+# second-mate worker counts only while its home ledger is current: generated at
+# most 2 x FM_HOME_SUMMARY_INTERVAL seconds ago, whatever the ledger source. An
+# agent whose process could not be confirmed stays out and is counted in omitted[].
 # Captain-hold placement follows the canonical snapshot's hold_bucket and
 # nothing else; this wrapper never inspects hold reason or body prose. The
 # buckets are total and mutually exclusive, so every captain hold appears in
@@ -114,6 +122,8 @@ FM_BEARINGS_PR_REPOS=${FM_BEARINGS_PR_REPOS:-10}
 FM_BEARINGS_PR_LIMIT=${FM_BEARINGS_PR_LIMIT:-20}
 FM_BEARINGS_PR_TIMEOUT=${FM_BEARINGS_PR_TIMEOUT:-20}
 case "$FM_BEARINGS_PR_TIMEOUT" in ''|*[!0-9]*|0) FM_BEARINGS_PR_TIMEOUT=20 ;; esac
+FM_HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
+case "$FM_HOME_SUMMARY_INTERVAL" in ''|*[!0-9]*|0) FM_HOME_SUMMARY_INTERVAL=300 ;; esac
 validate_bound() {  # <name> <value>
   case "$2" in ''|*[!0-9]*|0) echo "fm-bearings-snapshot: $1 must be a positive integer" >&2; exit 2 ;; esac
 }
@@ -144,6 +154,7 @@ remote homes under one shared snapshot budget and may refresh the parent-side ca
 --include-prs additionally performs live GitHub discovery and checks.
 
 Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,doing},
+  running{id,kind,parent,where,name,state,doing,freshness},
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
   decisions_open{id,key,verb,summary,owner}, landed{id,what,artifact,owner},
@@ -161,6 +172,12 @@ For every registered secondmate, readable structured facts from its own home are
   Parent events and bounded terminal reads are labeled fallback or contradiction
   evidence and never become current work. The provenance and freshness fields
   distinguish live and cached ledgers; a home without either is explicitly unreadable.
+running lists only agents whose process is verified alive: main-home workers,
+  second mates (remote ones probed on their own host), and second-mate workers
+  from their home ledger while it is current (generated at most
+  2 x FM_HOME_SUMMARY_INTERVAL seconds ago). where is "this Mac" or "this machine" for local agents
+  and the registered SSH host for a remote home's agents; agents whose liveness
+  could not be confirmed stay out and are counted in omitted[].
 Opt-in surfaces: --fields bodies|paths|actions|endpoints, --all-in-flight,
   --all-decisions (all open decisions and captain holds in the bounded snapshot),
   --all-secondmates, --all-landed, --all-reports, --all-queued, --all-recorded-prs,
@@ -231,13 +248,17 @@ fi
 NOW=${FM_BEARINGS_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 if [ "$ALL_LANDED" = 1 ] || [ "$ALL_SECONDMATES" = 1 ]; then
   if [ "$ALL_LANDED" = 1 ]; then
-    SNAP=$(FM_SNAPSHOT_NOW="$NOW" FM_SNAPSHOT_SECONDMATES=0 FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME=0 "$FLEET" --json) || exit $?
+    SNAP=$(FM_SNAPSHOT_REMOTE_AGENT_STATE=1 FM_SNAPSHOT_NOW="$NOW" FM_SNAPSHOT_SECONDMATES=0 FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME=0 "$FLEET" --json) || exit $?
   else
-    SNAP=$(FM_SNAPSHOT_NOW="$NOW" FM_SNAPSHOT_SECONDMATES=0 "$FLEET" --json) || exit $?
+    SNAP=$(FM_SNAPSHOT_REMOTE_AGENT_STATE=1 FM_SNAPSHOT_NOW="$NOW" FM_SNAPSHOT_SECONDMATES=0 "$FLEET" --json) || exit $?
   fi
 else
-  SNAP=$(FM_SNAPSHOT_NOW="$NOW" "$FLEET" --json) || exit $?
+  SNAP=$(FM_SNAPSHOT_REMOTE_AGENT_STATE=1 FM_SNAPSHOT_NOW="$NOW" "$FLEET" --json) || exit $?
 fi
+case "$(uname -s 2>/dev/null)" in
+  Darwin) LOCAL_WHERE='this Mac' ;;
+  *) LOCAL_WHERE='this machine' ;;
+esac
 HOME_LABEL=$(printf '%s' "$SNAP" | jq -er '.fm_home | strings | split("/") | (.[-2:] | join("/"))') \
   || { echo "fm-bearings-snapshot: invalid canonical snapshot" >&2; exit 1; }
 
@@ -347,6 +368,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson landed_n "$FM_BEARINGS_LANDED" \
   --argjson landed_per_home_n "$FM_BEARINGS_LANDED_PER_HOME" \
   --argjson in_flight_n "$FM_BEARINGS_IN_FLIGHT" \
+  --arg summary_interval "$FM_HOME_SUMMARY_INTERVAL" \
+  --arg local_where "$LOCAL_WHERE" \
   --argjson decisions_n "$FM_BEARINGS_DECISIONS" \
   --argjson secondmates_n "$FM_BEARINGS_SECONDMATES" \
   --argjson gates_n "$FM_BEARINGS_GATES" \
@@ -376,6 +399,21 @@ MODEL=$(printf '%s' "$SNAP" | jq \
       elif length > $n then (if $n == 1 then "…" else (.[:($n - 1)] + "…") end)
       else . end;
   def live_captain_call: .hold_bucket == "live";
+  def mate_doing:
+    (if .bearings_state == "active_child_work" then
+       ([.active_children[] | .id + ": " + (.doing // .state)] | join("; "))
+     elif .bearings_state == "captain_decision" then
+       ([.bearings_captain_holds[] | .summary] | join("; "))
+     elif .bearings_state == "externally_held" then
+       ([.bearings_holds[] | .id + ": " + (.reason // "held")] | join("; "))
+     elif .bearings_state == "no_active_work" then "No active child work"
+     else (.current.reason // "Current home state unavailable") end) | trunc(120);
+  def nonblank_or($fallback):
+    if (type == "string" and test("[^[:space:]]")) then . else $fallback end;
+  def confirmed_agent_state: . == "alive" or . == "dead" or . == "missing";
+  def ledger_current:
+    (.freshness.age_seconds | type) == "number"
+      and .freshness.age_seconds <= (($summary_interval | tonumber) * 2);
   def projected_deferred_hold:
     .hold_bucket != null and .hold_bucket != "live";
   def bounded_blocker_note($n):
@@ -475,14 +513,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
        else empty end ]
      + [ $secondmate_views[]
        | {id,state:.bearings_state,
-          doing:((if .bearings_state == "active_child_work" then
-                    ([.active_children[] | .id + ": " + (.doing // .state)] | join("; "))
-                  elif .bearings_state == "captain_decision" then
-                    ([.bearings_captain_holds[] | .summary] | join("; "))
-                  elif .bearings_state == "externally_held" then
-                    ([.bearings_holds[] | .id + ": " + (.reason // "held")] | join("; "))
-                  elif .bearings_state == "no_active_work" then "No active child work"
-                  else (.current.reason // "Current home state unavailable") end) | trunc(120)),
+          doing:mate_doing,
           provenance:(if .provenance.summary_source == "remote-ledger-cache" then "structured-home-cache"
                       else .provenance.selected end),freshness:.freshness.status,
           age_seconds:.freshness.age_seconds,contradiction:(.contradiction // false),
@@ -509,6 +540,45 @@ MODEL=$(printf '%s' "$SNAP" | jq \
                   | (if (($name | type) == "string" and ($name | test("[^[:space:]]")))
                      then $name else ($m.id + "/" + .id) end) | trunc(70)),
             doing:((.doing // .state) | trunc(90))} ]) as $in_flight_all
+  | ([ .tasks[]
+       | select(.kind != "secondmate" and .endpoint.agent_state == "alive")
+       | . as $t
+       | {id, kind, parent:null, where:$local_where,
+          name:(($t.backlog.title // "") | nonblank_or($t.id) | trunc(70)),
+          state:.current_state.state,
+          doing:(($t.current_state.detail // "") | nonblank_or($t.hints.last_event_text // "") | trunc(90)),
+          freshness:"fresh"} ]
+     + [ $secondmate_views[] as $m
+         | ($m.host // $local_where) as $where
+         | (if $m.agent_state == "alive" then
+              {id:$m.id, kind:"secondmate", parent:null, where:$where, name:$m.id,
+               state:$m.bearings_state, doing:($m | mate_doing),
+               freshness:($m.freshness.status // "unknown")}
+            else empty end),
+           (if ($m | ledger_current) then $m.endpoints[]? else empty end
+            | select(.endpoint.agent_state == "alive")
+            | . as $e
+            | ([$m.active_children[]? | select(.id == $e.id)][0] // {}) as $c
+            | {id:($m.id + "/" + $e.id), kind:($c.kind // "worker"), parent:$m.id, where:$where,
+               name:(($c.name // "") | nonblank_or($m.id + "/" + $e.id) | trunc(70)),
+               state:($c.state // $e.state // "unknown"),
+               doing:(($c.doing // $e.state // "") | tostring | trunc(90)),
+               freshness:($m.freshness.status // "unknown")}) ]) as $running_all
+  | ([ .tasks[]
+       | select(.kind != "secondmate" and .endpoint.target != null
+                and .endpoint.agent_state != "not_checked"
+                and (.endpoint.agent_state | confirmed_agent_state | not)) ]
+     + [ $secondmate_views[]
+         | select(.agent_state != null and .agent_state != "not_checked"
+                  and (.agent_state | confirmed_agent_state | not)) ]
+     + [ $secondmate_views[] as $m | $m.endpoints[]?
+         | select(if ($m | ledger_current) then
+                    .endpoint.exists == true
+                      and ((.endpoint.agent_state // "not_checked") | confirmed_agent_state | not)
+                  else .endpoint.exists == true or .endpoint.agent_state == "alive" end) ]
+     | length
+     + ([ $secondmate_views[] | (.omitted // [])[] | select(.surface == "endpoints") | .count ] | add // 0)
+    ) as $running_unconfirmed
   | ([ .backlog.records[]
          | . as $record
          | select(.structured and .hold_bucket != null)
@@ -595,6 +665,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
       generated: $now,
       prs: $prs,
       in_flight: (if $all_in_flight == 1 then $in_flight_all else $in_flight_all[:$in_flight_n] end),
+      running: $running_all,
       secondmates: (if $all_secondmates == 1 then $secondmates_all else $secondmates_all[:$secondmates_n] end),
       secondmate_reconcile: [ (.secondmate_current.records // [])[]
         | select(.reconcile_inventory != null)
@@ -630,10 +701,14 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | if $n > 0 then {surface:("main in-flight backlog item(s) have no child metadata: \($n)"), reveal:"inspect main data/backlog.md In flight vs state/*.meta"} else empty end),
         ((($snap.main_inventory.unstructured_current_count // 0)) as $n
          | if $n > 0 then {surface:("main unstructured current backlog row(s): \($n)"), reveal:"inspect main data/backlog.md In flight and Queued free-form rows"} else empty end),
+        (if $running_unconfirmed > 0 then {surface:("agents left out of running because their process could not be confirmed: \($running_unconfirmed)"), reveal:"--fields endpoints"} else empty end),
         (if $all_in_flight == 0 and ($in_flight_all | length) > $in_flight_n then {surface:("in_flight showing \($in_flight_n) of \($in_flight_all | length)"), reveal:"--all-in-flight"} else empty end),
         (($snap.secondmate_current.records // [])[] as $m
          | ([($m.omitted // [])[] | select(.surface == "active_children") | .count] | add // 0) as $n
          | if $n > 0 then {surface:("secondmate " + $m.id + " active children omitted by snapshot bound: \($n)"), reveal:"raise FM_SNAPSHOT_SECONDMATE_CHILDREN"} else empty end),
+        (($snap.secondmate_current.records // [])[] as $m
+         | ([($m.omitted // [])[] | select(.surface == "endpoints") | .count] | add // 0) as $n
+         | if $n > 0 then {surface:("secondmate " + $m.id + " workers not checked for running by snapshot bound: \($n)"), reveal:"raise FM_SNAPSHOT_SECONDMATE_CHILDREN"} else empty end),
         (if $all_secondmates == 0 and ($secondmates_all | length) > $secondmates_n then {surface:("secondmates showing \($secondmates_n) of \($secondmates_all | length)"), reveal:"--all-secondmates"} else empty end),
         (if (($snap.secondmate_current.truncated // 0) > 0) then {surface:("registered secondmates omitted by snapshot bound: \($snap.secondmate_current.truncated)"), reveal:"raise FM_SNAPSHOT_SECONDMATES"} else empty end),
         (if $snap.secondmate_current.registry.input_truncated == true then {surface:"secondmate registry input truncated by bounded read", reveal:"raise FM_SNAPSHOT_REGISTRY_LINES or FM_SNAPSHOT_REGISTRY_BYTES"} else empty end),
