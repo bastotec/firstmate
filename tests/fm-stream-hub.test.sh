@@ -35,6 +35,7 @@ URL=""
 HUB_PID=""
 HUB_READY=""
 STUB_JOURNAL=""
+AGENT_PID=""
 # Labels carry the pid of THIS run. An interrupted run leaves its agents
 # behind - they outlive the hub they published to - and a fixed label would
 # then let agent_pid_for resolve one of those leftovers, silencing a dead
@@ -1399,74 +1400,112 @@ EOF
   pass "hub: an agent the hub cannot take back paces its attempts instead of hammering it"
 }
 
-test_a_hub_that_refuses_the_agent_is_terminal_and_says_so() {
-  # Not every refusal is a hub to wait for. A credential it will not take and a
-  # protocol it no longer speaks are settled answers, and retrying either is a
-  # poll that never ends and that nobody ever sees - this agent's own output
-  # went to os.devnull the moment it registered. So it stops, and it says so on
-  # the one channel a hub cannot break: the task's own status record, written
-  # here on the worker's machine.
-  local status log pid waited=0 reported=""
-  for mode in credential protocol; do
-    case $mode in
-      credential)
-        start_stub "reregister-refused-$mode" --frames-ok-first 1 \
-          --frames-error unauthenticated:401
-        ;;
-      protocol)
-        # Protocol 2 for the startup check, and a hub that speaks something
-        # else by the time the agent asks to come back - a hub upgraded while
-        # it was down, which is exactly when this happens.
-        start_stub "reregister-refused-$mode" --frames-ok-first 1 \
-          --protocol 2 --protocol-after 99
-        ;;
-    esac
-    status="$CASE_DIR/state/refused.status"
-    log="$CASE_DIR/agent.log"
-    python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
-      --machine box-a --label "refused-$mode-$RUN" --cwd "$CASE_DIR/cwd" \
-      --status-path "$status" --ready-file "$CASE_DIR/refused.ready" \
-      --state-interval 0.5 --poll-secs 3 > "$log" 2>&1 &
-    pid=$!
-    disown "$pid" 2>/dev/null || true
-    fm_test_track_helper_pid "$pid"
-    waited=0
-    while [ "$waited" -lt 150 ]; do
-      [ -s "$CASE_DIR/refused.ready" ] && break
-      sleep 0.1
-      waited=$((waited + 1))
-    done
-    [ -s "$CASE_DIR/refused.ready" ] || fail "the agent never registered against the stand-in: $(cat "$log")"
-    waited=0
-    reported=""
-    while [ "$waited" -lt 200 ]; do
-      reported=$(cat "$status" 2>/dev/null || true)
-      case $reported in *blocked:*) break ;; esac
-      sleep 0.1
-      waited=$((waited + 1))
-    done
-    assert_contains "$reported" "blocked: this worker cannot reach the fleet hub" \
-      "a $mode refusal should be reported where supervision reads it, not into a silenced stderr"
-    assert_equals "$(printf '%s\n' "$reported" | grep -c '^blocked:' || true)" 1 \
-      "the refusal should be reported once, not once per dropped frame"
-    # Terminal means terminal, and it is the whole conversation that ends, not
-    # just the registrations: a refused agent stops publishing and stops asking
-    # for commands too. Measured after the report, so a refusal discovered late
-    # cannot pass this by not having got round to asking yet.
-    local before after
-    before=$(hub_requests)
-    sleep 5
-    after=$(hub_requests)
-    assert_equals "$after" "$before" \
-      "a $mode refusal must end this agent's calls rather than become a poll against a hub that keeps saying no"
-    assert_equals "$(registrations | grep -c . || true)" 0 \
-      "a $mode refusal is not something to re-register through"
-    # And the worker is left exactly where it was, because a refused agent says
-    # nothing at all about the work its worker is in the middle of.
-    kill -0 "$pid" 2>/dev/null || fail "a refused agent should stand down, not exit"
-    [ -n "$(pgrep -P "$pid" 2>/dev/null)" ] || fail "a refused agent must keep its worker running"
+# hub_quiet - wait until the agent has stopped calling the stand-in, or give up
+# waiting. Used before measuring a stand-down, so the measurement is not taken
+# in the middle of a long poll the agent had already started.
+hub_quiet() {
+  local waited=0 seen count
+  seen=$(hub_requests)
+  # The window is longer than the command long poll, so an agent that is merely
+  # mid-poll is never mistaken for one that has stopped.
+  while [ "$waited" -lt 6 ]; do
+    sleep 4
+    count=$(hub_requests)
+    [ "$count" = "$seen" ] && return 0
+    seen=$count
+    waited=$((waited + 1))
   done
-  pass "hub: a hub that refuses the agent ends the attempts and reports it where it can be read"
+  return 1
+}
+
+# start_agent_against_stub <label-stem> <status-path> -> sets AGENT_PID
+# Not a command substitution: a stand-in that never took the registration has
+# to end the case, and a fail inside $(...) would only end the subshell.
+start_agent_against_stub() {
+  local stem=$1 status=$2 pid waited=0
+  python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+    --machine box-a --label "$stem-$RUN" --cwd "$CASE_DIR/cwd" \
+    --status-path "$status" --ready-file "$CASE_DIR/$stem.ready" \
+    --state-interval 0.5 --poll-secs 3 > "$CASE_DIR/agent.log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$CASE_DIR/$stem.ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$CASE_DIR/$stem.ready" ] \
+    || fail "the agent never registered against the stand-in: $(cat "$CASE_DIR/agent.log")"
+  AGENT_PID=$pid
+}
+
+test_a_hub_that_refuses_the_agent_is_terminal_and_leaves_the_task_record_alone() {
+  # Not every refusal is a hub to wait for. A credential the hub will not take
+  # is a settled answer, and retrying it is a poll that never ends. So the
+  # agent stops - all of it, publishes and command polls alike - rather than
+  # arguing with a hub that keeps saying no.
+  #
+  # And it stops without writing into the task's own status record. That record
+  # is the WORKER's channel: supervision reads it to learn what the work is
+  # doing, and an agent whose credential was refused is an operator's problem,
+  # not the task being blocked.
+  start_stub reregister-refused --frames-ok-first 1 --frames-error unauthenticated:401
+  local status pid before
+  status="$CASE_DIR/state/refused.status"
+  start_agent_against_stub refused "$status"
+  pid=$AGENT_PID
+  hub_quiet || fail "a refused agent should stop calling the hub, but it never went quiet"
+  before=$(hub_requests)
+  sleep 5
+  assert_equals "$(hub_requests)" "$before" \
+    "a refusal must end this agent's calls rather than become a poll against a hub that keeps saying no"
+  assert_equals "$(registrations | grep -c . || true)" 0 \
+    "a refusal is not something to re-register through"
+  assert_equals "$(cat "$status" 2>/dev/null || true)" "" \
+    "a hub-side refusal must not be written into the task's own status record"
+  # And the worker is left exactly where it was, because a refused agent says
+  # nothing at all about the work its worker is in the middle of.
+  kill -0 "$pid" 2>/dev/null || fail "a refused agent should stand down, not exit"
+  [ -n "$(pgrep -P "$pid" 2>/dev/null)" ] || fail "a refused agent must keep its worker running"
+  pass "hub: a refused agent ends its calls and leaves the task's own record alone"
+}
+
+test_an_agent_waits_out_a_hub_that_changed_protocol() {
+  # A hub upgraded while it was down is the one refusal that must NOT be
+  # settled. One restart puts the new protocol in front of every agent in the
+  # fleet at once, so an agent that stood down on it would turn a rolling
+  # upgrade into a fleet that never comes back - the exact outcome
+  # re-registration exists to prevent. It holds off and keeps trying instead,
+  # so the worker is still waiting when its protocol is served again.
+  start_stub reregister-protocol --frames-ok-first 1 --protocol 2 --protocol-after 99
+  local status pid asked before
+  status="$CASE_DIR/state/protocol.status"
+  start_agent_against_stub protocol "$status"
+  pid=$AGENT_PID
+  # Long enough for several paced attempts, and for an unpaced one to make
+  # dozens: the heartbeat that discovers the strand runs twice a second.
+  sleep 10
+  # One health call is the agent's startup check; the rest are recovery
+  # attempts, which is what "kept trying" means here.
+  asked=$(grep -c 'GET /v1/health' "$STUB_JOURNAL" 2>/dev/null || true)
+  [ "$asked" -ge 3 ] \
+    || fail "the agent asked the hub about its protocol $asked times, so it is not still trying"
+  [ "$asked" -le 8 ] \
+    || fail "the agent asked $asked times in ten seconds, so the attempts are not paced"
+  assert_equals "$(registrations | grep -c . || true)" 0 \
+    "an agent must not register into a protocol it does not implement"
+  # Still talking to the hub at all is what tells a held-off agent from a
+  # stood-down one: a stand-down ends the command poll too.
+  before=$(hub_requests)
+  sleep 5
+  [ "$(hub_requests)" -gt "$before" ] \
+    || fail "the agent stood down on a protocol change instead of waiting the hub out"
+  assert_equals "$(cat "$status" 2>/dev/null || true)" "" \
+    "a protocol change must not be written into the task's own status record"
+  kill -0 "$pid" 2>/dev/null || fail "the agent should keep waiting for its hub, not exit"
+  [ -n "$(pgrep -P "$pid" 2>/dev/null)" ] || fail "the waiting agent should keep its worker running"
+  pass "hub: an agent waits out a hub that changed protocol rather than standing down"
 }
 
 test_fm_stream_start_status_stop_round_trip() {
@@ -1565,6 +1604,7 @@ test_the_viewer_keeps_the_send_box_disabled_for_a_closed_worker
 test_a_restarted_hub_gets_its_workers_back
 test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
-test_a_hub_that_refuses_the_agent_is_terminal_and_says_so
+test_a_hub_that_refuses_the_agent_is_terminal_and_leaves_the_task_record_alone
+test_an_agent_waits_out_a_hub_that_changed_protocol
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home

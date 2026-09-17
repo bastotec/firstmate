@@ -420,10 +420,10 @@ class Forgotten(Refusal):
 class Rejected(Refusal):
     """The hub refuses this agent on terms no retry changes.
 
-    A credential it will not take and a protocol it no longer speaks are
-    settled answers, not transients. Retrying either is a poll against a hub
-    that keeps saying no, so this ends the agent's part instead and says so
-    where it can still be read.
+    A credential the hub will not take and an identity it records against
+    another machine are settled answers, not transients. Retrying either is a
+    poll against a hub that keeps saying no, so this ends the agent's part
+    instead.
     """
 
 
@@ -449,6 +449,11 @@ TERMINAL_REFUSALS = frozenset((
 REREGISTER_BACKOFF_MIN = 2.0
 REREGISTER_BACKOFF_MAX = 60.0
 REREGISTER_JITTER = 0.25
+# How long a closing frame's recovery waits for an attempt already in flight.
+# It is the only caller that waits at all: it has no later attempt to defer to,
+# and an attempt in flight holds two hub calls of its own, so a wait shorter
+# than those would hand back the same "not recovered" that losing the lock did.
+REREGISTER_URGENT_WAIT = 35.0
 
 
 def registration(options: argparse.Namespace, endpoint_id: str) -> dict:
@@ -585,15 +590,19 @@ class Agent:
         # a lost name is the fleet working as designed, and a refused agent is
         # a condition someone has to fix.
         self.rejected = threading.Event()
-        self._refuse_lock = threading.Lock()
-        self._backoff = 2.0
+        # Set each time a recovery puts this endpoint back. The command poll
+        # waits on it so an outage's backoff ends the moment the hub is back
+        # rather than whenever the wait it had already started runs out.
+        self.rejoined = threading.Event()
+        self._backoff = REREGISTER_BACKOFF_MIN
         # Re-registration is serialized and paced. Three threads publish, so a
         # forgotten endpoint is discovered several times over, and a hub that is
         # down must see one attempt per backoff window rather than one per
-        # frame. The lock is only ever taken without blocking: a thread that
-        # finds an attempt already in flight has nothing to add by waiting for
-        # it, and the pty reader in particular must never be parked on a hub
-        # call it did not make.
+        # frame. The lock is taken without blocking by every caller but one: a
+        # thread that finds an attempt already in flight has nothing to add by
+        # waiting for it, and the pty reader in particular must never be parked
+        # on a hub call it did not make. The closing frame is the exception,
+        # and recover_registration says why it waits.
         self._register_lock = threading.Lock()
         self._register_not_before = 0.0
         self._register_backoff = REREGISTER_BACKOFF_MIN
@@ -668,7 +677,16 @@ class Agent:
         """
         if self.stood_down.is_set() or self.rejected.is_set():
             return False
-        if not self._register_lock.acquire(blocking=False):
+        # An urgent recovery WAITS for an attempt already in flight, where
+        # every other caller walks away from it. A caller that walks away has
+        # a next frame to discover the same thing on; this one is the last
+        # frame there will ever be, and losing the lock to a recovery that is
+        # about to succeed would lose the task's end to it.
+        if urgent:
+            acquired = self._register_lock.acquire(timeout=REREGISTER_URGENT_WAIT)
+        else:
+            acquired = self._register_lock.acquire(blocking=False)
+        if not acquired:
             return False
         try:
             if self.stood_down.is_set() or self.rejected.is_set():
@@ -683,13 +701,20 @@ class Agent:
                 # have been upgraded while it was down, and an agent that
                 # published into a protocol it does not implement would look
                 # present and behave wrongly.
+                #
+                # A mismatch is held against, never stood down on. One restart
+                # can put a new protocol in front of every agent in the fleet
+                # at once, and an agent that treated that as settled would turn
+                # a rolling upgrade into a fleet that never comes back; this
+                # way the worker is waiting when the version it speaks is
+                # served again - by a rollback, or by a hub that keeps the old
+                # protocol alongside the new one.
                 health = self.hub.call("GET", "/v1/health", timeout=15.0)
                 protocol = health.get("protocol")
                 if protocol != AGENT_PROTOCOL:
-                    raise Rejected("protocol_mismatch",
-                                   "the hub at %s now speaks protocol %r but this agent "
-                                   "implements %d"
-                                   % (self.hub.base_url, protocol, AGENT_PROTOCOL))
+                    raise RuntimeError("the hub at %s now speaks protocol %r but this "
+                                       "agent implements %d"
+                                       % (self.hub.base_url, protocol, AGENT_PROTOCOL))
                 self.hub.call("POST", "/v1/agent/endpoints",
                               registration(self.options, self.endpoint_id),
                               timeout=15.0)
@@ -717,6 +742,12 @@ class Agent:
             self._register_backoff = REREGISTER_BACKOFF_MIN
         finally:
             self._register_lock.release()
+        # The command poll backed off through the same outage this just ended,
+        # and it has no other way to learn the hub is back: it would otherwise
+        # sit out a wait of up to a minute while the endpoint is listed,
+        # readable, and to an operator already steerable. This is what tells it.
+        self._backoff = REREGISTER_BACKOFF_MIN
+        self.rejoined.set()
         try:
             self.publish_initial_state()
         except RuntimeError as exc:
@@ -835,35 +866,46 @@ class Agent:
         self.stood_down.set()
 
     def refuse(self, reason: Exception) -> None:
-        """Stop for good, and say so where it can still be read.
+        """Stop for good: the hub's answer is one no further attempt changes.
 
-        A credential the hub will not take and a protocol it no longer speaks
-        are settled answers, so this ends the agent's part rather than becoming
-        a poll against a hub that keeps saying no. The worker is left exactly
-        as a stand-down leaves it - running, holding whatever it was doing,
-        recoverable - because nothing about a refused agent says anything about
-        the work its worker is in the middle of.
+        A credential the hub will not take and an identity it holds against
+        another machine are settled answers, so this ends the agent's part
+        rather than becoming a poll against a hub that keeps saying no. The
+        worker is left exactly as a stand-down leaves it - running, holding
+        whatever it was doing, recoverable - because nothing about a refused
+        agent says anything about the work its worker is in the middle of.
 
-        Saying so is the harder half. This agent's own output went to
-        os.devnull the moment it registered, and the hub is the very thing
-        refusing it, so the one channel still open is the durable status record
-        on this machine: the same file the worker reports into, which
-        supervision reads whether or not anything is reachable. One line, once.
-        It names a condition someone has to fix, and repeating it for every
-        dropped frame would bury that under its own noise.
+        It is reported to this agent's own output and nowhere else. The task's
+        status record is the WORKER's channel: supervision reads it to learn
+        what the work is doing, and a hub that will not take this agent's
+        credential is not the task being blocked. Writing there would put an
+        operator's problem in front of supervision as the task's own.
         """
-        with self._refuse_lock:
-            if self.rejected.is_set():
-                return
-            self.rejected.set()
-            if self.status_path:
-                try:
-                    append_status(self.status_path, "blocked",
-                                  "this worker cannot reach the fleet hub: %s" % reason)
-                except (OSError, RuntimeError) as exc:
-                    sys.stderr.write("fm-stream-agent: could not report the refusal: %s\n"
-                                     % exc)
+        if self.rejected.is_set():
+            return
+        self.rejected.set()
         self.give_up(reason)
+
+    def _pause_command_poll(self) -> None:
+        """Sit out the poll's backoff, but never past the hub coming back.
+
+        Backing off is what keeps an agent whose hub is gone from polling a
+        dead socket, and it is why a long outage ends with this loop parked for
+        up to a minute. A recovery ends the outage in seconds, so waiting that
+        minute out afterwards would leave a worker that is listed and readable
+        unsteerable for the rest of it - and to whoever typed into it, a steer
+        that simply never arrived.
+        """
+        self.rejoined.clear()
+        deadline = time.monotonic() + self._backoff
+        while not self.stop.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if self.rejoined.wait(min(remaining, 0.5)):
+                self._backoff = REREGISTER_BACKOFF_MIN
+                return
+        self._backoff = min(self._backoff * 2, REREGISTER_BACKOFF_MAX)
 
     def command_loop(self) -> None:
         """Long-poll the hub for this endpoint's commands and acknowledge each.
@@ -898,10 +940,9 @@ class Agent:
                 # reconnects - but an agent whose hub is gone for good would
                 # otherwise poll a dead socket forever.
                 sys.stderr.write("fm-stream-agent: command poll failed: %s\n" % exc)
-                self.stop.wait(self._backoff)
-                self._backoff = min(self._backoff * 2, 60.0)
+                self._pause_command_poll()
                 continue
-            self._backoff = 2.0
+            self._backoff = REREGISTER_BACKOFF_MIN
             for command in answer.get("commands") or []:
                 self.command_busy.set()
                 try:

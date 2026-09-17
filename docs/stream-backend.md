@@ -146,9 +146,13 @@ One restart strands every agent in the fleet at once, so an agent leaves at leas
 A worker whose own process ended while the hub was down is recovered the same way and for the same reason: if the hub is back by the time its agent posts the closing frame, the agent takes the identity back in order to deliver it, so the task's end and its exit code land under the id that names them rather than being lost with the record that was meant to hold them.
 
 Two answers end the attempts instead of continuing them.
-A credential the hub will not take and a protocol it no longer speaks are settled refusals, not transients, so the agent stops and appends one `blocked:` line to that task's own status record - the channel that still works, because it is written on the worker's own machine.
+A credential the hub will not take and an endpoint id it holds against a different machine are settled refusals, not transients, so the agent stops trying and reports it to its own output rather than into the task's status record - that record is the worker's channel, and a hub that refuses an agent is not the task being blocked.
 An agent that comes back to find another endpoint already answering to its machine and label stands down exactly as it would have anywhere else.
 In every one of those cases the worker itself is left running and untouched, because a refused agent says nothing at all about the work its worker is in the middle of.
+
+A hub speaking a protocol this agent does not implement is NOT one of them.
+The agent checks the protocol on its way back in, for the reason it checks at startup - publishing into a protocol it does not implement would make it look present and behave wrongly - but it holds off and keeps trying, because one restart can put a new protocol in front of every agent in the fleet at once and a settled answer there would be a fleet that never comes back.
+The worker is still waiting when the protocol it speaks is served again.
 
 ## When the hub is down
 
