@@ -65,6 +65,9 @@
 #     endpoint.agent_alive is populated for local secondmates only, where it is
 #     useful return-channel supervision data; remote secondmates use "unknown"
 #     without a probe, and other tasks use "not_checked".
+#     endpoint.agent_state is bin/fm-backend.sh's recovery-grade verdict
+#     (fm_backend_agent_state) for every local task with a recorded target, and
+#     "not_checked" for remote rows, target-less rows, and discarded generations.
 #   scout_reports[]: present data/<id>/report.md pointers.
 #   main_inventory: {valid,reason,orphan_in_flight[],unstructured_current_count} -
 #     main-home current-inventory checks shared with secondmate_home_summary_json
@@ -81,7 +84,12 @@
 #     queued, landed, endpoints, counts, and omitted. provenance.summary_source
 #     distinguishes "local-ledger", "remote-ledger", and "remote-ledger-cache";
 #     freshness is "cached" only for the cache source, and observed_at/age_seconds
-#     come from the selected summary's generation. Every successfully sampled home also carries
+#     come from the selected summary's generation. Every record carries
+#     agent_state, the mate's own agent process verdict: the parent task's local
+#     endpoint.agent_state, or for a remote home the remote host's verdict when
+#     FM_SNAPSHOT_REMOTE_AGENT_STATE=1 ("unreadable" when that probe gave no
+#     answer within the budget) and "not_checked" otherwise.
+#     Every successfully sampled home also carries
 #     reconcile_inventory independently of projection trust.
 #     Actionable captain holds appear in decisions_open; every captain hold remains
 #     in the bounded queued inventory with its structured classification metadata.
@@ -162,6 +170,11 @@ FM_SNAPSHOT_REGISTRY_LINES=${FM_SNAPSHOT_REGISTRY_LINES:-256}
 FM_SNAPSHOT_REGISTRY_BYTES=${FM_SNAPSHOT_REGISTRY_BYTES:-65536}
 FM_SNAPSHOT_REGISTRY_RECORDS=${FM_SNAPSHOT_REGISTRY_RECORDS:-40}
 FM_SNAPSHOT_REGISTRY_TIMEOUT=${FM_SNAPSHOT_REGISTRY_TIMEOUT:-2}
+FM_SNAPSHOT_REMOTE_AGENT_STATE=${FM_SNAPSHOT_REMOTE_AGENT_STATE:-0}
+case "$FM_SNAPSHOT_REMOTE_AGENT_STATE" in
+  0|1) : ;;
+  *) echo "fm-fleet-snapshot: FM_SNAPSHOT_REMOTE_AGENT_STATE must be 0 or 1" >&2; exit 2 ;;
+esac
 validate_positive_bound() {  # <name> <value>
   case "$2" in
     ''|*[!0-9]*|0)
@@ -252,7 +265,10 @@ that home.
 Each local per-task current-state read is bounded by FM_SNAPSHOT_CREW_STATE_TIMEOUT
 (default 10 seconds); a read that hits the bound reports state unknown. Local task
 observations run concurrently, up to FM_SNAPSHOT_LOCAL_READ_CONCURRENCY (default 8).
-Remote secondmate endpoint liveness is not probed by this command.
+Every local task with a recorded endpoint carries endpoint.agent_state, the
+recovery-grade process verdict. Remote secondmate endpoint liveness is probed
+only when FM_SNAPSHOT_REMOTE_AGENT_STATE=1, concurrently with the ledger reads
+and under the same FM_SNAPSHOT_BUDGET.
 Terminal contradiction evidence uses
 FM_SNAPSHOT_TERMINAL_LINES, FM_SNAPSHOT_TERMINAL_BYTES, and
 FM_SNAPSHOT_TERMINAL_TIMEOUT and never becomes canonical current state.
@@ -609,7 +625,7 @@ snapshot_task_generation_is_current() {  # <captured-meta> <id>
 prefetch_task_observations() {  # <meta> <id>
   local meta=$1 id=$2 remote_host current_file endpoint_file current_pid='' current_rc=0
   local status_log status_capture report_path report_capture
-  local kind backend target endpoint_exists=null agent_alive=not_checked generation_current=1
+  local backend target endpoint_exists=null agent_alive=not_checked agent_state=not_checked generation_current=1
   remote_host=$(meta_value "$meta" remote_host)
   current_file="$SNAPSHOT_TASK_DIR/$id.json"
   endpoint_file="$SNAPSHOT_TASK_DIR/$id.endpoint"
@@ -631,7 +647,6 @@ prefetch_task_observations() {  # <meta> <id>
   elif [ "$generation_current" = 1 ]; then
     crew_state_json "$id" "$meta" "$status_capture" > "$current_file" &
     current_pid=$!
-    kind=$(meta_value "$meta" kind)
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
     if [ -n "$target" ]; then
@@ -640,8 +655,17 @@ prefetch_task_observations() {  # <meta> <id>
       else
         endpoint_exists=false
       fi
-      if [ "$kind" = secondmate ]; then
-        agent_alive=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null || printf unknown)
+      agent_state=$(fm_backend_agent_state "$backend" "$target" 2>/dev/null) || agent_state=unreadable
+      case "$agent_state" in
+        alive|dead|missing|ambiguous|unreadable|unverified) : ;;
+        *) agent_state=unreadable ;;
+      esac
+      if [ "$(meta_value "$meta" kind)" = secondmate ]; then
+        case "$agent_state" in
+          alive) agent_alive=alive ;;
+          dead|missing) agent_alive=dead ;;
+          *) agent_alive=unknown ;;
+        esac
       fi
     fi
   else
@@ -659,8 +683,10 @@ prefetch_task_observations() {  # <meta> <id>
       > "$current_file" || current_rc=1
     endpoint_exists=null
     agent_alive=unknown
+    agent_state=not_checked
   fi
-  printf 'endpoint_exists=%s\nagent_alive=%s\n' "$endpoint_exists" "$agent_alive" > "$endpoint_file" || current_rc=1
+  printf 'endpoint_exists=%s\nagent_alive=%s\nagent_state=%s\n' "$endpoint_exists" "$agent_alive" "$agent_state" \
+    > "$endpoint_file" || current_rc=1
   return "$current_rc"
 }
 
@@ -721,7 +747,7 @@ prefetch_task_current_states() {
 task_json_lines() {
   local meta original_meta id kind harness mode yolo project worktree home projects spawn_gen backend target status_log report_path
   local remote_host remote_root current_file endpoint_file observation_line index=0
-  local pr pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
+  local pr pr_source event_json current_json endpoint_exists agent_alive agent_state meta_json status_json report_json worktree_json home_json
   local last_event_raw current_state current_source pending_decision blocked_event report_present=0 pr_from_status
   local open_decisions_tsv open_decisions_json
 
@@ -807,11 +833,13 @@ task_json_lines() {
 
     endpoint_exists=null
     agent_alive=not_checked
+    agent_state=not_checked
     endpoint_file="$SNAPSHOT_TASK_DIR/$id.endpoint"
     while IFS= read -r observation_line || [ -n "$observation_line" ]; do
       case "$observation_line" in
         endpoint_exists=*) endpoint_exists=${observation_line#*=} ;;
         agent_alive=*) agent_alive=${observation_line#*=} ;;
+        agent_state=*) agent_state=${observation_line#*=} ;;
       esac
     done < "$endpoint_file" || {
       snapshot_task_cleanup
@@ -848,6 +876,7 @@ task_json_lines() {
       --arg pr "$pr" \
       --arg pr_source "$pr_source" \
       --arg agent_alive "$agent_alive" \
+      --arg agent_state "$agent_state" \
       --arg observed_at "$SNAPSHOT_NOW" \
       --arg last_event_raw "$last_event_raw" \
       --argjson current_state "$current_json" \
@@ -881,6 +910,7 @@ task_json_lines() {
         secondmate_projects:($projects | if . == "" then [] else split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) | map(select(. != "")) end),
         current_state:($current_state + {observed_at:$observed_at,freshness:"fresh"}),
         endpoint:{target:($target | if . == "" then null else . end),exists:$endpoint_exists,agent_alive:$agent_alive,
+          agent_state:$agent_state,
           status:(if $endpoint_exists == false then "absent"
                   elif $agent_alive == "alive" or $agent_alive == "dead" then $agent_alive
                   else "unknown" end),
@@ -1392,6 +1422,7 @@ manifest=$2
 out_dir=$3
 filter=$4
 max_bytes=$5
+probe_agent=$6
 
 valid_summary() {  # <file> <home>
   local file=$1 home=$2 bytes
@@ -1413,12 +1444,32 @@ bounded_collect() {  # <output> <error> <command...>
   return "$producer_rc"
 }
 
+# The remote host's own recovery-grade verdict for the mate's endpoint. Only a
+# recognized verdict is published, atomically, so a budget kill leaves no file.
+probe_agent_state() {  # <id> <slot>
+  local id=$1 slot=$2 out
+  out=$("$script_dir/fm-on.sh" "$id" fm-remote-secondmate-control.sh state "$id" \
+    < /dev/null 2>/dev/null | LC_ALL=C head -c 256 | tail -1) || out=
+  case "$out" in alive|dead|missing|ambiguous|unreadable|unverified) : ;; *) out=unreadable ;; esac
+  printf '%s\n' "$out" > "$out_dir/$slot.agent.tmp" && mv -f "$out_dir/$slot.agent.tmp" "$out_dir/$slot.agent"
+}
+
 collect_one() {  # <manifest-row>
-  local row=$1 id home cache slot fetch status
+  local row=$1 id home cache slot probe_pid=
   id=$(printf '%s' "$row" | jq -r '.id') || return
   home=$(printf '%s' "$row" | jq -r '.home') || return
   cache=$(printf '%s' "$row" | jq -r '.cache') || return
   slot=$(printf '%s' "$row" | jq -r '.slot') || return
+  if [ "$probe_agent" = 1 ]; then
+    probe_agent_state "$id" "$slot" &
+    probe_pid=$!
+  fi
+  collect_summary "$id" "$home" "$cache" "$slot"
+  [ -z "$probe_pid" ] || wait "$probe_pid"
+}
+
+collect_summary() {  # <id> <home> <cache> <slot>
+  local id=$1 home=$2 cache=$3 slot=$4 fetch status
   fetch="$out_dir/$slot.fetch"
   status="$out_dir/$slot.status"
   if bounded_collect "$fetch" "$out_dir/$slot.fetch.err" \
@@ -1444,7 +1495,7 @@ BASH
   SNAPSHOT_COLLECTION_TIMED_OUT=0
   if fm_run_timed "$FM_SNAPSHOT_BUDGET" bash "$collector" \
       "$SCRIPT_DIR" "$manifest" "$SNAPSHOT_COLLECT_DIR" "$SNAPSHOT_SUMMARY_FILTER" \
-      "$FM_SNAPSHOT_SECONDMATE_MAX_BYTES"; then
+      "$FM_SNAPSHOT_SECONDMATE_MAX_BYTES" "$FM_SNAPSHOT_REMOTE_AGENT_STATE"; then
     :
   else
     rc=$?
@@ -1693,6 +1744,7 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
   local row id home host remote registered registry_error task sampled_spawn_gen status_file status_observation_file event_raw event_note event_epoch event_age
   local activity_scan activities decisions reconciliation provenance freshness reason summary_file summary_sampled summary_valid summary_invalidity state terminal terminal_contradiction contradiction
   local summary_source summary_age summary_observed summary_freshness cache_path collection_status collection_slot summary_index=0
+  local agent_state
   local seen_homes=''
   registry_file="$JSON_TRANSPORT_DIR/secondmate-registry.json"
   union_file="$JSON_TRANSPORT_DIR/secondmate-union.json"
@@ -1752,6 +1804,19 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
       [ "$event_age" -lt 0 ] && event_age=0
     fi
 
+    # The mate's own agent process verdict: local rows reuse the task
+    # observation; remote rows read the collector's probe when it was requested.
+    agent_state=$(printf '%s' "$task" | jq -r '.endpoint.agent_state // "not_checked"')
+    if [ "$remote" = true ]; then
+      agent_state=not_checked
+      if [ "$FM_SNAPSHOT_REMOTE_AGENT_STATE" = 1 ]; then
+        collection_slot=$(jq -r --arg id "$id" 'select(.id == $id) | .slot' "$SNAPSHOT_COLLECT_DIR/manifest.jsonl" 2>/dev/null | head -1)
+        agent_state=unreadable
+        if [ -n "$collection_slot" ] && [ -f "$SNAPSHOT_COLLECT_DIR/$collection_slot.agent" ]; then
+          agent_state=$(head -1 "$SNAPSHOT_COLLECT_DIR/$collection_slot.agent")
+        fi
+      fi
+    fi
     reason=$registry_error
     summary_index=$((summary_index + 1))
     summary_file="$SNAPSHOT_COLLECT_DIR/selected-summary-$summary_index.json"
@@ -1844,6 +1909,7 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
       jq -n \
         --arg id "$id" --arg home "$home" --arg host "$host" --argjson remote "$remote" --arg state "$state" --arg observed "$summary_observed" \
         --arg summary_source "$summary_source" --arg summary_freshness "$summary_freshness" --argjson summary_age "$summary_age" \
+        --arg agent_state "$agent_state" \
         --arg spawn_gen "$sampled_spawn_gen" \
         --argjson registered "$registered" --slurpfile summary "$summary_file" --argjson summary_valid "$summary_valid" --argjson decisions "$decisions" \
         --argjson activities "$activities" --argjson activity_scan "$activity_scan" \
@@ -1852,7 +1918,7 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
         ($summary[0]) as $summary
         |
         {id:$id,home:$home,host:($host | if . == "" then null else . end),remote:$remote,registered:$registered,
-         spawn_gen:($spawn_gen | if . == "" then null else . end),
+         spawn_gen:($spawn_gen | if . == "" then null else . end),agent_state:$agent_state,
          current:{state:$state,reason:(if $summary_valid then null else "structured home state invalid: " + ($summary.reason // "unknown reason") end)},invalidity:$summary.invalidity,
          reconcile_inventory:$summary.invalidity,
          provenance:{selected:"structured-home",structured_home:$home,summary_source:$summary_source,summary_valid:$summary_valid,
@@ -1879,14 +1945,14 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
       fi
       jq -n \
         --arg id "$id" --arg home "$home" --arg host "$host" --argjson remote "$remote" --arg reason "$reason" --arg observed "$SNAPSHOT_NOW" \
-        --arg spawn_gen "$sampled_spawn_gen" \
+        --arg spawn_gen "$sampled_spawn_gen" --arg agent_state "$agent_state" \
         --arg provenance "$provenance" --arg freshness "$freshness" --arg event_raw "$event_raw" --arg event_note "$event_note" \
         --argjson registered "$registered" --argjson event_age "$event_age" --argjson activities "$activities" --argjson activity_scan "$activity_scan" \
         --argjson decisions "$decisions" --argjson terminal "$terminal" --slurpfile summary "$summary_file" --argjson summary_sampled "$summary_sampled" '
         ($summary[0]) as $summary
         |
         {id:$id,home:($home | if . == "" then null else . end),host:($host | if . == "" then null else . end),remote:$remote,registered:$registered,
-         spawn_gen:($spawn_gen | if . == "" then null else . end),
+         spawn_gen:($spawn_gen | if . == "" then null else . end),agent_state:$agent_state,
          current:{state:"unknown",reason:(if $summary_sampled then "structured home state invalid: " + ($summary.reason // "unknown reason") else $reason end)},invalidity:null,
          reconcile_inventory:(if $summary_sampled then $summary.invalidity else null end),
          provenance:{selected:$provenance,structured_home:($home | if . == "" then null else . end),parent_event_role:"fallback-only-not-current"},

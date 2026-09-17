@@ -148,10 +148,30 @@ Every `/bearings` chat response renders EXACTLY these four sections, in THIS ord
    Empty-state: "Nothing needs your action right now."
 2. **Recently Landed** - the bounded current recent-completions baseline: merged PRs, completed scouts, and finished local-only merges across the main fleet and every registered secondmate home.
    Empty-state: "No recent completions are in the current baseline."
-3. **Underway** - live work progressing on its own, one line of current state per direct report.
+3. **Underway** - the running-agents table below, then one line of current state per live direct report the table does not already describe.
    Empty-state: "Nothing is underway."
 4. **Charted Next** - queued or gated work waiting on the fleet or a date, deferred or aged captain-hold safety gates, plus action-free fleet-integrity warnings.
    Empty-state: "Nothing is queued."
+
+### Running-agents table
+
+Underway always opens with a table of every agent whose process is running right now, across this home and every second mate home, because that is the live work the section exists to show.
+Build it only from the snapshot's `running` rows, in their order; the snapshot already keeps out every agent that merely has a record, so never add a row from `in_flight`, `secondmates`, or backlog state, and never drop a `running` row because its work looks idle or finished.
+
+| Agent | Where | Right now |
+|---|---|---|
+| build-helper | build server | Running. Its release PR is merged and it was cleaning up the worker it used, so nothing is in progress. |
+| developer-tools | this Mac | Running, idle. |
+| Fix the login redirect for developer-tools | this Mac | Running. It is validating the fix before opening a PR. |
+| billing | this Mac | Running, idle. Four billing decisions are waiting on you. |
+
+- **Agent** is the row's `name`; for a second mate's worker (`parent` set) add "for <parent>" after the name.
+- **Where** is the row's `where`: keep "this Mac" or "this machine" as given, and write a remote host as the plain place it names.
+- **Right now** is one or two plain-English sentences that start with "Running", built from `state` and `doing` plus that agent's own items elsewhere in the digest, such as its decisions waiting on the captain.
+  Never put task ids, harness or backend names, status prefixes, or raw state labels in this column.
+  When the row's `freshness` is `cached`, say the picture comes from that home's last saved report.
+- When `running` is empty but other Underway lines remain, the table becomes the sentence "No agents are running right now."
+- When `omitted` mentions `running`, add one line under the table saying how many agents were left out and why.
 
 Rules that keep the contract unambiguous:
 
@@ -162,7 +182,7 @@ Rules that keep the contract unambiguous:
 - Underway independently reports active work, so an actively worked captain-held task may appear there plus its one decision bucket.
 - A secondmate home can contribute to more than one section at once. Each active child is an Underway row regardless of the home-level `bearings_state`, while that same home's live captain hold is Captain's Call and its queued or external holds stay Charted Next. Do not hide active children because the home also has an open captain hold.
 - The strict boundary keeps action-free items OUT of Captain's Call: a working or validating task, a queued item blocked on another task or a date, landed work, a completed scout's report pointer, a declared `paused:` external wait, and a bare recorded PR with no merge-ready signal each belong to one of the other three sections, never Captain's Call.
-- A secondmate's own home-level row is not an Underway unit: `externally_held` belongs in Charted Next, and `unknown` belongs there as an unavailable-state gate unless its reason requires the captain's action.
+- A secondmate's own home-level row is not an Underway work line; it appears in Underway only as a running-agents table row, while `externally_held` belongs in Charted Next, and `unknown` belongs there as an unavailable-state gate unless its reason requires the captain's action.
 - Do not suppress separately projected decisions, landed records, or gates from a `partial-structured` home merely because that secondmate's own row is `unknown` or its `invalidity` reports an inventory mismatch.
 - Include the required direct address to the captain inside one item or empty-state sentence.
 - Every PR appears as the full `https://...` URL; a shorthand `#number` is fine only as a back-reference after the full URL has already appeared in the same digest.
