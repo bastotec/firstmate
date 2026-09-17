@@ -603,6 +603,11 @@ do_exit() {
 # helper is covered too) and leaves either the pre-relaunch durable record or a
 # concrete, named partial state - never a task whose record claims an agent
 # that is not running.
+#
+# $BRIEF_PRIOR is a rollback source, because this script appends the progress
+# note to the brief and so has something of its own to put back. $META_PRIOR is
+# not, and nothing reads it: this script never writes $META at all. It stays as
+# the operator-facing copy beside the journal, and fm-teardown.sh removes both.
 
 JOURNAL="$STATE/$ID.control-relaunch"
 META_PRIOR="$JOURNAL.meta-prior"
@@ -681,13 +686,16 @@ relaunch_rollback() {
       # touched in any phase: the instructions go back byte-exact, exactly as
       # they do for a relaunch refused before its agent was stopped. Without
       # this every failed attempt would leave another progress note appended.
+      #
+      # The durable record is deliberately NOT restored, for the same reason
+      # the sibling checkpoint|noted arm has no restore: nothing in this phase
+      # writes it, so a restore could only revert another process's locked
+      # write - see docs/agent-control.md's rollback account, and the
+      # concurrent-record-write case in tests/fm-control-recover-missing.test.sh.
       if [ -n "$RELAUNCH_BRIEF" ] && [ -f "$BRIEF_PRIOR" ]; then
         cp -p "$BRIEF_PRIOR" "$RELAUNCH_BRIEF" 2>/dev/null || true
       fi
-      journal_write "failed:$RELAUNCH_PHASE" "rollback=prior-record-and-instructions-restored" || true
-      if [ -f "$META_PRIOR" ]; then
-        mv "$META_PRIOR" "$META" 2>/dev/null || true
-      fi
+      journal_write "failed:$RELAUNCH_PHASE" "rollback=prior-instructions-restored" || true
       case "$(agent_state 2>/dev/null || printf unknown)" in
         dead|alive|ambiguous)
           echo "error: $ID's missing-endpoint recovery recreated the terminal but could not hand it over; its agent was never touched, so the progress note was rolled back and its work is preserved at $WT" >&2

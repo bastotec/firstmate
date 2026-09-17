@@ -118,6 +118,14 @@ case "${1:-}" in
     done
     printf '%s\n' "$name" >> "$D/windows"
     printf '%s\n' "$name" >> "$D/created-windows"
+    # Stand in for another process writing the task's durable record while the
+    # recreating phase is in flight - the real one is bin/fm-pr-check.sh
+    # appending `pr=` under the per-task record lock when the merge poll is
+    # armed. Creating the window is inside that phase, so this write lands
+    # after fm-control took its snapshot and before any rollback.
+    if [ -n "${FM_FAKE_META_RACE:-}" ]; then
+      printf '%s\n' "${FM_FAKE_META_RACE_LINE:?}" >> "$FM_FAKE_META_RACE"
+    fi
     # A freshly created window holds a bare shell: agent-free, not missing.
     printf 'zsh' > "$D/command"
     printf '%s\n' "${FM_FAKE_SHELL_BUSY_READS:-0}" > "$D/busy-reads"
@@ -299,6 +307,8 @@ run_control() {  # <case-dir> <args...>
     FM_FAKE_NEW_SESSION_FAIL="${FM_FAKE_NEW_SESSION_FAIL:-}" \
     FM_FAKE_LOSE_SERVER="${FM_FAKE_LOSE_SERVER:-}" \
     FM_FAKE_SHELL_BUSY_READS="${FM_FAKE_SHELL_BUSY_READS:-0}" \
+    FM_FAKE_META_RACE="${FM_FAKE_META_RACE:-}" \
+    FM_FAKE_META_RACE_LINE="${FM_FAKE_META_RACE_LINE:-}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -529,7 +539,7 @@ test_failed_recreation_rolls_the_progress_note_back() {
   [ "$(cat "$dir/home/data/rm11/brief.md")" = "$brief_before" ] \
     || fail "a failed recreation must roll the progress note back out of the instructions"
   [ "$(cat "$dir/home/state/rm11.meta")" = "$meta_before" ] \
-    || fail "a failed recreation must restore the prior durable record"
+    || fail "a failed recreation must leave the durable record exactly as it found it"
 
   out=$(run_control "$dir" rm11 recover-missing --note "second attempt"); rc=$?
   expect_code 0 "$rc" "the retry after the provider recovers should succeed"$'\n'"$out"
@@ -538,6 +548,39 @@ test_failed_recreation_rolls_the_progress_note_back() {
   assert_no_grep "first attempt" "$dir/home/data/rm11/brief.md" \
     "the rolled-back attempt's note must not survive into the retry"
   pass "fm-control recover-missing: a failed recreation rolls the progress note back so retries do not stack"
+}
+
+test_failed_recreation_keeps_a_concurrent_record_write() {
+  local dir out rc
+  dir=$(new_case recreate-race rm24)
+  add_ship_task "$dir" rm24
+  make_endpoint_missing "$dir"
+
+  # The recreating phase writes NOTHING to the durable record - the journal,
+  # the progress note and the instructions are separate files, and recreating
+  # the window and waiting for its shell to settle write nothing at all - so a
+  # rollback that restored a snapshot of it could only ever revert somebody
+  # ELSE's write, over a phase that spans window creation plus the settle wait.
+  #
+  # This is that race, made deterministic: a delivery task's terminal dies, the
+  # operator runs recover-missing, and while the recreated shell is settling
+  # bin/fm-pr-check.sh arms the merge poll and appends `pr=` under the per-task
+  # record lock. The shell never settles, so the rescue refuses - and the line
+  # must still be there. A restore would drop it, and the poll's sidecar and
+  # registration would keep passing their own identity checks while the merge
+  # notification was silently revoked.
+  out=$(FM_FAKE_SHELL_BUSY_READS=100000 \
+    FM_FAKE_META_RACE="$dir/home/state/rm24.meta" \
+    FM_FAKE_META_RACE_LINE='pr=https://github.com/o/r/pull/7' \
+    run_control "$dir" rm24 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "a terminal that never settles must refuse"$'\n'"$out"
+  assert_grep "fm-rm24" "$dir/fake/created-windows" \
+    "the terminal should have been recreated before the settle wait timed out"
+  grep -qxF 'pr=https://github.com/o/r/pull/7' "$dir/home/state/rm24.meta" \
+    || fail "a refused recovery must not revert a record write it never made"
+  [ "$(journal_field "$dir" rm24 rollback)" = prior-instructions-restored ] \
+    || fail "the journal must not claim a record rollback the arm does not perform"
+  pass "fm-control recover-missing: a failed recreation leaves a concurrent record write alone"
 }
 
 test_unreadable_endpoint_after_a_failed_recreation_claims_nothing() {
@@ -935,6 +978,7 @@ test_recover_missing_refuses_a_pool_slot_owned_by_another_task
 test_recover_missing_refuses_an_unreadable_pool_slot_claim
 test_recover_missing_keeps_its_own_pool_slot
 test_failed_recreation_rolls_the_progress_note_back
+test_failed_recreation_keeps_a_concurrent_record_write
 test_unreadable_endpoint_after_a_failed_recreation_claims_nothing
 test_launch_failure_never_claims_an_agent_was_stopped
 test_recover_missing_refuses_a_backend_it_cannot_recreate_on

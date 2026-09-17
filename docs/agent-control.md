@@ -115,7 +115,8 @@ There are two ways out:
 - A launch failure **after** the agent is stopped restores the prior durable record, keeps the progress note so a later recovery still has it, marks the journal `failed:launching`, and reports plainly that no agent is running and where the work is preserved.
 - If the launch owner already published the new record but no running agent can be confirmed, the new record is kept: the task is recorded on the new harness with no agent confirmed, which is exactly what recovery reconciles.
   Rewriting it back to the old harness would be a second, worse inaccuracy.
-- A `recover-missing` failure while the terminal is being recreated restores the prior record and the prior instructions byte-exact, because no agent was ever touched in that phase.
+- A `recover-missing` failure while the terminal is being recreated restores the prior instructions byte-exact, because no agent was ever touched in that phase.
+  The durable record is left exactly as it stands rather than restored, because nothing in that phase writes it: restoring it could only revert another writer's change, and the phase is long enough - window creation plus the settle wait - for an armed merge poll's `pr=` line to land inside it.
 - A `recover-missing` failure because the new shell never settles to agent-free never claims an agent was stopped: the terminal was recreated, the handover could not be completed, and the pane was just measured as not agent-free, so no bare shell, `dead` endpoint, or ready-to-`relaunch` state is claimed for it.
 - A `recover-missing` failure at the launch itself never claims an agent was stopped either, and names the state the operator is now in: the recreated terminal holds a bare shell, so the endpoint reads `dead` rather than `missing` and the verb that retries it is `relaunch`.
   That holds because the durable record is published before the launch command is sent, so reaching this failure means nothing was ever typed into the pane.
