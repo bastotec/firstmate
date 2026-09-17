@@ -93,17 +93,35 @@ def _become_session_leader() -> None:
         pass
 
 
-def _process_cwd(pid: str) -> str:
+def _left(until):
+    """Seconds until <until>, or None when nothing is bounding this call.
+
+    Every bounded operation reads the deadline itself rather than a duration
+    handed down earlier, so a sequence of them cannot add up past it.
+    """
+    if until is None:
+        return None
+    return until - time.monotonic()
+
+
+def _process_cwd(pid: str, until=None) -> str:
     try:
         return os.readlink("/proc/%s/cwd" % pid)
     except OSError:
         pass
+    # Where there is no /proc this is the routine path, and it reads through
+    # the filesystem the process is sitting in - a hung mount blocks it for as
+    # long as that mount does. Against a deadline it answers "unknown" instead.
+    left = _left(until)
+    if left is not None and left <= 0:
+        return ""
     try:
         proc = subprocess.run(
             ["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"],
             check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=left,
             env={"LC_ALL": "C", "PATH": os.environ.get("PATH", "/usr/bin:/bin")})
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return ""
     for line in proc.stdout.decode("utf-8", "replace").splitlines():
         if line.startswith("n/"):
@@ -111,31 +129,32 @@ def _process_cwd(pid: str) -> str:
     return ""
 
 
-def _ps_args(pid: str) -> str:
+def _ps_args(pid: str, until=None) -> str:
+    left = _left(until)
+    if left is not None and left <= 0:
+        return ""
     try:
         proc = subprocess.run(
             ["ps", "-p", pid, "-o", "args="],
             check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=left,
             env={"LC_ALL": "C", "PATH": os.environ.get("PATH", "/usr/bin:/bin")})
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return ""
     return proc.stdout.decode("utf-8", "replace").strip()
 
 
-# The agent's whole startup attempt - every blocking hub call from launch to
-# either the ready-file write or a finished abandonment, including tearing the
-# pty down and closing a half-registered endpoint - runs against ONE clock, so
-# a call added to that path is bounded by it without anyone remembering to
-# bound it. The budget is strictly under the window the adapter waits for the
-# ready file, so an agent that cannot come up has already given up by the time
-# the spawn abandons it rather than registering an endpoint nobody waits for.
+# The agent's whole startup attempt - every blocking operation from launch to
+# either the ready-file write or a finished abandonment, hub calls and the
+# subprocesses that read the endpoint's own state alike - runs against ONE
+# clock, so an operation added to that path is bounded by it without anyone
+# remembering to bound it. The budget is strictly under the window the adapter
+# waits for the ready file, so an agent that cannot come up has already given
+# up by the time the spawn abandons it rather than registering an endpoint
+# nobody waits for. The frame that closes a half-registered endpoint runs on
+# whatever is left of the clock and is skipped when nothing is: it makes the
+# next attempt tidier, while the registration is what has to succeed.
 STARTUP_BUDGET = 12.0
-# Held back from that budget for the abandonment itself: closing the pty costs
-# up to ~5s, and the frame that closes a half-registered endpoint has to fit
-# after it. An abandonment that runs out of reserve stops rather than borrowing
-# more time - the spawn has already been refused, and an agent still calling a
-# hub after that is the orphan this budget exists to prevent.
-ABANDON_RESERVE = 6.0
 
 
 def _silence_diagnostics() -> None:
@@ -228,7 +247,7 @@ class Pty:
         with self._reap_lock:
             return self.proc.poll() is None
 
-    def foreground_processes(self) -> list:
+    def foreground_processes(self, until=None) -> list:
         """The pty's foreground process group, as identity records.
 
         Scoped to the foreground group rather than every descendant, for the
@@ -239,12 +258,16 @@ class Pty:
         tty = self.slave_name
         if tty.startswith("/dev/"):
             tty = tty[len("/dev/"):]
+        left = _left(until)
+        if left is not None and left <= 0:
+            return []
         try:
             proc = subprocess.run(
                 ["ps", "-t", tty, "-o", "pid=,pgid=,tpgid=,comm="],
                 check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                timeout=left,
                 env={"LC_ALL": "C", "PATH": os.environ.get("PATH", "/usr/bin:/bin")})
-        except OSError:
+        except (OSError, subprocess.TimeoutExpired):
             return []
         out = []
         for line in proc.stdout.decode("utf-8", "replace").splitlines():
@@ -254,12 +277,12 @@ class Pty:
             pid, pgid, tpgid, comm = fields
             if pgid != tpgid:
                 continue
-            args = _ps_args(pid)
+            args = _ps_args(pid, until)
             argv0 = args.strip().split(" ", 1)[0] if args else ""
             out.append({"pid": pid, "name": comm, "argv0": argv0, "args": args})
         return out
 
-    def foreground_cwd(self) -> str:
+    def foreground_cwd(self, until=None) -> str:
         """The working directory of the endpoint's INNERMOST foreground process.
 
         Innermost first, with the endpoint's own shell as the last resort. The
@@ -267,11 +290,11 @@ class Pty:
         directory whenever a foreground process had chdir'd elsewhere, which is
         the one case the caller is asking about.
         """
-        for entry in reversed(self.foreground_processes()):
-            cwd = _process_cwd(entry["pid"])
+        for entry in reversed(self.foreground_processes(until)):
+            cwd = _process_cwd(entry["pid"], until)
             if cwd:
                 return cwd
-        return _process_cwd(str(self.pid))
+        return _process_cwd(str(self.pid), until)
 
     def _signal_group(self, sig) -> bool:
         """Signal the endpoint's process group, but only while it is still ours.
@@ -366,22 +389,16 @@ class HubClient:
         self._abandon_deadline = None
 
     def begin_startup(self) -> None:
-        """Start the one clock every startup call is bounded by."""
-        self._abandon_deadline = time.monotonic() + STARTUP_BUDGET
-        self.deadline = self._abandon_deadline - ABANDON_RESERVE
-
-    def abandoning_startup(self) -> None:
-        """Release the reserve. The clock is not restarted, only read to its end."""
-        self.deadline = self._abandon_deadline
+        """Start the one clock every startup operation is bounded by."""
+        self.deadline = time.monotonic() + STARTUP_BUDGET
 
     def end_startup(self) -> None:
         """Return to ordinary per-call timeouts, once the endpoint is announced."""
         self.deadline = None
-        self._abandon_deadline = None
 
     def call(self, method: str, path: str, payload=None, timeout: float = 30.0):
-        if self.deadline is not None:
-            remaining = self.deadline - time.monotonic()
+        remaining = _left(self.deadline)
+        if remaining is not None:
             if remaining <= 0:
                 raise RuntimeError("the hub at %s did not finish %s %s within the "
                                    "startup budget" % (self.base_url, method, path))
@@ -487,12 +504,13 @@ class Agent:
             self.stop.set()
 
     def state_frame(self) -> dict:
+        until = self.hub.deadline
         return {
             "endpoint_id": self.endpoint_id,
             "state": {
                 "alive": self.pty.alive(),
-                "foreground": self.pty.foreground_processes(),
-                "cwd": self.pty.foreground_cwd(),
+                "foreground": self.pty.foreground_processes(until),
+                "cwd": self.pty.foreground_cwd(until),
                 "published_at": _now(),
             },
         }
@@ -779,7 +797,6 @@ def main(argv: list) -> int:
         # "no state frame yet", i.e. unreadable, for a worker that is fine.
         agent.publish_initial_state()
     except RuntimeError as exc:
-        hub.abandoning_startup()
         pty.close()
         pty.release()
         # The registration may have been recorded before startup ran out, so

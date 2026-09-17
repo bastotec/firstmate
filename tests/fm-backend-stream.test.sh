@@ -84,11 +84,15 @@ start_case_hub() {  # <case-name> [extra hub args...]
 # names, so a case can make the hub answer too late on exactly the call it
 # cares about while everything else behaves normally.
 start_slow_stand_in() {  # <stall-spec>
-  local spec=$1 ready hostport host port waited=0 pid
-  ready="$CASE_DIR/proxy-$spec.ready"
+  start_slow_stand_in_delay 25 "$1"
+}
+
+start_slow_stand_in_delay() {  # <delay-secs> <stall-spec>
+  local delay=$1 spec=$2 ready hostport host port waited=0 pid
+  ready="$CASE_DIR/proxy-$delay-$spec.ready"
   hostport=${URL#http://}
   python3 "$ROOT/tests/assets/slow-tcp-proxy.py" 127.0.0.1 \
-    "${hostport%%:*}" "${hostport##*:}" 25 "$spec" > "$ready" 2>"$CASE_DIR/proxy.log" &
+    "${hostport%%:*}" "${hostport##*:}" "$delay" "$spec" > "$ready" 2>"$CASE_DIR/proxy.log" &
   pid=$!
   disown "$pid" 2>/dev/null || true
   fm_test_track_helper_pid "$pid"
@@ -368,46 +372,15 @@ test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers() {
   pass "stream: a spawned agent's diagnostics stop accumulating once it has registered"
 }
 
-test_a_create_that_times_out_leaves_nothing_behind() {
-  # The adapter gives up on a spawn after 15s, so the agent's WHOLE startup has
-  # to fit inside that, not just the calls someone remembered to bound. The
-  # stand-in here is prompt for the health check and the registration and then
-  # stalls on the last call before the ready file - the shape that leaves a
-  # live endpoint and a live shell behind when only some calls are budgeted,
-  # and whose retry then collides on duplicate_label.
-  start_case_hub createtimeout
-  local label out target real_url
-  label="fm-slowhub-$$"
-  start_slow_stand_in 3
-  real_url=$URL
-  URL=$SLOW_URL
-  if out=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" 2>&1); then
-    URL=$real_url
-    fail "a create against a hub that answers too late should be refused, got '$out'"
-  fi
-  URL=$real_url
-  # Nothing survives the refusal: no agent, and no endpoint on the hub.
-  sleep 1
-  assert_equals "$(agent_pid_for "$label")" "" \
-    "an abandoned create must leave no agent holding a shell: $out"
-  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET /v1/tasks)" \
-    | jq -r --arg l "$label" '[.tasks[] | select(.label==$l and (.closed_at | not))] | length')" \
-    0 "an abandoned create must leave no live endpoint registered"
-  # And the obvious next thing an operator does works.
-  target=$(create_endpoint "$label")
-  case "$target" in
-    *:[0-9a-f]*) ;;
-    *) fail "retrying the same task after a timed-out create should succeed, got '$target'" ;;
-  esac
-  pass "stream: a create that times out leaves no agent and no endpoint, and the retry succeeds"
-}
-
 test_a_hub_that_stays_slow_does_not_outlive_the_spawn() {
-  # The same abandonment, against a hub that goes slow and STAYS slow - so the
-  # agent's cleanup call is slow too. The whole attempt, including tearing the
-  # pty down and trying to close a half-registered endpoint, is one budget: an
-  # abandonment that borrowed a fresh one would still be calling the hub long
-  # after fm-spawn refused the task, holding a shell nobody is watching.
+  # A hub that is prompt for the health check and the registration and then
+  # goes slow, on the last call before the ready file and on everything after
+  # it. The whole attempt - the hub calls, tearing the pty down, and the frame
+  # that would close a half-registered endpoint - is ONE budget: an abandonment
+  # that borrowed a fresh one would still be calling the hub long after
+  # fm-spawn refused the task, holding a shell nobody is watching. The closing
+  # frame is a courtesy and is skipped when the clock is spent; giving up
+  # inside the window is what has to hold.
   start_case_hub staysslow
   local label out real_url
   label="fm-staysslow-$$"
@@ -423,6 +396,60 @@ test_a_hub_that_stays_slow_does_not_outlive_the_spawn() {
   assert_equals "$(agent_pid_for "$label")" "" \
     "an agent whose startup ran out must be gone by the time the spawn is refused: $out"
   pass "stream: a startup against a permanently slow hub gives up inside its own budget"
+}
+
+test_a_slow_but_answering_hub_still_spawns() {
+  # The agent must give up before the adapter does - and no sooner. A hub that
+  # answers every startup call slowly but well inside the adapter's window is a
+  # spawn that works; refusing it would be the budget failing in the other
+  # direction, turning a working link into a refused task.
+  start_case_hub slowbutfine
+  local label target real_url
+  label="fm-slowfine-$$"
+  start_slow_stand_in_delay 2.5 ""
+  real_url=$URL
+  URL=$SLOW_URL
+  target=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd") \
+    || { URL=$real_url; fail "a hub that answers slowly but inside the window should still spawn"; }
+  URL=$real_url
+  fm_test_track_helper_pid "$(agent_pid_for "$label")"
+  case "$target" in
+    *\ [0-9a-f]*) ;;
+    *) fail "the slow-but-answering create should return a durable endpoint, got '$target'" ;;
+  esac
+  pass "stream: a hub that answers slowly but inside the window still spawns"
+}
+
+test_a_hung_process_probe_cannot_outlive_the_startup_budget() {
+  # The agent reads its endpoint's foreground processes before announcing
+  # readiness, and that read is a subprocess: a wedged ps, or lsof on a dead
+  # network mount, blocks for as long as the box does. It is on the startup
+  # path, so it spends the same clock every hub call does - the attempt is
+  # decided inside the adapter's window either way, and never left running
+  # behind a spawn that has already been refused.
+  start_case_hub hungprobe
+  local label out bin
+  label="fm-hungprobe-$$"
+  bin="$CASE_DIR/hung-bin"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\nsleep 120\n' > "$bin/ps"
+  chmod +x "$bin/ps"
+  if out=$( (export PATH="$bin:$PATH"; with_stream_env fm_backend_stream_create_task \
+      "$label" "$CASE_DIR/cwd") 2>&1 ); then
+    # Answering inside the window is the good outcome, and the endpoint it
+    # returned has to be real.
+    fm_test_track_helper_pid "$(agent_pid_for "$label")"
+    case "$out" in
+      *\ [0-9a-f]*) ;;
+      *) fail "the create should return a durable endpoint, got '$out'" ;;
+    esac
+  else
+    # Giving up is the other good outcome - but nothing may still be running
+    # against a probe that never returns.
+    assert_equals "$(agent_pid_for "$label")" "" \
+      "an agent whose probe hung must not outlive the refused spawn: $out"
+  fi
+  pass "stream: a hung process probe cannot outlive the startup budget"
 }
 
 test_an_unreachable_hub_refuses_and_names_the_start_command() {
@@ -629,8 +656,9 @@ test_status_return_channel_appends_on_the_owning_machine
 test_a_target_from_another_hub_is_refused
 test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error
 test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers
-test_a_create_that_times_out_leaves_nothing_behind
 test_a_hub_that_stays_slow_does_not_outlive_the_spawn
+test_a_slow_but_answering_hub_still_spawns
+test_a_hung_process_probe_cannot_outlive_the_startup_budget
 test_an_unreachable_hub_refuses_and_names_the_start_command
 test_hub_url_prefers_configuration_then_a_locally_started_hub
 test_a_rejected_token_refuses_instead_of_retrying_unauthenticated

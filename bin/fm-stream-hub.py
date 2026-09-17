@@ -1776,11 +1776,26 @@ WEB_UI = """<!DOCTYPE html>
     // this view must never make.
     fetch("/v1/tasks/" + chosen + "/capture?lines=200",
           {headers: {"Authorization": "Bearer " + token}})
-      .then(function (r) { return r.text(); })
+      .then(function (r) {
+        return r.text().then(function (t) {
+          // A refusal is not terminal output. Painting a 404 body into the
+          // pane would read as something the worker printed.
+          if (!r.ok) { throw new Error(t.slice(0, 300)); }
+          return t;
+        });
+      })
       .then(function (t) {
         if (selected !== chosen) { return; }
         outEl.textContent = t;
         outEl.scrollTop = outEl.scrollHeight;
+      })
+      .catch(function (err) {
+        if (selected !== chosen) { return; }
+        outEl.textContent = "";
+        var notice = document.createElement("span");
+        notice.className = "notice error";
+        notice.textContent = "This worker's transcript could not be read: " + err.message;
+        outEl.appendChild(notice);
       });
     source = new EventSource("/v1/tasks/" + chosen +
       "/stream?access_token=" + encodeURIComponent(token));
@@ -1818,7 +1833,11 @@ WEB_UI = """<!DOCTYPE html>
       if (selected !== chosen) { return; }
       outEl.textContent += "\\n[not delivered: " + err.message + "]\\n";
       outEl.scrollTop = outEl.scrollHeight;
-    }).then(function () { lineEl.disabled = false; lineEl.focus(); });
+    }).then(function () {
+      if (selected !== chosen) { return; }
+      lineEl.disabled = false;
+      lineEl.focus();
+    });
   });
 
   if (!token) {
