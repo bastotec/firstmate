@@ -109,7 +109,7 @@ api_code() {
 # A real agent owning a real pty, exactly as a spawn would start it.
 AGENT_SEQ=0
 start_agent() {  # <machine> <label> [status-path]
-  local machine=$1 label=$2 status=${3:-} ready log pid waited=0 got_machine endpoint
+  local machine=$1 label=$2 status=${3:-} ready log pid waited=0 endpoint
   AGENT_SEQ=$((AGENT_SEQ + 1))
   ready="$CASE_DIR/agent-$machine-$label-$AGENT_SEQ.ready"
   log="$CASE_DIR/agent-$machine-$label-$AGENT_SEQ.log"
@@ -128,7 +128,9 @@ start_agent() {  # <machine> <label> [status-path]
     waited=$((waited + 1))
   done
   [ -s "$ready" ] || fail "agent did not register for $machine/$label: $(cat "$log" 2>/dev/null)"
-  read -r got_machine endpoint < "$ready"
+  # The ready file is "<machine> <endpoint-id>"; only the endpoint is needed here,
+  # so the machine field is read into the throwaway name rather than a real one.
+  read -r _ endpoint < "$ready"
   printf '%s' "$endpoint"
 }
 
