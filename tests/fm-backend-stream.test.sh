@@ -345,17 +345,19 @@ test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers() {
 }
 
 test_a_create_that_times_out_leaves_nothing_behind() {
-  # The adapter gives up on a spawn after 15s. The agent's own startup budget
-  # has to be smaller than that, or it goes on to register an endpoint and hold
-  # a shell firstmate has already stopped waiting for - and the retry of that
-  # same task then collides on duplicate_label.
+  # The adapter gives up on a spawn after 15s, so the agent's WHOLE startup has
+  # to fit inside that, not just the calls someone remembered to bound. The
+  # stand-in here is prompt for the health check and the registration and then
+  # stalls on the last call before the ready file - the shape that leaves a
+  # live endpoint and a live shell behind when only some calls are budgeted,
+  # and whose retry then collides on duplicate_label.
   start_case_hub createtimeout
   local label slow_ready slow_host slow_port slow_url out target hostport
   label="fm-slowhub-$$"
   slow_ready="$CASE_DIR/proxy.ready"
   hostport=${URL#http://}
   python3 "$ROOT/tests/assets/slow-tcp-proxy.py" 127.0.0.1 \
-    "${hostport%%:*}" "${hostport##*:}" 12 > "$slow_ready" 2>"$CASE_DIR/proxy.log" &
+    "${hostport%%:*}" "${hostport##*:}" 25 3 > "$slow_ready" 2>"$CASE_DIR/proxy.log" &
   local proxy_pid=$!
   disown "$proxy_pid" 2>/dev/null || true
   fm_test_track_helper_pid "$proxy_pid"

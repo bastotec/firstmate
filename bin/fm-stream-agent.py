@@ -122,10 +122,13 @@ def _ps_args(pid: str) -> str:
     return proc.stdout.decode("utf-8", "replace").strip()
 
 
-# Each startup call to the hub, bounded so the whole startup - the dead-child
-# check, the health call, and the registration - finishes inside the window the
-# adapter waits for the ready file.
-STARTUP_CALL_TIMEOUT = 5.0
+# The agent's whole startup - every blocking hub call from launch up to and
+# including the ready-file write - runs against ONE deadline, so a call added
+# to that path is bounded by it without anyone remembering to bound it. The
+# budget is strictly under the window the adapter waits for the ready file, so
+# an agent that cannot come up has already given up by the time the spawn
+# abandons it rather than registering an endpoint nobody is waiting for.
+STARTUP_BUDGET = 12.0
 
 
 def _silence_diagnostics() -> None:
@@ -352,8 +355,23 @@ class HubClient:
     def __init__(self, base_url: str, token: str) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.deadline = None
+
+    def begin_startup(self, budget: float) -> None:
+        """Bound every call from here until end_startup by one wall-clock budget."""
+        self.deadline = time.monotonic() + budget
+
+    def end_startup(self) -> None:
+        """Return to ordinary per-call timeouts, once the endpoint is announced."""
+        self.deadline = None
 
     def call(self, method: str, path: str, payload=None, timeout: float = 30.0):
+        if self.deadline is not None:
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("the hub at %s did not finish %s %s within the "
+                                   "startup budget" % (self.base_url, method, path))
+            timeout = min(timeout, remaining)
         data = None
         headers = {"Authorization": "Bearer " + self.token}
         if payload is not None:
@@ -374,6 +392,13 @@ class HubClient:
                                % (method, path, parsed.get("message") or exc.code))
         except urllib.error.URLError as exc:
             raise RuntimeError("cannot reach the hub at %s: %s" % (self.base_url, exc.reason))
+        except (TimeoutError, OSError) as exc:
+            # A hub that accepts the connection and then says nothing raises
+            # here rather than as a URLError, and it must read as a hub that
+            # could not be reached - not as a crash that skips the caller's
+            # own cleanup.
+            raise RuntimeError("the hub at %s did not answer %s %s: %s"
+                               % (self.base_url, method, path, exc))
         if not body:
             return {}
         try:
@@ -459,8 +484,14 @@ class Agent:
         }
 
     def publish_initial_state(self) -> None:
-        """Make this endpoint reportable before anything is told it exists."""
-        self._post_frames([self.state_frame()])
+        """Make this endpoint reportable before anything is told it exists.
+
+        This one raises where the heartbeat's publishes do not: a first state
+        frame that never lands means startup has not finished, and startup is
+        the one moment where giving up cleanly beats carrying on.
+        """
+        self.hub.call("POST", "/v1/agent/frames",
+                      {"machine": self.machine, "frames": [self.state_frame()]})
 
     def state_loop(self) -> None:
         """Publish state on a heartbeat.
@@ -678,11 +709,8 @@ def main(argv: list) -> int:
     command = _default_shell_command()
 
     hub = HubClient(options.hub, read_token(options))
-    # Startup is budgeted to finish well inside the window the adapter waits
-    # for the ready file, so an agent that cannot come up has already given up
-    # by the time the spawn abandons it, rather than registering an endpoint
-    # firstmate no longer knows about.
-    health = hub.call("GET", "/v1/health", timeout=STARTUP_CALL_TIMEOUT)
+    hub.begin_startup(STARTUP_BUDGET)
+    health = hub.call("GET", "/v1/health")
     protocol = health.get("protocol")
     if protocol != AGENT_PROTOCOL:
         raise SystemExit("fm-stream-agent: the hub at %s speaks protocol %r but this agent "
@@ -729,28 +757,30 @@ def main(argv: list) -> int:
             "cwd": options.cwd,
             "rows": options.rows,
             "cols": options.cols,
-        }, timeout=STARTUP_CALL_TIMEOUT)
+        })
+        agent = Agent(options, hub, pty, endpoint_id)
+        # Publish the first state frame BEFORE announcing readiness. The ready
+        # file is what a spawn waits on, and the very next thing it may do is
+        # ask how this endpoint is doing - which would otherwise be answered
+        # "no state frame yet", i.e. unreadable, for a worker that is fine.
+        agent.publish_initial_state()
     except RuntimeError as exc:
         pty.close()
         pty.release()
-        # The registration may have been recorded before the answer was lost,
-        # so the endpoint is closed on the way out. A live endpoint nobody owns
+        # The registration may have been recorded before startup ran out, so
+        # the endpoint is closed on the way out. A live endpoint nobody owns
         # would refuse the next attempt at the same task with duplicate_label.
+        # The closing frame gets its own budget: the one just spent is gone,
+        # and this is the call that keeps the next attempt clean.
+        hub.begin_startup(STARTUP_BUDGET)
         try:
             hub.call("POST", "/v1/agent/frames", {
                 "machine": options.machine,
                 "frames": [{"endpoint_id": endpoint_id, "closed": True, "exit_code": None}],
-            }, timeout=STARTUP_CALL_TIMEOUT)
+            })
         except RuntimeError:
             pass
         raise SystemExit("fm-stream-agent: %s" % exc)
-
-    agent = Agent(options, hub, pty, endpoint_id)
-    # Publish the first state frame BEFORE announcing readiness. The ready file
-    # is what a spawn waits on, and the very next thing it may do is ask how
-    # this endpoint is doing - which would otherwise be answered "no state frame
-    # yet", i.e. unreadable, for a worker that is in fact perfectly fine.
-    agent.publish_initial_state()
 
     if options.ready_file:
         with open(options.ready_file, "w", encoding="utf-8") as fh:
@@ -764,6 +794,7 @@ def main(argv: list) -> int:
     # failed publish, for the worker's whole life - would only grow a file
     # nobody can read.
     _silence_diagnostics()
+    hub.end_startup()
 
     return agent.run()
 

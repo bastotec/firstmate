@@ -2,11 +2,15 @@
 """A TCP forwarder that stalls before connecting, standing in for a slow link.
 
 Usage: slow-tcp-proxy.py <listen-host> <target-host> <target-port> <delay-secs>
-Prints "<host> <port>" once listening. Every accepted connection waits
-<delay-secs> before it is forwarded, which is how a hub that answers eventually
-but not promptly looks from an agent's side.
+                         [stall-connection]
+Prints "<host> <port>" once listening. Accepted connections wait <delay-secs>
+before they are forwarded, which is how a hub that answers eventually but not
+promptly looks from a client's side. With <stall-connection> given, only that
+one connection (counted from 1) is stalled and every other is forwarded at
+once - a hub that is prompt until one particular call.
 """
 
+import itertools
 import socket
 import socketserver
 import sys
@@ -16,6 +20,8 @@ import time
 listen_host, target_host, target_port, delay = sys.argv[1:5]
 target = (target_host, int(target_port))
 delay = float(delay)
+stall_connection = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+accepted = itertools.count(1)
 
 
 def pump(src, dst):
@@ -36,7 +42,8 @@ def pump(src, dst):
 
 class Handler(socketserver.BaseRequestHandler):
     def handle(self):
-        time.sleep(delay)
+        if not stall_connection or next(accepted) == stall_connection:
+            time.sleep(delay)
         try:
             upstream = socket.create_connection(target, timeout=30)
         except OSError:
