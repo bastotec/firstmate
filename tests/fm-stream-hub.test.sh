@@ -913,8 +913,10 @@ test_a_stood_down_agent_still_closes_the_record_it_holds() {
   # endpoint finished: the worker it kept alive eventually exits, and if that
   # close cannot be posted the fleet lists a live worker for a process that is
   # gone.
-  start_hub standdown
-  local endpoint agent child taker closed waited=0
+  # A short acknowledgement window, because the signal this case waits on is
+  # the hub giving up on a command nobody takes.
+  start_hub standdown --command-ack-secs 3
+  local endpoint agent child taker closed acked="" waited=0
   endpoint=$(start_agent box-a survivor)
   agent=$(agent_pid_for box-a survivor)
   [ -n "$agent" ] || fail "the agent should be running"
@@ -931,11 +933,22 @@ test_a_stood_down_agent_still_closes_the_record_it_holds() {
     '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
   assert_equals "$(api_code)" 200 "the retry's agent should hold the name"
   kill -CONT "$agent" || fail "could not resume the agent"
-  # The returning agent is refused and stands down - it goes quiet again while
-  # its worker keeps running, which is how the stand-down shows from here.
-  wait_until_quiet "$endpoint" || fail "the superseded agent should have stopped publishing"
+  # The returning agent is refused and stands down. Elapsed silence proves
+  # nothing here - it was already true while the agent was paused - so the case
+  # waits on the one thing only a stood-down agent produces: it stops taking
+  # commands, so a steer goes unacknowledged and the hub gives up on it. A
+  # running agent takes that same steer and answers.
+  while [ "$waited" -lt 8 ]; do
+    view POST "/v1/tasks/$endpoint/input" '{"text":":","submit":false}' >/dev/null
+    acked=$(api_code)
+    [ "$acked" = 504 ] && break
+    waited=$((waited + 1))
+  done
+  assert_equals "$acked" 504 \
+    "a superseded agent should stand down and stop taking commands"
   [ -n "$(pgrep -P "$agent" 2>/dev/null)" ] \
     || fail "standing down must not stop the worker"
+  waited=0
   # That worker now exits on its own, and the agent that lost the name still
   # has a record to close out.
   kill -KILL "$child" || fail "could not end the worker"
