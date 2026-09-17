@@ -107,6 +107,8 @@ A presumption is not a close, and it does exactly one thing: it frees the endpoi
 Everything else stays as it was.
 The worker is still listed, its stream still runs, and input, status lines and kills still reach it - because a worker the hub has not heard from lately may be perfectly healthy, and if it really is gone those calls fail on their own and say so.
 A state read answers `unreadable` rather than `dead` for the same reason: the hub cannot see the worker's process either way.
+Staleness withholds a verdict about a live READING, though, not about a recorded one: an endpoint its own agent closed reported the worker's exit and its exit code, and that answers `dead` however long ago it was recorded.
+A record the hub closed by itself is an unacknowledged kill and keeps reading `unreadable`.
 The agent's next word to the hub takes the presumption back.
 Where two registrations answer to one machine and label, the contest is settled by which agent the hub has heard from, not by which record is newer: an agent that is publishing keeps the name against a record nothing stands behind, and loses it only to one the hub has heard from just as lately.
 An agent that loses stands down - it stops publishing state and stops taking commands - but it does NOT stop its worker, and when that worker eventually exits it still closes its own record out.

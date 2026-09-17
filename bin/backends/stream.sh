@@ -507,7 +507,9 @@ fm_backend_stream_send_text_submit() {  # <target> <text> <retries> <enter-sleep
 # That last case is the whole difference between a central hub and a local
 # broker. A partitioned agent and a dead worker look identical from here, and
 # only one of them authorizes recovery, so a stale reading is `unreadable` and
-# NEVER `dead`. The hub marks staleness; this refuses to classify past it.
+# NEVER `dead`. The hub marks staleness; this refuses to classify past it -
+# except where the hub holds the agent's own report that the worker exited,
+# which is a recorded event rather than a reading and never goes stale.
 #
 # Identity is classified HERE, from the records the agent published, not on the
 # hub or the agent: that keeps one owner (bin/fm-agent-process-lib.sh) for what
@@ -524,6 +526,16 @@ fm_backend_stream_agent_state() {  # <target>
     esac
     return 0
   fi
+  # Staleness governs live READINGS, not recorded facts. A close the endpoint's
+  # OWN agent reported is that agent watching the worker exit and carrying its
+  # exit code back - an event that already happened, which no amount of elapsed
+  # silence makes less true. So it answers before the freshness gate. A close
+  # the hub made by itself is an unacknowledged kill and says nothing about the
+  # worker, which is why only `agent` counts here, exactly as the kill path
+  # already requires.
+  case "$(printf '%s' "$out" | jq -r '.closed_by // empty' 2>/dev/null)" in
+    agent) printf 'dead'; return 0 ;;
+  esac
   stale=$(printf '%s' "$out" | jq -r '.stale' 2>/dev/null)
   case "$stale" in
     false) ;;

@@ -253,6 +253,66 @@ test_agent_state_separates_missing_unreachable_and_partitioned() {
   pass "stream: agent state separates a missing endpoint, a partition, and an unreachable hub"
 }
 
+test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale() {
+  # Staleness governs live READINGS. An agent-reported close carries the exit
+  # code the owning agent watched the worker produce, so it is a recorded event
+  # and does not expire - otherwise every finished stream task reads
+  # `unreadable` for the whole retention hour and fm-control exit and relaunch
+  # refuse a worker that provably ended.
+  start_case_hub closedstate --state-max-age-secs 2
+  local label target endpoint state waited=0
+  label="fm-closedstate-$$"
+  target=$(create_endpoint "$label")
+  endpoint=${target##*:}
+  # The worker exits on its own, the way a finished task does, and its agent
+  # reports that exit and stops publishing.
+  with_stream_env fm_backend_send_text_submit stream "$target" 'exit' 3 0.2 0.2 >/dev/null 2>&1 || true
+  while [ "$waited" -lt 150 ]; do
+    [ "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET "/v1/tasks/$endpoint")" \
+      | jq -r '.task.closed_by // empty')" = agent ] && break
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET "/v1/tasks/$endpoint")" \
+    | jq -r '.task.closed_by // empty')" agent \
+    "the agent should have reported the worker's exit"
+  # Past the freshness window: before it the answer is already `dead` from the
+  # last live reading, so only this side of it tests anything.
+  waited=0
+  while [ "$waited" -lt 100 ]; do
+    [ "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET "/v1/tasks/$endpoint/processes")" \
+      | jq -r '.stale')" = true ] && break
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET "/v1/tasks/$endpoint/processes")" \
+    | jq -r '.stale')" true \
+    "the last state frame should have aged out of the freshness window"
+  state=$(with_stream_env fm_backend_agent_state stream "$target")
+  assert_equals "$state" dead \
+    "a worker its own agent watched exit must keep reading dead past the staleness window"
+
+  # And the boundary: a record the HUB closed by itself is an unacknowledged
+  # kill that says nothing about the worker, so it must still withhold a
+  # verdict rather than be laundered into a confirmed death.
+  local forced
+  forced=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  with_stream_env fm_backend_stream_api POST /v1/agent/endpoints \
+    "$(jq -nc --arg id "$forced" --arg l "fm-forcedstate-$$" \
+      '{endpoint_id: $id, machine: "box-test", label: $l, cwd: "/tmp"}')" >/dev/null \
+    || fail "the endpoint with no agent should register"
+  with_stream_env fm_backend_stream_api DELETE "/v1/tasks/$forced" >/dev/null \
+    || fail "the hub should close a record whose agent never answers"
+  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET "/v1/tasks/$forced")" \
+    | jq -r '.task.closed_by // empty')" hub \
+    "that close should be recorded as the hub's own"
+  state=$(with_stream_env fm_backend_agent_state stream \
+    "$(with_stream_env fm_backend_stream_hub_tag):$forced")
+  assert_equals "$state" unreadable \
+    "a close the hub made by itself is no evidence the worker stopped"
+  pass "stream: an agent-reported exit stays dead past staleness, a forced close does not"
+}
+
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling() {
   local victim bystander
   start_case_hub kill
@@ -802,6 +862,7 @@ test_capture_is_bounded_by_the_requested_line_count
 test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor
 test_agent_state_reads_the_foreground_process_not_the_screen
 test_agent_state_separates_missing_unreachable_and_partitioned
+test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_only_a_close_the_agent_reported_counts_as_a_stop
 test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop

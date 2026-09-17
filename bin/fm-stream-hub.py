@@ -1652,6 +1652,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         caller must report the endpoint unreadable; it must NEVER be read as
         the endpoint being dead, because an unreachable agent and a dead worker
         look identical from here and only one of them authorizes recovery.
+
+        `closed_by` rides along because staleness governs live READINGS, not
+        recorded facts: a close the owning agent reported is an event that
+        already happened, and it does not expire the way a reading does.
         """
         hub = self.server.hub
         max_age = hub.options.state_max_age_secs
@@ -1671,6 +1675,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "machine_silent_for_secs": None if machine_silent < 0 else round(machine_silent, 3),
             "state_max_age_secs": max_age,
             "closed": bool(endpoint.closed_at),
+            "closed_by": endpoint.closed_by or None,
             "exit_code": endpoint.exit_code,
         }
         if stale:
