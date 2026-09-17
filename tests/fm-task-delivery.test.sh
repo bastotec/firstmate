@@ -392,8 +392,10 @@ STUB
       "$mode: promoted worker was not told to rebase rather than design around other work"
     assert_grep "never during an active run" "$payload" \
       "$mode: promoted worker was not kept from rebasing under an active validation run"
-    assert_grep "never after you have appended \`done:\`" "$payload" \
-      "$mode: promoted worker was not told the post-done rebase is firstmate's"
+    assert_grep "A mid-task \`done:\` you continue past leaves that window open" "$payload" \
+      "$mode: promoted worker's rebase window closes on a nonterminal done line"
+    assert_grep "the final \`done:\` line your Definition of done ends on" "$payload" \
+      "$mode: promoted worker was not told the handoff keys to its terminal done line"
     assert_grep "instead of resolving it yourself" "$payload" \
       "$mode: promoted worker was not told to hand a semantic conflict back"
   done

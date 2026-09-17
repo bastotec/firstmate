@@ -41,8 +41,9 @@
 # fm_concurrent_work_section owns the worker's half of the parallel-work contract
 # (AGENTS.md section 7): firstmate names concurrent work touching this task's
 # area, and this section is what tells the worker that the notice is awareness
-# rather than a hold, when a rebase is its own to take, and that a genuine
-# semantic conflict goes back to firstmate. It is mode-independent and ship-only
+# rather than a hold, when a rebase is still its own to take - through its final
+# `done:` line, and never under an active run - and that a genuine semantic
+# conflict goes back to firstmate. It is mode-independent and ship-only
 # - a scout delivers a report, so it has nothing to rebase or conflict with - and
 # both bin/fm-brief.sh and bin/fm-promote.sh render it so a promoted scout
 # receives it too.
@@ -88,7 +89,8 @@ fm_concurrent_work_section() {
 You may not be the only worker on this project.
 When other work touches your area, firstmate names that work and what it touches - in the task above, or through the instruction inbox - and tells those workers about you.
 That notice is awareness, not a hold: keep going, and rebase onto the updated default branch once the other change lands rather than designing around it, waiting for it, or narrowing your own change to avoid it.
-Rebase only while the branch is yours to rewrite: before you start a validation run or between runs, never during an active run, because the pipeline owns your branch while it is running, and never after you have appended `done:` - a change that lands after that is firstmate's to rebase, not a reason to resume.
+Rebase only while the branch is still yours to rewrite: before you start a validation run or between runs, never during an active run, because the pipeline owns your branch while it is running.
+A mid-task `done:` you continue past leaves that window open; once you have reported the final `done:` line your Definition of done ends on, you have stopped, so getting the branch current from there is firstmate's to own rather than a reason to resume.
 Two edits in one file are an ordinary rebase; a genuine semantic conflict - two changes that cannot both be true - is firstmate's call, so append `needs-decision: {the two changes and why they cannot both hold}` and stop instead of resolving it yourself.
 EOF
 }
