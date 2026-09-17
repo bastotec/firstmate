@@ -247,7 +247,7 @@ test_capture_stays_readable_while_frames_are_arriving() {
   local endpoint out
   endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
-    '{endpoint_id: $id, machine: "box-a", label: "chatty", cwd: "/tmp", rows: 4, cols: 40}')" >/dev/null
+    '{endpoint_id: $id, machine: "box-a", label: "chatty", cwd: "/tmp", rows: 40, cols: 200}')" >/dev/null
   assert_equals "$(api_code)" 201 "the chatty endpoint should register"
   out=$(python3 "$ROOT/tests/assets/stream-hub-concurrent-capture.py" \
     "$URL" "$endpoint" "$PUBLISH_TOKEN" "$VIEW_TOKEN")
@@ -371,7 +371,75 @@ sys.stdout.write(b"".join(out).decode("utf-8", "replace"))
 ' "$CASE_DIR/sse")
   assert_contains "$decoded" BEFORE-SUBSCRIBE "the stream should replay output produced before the subscriber attached"
   assert_contains "$decoded" AFTER-SUBSCRIBE "the stream should deliver output produced after the subscriber attached"
-  pass "hub: the event stream replays the ring and then delivers live frames"
+  # An EventSource cannot set a header, so the stream route - and only it -
+  # takes the credential from the query. Everywhere else a steering credential
+  # in a request line would land in proxy logs and browser history.
+  local code
+  code=$(curl -sS -N -m 3 -o /dev/null -w '%{http_code}' \
+    "$URL/v1/tasks/$endpoint/stream?access_token=$VIEW_TOKEN" 2>/dev/null || true)
+  assert_equals "$code" 200 "the stream route should accept the browser's query credential"
+  code=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' \
+    "$URL/v1/tasks/$endpoint/capture?lines=5&access_token=$VIEW_TOKEN" 2>/dev/null)
+  assert_equals "$code" 401 "a read route should refuse a credential spelled into the URL"
+  code=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' -X POST \
+    -H 'Content-Type: application/json' --data-binary '{"text":"echo URL-TYPED","submit":true}' \
+    "$URL/v1/tasks/$endpoint/input?access_token=$VIEW_TOKEN" 2>/dev/null)
+  assert_equals "$code" 401 "steering must never be authorized by a credential in the URL"
+  assert_not_contains "$(view GET "/v1/tasks/$endpoint/capture?lines=40")" URL-TYPED \
+    "an input refused at the door must never reach the pseudoterminal"
+  pass "hub: the event stream replays the ring, delivers live frames, and is the only route taking a query credential"
+}
+
+test_an_endpoint_runs_the_operators_own_shell_and_a_dead_one_is_refused() {
+  # Workers live on machines the hub never chose, so the endpoint's shell is
+  # whatever $SHELL is there - a macOS home defaults to zsh, which rejects
+  # bash's rc-suppressing flags and exits at birth. Both halves matter: a
+  # non-bash shell must actually work, and a shell that cannot start must be
+  # refused at creation rather than recorded as a live endpoint.
+  start_hub shell
+  local other_shell ready endpoint out
+  other_shell=""
+  for candidate in /bin/dash /usr/bin/dash /bin/zsh /usr/bin/zsh /bin/sh; do
+    [ -x "$candidate" ] || continue
+    case "$("$candidate" -c 'echo $0' 2>/dev/null)" in *bash*) continue ;; esac
+    other_shell=$candidate
+    break
+  done
+  [ -n "$other_shell" ] || { pass "hub: no non-bash shell on this host to run the endpoint shell case"; return; }
+  ready="$CASE_DIR/other-shell.ready"
+  SHELL="$other_shell" python3 "$AGENT" serve --hub "$URL" \
+    --token-file "$CASE_DIR/publish-token" --machine box-a --label othershell-$RUN \
+    --cwd "$CASE_DIR/cwd" --ready-file "$ready" --state-interval 1 --poll-secs 3 \
+    > "$CASE_DIR/other-shell.log" 2>&1 &
+  local agent_pid=$!
+  disown "$agent_pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$agent_pid"
+  local waited=0
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$ready" ] || fail "an endpoint under $other_shell never registered: $(cat "$CASE_DIR/other-shell.log" 2>/dev/null)"
+  read -r _ endpoint < "$ready"
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo OTHER-SHELL-ALIVE","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 "an endpoint under $other_shell should accept input"
+  wait_for_capture "$endpoint" OTHER-SHELL-ALIVE \
+    || fail "an endpoint under $other_shell never ran what was typed into it"
+
+  # And a shell that genuinely cannot start is refused, rather than leaving a
+  # registered endpoint behind that every later steer would address in vain.
+  printf '#!/bin/sh\necho "cannot start here" >&2\nexit 3\n' > "$CASE_DIR/broken-shell"
+  chmod +x "$CASE_DIR/broken-shell"
+  out=$(SHELL="$CASE_DIR/broken-shell" python3 "$AGENT" serve --hub "$URL" \
+    --token-file "$CASE_DIR/publish-token" --machine box-a --label brokenshell-$RUN \
+    --cwd "$CASE_DIR/cwd" --ready-file "$CASE_DIR/broken.ready" 2>&1) \
+    && fail "an endpoint whose shell died at birth should not report success"
+  assert_contains "$out" "cannot start here" "the refusal should carry the shell's own error"
+  [ -s "$CASE_DIR/broken.ready" ] && fail "a refused endpoint must never write a ready file"
+  assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r '[.tasks[] | select(.label | startswith("brokenshell"))] | length')" \
+    0 "a shell that died at birth must leave no endpoint registered in the fleet"
+  pass "hub: an endpoint runs the operator's own shell, and one that cannot start is refused"
 }
 
 test_the_status_channel_writes_on_the_owning_machine_only() {
@@ -539,6 +607,7 @@ test_input_with_no_agent_to_acknowledge_is_refused
 test_state_reads_carry_their_age_and_withhold_a_stale_verdict
 test_a_silent_agent_is_unreadable_and_never_dead
 test_the_stream_replays_the_ring_then_delivers_live_frames
+test_an_endpoint_runs_the_operators_own_shell_and_a_dead_one_is_refused
 test_the_status_channel_writes_on_the_owning_machine_only
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_no_terminal_content_is_persisted_to_disk

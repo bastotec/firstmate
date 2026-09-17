@@ -122,6 +122,19 @@ def _ps_args(pid: str) -> str:
     return proc.stdout.decode("utf-8", "replace").strip()
 
 
+def _default_shell_command() -> list:
+    """The operator's own shell, with rc suppression only where it is understood.
+
+    --norc and --noprofile are bash's spelling. zsh and fish reject them and
+    exit at birth, so a shell this cannot classify is started plainly rather
+    than handed bash's flags.
+    """
+    shell = os.environ.get("SHELL", "") or "/bin/bash"
+    if os.path.basename(shell) == "bash":
+        return [shell, "--norc", "--noprofile", "-i"]
+    return [shell, "-i"]
+
+
 class Pty:
     """The task's pseudoterminal, owned here on the machine that runs it."""
 
@@ -156,6 +169,15 @@ class Pty:
         # target at the one moment it is provably ours, rather than asking the
         # kernel again later, when the answer may describe a stranger.
         self.pgid = self.pid
+
+    def exited_within(self, timeout: float) -> bool:
+        """True when the child is already gone, waiting at most <timeout>."""
+        with self._reap_lock:
+            try:
+                self.exit_code = self.proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                return False
+        return True
 
     def read(self, size: int = 65536) -> bytes:
         """One blocking read of the pty, b"" at end of file."""
@@ -638,7 +660,7 @@ def main(argv: list) -> int:
 
     command = [a for a in (options.argv or []) if a != "--"]
     if not command:
-        command = [os.environ.get("SHELL", "/bin/bash"), "--norc", "--noprofile", "-i"]
+        command = _default_shell_command()
 
     hub = HubClient(options.hub, read_token(options))
     health = hub.call("GET", "/v1/health", timeout=15.0)
@@ -670,6 +692,16 @@ def main(argv: list) -> int:
     env.setdefault("TERM", "xterm-256color")
 
     pty = Pty(options.cwd, command, options.rows, options.cols, env)
+    # An endpoint whose process is already gone must never be registered: the
+    # spawn would record a task against a corpse and every later steer would
+    # address nothing. The command's own output is the reason it failed.
+    if pty.exited_within(0.4):
+        detail = pty.read().decode("utf-8", "replace").strip().splitlines()
+        pty.release()
+        raise SystemExit("fm-stream-agent: %s exited immediately (status %s): %s"
+                         % (command[0], pty.exit_code,
+                            detail[-1] if detail else "no output"))
+
     try:
         hub.call("POST", "/v1/agent/endpoints", {
             "endpoint_id": endpoint_id,

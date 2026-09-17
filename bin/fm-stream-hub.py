@@ -79,15 +79,10 @@ serve options:
                          credential can never register an endpoint nor steer
                          one; an operating credential is spelled
                          "subscribe,control:<token>".
-  --ring-bytes N         per-endpoint frame ring (default 262144)
-  --scrollback N         per-endpoint rendered scrollback lines (default 2000)
   --state-max-age-secs N how old a published state frame may be before a state
                          answer is reported stale (default 30)
   --command-ack-secs N   how long an input or kill waits for the owning agent's
                          acknowledgement before it is refused (default 20)
-  --endpoint-retention-secs N
-                         how long a closed endpoint stays readable before the
-                         reaper drops it (default 3600, 0 keeps it forever)
   --ready-file PATH      write "<bind> <port>" there once listening
   --pid-file PATH        write this process's pid there once listening
 
@@ -1006,7 +1001,7 @@ class Hub:
                                    "machine %s already has a live endpoint labelled %s"
                                    % (machine, label))
             endpoint = Endpoint(endpoint_id, machine, label, cwd, rows, cols,
-                                self.options.ring_bytes, self.options.scrollback)
+                                DEFAULT_RING_BYTES, DEFAULT_SCROLLBACK)
             self.endpoints[endpoint_id] = endpoint
             self.touch_machine(machine)
             return endpoint
@@ -1024,10 +1019,7 @@ class Hub:
             return list(self.endpoints.values())
 
     def reap(self) -> None:
-        retention = self.options.endpoint_retention_secs
-        if retention <= 0:
-            return
-        cutoff = _now() - retention
+        cutoff = _now() - DEFAULT_ENDPOINT_RETENTION
         with self.lock:
             for endpoint_id in [e.endpoint_id for e in self.endpoints.values()
                                 if e.closed_at and e.closed_at < cutoff]:
@@ -1204,18 +1196,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # --- auth -------------------------------------------------------------
 
-    def _presented_token(self, query: dict) -> str:
+    def _presented_token(self, query: dict, allow_query: bool) -> str:
         header = self.headers.get("Authorization", "")
         if header.startswith("Bearer "):
             return header[7:].strip()
         # The query form exists for the one client that cannot set a header: a
-        # browser opening an EventSource. It is accepted only where the header
-        # is absent, and _require still checks the class, so it grants nothing
-        # the header would not have.
-        return _query_one(query, "access_token", "")
+        # browser opening an EventSource on the stream route. Every other route
+        # requires the header, so a steering credential can never be spelled
+        # into a request line, a proxy log, or browser history.
+        return _query_one(query, "access_token", "") if allow_query else ""
 
-    def _require(self, needed: str, query: dict) -> frozenset:
-        granted = self.server.hub.classes_for(self._presented_token(query))
+    def _require(self, needed: str, query: dict, allow_query: bool = False) -> frozenset:
+        granted = self.server.hub.classes_for(self._presented_token(query, allow_query))
         if not granted:
             raise HubError(HTTPStatus.UNAUTHORIZED, "unauthenticated",
                            "a bearer token is required")
@@ -1267,7 +1259,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return payload
 
     def _require_any(self, query: dict) -> frozenset:
-        granted = self.server.hub.classes_for(self._presented_token(query))
+        granted = self.server.hub.classes_for(self._presented_token(query, False))
         if not granted:
             raise HubError(HTTPStatus.UNAUTHORIZED, "unauthenticated",
                            "a bearer token is required")
@@ -1440,7 +1432,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # Steering an endpoint - typing into it or appending to its record - is
         # the control class; everything else on a task is a read.
         steering = method == "POST" and tail in ("input", "status")
-        self._require(CLASS_CONTROL if steering else CLASS_SUBSCRIBE, query)
+        self._require(CLASS_CONTROL if steering else CLASS_SUBSCRIBE, query,
+                      allow_query=(method == "GET" and tail == "stream"))
         endpoint = hub.get(endpoint_id)
 
         if tail == "" and method == "GET":
@@ -1478,7 +1471,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         if tail == "capture" and method == "GET":
-            lines = min(max(_query_int(query, "lines", 40), 1), hub.options.scrollback)
+            lines = min(max(_query_int(query, "lines", 40), 1), DEFAULT_SCROLLBACK)
             ansi = _query_one(query, "format", "text") == "ansi"
             with endpoint.lock:
                 rendered = endpoint.screen.tail_lines(lines, ansi=ansi)
@@ -1816,12 +1809,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--bind", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=DEFAULT_PORT)
     serve.add_argument("--token-file", default="")
-    serve.add_argument("--ring-bytes", type=int, default=DEFAULT_RING_BYTES)
-    serve.add_argument("--scrollback", type=int, default=DEFAULT_SCROLLBACK)
     serve.add_argument("--state-max-age-secs", type=float, default=DEFAULT_STATE_MAX_AGE)
     serve.add_argument("--command-ack-secs", type=float, default=DEFAULT_COMMAND_ACK)
-    serve.add_argument("--endpoint-retention-secs", type=float,
-                       default=DEFAULT_ENDPOINT_RETENTION)
     serve.add_argument("--ready-file", default="")
     serve.add_argument("--pid-file", default="")
     return parser
@@ -1853,9 +1842,6 @@ def main(argv: list) -> int:
         # issue a viewing credential that can neither register an endpoint nor
         # steer one.
         tokens = {env_token: frozenset(TOKEN_CLASSES)}
-
-    if options.ring_bytes <= 0 or options.scrollback <= 0:
-        raise SystemExit("fm-stream-hub: --ring-bytes and --scrollback must be positive")
 
     HubServer.hub = Hub(options, tokens)
     try:

@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Drive concurrent capture reads against a live hub while frames arrive.
 
-Prints "clean" when every capture answered 200 with a well-formed body, and
-the first failure otherwise. Used by tests/fm-stream-hub.test.sh, which cannot
-express real overlap from a shell loop.
+Prints "clean" when every capture answered 200 with a coherent screen, and the
+first failure otherwise. Used by tests/fm-stream-hub.test.sh, which cannot
+express real publish/read overlap from a shell loop.
+
+Every published line repeats its own row number three times, and the numbers
+run consecutively. A capture is coherent exactly when each line agrees with
+itself and the lines run in sequence: a render that walks the screen while the
+worker is still writing into it returns a row built from two different lines,
+and one that reads the scrollback and the screen in two different states drops
+the row that moved between them.
 """
 
 import base64
@@ -29,12 +36,12 @@ def request(path, token, method="GET", body=None):
 
 
 def publisher():
-    # The endpoint has four screen rows, so every published line scrolls one
-    # row into the scrollback deque the capture read is iterating.
+    # Each POST rewrites the whole screen many times over, so the worker is
+    # still writing into the rows a concurrent capture is rendering.
     n = 0
     while not stop.is_set():
-        n += 1
-        chunk = "".join("row-%d-%d\r\n" % (n, i) for i in range(20))
+        chunk = "".join("row-%08d-%08d-%08d\r\n" % ((n + i,) * 3) for i in range(400))
+        n += 400
         try:
             request("/v1/agent/frames", publish_token, "POST", {
                 "machine": "box-a",
@@ -47,7 +54,7 @@ def publisher():
 
 
 def reader():
-    for _ in range(150):
+    for _ in range(200):
         try:
             status, body = request("/v1/tasks/%s/capture?lines=40" % endpoint, view_token)
         except urllib.error.HTTPError as exc:
@@ -60,21 +67,29 @@ def reader():
         if status != 200 or not body.endswith("\n"):
             failures.append("capture answered %s with %r" % (status, body[:120]))
             return
-        # Every published line is unique, so one line appearing twice means the
-        # render read the scrollback and the screen in two different states.
-        lines = [line for line in body.split("\n") if line]
-        if len(set(lines)) != len(lines):
-            failures.append("capture returned a torn screen: %r" % (body[:200],))
-            return
+        rows = []
+        for line in body.split("\n"):
+            if not line.startswith("row-"):
+                continue
+            fields = line[4:].split("-")
+            if len(fields) != 3 or len(set(fields)) != 1:
+                failures.append("capture returned a torn row: %r" % (line,))
+                return
+            rows.append(int(fields[0]))
+        for previous, current in zip(rows, rows[1:]):
+            if current != previous + 1:
+                failures.append("capture returned a torn screen: row %d is followed by "
+                                "row %d" % (previous, current))
+                return
 
 
-publishers = [threading.Thread(target=publisher) for _ in range(2)]
-readers = [threading.Thread(target=reader) for _ in range(3)]
-for thread in publishers + readers:
+publisher_thread = threading.Thread(target=publisher)
+readers = [threading.Thread(target=reader) for _ in range(6)]
+publisher_thread.start()
+for thread in readers:
     thread.start()
 for thread in readers:
     thread.join()
 stop.set()
-for thread in publishers:
-    thread.join()
+publisher_thread.join()
 print(failures[0] if failures else "clean")
