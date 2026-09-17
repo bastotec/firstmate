@@ -125,6 +125,14 @@ DEFAULT_SCROLLBACK = 2000
 DEFAULT_STATE_MAX_AGE = 30.0
 DEFAULT_COMMAND_ACK = 20.0
 DEFAULT_ENDPOINT_RETENTION = 3600.0
+# How many staleness windows of silence end an endpoint. The hub hears from an
+# agent on every frame, every state heartbeat, and every command poll, so an
+# endpoint that has said nothing for this long has no agent behind it any more,
+# whatever became of the worker's own process. Closing the record is what lets
+# the label be used again and lets the reaper clear it; the hub still never
+# calls a silent worker dead in a state answer, because those are two different
+# questions - whether a record is worth keeping, and whether a process died.
+AGENT_SILENCE_CLOSE_WINDOWS = 3
 MAX_BODY = 4 * 1024 * 1024
 MAX_LABEL_LEN = 128
 MAX_MACHINE_LEN = 128
@@ -778,10 +786,6 @@ class Endpoint:
         self.cols = cols
         self.created_at = _now()
         self.closed_at = 0.0
-        # Set when the hub closed its own record without the owning agent
-        # confirming the kill. The process may still be running, so this is
-        # never proof of death and the label stays claimed.
-        self.forced_close = False
         self.exit_code = None
         self.screen = Screen(rows, cols, scrollback)
         self.ring = Ring(ring_bytes)
@@ -991,6 +995,10 @@ class Hub:
         cwd = str(payload.get("cwd") or "")
         rows = _positive_int(payload.get("rows"), 40, "rows")
         cols = _positive_int(payload.get("cols"), 200, "cols")
+        # A label is only claimed by an endpoint that still has an agent, so
+        # the silence check runs before the claim is tested rather than waiting
+        # for the next listing call to notice.
+        self.reap()
         with self.lock:
             existing = self.endpoints.get(endpoint_id)
             if existing is not None:
@@ -1004,12 +1012,11 @@ class Hub:
                 self.touch_machine(machine)
                 return existing
             for other in self.endpoints.values():
-                if other.closed_at and not other.forced_close:
+                if other.closed_at:
                     continue
                 if other.machine == machine and other.label == label:
                     raise HubError(HTTPStatus.CONFLICT, "duplicate_label",
-                                   "machine %s already has an endpoint labelled %s "
-                                   "whose worker is not known to have stopped"
+                                   "machine %s already has a live endpoint labelled %s"
                                    % (machine, label))
             endpoint = Endpoint(endpoint_id, machine, label, cwd, rows, cols,
                                 DEFAULT_RING_BYTES, DEFAULT_SCROLLBACK)
@@ -1030,8 +1037,12 @@ class Hub:
             return list(self.endpoints.values())
 
     def reap(self) -> None:
+        silent_for = self.options.state_max_age_secs * AGENT_SILENCE_CLOSE_WINDOWS
         cutoff = _now() - DEFAULT_ENDPOINT_RETENTION
         with self.lock:
+            for endpoint in list(self.endpoints.values()):
+                if not endpoint.closed_at and endpoint.agent_silent_for() > silent_for:
+                    endpoint.mark_closed(None)
             for endpoint_id in [e.endpoint_id for e in self.endpoints.values()
                                 if e.closed_at and e.closed_at < cutoff]:
                 self.endpoints.pop(endpoint_id, None)
@@ -1468,13 +1479,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     raise
                 # An agent that never answers cannot be waited for, so the hub
                 # stops carrying a record it can no longer steer. That is not
-                # proof the worker died: the answer says so, and the label
-                # stays claimed, because a label handed to a second worker
-                # while the first may still be running is the one outcome
-                # worse than a label nobody can reuse.
+                # proof the worker died, and the answer says so rather than
+                # reporting a kill it did not make.
                 delivered = False
                 endpoint.mark_closed(None)
-                endpoint.forced_close = True
             self._json(HTTPStatus.OK, {
                 "ok": True,
                 "closed": endpoint.endpoint_id,

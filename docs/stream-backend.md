@@ -88,8 +88,15 @@ A status line travels as a command to that endpoint's own agent, which appends i
 
 `DELETE /v1/tasks/<id>` hands the kill to the endpoint's own agent and waits for it to acknowledge.
 The answer carries `delivered`: true when that agent took the kill, and false when it never answered and the hub closed only its own record.
-A `delivered: false` close is not proof the worker stopped - its process lives on the worker's machine, which the hub cannot reach - so `fm-spawn` and teardown report it as an unconfirmed stop rather than a successful one, and the endpoint's label stays claimed.
-A label nobody can reuse is recoverable; two live workers answering to one name is not.
+A `delivered: false` close is not proof the worker stopped - its process lives on the worker's machine, which the hub cannot reach.
+The adapter refuses such a close: `fm_backend_stream_kill` exits nonzero and says the worker may still be running.
+Today that is where the distinction stops, because every caller of the shared `fm_backend_kill` discards its status and its stderr, so firstmate's teardown proceeds as it would after any other kill.
+Making those call sites honour a refused kill is a cross-backend change and is follow-up work.
+
+The hub also closes an endpoint on its own once its agent has been silent for several staleness windows.
+Agents are heard from on every frame, every state heartbeat, and every command poll, so silence that long means no agent is behind that endpoint any more - a spawn that was abandoned mid-startup, or an agent that died.
+Closing the record frees the label for the next attempt at that task and lets the reaper clear it on the ordinary retention schedule.
+This is a statement about the hub's record, not about the worker: a state read still answers `unreadable` rather than `dead` for a silent endpoint, because the hub cannot see the process.
 
 ## When the hub is down
 

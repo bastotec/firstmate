@@ -578,7 +578,13 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
     # closing it would destroy a stranger's endpoint.
     fm_backend_stream_target_ready "$target" "$expected" || return 0
   fi
-  out=$(fm_backend_stream_api DELETE "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || return 0
+  out=$(fm_backend_stream_api DELETE "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
+    # A kill the hub never answered is not a kill. Saying so is all this
+    # adapter can do about it, but reporting it as a stop would be a lie.
+    echo "error: the stream hub refused or never answered the kill for" \
+         "$FM_BACKEND_STREAM_ENDPOINT; the worker may still be running" >&2
+    return 1
+  }
   # The hub answers whether the owning agent actually took the kill. A record
   # it closed on its own says nothing about the worker's process, and reporting
   # that as a stop would let a task be treated as gone while it still runs.

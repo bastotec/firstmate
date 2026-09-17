@@ -395,15 +395,15 @@ test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers() {
 }
 
 test_a_create_that_times_out_leaves_nothing_behind() {
-  # The half that matters most after a spawn is abandoned: the hub must not be
-  # left holding a live endpoint under that label. Only the agent knows the id
-  # it registered, so only the agent can close it - here the hub drops the one
-  # connection its first frame needs, which leaves the attempt refused with
-  # budget still on its clock to close what it registered.
-  start_case_hub createtimeout --command-ack-secs 2
+  # The hard shape: the hub takes the registration and THEN stalls, so the
+  # attempt is abandoned with an endpoint already registered and no budget left
+  # to close it. Nothing on the worker's side can clean that up - the agent is
+  # gone - so the hub itself has to stop carrying a record no agent stands
+  # behind, or the task id is unusable for as long as the hub runs.
+  start_case_hub createtimeout --command-ack-secs 2 --state-max-age-secs 2
   local label out real_url target
   label="fm-slowhub-$$"
-  start_slow_stand_in_delay 0 3
+  start_slow_stand_in 3
   real_url=$URL
   URL=$SLOW_URL
   if out=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" 2>&1); then
@@ -416,7 +416,8 @@ test_a_create_that_times_out_leaves_nothing_behind() {
   assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET /v1/tasks)" \
     | jq -r --arg l "$label" '[.tasks[] | select(.label==$l and (.closed_at | not))] | length')" \
     0 "an abandoned create must leave no live endpoint registered"
-  # And the obvious next thing an operator does works.
+  # And the obvious next thing an operator does works, rather than colliding
+  # with the record the abandoned attempt left behind.
   target=$(create_endpoint "$label")
   case "$target" in
     *:[0-9a-f]*) ;;

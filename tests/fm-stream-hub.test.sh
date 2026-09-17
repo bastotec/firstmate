@@ -525,8 +525,7 @@ test_kill_closes_the_exact_endpoint_and_leaves_its_sibling() {
 test_a_kill_closes_an_endpoint_whose_agent_never_answers() {
   # Lifecycle point four is killing the exact endpoint, and an endpoint whose
   # agent is gone is precisely when an operator reaches for it. Answering "the
-  # agent did not acknowledge" and leaving the endpoint live kills nothing, and
-  # the registration then refuses its own label for as long as the hub runs.
+  # agent did not acknowledge" and leaving the endpoint live kills nothing.
   start_hub deadkill --command-ack-secs 2
   local endpoint payload out
   endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
@@ -544,13 +543,42 @@ test_a_kill_closes_an_endpoint_whose_agent_never_answers() {
   assert_equals "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
     '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
     0 "the endpoint must be closed rather than left steerable"
-  # And the label stays claimed, because that worker's process may still be
-  # running: two live workers under one name is worse than a stuck label.
+  # The label is usable again: a record with no agent behind it is exactly what
+  # the next attempt at that task has to be able to replace.
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$(python3 -c 'import os; print(os.urandom(16).hex())')" \
     '{endpoint_id: $id, machine: "box-a", label: "abandoned", cwd: "/tmp"}')" >/dev/null
-  assert_equals "$(api_code)" 409 \
-    "a label whose worker was never confirmed stopped must not be handed to a second endpoint"
+  assert_equals "$(api_code)" 201 \
+    "the next attempt at that task should register once the closed record is gone"
   pass "hub: a kill the agent never answers closes the record and says so"
+}
+
+test_an_endpoint_whose_agent_goes_silent_stops_being_registered() {
+  # The hub hears from an agent on every frame, heartbeat and command poll, so
+  # an endpoint that says nothing at all has nobody behind it - a spawn
+  # abandoned mid-startup, or an agent that died. Carrying that record forever
+  # is what makes its task id unusable, because the next attempt collides with
+  # a worker that does not exist.
+  start_hub silence --state-max-age-secs 1
+  local endpoint out waited=0
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
+    '{endpoint_id: $id, machine: "box-a", label: "silent", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the endpoint should register"
+  # Nothing ever publishes for it. Read the fleet until the hub gives up on it.
+  while [ "$waited" -lt 100 ]; do
+    out=$(view GET /v1/tasks)
+    [ "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
+      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" = 0 ] && break
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  assert_equals "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
+    '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
+    0 "an endpoint no agent stands behind should stop being carried as live"
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$(python3 -c 'import os; print(os.urandom(16).hex())')" \
+    '{endpoint_id: $id, machine: "box-a", label: "silent", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "its label should be usable by the next attempt at that task"
+  pass "hub: an endpoint whose agent goes silent stops being registered"
 }
 
 test_no_terminal_content_is_persisted_to_disk() {
@@ -740,6 +768,7 @@ test_an_endpoint_runs_the_operators_own_shell_and_a_dead_one_is_refused
 test_the_status_channel_writes_on_the_owning_machine_only
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_a_kill_closes_an_endpoint_whose_agent_never_answers
+test_an_endpoint_whose_agent_goes_silent_stops_being_registered
 test_no_terminal_content_is_persisted_to_disk
 test_malformed_and_unknown_requests_are_refused
 test_the_viewer_is_static_and_carries_no_terminal_content
