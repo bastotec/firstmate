@@ -40,11 +40,15 @@ commands:
 # out-of-scope list below.
 test:
   instructions: |
-    The repository's own suites under tests/ are the rig for this product: they
-    drive the real firstmate scripts against real worktrees and real processes,
-    with PATH-shimmed terminal and harness binaries. Drive the change through the
-    suites for the area it touches - prove the change works, and prove the
-    regression fails without it - rather than constructing a new rig of your own.
+    The repository's portable suites under tests/ are the rig for this product:
+    they drive the real firstmate scripts against real worktrees and real
+    processes, with PATH-shimmed terminal and harness binaries. Drive the change
+    through the portable suites for the area it touches - prove the change works,
+    and prove the regression fails without it - rather than constructing a new rig
+    of your own.
+    The *-live-e2e guards are out of scope unless the change under validation is
+    to one of those guards themselves: they launch real harnesses and real
+    terminal servers on this machine.
     Out of scope here: standing up rigs of your own - live tmux servers, dirty
     worktrees, fake agent binaries, or reusable lab factories - beyond what the
     suites under tests/ already set up.
