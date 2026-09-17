@@ -95,6 +95,8 @@ It answers the same way to every other refusal, including `no_such_endpoint`: a 
 One answer is a confirmed stop, and only one.
 An endpoint carries `closed_by`: `agent` when its own agent reported the worker gone and brought its exit code back, and `hub` when the hub closed a record it could no longer steer.
 A kill against an endpoint already closed by its agent reports success without asking again - that agent watched the worker exit, which is the best evidence there will ever be - while every other outcome, `closed_by: hub` included, reports an unconfirmed stop.
+A close record moves from presumption to fact and never the reverse: a `hub` close is what the hub assumed about a worker it could not reach, so when that agent comes back and reports its own worker's exit, its report takes the record over - attribution and exit code together - and the endpoint then reads as one the agent closed.
+A hub close can never take over an agent's, and it never overwrites the exit code an agent recorded, which is what keeps an unacknowledged kill from ever claiming confirmation.
 Today that is where the distinction stops, because every caller of the shared `fm_backend_kill` discards its status and its stderr, so firstmate's teardown proceeds as it would after any other kill.
 Making those call sites honour a refused kill is a cross-backend change and is follow-up work.
 
@@ -108,7 +110,7 @@ Everything else stays as it was.
 The worker is still listed, its stream still runs, and input, status lines and kills still reach it - because a worker the hub has not heard from lately may be perfectly healthy, and if it really is gone those calls fail on their own and say so.
 A state read answers `unreadable` rather than `dead` for the same reason: the hub cannot see the worker's process either way.
 Staleness withholds a verdict about a live READING, though, not about a recorded one: an endpoint its own agent closed reported the worker's exit and its exit code, and that answers `dead` however long ago it was recorded.
-A record the hub closed by itself is an unacknowledged kill and keeps reading `unreadable`.
+A record the hub closed by itself is an unacknowledged kill and keeps reading `unreadable`, until and unless its own agent comes back and reports that worker's exit.
 The agent's next word to the hub takes the presumption back.
 Where two registrations answer to one machine and label, the contest is settled by which agent the hub has heard from, not by which record is newer: an agent that is publishing keeps the name against a record nothing stands behind, and loses it only to one the hub has heard from just as lately.
 An agent that loses stands down - it stops publishing state and stops taking commands - but it does NOT stop its worker, and when that worker eventually exits it still closes its own record out.
