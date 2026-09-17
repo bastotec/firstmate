@@ -139,7 +139,9 @@ The ring buffer was in memory too, so the terminal output produced while the hub
 
 A worker coming back this way must not lose its identity to the replacement its own absence provoked.
 Inside the restart window every stream endpoint reads unknown to the hub, so something may well start a fresh worker for the same task under the same name; registering it is not what decides the contest.
-A record the hub has never heard from stands for no worker, so it takes no name from the agent that is publishing under it - the rule the hub already applied to publishing, applied to registering too, so a recovering agent wins the window it did not choose to be in.
+A record the hub has never heard from stands for no worker, so it takes no name from the agent that is publishing under it - the rule the hub already applied to publishing, applied to registering too, so the contest is decided by which agent speaks rather than by which one registered first.
+That is a narrow protection, and worth being exact about: a replacement publishes its own first state frame immediately after registering, so the interval in which it stands for nothing at all is the gap between those two calls.
+Past it, the recovering agent is the one refused - correctly, because by then two workers really do answer to one name and the one the hub has heard from is the one it can account for.
 Readers on this side wait that window out rather than call the worker gone: a hub 404 has to keep being the answer for longer than a re-registration takes before it is reported as `missing`, because inside it the endpoint is about to exist again and a steer dropped there is a steer dropped on a healthy worker.
 
 `no_such_endpoint` is the only thing an agent acts on here, and only the hub states it.
@@ -149,7 +151,8 @@ An agent finds out through its own publishing, so an endpoint with nothing to sa
 Attempts are paced rather than repeated.
 One restart strands every agent in the fleet at once, so an agent leaves at least a couple of seconds between attempts, backs further off while the hub cannot take it back, and spreads the wait by a random margin so the fleet does not return in one burst against a hub that has only just come up.
 A worker whose own process ended while the hub was down is recovered the same way and on the same terms: if the hub is back by the time its agent posts the closing frame, the agent takes the identity back in order to deliver it, so the task's end and its exit code land under the id that names them rather than being lost with the record that was meant to hold them.
-Its closing frame asks for that recovery like any other frame, and gets no special licence - a hub that is still down at that moment does not hold an exiting agent open waiting for it.
+Its closing frame is the one thing the pace does not apply to: pacing exists to stop an agent asking again and again, and a closing frame is the last call that agent will ever make, so it takes its one attempt whether or not the wait from an earlier attempt has run out.
+That is the whole of the licence. It is one attempt on ordinary timeouts, it never waits for an attempt already in flight, and an agent whose hub is still down exits rather than holding its teardown open.
 
 One answer ends the attempts instead of continuing them, and only one.
 An agent that comes back to find another endpoint already answering to its machine and label stands down exactly as it would have anywhere else, because two workers behind one identity is the outcome worse than any lost endpoint.

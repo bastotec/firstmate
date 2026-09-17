@@ -599,7 +599,7 @@ class Agent:
                     sys.stderr.write("fm-stream-agent: the hub forgot endpoint %s again: "
                                      "%s\n" % (self.endpoint_id, exc))
                     return
-                if not self.recover_registration(exc):
+                if not self.recover_registration(exc, final=closing):
                     return
             except Superseded as exc:
                 self.give_up(exc)
@@ -613,7 +613,7 @@ class Agent:
                 sys.stderr.write("fm-stream-agent: publish failed: %s\n" % exc)
                 return
 
-    def recover_registration(self, reason: Exception) -> bool:
+    def recover_registration(self, reason: Exception, final: bool = False) -> bool:
         """Take this endpoint's identity back from a hub that forgot it.
 
         The hub's registry lives in its memory, so a hub that restarted has
@@ -626,10 +626,16 @@ class Agent:
 
         False means the endpoint is not back and the caller should drop what it
         was publishing: the hub was unreachable, the attempt is inside a backoff
-        window, or the answer was one this agent does not come back from. The
-        closing frame asks on the same terms as any other, so an agent whose
-        worker exited while the hub was down delivers its end if the hub is
-        back, and exits rather than holding its teardown open if it is not.
+        window, or the answer was one this agent does not come back from.
+
+        A FINAL recovery is the closing frame's, and the pace does not apply to
+        it. Pacing exists to stop an agent asking again and again; this is the
+        last call the agent will ever make, so there is no next attempt to
+        space out and nothing to protect the hub from - while the frame it
+        carries is the task's end and its exit code, which nothing afterwards
+        would ever ask for again. It is still ONE attempt on ordinary timeouts:
+        it never waits for an attempt already in flight, and an agent whose hub
+        is still down exits rather than holding its teardown open.
         """
         if self.stood_down.is_set():
             return False
@@ -638,7 +644,7 @@ class Agent:
         try:
             if self.stood_down.is_set():
                 return False
-            if time.monotonic() < self._register_not_before:
+            if not final and time.monotonic() < self._register_not_before:
                 return False
             self._register_not_before = time.monotonic() + self._register_backoff * (
                 1.0 + REREGISTER_JITTER * random.random())

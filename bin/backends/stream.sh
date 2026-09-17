@@ -46,13 +46,22 @@ FM_BACKEND_STREAM_AGENT_BIN="$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agen
 # How long a 404 has to keep being the answer before it counts as `missing`.
 # A hub that restarted has forgotten every endpoint until each agent registers
 # itself again, so a verdict taken inside that window is about the hub rather
-# than the worker. This is NOT sized by that window alone: the callers of this
-# classifier bound it already - the fleet snapshot gives crew-state 10s for a
-# whole read - so the wait has to stay far enough under their budgets that a
-# torn-down endpoint still reaches `missing` inside them rather than timing the
-# caller out and folding to unknown. A recovery slower than this is covered by
-# the caller asking again, which every one of them does.
-FM_BACKEND_STREAM_MISSING_GRACE_SECS=2
+# than the worker.
+#
+# The number is derived from both ends, and both matter.
+#   Lower bound - what it has to outlast. An agent discovers the hub forgot it
+#   only by publishing, and an idle worker publishes nothing but its state
+#   heartbeat, which at shipped defaults is every 5s (bin/fm-stream-agent.py's
+#   --state-interval default, capped by the hub's state_max_age_secs/3). Add
+#   the registration round trip it then makes: ~5s before the endpoint is back.
+#   Upper bound - what it has to fit inside. Callers bound this classifier:
+#   fm-fleet-snapshot.sh gives 10s to a whole crew-state read, of which this
+#   probe is one part, so a torn-down endpoint has to reach `missing` well
+#   within that rather than timing the caller out and folding to unknown.
+# 6s clears the first and leaves ~4s of the second for everything else a
+# crew-state read does. A recovery slower than that is not lost, only late: it
+# is covered by the caller asking again, which every one of them does.
+FM_BACKEND_STREAM_MISSING_GRACE_SECS=6
 
 # The last HTTP status fm_backend_stream_api saw. Initialised at source time so
 # an error path that runs before any request - a missing token, an unreachable

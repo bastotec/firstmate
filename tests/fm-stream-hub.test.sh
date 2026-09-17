@@ -1337,6 +1337,31 @@ test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for() {
   pass "hub: a worker that exited while the hub was down still reports its end to the hub that returns"
 }
 
+test_a_closing_frame_outlives_the_pace_its_own_outage_set() {
+  # The other half of an outage that ends badly. While the hub was gone the
+  # agent tried to come back and was refused, so it is waiting out a long pause
+  # before it tries again - and then the hub returns and the worker exits
+  # inside that pause. The close it owes the fleet must not be what the pause
+  # swallows: a frame dropped here is a task whose end and exit code are
+  # recorded nowhere, and nothing afterwards ever asks again.
+  start_hub closing-pace
+  local endpoint task
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  python3 "$ROOT/tests/assets/stream-agent-closing-frame.py" --hub "$URL" \
+    --token "$PUBLISH_TOKEN" --machine box-a --label "departing-$RUN" \
+    --endpoint "$endpoint" --exit-code 7 --pace-secs 600 \
+    > "$CASE_DIR/closing.log" 2>&1 \
+    || fail "the closing publisher failed: $(cat "$CASE_DIR/closing.log")"
+  task=$(view GET "/v1/tasks/$endpoint")
+  assert_equals "$(api_code)" 200 \
+    "the hub should hold a record for the endpoint the closing frame named"
+  assert_equals "$(printf '%s' "$task" | jq -r '.task.closed_by')" agent \
+    "the end its agent watched should be recorded, and attributed to that agent"
+  assert_equals "$(printf '%s' "$task" | jq -r '.task.exit_code')" 7 \
+    "the exit code the closing frame carried should be the one on the record"
+  pass "hub: a closing frame is delivered even when the agent's re-registration pace is spent"
+}
+
 # start_stub <case-name> [stub args...] -> sets CASE_DIR URL STUB_JOURNAL
 # The re-registration pacing and refusal cases need a hub that keeps saying one
 # exact thing; tests/assets/stream-hub-stub.py owns what it answers and why a
@@ -1530,6 +1555,7 @@ test_the_viewer_reports_a_refused_transcript_rather_than_painting_it
 test_the_viewer_keeps_the_send_box_disabled_for_a_closed_worker
 test_a_restarted_hub_gets_its_workers_back
 test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
+test_a_closing_frame_outlives_the_pace_its_own_outage_set
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home
