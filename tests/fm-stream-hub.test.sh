@@ -293,6 +293,19 @@ test_one_hub_lists_endpoints_from_several_machines() {
   pass "hub: one listing carries every machine's endpoints"
 }
 
+test_the_fleet_listing_answers_while_machines_are_joining() {
+  # One listing across every machine is the whole point of the hub, and the
+  # viewer polls it continuously. A machine joining while that listing is being
+  # built must not turn the request into a 500 - which is the fleet view going
+  # blank at the exact moment a new worker appears.
+  start_hub listing
+  local out
+  out=$(python3 "$ROOT/tests/assets/stream-hub-listing-under-registration.py" \
+    "$URL" "$PUBLISH_TOKEN" "$VIEW_TOKEN")
+  assert_equals "$out" clean "the fleet listings must answer while machines register: $out"
+  pass "hub: the fleet listing answers while new machines are joining"
+}
+
 test_input_reaches_the_endpoint_and_capture_reads_it_back() {
   start_hub input
   local endpoint out
@@ -642,6 +655,7 @@ test_a_viewing_token_cannot_steer_or_close_a_worker
 test_the_screen_read_answers_with_the_live_screen_and_cursor
 test_capture_stays_readable_while_frames_are_arriving
 test_one_hub_lists_endpoints_from_several_machines
+test_the_fleet_listing_answers_while_machines_are_joining
 test_input_reaches_the_endpoint_and_capture_reads_it_back
 test_input_with_no_agent_to_acknowledge_is_refused
 test_state_reads_carry_their_age_and_withhold_a_stale_verdict

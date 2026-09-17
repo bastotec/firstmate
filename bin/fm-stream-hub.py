@@ -956,6 +956,16 @@ class Hub:
             if endpoint is not None:
                 endpoint.agent_seen_at = _now()
 
+    def list_machines(self) -> list:
+        """A snapshot of the machines, taken under the lock like list_endpoints.
+
+        Every read of shared state here takes the lock and renders outside it:
+        a threaded server means a machine can be registered while a listing is
+        being built, and iterating the live dict raises rather than answering.
+        """
+        with self.lock:
+            return sorted(self.machines.values(), key=lambda m: m.name)
+
     def machine_silent_for(self, name: str) -> float:
         with self.lock:
             machine = self.machines.get(name)
@@ -1334,8 +1344,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             silent_after = hub.options.state_max_age_secs
             self._json(HTTPStatus.OK, {
                 "ok": True,
-                "machines": [m.describe(silent_after)
-                             for m in sorted(hub.machines.values(), key=lambda x: x.name)],
+                "machines": [m.describe(silent_after) for m in hub.list_machines()],
             })
             return
 
@@ -1348,7 +1357,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "ok": True,
                 "tasks": [e.describe() for e in endpoints],
                 "machines": [m.describe(hub.options.state_max_age_secs)
-                             for m in sorted(hub.machines.values(), key=lambda x: x.name)],
+                             for m in hub.list_machines()],
             })
             return
 
@@ -1752,7 +1761,8 @@ WEB_UI = """<!DOCTYPE html>
   }
 
   function select(ep) {
-    selected = ep.endpoint_id;
+    var chosen = ep.endpoint_id;
+    selected = chosen;
     nameEl.textContent = ep.label;
     metaEl.textContent = ep.machine + (ep.closed_at ? " - closed" : "");
     lineEl.disabled = !!ep.closed_at;
@@ -1760,17 +1770,26 @@ WEB_UI = """<!DOCTYPE html>
                                       : "Type a line for " + ep.label;
     outEl.textContent = "";
     if (source) { source.close(); source = null; }
-    fetch("/v1/tasks/" + selected + "/capture?lines=200",
+    // Every asynchronous write into the pane checks the selection it was
+    // issued for. A response that loses the race to a later click is dropped:
+    // painting one worker's terminal under another's name is the one mistake
+    // this view must never make.
+    fetch("/v1/tasks/" + chosen + "/capture?lines=200",
           {headers: {"Authorization": "Bearer " + token}})
       .then(function (r) { return r.text(); })
-      .then(function (t) { outEl.textContent = t; outEl.scrollTop = outEl.scrollHeight; });
-    source = new EventSource("/v1/tasks/" + selected +
+      .then(function (t) {
+        if (selected !== chosen) { return; }
+        outEl.textContent = t;
+        outEl.scrollTop = outEl.scrollHeight;
+      });
+    source = new EventSource("/v1/tasks/" + chosen +
       "/stream?access_token=" + encodeURIComponent(token));
     // One decoder for the whole subscription: frames are raw pty chunks, so a
     // character can straddle any frame boundary and only a streaming decode
     // carries the remainder across.
     decoder = new TextDecoder("utf-8");
     source.onmessage = function (event) {
+      if (selected !== chosen) { return; }
       var record = JSON.parse(event.data);
       if (record.b64) {
         var binary = atob(record.b64);
@@ -1787,14 +1806,16 @@ WEB_UI = """<!DOCTYPE html>
   formEl.addEventListener("submit", function (event) {
     event.preventDefault();
     if (!selected || !lineEl.value) { return; }
+    var chosen = selected;
     var text = lineEl.value;
     lineEl.value = "";
     lineEl.disabled = true;
-    api("/v1/tasks/" + selected + "/input", {
+    api("/v1/tasks/" + chosen + "/input", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({text: text, submit: true})
     }).catch(function (err) {
+      if (selected !== chosen) { return; }
       outEl.textContent += "\\n[not delivered: " + err.message + "]\\n";
       outEl.scrollTop = outEl.scrollHeight;
     }).then(function () { lineEl.disabled = false; lineEl.focus(); });

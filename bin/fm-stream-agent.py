@@ -122,13 +122,20 @@ def _ps_args(pid: str) -> str:
     return proc.stdout.decode("utf-8", "replace").strip()
 
 
-# The agent's whole startup - every blocking hub call from launch up to and
-# including the ready-file write - runs against ONE deadline, so a call added
-# to that path is bounded by it without anyone remembering to bound it. The
-# budget is strictly under the window the adapter waits for the ready file, so
-# an agent that cannot come up has already given up by the time the spawn
-# abandons it rather than registering an endpoint nobody is waiting for.
+# The agent's whole startup attempt - every blocking hub call from launch to
+# either the ready-file write or a finished abandonment, including tearing the
+# pty down and closing a half-registered endpoint - runs against ONE clock, so
+# a call added to that path is bounded by it without anyone remembering to
+# bound it. The budget is strictly under the window the adapter waits for the
+# ready file, so an agent that cannot come up has already given up by the time
+# the spawn abandons it rather than registering an endpoint nobody waits for.
 STARTUP_BUDGET = 12.0
+# Held back from that budget for the abandonment itself: closing the pty costs
+# up to ~5s, and the frame that closes a half-registered endpoint has to fit
+# after it. An abandonment that runs out of reserve stops rather than borrowing
+# more time - the spawn has already been refused, and an agent still calling a
+# hub after that is the orphan this budget exists to prevent.
+ABANDON_RESERVE = 6.0
 
 
 def _silence_diagnostics() -> None:
@@ -356,14 +363,21 @@ class HubClient:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.deadline = None
+        self._abandon_deadline = None
 
-    def begin_startup(self, budget: float) -> None:
-        """Bound every call from here until end_startup by one wall-clock budget."""
-        self.deadline = time.monotonic() + budget
+    def begin_startup(self) -> None:
+        """Start the one clock every startup call is bounded by."""
+        self._abandon_deadline = time.monotonic() + STARTUP_BUDGET
+        self.deadline = self._abandon_deadline - ABANDON_RESERVE
+
+    def abandoning_startup(self) -> None:
+        """Release the reserve. The clock is not restarted, only read to its end."""
+        self.deadline = self._abandon_deadline
 
     def end_startup(self) -> None:
         """Return to ordinary per-call timeouts, once the endpoint is announced."""
         self.deadline = None
+        self._abandon_deadline = None
 
     def call(self, method: str, path: str, payload=None, timeout: float = 30.0):
         if self.deadline is not None:
@@ -709,7 +723,7 @@ def main(argv: list) -> int:
     command = _default_shell_command()
 
     hub = HubClient(options.hub, read_token(options))
-    hub.begin_startup(STARTUP_BUDGET)
+    hub.begin_startup()
     health = hub.call("GET", "/v1/health")
     protocol = health.get("protocol")
     if protocol != AGENT_PROTOCOL:
@@ -765,14 +779,12 @@ def main(argv: list) -> int:
         # "no state frame yet", i.e. unreadable, for a worker that is fine.
         agent.publish_initial_state()
     except RuntimeError as exc:
+        hub.abandoning_startup()
         pty.close()
         pty.release()
         # The registration may have been recorded before startup ran out, so
         # the endpoint is closed on the way out. A live endpoint nobody owns
         # would refuse the next attempt at the same task with duplicate_label.
-        # The closing frame gets its own budget: the one just spent is gone,
-        # and this is the call that keeps the next attempt clean.
-        hub.begin_startup(STARTUP_BUDGET)
         try:
             hub.call("POST", "/v1/agent/frames", {
                 "machine": options.machine,

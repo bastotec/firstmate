@@ -28,6 +28,7 @@ TOKEN="adapter-token-$$"
 CASE_DIR=""
 URL=""
 HUB_PID=""
+SLOW_URL=""
 
 cleanup_helpers() {
   fm_test_reap_helper_pids
@@ -76,6 +77,29 @@ start_case_hub() {  # <case-name> [extra hub args...]
   [ -s "$ready" ] || fail "hub did not report ready for case $name: $(cat "$CASE_DIR/log" 2>/dev/null)"
   read -r host port < "$ready"
   URL="http://$host:$port"
+}
+
+# start_slow_stand_in <stall-spec> -> sets SLOW_URL
+# A forwarder in front of THIS case's hub that stalls the connections the spec
+# names, so a case can make the hub answer too late on exactly the call it
+# cares about while everything else behaves normally.
+start_slow_stand_in() {  # <stall-spec>
+  local spec=$1 ready hostport host port waited=0 pid
+  ready="$CASE_DIR/proxy-$spec.ready"
+  hostport=${URL#http://}
+  python3 "$ROOT/tests/assets/slow-tcp-proxy.py" 127.0.0.1 \
+    "${hostport%%:*}" "${hostport##*:}" 25 "$spec" > "$ready" 2>"$CASE_DIR/proxy.log" &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 100 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$ready" ] || fail "the slow stand-in never reported ready: $(cat "$CASE_DIR/proxy.log" 2>/dev/null)"
+  read -r host port < "$ready"
+  SLOW_URL="http://$host:$port"
 }
 
 # create_endpoint -> "<tag>:<endpoint-id>", the exact target shape a task's
@@ -352,26 +376,11 @@ test_a_create_that_times_out_leaves_nothing_behind() {
   # live endpoint and a live shell behind when only some calls are budgeted,
   # and whose retry then collides on duplicate_label.
   start_case_hub createtimeout
-  local label slow_ready slow_host slow_port slow_url out target hostport
+  local label out target real_url
   label="fm-slowhub-$$"
-  slow_ready="$CASE_DIR/proxy.ready"
-  hostport=${URL#http://}
-  python3 "$ROOT/tests/assets/slow-tcp-proxy.py" 127.0.0.1 \
-    "${hostport%%:*}" "${hostport##*:}" 25 3 > "$slow_ready" 2>"$CASE_DIR/proxy.log" &
-  local proxy_pid=$!
-  disown "$proxy_pid" 2>/dev/null || true
-  fm_test_track_helper_pid "$proxy_pid"
-  local waited=0
-  while [ "$waited" -lt 100 ]; do
-    [ -s "$slow_ready" ] && break
-    sleep 0.1
-    waited=$((waited + 1))
-  done
-  [ -s "$slow_ready" ] || fail "the slow stand-in never reported ready: $(cat "$CASE_DIR/proxy.log" 2>/dev/null)"
-  read -r slow_host slow_port < "$slow_ready"
-  slow_url="http://$slow_host:$slow_port"
-  local real_url=$URL
-  URL=$slow_url
+  start_slow_stand_in 3
+  real_url=$URL
+  URL=$SLOW_URL
   if out=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" 2>&1); then
     URL=$real_url
     fail "a create against a hub that answers too late should be refused, got '$out'"
@@ -391,6 +400,29 @@ test_a_create_that_times_out_leaves_nothing_behind() {
     *) fail "retrying the same task after a timed-out create should succeed, got '$target'" ;;
   esac
   pass "stream: a create that times out leaves no agent and no endpoint, and the retry succeeds"
+}
+
+test_a_hub_that_stays_slow_does_not_outlive_the_spawn() {
+  # The same abandonment, against a hub that goes slow and STAYS slow - so the
+  # agent's cleanup call is slow too. The whole attempt, including tearing the
+  # pty down and trying to close a half-registered endpoint, is one budget: an
+  # abandonment that borrowed a fresh one would still be calling the hub long
+  # after fm-spawn refused the task, holding a shell nobody is watching.
+  start_case_hub staysslow
+  local label out real_url
+  label="fm-staysslow-$$"
+  start_slow_stand_in 3+
+  real_url=$URL
+  URL=$SLOW_URL
+  if out=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" 2>&1); then
+    URL=$real_url
+    fail "a create against a hub that stays slow should be refused, got '$out'"
+  fi
+  URL=$real_url
+  # The adapter has refused by now. Nothing of the attempt may still be running.
+  assert_equals "$(agent_pid_for "$label")" "" \
+    "an agent whose startup ran out must be gone by the time the spawn is refused: $out"
+  pass "stream: a startup against a permanently slow hub gives up inside its own budget"
 }
 
 test_an_unreachable_hub_refuses_and_names_the_start_command() {
@@ -598,6 +630,7 @@ test_a_target_from_another_hub_is_refused
 test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error
 test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers
 test_a_create_that_times_out_leaves_nothing_behind
+test_a_hub_that_stays_slow_does_not_outlive_the_spawn
 test_an_unreachable_hub_refuses_and_names_the_start_command
 test_hub_url_prefers_configuration_then_a_locally_started_hub
 test_a_rejected_token_refuses_instead_of_retrying_unauthenticated
