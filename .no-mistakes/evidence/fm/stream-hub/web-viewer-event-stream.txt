@@ -1,0 +1,14 @@
+=== the central web viewer's own event stream (raw SSE from the running hub) ===
+data: {"offset": 719, "machine": "box-live", "b64": "ZWNobyAidGhlIHdlYiB2aWV3ZXIgaXMgd2F0Y2hpbmcgYm94LWxpdmUgYXQgJChkYXRlICslVCki"}
+
+data: {"offset": 721, "machine": "box-live", "b64": "DQo="}
+
+data: {"offset": 730, "machine": "box-live", "b64": "G1s/MjAwNGwN"}
+
+data: {"offset": 797, "machine": "box-live", "b64": "dGhlIHdlYiB2aWV3ZXIgaXMgd2F0Y2hpbmcgYm94LWxpdmUgYXQgMTI6MTY6MTgNChtbPzIwMDRoYmFzaC01LjMkIA=="}
+
+
+--- the same frames decoded the way the viewer page decodes them ---
+echo "the web viewer is watching box-live at $(date +%T)"
+[?2004lthe web viewer is watching box-live at 12:16:18
+[?2004hbash-5.3$ 

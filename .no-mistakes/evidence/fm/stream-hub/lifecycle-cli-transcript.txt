@@ -1,0 +1,54 @@
+
+=== one central hub, resolved by this home; one browser URL for the whole fleet ===
+local hub process: 3909534
+hub at http://127.0.0.1:7731: protocol 2 version 2.0.0 endpoints 9
+http://127.0.0.1:7731/ui#VCAowhEPTVFYZLc1sIJsS-m7w6DdnMpqycwinypE-Eg
+
+=== (1) create a task endpoint with a durable id for a worker on machine box-far ===
+the task record binds endpoint_task_id=far4 to 127.0.0.1-7731:653e6d111600be6d69a27bb7a62f4f73
+the endpoint now runs the harness process: claude -u -c import sys;[print("far4 saw:", l.strip(), flush=True) for l in sys.stdin]
+
+=== workers from every machine on one central listing ===
+box-far	fm-far-worker	a5bd90388a5a8a51f20235ac5692e100	closed
+box-far	fm-far-worker-2	329a616e56c2fa76724f6cfd2205063d	closed
+box-far	fm-far3	66b31019ca59415cf0d2d415ad2622f3	live
+box-far	fm-far4	653e6d111600be6d69a27bb7a62f4f73	live
+box-gone	fm-unacked	5b6c1aad581d78ca11701562ef5090d1	closed
+box-live	fm-live-demo	6db65cc1e873f71990f64468781e0262	live
+box-partitioned	fm-finisher	4341da86a5fa9a1f500e33395715eae4	closed
+box-partitioned	fm-healer	fd45dde48b3cc17746712a5201ab036e	closed
+box-remote	fm-mate-b	04923b54c0028ae549242a14237f0925	closed
+box-remote	fm-mate-c	29b0eae5ff8b52fc03a6d71e7df22291	closed
+
+=== (3) supervise from the centre: state classification and a bounded transcript ===
+fm_backend_agent_state -> alive
+bash-5.3$ exec claude -u -c 'import sys;[print("far4 saw:", l.strip(), flush=True) for l in sys.stdin]'
+
+=== (2) deliver an operator message through firstmate's normal supervision surface ===
+--- the worker on box-far received it (fm-peek.sh far4) ---
+bash-5.3$ exec claude -u -c 'import sys;[print("far4 saw:", l.strip(), flush=True) for l in sys.stdin]'
+: Firstmate instruction waiting: list '/tmp/fmlive.3908087/home/state/far4.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '/tmp/fmlive.3908087/home/state/far4.i
+nbox'/handled/.
+far4 saw: : Firstmate instruction waiting: list '/tmp/fmlive.3908087/home/state/far4.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '/tmp/fmlive.3908087/home/st
+ate/far4.inbox'/handled/.
+
+=== (5) status return channel into this home's ordinary lifecycle record ===
+state/far4.status: working: far4 reporting in through the central hub
+
+=== (4) archive/kill the exact endpoint ===
+the kill reported a confirmed stop
+close record: {"closed_by":"agent","exit_code":-15}
+fm_backend_agent_state after the kill -> dead
+already-stopped far4 harness=claude backend=stream endpoint=127.0.0.1-7731:653e6d111600be6d69a27bb7a62f4f73 worktree=/tmp/fmlive.3908087/proj
+
+=== only that endpoint closed; the box-live worker keeps streaming ===
+box-far	fm-far-worker	a5bd90388a5a8a51f20235ac5692e100	closed
+box-far	fm-far-worker-2	329a616e56c2fa76724f6cfd2205063d	closed
+box-far	fm-far3	66b31019ca59415cf0d2d415ad2622f3	live
+box-far	fm-far4	653e6d111600be6d69a27bb7a62f4f73	closed
+box-gone	fm-unacked	5b6c1aad581d78ca11701562ef5090d1	closed
+box-live	fm-live-demo	6db65cc1e873f71990f64468781e0262	live
+box-partitioned	fm-finisher	4341da86a5fa9a1f500e33395715eae4	closed
+box-partitioned	fm-healer	fd45dde48b3cc17746712a5201ab036e	closed
+box-remote	fm-mate-b	04923b54c0028ae549242a14237f0925	closed
+box-remote	fm-mate-c	29b0eae5ff8b52fc03a6d71e7df22291	closed

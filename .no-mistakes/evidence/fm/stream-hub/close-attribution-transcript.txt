@@ -1,0 +1,24 @@
+
+=== A hub close is a presumption: it says nothing about the worker ===
+operator kill against a partitioned agent: {"ok":true,"delivered":false}
+record: {"closed_by":"hub","exit_code":null}
+fm_backend_agent_state -> unreadable   (unreadable: recovery is NOT authorized)
+error: the stream hub refused or never answered the kill for e55c78acb08853038cf1ddfa732dbdb8; the worker may still be running
+
+=== The partition heals and the owning agent reports the exit it watched ===
+record: {"closed_by":"agent","exit_code":3}   (the fact took the attribution from the presumption)
+fm_backend_agent_state -> dead
+the kill now reports a confirmed stop
+
+=== The reverse is refused: a hub presumption cannot erase an agent close ===
+the owning agent closed its own record with exit 7 while the kill was outstanding
+the hub then gave up on that kill: {"ok":true,"delivered":false}
+record: {"closed_by":"agent","exit_code":7}   (neither the attribution nor the exit code was overwritten)
+
+=== Recorded facts do not expire the way live readings do ===
+waiting out the hub freshness window (state_max_age_secs=30)...
+e55c78ac stale=true closed_by=agent -> fm_backend_agent_state dead
+53017f89 stale=true closed_by=agent -> fm_backend_agent_state dead
+
+=== The boundary: a record the hub closed by itself still withholds a verdict, however old ===
+hub-closed record 5b6c1aad stale=true closed_by=hub -> fm_backend_agent_state unreadable

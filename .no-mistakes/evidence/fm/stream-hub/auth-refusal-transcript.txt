@@ -1,0 +1,4 @@
+=== The hub is authenticated: an unauthenticated data route is refused ===
+GET /v1/tasks with no credential -> HTTP 401
+GET /v1/tasks with a wrong token -> HTTP 401
+GET /ui (the static viewer page, deliberately unauthenticated) -> HTTP 200

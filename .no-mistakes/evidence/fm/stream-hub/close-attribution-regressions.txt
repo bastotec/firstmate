@@ -1,0 +1,6 @@
+ok - stream: an agent-reported exit stays dead past staleness, a forced close does not
+ok - stream: an agent's own close outranks a forced one that landed first
+ok - stream: only a close the endpoint's own agent reported counts as a stop
+ok - stream: a kill the hub cannot answer is reported as unconfirmed
+ok - hub: a kill the agent never answers closes the record and says so
+ok - hub: a forced close cannot erase the exit code the owning agent reported

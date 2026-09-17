@@ -1,0 +1,6 @@
+=== Token classes: a viewing credential may watch but never steer ===
+viewer token, GET /v1/tasks (read)            -> HTTP 200
+viewer token, POST input (type into a worker) -> HTTP 403
+viewer token, DELETE endpoint (close it)      -> HTTP 403
+viewer token, register an endpoint (publish)  -> HTTP 403
+control token, DELETE endpoint                -> HTTP 200

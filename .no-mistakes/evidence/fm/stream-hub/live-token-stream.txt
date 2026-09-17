@@ -1,0 +1,5 @@
+[subscriber 12:12:44.9134489] for i in 1 2 3 4; do echo "worker emitted token $i at $(date +%H:%M:%S.%3N)"; sleep 0.5; done^M
+[subscriber 12:12:44.13128958] ^[[?2004l^Mworker emitted token 1 at 12:12:44.8233239^M
+[subscriber 12:12:44.523284138] worker emitted token 2 at 12:12:44.516631735^M
+[subscriber 12:12:45.37186108] worker emitted token 3 at 12:12:45.27477446^M
+[subscriber 12:12:45.543831811] worker emitted token 4 at 12:12:45.538660934^M
