@@ -118,9 +118,6 @@ class Stub(http.server.BaseHTTPRequestHandler):
             self._refuse(404, "no_such_endpoint",
                          "the stub has forgotten this endpoint by design")
             return
-        if path == "/v1/agent/results":
-            self._json(200, {"ok": True})
-            return
         self._refuse(404, "no_such_route", "the stub serves agent routes only")
 
 

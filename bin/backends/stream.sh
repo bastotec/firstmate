@@ -59,11 +59,21 @@ FM_BACKEND_STREAM_AGENT_BIN="$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agen
 #   probe is one part, so a torn-down endpoint has to reach `missing` well
 #   within that rather than timing the caller out and folding to unknown.
 # 6s clears the first and leaves ~4s of the second for everything else a
-# crew-state read does. A recovery slower than that is not free: fm-watch.sh
-# treats `missing` like `dead` and escalates the pending steer, and an
-# escalated record is one fm_task_inbox_due_action stays quiet about, so that
-# steer leaves the delivery ladder rather than being rung again. Which is the
-# cost this window is sized to avoid paying, not one it hands on to a retry.
+# crew-state read does.
+#
+# So what the window covers is precisely one case: a rejoin that succeeds on
+# the FIRST attempt the agent makes after a restart. It does not cover a rejoin
+# delayed behind a failed attempt. An attempt that times out or meets a hub
+# still coming up doubles that agent's re-registration backoff and pushes the
+# next attempt out by it (bin/fm-stream-agent.py's REREGISTER_BACKOFF_MIN ->
+# REREGISTER_BACKOFF_MAX with jitter), which can be far longer than this
+# window; the endpoint is then reported `missing` while its worker is healthy
+# and still coming back. That verdict is not retried into harmlessness later:
+# fm-watch.sh treats `missing` like `dead` and escalates the pending steer, and
+# fm_task_inbox_due_action stays quiet for an escalated record, so the steer
+# leaves the delivery ladder rather than being rung again. Widening the window
+# to cover the backoff ladder is not available here - it would blow the 10s
+# caller bound above - so that cost is real and stands.
 FM_BACKEND_STREAM_MISSING_GRACE_SECS=6
 
 # The last HTTP status fm_backend_stream_api saw. Initialised at source time so
