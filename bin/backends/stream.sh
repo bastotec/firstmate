@@ -579,15 +579,10 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
     fm_backend_stream_target_ready "$target" "$expected" || return 0
   fi
   out=$(fm_backend_stream_api DELETE "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
-    # One refusal is proof the task is already gone rather than a kill that
-    # failed: an endpoint the hub no longer has. A 404 for any other reason -
-    # a route this hub does not serve, an id it will not parse - says nothing
-    # about the worker, so it is not accepted as a stop.
-    case "$FM_BACKEND_STREAM_HTTP_CODE" in
-      404)
-        [ "$(printf '%s' "$out" | jq -r '.error' 2>/dev/null)" = no_such_endpoint ] && return 0
-        ;;
-    esac
+    # No refusal proves the worker stopped, including an endpoint the hub does
+    # not have: the hub forgets an endpoint it has not heard from for long
+    # enough, and a worker whose agent died keeps running past that. So every
+    # refusal reads the same way the unacknowledged kill below does.
     echo "error: the stream hub refused or never answered the kill for" \
          "$FM_BACKEND_STREAM_ENDPOINT; the worker may still be running" >&2
     return 1

@@ -987,7 +987,14 @@ class Hub:
             if not endpoint.presumed_gone:
                 return
             for other in self.endpoints.values():
-                if other is endpoint or other.closed_at or other.presumed_gone:
+                if other is endpoint or other.closed_at:
+                    continue
+                # A name contest is settled by which registration is current,
+                # never by which agent happens to be heard from first. Only an
+                # OLDER record steps aside for a presumption: skipping a newer
+                # one would let a stale endpoint reclaim a name the live worker
+                # holds, and that worker is then told to stop.
+                if other.presumed_gone and other.created_at < endpoint.created_at:
                     continue
                 if other.machine == endpoint.machine and other.label == endpoint.label:
                     raise HubError(HTTPStatus.GONE, "endpoint_superseded",
@@ -1077,7 +1084,8 @@ class Hub:
         cutoff = _now() - DEFAULT_ENDPOINT_RETENTION
         with self.lock:
             for endpoint in list(self.endpoints.values()):
-                if endpoint.agent_silent_for() > AGENT_SILENCE_PRESUMED_SECS:
+                if (not endpoint.closed_at
+                        and endpoint.agent_silent_for() > AGENT_SILENCE_PRESUMED_SECS):
                     endpoint.presumed_gone = True
             for endpoint_id in [
                     e.endpoint_id for e in self.endpoints.values()

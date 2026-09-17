@@ -149,6 +149,22 @@ wait_for_capture() {  # <endpoint> <needle>
   return 1
 }
 
+# wait_until_quiet <endpoint> - block until the hub reports it has not heard
+# from that endpoint for longer than the window it waits before presuming an
+# agent gone. Reading the fleet is what makes the hub notice, so the loop reads
+# it rather than sleeping blind.
+wait_until_quiet() {  # <endpoint>
+  local endpoint=$1 waited=0 silent=""
+  while [ "$waited" -lt 150 ]; do
+    silent=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+      '.tasks[] | select(.endpoint_id==$id) | .agent_silent_for_secs')
+    [ "${silent%%.*}" -ge 11 ] 2>/dev/null && return 0
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
 test_every_data_route_requires_a_token() {
   start_hub auth
   local raw
@@ -604,7 +620,6 @@ test_an_agent_that_speaks_again_takes_the_presumption_back() {
   # Nothing publishes for it, and the fleet is read meanwhile, so the hub
   # reaches its own conclusion about it rather than being told.
   while [ "$waited" -lt 150 ]; do
-    view GET /v1/tasks >/dev/null
     out=$(view GET /v1/tasks)
     [ "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
       '[.tasks[] | select(.endpoint_id==$id)] | length')" = 1 ] || fail "the endpoint vanished"
@@ -669,6 +684,40 @@ test_a_returning_agent_whose_name_was_taken_is_refused() {
     '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
     1 "the endpoint that holds the name should be the one still serving it"
   pass "hub: a returning agent whose name was taken is refused rather than revived"
+}
+
+test_a_name_contest_is_settled_by_the_later_registration() {
+  # The correlated case: the hub itself pauses, so every agent goes quiet at
+  # once and the stale record and the live one are presumed gone together. The
+  # worker that holds the name now must win that contest - if the older record
+  # could take the name back, the hub would tell the LIVE worker to stop.
+  start_hub contest
+  local stale current out waited=0 silent=""
+  stale=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  current=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$stale" \
+    '{endpoint_id: $id, machine: "box-a", label: "contested", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the first endpoint should register"
+  wait_until_quiet "$stale" || fail "the first endpoint never went quiet"
+  # The next attempt at that task takes the free name.
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$current" \
+    '{endpoint_id: $id, machine: "box-a", label: "contested", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the next attempt should claim the free label"
+  # Now BOTH are quiet, which is what a paused hub looks like from here.
+  wait_until_quiet "$current" || fail "the second endpoint never went quiet"
+  # The stale agent comes back first. It must not be handed the name back.
+  out=$(publish POST /v1/agent/frames "$(jq -nc --arg id "$stale" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')")
+  assert_equals "$(api_code)" 410 "a stale endpoint must not reclaim a name a later one holds"
+  assert_equals "$(printf '%s' "$out" | jq -r '.error')" endpoint_superseded \
+    "the stale agent should be told its name is served by another endpoint"
+  # And the worker that actually holds the name carries on.
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$current" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "the endpoint holding the name must keep publishing"
+  assert_contains "$(view GET "/v1/tasks/$current/capture?lines=5")" hello \
+    "its output should still reach the hub"
+  pass "hub: a name contest is settled by the later registration, not by who speaks first"
 }
 
 test_no_terminal_content_is_persisted_to_disk() {
@@ -861,6 +910,7 @@ test_a_kill_closes_an_endpoint_whose_agent_never_answers
 test_a_worker_the_hub_has_not_heard_from_keeps_its_place
 test_an_agent_that_speaks_again_takes_the_presumption_back
 test_a_returning_agent_whose_name_was_taken_is_refused
+test_a_name_contest_is_settled_by_the_later_registration
 test_no_terminal_content_is_persisted_to_disk
 test_malformed_and_unknown_requests_are_refused
 test_the_viewer_is_static_and_carries_no_terminal_content

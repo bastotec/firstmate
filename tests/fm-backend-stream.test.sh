@@ -302,6 +302,22 @@ test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error() {
   pass "stream: a spawn whose endpoint shell cannot start reports the shell's own error"
 }
 
+test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop() {
+  # The hub forgets an endpoint it has not heard from for long enough, and a
+  # worker whose agent died outlives that. So an endpoint the hub does not have
+  # is not evidence the worker stopped, and a kill against one must read the
+  # same as any other kill the hub could not deliver.
+  start_case_hub unknownkill
+  local target out
+  # A target the hub has never had, shaped exactly like a real one.
+  target="$(with_stream_env fm_backend_stream_hub_tag):$(python3 -c 'import os; print(os.urandom(16).hex())')"
+  out=$(with_stream_env fm_backend_kill stream "$target" 2>&1) \
+    && fail "a kill the hub could not answer must not report a confirmed stop"
+  assert_contains "$out" "may still be running" \
+    "an unanswerable kill should say the worker may still be running"
+  pass "stream: a kill the hub cannot answer is reported as unconfirmed"
+}
+
 test_a_target_from_another_hub_is_refused() {
   local target foreign
   start_case_hub foreign-tag
@@ -735,6 +751,7 @@ test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor
 test_agent_state_reads_the_foreground_process_not_the_screen
 test_agent_state_separates_missing_unreachable_and_partitioned
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
+test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop
 test_status_return_channel_appends_on_the_owning_machine
 test_a_target_from_another_hub_is_refused
 test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error
