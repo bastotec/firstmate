@@ -1234,8 +1234,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return header[7:].strip()
         # The query form exists for the one client that cannot set a header: a
         # browser opening an EventSource on the stream route. Every other route
-        # requires the header, so a steering credential can never be spelled
-        # into a request line, a proxy log, or browser history.
+        # requires the header, which confines a credential in a request line to
+        # that single route. It does not eliminate it: the viewer opens that
+        # stream with whatever token it was given, usually an operating one, so
+        # the token does reach that request line. The hub logs nothing, but a
+        # TLS terminator in front of it logs what it is configured to.
         return _query_one(query, "access_token", "") if allow_query else ""
 
     def _require(self, needed: str, query: dict, allow_query: bool = False) -> frozenset:
@@ -1586,14 +1589,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return answer
 
     def _stream(self, endpoint: "Endpoint", query: dict) -> None:
-        raw_from = _query_one(query, "from", "")
         replay = _query_one(query, "replay", "") in ("1", "true", "yes")
-        if raw_from:
-            offset = _query_int(query, "from", 0)
-        elif replay:
-            offset = 0
-        else:
-            offset = endpoint.ring.end
+        offset = 0 if replay else endpoint.ring.end
         self.send_response(int(HTTPStatus.OK))
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-store")
@@ -1685,7 +1682,7 @@ WEB_UI = """<!DOCTYPE html>
 (function () {
   "use strict";
   var token = location.hash.slice(1);
-  var selected = null, source = null;
+  var selected = null, source = null, decoder = null;
   var listEl = document.getElementById("list"), outEl = document.getElementById("out");
   var nameEl = document.getElementById("name"), metaEl = document.getElementById("meta");
   var lineEl = document.getElementById("line"), formEl = document.getElementById("form");
@@ -1769,10 +1766,17 @@ WEB_UI = """<!DOCTYPE html>
       .then(function (t) { outEl.textContent = t; outEl.scrollTop = outEl.scrollHeight; });
     source = new EventSource("/v1/tasks/" + selected +
       "/stream?access_token=" + encodeURIComponent(token));
+    // One decoder for the whole subscription: frames are raw pty chunks, so a
+    // character can straddle any frame boundary and only a streaming decode
+    // carries the remainder across.
+    decoder = new TextDecoder("utf-8");
     source.onmessage = function (event) {
       var record = JSON.parse(event.data);
       if (record.b64) {
-        outEl.textContent += decodeURIComponent(escape(atob(record.b64)));
+        var binary = atob(record.b64);
+        var bytes = new Uint8Array(binary.length);
+        for (var i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+        outEl.textContent += decoder.decode(bytes, {stream: true});
         outEl.scrollTop = outEl.scrollHeight;
       }
       if (record.closed) { lineEl.disabled = true; refresh(); }

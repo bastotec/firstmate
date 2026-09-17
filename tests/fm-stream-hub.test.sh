@@ -554,6 +554,27 @@ test_the_viewer_is_static_and_carries_no_terminal_content() {
   pass "hub: the subscriber view is static and carries no terminal content"
 }
 
+test_the_viewer_renders_a_character_split_across_two_frames() {
+  # Frames are raw pty chunks, so a multi-byte character straddling a frame
+  # boundary is ordinary. A viewer that decoded each frame on its own dropped
+  # both frames silently - the operator saw a gap and no error, which is the
+  # opposite of the live view this exists to give.
+  command -v node >/dev/null 2>&1 || { pass "hub: no node on this host to drive the viewer's decode"; return; }
+  start_hub uidecode
+  local page rendered first second
+  page="$CASE_DIR/viewer.html"
+  curl -sS -m 10 "$URL/ui" > "$page" 2>/dev/null
+  [ -s "$page" ] || fail "the viewer page did not load"
+  # "x" then U+2500 split down the middle: the first frame ends mid-character.
+  first=$(printf 'x\342\224' | base64 | tr -d '\n')
+  second=$(printf '\200 ok\n' | base64 | tr -d '\n')
+  rendered=$(node "$ROOT/tests/assets/stream-viewer-harness.mjs" "$page" "$first" "$second") \
+    || fail "the viewer harness failed: $rendered"
+  assert_equals "$rendered" "$(printf 'x\342\224\200 ok\n')" \
+    "the viewer should render the character that straddles the frame boundary"
+  pass "hub: the viewer renders a character split across two frames"
+}
+
 test_fm_stream_start_status_stop_round_trip() {
   # The operator path, through the real entry point rather than the API.
   local home out
@@ -632,5 +653,6 @@ test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_no_terminal_content_is_persisted_to_disk
 test_malformed_and_unknown_requests_are_refused
 test_the_viewer_is_static_and_carries_no_terminal_content
+test_the_viewer_renders_a_character_split_across_two_frames
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home

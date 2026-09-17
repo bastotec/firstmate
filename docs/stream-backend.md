@@ -43,7 +43,8 @@ Run `bin/fm-stream.sh --help` for the operator commands; that help and each scri
 
 ## Watching and steering
 
-`bin/fm-stream.sh web` prints the browser URL for the one central subscriber view, carrying the token as a URL fragment so it never reaches the server's log.
+`bin/fm-stream.sh web` prints the browser URL for the one central subscriber view, carrying the token as a URL fragment, which a browser never sends - so the navigation to the page carries no credential.
+The page's own event stream is the one request that does carry the token in a URL, because an `EventSource` cannot set a header: the hub logs nothing, but a TLS terminator or proxy in front of it logs whatever it is configured to.
 `bin/fm-stream.sh tasks` lists every endpoint across every machine, and `attach` streams one endpoint to stdout.
 
 Ordinary supervision does not need any of that.

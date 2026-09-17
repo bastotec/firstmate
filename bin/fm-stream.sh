@@ -16,9 +16,7 @@
 #   fm-stream.sh web
 #   fm-stream.sh machines
 #   fm-stream.sh tasks
-#   fm-stream.sh attach <endpoint-id|target> [--replay|--from <offset>]
-#   fm-stream.sh send <endpoint-id|target> <text>
-#   fm-stream.sh report <endpoint-id|target> <state> <note>
+#   fm-stream.sh attach <endpoint-id|target> [--replay]
 #   fm-stream.sh -h | --help
 #
 # Commands:
@@ -38,17 +36,15 @@
 #             config/stream-hub-tokens instead, which is what `hub start`
 #             serves when it is present.
 #   web       Print the browser URL for the one central subscriber view, token
-#             included as a fragment so it never reaches the server's log.
+#             included as a fragment, which keeps it out of the navigation the
+#             browser sends. The viewer's own event stream still carries it in
+#             a URL.
 #   machines  List the machines the hub has heard from, and how long each has
 #             been silent.
 #   tasks     List every endpoint the hub hosts, across every machine.
 #   attach    Stream one endpoint's live output to stdout until interrupted.
 #             --replay starts from the oldest byte still in the ring buffer;
 #             the default starts from now.
-#   send      Type one line into an endpoint and submit it. It succeeds only
-#             once the owning agent has acknowledged the delivery.
-#   report    Append one status line through the return channel into the record
-#             that endpoint's agent registered, on that agent's own machine.
 #
 # Selection: FM_STREAM_HUB, then config/stream-hub, then a hub this home
 # started itself, then http://127.0.0.1:7717.
@@ -227,7 +223,8 @@ cmd_web() {
   url=$(fm_backend_stream_hub_url) || exit 1
   token=$(fm_backend_stream_token) || exit 1
   # The token rides in the fragment, which a browser never sends to the server,
-  # so it stays out of the hub's request handling and any proxy's access log.
+  # so this navigation carries no credential. The page's own event stream does
+  # put it in a URL, because an EventSource cannot set a header.
   printf '%s/ui#%s\n' "$url" "$token"
 }
 
@@ -255,7 +252,6 @@ cmd_attach() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --replay) query="?replay=1"; shift ;;
-      --from) query="?from=${2:?--from needs an offset}"; shift 2 ;;
       *) die "unknown option for attach: $1" ;;
     esac
   done
@@ -281,18 +277,6 @@ for line in sys.stdin:
 '
 }
 
-cmd_send() {
-  local raw=${1:?send needs an endpoint} text=${2:?send needs text} target
-  target=$(resolve_target "$raw") || exit 1
-  fm_backend_stream_send_text_line "$target" "$text" || exit 1
-}
-
-cmd_report() {
-  local raw=${1:?report needs an endpoint} state=${2:?report needs a state} note=${3:?report needs a note} target
-  target=$(resolve_target "$raw") || exit 1
-  fm_backend_stream_report_status "$target" "$state" "$note" || exit 1
-}
-
 [ $# -gt 0 ] || { usage; exit 2; }
 COMMAND=$1
 shift
@@ -313,8 +297,6 @@ case "$COMMAND" in
   machines) cmd_machines ;;
   tasks) cmd_tasks ;;
   attach) cmd_attach "$@" ;;
-  send) cmd_send "$@" ;;
-  report) cmd_report "$@" ;;
   -h|--help|help) usage ;;
   *) die "unknown command: $COMMAND" ;;
 esac

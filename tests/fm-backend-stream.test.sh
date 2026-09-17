@@ -344,6 +344,53 @@ test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers() {
   pass "stream: a spawned agent's diagnostics stop accumulating once it has registered"
 }
 
+test_a_create_that_times_out_leaves_nothing_behind() {
+  # The adapter gives up on a spawn after 15s. The agent's own startup budget
+  # has to be smaller than that, or it goes on to register an endpoint and hold
+  # a shell firstmate has already stopped waiting for - and the retry of that
+  # same task then collides on duplicate_label.
+  start_case_hub createtimeout
+  local label slow_ready slow_host slow_port slow_url out target hostport
+  label="fm-slowhub-$$"
+  slow_ready="$CASE_DIR/proxy.ready"
+  hostport=${URL#http://}
+  python3 "$ROOT/tests/assets/slow-tcp-proxy.py" 127.0.0.1 \
+    "${hostport%%:*}" "${hostport##*:}" 12 > "$slow_ready" 2>"$CASE_DIR/proxy.log" &
+  local proxy_pid=$!
+  disown "$proxy_pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$proxy_pid"
+  local waited=0
+  while [ "$waited" -lt 100 ]; do
+    [ -s "$slow_ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$slow_ready" ] || fail "the slow stand-in never reported ready: $(cat "$CASE_DIR/proxy.log" 2>/dev/null)"
+  read -r slow_host slow_port < "$slow_ready"
+  slow_url="http://$slow_host:$slow_port"
+  local real_url=$URL
+  URL=$slow_url
+  if out=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" 2>&1); then
+    URL=$real_url
+    fail "a create against a hub that answers too late should be refused, got '$out'"
+  fi
+  URL=$real_url
+  # Nothing survives the refusal: no agent, and no endpoint on the hub.
+  sleep 1
+  assert_equals "$(agent_pid_for "$label")" "" \
+    "an abandoned create must leave no agent holding a shell: $out"
+  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET /v1/tasks)" \
+    | jq -r --arg l "$label" '[.tasks[] | select(.label==$l and (.closed_at | not))] | length')" \
+    0 "an abandoned create must leave no live endpoint registered"
+  # And the obvious next thing an operator does works.
+  target=$(create_endpoint "$label")
+  case "$target" in
+    *:[0-9a-f]*) ;;
+    *) fail "retrying the same task after a timed-out create should succeed, got '$target'" ;;
+  esac
+  pass "stream: a create that times out leaves no agent and no endpoint, and the retry succeeds"
+}
+
 test_an_unreachable_hub_refuses_and_names_the_start_command() {
   local err
   start_case_hub unreachable
@@ -548,6 +595,7 @@ test_status_return_channel_appends_on_the_owning_machine
 test_a_target_from_another_hub_is_refused
 test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error
 test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers
+test_a_create_that_times_out_leaves_nothing_behind
 test_an_unreachable_hub_refuses_and_names_the_start_command
 test_hub_url_prefers_configuration_then_a_locally_started_hub
 test_a_rejected_token_refuses_instead_of_retrying_unauthenticated

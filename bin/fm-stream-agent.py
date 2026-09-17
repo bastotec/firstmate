@@ -122,6 +122,12 @@ def _ps_args(pid: str) -> str:
     return proc.stdout.decode("utf-8", "replace").strip()
 
 
+# Each startup call to the hub, bounded so the whole startup - the dead-child
+# check, the health call, and the registration - finishes inside the window the
+# adapter waits for the ready file.
+STARTUP_CALL_TIMEOUT = 5.0
+
+
 def _silence_diagnostics() -> None:
     """Send this process's own output to os.devnull for the rest of its life."""
     sys.stdout.flush()
@@ -672,7 +678,11 @@ def main(argv: list) -> int:
     command = _default_shell_command()
 
     hub = HubClient(options.hub, read_token(options))
-    health = hub.call("GET", "/v1/health", timeout=15.0)
+    # Startup is budgeted to finish well inside the window the adapter waits
+    # for the ready file, so an agent that cannot come up has already given up
+    # by the time the spawn abandons it, rather than registering an endpoint
+    # firstmate no longer knows about.
+    health = hub.call("GET", "/v1/health", timeout=STARTUP_CALL_TIMEOUT)
     protocol = health.get("protocol")
     if protocol != AGENT_PROTOCOL:
         raise SystemExit("fm-stream-agent: the hub at %s speaks protocol %r but this agent "
@@ -719,10 +729,20 @@ def main(argv: list) -> int:
             "cwd": options.cwd,
             "rows": options.rows,
             "cols": options.cols,
-        }, timeout=15.0)
+        }, timeout=STARTUP_CALL_TIMEOUT)
     except RuntimeError as exc:
         pty.close()
         pty.release()
+        # The registration may have been recorded before the answer was lost,
+        # so the endpoint is closed on the way out. A live endpoint nobody owns
+        # would refuse the next attempt at the same task with duplicate_label.
+        try:
+            hub.call("POST", "/v1/agent/frames", {
+                "machine": options.machine,
+                "frames": [{"endpoint_id": endpoint_id, "closed": True, "exit_code": None}],
+            }, timeout=STARTUP_CALL_TIMEOUT)
+        except RuntimeError:
+            pass
         raise SystemExit("fm-stream-agent: %s" % exc)
 
     agent = Agent(options, hub, pty, endpoint_id)
