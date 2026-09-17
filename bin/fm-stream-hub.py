@@ -841,9 +841,25 @@ class Endpoint:
         return max(0.0, _now() - self.agent_seen_at)
 
     def mark_closed(self, exit_code, closed_by: str) -> None:
+        """Close the record, first writer wins - with one asymmetry.
+
+        ATTRIBUTION MOVES FROM PRESUMPTION TO FACT, NEVER THE REVERSE.
+        A `hub` close is a presumption: the hub stopped carrying a record it
+        could no longer steer, and it knows nothing about that worker. An
+        `agent` close is a fact: the owning agent watched its worker exit and
+        brought the exit code back. So when the agent's report arrives after a
+        forced close - the partition healed, the worker ran on, then ended -
+        the fact takes over the attribution it is entitled to, and the record
+        stops carrying a real exit code under a close the hub invented.
+
+        The reverse is refused, which is what keeps an unacknowledged kill from
+        ever claiming confirmation: the hub cannot overwrite an agent's close.
+        """
         with self.wake:
             if not self.closed_at:
                 self.closed_at = _now()
+                self.closed_by = closed_by
+            elif closed_by == "agent" and self.closed_by != "agent":
                 self.closed_by = closed_by
             self.exit_code = exit_code
             self.wake.notify_all()

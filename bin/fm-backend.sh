@@ -945,7 +945,9 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # process owner. Relaying adds one state the local backends do not have: a
 # silent agent makes the endpoint `unreadable`, never `dead`, because an
 # unreachable worker and a stopped one are indistinguishable from the hub and
-# only one of them authorizes recovery. Zellij remains unverified because
+# only one of them authorizes recovery - unless the hub holds that agent's OWN
+# report that its worker exited, which is a recorded fact rather than a live
+# reading, does not go stale, and reads `dead`. Zellij remains unverified because
 # its secondmate ghost-tab and agent-process recovery path has not been
 # empirically validated. Orca, cmux, and stream do not support secondmate spawns.
 fm_backend_agent_state() {  # <backend> <target>

@@ -313,6 +313,56 @@ test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale() {
   pass "stream: an agent-reported exit stays dead past staleness, a forced close does not"
 }
 
+test_a_forced_close_gives_way_to_the_agents_own_later_report() {
+  # A hub close is a presumption - the hub stopped carrying a record it could
+  # not steer. An agent close is a fact. When the partition heals and the
+  # owning agent later reports the exit it watched, the fact must take the
+  # attribution, or the record carries a real exit code under a close the hub
+  # invented and every consumer reads it as no evidence at all.
+  # A short acknowledgement window, because the signal this case needs is the
+  # hub giving up on a kill the paused agent cannot take.
+  start_case_hub forcedthenagent --state-max-age-secs 2 --command-ack-secs 2
+  local label target endpoint agent child out state waited=0
+  label="fm-forcedthenagent-$$"
+  target=$(create_endpoint "$label")
+  endpoint=${target##*:}
+  agent=$(agent_pid_for "$label")
+  [ -n "$agent" ] || fail "the publishing agent should be running"
+  child=$(pgrep -P "$agent" 2>/dev/null | head -1)
+  [ -n "$child" ] || fail "the agent should own a worker"
+  # The agent is partitioned. Its worker runs on; the hub simply cannot reach
+  # the agent that holds it.
+  kill -STOP "$agent" || fail "could not pause the agent"
+  out=$(with_stream_env fm_backend_stream_api DELETE "/v1/tasks/$endpoint") || {
+    kill -CONT "$agent"
+    fail "the hub should close a record it cannot steer"
+  }
+  assert_equals "$(printf '%s' "$out" | jq -r '.delivered')" false     "a kill the paused agent never took must not be reported as delivered"
+  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET "/v1/tasks/$endpoint")" \
+    | jq -r '.task.closed_by // empty')" hub \
+    "that close should first be recorded as the hub's own presumption"
+  kill -CONT "$agent" || fail "could not resume the agent"
+  # The partition heals, the worker ends, and its agent reports the exit it
+  # watched - after the forced close, which is the ordering that matters.
+  kill -KILL "$child" || fail "could not end the worker"
+  while [ "$waited" -lt 250 ]; do
+    [ "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET "/v1/tasks/$endpoint")" \
+      | jq -r '.task.closed_by // empty')" = agent ] && break
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET "/v1/tasks/$endpoint")" \
+    | jq -r '.task.closed_by // empty')" agent \
+    "the owning agent's report must take the attribution from the hub's presumption"
+  state=$(with_stream_env fm_backend_agent_state stream "$target")
+  assert_equals "$state" dead \
+    "a worker its own agent watched exit must read dead, whatever closed the record first"
+  out=$(with_stream_env fm_backend_kill stream "$target" "" "$label" 2>&1) \
+    || fail "a worker the owning agent watched exit is a confirmed stop: $out"
+  assert_equals "$out" "" "a confirmed stop should say nothing"
+  pass "stream: an agent's own close outranks a forced one that landed first"
+}
+
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling() {
   local victim bystander
   start_case_hub kill
@@ -863,6 +913,7 @@ test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor
 test_agent_state_reads_the_foreground_process_not_the_screen
 test_agent_state_separates_missing_unreachable_and_partitioned
 test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale
+test_a_forced_close_gives_way_to_the_agents_own_later_report
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_only_a_close_the_agent_reported_counts_as_a_stop
 test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop
