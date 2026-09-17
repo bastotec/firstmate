@@ -1,0 +1,8 @@
+### fm-bootstrap.sh with an unknown backend (backend=bogus)
+BACKEND_INVALID: bogus (known: tmux herdr zellij orca cmux stream)
+
+### fm-bootstrap.sh with the newly registered backend (backend=stream)
+(no BACKEND_INVALID: stream is accepted as a known backend)
+
+### fm-bootstrap.sh with backend=tmux (control)
+(no BACKEND_INVALID)

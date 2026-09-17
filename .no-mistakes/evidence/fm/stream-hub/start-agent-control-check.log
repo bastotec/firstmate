@@ -1,0 +1,2 @@
+ok - hub: input reaches the endpoint's pseudoterminal and capture reads it back
+control exit=0
