@@ -103,6 +103,10 @@
       "target": "docs/verification/runtime-backends.md"
     },
     {
+      "source": "docs/stream-backend.md",
+      "target": "docs/verification/runtime-backends.md"
+    },
+    {
       "source": "docs/trace-context.md",
       "target": "docs/verification/trace-context.md"
     }
@@ -506,6 +510,10 @@
     },
     {
       "path": "docs/zellij-backend.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/stream-backend.md",
       "audience": "operator-current"
     },
     {
