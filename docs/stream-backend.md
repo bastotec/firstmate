@@ -137,13 +137,19 @@ The endpoint id an agent re-registers is the one the task's own records name, so
 The history does not come back with it.
 The ring buffer was in memory too, so the terminal output produced while the hub was gone is lost and that endpoint's scrollback starts again from the reconnect.
 
+A worker coming back this way must not lose its identity to the replacement its own absence provoked.
+Inside the restart window every stream endpoint reads unknown to the hub, so something may well start a fresh worker for the same task under the same name; registering it is not what decides the contest.
+A record the hub has never heard from stands for no worker, so it takes no name from the agent that is publishing under it - the rule the hub already applied to publishing, applied to registering too, so a recovering agent wins the window it did not choose to be in.
+Readers on this side wait that window out rather than call the worker gone: a hub 404 has to keep being the answer for longer than a re-registration takes before it is reported as `missing`, because inside it the endpoint is about to exist again and a steer dropped there is a steer dropped on a healthy worker.
+
 `no_such_endpoint` is the only thing an agent acts on here, and only the hub states it.
 A failed connection is not that, and is never treated as it: a hub on its way back up passes through exactly that state, and a returning hub that still holds the record must not be re-registered against.
 An agent finds out through its own publishing, so an endpoint with nothing to say comes back on its state heartbeat rather than waiting for its worker to print something.
 
 Attempts are paced rather than repeated.
 One restart strands every agent in the fleet at once, so an agent leaves at least a couple of seconds between attempts, backs further off while the hub cannot take it back, and spreads the wait by a random margin so the fleet does not return in one burst against a hub that has only just come up.
-A worker whose own process ended while the hub was down is recovered the same way and for the same reason: if the hub is back by the time its agent posts the closing frame, the agent takes the identity back in order to deliver it, so the task's end and its exit code land under the id that names them rather than being lost with the record that was meant to hold them.
+A worker whose own process ended while the hub was down is recovered the same way and on the same terms: if the hub is back by the time its agent posts the closing frame, the agent takes the identity back in order to deliver it, so the task's end and its exit code land under the id that names them rather than being lost with the record that was meant to hold them.
+Its closing frame asks for that recovery like any other frame, and gets no special licence - a hub that is still down at that moment does not hold an exiting agent open waiting for it.
 
 Two answers end the attempts instead of continuing them.
 A credential the hub will not take and an endpoint id it holds against a different machine are settled refusals, not transients, so the agent stands down rather than keep asking.
@@ -154,10 +160,6 @@ Standing down is SILENT, and that is a real limitation rather than an oversight.
 The agent stops publishing and stops asking for commands, so its endpoint stops being readable, the hub's silence reaper eventually calls the worker presumed gone, and the record ages out of the listing - while the terminal it owns goes on running, unwatched and unsteerable, on the machine it started on.
 The reason is recorded nowhere: the agent's own output went to `/dev/null` when it registered, the hub is the thing refusing it, and the task's status record is the WORKER's channel - supervision reads that record to learn what the work is doing, and an agent whose credential was refused is not the task being blocked.
 So a worker that disappears this way is explained only by the hub's own refusal, read on the hub; nothing on the worker's machine will say why.
-
-A hub speaking a protocol this agent does not implement is NOT one of them.
-The agent checks the protocol on its way back in, for the reason it checks at startup - publishing into a protocol it does not implement would make it look present and behave wrongly - but it holds off and keeps trying, because one restart can put a new protocol in front of every agent in the fleet at once and a settled answer there would be a fleet that never comes back.
-The worker is still waiting when the protocol it speaks is served again.
 
 ## When the hub is down
 

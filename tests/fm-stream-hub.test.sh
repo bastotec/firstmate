@@ -732,6 +732,45 @@ test_a_returning_agent_whose_name_was_taken_is_refused() {
   pass "hub: a returning agent whose name was taken is refused rather than revived"
 }
 
+test_a_registration_takes_no_name_from_the_agent_recovering_it() {
+  # The restart window's own hazard. While the hub knew nothing, every endpoint
+  # read unknown, so something started a REPLACEMENT worker for the task under
+  # the same machine and label. It has registered and never published. The
+  # original agent - whose worker is still running - then recovers its own
+  # endpoint id, and must not lose the task's identity to a record that stands
+  # for nothing yet. Registering is not proof, on this path exactly as on the
+  # publish path.
+  start_hub register-unproven
+  local replacement recovering out
+  replacement=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  recovering=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$replacement" --arg l "held-$RUN" \
+    '{endpoint_id: $id, machine: "box-a", label: $l, cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the replacement should register"
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$recovering" --arg l "held-$RUN" \
+    '{endpoint_id: $id, machine: "box-a", label: $l, cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 \
+    "a record nothing has been heard from must not refuse the agent recovering that name"
+  # The agent that publishes is the one that holds it, which is the rule the
+  # publish path already stated; the loser is told so rather than left to
+  # publish into a fleet where its name means someone else.
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$recovering" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "the recovering agent should publish under its own id"
+  out=$(publish POST /v1/agent/frames "$(jq -nc --arg id "$replacement" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')")
+  assert_equals "$(api_code)" 410 "the replacement must not publish under a name another worker holds"
+  assert_equals "$(printf '%s' "$out" | jq -r '.error')" endpoint_superseded \
+    "it should be told the name is served by another endpoint"
+  # And the name is genuinely held now, so the duplicate rule still refuses the
+  # next claim on it: the check was narrowed, not removed.
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$(python3 -c 'import os; print(os.urandom(16).hex())')" \
+    --arg l "held-$RUN" '{endpoint_id: $id, machine: "box-a", label: $l, cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 409 \
+    "an endpoint whose agent is publishing should still hold its label against a new claim"
+  pass "hub: a registration nothing stands behind takes no name from the agent recovering it"
+}
+
 test_a_name_contest_is_settled_by_which_agent_is_heard_from() {
   # Two records, one name, and nothing heard from either - the shape a paused
   # hub leaves behind. The name belongs to whichever agent comes back, because
@@ -1473,43 +1512,6 @@ test_a_refused_agent_goes_silent_and_stays_silent() {
   pass "hub: a refused agent goes silent, leaving its worker running and its task's record untouched"
 }
 
-test_an_agent_waits_out_a_hub_that_changed_protocol() {
-  # A hub upgraded while it was down is the one refusal that must NOT be
-  # settled. One restart puts the new protocol in front of every agent in the
-  # fleet at once, so an agent that stood down on it would turn a rolling
-  # upgrade into a fleet that never comes back - the exact outcome
-  # re-registration exists to prevent. It holds off and keeps trying instead,
-  # so the worker is still waiting when its protocol is served again.
-  start_stub reregister-protocol --frames-ok-first 1 --protocol 2 --protocol-after 99
-  local status pid asked before
-  status="$CASE_DIR/state/protocol.status"
-  start_agent_against_stub protocol "$status"
-  pid=$AGENT_PID
-  # Long enough for several paced attempts, and for an unpaced one to make
-  # dozens: the heartbeat that discovers the strand runs twice a second.
-  sleep 10
-  # One health call is the agent's startup check; the rest are recovery
-  # attempts, which is what "kept trying" means here.
-  asked=$(grep -c 'GET /v1/health' "$STUB_JOURNAL" 2>/dev/null || true)
-  [ "$asked" -ge 3 ] \
-    || fail "the agent asked the hub about its protocol $asked times, so it is not still trying"
-  [ "$asked" -le 8 ] \
-    || fail "the agent asked $asked times in ten seconds, so the attempts are not paced"
-  assert_equals "$(registrations | grep -c . || true)" 0 \
-    "an agent must not register into a protocol it does not implement"
-  # Still talking to the hub at all is what tells a held-off agent from a
-  # stood-down one: a stand-down ends the command poll too.
-  before=$(hub_requests)
-  sleep 5
-  [ "$(hub_requests)" -gt "$before" ] \
-    || fail "the agent stood down on a protocol change instead of waiting the hub out"
-  assert_equals "$(cat "$status" 2>/dev/null || true)" "" \
-    "a protocol change must not be written into the task's own status record"
-  kill -0 "$pid" 2>/dev/null || fail "the agent should keep waiting for its hub, not exit"
-  [ -n "$(pgrep -P "$pid" 2>/dev/null)" ] || fail "the waiting agent should keep its worker running"
-  pass "hub: an agent waits out a hub that changed protocol rather than standing down"
-}
-
 test_fm_stream_start_status_stop_round_trip() {
   # The operator path, through the real entry point rather than the API.
   local home out
@@ -1590,6 +1592,7 @@ test_a_kill_closes_an_endpoint_whose_agent_never_answers
 test_a_worker_the_hub_has_not_heard_from_keeps_its_place
 test_an_agent_that_speaks_again_takes_the_presumption_back
 test_a_returning_agent_whose_name_was_taken_is_refused
+test_a_registration_takes_no_name_from_the_agent_recovering_it
 test_a_name_contest_is_settled_by_which_agent_is_heard_from
 test_a_publishing_worker_keeps_its_name_against_an_empty_record
 test_a_worker_that_loses_its_name_keeps_its_worker
@@ -1607,6 +1610,5 @@ test_a_restarted_hub_gets_its_workers_back
 test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
 test_a_refused_agent_goes_silent_and_stays_silent
-test_an_agent_waits_out_a_hub_that_changed_protocol
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home

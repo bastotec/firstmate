@@ -456,11 +456,6 @@ TERMINAL_REFUSALS = frozenset((
 REREGISTER_BACKOFF_MIN = 2.0
 REREGISTER_BACKOFF_MAX = 60.0
 REREGISTER_JITTER = 0.25
-# How long a closing frame's recovery waits for an attempt already in flight.
-# It is the only caller that waits at all: it has no later attempt to defer to,
-# and an attempt in flight holds two hub calls of its own, so a wait shorter
-# than those would hand back the same "not recovered" that losing the lock did.
-REREGISTER_URGENT_WAIT = 35.0
 
 
 def registration(options: argparse.Namespace, endpoint_id: str) -> dict:
@@ -592,19 +587,14 @@ class Agent:
         # draining the pty - a worker whose output nobody reads eventually
         # blocks - but publishes nothing and takes no commands.
         self.stood_down = threading.Event()
-        # Set each time a recovery puts this endpoint back. The command poll
-        # waits on it so an outage's backoff ends the moment the hub is back
-        # rather than whenever the wait it had already started runs out.
-        self.rejoined = threading.Event()
-        self._backoff = REREGISTER_BACKOFF_MIN
+        self._backoff = 2.0
         # Re-registration is serialized and paced. Three threads publish, so a
         # forgotten endpoint is discovered several times over, and a hub that is
         # down must see one attempt per backoff window rather than one per
-        # frame. The lock is taken without blocking by every caller but one: a
-        # thread that finds an attempt already in flight has nothing to add by
-        # waiting for it, and the pty reader in particular must never be parked
-        # on a hub call it did not make. The closing frame is the exception,
-        # and recover_registration says why it waits.
+        # frame. The lock is only ever taken without blocking: a thread that
+        # finds an attempt already in flight has nothing to add by waiting for
+        # it, and the pty reader in particular must never be parked on a hub
+        # call it did not make.
         self._register_lock = threading.Lock()
         self._register_not_before = 0.0
         self._register_backoff = REREGISTER_BACKOFF_MIN
@@ -637,7 +627,7 @@ class Agent:
                     sys.stderr.write("fm-stream-agent: the hub forgot endpoint %s again: "
                                      "%s\n" % (self.endpoint_id, exc))
                     return
-                if not self.recover_registration(exc, urgent=closing):
+                if not self.recover_registration(exc):
                     return
             except (Superseded, Rejected) as exc:
                 self.give_up(exc)
@@ -651,7 +641,7 @@ class Agent:
                 sys.stderr.write("fm-stream-agent: publish failed: %s\n" % exc)
                 return
 
-    def recover_registration(self, reason: Exception, urgent: bool = False) -> bool:
+    def recover_registration(self, reason: Exception) -> bool:
         """Take this endpoint's identity back from a hub that forgot it.
 
         The hub's registry lives in its memory, so a hub that restarted has
@@ -664,56 +654,23 @@ class Agent:
 
         False means the endpoint is not back and the caller should drop what it
         was publishing: the hub was unreachable, the attempt is inside a backoff
-        window, or the answer was one this agent does not come back from.
-
-        An URGENT recovery is the closing frame's, and it skips that window for
-        the same reason every other rule here steps aside for a close: this
-        agent is about to exit, the frame says the worker is gone and carries
-        its exit code, and there is no later attempt to defer to. A pace exists
-        to stop an agent asking too often, not to make a task's end unrecorded.
-        The pause for the NEXT attempt is still written, so nothing this
-        borrows is free.
+        window, or the answer was one this agent does not come back from. The
+        closing frame asks on the same terms as any other, so an agent whose
+        worker exited while the hub was down delivers its end if the hub is
+        back, and exits rather than holding its teardown open if it is not.
         """
         if self.stood_down.is_set():
             return False
-        # An urgent recovery WAITS for an attempt already in flight, where
-        # every other caller walks away from it. A caller that walks away has
-        # a next frame to discover the same thing on; this one is the last
-        # frame there will ever be, and losing the lock to a recovery that is
-        # about to succeed would lose the task's end to it.
-        if urgent:
-            acquired = self._register_lock.acquire(timeout=REREGISTER_URGENT_WAIT)
-        else:
-            acquired = self._register_lock.acquire(blocking=False)
-        if not acquired:
+        if not self._register_lock.acquire(blocking=False):
             return False
         try:
             if self.stood_down.is_set():
                 return False
-            if not urgent and time.monotonic() < self._register_not_before:
+            if time.monotonic() < self._register_not_before:
                 return False
             self._register_not_before = time.monotonic() + self._register_backoff * (
                 1.0 + REREGISTER_JITTER * random.random())
             try:
-                # The protocol is checked on the way back in for the same
-                # reason it is checked at startup: a hub that restarted may
-                # have been upgraded while it was down, and an agent that
-                # published into a protocol it does not implement would look
-                # present and behave wrongly.
-                #
-                # A mismatch is held against, never stood down on. One restart
-                # can put a new protocol in front of every agent in the fleet
-                # at once, and an agent that treated that as settled would turn
-                # a rolling upgrade into a fleet that never comes back; this
-                # way the worker is waiting when the version it speaks is
-                # served again - by a rollback, or by a hub that keeps the old
-                # protocol alongside the new one.
-                health = self.hub.call("GET", "/v1/health", timeout=15.0)
-                protocol = health.get("protocol")
-                if protocol != AGENT_PROTOCOL:
-                    raise RuntimeError("the hub at %s now speaks protocol %r but this "
-                                       "agent implements %d"
-                                       % (self.hub.base_url, protocol, AGENT_PROTOCOL))
                 self.hub.call("POST", "/v1/agent/endpoints",
                               registration(self.options, self.endpoint_id),
                               timeout=15.0)
@@ -739,12 +696,6 @@ class Agent:
             self._register_backoff = REREGISTER_BACKOFF_MIN
         finally:
             self._register_lock.release()
-        # The command poll backed off through the same outage this just ended,
-        # and it has no other way to learn the hub is back: it would otherwise
-        # sit out a wait of up to a minute while the endpoint is listed,
-        # readable, and to an operator already steerable. This is what tells it.
-        self._backoff = REREGISTER_BACKOFF_MIN
-        self.rejoined.set()
         try:
             self.publish_initial_state()
         except RuntimeError as exc:
@@ -871,27 +822,6 @@ class Agent:
         sys.stderr.write("fm-stream-agent: %s\n" % reason)
         sys.stderr.flush()
 
-    def _pause_command_poll(self) -> None:
-        """Sit out the poll's backoff, but never past the hub coming back.
-
-        Backing off is what keeps an agent whose hub is gone from polling a
-        dead socket, and it is why a long outage ends with this loop parked for
-        up to a minute. A recovery ends the outage in seconds, so waiting that
-        minute out afterwards would leave a worker that is listed and readable
-        unsteerable for the rest of it - and to whoever typed into it, a steer
-        that simply never arrived.
-        """
-        self.rejoined.clear()
-        deadline = time.monotonic() + self._backoff
-        while not self.stop.is_set():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            if self.rejoined.wait(min(remaining, 0.5)):
-                self._backoff = REREGISTER_BACKOFF_MIN
-                return
-        self._backoff = min(self._backoff * 2, REREGISTER_BACKOFF_MAX)
-
     def command_loop(self) -> None:
         """Long-poll the hub for this endpoint's commands and acknowledge each.
 
@@ -922,9 +852,10 @@ class Agent:
                 # reconnects - but an agent whose hub is gone for good would
                 # otherwise poll a dead socket forever.
                 sys.stderr.write("fm-stream-agent: command poll failed: %s\n" % exc)
-                self._pause_command_poll()
+                self.stop.wait(self._backoff)
+                self._backoff = min(self._backoff * 2, 60.0)
                 continue
-            self._backoff = REREGISTER_BACKOFF_MIN
+            self._backoff = 2.0
             for command in answer.get("commands") or []:
                 self.command_busy.set()
                 try:

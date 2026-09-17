@@ -253,6 +253,65 @@ test_agent_state_separates_missing_unreachable_and_partitioned() {
   pass "stream: agent state separates a missing endpoint, a partition, and an unreachable hub"
 }
 
+# restart_case_hub - stop this case's hub and bring one back at the SAME
+# address, which is what a restart means to an agent that never moved. The
+# agents keep running: outliving the hub is the property under test.
+restart_case_hub() {
+  local port=${URL##*:} waited=0 ready="$CASE_DIR/ready" pid host bound
+  kill "$HUB_PID" 2>/dev/null
+  while [ "$waited" -lt 100 ]; do
+    [ -e "$ready" ] || break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -e "$ready" ] && fail "the hub did not stop when asked"
+  python3 "$HUB" serve --bind 127.0.0.1 --port "$port" \
+    --token-file "$CASE_DIR/tokens" --ready-file "$ready" >> "$CASE_DIR/log" 2>&1 &
+  pid=$!
+  HUB_PID=$pid
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  waited=0
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$ready" ] || fail "the hub did not come back: $(cat "$CASE_DIR/log" 2>/dev/null)"
+  read -r host bound < "$ready"
+  URL="http://$host:$bound"
+}
+
+test_a_restarting_hub_never_reads_as_a_missing_worker() {
+  # The hub keeps its endpoint registry in memory, so for the seconds between a
+  # restart and each agent re-registering, every endpoint answers 404. That
+  # window is a recovery, not a verdict: `missing` folds into `dead` for every
+  # caller of fm_backend_agent_alive, and the steer paths escalate `dead|missing`
+  # by dropping a pending steer - on a worker that is alive and coming back.
+  start_case_hub restart-not-missing
+  local target before after waited=0
+  target=$(create_endpoint "fm-restart-$$")
+  before=$(with_stream_env fm_backend_agent_state stream "$target")
+  [ "$before" != missing ] || fail "the endpoint should be known before the restart"
+  [ "$before" != unreadable ] || fail "the endpoint should be readable before the restart"
+
+  restart_case_hub
+
+  # Read it repeatedly across the whole recovery, because the defect is a
+  # verdict taken DURING the window, not the one it settles on afterwards.
+  while [ "$waited" -lt 30 ]; do
+    after=$(with_stream_env fm_backend_agent_state stream "$target")
+    [ "$after" != missing ] \
+      || fail "a worker re-registering with its hub must never read missing"
+    [ "$after" = "$before" ] && break
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  assert_equals "$after" "$before" \
+    "the worker should read exactly as it did before, under the endpoint id it kept"
+  pass "stream: a hub restart is waited out rather than reported as a missing worker"
+}
+
 test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale() {
   # Staleness governs live READINGS. An agent-reported close carries the exit
   # code the owning agent watched the worker produce, so it is a recorded event
@@ -912,6 +971,7 @@ test_capture_is_bounded_by_the_requested_line_count
 test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor
 test_agent_state_reads_the_foreground_process_not_the_screen
 test_agent_state_separates_missing_unreachable_and_partitioned
+test_a_restarting_hub_never_reads_as_a_missing_worker
 test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale
 test_a_forced_close_gives_way_to_the_agents_own_later_report
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling

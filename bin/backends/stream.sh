@@ -494,7 +494,8 @@ fm_backend_stream_send_text_submit() {  # <target> <text> <retries> <enter-sleep
 # fm_backend_stream_agent_state: the recovery-grade classifier. See
 # bin/fm-backend.sh's fm_backend_agent_state for the shared vocabulary.
 #
-#   missing    the hub answered and has no such endpoint (404).
+#   missing    the hub answered and has no such endpoint (404), and went on
+#              saying so for long enough that no agent is still coming back.
 #   dead       the owning agent POSITIVELY reported the process gone, or a
 #              foreground group that is nothing but shells.
 #   alive      a verified harness is in that reported foreground group.
@@ -516,9 +517,24 @@ fm_backend_stream_send_text_submit() {  # <target> <text> <retries> <enter-sleep
 # a process name means, so every backend gives the same verdict.
 fm_backend_stream_agent_state() {  # <target>
   local target=$1 out stale alive count classified seen=0 shell_seen=0 other_seen=0
-  local index name argv0 args status=0
+  local index name argv0 args status=0 waited=0
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || { printf 'unreadable'; return 0; }
-  out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT/processes" 2>/dev/null) || status=$?
+  # A 404 is no longer a settled answer. The hub keeps its endpoint registry in
+  # memory, so a hub that restarted has no such endpoint for anyone until each
+  # agent re-registers its own - which its next state heartbeat does, within
+  # seconds and without an operator. Reporting `missing` inside that window is
+  # what drops a pending steer for a worker that is about to be back, so the
+  # 404 has to keep being the answer for longer than that recovery takes
+  # before it counts as one. A hub that really has forgotten an endpoint says
+  # so again every time, and still reaches `missing` - just later.
+  while :; do
+    status=0
+    out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT/processes" 2>/dev/null) || status=$?
+    [ "$status" -eq 3 ] || break
+    [ "$waited" -lt "${FM_STREAM_MISSING_GRACE_SECS:-8}" ] || break
+    waited=$((waited + 1))
+    sleep 1
+  done
   if [ "$status" -ne 0 ]; then
     case "$status" in
       3) printf 'missing' ;;

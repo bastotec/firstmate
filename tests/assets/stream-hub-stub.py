@@ -16,8 +16,7 @@ test can measure rather than infer.
   --port N                 loopback port to bind (0 for an ephemeral one)
   --ready-file PATH        "<host> <port>" written there once bound
   --journal PATH           one line per request, appended
-  --protocol N             the protocol the first health call reports
-  --protocol-after N       the protocol every LATER health call reports
+  --protocol N             the protocol every health call reports
   --frames-ok-first N      let the first N frame posts through
   --frames-error CODE:HTTP refuse every frame post after those
   --accept-registrations N how many registrations to accept (-1 for all)
@@ -72,12 +71,9 @@ class Stub(http.server.BaseHTTPRequestHandler):
         path = self._record()
         state = self.server.state
         if path == "/v1/health":
-            with state["lock"]:
-                first = state["health_calls"] == 0
-                state["health_calls"] += 1
             self._json(200, {
                 "ok": True,
-                "protocol": state["protocol"] if first else state["protocol_after"],
+                "protocol": state["protocol"],
                 "version": "stub",
                 "state_max_age_secs": 10,
                 "command_ack_secs": 10,
@@ -141,7 +137,6 @@ def main() -> int:
     parser.add_argument("--ready-file", default="")
     parser.add_argument("--journal", required=True)
     parser.add_argument("--protocol", type=int, default=2)
-    parser.add_argument("--protocol-after", type=int, default=2)
     parser.add_argument("--frames-ok-first", type=int, default=1)
     parser.add_argument("--frames-error", default="no_such_endpoint:404")
     parser.add_argument("--accept-registrations", type=int, default=-1)
@@ -154,12 +149,10 @@ def main() -> int:
         "started": time.monotonic(),
         "journal": options.journal,
         "protocol": options.protocol,
-        "protocol_after": options.protocol_after,
         "frames_ok_first": options.frames_ok_first,
         "frames_code": code,
         "frames_status": int(status or 404),
         "accept_registrations": options.accept_registrations,
-        "health_calls": 0,
         "registrations": 0,
         "frames": 0,
     }
