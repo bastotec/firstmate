@@ -578,7 +578,9 @@ test_failed_recreation_keeps_a_concurrent_record_write() {
     "the terminal should have been recreated before the settle wait timed out"
   grep -qxF 'pr=https://github.com/o/r/pull/7' "$dir/home/state/rm24.meta" \
     || fail "a refused recovery must not revert a record write it never made"
-  [ "$(journal_field "$dir" rm24 rollback)" = prior-instructions-restored ] \
+  [ "$(journal_field "$dir" rm24 phase)" = failed:recreating ] \
+    || fail "the journal must record the phase the rescue failed in"
+  [ "$(journal_field "$dir" rm24 rollback)" = instructions-restored ] \
     || fail "the journal must not claim a record rollback the arm does not perform"
   pass "fm-control recover-missing: a failed recreation leaves a concurrent record write alone"
 }

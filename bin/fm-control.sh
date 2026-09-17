@@ -695,7 +695,7 @@ relaunch_rollback() {
       if [ -n "$RELAUNCH_BRIEF" ] && [ -f "$BRIEF_PRIOR" ]; then
         cp -p "$BRIEF_PRIOR" "$RELAUNCH_BRIEF" 2>/dev/null || true
       fi
-      journal_write "failed:$RELAUNCH_PHASE" "rollback=prior-instructions-restored" || true
+      journal_write "failed:$RELAUNCH_PHASE" "rollback=instructions-restored" || true
       case "$(agent_state 2>/dev/null || printf unknown)" in
         dead|alive|ambiguous)
           echo "error: $ID's missing-endpoint recovery recreated the terminal but could not hand it over; its agent was never touched, so the progress note was rolled back and its work is preserved at $WT" >&2
@@ -1001,7 +1001,7 @@ do_relaunch() {
     note_line="note=none"
   fi
   safe_checkpoint
-  cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before relaunching"
+  cp -p "$META" "$META_PRIOR" 2>/dev/null || true
   RELAUNCH_ACTIVE=1
   journal_write checkpoint "${CHECKPOINT_LINES[@]}" "$note_line"
 
@@ -1098,7 +1098,7 @@ do_recover_missing() {
   # records what it found (worktree_dirty=) as evidence, and nothing below
   # cleans, resets, or stashes any of it.
   safe_checkpoint
-  cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before recovery"
+  cp -p "$META" "$META_PRIOR" 2>/dev/null || true
   RELAUNCH_ACTIVE=1
   journal_write checkpoint "${CHECKPOINT_LINES[@]}" "$note_line"
 
