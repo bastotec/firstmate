@@ -122,6 +122,18 @@ def _ps_args(pid: str) -> str:
     return proc.stdout.decode("utf-8", "replace").strip()
 
 
+def _silence_diagnostics() -> None:
+    """Send this process's own output to os.devnull for the rest of its life."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+    finally:
+        os.close(devnull)
+
+
 def _default_shell_command() -> list:
     """The operator's own shell, with rc suppression only where it is understood.
 
@@ -726,6 +738,12 @@ def main(argv: list) -> int:
     sys.stderr.write("fm-stream-agent %s endpoint %s on %s -> %s\n"
                      % (AGENT_VERSION, endpoint_id, options.machine, options.hub))
     sys.stderr.flush()
+    # The caller's capture of this agent's output exists to carry a refusal out
+    # of a spawn that never registered. Registration succeeded, so the caller
+    # has already unlinked it, and everything written from here - one line per
+    # failed publish, for the worker's whole life - would only grow a file
+    # nobody can read.
+    _silence_diagnostics()
 
     return agent.run()
 

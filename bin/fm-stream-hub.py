@@ -1170,6 +1170,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._handle("DELETE")
 
     def _handle(self, method: str) -> None:
+        self._body_consumed = False
         try:
             parsed = urllib.parse.urlsplit(self.path)
             query = urllib.parse.parse_qs(parsed.query)
@@ -1185,14 +1186,43 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self._route(method, path, query)
         except HubError as exc:
+            self._discard_body()
             self._json(exc.status, {"ok": False, "error": exc.code, "message": exc.message})
         except BrokenPipeError:
             return
         except ConnectionResetError:
             return
         except Exception as exc:  # noqa: BLE001 - the hub must not die on one request
+            self._discard_body()
             self._json(HTTPStatus.INTERNAL_SERVER_ERROR,
                        {"ok": False, "error": "internal", "message": str(exc)})
+
+    def _discard_body(self) -> None:
+        """Read a refused request's body, so the next one on this connection parses.
+
+        A refusal that answers before the body is read leaves those bytes in the
+        socket, and on a kept-alive connection the client's NEXT request is then
+        parsed starting mid-body. Where the declared length cannot be honoured,
+        the connection is closed instead of being left desynchronised.
+        """
+        if self._body_consumed:
+            return
+        self._body_consumed = True
+        declared = self.headers.get("Content-Length")
+        if declared is None:
+            return
+        try:
+            size = int(declared)
+        except (TypeError, ValueError):
+            self.close_connection = True
+            return
+        if size < 0 or size > MAX_BODY:
+            self.close_connection = True
+            return
+        try:
+            self.rfile.read(size)
+        except OSError:
+            self.close_connection = True
 
     # --- auth -------------------------------------------------------------
 
@@ -1237,6 +1267,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _body(self) -> dict:
+        self._body_consumed = True
         length = self.headers.get("Content-Length")
         if length is None:
             return {}

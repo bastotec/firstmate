@@ -213,6 +213,12 @@ test_a_viewing_token_cannot_steer_or_close_a_worker() {
     "the operator's status line should reach the owning agent's record"
   assert_no_grep 'not yours' "$CASE_DIR/state/steerable.status" \
     "a refused status must never reach the record"
+  # The viewer holds ONE kept-alive connection: its refused send box must not
+  # leave the next poll on that connection parsing the refused request's body.
+  local hostport=${URL#http://}
+  assert_equals "$(python3 "$ROOT/tests/assets/stream-hub-keepalive-refusal.py" \
+    "${hostport%%:*}" "${hostport##*:}" "$endpoint" "$VIEW_ONLY_TOKEN" 2>&1)" clean \
+    "a refused POST must leave the connection usable for the next request"
   view DELETE "/v1/tasks/$endpoint" >/dev/null
   assert_equals "$(api_code)" 200 "an operating credential should close a worker"
   pass "hub: steering needs the control class, and a viewing token holds none of it"

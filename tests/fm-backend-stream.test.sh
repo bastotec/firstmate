@@ -27,6 +27,7 @@ HUB="$ROOT/bin/fm-stream-hub.py"
 TOKEN="adapter-token-$$"
 CASE_DIR=""
 URL=""
+HUB_PID=""
 
 cleanup_helpers() {
   fm_test_reap_helper_pids
@@ -64,6 +65,7 @@ start_case_hub() {  # <case-name> [extra hub args...]
     --token-file "$CASE_DIR/tokens" --ready-file "$ready" "$@" \
     > "$CASE_DIR/log" 2>&1 &
   pid=$!
+  HUB_PID=$pid
   disown "$pid" 2>/dev/null || true
   fm_test_track_helper_pid "$pid"
   while [ "$waited" -lt 100 ]; do
@@ -316,6 +318,32 @@ test_hub_url_prefers_configuration_then_a_locally_started_hub() {
   pass "stream: the hub URL prefers configuration, then a hub this home started, then the default"
 }
 
+test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers() {
+  # The adapter keeps the agent's output only to carry a refusal out of a spawn
+  # that never registered, and unlinks it the moment registration succeeds. If
+  # the agent kept writing there, every failed publish during a hub outage would
+  # grow a file nobody can read, in a $TMPDIR that is often RAM.
+  local target pid before after
+  start_case_hub agentlog
+  [ -r /proc/self/fd ] || { pass "stream: no /proc on this host to read a spawned agent's descriptors"; return; }
+  target=$(create_endpoint "fm-agentlog-$$")
+  pid=$(agent_pid_for "fm-agentlog-$$")
+  [ -n "$pid" ] || fail "the spawned agent should be running"
+  # Make the worker talk and take the hub away, which is what drives the agent's
+  # per-failure diagnostics.
+  with_stream_env fm_backend_send_text_submit stream "$target" \
+    'while true; do echo diagnostic-pressure; done' 3 0.2 0.2 >/dev/null 2>&1 || true
+  kill "$HUB_PID" 2>/dev/null || true
+  sleep 1
+  before=$(stat -L -c %s "/proc/$pid/fd/2" 2>/dev/null) || fail "could not read the agent's diagnostic descriptor"
+  sleep 2
+  after=$(stat -L -c %s "/proc/$pid/fd/2" 2>/dev/null) || fail "could not re-read the agent's diagnostic descriptor"
+  assert_equals "$after" "$before" \
+    "a registered agent's diagnostics must not keep growing (grew from $before to $after bytes)"
+  kill "$pid" 2>/dev/null || true
+  pass "stream: a spawned agent's diagnostics stop accumulating once it has registered"
+}
+
 test_an_unreachable_hub_refuses_and_names_the_start_command() {
   local err
   start_case_hub unreachable
@@ -519,6 +547,7 @@ test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_status_return_channel_appends_on_the_owning_machine
 test_a_target_from_another_hub_is_refused
 test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error
+test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers
 test_an_unreachable_hub_refuses_and_names_the_start_command
 test_hub_url_prefers_configuration_then_a_locally_started_hub
 test_a_rejected_token_refuses_instead_of_retrying_unauthenticated
