@@ -382,18 +382,16 @@ class Pty:
 
 
 class Refusal(RuntimeError):
-    """A refusal the hub STATED, carrying the code it named it with.
+    """A refusal the hub STATED.
 
     A hub that could not be reached is not one of these: it has said nothing,
     and silence is an ordinary transient the retries already handle. The whole
     of what this agent is allowed to act on - take an identity back, stand
     down, stop for good - turns on the difference, so the two are different
     types rather than one string an ill-judged substring match could confuse.
+    The code the hub named is read once, here, to pick the type; everything
+    downstream dispatches on the type alone.
     """
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
 
 
 class Superseded(Refusal):
@@ -422,8 +420,17 @@ class Rejected(Refusal):
 
     A credential the hub will not take and an identity it records against
     another machine are settled answers, not transients. Retrying either is a
-    poll against a hub that keeps saying no, so this ends the agent's part
-    instead.
+    poll against a hub that keeps saying no, so the agent stands down instead.
+
+    Standing down on one of these is SILENT, and the limitation is worth
+    stating plainly. The agent stops publishing and stops asking for commands,
+    so the worker goes quiet to the fleet: its endpoint stops being readable,
+    the hub's silence reaper eventually calls it presumed gone, and the record
+    ages out of the listing. Nothing anywhere records why. This agent's own
+    output goes to os.devnull the moment it registers, the hub is the very
+    thing refusing it, and the task's status record is the worker's channel
+    rather than the agent's - so the reason has to be read from the hub's own
+    refusal, on the hub, and not from anything the worker's machine holds.
     """
 
 
@@ -523,11 +530,11 @@ class HubClient:
             message = "hub refused %s %s: %s" % (method, path,
                                                  parsed.get("message") or exc.code)
             if code in SUPERSEDING_REFUSALS:
-                raise Superseded(code, message)
+                raise Superseded(message)
             if code == "no_such_endpoint":
-                raise Forgotten(code, message)
+                raise Forgotten(message)
             if code in TERMINAL_REFUSALS:
-                raise Rejected(code, message)
+                raise Rejected(message)
             raise RuntimeError(message)
         except urllib.error.URLError as exc:
             raise RuntimeError("cannot reach the hub at %s: %s" % (self.base_url, exc.reason))
@@ -585,11 +592,6 @@ class Agent:
         # draining the pty - a worker whose output nobody reads eventually
         # blocks - but publishes nothing and takes no commands.
         self.stood_down = threading.Event()
-        # Set when the hub refuses this agent on terms no retry changes. It is
-        # separate from standing down because the two are reported differently:
-        # a lost name is the fleet working as designed, and a refused agent is
-        # a condition someone has to fix.
-        self.rejected = threading.Event()
         # Set each time a recovery puts this endpoint back. The command poll
         # waits on it so an outage's backoff ends the moment the hub is back
         # rather than whenever the wait it had already started runs out.
@@ -637,11 +639,8 @@ class Agent:
                     return
                 if not self.recover_registration(exc, urgent=closing):
                     return
-            except Superseded as exc:
+            except (Superseded, Rejected) as exc:
                 self.give_up(exc)
-                return
-            except Rejected as exc:
-                self.refuse(exc)
                 return
             except RuntimeError as exc:
                 # A hub that cannot be reached must not take the worker down
@@ -675,7 +674,7 @@ class Agent:
         The pause for the NEXT attempt is still written, so nothing this
         borrows is free.
         """
-        if self.stood_down.is_set() or self.rejected.is_set():
+        if self.stood_down.is_set():
             return False
         # An urgent recovery WAITS for an attempt already in flight, where
         # every other caller walks away from it. A caller that walks away has
@@ -689,7 +688,7 @@ class Agent:
         if not acquired:
             return False
         try:
-            if self.stood_down.is_set() or self.rejected.is_set():
+            if self.stood_down.is_set():
                 return False
             if not urgent and time.monotonic() < self._register_not_before:
                 return False
@@ -718,14 +717,12 @@ class Agent:
                 self.hub.call("POST", "/v1/agent/endpoints",
                               registration(self.options, self.endpoint_id),
                               timeout=15.0)
-            except Superseded as exc:
-                # The next attempt at this task claimed the name while this
-                # agent was out of touch. Standing down is the same answer a
+            except (Superseded, Rejected) as exc:
+                # Either the next attempt at this task claimed the name while
+                # this agent was out of touch, or the hub answers on terms no
+                # further attempt changes. Standing down is the same answer a
                 # lost contest gets anywhere else, and for the same reason.
                 self.give_up(exc)
-                return False
-            except Rejected as exc:
-                self.refuse(exc)
                 return False
             except RuntimeError as exc:
                 sys.stderr.write("fm-stream-agent: could not re-register endpoint %s: %s\n"
@@ -853,38 +850,26 @@ class Agent:
         return (False, "unknown command kind %r" % kind)
 
     def give_up(self, reason: Exception) -> None:
-        """Stand down: this name is another endpoint's now.
+        """Stand down: the hub's answer is one this agent does not go on from.
 
-        Standing down is not stopping the worker. Two records contesting one
-        identity tell the hub nothing about which one holds the real work, and
-        the safe move when that cannot be known is to go quiet, never to end a
-        process. The pty stays exactly as it is - unsupervised, which is
-        recoverable, rather than killed, which is not.
+        Two records contesting one identity tell the hub nothing about which
+        one holds the real work, and a credential it will not take is settled
+        in the same way. Either way the safe move is to go quiet.
+
+        Standing down is never stopping the worker. The pty stays exactly as it
+        is - unsupervised, which is recoverable, rather than killed, which is
+        not - because nothing about a refused agent says anything about the
+        work its worker is in the middle of.
+
+        Said once, because a stand-down is a state rather than an event and the
+        publish path can reach it from several threads at once. Where it can be
+        read afterwards, and where it cannot, is Rejected's to state.
         """
+        if self.stood_down.is_set():
+            return
+        self.stood_down.set()
         sys.stderr.write("fm-stream-agent: %s\n" % reason)
         sys.stderr.flush()
-        self.stood_down.set()
-
-    def refuse(self, reason: Exception) -> None:
-        """Stop for good: the hub's answer is one no further attempt changes.
-
-        A credential the hub will not take and an identity it holds against
-        another machine are settled answers, so this ends the agent's part
-        rather than becoming a poll against a hub that keeps saying no. The
-        worker is left exactly as a stand-down leaves it - running, holding
-        whatever it was doing, recoverable - because nothing about a refused
-        agent says anything about the work its worker is in the middle of.
-
-        It is reported to this agent's own output and nowhere else. The task's
-        status record is the WORKER's channel: supervision reads it to learn
-        what the work is doing, and a hub that will not take this agent's
-        credential is not the task being blocked. Writing there would put an
-        operator's problem in front of supervision as the task's own.
-        """
-        if self.rejected.is_set():
-            return
-        self.rejected.set()
-        self.give_up(reason)
 
     def _pause_command_poll(self) -> None:
         """Sit out the poll's backoff, but never past the hub coming back.
@@ -928,11 +913,8 @@ class Agent:
                 return
             try:
                 answer = self.hub.call("GET", path, timeout=self.options.poll_secs + 15)
-            except Superseded as exc:
+            except (Superseded, Rejected) as exc:
                 self.give_up(exc)
-                return
-            except Rejected as exc:
-                self.refuse(exc)
                 return
             except RuntimeError as exc:
                 # Back off rather than spin. A hub outage must not take the

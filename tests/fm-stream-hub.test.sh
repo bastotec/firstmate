@@ -1440,16 +1440,18 @@ start_agent_against_stub() {
   AGENT_PID=$pid
 }
 
-test_a_hub_that_refuses_the_agent_is_terminal_and_leaves_the_task_record_alone() {
+test_a_refused_agent_goes_silent_and_stays_silent() {
   # Not every refusal is a hub to wait for. A credential the hub will not take
   # is a settled answer, and retrying it is a poll that never ends. So the
   # agent stops - all of it, publishes and command polls alike - rather than
   # arguing with a hub that keeps saying no.
   #
-  # And it stops without writing into the task's own status record. That record
-  # is the WORKER's channel: supervision reads it to learn what the work is
-  # doing, and an agent whose credential was refused is an operator's problem,
-  # not the task being blocked.
+  # Silence is the WHOLE of what this proves, and deliberately so: nothing on
+  # this machine records why. The task's status record is the worker's channel
+  # - supervision reads it to learn what the work is doing - and an agent whose
+  # credential was refused is not the task being blocked, so that record stays
+  # untouched; the agent's own output is on /dev/null by now. The reason lives
+  # only in the refusal the hub itself stated.
   start_stub reregister-refused --frames-ok-first 1 --frames-error unauthenticated:401
   local status pid before
   status="$CASE_DIR/state/refused.status"
@@ -1468,7 +1470,7 @@ test_a_hub_that_refuses_the_agent_is_terminal_and_leaves_the_task_record_alone()
   # nothing at all about the work its worker is in the middle of.
   kill -0 "$pid" 2>/dev/null || fail "a refused agent should stand down, not exit"
   [ -n "$(pgrep -P "$pid" 2>/dev/null)" ] || fail "a refused agent must keep its worker running"
-  pass "hub: a refused agent ends its calls and leaves the task's own record alone"
+  pass "hub: a refused agent goes silent, leaving its worker running and its task's record untouched"
 }
 
 test_an_agent_waits_out_a_hub_that_changed_protocol() {
@@ -1604,7 +1606,7 @@ test_the_viewer_keeps_the_send_box_disabled_for_a_closed_worker
 test_a_restarted_hub_gets_its_workers_back
 test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
-test_a_hub_that_refuses_the_agent_is_terminal_and_leaves_the_task_record_alone
+test_a_refused_agent_goes_silent_and_stays_silent
 test_an_agent_waits_out_a_hub_that_changed_protocol
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home
