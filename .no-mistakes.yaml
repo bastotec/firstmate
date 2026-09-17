@@ -33,21 +33,18 @@ document:
 commands:
   lint: 'bin/fm-lint.sh'
 
-# Trusted scope bound for the Test step.
+# Trusted scope bound for the Test step; this block owns that policy.
 # With no commands.test the step decides what to run, and on terminal, pane, process
 # or worktree lifecycle changes that invites standing up live rigs until the agent
-# budget runs out. The firstmate-coding-guidelines skill owns the policy, so keep this
-# a pointer plus the concrete out-of-scope list.
+# budget runs out. Keep it to the targeted-validation scope plus the concrete
+# out-of-scope list below.
 test:
   instructions: |
     This step is targeted validation: prove the change works, and prove the
     regression fails without it, using the repository's own suites under tests/
     for the area the change touches.
-    Apply the no-mistakes test configuration policy in
-    .agents/skills/firstmate-coding-guidelines/SKILL.md.
     Out of scope here: building live tmux servers, creating real dirty worktrees,
-    writing fake agent binaries, adversarial scenario sweeps, reusable lab
-    factories, and evidence-transcript capture.
+    writing fake agent binaries, and reusable lab factories.
   # Publish each run's test evidence to the orphan no-mistakes/evidence branch linked from the PR.
   # The evidence is not committed to the feature or default branch.
   evidence:
