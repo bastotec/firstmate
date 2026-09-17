@@ -63,6 +63,11 @@
 # Every scaffold also carries the steering-inbox receive-and-ack section:
 # process state/<id>.inbox/*.msg in order and acknowledge each by moving it to
 # handled/ (record, doorbell, and ladder owned by bin/fm-task-inbox-lib.sh).
+# Ship briefs also carry the "Other work in flight" section: firstmate names
+# concurrent work touching the task's area (AGENTS.md section 7), and that
+# section is the worker's own half of the contract - rebase rather than design
+# around it, and report a genuine semantic conflict instead of resolving it.
+# Scouts and charters omit it: a report has nothing to rebase or conflict with.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -215,6 +220,20 @@ When a terminal message says an instruction is waiting there - and at any natura
 The move IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
 EOF
 INBOX_SECTION=${INBOX_SECTION%$'\n'}
+
+# The cross-worker awareness half of the parallel-work contract (AGENTS.md
+# section 7). Firstmate names concurrent work touching this task's area; this
+# section is what tells the worker to rebase rather than design around it, and
+# to hand a genuine semantic conflict back instead of resolving it. Ship-only:
+# a scout delivers a report, so it has nothing to rebase or conflict with.
+IFS= read -r -d '' CONCURRENT_SECTION <<'EOF' || true
+# Other work in flight
+You may not be the only worker on this project.
+When other work touches your area, firstmate names that work and what it touches - in the task above, or through the instruction inbox - and tells those workers about you.
+That notice is awareness, not a hold: keep going, and rebase onto the updated default branch once the other change lands rather than designing around it, waiting for it, or narrowing your own change to avoid it.
+Two edits in one file are an ordinary rebase; a genuine semantic conflict - two changes that cannot both be true - is firstmate's call, so append `needs-decision: {the two changes and why they cannot both hold}` and stop instead of resolving it yourself.
+EOF
+CONCURRENT_SECTION=${CONCURRENT_SECTION%$'\n'}
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
@@ -503,6 +522,8 @@ $ASK_USER_BLOCK
    timed-out call was only waiting for a read while the run kept working.
 
 $INBOX_SECTION
+
+$CONCURRENT_SECTION
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
