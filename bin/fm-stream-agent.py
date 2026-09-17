@@ -486,11 +486,17 @@ class Agent:
         # exit between doing the work and reporting it - and the hub would then
         # tell the caller the kill was never delivered when in fact it was.
         self.command_busy = threading.Event()
+        # Set when this agent has lost its name to another endpoint. It goes on
+        # draining the pty - a worker whose output nobody reads eventually
+        # blocks - but publishes nothing and takes no commands.
+        self.stood_down = threading.Event()
         self._backoff = 2.0
 
     # --- publishing -------------------------------------------------------
 
     def _post_frames(self, frames: list) -> None:
+        if self.stood_down.is_set():
+            return
         try:
             self.hub.call("POST", "/v1/agent/frames",
                           {"machine": self.machine, "frames": frames}, timeout=30.0)
@@ -589,11 +595,17 @@ class Agent:
         return (False, "unknown command kind %r" % kind)
 
     def give_up(self, reason: Exception) -> None:
-        """Stop owning this endpoint, because its name is someone else's now."""
+        """Stand down: this name is another endpoint's now.
+
+        Standing down is not stopping the worker. Two records contesting one
+        identity tell the hub nothing about which one holds the real work, and
+        the safe move when that cannot be known is to go quiet, never to end a
+        process. The pty stays exactly as it is - unsupervised, which is
+        recoverable, rather than killed, which is not.
+        """
         sys.stderr.write("fm-stream-agent: %s\n" % reason)
         sys.stderr.flush()
-        self.stop.set()
-        self.pty.close()
+        self.stood_down.set()
 
     def command_loop(self) -> None:
         """Long-poll the hub for this endpoint's commands and acknowledge each.

@@ -795,6 +795,11 @@ class Endpoint:
         self.cols = cols
         self.created_at = _now()
         self.closed_at = 0.0
+        # Who ended this endpoint: "agent" when its own agent reported the
+        # worker gone and carried the exit code with it, "hub" when the hub
+        # closed a record it could no longer steer. Only the first is evidence
+        # about the worker; the second is bookkeeping.
+        self.closed_by = ""
         # The hub has not heard from this endpoint's agent lately. It says
         # nothing about the worker, which is why it closes nothing and hides
         # nothing: it only frees the name for the next attempt at this task.
@@ -831,10 +836,11 @@ class Endpoint:
     def agent_silent_for(self) -> float:
         return max(0.0, _now() - self.agent_seen_at)
 
-    def mark_closed(self, exit_code) -> None:
+    def mark_closed(self, exit_code, closed_by: str) -> None:
         with self.wake:
             if not self.closed_at:
                 self.closed_at = _now()
+                self.closed_by = closed_by
             self.exit_code = exit_code
             self.wake.notify_all()
 
@@ -868,6 +874,7 @@ class Endpoint:
             "cols": self.cols,
             "created_at": self.created_at,
             "closed_at": self.closed_at or None,
+            "closed_by": self.closed_by or None,
             "exit_code": self.exit_code,
             "stream_offset": self.ring.end,
             "state_age_secs": None if age < 0 else round(age, 3),
@@ -989,12 +996,13 @@ class Hub:
             for other in self.endpoints.values():
                 if other is endpoint or other.closed_at:
                     continue
-                # A name contest is settled by which registration is current,
-                # never by which agent happens to be heard from first. Only an
-                # OLDER record steps aside for a presumption: skipping a newer
-                # one would let a stale endpoint reclaim a name the live worker
-                # holds, and that worker is then told to stop.
-                if other.presumed_gone and other.created_at < endpoint.created_at:
+                # A name contest is settled by which agent has proven itself
+                # REACHABLE, not by which record is newer. The endpoint here is
+                # reachable by definition - it is speaking - so only a
+                # contender the hub has heard from just as lately takes the
+                # name from it. A record with nothing behind it must never
+                # displace a worker that is publishing right now.
+                if other.agent_silent_for() > AGENT_SILENCE_PRESUMED_SECS:
                     continue
                 if other.machine == endpoint.machine and other.label == endpoint.label:
                     raise HubError(HTTPStatus.GONE, "endpoint_superseded",
@@ -1464,7 +1472,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if isinstance(state, dict):
                     endpoint.publish_state(state)
                 if frame.get("closed"):
-                    endpoint.mark_closed(frame.get("exit_code"))
+                    endpoint.mark_closed(frame.get("exit_code"), "agent")
                 accepted += 1
             self._json(HTTPStatus.OK, {"ok": True, "accepted": accepted})
             return
@@ -1529,7 +1537,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 # proof the worker died, and the answer says so rather than
                 # reporting a kill it did not make.
                 delivered = False
-                endpoint.mark_closed(None)
+                endpoint.mark_closed(None, "hub")
             self._json(HTTPStatus.OK, {
                 "ok": True,
                 "closed": endpoint.endpoint_id,

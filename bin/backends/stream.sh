@@ -571,18 +571,28 @@ fm_backend_stream_agent_state() {  # <target>
 }
 
 fm_backend_stream_kill() {  # <target> [unused] [expected-label]
-  local target=$1 expected=${3:-} out
+  local target=$1 expected=${3:-} task out
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || return 0
+  # One read answers both questions this needs: whose task this id names, and
+  # whether the hub already watched the worker go. A read that FAILS answers
+  # neither, so it is reported rather than taken for a stop - a hub that cannot
+  # be reached, or that forgot an endpoint it stopped hearing from, knows
+  # nothing about whether that worker is still running.
+  task=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
+    echo "error: the stream hub could not say what $FM_BACKEND_STREAM_ENDPOINT is;" \
+         "the worker may still be running" >&2
+    return 1
+  }
   if [ -n "$expected" ]; then
     # A mismatched label means the id names something other than this task, so
     # closing it would destroy a stranger's endpoint.
-    fm_backend_stream_target_ready "$target" "$expected" || return 0
+    [ "$(printf '%s' "$task" | jq -r '.task.label // empty' 2>/dev/null)" = "$expected" ] || return 0
   fi
+  # An endpoint its own agent closed is the one confirmed stop there is: that
+  # agent watched the worker exit and carried its exit code back. A record the
+  # hub closed by itself says nothing about the process.
+  [ "$(printf '%s' "$task" | jq -r '.task.closed_by // empty' 2>/dev/null)" = agent ] && return 0
   out=$(fm_backend_stream_api DELETE "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
-    # No refusal proves the worker stopped, including an endpoint the hub does
-    # not have: the hub forgets an endpoint it has not heard from for long
-    # enough, and a worker whose agent died keeps running past that. So every
-    # refusal reads the same way the unacknowledged kill below does.
     echo "error: the stream hub refused or never answered the kill for" \
          "$FM_BACKEND_STREAM_ENDPOINT; the worker may still be running" >&2
     return 1

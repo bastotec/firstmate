@@ -302,6 +302,51 @@ test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error() {
   pass "stream: a spawn whose endpoint shell cannot start reports the shell's own error"
 }
 
+test_only_a_close_the_agent_reported_counts_as_a_stop() {
+  # The one confirmed stop there is: the endpoint's own agent watched the
+  # worker exit and brought its exit code back. A record the hub closed on its
+  # own knows nothing about that process, and calling it a stop would let a
+  # task be treated as finished while it is still running.
+  start_case_hub killverdict
+  local label target endpoint out waited=0
+  label="fm-exited-$$"
+  target=$(create_endpoint "$label")
+  endpoint=${target##*:}
+  # The worker exits on its own, the way a finished task does.
+  with_stream_env fm_backend_send_text_submit stream "$target" 'exit' 3 0.2 0.2 >/dev/null 2>&1 || true
+  while [ "$waited" -lt 150 ]; do
+    [ "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET "/v1/tasks/$endpoint")" \
+      | jq -r '.task.closed_by // empty')" = agent ] && break
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET "/v1/tasks/$endpoint")" \
+    | jq -r '.task.closed_by // empty')" agent \
+    "the agent should have reported the worker's exit"
+  out=$(with_stream_env fm_backend_kill stream "$target" "" "$label" 2>&1) \
+    || fail "a worker the hub watched exit is a confirmed stop: $out"
+  assert_equals "$out" "" "a confirmed stop should say nothing"
+  # And a record the hub closed by itself is NOT a stop, even though the
+  # endpoint reads closed exactly the same way from a listing.
+  label="fm-forced-$$"
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  with_stream_env fm_backend_stream_api POST /v1/agent/endpoints \
+    "$(jq -nc --arg id "$endpoint" --arg l "$label" \
+      '{endpoint_id: $id, machine: "box-test", label: $l, cwd: "/tmp"}')" >/dev/null \
+    || fail "the endpoint with no agent should register"
+  with_stream_env fm_backend_stream_api DELETE "/v1/tasks/$endpoint" >/dev/null \
+    || fail "the hub should close a record whose agent never answers"
+  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET "/v1/tasks/$endpoint")" \
+    | jq -r '.task.closed_by // empty')" hub \
+    "that close should be recorded as the hub's own"
+  out=$(with_stream_env fm_backend_kill stream "$(with_stream_env fm_backend_stream_hub_tag):$endpoint" \
+    "" "$label" 2>&1) \
+    && fail "a close the hub made by itself must not report a confirmed stop"
+  assert_contains "$out" "may still be running" \
+    "a forced close should say the worker may still be running"
+  pass "stream: only a close the endpoint's own agent reported counts as a stop"
+}
+
 test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop() {
   # The hub forgets an endpoint it has not heard from for long enough, and a
   # worker whose agent died outlives that. So an endpoint the hub does not have
@@ -311,7 +356,8 @@ test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop() {
   local target out
   # A target the hub has never had, shaped exactly like a real one.
   target="$(with_stream_env fm_backend_stream_hub_tag):$(python3 -c 'import os; print(os.urandom(16).hex())')"
-  out=$(with_stream_env fm_backend_kill stream "$target" 2>&1) \
+  # With the expected label, exactly as fm-teardown and fm-spawn call it.
+  out=$(with_stream_env fm_backend_kill stream "$target" "" "fm-gone-$$" 2>&1) \
     && fail "a kill the hub could not answer must not report a confirmed stop"
   assert_contains "$out" "may still be running" \
     "an unanswerable kill should say the worker may still be running"
@@ -751,6 +797,7 @@ test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor
 test_agent_state_reads_the_foreground_process_not_the_screen
 test_agent_state_separates_missing_unreachable_and_partitioned
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
+test_only_a_close_the_agent_reported_counts_as_a_stop
 test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop
 test_status_return_channel_appends_on_the_owning_machine
 test_a_target_from_another_hub_is_refused

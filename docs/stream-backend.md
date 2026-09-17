@@ -91,6 +91,10 @@ The answer carries `delivered`: true when that agent took the kill, and false wh
 A `delivered: false` close is not proof the worker stopped - its process lives on the worker's machine, which the hub cannot reach.
 The adapter refuses such a close: `fm_backend_stream_kill` exits nonzero and says the worker may still be running.
 It answers the same way to every other refusal, including `no_such_endpoint`: a hub that has forgotten an endpoint it stopped hearing from says nothing about whether that worker is still running, so a kill it cannot confirm is never reported as one it made.
+
+One answer is a confirmed stop, and only one.
+An endpoint carries `closed_by`: `agent` when its own agent reported the worker gone and brought its exit code back, and `hub` when the hub closed a record it could no longer steer.
+A kill against an endpoint already closed by its agent reports success without asking again - that agent watched the worker exit, which is the best evidence there will ever be - while every other outcome, `closed_by: hub` included, reports an unconfirmed stop.
 Today that is where the distinction stops, because every caller of the shared `fm_backend_kill` discards its status and its stderr, so firstmate's teardown proceeds as it would after any other kill.
 Making those call sites honour a refused kill is a cross-backend change and is follow-up work.
 
@@ -103,7 +107,10 @@ A presumption is not a close, and it does exactly one thing: it frees the endpoi
 Everything else stays as it was.
 The worker is still listed, its stream still runs, and input, status lines and kills still reach it - because a worker the hub has not heard from lately may be perfectly healthy, and if it really is gone those calls fail on their own and say so.
 A state read answers `unreadable` rather than `dead` for the same reason: the hub cannot see the worker's process either way.
-The agent's next word to the hub takes the presumption back, and a name contest between two registrations is always settled in favour of the later one, so a stale record can never take a name back from the worker that holds it.
+The agent's next word to the hub takes the presumption back.
+Where two registrations answer to one machine and label, the contest is settled by which agent the hub has heard from, not by which record is newer: an agent that is publishing keeps the name against a record nothing stands behind, and loses it only to one the hub has heard from just as lately.
+An agent that loses stands down - it stops publishing and stops taking commands - but it does NOT stop its worker.
+Two records contesting one name tell the hub nothing about which holds the real work, and a worker left unsupervised can be recovered while a worker killed by mistake cannot.
 A record nothing has been heard from for the full retention period is dropped; a kill against an endpoint the hub has forgotten reports an unconfirmed stop, because by then the hub knows nothing about that worker at all.
 
 There is one case with no way back: the agent speaks again to find another endpoint already answering to its machine and label, because the next attempt at that task claimed the name while it was out of touch.
