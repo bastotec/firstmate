@@ -3442,6 +3442,15 @@ EOF
     ([.running[].id] | sort) == ["helper", "helper/child-live", "live-ship"]
       and (.omitted | all(.surface | startswith("agents left out of running") | not))
   ' >/dev/null || fail "a ledger within 2 x FM_HOME_SUMMARY_INTERVAL was not treated as current: $json"
+  # The ledger bounds its endpoint list; workers past the bound are disclosed
+  # and counted as unconfirmed instead of silently missing from running.
+  json=$(FM_SNAPSHOT_SECONDMATE_CHILDREN=1 run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.running[] | select(.parent == "helper")] | length) == 0
+      and (.omitted | any(.surface == "agents left out of running because their process could not be confirmed: 1"))
+      and (.omitted | any(.surface == "secondmate helper workers not checked for running by snapshot bound: 1"
+        and .reveal == "raise FM_SNAPSHOT_SECONDMATE_CHILDREN"))
+  ' >/dev/null || fail "workers past the ledger endpoint bound were dropped from running without disclosure: $json"
   unset FAKE_TMUX_WINDOWS FM_SNAPSHOT_NOW_EPOCH
   pass "running lists only verified live local agents, children only from a current ledger, with where they run"
 }

@@ -576,7 +576,9 @@ MODEL=$(printf '%s' "$SNAP" | jq \
                     .endpoint.exists == true
                       and ((.endpoint.agent_state // "not_checked") | confirmed_agent_state | not)
                   else .endpoint.exists == true or .endpoint.agent_state == "alive" end) ]
-     | length) as $running_unconfirmed
+     | length
+     + ([ $secondmate_views[] | (.omitted // [])[] | select(.surface == "endpoints") | .count ] | add // 0)
+    ) as $running_unconfirmed
   | ([ .backlog.records[]
          | . as $record
          | select(.structured and .hold_bucket != null)
@@ -704,6 +706,9 @@ MODEL=$(printf '%s' "$SNAP" | jq \
         (($snap.secondmate_current.records // [])[] as $m
          | ([($m.omitted // [])[] | select(.surface == "active_children") | .count] | add // 0) as $n
          | if $n > 0 then {surface:("secondmate " + $m.id + " active children omitted by snapshot bound: \($n)"), reveal:"raise FM_SNAPSHOT_SECONDMATE_CHILDREN"} else empty end),
+        (($snap.secondmate_current.records // [])[] as $m
+         | ([($m.omitted // [])[] | select(.surface == "endpoints") | .count] | add // 0) as $n
+         | if $n > 0 then {surface:("secondmate " + $m.id + " workers not checked for running by snapshot bound: \($n)"), reveal:"raise FM_SNAPSHOT_SECONDMATE_CHILDREN"} else empty end),
         (if $all_secondmates == 0 and ($secondmates_all | length) > $secondmates_n then {surface:("secondmates showing \($secondmates_n) of \($secondmates_all | length)"), reveal:"--all-secondmates"} else empty end),
         (if (($snap.secondmate_current.truncated // 0) > 0) then {surface:("registered secondmates omitted by snapshot bound: \($snap.secondmate_current.truncated)"), reveal:"raise FM_SNAPSHOT_SECONDMATES"} else empty end),
         (if $snap.secondmate_current.registry.input_truncated == true then {surface:"secondmate registry input truncated by bounded read", reveal:"raise FM_SNAPSHOT_REGISTRY_LINES or FM_SNAPSHOT_REGISTRY_BYTES"} else empty end),
