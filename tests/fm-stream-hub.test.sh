@@ -1377,11 +1377,6 @@ registrations() {
   grep -F 'POST /v1/agent/endpoints' "$STUB_JOURNAL" 2>/dev/null | tail -n +2 | awk '{print $1}'
 }
 
-# hub_requests - every request the agent has made, of any kind.
-hub_requests() {
-  grep -c . "$STUB_JOURNAL" 2>/dev/null || true
-}
-
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub() {
   # A hub that has forgotten an endpoint and cannot take it back is the shape
   # of a hub mid-restart, flapping, or refusing for a reason of its own. Every
@@ -1437,79 +1432,6 @@ EOF
   kill -0 "$pid" 2>/dev/null || fail "the agent should keep waiting for its hub, not exit"
   [ -n "$(pgrep -P "$pid" 2>/dev/null)" ] || fail "the stranded agent should keep its worker running"
   pass "hub: an agent the hub cannot take back paces its attempts instead of hammering it"
-}
-
-# hub_quiet - wait until the agent has stopped calling the stand-in, or give up
-# waiting. Used before measuring a stand-down, so the measurement is not taken
-# in the middle of a long poll the agent had already started.
-hub_quiet() {
-  local waited=0 seen count
-  seen=$(hub_requests)
-  # The window is longer than the command long poll, so an agent that is merely
-  # mid-poll is never mistaken for one that has stopped.
-  while [ "$waited" -lt 6 ]; do
-    sleep 4
-    count=$(hub_requests)
-    [ "$count" = "$seen" ] && return 0
-    seen=$count
-    waited=$((waited + 1))
-  done
-  return 1
-}
-
-# start_agent_against_stub <label-stem> <status-path> -> sets AGENT_PID
-# Not a command substitution: a stand-in that never took the registration has
-# to end the case, and a fail inside $(...) would only end the subshell.
-start_agent_against_stub() {
-  local stem=$1 status=$2 pid waited=0
-  python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
-    --machine box-a --label "$stem-$RUN" --cwd "$CASE_DIR/cwd" \
-    --status-path "$status" --ready-file "$CASE_DIR/$stem.ready" \
-    --state-interval 0.5 --poll-secs 3 > "$CASE_DIR/agent.log" 2>&1 &
-  pid=$!
-  disown "$pid" 2>/dev/null || true
-  fm_test_track_helper_pid "$pid"
-  while [ "$waited" -lt 150 ]; do
-    [ -s "$CASE_DIR/$stem.ready" ] && break
-    sleep 0.1
-    waited=$((waited + 1))
-  done
-  [ -s "$CASE_DIR/$stem.ready" ] \
-    || fail "the agent never registered against the stand-in: $(cat "$CASE_DIR/agent.log")"
-  AGENT_PID=$pid
-}
-
-test_a_refused_agent_goes_silent_and_stays_silent() {
-  # Not every refusal is a hub to wait for. A credential the hub will not take
-  # is a settled answer, and retrying it is a poll that never ends. So the
-  # agent stops - all of it, publishes and command polls alike - rather than
-  # arguing with a hub that keeps saying no.
-  #
-  # Silence is the WHOLE of what this proves, and deliberately so: nothing on
-  # this machine records why. The task's status record is the worker's channel
-  # - supervision reads it to learn what the work is doing - and an agent whose
-  # credential was refused is not the task being blocked, so that record stays
-  # untouched; the agent's own output is on /dev/null by now. The reason lives
-  # only in the refusal the hub itself stated.
-  start_stub reregister-refused --frames-ok-first 1 --frames-error unauthenticated:401
-  local status pid before
-  status="$CASE_DIR/state/refused.status"
-  start_agent_against_stub refused "$status"
-  pid=$AGENT_PID
-  hub_quiet || fail "a refused agent should stop calling the hub, but it never went quiet"
-  before=$(hub_requests)
-  sleep 5
-  assert_equals "$(hub_requests)" "$before" \
-    "a refusal must end this agent's calls rather than become a poll against a hub that keeps saying no"
-  assert_equals "$(registrations | grep -c . || true)" 0 \
-    "a refusal is not something to re-register through"
-  assert_equals "$(cat "$status" 2>/dev/null || true)" "" \
-    "a hub-side refusal must not be written into the task's own status record"
-  # And the worker is left exactly where it was, because a refused agent says
-  # nothing at all about the work its worker is in the middle of.
-  kill -0 "$pid" 2>/dev/null || fail "a refused agent should stand down, not exit"
-  [ -n "$(pgrep -P "$pid" 2>/dev/null)" ] || fail "a refused agent must keep its worker running"
-  pass "hub: a refused agent goes silent, leaving its worker running and its task's record untouched"
 }
 
 test_fm_stream_start_status_stop_round_trip() {
@@ -1609,6 +1531,5 @@ test_the_viewer_keeps_the_send_box_disabled_for_a_closed_worker
 test_a_restarted_hub_gets_its_workers_back
 test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
-test_a_refused_agent_goes_silent_and_stays_silent
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home

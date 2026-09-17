@@ -282,15 +282,47 @@ restart_case_hub() {
   URL="http://$host:$bound"
 }
 
+# start_fast_agent <label> -> sets FAST_TARGET to "<tag>:<endpoint>"
+# The adapter's own spawn is what create_endpoint exercises; this starts the
+# same agent directly so a case can shorten its state heartbeat, which is what
+# makes the hub-restart recovery land in a bounded time instead of whenever the
+# default heartbeat happens to fall.
+FAST_TARGET=""
+start_fast_agent() {  # <label>
+  local label=$1 ready log pid waited=0 endpoint tag
+  ready="$CASE_DIR/$label.ready"
+  log="$CASE_DIR/$label.log"
+  rm -f "$ready"
+  printf '%s\n' "$TOKEN" > "$CASE_DIR/agent-token"
+  chmod 600 "$CASE_DIR/agent-token"
+  python3 "$ROOT/bin/fm-stream-agent.py" serve --hub "$URL" \
+    --token-file "$CASE_DIR/agent-token" --machine box-test --label "$label" \
+    --cwd "$CASE_DIR/cwd" --ready-file "$ready" --state-interval 0.5 \
+    > "$log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$ready" ] || fail "the agent never registered: $(cat "$log" 2>/dev/null)"
+  read -r _ endpoint < "$ready"
+  tag=$(with_stream_env fm_backend_stream_hub_tag "$URL")
+  FAST_TARGET="$tag:$endpoint"
+}
+
 test_a_restarting_hub_never_reads_as_a_missing_worker() {
-  # The hub keeps its endpoint registry in memory, so for the seconds between a
-  # restart and each agent re-registering, every endpoint answers 404. That
+  # The hub keeps its endpoint registry in memory, so between a restart and
+  # each agent registering itself again, every endpoint answers 404. That
   # window is a recovery, not a verdict: `missing` folds into `dead` for every
   # caller of fm_backend_agent_alive, and the steer paths escalate `dead|missing`
   # by dropping a pending steer - on a worker that is alive and coming back.
   start_case_hub restart-not-missing
   local target before after waited=0
-  target=$(create_endpoint "fm-restart-$$")
+  start_fast_agent "fm-restart-$$"
+  target=$FAST_TARGET
   before=$(with_stream_env fm_backend_agent_state stream "$target")
   [ "$before" != missing ] || fail "the endpoint should be known before the restart"
   [ "$before" != unreadable ] || fail "the endpoint should be readable before the restart"
@@ -309,6 +341,12 @@ test_a_restarting_hub_never_reads_as_a_missing_worker() {
   done
   assert_equals "$after" "$before" \
     "the worker should read exactly as it did before, under the endpoint id it kept"
+  # The half an operator notices: a steer aimed at a worker that lived through
+  # the restart still reaches its terminal.
+  with_stream_env fm_backend_send_text_submit stream "$target" 'echo AFTER-RESTART' 3 0.2 0.2 >/dev/null \
+    || fail "the dispatcher refused to steer a worker that came back"
+  wait_for_capture "$target" AFTER-RESTART \
+    || fail "a steer for a worker that returns in seconds must not be dropped"
   pass "stream: a hub restart is waited out rather than reported as a missing worker"
 }
 

@@ -17,8 +17,8 @@ test can measure rather than infer.
   --ready-file PATH        "<host> <port>" written there once bound
   --journal PATH           one line per request, appended
   --protocol N             the protocol every health call reports
-  --frames-ok-first N      let the first N frame posts through
-  --frames-error CODE:HTTP refuse every frame post after those
+  --frames-ok-first N      let the first N frame posts through, forgetting the
+                           endpoint on every frame after those
   --accept-registrations N how many registrations to accept (-1 for all)
 """
 
@@ -117,8 +117,8 @@ class Stub(http.server.BaseHTTPRequestHandler):
             if allowed:
                 self._json(200, {"ok": True, "accepted": 1})
                 return
-            self._refuse(state["frames_status"], state["frames_code"],
-                         "the stub refuses this frame by design")
+            self._refuse(404, "no_such_endpoint",
+                         "the stub has forgotten this endpoint by design")
             return
         if path == "/v1/agent/results":
             self._json(200, {"ok": True})
@@ -138,11 +138,9 @@ def main() -> int:
     parser.add_argument("--journal", required=True)
     parser.add_argument("--protocol", type=int, default=2)
     parser.add_argument("--frames-ok-first", type=int, default=1)
-    parser.add_argument("--frames-error", default="no_such_endpoint:404")
     parser.add_argument("--accept-registrations", type=int, default=-1)
     options = parser.parse_args()
 
-    code, _, status = options.frames_error.partition(":")
     server = StubServer(("127.0.0.1", options.port), Stub)
     server.state = {
         "lock": threading.Lock(),
@@ -150,8 +148,6 @@ def main() -> int:
         "journal": options.journal,
         "protocol": options.protocol,
         "frames_ok_first": options.frames_ok_first,
-        "frames_code": code,
-        "frames_status": int(status or 404),
         "accept_registrations": options.accept_registrations,
         "registrations": 0,
         "frames": 0,

@@ -151,15 +151,11 @@ One restart strands every agent in the fleet at once, so an agent leaves at leas
 A worker whose own process ended while the hub was down is recovered the same way and on the same terms: if the hub is back by the time its agent posts the closing frame, the agent takes the identity back in order to deliver it, so the task's end and its exit code land under the id that names them rather than being lost with the record that was meant to hold them.
 Its closing frame asks for that recovery like any other frame, and gets no special licence - a hub that is still down at that moment does not hold an exiting agent open waiting for it.
 
-Two answers end the attempts instead of continuing them.
-A credential the hub will not take and an endpoint id it holds against a different machine are settled refusals, not transients, so the agent stands down rather than keep asking.
-An agent that comes back to find another endpoint already answering to its machine and label stands down exactly as it would have anywhere else.
-In every one of those cases the worker itself is left running and untouched, because a refused agent says nothing at all about the work its worker is in the middle of.
-
-Standing down is SILENT, and that is a real limitation rather than an oversight.
-The agent stops publishing and stops asking for commands, so its endpoint stops being readable, the hub's silence reaper eventually calls the worker presumed gone, and the record ages out of the listing - while the terminal it owns goes on running, unwatched and unsteerable, on the machine it started on.
-The reason is recorded nowhere: the agent's own output went to `/dev/null` when it registered, the hub is the thing refusing it, and the task's status record is the WORKER's channel - supervision reads that record to learn what the work is doing, and an agent whose credential was refused is not the task being blocked.
-So a worker that disappears this way is explained only by the hub's own refusal, read on the hub; nothing on the worker's machine will say why.
+One answer ends the attempts instead of continuing them, and only one.
+An agent that comes back to find another endpoint already answering to its machine and label stands down exactly as it would have anywhere else, because two workers behind one identity is the outcome worse than any lost endpoint.
+Everything else the hub can say is kept, including a credential it will not take: the hub reads its tokens once at startup, so a hub that came back with the wrong token file refuses the whole fleet at once, and an agent that treated that as settled would strand every worker permanently over a condition that ends the moment the hub is restarted correctly.
+So a refusal that is not a lost name is waited out on the same backoff as an unreachable hub, and the worker is there when the hub is right again.
+In either case the worker itself is left running and untouched, because a refused agent says nothing at all about the work its worker is in the middle of.
 
 ## When the hub is down
 

@@ -43,6 +43,17 @@ FM_BACKEND_STREAM_PROTOCOL=2
 FM_BACKEND_STREAM_DEFAULT_URL="http://127.0.0.1:7717"
 FM_BACKEND_STREAM_AGENT_BIN="$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agent.py"
 
+# How long a 404 has to keep being the answer before it counts as `missing`.
+# A hub that restarted has forgotten every endpoint until each agent registers
+# itself again, so a verdict taken inside that window is about the hub rather
+# than the worker. This is NOT sized by that window alone: the callers of this
+# classifier bound it already - the fleet snapshot gives crew-state 10s for a
+# whole read - so the wait has to stay far enough under their budgets that a
+# torn-down endpoint still reaches `missing` inside them rather than timing the
+# caller out and folding to unknown. A recovery slower than this is covered by
+# the caller asking again, which every one of them does.
+FM_BACKEND_STREAM_MISSING_GRACE_SECS=2
+
 # The last HTTP status fm_backend_stream_api saw. Initialised at source time so
 # an error path that runs before any request - a missing token, an unreachable
 # hub - can report it without tripping `set -u` in a caller.
@@ -519,19 +530,18 @@ fm_backend_stream_agent_state() {  # <target>
   local target=$1 out stale alive count classified seen=0 shell_seen=0 other_seen=0
   local index name argv0 args status=0 waited=0
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || { printf 'unreadable'; return 0; }
-  # A 404 is no longer a settled answer. The hub keeps its endpoint registry in
-  # memory, so a hub that restarted has no such endpoint for anyone until each
-  # agent re-registers its own - which its next state heartbeat does, within
-  # seconds and without an operator. Reporting `missing` inside that window is
-  # what drops a pending steer for a worker that is about to be back, so the
-  # 404 has to keep being the answer for longer than that recovery takes
-  # before it counts as one. A hub that really has forgotten an endpoint says
-  # so again every time, and still reaches `missing` - just later.
+  # A 404 is no longer a settled answer on its own. The hub keeps its endpoint
+  # registry in memory, so a hub that restarted has no such endpoint for anyone
+  # until each agent registers itself again - which happens within seconds and
+  # without an operator. Reporting `missing` from the first 404 is what drops a
+  # pending steer for a worker that is about to be back, so it has to keep
+  # being the answer before it counts as one. A hub that really has forgotten
+  # an endpoint says so every time and still reaches `missing`, just later.
   while :; do
     status=0
     out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT/processes" 2>/dev/null) || status=$?
     [ "$status" -eq 3 ] || break
-    [ "$waited" -lt "${FM_STREAM_MISSING_GRACE_SECS:-8}" ] || break
+    [ "$waited" -lt "$FM_BACKEND_STREAM_MISSING_GRACE_SECS" ] || break
     waited=$((waited + 1))
     sleep 1
   done

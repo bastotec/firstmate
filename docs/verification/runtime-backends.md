@@ -1565,7 +1565,7 @@ The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
 
 ## stream
 
-Hub 2.0.0 and agent 2.1.0 (protocol 2), verified on 2026-09-17 on Linux with Python 3.14.4, curl 8.18.0, and jq 1.8.1.
+Hub 2.0.0 (protocol 2), verified on 2026-09-17 on Linux with Python 3.14.4, curl 8.18.0, and jq 1.8.1.
 
 The stream backend reads a different table by a different route than tmux does: the owning agent reads its own pseudoterminal's foreground process group, publishes it to the hub over HTTP, and the classifier sees a flattened command line rather than tmux's `comm` list.
 A defect in that reading, in the publish path, or in the freshness gate surfaces only here, which is why this guard exists beside the tmux one.
@@ -1575,9 +1575,9 @@ bash tests/fm-stream-agent-live-e2e.test.sh
 ```
 
 ```
-# claude 2.1.274 (Claude Code): published foreground=[claude .../claude .../claude]
-ok - stream liveness: claude 2.1.274 (Claude Code) classifies alive through the hub
-# claude 2.1.274 (Claude Code): a silenced publisher reads unreadable, not dead
+# claude 2.1.273 (Claude Code): published foreground=[claude /home/bruno/.local/bin/claude /home/bruno/.local/bin/claude]
+ok - stream liveness: claude 2.1.273 (Claude Code) classifies alive through the hub
+# claude 2.1.273 (Claude Code): a silenced publisher reads unreadable, not dead
 # pi 0.85.1: published foreground=[pi pi pi]
 ok - stream liveness: pi 0.85.1 classifies alive through the hub
 # pi 0.85.1: a silenced publisher reads unreadable, not dead
@@ -1585,8 +1585,6 @@ ok - stream liveness: pi 0.85.1 classifies alive through the hub
 # unverified here: codex opencode pi-signed grok kimi cursor muse
 ok - stream liveness: every installed harness is attributable through the hub, and a partition is never read as death
 ```
-
-The installed binary's directory is elided above: what the classifier reads from that record is the command name and the argument vector's own head, never where the binary happens to live.
 
 Each harness is launched bare with no prompt, so the guard spends no model tokens and runs by default wherever its tools are installed.
 Every case first asserts that a bare endpoint shell classifies `dead`, so a later `alive` proves the harness was actually seen rather than that the guard says `alive` about anything with a pulse.

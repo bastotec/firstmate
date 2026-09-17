@@ -415,36 +415,10 @@ class Forgotten(Refusal):
     """
 
 
-class Rejected(Refusal):
-    """The hub refuses this agent on terms no retry changes.
-
-    A credential the hub will not take and an identity it records against
-    another machine are settled answers, not transients. Retrying either is a
-    poll against a hub that keeps saying no, so the agent stands down instead.
-
-    Standing down on one of these is SILENT, and the limitation is worth
-    stating plainly. The agent stops publishing and stops asking for commands,
-    so the worker goes quiet to the fleet: its endpoint stops being readable,
-    the hub's silence reaper eventually calls it presumed gone, and the record
-    ages out of the listing. Nothing anywhere records why. This agent's own
-    output goes to os.devnull the moment it registers, the hub is the very
-    thing refusing it, and the task's status record is the worker's channel
-    rather than the agent's - so the reason has to be read from the hub's own
-    refusal, on the hub, and not from anything the worker's machine holds.
-    """
-
-
 # The refusals that mean another live endpoint answers to this one's identity.
 # duplicate_label reaches an agent only on a registration, and it says exactly
 # what endpoint_superseded says on a publish: the name is taken.
 SUPERSEDING_REFUSALS = frozenset(("endpoint_superseded", "duplicate_label"))
-
-# The refusals no further attempt improves. endpoint_owned_elsewhere belongs
-# here rather than above because it is not a lost contest: this endpoint id is
-# recorded against a DIFFERENT machine, which is an identity collision an
-# operator has to resolve and an agent can only report.
-TERMINAL_REFUSALS = frozenset((
-    "unauthenticated", "wrong_token_class", "endpoint_owned_elsewhere"))
 
 # Re-registration pacing. The floor is short because a hub restart is over in
 # seconds and a worker is unwatchable and unsteerable until its agent is back;
@@ -528,8 +502,6 @@ class HubClient:
                 raise Superseded(message)
             if code == "no_such_endpoint":
                 raise Forgotten(message)
-            if code in TERMINAL_REFUSALS:
-                raise Rejected(message)
             raise RuntimeError(message)
         except urllib.error.URLError as exc:
             raise RuntimeError("cannot reach the hub at %s: %s" % (self.base_url, exc.reason))
@@ -629,7 +601,7 @@ class Agent:
                     return
                 if not self.recover_registration(exc):
                     return
-            except (Superseded, Rejected) as exc:
+            except Superseded as exc:
                 self.give_up(exc)
                 return
             except RuntimeError as exc:
@@ -674,7 +646,7 @@ class Agent:
                 self.hub.call("POST", "/v1/agent/endpoints",
                               registration(self.options, self.endpoint_id),
                               timeout=15.0)
-            except (Superseded, Rejected) as exc:
+            except Superseded as exc:
                 # Either the next attempt at this task claimed the name while
                 # this agent was out of touch, or the hub answers on terms no
                 # further attempt changes. Standing down is the same answer a
@@ -697,7 +669,7 @@ class Agent:
         finally:
             self._register_lock.release()
         try:
-            self.publish_initial_state()
+            self.publish_initial_state(timeout=15.0)
         except RuntimeError as exc:
             # The heartbeat publishes the next one within seconds, so a state
             # frame lost here costs a moment of unreadability, not the recovery.
@@ -734,7 +706,7 @@ class Agent:
             },
         }
 
-    def publish_initial_state(self) -> None:
+    def publish_initial_state(self, timeout: float = 30.0) -> None:
         """Make this endpoint reportable before anything is told it exists.
 
         This one raises where the heartbeat's publishes do not: a first state
@@ -742,10 +714,14 @@ class Agent:
         the one moment where giving up cleanly beats carrying on. A recovered
         registration sends the same frame for the same reason - an endpoint
         back in the fleet listing that answers "no state yet" has not really
-        come back - and decides for itself what a failure there is worth.
+        come back - and decides for itself what a failure there is worth, on
+        the shorter clock it passes in: a recovery runs on the pty reader's own
+        thread, and a reader parked on the hub is a worker blocked on writing
+        to its own terminal.
         """
         self.hub.call("POST", "/v1/agent/frames",
-                      {"machine": self.machine, "frames": [self.state_frame()]})
+                      {"machine": self.machine, "frames": [self.state_frame()]},
+                      timeout=timeout)
 
     def state_loop(self) -> None:
         """Publish state on a heartbeat.
@@ -801,20 +777,22 @@ class Agent:
         return (False, "unknown command kind %r" % kind)
 
     def give_up(self, reason: Exception) -> None:
-        """Stand down: the hub's answer is one this agent does not go on from.
+        """Stand down: this name is another endpoint's now.
 
         Two records contesting one identity tell the hub nothing about which
-        one holds the real work, and a credential it will not take is settled
-        in the same way. Either way the safe move is to go quiet.
+        one holds the real work, and the safe move when that cannot be known is
+        to go quiet. It is the ONLY answer an agent stands down on: everything
+        else the hub can say, including a credential it will not take right
+        now, is a condition that can end without anyone touching this worker,
+        and an agent that gave up on those would strand the fleet the next time
+        a hub came back wrong.
 
         Standing down is never stopping the worker. The pty stays exactly as it
         is - unsupervised, which is recoverable, rather than killed, which is
-        not - because nothing about a refused agent says anything about the
-        work its worker is in the middle of.
+        not.
 
         Said once, because a stand-down is a state rather than an event and the
-        publish path can reach it from several threads at once. Where it can be
-        read afterwards, and where it cannot, is Rejected's to state.
+        publish path can reach it from several threads at once.
         """
         if self.stood_down.is_set():
             return
@@ -843,7 +821,7 @@ class Agent:
                 return
             try:
                 answer = self.hub.call("GET", path, timeout=self.options.poll_secs + 15)
-            except (Superseded, Rejected) as exc:
+            except Superseded as exc:
                 self.give_up(exc)
                 return
             except RuntimeError as exc:
