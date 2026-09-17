@@ -270,13 +270,18 @@ fm_backend_stream_machine() {
 # and never sent to the hub, which is what lets a worker on any machine report
 # into its own home's records.
 fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
-  local label=$1 cwd=$2 status_path=${3:-} tag machine ready endpoint token_file
+  local label=$1 cwd=$2 status_path=${3:-} tag machine ready endpoint token_file agent_log reason
   tag=$(fm_backend_stream_hub_tag) || return 1
   machine=$(fm_backend_stream_machine) || return 1
   ready=$(mktemp "${TMPDIR:-/tmp}/fm-stream-ready.XXXXXX") || return 1
   token_file=$(mktemp "${TMPDIR:-/tmp}/fm-stream-tok.XXXXXX") || { rm -f "$ready"; return 1; }
+  agent_log=$(mktemp "${TMPDIR:-/tmp}/fm-stream-agent.XXXXXX") || { rm -f "$ready" "$token_file"; return 1; }
   chmod 600 "$token_file"
-  fm_backend_stream_token > "$token_file" || { rm -f "$ready" "$token_file"; return 1; }
+  fm_backend_stream_token > "$token_file" || { rm -f "$ready" "$token_file" "$agent_log"; return 1; }
+  # The agent's own refusal - the shell's error text when an endpoint's process
+  # cannot start - is the only account of why a spawn failed, so it is kept
+  # rather than discarded into /dev/null. The credential still reaches the agent
+  # through a file, never a command line.
   (
     setsid python3 "$FM_BACKEND_STREAM_AGENT_BIN" serve \
       --hub "$(fm_backend_stream_hub_url)" \
@@ -286,7 +291,7 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
       --cwd "$cwd" \
       --status-path "$status_path" \
       --ready-file "$ready" \
-      >/dev/null 2>&1 < /dev/null &
+      >"$agent_log" 2>&1 < /dev/null &
   )
   local waited=0
   while [ "$waited" -lt 150 ]; do
@@ -295,12 +300,17 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
     waited=$((waited + 1))
   done
   if [ ! -s "$ready" ]; then
-    rm -f "$ready" "$token_file"
-    echo "error: the stream agent did not register an endpoint for '$label' within 15s" >&2
+    reason=$(tail -n 1 "$agent_log" 2>/dev/null)
+    rm -f "$ready" "$token_file" "$agent_log"
+    if [ -n "$reason" ]; then
+      echo "error: the stream agent refused to start an endpoint for '$label': $reason" >&2
+    else
+      echo "error: the stream agent did not register an endpoint for '$label' within 15s" >&2
+    fi
     return 1
   fi
   read -r _ endpoint < "$ready"
-  rm -f "$ready" "$token_file"
+  rm -f "$ready" "$token_file" "$agent_log"
   case "$endpoint" in
     ''|*[!0-9a-f]*)
       echo "error: the stream agent did not return a durable endpoint id for '$label'" >&2

@@ -231,6 +231,25 @@ test_status_return_channel_appends_on_the_owning_machine() {
   pass "stream: the status return channel appends through the normal status protocol"
 }
 
+test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error() {
+  # The endpoint's shell is whatever $SHELL is on the worker's machine, and one
+  # that cannot start must fail the spawn visibly: the agent's refusal carries
+  # the shell's own error, and this is the only path firstmate takes, so the
+  # caller has to see that text rather than a bare timeout.
+  local out
+  start_case_hub brokenshell
+  printf '#!/bin/sh\necho "this shell cannot start" >&2\nexit 3\n' > "$CASE_DIR/broken-shell"
+  chmod +x "$CASE_DIR/broken-shell"
+  out=$(SHELL="$CASE_DIR/broken-shell" with_stream_env fm_backend_stream_create_task \
+    "fm-broken-$$" "$CASE_DIR/cwd" 2>&1) \
+    && fail "a spawn whose endpoint shell dies at birth should be refused"
+  assert_contains "$out" "this shell cannot start" \
+    "the refusal should carry the shell's own error as the reason"
+  assert_equals "$(with_stream_env fm_backend_stream_api GET /v1/tasks 2>/dev/null | jq -r '[.tasks[] | select(.label | startswith("fm-broken"))] | length')" \
+    0 "a shell that died at birth must leave no endpoint registered on the hub"
+  pass "stream: a spawn whose endpoint shell cannot start reports the shell's own error"
+}
+
 test_a_target_from_another_hub_is_refused() {
   local target foreign
   start_case_hub foreign-tag
@@ -499,6 +518,7 @@ test_agent_state_separates_missing_unreachable_and_partitioned
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_status_return_channel_appends_on_the_owning_machine
 test_a_target_from_another_hub_is_refused
+test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error
 test_an_unreachable_hub_refuses_and_names_the_start_command
 test_hub_url_prefers_configuration_then_a_locally_started_hub
 test_a_rejected_token_refuses_instead_of_retrying_unauthenticated

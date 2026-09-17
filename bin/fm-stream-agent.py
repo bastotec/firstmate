@@ -23,7 +23,7 @@ What it owns, and why each stays here rather than at the hub:
 
 Commands:
 
-  fm-stream-agent.py serve [options] -- <command...>   own a pty and publish it
+  fm-stream-agent.py serve [options]                   own a pty and publish it
   fm-stream-agent.py --protocol                        print the wire protocol
   fm-stream-agent.py --version                         print the agent version
 
@@ -622,7 +622,6 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--cols", type=int, default=200)
     serve.add_argument("--state-interval", type=float, default=5.0)
     serve.add_argument("--poll-secs", type=float, default=25.0)
-    serve.add_argument("argv", nargs=argparse.REMAINDER)
     return parser
 
 
@@ -658,9 +657,7 @@ def main(argv: list) -> int:
     if options.status_path and not os.path.isabs(options.status_path):
         raise SystemExit("fm-stream-agent: --status-path must be absolute")
 
-    command = [a for a in (options.argv or []) if a != "--"]
-    if not command:
-        command = _default_shell_command()
+    command = _default_shell_command()
 
     hub = HubClient(options.hub, read_token(options))
     health = hub.call("GET", "/v1/health", timeout=15.0)
