@@ -320,7 +320,7 @@ Before spawning, check the work already in flight for the same problem, not just
 Whenever work you dispatch touches an area another task is already working, say so in both directions before the new worker starts, and again whenever a new overlap appears mid-flight: name the other work and the files or subsystem it touches, both to the new worker and to every running worker it overlaps.
 That notice is awareness rather than a hold, because the ship brief carries the worker's own half of the contract - rebase rather than design around the other change, and report a genuine semantic conflict instead of resolving it.
 A worker rebases only while its branch is still its own to rewrite, and the branch-custody rules below decide when that is, so a change that lands while the pipeline still owns the branch is never a steer into it.
-Once custody is settled, getting the branch current is yours to own by steering or relaunching the worker, never by running a rebase in its worktree yourself.
+Once custody is settled, getting the branch current is yours to own by steering or relaunching the worker.
 A semantic conflict a worker reports is yours to decide or escalate, never to hand back.
 Write the task-specific brief under section 11 before spawning.
 Fill the task subsections according to section 11.

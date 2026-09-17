@@ -41,9 +41,9 @@
 # fm_concurrent_work_section owns the worker's half of the parallel-work contract
 # (AGENTS.md section 7): firstmate names concurrent work touching this task's
 # area, and this section is what tells the worker that the notice is awareness
-# rather than a hold, that a rebase is its own to take only while the
-# branch-custody contract says the branch is the worker's, and that a genuine
-# semantic conflict goes back to firstmate.
+# rather than a hold, that a rebase is the worker's to take unless the pipeline
+# owns the branch, with the branch-custody contract deciding when ownership
+# returns, and that a genuine semantic conflict goes back to firstmate.
 # It is mode-independent and ship-only - a scout delivers a report, so it has
 # nothing to rebase or conflict with - and both bin/fm-brief.sh and
 # bin/fm-promote.sh render it so a promoted scout receives it too.
@@ -89,7 +89,7 @@ fm_concurrent_work_section() {
 You may not be the only worker on this project.
 When other work touches your area, firstmate names that work and what it touches - in the task above, or through the instruction inbox - and tells those workers about you.
 That notice is awareness, not a hold: keep going, and rebase onto the updated default branch once the other change lands rather than designing around it, waiting for it, or narrowing your own change to avoid it.
-Rebase only while the branch is still yours to rewrite: where a validation run is involved, the pipeline's own branch-custody contract decides that - `branch_sync.next_action` from structured axi status must confirm ownership returned with no custody recovery required - not whether a run happens to be stopped.
+Never rebase while the pipeline owns the branch: after a run, the pipeline's own branch-custody contract decides when ownership returns through `branch_sync.next_action` from structured axi status, and no run on the branch means it is yours to rewrite.
 Two edits in one file are an ordinary rebase; a genuine semantic conflict - two changes that cannot both be true - is firstmate's call, so append `needs-decision: {the two changes and why they cannot both hold}` and stop instead of resolving it yourself.
 EOF
 }

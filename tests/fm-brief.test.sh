@@ -894,12 +894,14 @@ test_scout_and_secondmate_scaffold() {
 # is still its own to take, and to hand a genuine semantic conflict back instead
 # of resolving it. Asserting the phrasing that carries "not a hold" matters as
 # much as the section heading, because a reworded section that drops it would
-# reintroduce the serializing bias the dispatch rule forbids. Branch custody is
-# the only gate on the rebase: a `done:` line is not one, because the
-# no-mistakes worker reports its terminal `done:` at CI-ready while the run
-# still owns the branch. Scouts and charters must NOT carry the section: a
-# report has nothing to rebase, and a duplicated copy there would be a second
-# owner.
+# reintroduce the serializing bias the dispatch rule forbids. Pipeline branch
+# ownership is the only thing that stops the rebase, and it is stated as a
+# prohibition so that a worker with no run on its branch - every no-mistakes
+# worker during implementation - still rebases; a `done:` line stops nothing
+# either, because the no-mistakes worker reports its terminal `done:` at
+# CI-ready while the run still owns the branch. Scouts and charters must NOT
+# carry the section: a report has nothing to rebase, and a duplicated copy
+# there would be a second owner.
 test_ship_brief_carries_cross_worker_awareness() {
   local home id mode brief
   home="$TMP_ROOT/crossworker-home"
@@ -918,10 +920,10 @@ test_ship_brief_carries_cross_worker_awareness() {
       "$id: concurrent-work section no longer instructs a rebase"
     assert_grep "rather than designing around it" "$brief" \
       "$id: concurrent-work section no longer forbids designing around the other change"
-    assert_grep "must confirm ownership returned with no custody recovery required" "$brief" \
-      "$id: concurrent-work section no longer binds the rebase to the branch-custody contract"
-    assert_grep "not whether a run happens to be stopped" "$brief" \
-      "$id: concurrent-work section lets a stopped-but-owned run look like a rebase window"
+    assert_grep "Never rebase while the pipeline owns the branch" "$brief" \
+      "$id: concurrent-work section no longer bars a rebase of a pipeline-owned branch"
+    assert_grep "no run on the branch means it is yours to rewrite" "$brief" \
+      "$id: concurrent-work section gates the pre-run rebase on a custody confirmation no run has produced yet"
     assert_no_grep "done:\` is not grounds to decline" "$brief" \
       "$id: concurrent-work section reintroduced a done-line rebase window outside branch custody"
     assert_grep "two changes that cannot both be true" "$brief" \
