@@ -93,10 +93,15 @@ The adapter refuses such a close: `fm_backend_stream_kill` exits nonzero and say
 Today that is where the distinction stops, because every caller of the shared `fm_backend_kill` discards its status and its stderr, so firstmate's teardown proceeds as it would after any other kill.
 Making those call sites honour a refused kill is a cross-backend change and is follow-up work.
 
-The hub also closes an endpoint on its own once its agent has been silent for several staleness windows.
-Agents are heard from on every frame, every state heartbeat, and every command poll, so silence that long means no agent is behind that endpoint any more - a spawn that was abandoned mid-startup, or an agent that died.
-Closing the record frees the label for the next attempt at that task and lets the reaper clear it on the ordinary retention schedule.
-This is a statement about the hub's record, not about the worker: a state read still answers `unreadable` rather than `dead` for a silent endpoint, because the hub cannot see the process.
+The hub also closes an endpoint on its own once its agent has been silent for ten seconds - several missed heartbeats, and less than the budget an agent gives its own startup, so a spawn abandoned mid-startup frees its task id before anyone could retry it.
+Agents are heard from on every frame, every state heartbeat, and every command poll.
+
+That close is a presumption, never a verdict.
+An agent that comes back - after a hub restart, a network drop, anything its command loop is built to survive - revives its endpoint simply by speaking to the hub again, and its worker is watchable and steerable exactly as before.
+A state read still answers `unreadable` rather than `dead` for a silent endpoint, because the hub cannot see the worker's process either way.
+
+There is one case with no way back: the agent returns to find another live endpoint answering to its machine and label, because the next attempt at that task claimed the name while it was out of touch.
+The hub refuses that agent, and it stops rather than let two workers answer to one identity.
 
 ## When the hub is down
 

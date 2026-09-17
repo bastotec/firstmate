@@ -375,6 +375,16 @@ class Pty:
             pass
 
 
+class Superseded(RuntimeError):
+    """This endpoint's identity now belongs to another live endpoint.
+
+    The one situation an agent cannot come back from: while it was out of
+    touch, the hub gave up on its record AND another endpoint took its machine
+    and label. Publishing from here would put two workers behind one name, so
+    the agent stops instead.
+    """
+
+
 class HubClient:
     """Outbound-only authenticated calls to the fleet's hub.
 
@@ -419,8 +429,11 @@ class HubClient:
                 parsed = json.loads(body)
             except json.JSONDecodeError:
                 parsed = {"message": body.strip() or ("HTTP %d" % exc.code)}
-            raise RuntimeError("hub refused %s %s: %s"
-                               % (method, path, parsed.get("message") or exc.code))
+            message = "hub refused %s %s: %s" % (method, path,
+                                                 parsed.get("message") or exc.code)
+            if parsed.get("error") == "endpoint_superseded":
+                raise Superseded(message)
+            raise RuntimeError(message)
         except urllib.error.URLError as exc:
             raise RuntimeError("cannot reach the hub at %s: %s" % (self.base_url, exc.reason))
         except (TimeoutError, OSError) as exc:
@@ -481,6 +494,8 @@ class Agent:
         try:
             self.hub.call("POST", "/v1/agent/frames",
                           {"machine": self.machine, "frames": frames}, timeout=30.0)
+        except Superseded as exc:
+            self.give_up(exc)
         except RuntimeError as exc:
             # A hub that cannot be reached must not take the worker down with
             # it: the pty keeps running and the next frame retries. The output
@@ -573,6 +588,13 @@ class Agent:
             return (True, "")
         return (False, "unknown command kind %r" % kind)
 
+    def give_up(self, reason: Exception) -> None:
+        """Stop owning this endpoint, because its name is someone else's now."""
+        sys.stderr.write("fm-stream-agent: %s\n" % reason)
+        sys.stderr.flush()
+        self.stop.set()
+        self.pty.close()
+
     def command_loop(self) -> None:
         """Long-poll the hub for this endpoint's commands and acknowledge each.
 
@@ -586,6 +608,9 @@ class Agent:
         while not self.stop.is_set():
             try:
                 answer = self.hub.call("GET", path, timeout=self.options.poll_secs + 15)
+            except Superseded as exc:
+                self.give_up(exc)
+                return
             except RuntimeError as exc:
                 # Back off rather than spin. A hub outage must not take the
                 # worker down with it - the pty keeps running and this

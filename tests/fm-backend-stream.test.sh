@@ -400,7 +400,12 @@ test_a_create_that_times_out_leaves_nothing_behind() {
   # to close it. Nothing on the worker's side can clean that up - the agent is
   # gone - so the hub itself has to stop carrying a record no agent stands
   # behind, or the task id is unusable for as long as the hub runs.
-  start_case_hub createtimeout --command-ack-secs 2 --state-max-age-secs 2
+  # Shipped defaults, deliberately: the guarantee is that an operator who
+  # retries a refused spawn gets a working task, and a hub tuned for the test
+  # would prove that about a configuration nobody runs. If the window the hub
+  # waits before giving up on a silent endpoint ever grows past the budget an
+  # agent gives its own startup, this case fails, which is the point of it.
+  start_case_hub createtimeout
   local label out real_url target
   label="fm-slowhub-$$"
   start_slow_stand_in 3
@@ -430,16 +435,12 @@ test_a_failed_create_leaves_another_homes_endpoint_alone() {
   # The machine name defaults to the hostname, so two homes on one box share
   # it, and a task id can be spawned from either. A create that fails must
   # never reach for an endpoint by machine and label: the one it would find is
-  # the OTHER home's running worker.
+  # the OTHER home's running worker, with its own agent behind it.
   start_case_hub otherhome
-  local label endpoint payload out
+  local label target endpoint out
   label="fm-shared-$$"
-  # The other home's live endpoint, registered exactly as its agent would.
-  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
-  payload=$(jq -nc --arg id "$endpoint" --arg l "$label" \
-    '{endpoint_id: $id, machine: "box-test", label: $l, cwd: "/tmp"}')
-  out=$(with_stream_env fm_backend_stream_api POST /v1/agent/endpoints "$payload") \
-    || fail "the other home's endpoint should register: $out"
+  target=$(create_endpoint "$label")
+  endpoint=${target##*:}
   # This home now fails to create the same task: the hub refuses the duplicate
   # label, so the agent abandons before it ever owns an endpoint.
   out=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" 2>&1) \
@@ -447,6 +448,11 @@ test_a_failed_create_leaves_another_homes_endpoint_alone() {
   assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET /v1/tasks)" \
     | jq -r --arg id "$endpoint" '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
     1 "a failed create must leave the other home's live endpoint running"
+  # And that worker is still steerable, not merely listed.
+  with_stream_env fm_backend_send_text_submit stream "$target" 'echo STILL-MINE' 3 0.2 0.2 >/dev/null \
+    || fail "the surviving endpoint should still take input"
+  wait_for_capture "$target" STILL-MINE \
+    || fail "the surviving endpoint should still be running its own worker"
   pass "stream: a failed create never closes another home's endpoint under the same label"
 }
 

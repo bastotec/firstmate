@@ -579,8 +579,15 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
     fm_backend_stream_target_ready "$target" "$expected" || return 0
   fi
   out=$(fm_backend_stream_api DELETE "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
-    # A kill the hub never answered is not a kill. Saying so is all this
-    # adapter can do about it, but reporting it as a stop would be a lie.
+    # Two of the hub's refusals are proof the task is already gone rather than
+    # a kill that failed: an endpoint the hub no longer has, and one it already
+    # recorded as closed. Everything else is a kill this adapter cannot claim.
+    case "$FM_BACKEND_STREAM_HTTP_CODE" in
+      404) return 0 ;;
+      409)
+        [ "$(printf '%s' "$out" | jq -r '.error' 2>/dev/null)" = endpoint_closed ] && return 0
+        ;;
+    esac
     echo "error: the stream hub refused or never answered the kill for" \
          "$FM_BACKEND_STREAM_ENDPOINT; the worker may still be running" >&2
     return 1

@@ -558,14 +558,14 @@ test_an_endpoint_whose_agent_goes_silent_stops_being_registered() {
   # abandoned mid-startup, or an agent that died. Carrying that record forever
   # is what makes its task id unusable, because the next attempt collides with
   # a worker that does not exist.
-  start_hub silence --state-max-age-secs 1
+  start_hub silence
   local endpoint out waited=0
   endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
     '{endpoint_id: $id, machine: "box-a", label: "silent", cwd: "/tmp"}')" >/dev/null
   assert_equals "$(api_code)" 201 "the endpoint should register"
   # Nothing ever publishes for it. Read the fleet until the hub gives up on it.
-  while [ "$waited" -lt 100 ]; do
+  while [ "$waited" -lt 150 ]; do
     out=$(view GET /v1/tasks)
     [ "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
       '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" = 0 ] && break
@@ -579,6 +579,76 @@ test_an_endpoint_whose_agent_goes_silent_stops_being_registered() {
     '{endpoint_id: $id, machine: "box-a", label: "silent", cwd: "/tmp"}')" >/dev/null
   assert_equals "$(api_code)" 201 "its label should be usable by the next attempt at that task"
   pass "hub: an endpoint whose agent goes silent stops being registered"
+}
+
+test_an_agent_that_comes_back_revives_its_endpoint() {
+  # Giving up on a silent agent is a presumption, and a worker whose tokens are
+  # arriving again disproves it. Losing that endpoint for good would mean a hub
+  # restart or a network drop costs a live worker its place in the one central
+  # view - and its steering channel - while it is still running fine.
+  start_hub revive
+  local endpoint out waited=0 frame
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
+    '{endpoint_id: $id, machine: "box-a", label: "returning", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the endpoint should register"
+  while [ "$waited" -lt 150 ]; do
+    out=$(view GET /v1/tasks)
+    [ "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
+      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" = 0 ] && break
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  assert_equals "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
+    '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
+    0 "the hub should have given up on the silent endpoint first"
+  # The agent comes back the way it does after an outage: it publishes.
+  frame=$(jq -nc --arg id "$endpoint" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')
+  publish POST /v1/agent/frames "$frame" >/dev/null
+  assert_equals "$(api_code)" 200 "a returning agent should be allowed to publish"
+  out=$(view GET /v1/tasks)
+  assert_equals "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
+    '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
+    1 "the endpoint should be listed live again once its agent is back"
+  # And it is steerable again rather than refused as closed.
+  assert_contains "$(view GET "/v1/tasks/$endpoint/capture?lines=5")" hello \
+    "the revived endpoint should read back the output its agent just published"
+  pass "hub: an agent that comes back revives its own endpoint"
+}
+
+test_a_returning_agent_whose_name_was_taken_is_refused() {
+  # The one case with no way back. While this agent was out of touch the next
+  # attempt at its task claimed the same machine and label, so letting it
+  # publish would put two workers behind one identity - the outcome that is
+  # worse than any lost endpoint.
+  start_hub superseded
+  local first second out waited=0
+  first=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  second=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$first" \
+    '{endpoint_id: $id, machine: "box-a", label: "contested", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the first endpoint should register"
+  while [ "$waited" -lt 150 ]; do
+    out=$(view GET /v1/tasks)
+    [ "$(printf '%s' "$out" | jq -r --arg id "$first" \
+      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" = 0 ] && break
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  # The next attempt at that task takes the name.
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$second" \
+    '{endpoint_id: $id, machine: "box-a", label: "contested", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the next attempt should claim the free label"
+  out=$(publish POST /v1/agent/frames "$(jq -nc --arg id "$first" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')")
+  assert_equals "$(api_code)" 410 "the superseded agent must not be allowed to publish"
+  assert_equals "$(printf '%s' "$out" | jq -r '.error')" endpoint_superseded \
+    "the refusal should tell that agent its name is served by another endpoint"
+  assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r \
+    '[.tasks[] | select(.label=="contested" and (.closed_at | not))] | length')" \
+    1 "only one endpoint may answer to that machine and label"
+  pass "hub: a returning agent whose name was taken is refused rather than revived"
 }
 
 test_no_terminal_content_is_persisted_to_disk() {
@@ -769,6 +839,8 @@ test_the_status_channel_writes_on_the_owning_machine_only
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_a_kill_closes_an_endpoint_whose_agent_never_answers
 test_an_endpoint_whose_agent_goes_silent_stops_being_registered
+test_an_agent_that_comes_back_revives_its_endpoint
+test_a_returning_agent_whose_name_was_taken_is_refused
 test_no_terminal_content_is_persisted_to_disk
 test_malformed_and_unknown_requests_are_refused
 test_the_viewer_is_static_and_carries_no_terminal_content

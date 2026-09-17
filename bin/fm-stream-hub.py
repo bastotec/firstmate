@@ -125,14 +125,20 @@ DEFAULT_SCROLLBACK = 2000
 DEFAULT_STATE_MAX_AGE = 30.0
 DEFAULT_COMMAND_ACK = 20.0
 DEFAULT_ENDPOINT_RETENTION = 3600.0
-# How many staleness windows of silence end an endpoint. The hub hears from an
-# agent on every frame, every state heartbeat, and every command poll, so an
-# endpoint that has said nothing for this long has no agent behind it any more,
-# whatever became of the worker's own process. Closing the record is what lets
-# the label be used again and lets the reaper clear it; the hub still never
-# calls a silent worker dead in a state answer, because those are two different
-# questions - whether a record is worth keeping, and whether a process died.
-AGENT_SILENCE_CLOSE_WINDOWS = 3
+# How long an endpoint may say nothing before the hub presumes its agent is
+# gone. The hub hears from an agent on every frame, every state heartbeat, and
+# every command poll, so this is several missed heartbeats. It is deliberately
+# shorter than the agent's own startup budget, so the record an abandoned spawn
+# left behind is gone before anyone could retry that task.
+#
+# The presumption is never a fact. An agent that comes back - after a hub
+# restart, a network drop, anything its command loop is built to survive -
+# revives its own endpoint by contacting the hub, because a worker whose tokens
+# are still arriving is not gone whatever the hub concluded while it could not
+# hear it. The one case with no way back is the lost one: the label has since
+# been taken by another live endpoint, and two workers must never answer to one
+# identity.
+AGENT_SILENCE_CLOSE_SECS = 10.0
 MAX_BODY = 4 * 1024 * 1024
 MAX_LABEL_LEN = 128
 MAX_MACHINE_LEN = 128
@@ -786,6 +792,10 @@ class Endpoint:
         self.cols = cols
         self.created_at = _now()
         self.closed_at = 0.0
+        # Closed because the hub stopped hearing from its agent, rather than
+        # because anything reported the worker gone. Only such a close can be
+        # taken back.
+        self.presumed_gone = False
         self.exit_code = None
         self.screen = Screen(rows, cols, scrollback)
         self.ring = Ring(ring_bytes)
@@ -817,6 +827,13 @@ class Endpoint:
 
     def agent_silent_for(self) -> float:
         return max(0.0, _now() - self.agent_seen_at)
+
+    def reopen(self) -> None:
+        with self.wake:
+            self.closed_at = 0.0
+            self.exit_code = None
+            self.presumed_gone = False
+            self.wake.notify_all()
 
     def mark_closed(self, exit_code) -> None:
         with self.wake:
@@ -958,7 +975,30 @@ class Hub:
         with self.lock:
             endpoint = self.endpoints.get(endpoint_id)
             if endpoint is not None:
-                endpoint.agent_seen_at = _now()
+                self.agent_spoke(endpoint)
+
+    def agent_spoke(self, endpoint: "Endpoint") -> None:
+        """The owning agent is back, so a presumption that it was gone yields.
+
+        Reviving costs nothing when the identity is still this endpoint's. When
+        it is not - another live endpoint answers to this machine and label -
+        this agent is the lost one, and it is told so rather than allowed to
+        publish into a fleet where its name means someone else.
+        """
+        with self.lock:
+            endpoint.agent_seen_at = _now()
+            if not endpoint.presumed_gone:
+                return
+            for other in self.endpoints.values():
+                if other is endpoint or other.closed_at:
+                    continue
+                if other.machine == endpoint.machine and other.label == endpoint.label:
+                    raise HubError(HTTPStatus.GONE, "endpoint_superseded",
+                                   "endpoint %s was presumed gone and machine %s "
+                                   "now serves %s from another endpoint"
+                                   % (endpoint.endpoint_id, endpoint.machine,
+                                      endpoint.label))
+            endpoint.reopen()
 
     def list_machines(self) -> list:
         """A snapshot of the machines, taken under the lock like list_endpoints.
@@ -1037,12 +1077,13 @@ class Hub:
             return list(self.endpoints.values())
 
     def reap(self) -> None:
-        silent_for = self.options.state_max_age_secs * AGENT_SILENCE_CLOSE_WINDOWS
         cutoff = _now() - DEFAULT_ENDPOINT_RETENTION
         with self.lock:
             for endpoint in list(self.endpoints.values()):
-                if not endpoint.closed_at and endpoint.agent_silent_for() > silent_for:
+                if (not endpoint.closed_at
+                        and endpoint.agent_silent_for() > AGENT_SILENCE_CLOSE_SECS):
                     endpoint.mark_closed(None)
+                    endpoint.presumed_gone = True
             for endpoint_id in [e.endpoint_id for e in self.endpoints.values()
                                 if e.closed_at and e.closed_at < cutoff]:
                 self.endpoints.pop(endpoint_id, None)
@@ -1407,6 +1448,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     raise HubError(HTTPStatus.FORBIDDEN, "endpoint_owned_elsewhere",
                                    "endpoint %s belongs to machine %s"
                                    % (endpoint.endpoint_id, endpoint.machine))
+                hub.agent_spoke(endpoint)
                 if frame.get("b64"):
                     try:
                         endpoint.feed(base64.b64decode(frame["b64"], validate=True))
