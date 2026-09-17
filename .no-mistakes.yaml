@@ -40,11 +40,14 @@ commands:
 # out-of-scope list below.
 test:
   instructions: |
-    This step is targeted validation: prove the change works, and prove the
-    regression fails without it, using the repository's own suites under tests/
-    for the area the change touches.
-    Out of scope here: building live tmux servers, creating real dirty worktrees,
-    writing fake agent binaries, and reusable lab factories.
+    The repository's own suites under tests/ are the live rig for this product:
+    they stand up real worktrees, real processes and real harness binaries. Drive
+    the change through the suites for the area it touches - prove the change
+    works, and prove the regression fails without it - rather than constructing a
+    new rig of your own.
+    Out of scope here: standing up rigs of your own - live tmux servers, dirty
+    worktrees, fake agent binaries, or reusable lab factories - beyond what the
+    suites under tests/ already set up.
   # Publish each run's test evidence to the orphan no-mistakes/evidence branch linked from the PR.
   # The evidence is not committed to the feature or default branch.
   evidence:
