@@ -26,6 +26,9 @@ HUB="$ROOT/bin/fm-stream-hub.py"
 AGENT="$ROOT/bin/fm-stream-agent.py"
 PUBLISH_TOKEN="pub-$$"
 VIEW_TOKEN="view-$$"
+# The bare line in the token file: subscribe alone, no control. This is the
+# credential a fleet hands to someone who may watch and nothing else.
+VIEW_ONLY_TOKEN="viewonly-$$"
 API_CODE_FILE=""
 CASE_DIR=""
 URL=""
@@ -42,9 +45,9 @@ cleanup_helpers() {
 trap 'cleanup_helpers; fm_test_cleanup' EXIT INT TERM
 
 # start_hub <case-name> [extra hub args...] -> sets CASE_DIR URL
-# Publishing and viewing get SEPARATE tokens in every case, so a test that
-# accidentally used the wrong one fails rather than passing on a credential
-# that happened to hold both classes.
+# Publishing, operating, and watching get SEPARATE tokens in every case, so a
+# test that accidentally used the wrong one fails rather than passing on a
+# credential that happened to hold the class it needed.
 start_hub() {
   local name=$1
   shift
@@ -52,7 +55,8 @@ start_hub() {
   cleanup_helpers
   CASE_DIR="$TMP_ROOT/$name"
   mkdir -p "$CASE_DIR/state" "$CASE_DIR/cwd"
-  printf 'publish:%s\n%s\n' "$PUBLISH_TOKEN" "$VIEW_TOKEN" > "$CASE_DIR/tokens"
+  printf 'publish:%s\nsubscribe,control:%s\n%s\n' \
+    "$PUBLISH_TOKEN" "$VIEW_TOKEN" "$VIEW_ONLY_TOKEN" > "$CASE_DIR/tokens"
   chmod 600 "$CASE_DIR/tokens"
   printf '%s\n' "$PUBLISH_TOKEN" > "$CASE_DIR/publish-token"
   chmod 600 "$CASE_DIR/publish-token"
@@ -94,6 +98,7 @@ api() {  # <token> <method> <path> [body] -> body
 }
 
 view() { api "$VIEW_TOKEN" "$@"; }
+view_only() { api "$VIEW_ONLY_TOKEN" "$@"; }
 publish() { api "$PUBLISH_TOKEN" "$@"; }
 
 api_code() {
@@ -144,18 +149,22 @@ wait_for_capture() {  # <endpoint> <needle>
   return 1
 }
 
-test_every_route_requires_a_token() {
+test_every_data_route_requires_a_token() {
   start_hub auth
   local raw
   raw=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "$URL/v1/health" 2>/dev/null)
   assert_equals "$raw" 401 "health without a token should be refused"
   raw=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "$URL/v1/tasks" 2>/dev/null)
   assert_equals "$raw" 401 "the fleet listing without a token should be refused"
+  # The viewer page is the one exception, and it has to be: it is what reads
+  # the token out of the URL fragment, which a browser never sends anywhere.
+  # So this request is exactly what a browser makes - no Authorization header,
+  # no query parameter - and it must return the page.
   raw=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "$URL/ui" 2>/dev/null)
-  assert_equals "$raw" 401 "even the viewer page should be refused without a token"
+  assert_equals "$raw" 200 "a browser navigating to the viewer sends no credential and must get the page"
   view GET /v1/health >/dev/null
   assert_equals "$(api_code)" 200 "a configured viewing token should be accepted"
-  pass "hub: every route requires a bearer token"
+  pass "hub: every data route requires a bearer token, and only the viewer page does not"
 }
 
 test_a_viewing_token_cannot_register_an_endpoint_or_publish() {
@@ -174,6 +183,57 @@ test_a_viewing_token_cannot_register_an_endpoint_or_publish() {
   publish POST /v1/agent/endpoints "$payload" >/dev/null
   assert_equals "$(api_code)" 201 "the publishing credential should register the endpoint"
   pass "hub: registering an endpoint needs the publish class, reading needs subscribe"
+}
+
+test_a_viewing_token_cannot_steer_or_close_a_worker() {
+  # The other half of the split. A link handed to someone who may watch must
+  # not let them type into a live terminal or kill the worker behind it, while
+  # the operator's own credential still does both.
+  start_hub steering
+  local endpoint
+  endpoint=$(start_agent box-a steerable "$CASE_DIR/state/steerable.status")
+  view_only GET "/v1/tasks/$endpoint/capture?lines=5" >/dev/null
+  assert_equals "$(api_code)" 200 "a viewing credential should still read the terminal"
+  view_only POST "/v1/tasks/$endpoint/input" '{"text":"echo NEVER-TYPED","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 403 "a viewing credential must never type into a worker"
+  view_only POST "/v1/tasks/$endpoint/status" '{"state":"done","note":"not yours"}' >/dev/null
+  assert_equals "$(api_code)" 403 "a viewing credential must never append to a task's record"
+  view_only DELETE "/v1/tasks/$endpoint" >/dev/null
+  assert_equals "$(api_code)" 403 "a viewing credential must never close a worker"
+  # Nothing was delivered, not merely refused at the door.
+  assert_not_contains "$(view GET "/v1/tasks/$endpoint/capture?lines=40")" NEVER-TYPED \
+    "a refused input must never reach the pseudoterminal"
+  # And the operating credential - subscribe plus control - does all three.
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo OPERATOR-TYPED","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 "an operating credential should type into a worker"
+  wait_for_capture "$endpoint" OPERATOR-TYPED || fail "the operator's line never reached the endpoint"
+  view POST "/v1/tasks/$endpoint/status" '{"state":"working","note":"steered"}' >/dev/null
+  assert_equals "$(api_code)" 200 "an operating credential should append a status line"
+  assert_grep 'working: steered' "$CASE_DIR/state/steerable.status" \
+    "the operator's status line should reach the owning agent's record"
+  assert_no_grep 'not yours' "$CASE_DIR/state/steerable.status" \
+    "a refused status must never reach the record"
+  view DELETE "/v1/tasks/$endpoint" >/dev/null
+  assert_equals "$(api_code)" 200 "an operating credential should close a worker"
+  pass "hub: steering needs the control class, and a viewing token holds none of it"
+}
+
+test_the_screen_read_answers_with_the_live_screen_and_cursor() {
+  # fm-send verifies a submit through this route: when it fails, the composer's
+  # state answer degrades to "unknown" and every steer reports an unverifiable
+  # delivery, so the route answering at all is the assertion that matters.
+  start_hub screen
+  local endpoint out
+  endpoint=$(start_agent box-a onscreen)
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo SCREEN-MARKER-2210","submit":true}' >/dev/null
+  wait_for_capture "$endpoint" SCREEN-MARKER-2210 || fail "the endpoint never printed the marker"
+  out=$(view GET "/v1/tasks/$endpoint/screen")
+  assert_equals "$(api_code)" 200 "the screen read should answer rather than fail: $out"
+  assert_contains "$(printf '%s' "$out" | jq -r '.screen')" SCREEN-MARKER-2210 \
+    "the screen should carry what the worker just printed"
+  [ "$(printf '%s' "$out" | jq -r '.cursor_row')" -ge 0 ] 2>/dev/null \
+    || fail "the screen read should report which row the cursor is on"
+  pass "hub: the screen read answers with the live screen and its cursor row"
 }
 
 test_one_hub_lists_endpoints_from_several_machines() {
@@ -377,8 +437,11 @@ test_the_viewer_is_static_and_carries_no_terminal_content() {
   endpoint=$(start_agent box-a onstage)
   view POST "/v1/tasks/$endpoint/input" '{"text":"echo UI-LEAK-CHECK-4471","submit":true}' >/dev/null
   wait_for_capture "$endpoint" UI-LEAK-CHECK-4471 || fail "the endpoint never printed the marker"
-  page=$(view GET /ui)
-  assert_equals "$(api_code)" 200 "the viewer should be served to a subscriber"
+  # Fetched the way a browser navigates: no Authorization header and no query
+  # parameter, because the token lives in the fragment this page itself reads.
+  page=$(curl -sS -m 10 -w '\n%{http_code}' "$URL/ui" 2>/dev/null)
+  assert_equals "${page##*$'\n'}" 200 "the viewer must load for an unauthenticated browser navigation"
+  page=${page%$'\n'*}
   assert_not_contains "$page" UI-LEAK-CHECK-4471 "the viewer must not bake in terminal content"
   assert_not_contains "$page" "$endpoint" "the viewer must not bake in an endpoint id"
   assert_contains "$page" "EventSource" "the viewer should subscribe over the event stream"
@@ -390,7 +453,7 @@ test_fm_stream_start_status_stop_round_trip() {
   local home out
   home="$TMP_ROOT/operator"
   mkdir -p "$home/config" "$home/state"
-  printf 'publish,subscribe:%s\n' "$PUBLISH_TOKEN" > "$home/config/stream-hub-tokens"
+  printf 'publish,subscribe,control:%s\n' "$PUBLISH_TOKEN" > "$home/config/stream-hub-tokens"
   chmod 600 "$home/config/stream-hub-tokens"
   printf '%s\n' "$PUBLISH_TOKEN" > "$home/config/stream-token"
   chmod 600 "$home/config/stream-token"
@@ -446,8 +509,10 @@ s.close()')
   pass "fm-stream.sh: a second hub for the same home is refused rather than started"
 }
 
-test_every_route_requires_a_token
+test_every_data_route_requires_a_token
 test_a_viewing_token_cannot_register_an_endpoint_or_publish
+test_a_viewing_token_cannot_steer_or_close_a_worker
+test_the_screen_read_answers_with_the_live_screen_and_cursor
 test_one_hub_lists_endpoints_from_several_machines
 test_input_reaches_the_endpoint_and_capture_reads_it_back
 test_input_with_no_agent_to_acknowledge_is_refused

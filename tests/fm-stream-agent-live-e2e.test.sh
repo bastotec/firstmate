@@ -53,7 +53,7 @@ cleanup_all() {
 trap cleanup_all EXIT INT TERM
 
 mkdir -p "$LAB/wt"
-printf 'publish,subscribe:%s\n' "$TOKEN" > "$LAB/tokens"
+printf 'publish,subscribe,control:%s\n' "$TOKEN" > "$LAB/tokens"
 chmod 600 "$LAB/tokens"
 printf '%s\n' "$TOKEN" > "$LAB/token"
 chmod 600 "$LAB/token"

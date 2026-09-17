@@ -57,7 +57,7 @@ start_case_hub() {  # <case-name> [extra hub args...]
   cleanup_helpers
   CASE_DIR="$TMP_ROOT/$name"
   mkdir -p "$CASE_DIR/home/config" "$CASE_DIR/home/state" "$CASE_DIR/cwd"
-  printf 'publish,subscribe:%s\n' "$TOKEN" > "$CASE_DIR/tokens"
+  printf 'publish,subscribe,control:%s\n' "$TOKEN" > "$CASE_DIR/tokens"
   chmod 600 "$CASE_DIR/tokens"
   ready="$CASE_DIR/ready"
   python3 "$HUB" serve --bind 127.0.0.1 --port 0 \

@@ -118,9 +118,9 @@ cmd_hub_start() {
   #
   # config/stream-token is what THIS home presents as a client. When no hub
   # token file exists, a single-machine trial hands that one token to the hub
-  # through the environment, where it holds both classes - otherwise a bare
-  # token would grant subscribe only and this home's own agents could not
-  # publish to the hub it just started.
+  # through the environment, where it holds every class - otherwise a bare
+  # token would grant subscribe only and this home's own agents could neither
+  # publish to the hub it just started nor steer what they published.
   local hub_tokens="$CONFIG/stream-hub-tokens"
   local token_file="$CONFIG/stream-token"
   if [ -f "$PID_FILE" ]; then

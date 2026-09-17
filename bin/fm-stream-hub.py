@@ -132,20 +132,25 @@ MAX_BODY = 4 * 1024 * 1024
 MAX_LABEL_LEN = 128
 MAX_MACHINE_LEN = 128
 
-# Token classes.  Publishing and subscribing are separate credentials from the
-# first release: registering an endpoint starts a process on a worker machine,
-# and a viewing credential must never be able to do that.  A token holds a SET
+# Token classes.  Publishing, watching, and steering are separate credentials
+# from the first release: registering an endpoint starts a process on a worker
+# machine, and typing into or killing one is another operator's live terminal,
+# so a viewing credential must never be able to do either.  A token holds a SET
 # of classes rather than one, so narrowing or widening what a credential may do
 # - including adding a class this release does not define - stays a token-file
-# edit rather than a protocol change.
+# edit rather than a protocol change.  Watching and steering are split because
+# two classes cannot express what a fleet needs: one URL must watch every
+# worker and type back, while a link handed to someone else must only watch.
 CLASS_PUBLISH = "publish"
 CLASS_SUBSCRIBE = "subscribe"
-TOKEN_CLASSES = (CLASS_PUBLISH, CLASS_SUBSCRIBE)
+CLASS_CONTROL = "control"
+TOKEN_CLASSES = (CLASS_PUBLISH, CLASS_SUBSCRIBE, CLASS_CONTROL)
 
-# A bare token in the token file grants these.  Publishing is deliberately NOT
-# among them: registering an endpoint means starting a process on a worker
-# machine, so that credential must always be named explicitly and a viewing
-# credential can never hold it by default.
+# A bare token in the token file grants these.  Publishing and steering are
+# deliberately NOT among them: registering an endpoint means starting a process
+# on a worker machine and steering means typing into or killing one, so those
+# credentials must always be named explicitly and the careless line in a token
+# file is the read-only one.
 DEFAULT_CLASSES = (CLASS_SUBSCRIBE,)
 
 LABEL_RE = re.compile(r"\A[A-Za-z0-9._@%%+-]{1,%d}\Z" % MAX_LABEL_LEN)
@@ -1176,7 +1181,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(parsed.query)
             path = parsed.path.rstrip("/") or "/"
             if path == "/ui":
-                self._require(CLASS_SUBSCRIBE, query)
+                # Served without a credential, and only this document is. The
+                # page is static - no endpoint id, no machine name, no terminal
+                # content - and it is what reads the token out of the URL
+                # fragment a browser never sends to a server. Gating it would
+                # deadlock: the token cannot arrive before the page that reads
+                # it loads. Every data route below stays authenticated.
                 self._text(HTTPStatus.OK, WEB_UI, "text/html; charset=utf-8")
                 return
             self._route(method, path, query)
@@ -1415,7 +1425,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                            "no endpoint %s" % endpoint_id)
 
         if tail == "" and method == "DELETE":
-            self._require(CLASS_SUBSCRIBE, query)
+            self._require(CLASS_CONTROL, query)
             endpoint = hub.get(endpoint_id)
             hub.submit_command(endpoint, "kill",
                                {"signal": _query_one(query, "signal", "TERM")})
@@ -1426,7 +1436,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             })
             return
 
-        self._require(CLASS_SUBSCRIBE, query)
+        # Steering an endpoint - typing into it or appending to its record - is
+        # the control class; everything else on a task is a read.
+        steering = method == "POST" and tail in ("input", "status")
+        self._require(CLASS_CONTROL if steering else CLASS_SUBSCRIBE, query)
         endpoint = hub.get(endpoint_id)
 
         if tail == "" and method == "GET":
@@ -1474,7 +1487,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             ansi = _query_one(query, "format", "text") == "ansi"
             with endpoint.lock:
                 rendered = endpoint.screen.screen_lines(ansi=ansi)
-                cursor_row = endpoint.screen.cursor_y
+                cursor_row = endpoint.screen.cy
             self._json(HTTPStatus.OK, {
                 "ok": True,
                 "cursor_row": cursor_row,
@@ -1720,7 +1733,6 @@ WEB_UI = """<!DOCTYPE html>
                                       : "Type a line for " + ep.label;
     outEl.textContent = "";
     if (source) { source.close(); source = null; }
-    api("/v1/tasks/" + selected + "/capture?lines=200").catch(function () { return ""; });
     fetch("/v1/tasks/" + selected + "/capture?lines=200",
           {headers: {"Authorization": "Bearer " + token}})
       .then(function (r) { return r.text(); })
@@ -1834,9 +1846,10 @@ def main(argv: list) -> int:
         if not env_token:
             raise SystemExit("fm-stream-hub: no credential; pass --token-file or set "
                              "FM_STREAM_TOKEN. The hub never serves unauthenticated.")
-        # A single environment token holds both classes so a one-machine trial
+        # A single environment token holds every class so a one-machine trial
         # works with no token file, while the token file remains the way to
-        # issue a viewing credential that cannot register an endpoint.
+        # issue a viewing credential that can neither register an endpoint nor
+        # steer one.
         tokens = {env_token: frozenset(TOKEN_CLASSES)}
 
     if options.ring_bytes <= 0 or options.scrollback <= 0:

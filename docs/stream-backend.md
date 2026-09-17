@@ -53,12 +53,18 @@ A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoi
 
 ## Security
 
-The hub binds `127.0.0.1` by default and every route requires a bearer token.
+The hub binds `127.0.0.1` by default and every data route requires a bearer token; the static viewer page is the one exception.
 
-Tokens are class-scoped.
-A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, where `publish` may register endpoints and publish frames and `subscribe` may only watch.
-A bare token line grants viewing alone.
-A viewing token cannot register an endpoint, publish, or steer a worker.
+Tokens are class-scoped, and there are three classes:
+
+- `publish` registers endpoints and publishes frames. Agents hold it; nobody else needs it.
+- `subscribe` reads only: list, stream, capture, screen, and state.
+- `control` steers: sending input to a worker, appending a status line, and closing an endpoint.
+
+A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, so an operator credential is written `subscribe,control:<token>` and a home's own client credential, which both publishes and steers, is `publish,subscribe,control:<token>`.
+A bare token line grants `subscribe` alone, so the unqualified line is the read-only one.
+A viewing token cannot register an endpoint, publish, or steer a worker: input, status, and close are all refused with 403.
+The bundled viewer page is served without a credential - it is static, and the token it reads out of the URL fragment is what its own requests carry - but every data route behind it is authenticated, and opening it with a viewing token gives a read-only view whose send box is refused.
 
 ### The hub speaks plain HTTP
 
