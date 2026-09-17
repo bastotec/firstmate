@@ -764,8 +764,13 @@ def _abandon_startup(pty, hub, options, endpoint_id: str) -> None:
     refuse the next attempt at the same task with duplicate_label. The close
     gets a short timeout of its own so the abandonment still finishes well
     inside the window the spawn waits.
+
+    The worker is killed outright rather than asked to leave: it never reached
+    readiness, so it was never given work to finish, and an interactive shell
+    ignores TERM - the grace period would be spent in full, every time, and is
+    the whole margin this abandonment has left before the spawn is refused.
     """
-    pty.close()
+    pty.close("KILL")
     pty.release()
     hub.end_startup()
     try:
