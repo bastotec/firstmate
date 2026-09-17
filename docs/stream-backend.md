@@ -31,7 +31,8 @@ bin/fm-stream.sh status
 ```
 
 Every other home points at that hub rather than starting its own, by writing its base URL to `config/stream-hub` or exporting `FM_STREAM_HUB`.
-Resolution order is `FM_STREAM_HUB`, then `config/stream-hub`, then `http://127.0.0.1:7717`.
+Resolution order is `FM_STREAM_HUB`, then `config/stream-hub`, then a hub this home started itself, then `http://127.0.0.1:7717`.
+The locally started hub ranks below both configured sources, so a home pointed at the fleet's hub keeps using it even while running a hub of its own; it ranks above the default so that starting a hub on a non-default port does not leave every other command resolving a port nothing bound.
 
 Select the backend the way any explicit backend is selected: `config/backend`, `FM_BACKEND=stream`, or an explicit per-task request.
 It is never auto-detected, and a spawn refuses `--secondmate` until secondmate launch semantics are designed for it.

@@ -67,16 +67,28 @@ fm_backend_stream_config_line() {  # <config-file-name>
   return 1
 }
 
-# fm_backend_stream_hub_url: FM_STREAM_HUB, then config/stream-hub, then the
-# localhost default. The value is used exactly as configured, scheme included,
-# so pointing this home at a hub behind a TLS terminator is a config change and
-# needs no change here.
+# fm_backend_stream_hub_url: FM_STREAM_HUB, then config/stream-hub, then a hub
+# this home started itself, then the localhost default. The value is used
+# exactly as configured, scheme included, so pointing this home at a hub behind
+# a TLS terminator is a config change and needs no change here.
+#
+# The locally started hub ranks below both configured sources and above the
+# default only. It exists because `hub start --port N` otherwise left every
+# other command resolving the default port: the hub was up, and `status`, `web`,
+# and every task command reported it down. Reading the port the hub actually
+# bound is strictly better than assuming one, and a home pointed at the fleet's
+# hub still wins through its own configuration.
 fm_backend_stream_hub_url() {
-  local url
+  local url ready host port
   if [ -n "${FM_STREAM_HUB:-}" ]; then
     url=$FM_STREAM_HUB
   elif url=$(fm_backend_stream_config_line stream-hub); then
     :
+  elif ready="${FM_STATE_OVERRIDE:-${FM_HOME:-$FM_ROOT}/state}/.stream-hub.ready" \
+    && [ -s "$ready" ] \
+    && read -r host port < "$ready" \
+    && [ -n "${host:-}" ] && [ -n "${port:-}" ]; then
+    url="http://$host:$port"
   else
     url=$FM_BACKEND_STREAM_DEFAULT_URL
   fi

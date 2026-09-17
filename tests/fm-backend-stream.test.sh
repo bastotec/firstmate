@@ -251,6 +251,52 @@ test_a_target_from_another_hub_is_refused() {
   pass "stream: a target recorded against another hub is refused, not redirected"
 }
 
+test_hub_url_prefers_configuration_then_a_locally_started_hub() {
+  # `hub start --port N` used to leave every other command resolving the
+  # default port: the hub was up, and status, web, and every task command
+  # reported it down. Reading the port the hub actually bound beats assuming
+  # one - but only below both configured sources, so a home pointed at the
+  # fleet's hub still wins even while it runs a hub of its own.
+  local home url
+  home="$CASE_DIR/url-precedence"
+  mkdir -p "$home/config" "$home/state"
+
+  resolve() {  # [env assignments applied by the caller]
+    (
+      # shellcheck disable=SC2030,SC2031  # deliberate: each tier is scoped to its own subshell
+      export FM_HOME="$home" FM_ROOT="$ROOT" \
+        FM_CONFIG_OVERRIDE="$home/config" FM_STATE_OVERRIDE="$home/state"
+      # shellcheck source=bin/fm-backend.sh
+      . "$ROOT/bin/fm-backend.sh"
+      fm_backend_source stream || exit 90
+      fm_backend_stream_hub_url
+    )
+  }
+
+  url=$(resolve) || fail "resolution failed with nothing configured"
+  assert_equals "http://127.0.0.1:7717" "$url" "with nothing configured it should fall back to the documented default"
+
+  printf '127.0.0.1 7731\n' > "$home/state/.stream-hub.ready"
+  url=$(resolve) || fail "resolution failed with a locally started hub"
+  assert_equals "http://127.0.0.1:7731" "$url" "a hub this home started should be preferred over the default port it did not bind"
+
+  printf 'http://hub.example:9000\n' > "$home/config/stream-hub"
+  url=$(resolve) || fail "resolution failed with config/stream-hub present"
+  assert_equals "http://hub.example:9000" "$url" "config/stream-hub should outrank a hub this home happens to run"
+
+  url=$(FM_STREAM_HUB="http://env.example:9100" resolve) || fail "resolution failed with FM_STREAM_HUB set"
+  assert_equals "http://env.example:9100" "$url" "FM_STREAM_HUB should outrank every file"
+
+  # A truncated or half-written ready file must not become a hub URL.
+  rm -f "$home/config/stream-hub"
+  printf '127.0.0.1\n' > "$home/state/.stream-hub.ready"
+  url=$(resolve) || fail "resolution failed with a partial ready file"
+  assert_equals "http://127.0.0.1:7717" "$url" "a ready file with no port should be ignored rather than built into a broken URL"
+
+  unset -f resolve
+  pass "stream: the hub URL prefers configuration, then a hub this home started, then the default"
+}
+
 test_an_unreachable_hub_refuses_and_names_the_start_command() {
   local err
   start_case_hub unreachable
@@ -454,6 +500,7 @@ test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_status_return_channel_appends_on_the_owning_machine
 test_a_target_from_another_hub_is_refused
 test_an_unreachable_hub_refuses_and_names_the_start_command
+test_hub_url_prefers_configuration_then_a_locally_started_hub
 test_a_rejected_token_refuses_instead_of_retrying_unauthenticated
 test_a_hub_speaking_another_protocol_is_refused
 test_a_missing_dependency_refuses_and_names_the_tool

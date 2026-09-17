@@ -50,7 +50,8 @@
 #   report    Append one status line through the return channel into the record
 #             that endpoint's agent registered, on that agent's own machine.
 #
-# Selection: FM_STREAM_HUB, then config/stream-hub, then http://127.0.0.1:7717.
+# Selection: FM_STREAM_HUB, then config/stream-hub, then a hub this home
+# started itself, then http://127.0.0.1:7717.
 # The token comes from FM_STREAM_TOKEN, then config/stream-token.
 #
 # An endpoint argument may be a bare hub endpoint id or a full
