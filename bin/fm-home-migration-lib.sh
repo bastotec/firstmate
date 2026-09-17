@@ -169,6 +169,21 @@ if ($op eq 'pack' || $op eq 'classify') {
 PERL
 }
 
+# Publish a migration receipt into a home that is already live, the one place
+# the receipt is not covered by a whole-home rename. Each half is copied to a
+# sidecar in its own destination directory and renamed over the live file, the
+# same temp-then-rename idiom fm-remote-home-provision.sh uses to publish the
+# charter, registry, and parent records.
+publish_receipt() { # <bundle> <sha256> <home>
+  local bundle=$1 digest=$2 receipt="$3/.fm-migration"
+  cp "$bundle" "$receipt/bundle.json.tmp.$$" \
+    || { rm -f -- "$receipt/bundle.json.tmp.$$"; die 'cannot stage the migration receipt'; }
+  printf '%s\n' "$digest" > "$receipt/digest.tmp.$$" \
+    || { rm -f -- "$receipt/bundle.json.tmp.$$" "$receipt/digest.tmp.$$"; die 'cannot stage the migration receipt'; }
+  mv -f -- "$receipt/bundle.json.tmp.$$" "$receipt/bundle.json" || die 'cannot publish the migration receipt'
+  mv -f -- "$receipt/digest.tmp.$$" "$receipt/digest" || die 'cannot publish the migration receipt'
+}
+
 fm_migration_receive() { # <id> <sha256>
   local id=$1 digest=$2 parent lock_root lock_dir temp stage actual dropped
   case "$id" in ''|-*|*[!A-Za-z0-9._-]*) die 'invalid migration identity' ;; esac
@@ -223,8 +238,14 @@ fm_migration_receive() { # <id> <sha256>
         || die "this payload no longer carries records this home holds, and nothing is deleted here: $dropped"
       fm_migration_data unpack "$FM_HOME" "$id" "$temp/bundle.json" || die 'cannot refresh migration records'
       fm_migration_data check "$FM_HOME" "$id" "$temp/bundle.json" || die 'migration verification failed'
-      cp "$temp/bundle.json" "$FM_HOME/.fm-migration/bundle.json"
-      printf '%s\n' "$digest" > "$FM_HOME/.fm-migration/digest"
+      # The receipt is the only record naming which snapshot this home carries,
+      # and a truncated one is a home no rerun can read. Stage both halves beside
+      # their destinations - same directory, so the renames are atomic - then
+      # publish bundle first and digest second. A kill between the two renames
+      # leaves a digest this host will not accept, which the rerun converges; the
+      # reverse order would leave a digest promising records the home lacks. A
+      # kill during staging only ever leaves an inert sidecar beside the receipt.
+      publish_receipt "$temp/bundle.json" "$digest" "$FM_HOME"
     fi
     rm -rf -- "$temp"
     printf 'verified-migration: %s %s\n' "$id" "$digest"
@@ -242,6 +263,9 @@ fm_migration_receive() { # <id> <sha256>
   [ "$(cat "$stage/.fm-secondmate-home")" = "$id" ] || die 'provisioning identity differs from migration'
   fm_migration_data unpack "$stage" "$id" "$temp/bundle.json" || die 'cannot install migration records'
   fm_migration_data check "$stage" "$id" "$temp/bundle.json" || die 'migration verification failed'
+  # First publication writes its receipt into the private staging tree, which the
+  # mv below publishes whole, so this home is never observable half-written even
+  # though these two writes are not individually atomic.
   cp "$temp/bundle.json" "$stage/.fm-migration/bundle.json"
   printf '%s\n' "$digest" > "$stage/.fm-migration/digest"
   [ ! -e "$FM_HOME" ] && [ ! -L "$FM_HOME" ] || die 'destination appeared during staging'
