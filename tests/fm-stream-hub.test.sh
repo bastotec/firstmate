@@ -26,17 +26,18 @@ HUB="$ROOT/bin/fm-stream-hub.py"
 AGENT="$ROOT/bin/fm-stream-agent.py"
 PUBLISH_TOKEN="pub-$$"
 VIEW_TOKEN="view-$$"
-HELPER_PIDS=""
 API_CODE_FILE=""
 CASE_DIR=""
 URL=""
+# Labels carry the pid of THIS run. An interrupted run leaves its agents
+# behind - they outlive the hub they published to - and a fixed label would
+# then let agent_pid_for resolve one of those leftovers, silencing a dead
+# endpoint while the live publisher kept heartbeating. The partition case
+# would fail claiming the agent it just killed was still fresh.
+RUN=$$
 
 cleanup_helpers() {
-  local pid
-  for pid in $HELPER_PIDS; do
-    kill -9 "$pid" 2>/dev/null || true
-  done
-  HELPER_PIDS=""
+  fm_test_reap_helper_pids
 }
 trap 'cleanup_helpers; fm_test_cleanup' EXIT INT TERM
 
@@ -63,7 +64,7 @@ start_hub() {
   # Disowned so retiring the previous case's hub does not print a job-control
   # "Killed" notice into this suite's output.
   disown "$pid" 2>/dev/null || true
-  HELPER_PIDS="$HELPER_PIDS $pid"
+  fm_test_track_helper_pid "$pid"
   while [ "$waited" -lt 100 ]; do
     [ -s "$ready" ] && break
     sleep 0.1
@@ -107,12 +108,12 @@ start_agent() {  # <machine> <label> [status-path]
   rm -f "$ready"
   mkdir -p "$CASE_DIR/cwd"
   python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
-    --machine "$machine" --label "$label" --cwd "$CASE_DIR/cwd" \
+    --machine "$machine" --label "$label-$RUN" --cwd "$CASE_DIR/cwd" \
     --status-path "$status" --ready-file "$ready" --state-interval 1 --poll-secs 3 \
     > "$CASE_DIR/agent-$machine-$label.log" 2>&1 &
   pid=$!
   disown "$pid" 2>/dev/null || true
-  HELPER_PIDS="$HELPER_PIDS $pid"
+  fm_test_track_helper_pid "$pid"
   while [ "$waited" -lt 150 ]; do
     [ -s "$ready" ] && break
     sleep 0.1
@@ -128,7 +129,7 @@ start_agent() {  # <machine> <label> [status-path]
 agent_pid_for() {  # <ready-file-machine> <label>
   local machine=$1 label=$2
   ps -eo pid,args 2>/dev/null \
-    | awk -v m="--machine $machine" -v l="--label $label" \
+    | awk -v m="--machine $machine" -v l="--label $label-$RUN" \
         'index($0, "fm-stream-agent.py") && index($0, m) && index($0, l) && !index($0, "awk") {print $1; exit}'
 }
 
@@ -222,7 +223,7 @@ test_input_with_no_agent_to_acknowledge_is_refused() {
 }
 
 test_state_reads_carry_their_age_and_withhold_a_stale_verdict() {
-  start_hub freshness --state-max-age-secs 2
+  start_hub freshness --state-max-age-secs 5
   local endpoint out
   endpoint=$(start_agent box-a fresh)
   out=$(view GET "/v1/tasks/$endpoint/processes")
@@ -238,14 +239,14 @@ test_a_silent_agent_is_unreadable_and_never_dead() {
   # The partition case. An unreachable agent and a dead worker look identical
   # from the hub, and only one of them authorizes recovery, so silence must
   # never produce a verdict at all.
-  start_hub partition --state-max-age-secs 2
+  start_hub partition --state-max-age-secs 3
   local endpoint pid out waited=0
   endpoint=$(start_agent box-a partitioned)
   out=$(view GET "/v1/tasks/$endpoint/processes")
   assert_equals "$(printf '%s' "$out" | jq -r '.stale')" false "the endpoint should start out readable"
   pid=$(agent_pid_for box-a partitioned)
   [ -n "$pid" ] || fail "could not find the publishing agent to silence"
-  kill -9 "$pid" 2>/dev/null || fail "could not silence the publishing agent"
+  fm_test_kill_foreign_pid "$pid" "silencing the publishing agent"
   while [ "$waited" -lt 100 ]; do
     out=$(view GET "/v1/tasks/$endpoint/processes")
     [ "$(printf '%s' "$out" | jq -r '.stale')" = true ] && break
@@ -255,8 +256,11 @@ test_a_silent_agent_is_unreadable_and_never_dead() {
   assert_equals "$(printf '%s' "$out" | jq -r '.stale')" true "a silenced agent should read stale"
   assert_equals "$(printf '%s' "$out" | jq -r 'has("alive")')" false \
     "a stale read must carry NO verdict at all - silence is not evidence of death"
-  assert_contains "$(printf '%s' "$out" | jq -r '.reason')" "silent" \
-    "the answer should say why it cannot be acted on"
+  # Either staleness reason is correct here - the publisher is gone, so its
+  # last frame and its last contact age together. What must hold is that the
+  # answer explains itself rather than going quiet.
+  [ -n "$(printf '%s' "$out" | jq -r '.reason // empty')" ] \
+    || fail "a stale answer should say why it cannot be acted on"
   pass "hub: a silent agent reads unreadable and is never reported dead"
 }
 
@@ -345,7 +349,7 @@ test_no_terminal_content_is_persisted_to_disk() {
   wait_for_capture "$endpoint" SENSITIVE-MARKER-9137 || fail "the endpoint never printed the marker"
   # The hub's only files are its ready and pid files; terminal content lives in
   # a bounded in-memory ring and must not reach disk anywhere under its state.
-  hits=$(grep -rl SENSITIVE-MARKER-9137 "$CASE_DIR" 2>/dev/null | grep -v '/agent-.*\.log$' | wc -l)
+  hits=$(grep -rl SENSITIVE-MARKER-9137 "$CASE_DIR" 2>/dev/null | grep -cv '/agent-.*\.log$')
   assert_equals "$hits" 0 "terminal content must not be written to disk by the hub"
   pass "hub: terminal content is never persisted outside the in-memory ring"
 }

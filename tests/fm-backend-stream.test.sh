@@ -25,16 +25,11 @@ TMP_ROOT=$(fm_test_tmproot fm-backend-stream-tests)
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 HUB="$ROOT/bin/fm-stream-hub.py"
 TOKEN="adapter-token-$$"
-HELPER_PIDS=""
 CASE_DIR=""
 URL=""
 
 cleanup_helpers() {
-  local pid
-  for pid in $HELPER_PIDS; do
-    kill -9 "$pid" 2>/dev/null || true
-  done
-  HELPER_PIDS=""
+  fm_test_reap_helper_pids
 }
 trap 'cleanup_helpers; fm_test_cleanup' EXIT INT TERM
 
@@ -46,6 +41,7 @@ with_stream_env() {
   (
     # shellcheck disable=SC2030  # deliberate: the binding must not outlive the call
     export FM_STREAM_HUB="$URL" FM_STREAM_TOKEN="$TOKEN" FM_STREAM_MACHINE=box-test
+    # shellcheck disable=SC2030,SC2031  # deliberate: each case exports its own home into its own subshell
     export FM_HOME="$CASE_DIR/home" FM_ROOT="$ROOT" FM_CONFIG_OVERRIDE="$CASE_DIR/home/config"
     # shellcheck source=bin/fm-backend.sh
     . "$ROOT/bin/fm-backend.sh"
@@ -69,7 +65,7 @@ start_case_hub() {  # <case-name> [extra hub args...]
     > "$CASE_DIR/log" 2>&1 &
   pid=$!
   disown "$pid" 2>/dev/null || true
-  HELPER_PIDS="$HELPER_PIDS $pid"
+  fm_test_track_helper_pid "$pid"
   while [ "$waited" -lt 100 ]; do
     [ -s "$ready" ] && break
     sleep 0.1
@@ -84,10 +80,23 @@ start_case_hub() {  # <case-name> [extra hub args...]
 # durable record carries. This starts a real local agent, exactly as a spawn
 # would.
 create_endpoint() {  # <label> [status-path]
-  local label=$1 status=${2:-} pair
+  local label=$1 status=${2:-} pair pid
   pair=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" "$status") \
     || fail "creating endpoint $label failed"
+  # The adapter starts the agent DETACHED, exactly as a spawn does, so it is not
+  # a job of this shell and the trap would not reap it. Record it by pid.
+  pid=$(agent_pid_for "$label")
+  fm_test_track_helper_pid "$pid"
   printf '%s:%s' "${pair%% *}" "${pair##* }"
+}
+
+# agent_pid_for: the publisher for one label in THIS run. Labels are made
+# unique per run, because matching a label alone would find an agent left by an
+# earlier run and silence the wrong endpoint.
+agent_pid_for() {  # <label>
+  ps -eo pid,args 2>/dev/null \
+    | awk -v l="--label $1" \
+        'index($0, "fm-stream-agent.py") && index($0, l) && !index($0, "awk") {print $1; exit}'
 }
 
 wait_for_capture() {  # <target> <needle>
@@ -104,7 +113,7 @@ wait_for_capture() {  # <target> <needle>
 test_create_yields_a_hub_bound_target_the_dispatcher_can_read() {
   local target tag endpoint
   start_case_hub create
-  target=$(create_endpoint fm-create)
+  target=$(create_endpoint "fm-create-$$")
   tag=${target%%:*}
   endpoint=${target#*:}
   # The tag is the hub's identity, colon-free so the FIRST colon always splits
@@ -124,7 +133,7 @@ test_create_yields_a_hub_bound_target_the_dispatcher_can_read() {
 test_send_reaches_the_endpoint_and_capture_reads_it_back() {
   local target out
   start_case_hub send
-  target=$(create_endpoint fm-send)
+  target=$(create_endpoint "fm-send-$$")
   with_stream_env fm_backend_send_text_submit stream "$target" 'echo ADAPTER-SENT' 3 0.2 0.2 >/dev/null \
     || fail "the dispatcher refused to send text to the endpoint"
   wait_for_capture "$target" ADAPTER-SENT \
@@ -137,7 +146,7 @@ test_send_reaches_the_endpoint_and_capture_reads_it_back() {
 test_capture_is_bounded_by_the_requested_line_count() {
   local target few
   start_case_hub capture-bound
-  target=$(create_endpoint fm-capture)
+  target=$(create_endpoint "fm-capture-$$")
   with_stream_env fm_backend_send_text_submit stream "$target" \
     "printf 'ROW-%s\\n' 1 2 3 4 5 6 7 8 9 10 11 12" 3 0.2 0.2 >/dev/null \
     || fail "the dispatcher refused to send the row generator"
@@ -151,7 +160,7 @@ test_capture_is_bounded_by_the_requested_line_count() {
 test_agent_state_reads_the_foreground_process_not_the_screen() {
   local target state
   start_case_hub agent-state
-  target=$(create_endpoint fm-state)
+  target=$(create_endpoint "fm-state-$$")
   # An endpoint sitting at its own shell prompt is a dead worker, not a live
   # one: this is the fleet-wide dead-shell rule, and it must hold here without
   # reading a single rendered byte.
@@ -163,7 +172,7 @@ test_agent_state_reads_the_foreground_process_not_the_screen() {
 test_agent_state_separates_missing_unreachable_and_partitioned() {
   local target state gone
   start_case_hub agent-state-edges --state-max-age-secs 2
-  target=$(create_endpoint fm-edges)
+  target=$(create_endpoint "fm-edges-$$")
   gone="${target%%:*}:00000000000000000000000000000000"
   state=$(with_stream_env fm_backend_agent_state stream "$gone")
   assert_equals "$state" missing "an endpoint the hub does not host should classify as missing"
@@ -172,10 +181,9 @@ test_agent_state_separates_missing_unreachable_and_partitioned() {
   # may be perfectly healthy and simply unreachable, and only a positive report
   # of death authorizes recovery - so this must never read dead.
   local pid waited=0
-  pid=$(ps -eo pid,args 2>/dev/null \
-    | awk '/fm-stream-agent\.py/ && /--label fm-edges/ && !/awk/ {print $1; exit}')
+  pid=$(agent_pid_for "fm-edges-$$")
   [ -n "$pid" ] || fail "could not find the publishing agent to silence"
-  kill -9 "$pid" 2>/dev/null || fail "could not silence the publishing agent"
+  fm_test_kill_foreign_pid "$pid" "silencing the publishing agent"
   while [ "$waited" -lt 100 ]; do
     state=$(with_stream_env fm_backend_agent_state stream "$target")
     [ "$state" = unreadable ] && break
@@ -196,8 +204,8 @@ test_agent_state_separates_missing_unreachable_and_partitioned() {
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling() {
   local victim bystander
   start_case_hub kill
-  victim=$(create_endpoint fm-victim)
-  bystander=$(create_endpoint fm-bystander)
+  victim=$(create_endpoint "fm-victim-$$")
+  bystander=$(create_endpoint "fm-bystander-$$")
   with_stream_env fm_backend_kill stream "$victim" \
     || fail "the dispatcher refused to close the endpoint"
   local waited=0
@@ -215,7 +223,7 @@ test_status_return_channel_appends_on_the_owning_machine() {
   local target status_path
   start_case_hub status
   status_path="$CASE_DIR/home/state/fm-status.status"
-  target=$(create_endpoint fm-status "$status_path")
+  target=$(create_endpoint "fm-status-$$" "$status_path")
   with_stream_env fm_backend_stream_report_status "$target" working 'adapter return channel' \
     || fail "the adapter could not report status through the hub"
   assert_grep 'working: adapter return channel' "$status_path" \
@@ -226,7 +234,7 @@ test_status_return_channel_appends_on_the_owning_machine() {
 test_a_target_from_another_hub_is_refused() {
   local target foreign
   start_case_hub foreign-tag
-  target=$(create_endpoint fm-foreign)
+  target=$(create_endpoint "fm-foreign-$$")
   foreign="somewhere-else-9999:${target#*:}"
   # The endpoint id alone is not an address. A record made against one hub must
   # not quietly drive a same-id endpoint on whichever hub this home happens to
@@ -260,6 +268,7 @@ test_a_rejected_token_refuses_instead_of_retrying_unauthenticated() {
   err=$( (
     # shellcheck disable=SC2031  # deliberate: the wrong credential is scoped to this call
     export FM_STREAM_HUB="$URL" FM_STREAM_TOKEN="not-the-token"
+    # shellcheck disable=SC2030,SC2031  # deliberate: each case exports its own home into its own subshell
     export FM_HOME="$CASE_DIR/home" FM_ROOT="$ROOT" FM_CONFIG_OVERRIDE="$CASE_DIR/home/config"
     # shellcheck source=bin/fm-backend.sh
     . "$ROOT/bin/fm-backend.sh"
@@ -301,7 +310,7 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 threading.Event().wait()
 PY
   disown $! 2>/dev/null || true
-  HELPER_PIDS="$HELPER_PIDS $!"
+  fm_test_track_helper_pid "$!"
   while [ "$waited" -lt 100 ]; do
     [ -s "$CASE_DIR/ready" ] && break
     sleep 0.1
@@ -348,6 +357,7 @@ test_a_missing_token_reports_it_without_crashing() {
   err=$( (
     set -u
     unset FM_STREAM_TOKEN
+    # shellcheck disable=SC2030,SC2031  # deliberate: each case exports its own home into its own subshell
     export FM_HOME="$CASE_DIR/home" FM_ROOT="$ROOT" FM_CONFIG_OVERRIDE="$CASE_DIR/home/config"
     # shellcheck source=bin/fm-backend.sh
     . "$ROOT/bin/fm-backend.sh"
@@ -373,7 +383,7 @@ test_spawn_refuses_a_secondmate_on_stream() {
 test_cleanup_validation_binds_a_record_to_the_hub_that_made_it() {
   local state meta target endpoint
   start_case_hub teardown
-  target=$(create_endpoint fm-teardown)
+  target=$(create_endpoint "fm-teardown-$$")
   endpoint=${target#*:}
   state="$CASE_DIR/meta"
   mkdir -p "$state"

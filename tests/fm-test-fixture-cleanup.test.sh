@@ -17,6 +17,38 @@ set -u
 
 LIB="$ROOT/tests/lib.sh"
 
+test_helper_pids_registered_in_a_subshell_are_still_reaped() {
+  # The whole point of the `$$`-keyed registry. Suites start their helpers from
+  # inside a command substitution (`endpoint=$(start_agent box-a worker)`), and
+  # a shell-variable append there dies with the subshell, so a suite that
+  # tracked helper pids in a plain string tracked nothing and left every
+  # process it started running. These helpers do not exit on their own.
+  local dir marker pid waited=0
+  dir=$(fm_test_tmproot fm-helper-pid)
+  marker="$dir/pid"
+  bash -c '
+    set -u
+    . "$1"
+    # Register from inside a command substitution, exactly as the real suites do.
+    started=$(sleep 120 >/dev/null 2>&1 & echo $!; fm_test_track_helper_pid "$!")
+    printf "%s\n" "$started" > "$2"
+    trap fm_test_cleanup EXIT
+  ' _ "$LIB" "$marker" || fail "the helper-registration probe did not run"
+  pid=$(cat "$marker" 2>/dev/null) || pid=
+  case $pid in
+    '' | *[!0-9]*) fail "the probe did not report a helper pid (got '$pid')" ;;
+  esac
+  while [ "$waited" -lt 50 ] && kill -0 "$pid" 2>/dev/null; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null || true
+    fail "a helper registered from inside a command substitution outlived its suite (pid $pid), so every publisher a run starts would leak"
+  fi
+  pass "helpers registered from a command substitution are reaped with the suite"
+}
+
 test_fixture_root_gone_after_normal_exit() {
   local child_out child_dir
   child_out=$(bash -c '
@@ -166,6 +198,7 @@ test_orphan_sweep_reaps_read_only_package_tree() {
 
 test_fixture_root_gone_after_normal_exit
 test_fixture_root_gone_after_sigterm
+test_helper_pids_registered_in_a_subshell_are_still_reaped
 test_cleanup_registry_resists_precreation
 test_fixture_registration_failure_rolls_back_root
 test_orphan_sweep_respects_fixture_ownership
