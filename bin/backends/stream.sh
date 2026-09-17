@@ -579,13 +579,13 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
     fm_backend_stream_target_ready "$target" "$expected" || return 0
   fi
   out=$(fm_backend_stream_api DELETE "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
-    # Two of the hub's refusals are proof the task is already gone rather than
-    # a kill that failed: an endpoint the hub no longer has, and one it already
-    # recorded as closed. Everything else is a kill this adapter cannot claim.
+    # One refusal is proof the task is already gone rather than a kill that
+    # failed: an endpoint the hub no longer has. A 404 for any other reason -
+    # a route this hub does not serve, an id it will not parse - says nothing
+    # about the worker, so it is not accepted as a stop.
     case "$FM_BACKEND_STREAM_HTTP_CODE" in
-      404) return 0 ;;
-      409)
-        [ "$(printf '%s' "$out" | jq -r '.error' 2>/dev/null)" = endpoint_closed ] && return 0
+      404)
+        [ "$(printf '%s' "$out" | jq -r '.error' 2>/dev/null)" = no_such_endpoint ] && return 0
         ;;
     esac
     echo "error: the stream hub refused or never answered the kill for" \

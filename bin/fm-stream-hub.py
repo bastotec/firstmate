@@ -126,7 +126,10 @@ DEFAULT_STATE_MAX_AGE = 30.0
 DEFAULT_COMMAND_ACK = 20.0
 DEFAULT_ENDPOINT_RETENTION = 3600.0
 # How long an endpoint may say nothing before the hub presumes its agent is
-# gone. The hub hears from an agent on every frame, every state heartbeat, and
+# gone. A presumption is not a close: the endpoint stays listed, stays
+# streamable and stays steerable, because a worker the hub has merely not heard
+# from lately may be perfectly healthy. All the presumption does is release the
+# identity, so the next attempt at that task can claim the name. The hub hears from an agent on every frame, every state heartbeat, and
 # every command poll, so this is several missed heartbeats. It is deliberately
 # shorter than the agent's own startup budget, so the record an abandoned spawn
 # left behind is gone before anyone could retry that task.
@@ -138,7 +141,7 @@ DEFAULT_ENDPOINT_RETENTION = 3600.0
 # hear it. The one case with no way back is the lost one: the label has since
 # been taken by another live endpoint, and two workers must never answer to one
 # identity.
-AGENT_SILENCE_CLOSE_SECS = 10.0
+AGENT_SILENCE_PRESUMED_SECS = 10.0
 MAX_BODY = 4 * 1024 * 1024
 MAX_LABEL_LEN = 128
 MAX_MACHINE_LEN = 128
@@ -792,9 +795,9 @@ class Endpoint:
         self.cols = cols
         self.created_at = _now()
         self.closed_at = 0.0
-        # Closed because the hub stopped hearing from its agent, rather than
-        # because anything reported the worker gone. Only such a close can be
-        # taken back.
+        # The hub has not heard from this endpoint's agent lately. It says
+        # nothing about the worker, which is why it closes nothing and hides
+        # nothing: it only frees the name for the next attempt at this task.
         self.presumed_gone = False
         self.exit_code = None
         self.screen = Screen(rows, cols, scrollback)
@@ -827,13 +830,6 @@ class Endpoint:
 
     def agent_silent_for(self) -> float:
         return max(0.0, _now() - self.agent_seen_at)
-
-    def reopen(self) -> None:
-        with self.wake:
-            self.closed_at = 0.0
-            self.exit_code = None
-            self.presumed_gone = False
-            self.wake.notify_all()
 
     def mark_closed(self, exit_code) -> None:
         with self.wake:
@@ -980,17 +976,18 @@ class Hub:
     def agent_spoke(self, endpoint: "Endpoint") -> None:
         """The owning agent is back, so a presumption that it was gone yields.
 
-        Reviving costs nothing when the identity is still this endpoint's. When
-        it is not - another live endpoint answers to this machine and label -
-        this agent is the lost one, and it is told so rather than allowed to
-        publish into a fleet where its name means someone else.
+        Taking the presumption back costs nothing when the identity is still
+        this endpoint's. When it is not - another endpoint answers to this
+        machine and label - this agent is the lost one, and it is told so
+        rather than allowed to publish into a fleet where its name means
+        someone else.
         """
         with self.lock:
             endpoint.agent_seen_at = _now()
             if not endpoint.presumed_gone:
                 return
             for other in self.endpoints.values():
-                if other is endpoint or other.closed_at:
+                if other is endpoint or other.closed_at or other.presumed_gone:
                     continue
                 if other.machine == endpoint.machine and other.label == endpoint.label:
                     raise HubError(HTTPStatus.GONE, "endpoint_superseded",
@@ -998,7 +995,7 @@ class Hub:
                                    "now serves %s from another endpoint"
                                    % (endpoint.endpoint_id, endpoint.machine,
                                       endpoint.label))
-            endpoint.reopen()
+            endpoint.presumed_gone = False
 
     def list_machines(self) -> list:
         """A snapshot of the machines, taken under the lock like list_endpoints.
@@ -1052,7 +1049,7 @@ class Hub:
                 self.touch_machine(machine)
                 return existing
             for other in self.endpoints.values():
-                if other.closed_at:
+                if other.closed_at or other.presumed_gone:
                     continue
                 if other.machine == machine and other.label == label:
                     raise HubError(HTTPStatus.CONFLICT, "duplicate_label",
@@ -1080,12 +1077,12 @@ class Hub:
         cutoff = _now() - DEFAULT_ENDPOINT_RETENTION
         with self.lock:
             for endpoint in list(self.endpoints.values()):
-                if (not endpoint.closed_at
-                        and endpoint.agent_silent_for() > AGENT_SILENCE_CLOSE_SECS):
-                    endpoint.mark_closed(None)
+                if endpoint.agent_silent_for() > AGENT_SILENCE_PRESUMED_SECS:
                     endpoint.presumed_gone = True
-            for endpoint_id in [e.endpoint_id for e in self.endpoints.values()
-                                if e.closed_at and e.closed_at < cutoff]:
+            for endpoint_id in [
+                    e.endpoint_id for e in self.endpoints.values()
+                    if (e.closed_at and e.closed_at < cutoff)
+                    or e.agent_silent_for() > DEFAULT_ENDPOINT_RETENTION]:
                 self.endpoints.pop(endpoint_id, None)
 
     # --- commands ---------------------------------------------------------

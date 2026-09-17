@@ -93,15 +93,24 @@ The adapter refuses such a close: `fm_backend_stream_kill` exits nonzero and say
 Today that is where the distinction stops, because every caller of the shared `fm_backend_kill` discards its status and its stderr, so firstmate's teardown proceeds as it would after any other kill.
 Making those call sites honour a refused kill is a cross-backend change and is follow-up work.
 
-The hub also closes an endpoint on its own once its agent has been silent for ten seconds - several missed heartbeats, and less than the budget an agent gives its own startup, so a spawn abandoned mid-startup frees its task id before anyone could retry it.
+## When the hub has not heard from an agent
+
+After ten seconds of silence - several missed heartbeats, and less than the budget an agent gives its own startup - the hub presumes that endpoint's agent is gone.
 Agents are heard from on every frame, every state heartbeat, and every command poll.
 
-That close is a presumption, never a verdict.
-An agent that comes back - after a hub restart, a network drop, anything its command loop is built to survive - revives its endpoint simply by speaking to the hub again, and its worker is watchable and steerable exactly as before.
-A state read still answers `unreadable` rather than `dead` for a silent endpoint, because the hub cannot see the worker's process either way.
+A presumption is not a close, and it does exactly one thing: it frees the endpoint's label, so a spawn abandoned mid-startup does not make its task id unusable.
+Everything else stays as it was.
+The worker is still listed, its stream still runs, and input, status lines and kills still reach it - because a worker the hub has not heard from lately may be perfectly healthy, and if it really is gone those calls fail on their own and say so.
+A state read answers `unreadable` rather than `dead` for the same reason: the hub cannot see the worker's process either way.
+The agent's next word to the hub takes the presumption back.
 
-There is one case with no way back: the agent returns to find another live endpoint answering to its machine and label, because the next attempt at that task claimed the name while it was out of touch.
+There is one case with no way back: the agent speaks again to find another endpoint already answering to its machine and label, because the next attempt at that task claimed the name while it was out of touch.
 The hub refuses that agent, and it stops rather than let two workers answer to one identity.
+
+A hub RESTART is a different matter, and a harsher one.
+Endpoints live in the hub's memory only, so a restarted hub has never heard of any of them: a running agent's next publish is refused with `no_such_endpoint`, and an agent registers exactly once and has no path back.
+Every worker on every machine keeps running, invisible to the fleet listing and unsteerable, until it is dealt with on its own machine.
+Re-registering a returning agent is follow-up work, not something this backend does today.
 
 ## When the hub is down
 
@@ -116,11 +125,12 @@ While it is down, unreachable, or restarting:
   Supervision must not treat that as evidence a worker died, because it is evidence of nothing at all.
 - Status lines are the exception, and deliberately so: they are written by each agent on its own machine, so the durable record a task reports into keeps working while the hub is gone.
 
-When the hub returns, agents reconnect on their own and endpoints become readable again.
-What does not come back is the terminal output produced in the meantime: the ring buffer is in memory, so a hub restart starts every endpoint's scrollback from empty even though the workers never stopped.
+A hub that was merely unreachable comes back to the same endpoints, and agents pick up where they left off.
+A hub that RESTARTED comes back to none: its endpoints were in memory, so every running agent is stranded - refused with `no_such_endpoint` on its next publish, with no way to register again - and its worker goes on running unlisted and unsteerable until someone deals with it on its own machine.
+Either way the terminal output produced in the meantime is gone, because the ring buffer is in memory too.
 
 The operational shape of that is worth saying plainly.
-Losing the hub costs observation across the whole fleet at once, and costs no work.
+Losing the hub costs observation across the whole fleet at once, and costs no work; restarting it costs every running worker its place in the fleet until it is restarted too.
 
 ## Limits
 

@@ -552,69 +552,84 @@ test_a_kill_closes_an_endpoint_whose_agent_never_answers() {
   pass "hub: a kill the agent never answers closes the record and says so"
 }
 
-test_an_endpoint_whose_agent_goes_silent_stops_being_registered() {
+test_a_worker_the_hub_has_not_heard_from_keeps_its_place() {
   # The hub hears from an agent on every frame, heartbeat and command poll, so
-  # an endpoint that says nothing at all has nobody behind it - a spawn
-  # abandoned mid-startup, or an agent that died. Carrying that record forever
-  # is what makes its task id unusable, because the next attempt collides with
-  # a worker that does not exist.
+  # silence means it has not heard from that agent lately - not that the worker
+  # stopped. A brief hiccup must not end a live stream, drop a worker from the
+  # fleet listing, or refuse a steer, because the worker may be perfectly fine.
   start_hub silence
-  local endpoint out waited=0
-  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
-  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
-    '{endpoint_id: $id, machine: "box-a", label: "silent", cwd: "/tmp"}')" >/dev/null
-  assert_equals "$(api_code)" 201 "the endpoint should register"
-  # Nothing ever publishes for it. Read the fleet until the hub gives up on it.
+  local endpoint agent out waited=0 silent=""
+  endpoint=$(start_agent box-a quiet)
+  agent=$(agent_pid_for box-a quiet)
+  [ -n "$agent" ] || fail "the agent should be running"
+  # Silence the agent without touching its worker: the pty keeps running, the
+  # hub simply stops hearing about it.
+  kill -STOP "$agent" || fail "could not pause the agent"
   while [ "$waited" -lt 150 ]; do
     out=$(view GET /v1/tasks)
-    [ "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
-      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" = 0 ] && break
+    silent=$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
+      '.tasks[] | select(.endpoint_id==$id) | .agent_silent_for_secs')
+    [ "${silent%%.*}" -ge 11 ] 2>/dev/null && break
     sleep 0.2
     waited=$((waited + 1))
   done
+  [ "${silent%%.*}" -ge 11 ] 2>/dev/null \
+    || { kill -CONT "$agent"; fail "the hub never went that long without hearing from the agent: $silent"; }
+  # Still listed, and still readable.
   assert_equals "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
     '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
-    0 "an endpoint no agent stands behind should stop being carried as live"
-  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$(python3 -c 'import os; print(os.urandom(16).hex())')" \
-    '{endpoint_id: $id, machine: "box-a", label: "silent", cwd: "/tmp"}')" >/dev/null
-  assert_equals "$(api_code)" 201 "its label should be usable by the next attempt at that task"
-  pass "hub: an endpoint whose agent goes silent stops being registered"
+    1 "a worker the hub has not heard from must stay listed"
+  view GET "/v1/tasks/$endpoint/capture?lines=5" >/dev/null
+  assert_equals "$(api_code)" 200 "its transcript must stay readable"
+  # And a steer still reaches it rather than being refused as closed. The agent
+  # is let go first, because the steer is answered by the agent itself.
+  kill -CONT "$agent" || fail "could not resume the agent"
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo STILL-STEERABLE","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 "it must still take a steer"
+  wait_for_capture "$endpoint" STILL-STEERABLE \
+    || fail "the steer should reach a worker that never stopped"
+  pass "hub: a worker the hub has not heard from keeps its stream, its listing and its steering"
 }
 
-test_an_agent_that_comes_back_revives_its_endpoint() {
-  # Giving up on a silent agent is a presumption, and a worker whose tokens are
-  # arriving again disproves it. Losing that endpoint for good would mean a hub
-  # restart or a network drop costs a live worker its place in the one central
-  # view - and its steering channel - while it is still running fine.
+test_an_agent_that_speaks_again_takes_the_presumption_back() {
+  # Freeing the name is the whole of the presumption, and it is undone the
+  # moment the agent speaks: a later attempt at that task must not walk in on a
+  # worker that turned out to be fine.
   start_hub revive
-  local endpoint out waited=0 frame
+  local endpoint out waited=0 silent=""
   endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
     '{endpoint_id: $id, machine: "box-a", label: "returning", cwd: "/tmp"}')" >/dev/null
   assert_equals "$(api_code)" 201 "the endpoint should register"
+  # Nothing publishes for it, and the fleet is read meanwhile, so the hub
+  # reaches its own conclusion about it rather than being told.
   while [ "$waited" -lt 150 ]; do
+    view GET /v1/tasks >/dev/null
     out=$(view GET /v1/tasks)
     [ "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
-      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" = 0 ] && break
+      '[.tasks[] | select(.endpoint_id==$id)] | length')" = 1 ] || fail "the endpoint vanished"
+    silent=$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
+      '.tasks[] | select(.endpoint_id==$id) | .agent_silent_for_secs')
+    case "$silent" in
+      ''|null) ;;
+      *) [ "${silent%%.*}" -ge 11 ] 2>/dev/null && break ;;
+    esac
     sleep 0.2
     waited=$((waited + 1))
   done
-  assert_equals "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
-    '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
-    0 "the hub should have given up on the silent endpoint first"
-  # The agent comes back the way it does after an outage: it publishes.
-  frame=$(jq -nc --arg id "$endpoint" \
-    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')
-  publish POST /v1/agent/frames "$frame" >/dev/null
+  [ "${silent%%.*}" -ge 11 ] 2>/dev/null || fail "the endpoint never went quiet long enough: $silent"
+  # The agent speaks, the way it does after an outage.
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$endpoint" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
   assert_equals "$(api_code)" 200 "a returning agent should be allowed to publish"
-  out=$(view GET /v1/tasks)
-  assert_equals "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
-    '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
-    1 "the endpoint should be listed live again once its agent is back"
-  # And it is steerable again rather than refused as closed.
+  # Its name is its own again: the next attempt at that task is refused.
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$(python3 -c 'import os; print(os.urandom(16).hex())')" \
+    '{endpoint_id: $id, machine: "box-a", label: "returning", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 409 \
+    "an endpoint whose agent has just spoken must hold its label again"
   assert_contains "$(view GET "/v1/tasks/$endpoint/capture?lines=5")" hello \
-    "the revived endpoint should read back the output its agent just published"
-  pass "hub: an agent that comes back revives its own endpoint"
+    "the endpoint should read back what its agent published"
+  pass "hub: an agent that speaks again takes the presumption back"
 }
 
 test_a_returning_agent_whose_name_was_taken_is_refused() {
@@ -629,14 +644,19 @@ test_a_returning_agent_whose_name_was_taken_is_refused() {
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$first" \
     '{endpoint_id: $id, machine: "box-a", label: "contested", cwd: "/tmp"}')" >/dev/null
   assert_equals "$(api_code)" 201 "the first endpoint should register"
+  local silent=""
   while [ "$waited" -lt 150 ]; do
     out=$(view GET /v1/tasks)
-    [ "$(printf '%s' "$out" | jq -r --arg id "$first" \
-      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" = 0 ] && break
+    silent=$(printf '%s' "$out" | jq -r --arg id "$first" \
+      '.tasks[] | select(.endpoint_id==$id) | .agent_silent_for_secs')
+    [ "${silent%%.*}" -ge 11 ] 2>/dev/null && break
     sleep 0.2
     waited=$((waited + 1))
   done
-  # The next attempt at that task takes the name.
+  [ "${silent%%.*}" -ge 11 ] 2>/dev/null \
+    || fail "the hub never went that long without hearing from the first agent: $silent"
+  # The name is free for the next attempt at that task, which is the whole of
+  # what the presumption does.
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$second" \
     '{endpoint_id: $id, machine: "box-a", label: "contested", cwd: "/tmp"}')" >/dev/null
   assert_equals "$(api_code)" 201 "the next attempt should claim the free label"
@@ -645,9 +665,9 @@ test_a_returning_agent_whose_name_was_taken_is_refused() {
   assert_equals "$(api_code)" 410 "the superseded agent must not be allowed to publish"
   assert_equals "$(printf '%s' "$out" | jq -r '.error')" endpoint_superseded \
     "the refusal should tell that agent its name is served by another endpoint"
-  assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r \
-    '[.tasks[] | select(.label=="contested" and (.closed_at | not))] | length')" \
-    1 "only one endpoint may answer to that machine and label"
+  assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$second" \
+    '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
+    1 "the endpoint that holds the name should be the one still serving it"
   pass "hub: a returning agent whose name was taken is refused rather than revived"
 }
 
@@ -838,8 +858,8 @@ test_an_endpoint_runs_the_operators_own_shell_and_a_dead_one_is_refused
 test_the_status_channel_writes_on_the_owning_machine_only
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_a_kill_closes_an_endpoint_whose_agent_never_answers
-test_an_endpoint_whose_agent_goes_silent_stops_being_registered
-test_an_agent_that_comes_back_revives_its_endpoint
+test_a_worker_the_hub_has_not_heard_from_keeps_its_place
+test_an_agent_that_speaks_again_takes_the_presumption_back
 test_a_returning_agent_whose_name_was_taken_is_refused
 test_no_terminal_content_is_persisted_to_disk
 test_malformed_and_unknown_requests_are_refused
