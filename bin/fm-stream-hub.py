@@ -818,6 +818,10 @@ class Endpoint:
         # route. One agent owns one endpoint, so this is the precise reachability
         # signal; the machine-level one only groups the viewer.
         self.agent_seen_at = _now()
+        # Registering is not speaking. An agent proves it is there by polling
+        # for commands or publishing, and until it has, this record stands for
+        # nothing the hub has ever heard from.
+        self.heard_from = False
 
     def feed(self, data: bytes) -> None:
         with self.wake:
@@ -991,17 +995,21 @@ class Hub:
         """
         with self.lock:
             endpoint.agent_seen_at = _now()
+            endpoint.heard_from = True
             if not endpoint.presumed_gone:
                 return
             for other in self.endpoints.values():
                 if other is endpoint or other.closed_at:
                     continue
                 # A name contest is settled by which agent has proven itself
-                # REACHABLE, not by which record is newer. The endpoint here is
-                # reachable by definition - it is speaking - so only a
-                # contender the hub has heard from just as lately takes the
-                # name from it. A record with nothing behind it must never
-                # displace a worker that is publishing right now.
+                # REACHABLE, not by which record is newer or how lately one was
+                # created. The endpoint here is reachable by definition - it is
+                # speaking - so it yields only to a contender whose own agent
+                # has spoken, and lately. A record nothing has ever been heard
+                # from takes no name from a worker that is publishing now, at
+                # any age.
+                if not other.heard_from:
+                    continue
                 if other.agent_silent_for() > AGENT_SILENCE_PRESUMED_SECS:
                     continue
                 if other.machine == endpoint.machine and other.label == endpoint.label:

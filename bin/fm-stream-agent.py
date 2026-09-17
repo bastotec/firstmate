@@ -554,6 +554,11 @@ class Agent:
         agent that stops heartbeating makes its endpoint unreadable, never dead.
         """
         while not self.stop.wait(self.options.state_interval):
+            # Building the frame runs ps against the pty, so a stood-down agent
+            # must not reach it: it lives on for the worker's whole life, and
+            # nothing it builds would be published anyway.
+            if self.stood_down.is_set():
+                continue
             self._post_frames([self.state_frame()])
 
     # --- commands ---------------------------------------------------------

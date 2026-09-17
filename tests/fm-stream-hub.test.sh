@@ -675,6 +675,11 @@ test_a_returning_agent_whose_name_was_taken_is_refused() {
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$second" \
     '{endpoint_id: $id, machine: "box-a", label: "contested", cwd: "/tmp"}')" >/dev/null
   assert_equals "$(api_code)" 201 "the next attempt should claim the free label"
+  # Its agent speaks, which is what makes it a worker the hub has heard from
+  # rather than a record that merely exists.
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$second" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "the endpoint holding the name should be publishing"
   out=$(publish POST /v1/agent/frames "$(jq -nc --arg id "$first" \
     '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')")
   assert_equals "$(api_code)" 410 "the superseded agent must not be allowed to publish"
@@ -720,8 +725,9 @@ test_a_name_contest_is_settled_by_which_agent_is_heard_from() {
 test_a_publishing_worker_keeps_its_name_against_an_empty_record() {
   # The dangerous shape: a healthy worker loses contact briefly, the retry for
   # its task registers a second record under the same name, and THAT record is
-  # the one with nothing behind it. The worker that is actually publishing must
-  # keep the name - and whatever the contest decides, it must keep its worker.
+  # the one with nothing behind it - registered moments ago and never heard
+  # from since. The worker that is actually publishing must keep the name, and
+  # whatever the contest decides, it must keep its worker.
   start_hub liveness
   local endpoint agent empty out
   endpoint=$(start_agent box-a holder)
@@ -734,8 +740,10 @@ test_a_publishing_worker_keeps_its_name_against_an_empty_record() {
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$empty" --arg l "holder-$RUN" \
     '{endpoint_id: $id, machine: "box-a", label: $l, cwd: "/tmp"}')" >/dev/null
   assert_equals "$(api_code)" 201 "the retry should claim the freed name"
-  wait_until_quiet "$empty" || { kill -CONT "$agent"; fail "the empty record never went quiet"; }
-  # The real worker's agent comes back and publishes.
+  # The real worker's agent comes back WHILE that record is still fresh - well
+  # inside the window before the hub would presume anything about it. Freshness
+  # is not reachability: nothing has ever been heard from it, and a record like
+  # that takes no name from a worker that is publishing.
   kill -CONT "$agent" || fail "could not resume the agent"
   view POST "/v1/tasks/$endpoint/input" '{"text":"echo STILL-MINE","submit":true}' >/dev/null
   assert_equals "$(api_code)" 200 "the publishing worker should still take a steer"
