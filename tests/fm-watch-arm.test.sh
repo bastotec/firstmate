@@ -841,6 +841,133 @@ test_arm_refuses_an_unusable_launch_confirm_window() {
   pass "watch-arm: an unusable launch confirm window refuses to arm by name"
 }
 
+# RLIMIT_NPROC is the only portable way to make fork() fail on demand. Lowering it
+# binds the calling shell and everything it execs, and never touches a process that
+# is already running, so the probe below is safe to run inside a suite. A host that
+# does not enforce it (or will not let the soft limit down) cannot exercise the
+# case at all, and the test says so rather than passing silently over it.
+fork_limit_enforced() {
+  local out rc
+  out=$(bash -c 'ulimit -u 1 2>/dev/null || { printf nolimit; exit 0; }; probe=$(printf ok); printf "%s" "$probe"' 2>/dev/null)
+  rc=$?
+  case "$out" in
+    ok | nolimit) return 1 ;;
+  esac
+  [ "$rc" -ne 0 ]
+}
+
+# A machine that cannot create a process must not read as a broken installation.
+# The arm used to resolve its own directory with `$(cd "$(dirname ...)" && pwd)`;
+# both halves need fork(), so a refused fork left SCRIPT_DIR pointing at whatever
+# directory firstmate was standing in, and the run died naming a wake library with
+# no bin/ in its path and then an unbound STATE. Supervision was simply absent and
+# the captured output blamed the install. This drives the real arm with fork()
+# genuinely refused and asserts the arm names the resource cause, keeps the
+# misleading install wording out, and starts nothing.
+test_arm_reports_process_exhaustion_distinguishably() {
+  local dir home state armout status lock_pid
+  dir=$(make_case fork-exhaustion)
+  home="$dir/home"
+  state="$dir/state"
+  armout="$dir/arm.out"
+  mkdir -p "$home/data"
+
+  if ! fork_limit_enforced; then
+    pass "watch-arm: (not exercised) this host does not enforce a lowered RLIMIT_NPROC"
+    return 0
+  fi
+
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
+    bash -c 'ulimit -u 1; exec "$0"' "$WATCH_ARM" > "$armout" 2>&1
+  status=$?
+
+  grep -q '^watcher: FAILED' "$armout" \
+    || fail "a refused fork produced no watcher status line at all: $(cat "$armout")"
+  grep -qF 'out of process capacity' "$armout" \
+    || fail "the arm did not name the resource cause: $(cat "$armout")"
+  ! grep -qF 'No such file or directory' "$armout" \
+    || fail "a refused fork still reads as a missing file: $(cat "$armout")"
+  ! grep -qF 'unbound variable' "$armout" \
+    || fail "a refused fork still reads as an unbound variable: $(cat "$armout")"
+  ! grep -q '^watcher: FAILED - broken install' "$armout" \
+    || fail "a refused fork was reported as a broken install: $(cat "$armout")"
+  [ "$status" -eq 75 ] \
+    || fail "a refused fork exited $status, not the typed 75: $(cat "$armout")"
+  [ ! -e "$state/.last-watcher-beat" ] \
+    || fail "an arm that never bootstrapped still published a liveness beacon"
+  lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  [ -z "$lock_pid" ] || ! kill -0 "$lock_pid" 2>/dev/null \
+    || fail "an arm that never bootstrapped left pid $lock_pid running"
+  pass "watch-arm: a refused fork is reported as out of process capacity, not a broken install"
+}
+
+# A missing wake library is the OTHER reading of the same abort, and the two must
+# not be confused. Here the arm is genuinely alone in a directory, so it must say
+# the install is broken and name the file it could not load.
+test_arm_reports_a_missing_wake_library_as_a_broken_install() {
+  local dir home state lonely armout status
+  dir=$(make_case missing-wake-library)
+  home="$dir/home"
+  state="$dir/state"
+  lonely="$dir/lonely"
+  armout="$dir/arm.out"
+  mkdir -p "$home/data" "$lonely"
+  cp "$WATCH_ARM" "$lonely/fm-watch-arm.sh"
+
+  ( cd "$dir" && FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
+    ./lonely/fm-watch-arm.sh > "$armout" 2>&1 )
+  status=$?
+
+  grep -q '^watcher: FAILED - broken install' "$armout" \
+    || fail "a missing wake library was not reported as a broken install: $(cat "$armout")"
+  grep -qF "$lonely/fm-wake-lib.sh" "$armout" \
+    || fail "the refusal did not name the file it could not load: $(cat "$armout")"
+  ! grep -qF 'out of process capacity' "$armout" \
+    || fail "a broken install was blamed on process capacity: $(cat "$armout")"
+  [ "$status" -eq 78 ] \
+    || fail "a missing wake library exited $status, not the typed 78: $(cat "$armout")"
+  pass "watch-arm: a missing wake library is reported as a broken install, not a resource problem"
+}
+
+# The arm must resolve its OWN directory, not the caller's. The incident ran it
+# from the primary checkout and got a wake-library path with no bin/ segment, so
+# both shapes here are driven for real: an absolute invocation from a working
+# directory that is nowhere near the repository, and the incident's own shape - a
+# relative invocation made from the checkout root. Reaching the launch-window
+# validator's refusal by name is the proof, because that line can only be printed
+# after the wake library loaded and STATE was defined.
+test_arm_resolves_its_own_directory_from_a_foreign_working_directory() {
+  local dir home armout status shape cwd invocation
+  dir=$(make_case foreign-cwd)
+  home="$dir/home"
+  mkdir -p "$home/data"
+
+  for shape in absolute-from-elsewhere relative-from-checkout-root; do
+    armout="$dir/arm.$shape.out"
+    case "$shape" in
+      absolute-from-elsewhere) cwd="$dir"; invocation="$WATCH_ARM" ;;
+      *) cwd="$ROOT"; invocation="./bin/fm-watch-arm.sh" ;;
+    esac
+
+    ( cd "$cwd" && FM_HOME="$home" FM_STATE_OVERRIDE="$dir/state-$shape" \
+      FM_ARM_CONFIRM_TIMEOUT=5 FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=5s \
+      "$invocation" > "$armout" 2>&1 )
+    status=$?
+
+    ! grep -qF 'No such file or directory' "$armout" \
+      || fail "$shape: the arm looked for its library in the caller's directory: $(cat "$armout")"
+    ! grep -qF 'unbound variable' "$armout" \
+      || fail "$shape: the arm ran on without its library: $(cat "$armout")"
+    ! grep -q '^watcher: FAILED - broken install' "$armout" \
+      || fail "$shape: a working invocation was misread as a broken install: $(cat "$armout")"
+    grep -qF 'FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS' "$armout" \
+      || fail "$shape: the arm did not reach its own validation logic: $(cat "$armout")"
+    [ "$status" -ne 0 ] \
+      || fail "$shape: the arm reported success despite an unusable confirm window: $(cat "$armout")"
+  done
+  pass "watch-arm: the arm resolves its own directory from any working directory"
+}
+
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
 test_arm_refuses_an_unusable_launch_confirm_window
@@ -856,3 +983,6 @@ test_markerless_legacy_queue_is_recovered_on_arm
 test_handling_window_close_keeps_the_acknowledgement_valid
 test_moved_generation_acknowledgement_is_self_healing
 test_downtime_marker_does_not_follow_symlink
+test_arm_reports_process_exhaustion_distinguishably
+test_arm_reports_a_missing_wake_library_as_a_broken_install
+test_arm_resolves_its_own_directory_from_a_foreign_working_directory
