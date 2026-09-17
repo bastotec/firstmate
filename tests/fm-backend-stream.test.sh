@@ -480,6 +480,12 @@ test_a_create_that_times_out_leaves_nothing_behind() {
   URL=$real_url
   assert_equals "$(agent_pid_for "$label")" "" \
     "an abandoned create must leave no agent holding a shell: $out"
+  # The registration landed before the budget ran out, so the attempt owns a
+  # record - and it closes it on the way out. An open endpoint with no agent
+  # behind it is a worker the fleet listing reports and nobody can find.
+  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET /v1/tasks)" \
+    | jq -r '[.tasks[] | select(.closed_at | not)] | length')" 0 \
+    "an abandoned create must leave no open endpoint behind it"
   # The record the abandoned attempt left behind no longer owns the task id,
   # so the obvious next thing an operator does works rather than colliding
   # with a worker that never came up.
@@ -519,12 +525,12 @@ test_a_failed_create_leaves_another_homes_endpoint_alone() {
 test_a_hub_that_stays_slow_does_not_outlive_the_spawn() {
   # A hub that is prompt for the health check and the registration and then
   # goes slow, on the last call before the ready file and on everything after
-  # it. The whole attempt - the hub calls, tearing the pty down, and the frame
-  # that would close a half-registered endpoint - is ONE budget: an abandonment
-  # that borrowed a fresh one would still be calling the hub long after
-  # fm-spawn refused the task, holding a shell nobody is watching. The closing
-  # frame is a courtesy and is skipped when the clock is spent; giving up
-  # inside the window is what has to hold.
+  # it. An abandonment that borrowed a fresh budget would still be calling the
+  # hub long after fm-spawn refused the task, holding a shell nobody is
+  # watching. The frame that closes a half-registered endpoint is always
+  # attempted - an agent can always close the record it holds - but it is
+  # bounded tightly enough that a hub which never answers cannot stretch the
+  # attempt past the window. Giving up inside that window is what has to hold.
   start_case_hub staysslow
   local label out real_url
   label="fm-staysslow-$$"

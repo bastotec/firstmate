@@ -907,6 +907,50 @@ test_a_superseded_agent_still_closes_its_own_record() {
   pass "hub: an agent that lost its name can still close out the record it holds"
 }
 
+test_a_stood_down_agent_still_closes_the_record_it_holds() {
+  # Standing down means an agent stops claiming the name and stops taking
+  # commands. It does not mean it stops being able to report that its own
+  # endpoint finished: the worker it kept alive eventually exits, and if that
+  # close cannot be posted the fleet lists a live worker for a process that is
+  # gone.
+  start_hub standdown
+  local endpoint agent child taker closed waited=0
+  endpoint=$(start_agent box-a survivor)
+  agent=$(agent_pid_for box-a survivor)
+  [ -n "$agent" ] || fail "the agent should be running"
+  child=$(pgrep -P "$agent" 2>/dev/null | head -1)
+  [ -n "$child" ] || fail "the agent should own a worker"
+  kill -STOP "$agent" || fail "could not pause the agent"
+  wait_until_quiet "$endpoint" || { kill -CONT "$agent"; fail "the hub kept hearing from the paused agent"; }
+  # The retry for that task takes the name, and its agent is heard from.
+  taker=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$taker" --arg l "survivor-$RUN" \
+    '{endpoint_id: $id, machine: "box-a", label: $l, cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the retry should claim the freed name"
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$taker" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "the retry's agent should hold the name"
+  kill -CONT "$agent" || fail "could not resume the agent"
+  # The returning agent is refused and stands down - it goes quiet again while
+  # its worker keeps running, which is how the stand-down shows from here.
+  wait_until_quiet "$endpoint" || fail "the superseded agent should have stopped publishing"
+  [ -n "$(pgrep -P "$agent" 2>/dev/null)" ] \
+    || fail "standing down must not stop the worker"
+  # That worker now exits on its own, and the agent that lost the name still
+  # has a record to close out.
+  kill -KILL "$child" || fail "could not end the worker"
+  while [ "$waited" -lt 250 ]; do
+    closed=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')
+    [ "$closed" = 0 ] && break
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  assert_equals "$closed" 0 \
+    "a stood-down agent must still close out its own record when its worker exits"
+  pass "hub: a stood-down agent still closes the record it holds"
+}
+
 test_no_terminal_content_is_persisted_to_disk() {
   start_hub persistence
   local endpoint hits
@@ -1102,6 +1146,7 @@ test_a_publishing_worker_keeps_its_name_against_an_empty_record
 test_a_worker_that_loses_its_name_keeps_its_worker
 test_a_silent_record_is_contested_even_when_nothing_reaped
 test_a_superseded_agent_still_closes_its_own_record
+test_a_stood_down_agent_still_closes_the_record_it_holds
 test_no_terminal_content_is_persisted_to_disk
 test_malformed_and_unknown_requests_are_refused
 test_the_viewer_is_static_and_carries_no_terminal_content

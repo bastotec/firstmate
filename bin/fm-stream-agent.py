@@ -153,8 +153,9 @@ def _ps_args(pid: str, until=None) -> str:
 # nobody waits for. Two things on the abandonment path sit outside the clock
 # and are known to: pty.close() can spend ~5s waiting for the process group to
 # go, so an abandonment can finish after the adapter's window; and the frame
-# that closes a half-registered endpoint runs on whatever is left and is
-# skipped when nothing is, because the registration is what has to succeed.
+# that closes a half-registered endpoint is not refused by a spent budget - an
+# agent can always close out the record it holds - and instead runs on a short
+# ordinary timeout, so an abandonment still finishes inside the window.
 STARTUP_BUDGET = 12.0
 
 
@@ -495,7 +496,11 @@ class Agent:
     # --- publishing -------------------------------------------------------
 
     def _post_frames(self, frames: list) -> None:
-        if self.stood_down.is_set():
+        # A closing frame is a statement about the record this agent already
+        # holds, not a claim on the name, so standing down never swallows it:
+        # an endpoint left open with no agent behind it is exactly what the
+        # stand-down rule is there to avoid.
+        if self.stood_down.is_set() and not any(f.get("closed") for f in frames):
             return
         try:
             self.hub.call("POST", "/v1/agent/frames",
@@ -752,17 +757,22 @@ def build_parser() -> argparse.ArgumentParser:
 def _abandon_startup(pty, hub, options, endpoint_id: str) -> None:
     """End a worker whose startup never reached readiness, record and all.
 
-    The registration may have been recorded before startup ran out, so the
-    endpoint is closed on the way out. A live endpoint nobody owns would refuse
-    the next attempt at the same task with duplicate_label.
+    The registration may have been recorded before startup ran out, which is
+    the case this exists for, so the startup clock is put down before the close
+    is posted: a budget that is spent by construction would otherwise refuse
+    the one call that clears the record. A live endpoint nobody owns would
+    refuse the next attempt at the same task with duplicate_label. The close
+    gets a short timeout of its own so the abandonment still finishes well
+    inside the window the spawn waits.
     """
     pty.close()
     pty.release()
+    hub.end_startup()
     try:
         hub.call("POST", "/v1/agent/frames", {
             "machine": options.machine,
             "frames": [{"endpoint_id": endpoint_id, "closed": True, "exit_code": None}],
-        })
+        }, timeout=2.0)
     except RuntimeError:
         pass
 
