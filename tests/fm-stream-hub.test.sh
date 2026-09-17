@@ -107,15 +107,18 @@ api_code() {
 
 # start_agent <machine> <label> [status-path] -> endpoint id
 # A real agent owning a real pty, exactly as a spawn would start it.
+AGENT_SEQ=0
 start_agent() {  # <machine> <label> [status-path]
-  local machine=$1 label=$2 status=${3:-} ready pid waited=0 got_machine endpoint
-  ready="$CASE_DIR/agent-$machine-$label.ready"
+  local machine=$1 label=$2 status=${3:-} ready log pid waited=0 got_machine endpoint
+  AGENT_SEQ=$((AGENT_SEQ + 1))
+  ready="$CASE_DIR/agent-$machine-$label-$AGENT_SEQ.ready"
+  log="$CASE_DIR/agent-$machine-$label-$AGENT_SEQ.log"
   rm -f "$ready"
   mkdir -p "$CASE_DIR/cwd"
   python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
     --machine "$machine" --label "$label-$RUN" --cwd "$CASE_DIR/cwd" \
     --status-path "$status" --ready-file "$ready" --state-interval 1 --poll-secs 3 \
-    > "$CASE_DIR/agent-$machine-$label.log" 2>&1 &
+    > "$log" 2>&1 &
   pid=$!
   disown "$pid" 2>/dev/null || true
   fm_test_track_helper_pid "$pid"
@@ -124,7 +127,7 @@ start_agent() {  # <machine> <label> [status-path]
     sleep 0.1
     waited=$((waited + 1))
   done
-  [ -s "$ready" ] || fail "agent did not register for $machine/$label: $(cat "$CASE_DIR/agent-$machine-$label.log" 2>/dev/null)"
+  [ -s "$ready" ] || fail "agent did not register for $machine/$label: $(cat "$log" 2>/dev/null)"
   read -r got_machine endpoint < "$ready"
   printf '%s' "$endpoint"
 }
@@ -752,7 +755,74 @@ test_a_publishing_worker_keeps_its_name_against_an_empty_record() {
   assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
     '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
     1 "the publishing worker should still be listed"
+  # Now the mirror of that exchange, which is where two workers behind one
+  # identity used to become permanent: the record that never spoke speaks for
+  # the FIRST time, with the worker it shares a name with live and publishing.
+  # It loses the same contest, decided by the same rule, and the name still has
+  # exactly one worker behind it.
+  out=$(publish POST /v1/agent/frames "$(jq -nc --arg id "$empty" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')")
+  assert_equals "$(api_code)" 410 \
+    "a record speaking for the first time must not publish under a live worker's name"
+  assert_equals "$(printf '%s' "$out" | jq -r '.error')" endpoint_superseded \
+    "it should be told the name is served by another endpoint"
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$(python3 -c 'import os; print(os.urandom(16).hex())')" \
+    --arg l "holder-$RUN" '{endpoint_id: $id, machine: "box-a", label: $l, cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 409 \
+    "the name should still be held by the worker that won it"
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo STILL-MINE-AFTER","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 "the winning worker should keep taking steers"
+  wait_for_capture "$endpoint" STILL-MINE-AFTER \
+    || fail "the worker that won the contest should still own its pty"
   pass "hub: a publishing worker keeps its name against a record nothing stands behind"
+}
+
+test_a_worker_that_loses_its_name_keeps_its_worker() {
+  # The other ordering, with a real worker on each side: the newer record is
+  # the one that has been heard from, and the older agent comes back to find
+  # its name taken. The same rule decides it - the name goes to the agent most
+  # recently proven reachable - and the agent that loses stands down without
+  # taking its pty with it.
+  start_hub mirror
+  local first second first_agent out waited=0
+  first=$(start_agent box-a rival)
+  first_agent=$(agent_pid_for box-a rival)
+  [ -n "$first_agent" ] || fail "the first agent should be running"
+  kill -STOP "$first_agent" || fail "could not pause the first agent"
+  wait_until_quiet "$first" || { kill -CONT "$first_agent"; fail "the hub kept hearing from the paused agent"; }
+  # The retry for that task brings up a real worker under the same name, and
+  # its agent is heard from at once.
+  second=$(start_agent box-a rival)
+  [ "$second" != "$first" ] || fail "the retry should be a new endpoint"
+  kill -CONT "$first_agent" || fail "could not resume the first agent"
+  # The returning agent is refused rather than allowed to publish into a fleet
+  # where its name means someone else.
+  out=$(publish POST /v1/agent/frames "$(jq -nc --arg id "$first" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')")
+  assert_equals "$(api_code)" 410 "the returning agent must not publish under the taken name"
+  assert_equals "$(printf '%s' "$out" | jq -r '.error')" endpoint_superseded \
+    "it should be told the name is served by another endpoint"
+  # Exactly one worker answers to the name, and it is the one that was heard
+  # from: it publishes and it steers.
+  view POST "/v1/tasks/$second/input" '{"text":"echo NAME-IS-MINE","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 "the worker that holds the name should take a steer"
+  wait_for_capture "$second" NAME-IS-MINE \
+    || fail "the worker that holds the name should be running its own pty"
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$(python3 -c 'import os; print(os.urandom(16).hex())')" \
+    --arg l "rival-$RUN" '{endpoint_id: $id, machine: "box-a", label: $l, cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 409 "no third record should be able to claim the held name"
+  # And the loser's worker is untouched: its agent is still alive and still has
+  # its pty child, because standing down is not killing.
+  while [ "$waited" -lt 50 ]; do
+    kill -0 "$first_agent" 2>/dev/null || break
+    [ -n "$(pgrep -P "$first_agent" 2>/dev/null)" ] || break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  kill -0 "$first_agent" 2>/dev/null || fail "the losing agent should stand down, not exit"
+  [ -n "$(pgrep -P "$first_agent" 2>/dev/null)" ] \
+    || fail "the losing agent should keep its worker rather than close its pty"
+  pass "hub: the agent that loses a name contest stands down and keeps its worker"
 }
 
 test_no_terminal_content_is_persisted_to_disk() {
@@ -947,6 +1017,7 @@ test_an_agent_that_speaks_again_takes_the_presumption_back
 test_a_returning_agent_whose_name_was_taken_is_refused
 test_a_name_contest_is_settled_by_which_agent_is_heard_from
 test_a_publishing_worker_keeps_its_name_against_an_empty_record
+test_a_worker_that_loses_its_name_keeps_its_worker
 test_no_terminal_content_is_persisted_to_disk
 test_malformed_and_unknown_requests_are_refused
 test_the_viewer_is_static_and_carries_no_terminal_content

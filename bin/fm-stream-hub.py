@@ -985,40 +985,43 @@ class Hub:
                 self.agent_spoke(endpoint)
 
     def agent_spoke(self, endpoint: "Endpoint") -> None:
-        """The owning agent is back, so a presumption that it was gone yields.
+        """The owning agent is heard from, and its claim to the name is tested.
 
-        Taking the presumption back costs nothing when the identity is still
-        this endpoint's. When it is not - another endpoint answers to this
-        machine and label - this agent is the lost one, and it is told so
-        rather than allowed to publish into a fleet where its name means
-        someone else.
+        Two records can only share one machine and label while the hub has
+        given up on one of them, so the claim is tested at exactly the two
+        moments that shape can be entered from: a record the hub had presumed
+        gone speaking again, and a record speaking for the very first time.
+        Testing both is what makes the rule the same rule whichever agent
+        speaks first - there is no order of events that leaves two open
+        records answering to one name, and none that decides it one way and
+        its mirror the other.
         """
         with self.lock:
+            contested = endpoint.presumed_gone or not endpoint.heard_from
+            if contested:
+                for other in self.endpoints.values():
+                    if other is endpoint or other.closed_at:
+                        continue
+                    # The name goes to whichever agent has most recently proven
+                    # itself REACHABLE, not to whichever record is newer or was
+                    # created more lately. Registering is not proof: a record
+                    # nothing has ever been heard from takes no name from a
+                    # worker that is publishing now, at any age.
+                    if not other.heard_from:
+                        continue
+                    if other.agent_silent_for() > AGENT_SILENCE_PRESUMED_SECS:
+                        continue
+                    if other.machine == endpoint.machine and other.label == endpoint.label:
+                        raise HubError(HTTPStatus.GONE, "endpoint_superseded",
+                                       "machine %s serves %s from another endpoint, "
+                                       "not from %s"
+                                       % (endpoint.machine, endpoint.label,
+                                          endpoint.endpoint_id))
+                endpoint.presumed_gone = False
+            # A loser never counts as reachable, so it cannot go on to unseat
+            # the endpoint that just beat it.
             endpoint.agent_seen_at = _now()
             endpoint.heard_from = True
-            if not endpoint.presumed_gone:
-                return
-            for other in self.endpoints.values():
-                if other is endpoint or other.closed_at:
-                    continue
-                # A name contest is settled by which agent has proven itself
-                # REACHABLE, not by which record is newer or how lately one was
-                # created. The endpoint here is reachable by definition - it is
-                # speaking - so it yields only to a contender whose own agent
-                # has spoken, and lately. A record nothing has ever been heard
-                # from takes no name from a worker that is publishing now, at
-                # any age.
-                if not other.heard_from:
-                    continue
-                if other.agent_silent_for() > AGENT_SILENCE_PRESUMED_SECS:
-                    continue
-                if other.machine == endpoint.machine and other.label == endpoint.label:
-                    raise HubError(HTTPStatus.GONE, "endpoint_superseded",
-                                   "endpoint %s was presumed gone and machine %s "
-                                   "now serves %s from another endpoint"
-                                   % (endpoint.endpoint_id, endpoint.machine,
-                                      endpoint.label))
-            endpoint.presumed_gone = False
 
     def list_machines(self) -> list:
         """A snapshot of the machines, taken under the lock like list_endpoints.
