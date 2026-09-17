@@ -377,7 +377,10 @@ STUB
 
     # A promoted scout edits code beside other running ships, so it must receive
     # the same cross-worker awareness section a briefed ship gets - byte-identical,
-    # because a second copy of this contract is how the two drift apart.
+    # because a second copy of this contract is how the two drift apart. The
+    # section's own wording is asserted once, against the generated brief, in
+    # tests/fm-brief.test.sh; this comparison is what carries it to the promoted
+    # worker, so drift fails there or here rather than in a third copy.
     brief_concurrent="$TMP_ROOT/promote-dod/brief-concurrent-$id"
     delivered_concurrent="$TMP_ROOT/promote-dod/delivered-concurrent-$id"
     concurrent_section "$home/data/$id/brief.md" > "$brief_concurrent"
@@ -386,20 +389,6 @@ STUB
       || fail "$mode: promoted worker did not receive the concurrent-work section"
     cmp -s "$brief_concurrent" "$delivered_concurrent" \
       || fail "$mode: promotion and ordinary brief generation delivered different concurrent-work sections"
-    assert_grep "awareness, not a hold" "$payload" \
-      "$mode: promoted worker was not told the concurrent-work notice is not a hold"
-    assert_grep "rebase onto the updated default branch" "$payload" \
-      "$mode: promoted worker was not told to rebase rather than design around other work"
-    assert_grep "never during an active run" "$payload" \
-      "$mode: promoted worker was not kept from rebasing under an active validation run"
-    assert_grep "A mid-task \`done:\` you continue past leaves that window open" "$payload" \
-      "$mode: promoted worker's rebase window closes on a nonterminal done line"
-    assert_grep "the final \`done:\` line your Definition of done ends on" "$payload" \
-      "$mode: promoted worker was not told the handoff keys to its terminal done line"
-    assert_grep "a steer asking you to rebase after that final \`done:\` is not grounds to decline" "$payload" \
-      "$mode: promoted worker may decline the rebase firstmate steers it back for"
-    assert_grep "instead of resolving it yourself" "$payload" \
-      "$mode: promoted worker was not told to hand a semantic conflict back"
   done
 
   payload="$TMP_ROOT/promote-dod/payload-promote-dod-no-mistakes"
