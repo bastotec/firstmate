@@ -90,7 +90,7 @@ You may not be the only worker on this project.
 When other work touches your area, firstmate names that work and what it touches - in the task above, or through the instruction inbox - and tells those workers about you.
 That notice is awareness, not a hold: keep going, and rebase onto the updated default branch once the other change lands rather than designing around it, waiting for it, or narrowing your own change to avoid it.
 Rebase only while the branch is still yours to rewrite: before you start a validation run or between runs, never during an active run, because the pipeline owns your branch while it is running.
-A mid-task `done:` you continue past leaves that window open; once you have reported the final `done:` line your Definition of done ends on, you have stopped, so getting the branch current from there is firstmate's to own rather than a reason to resume.
+A mid-task `done:` you continue past leaves that window open; once you have reported the final `done:` line your Definition of done ends on, you have stopped, so getting the branch current from there is firstmate's to own rather than a reason to resume, and when firstmate does steer you back to rebase, rebase - that is not grounds to decline or to open a decision.
 Two edits in one file are an ordinary rebase; a genuine semantic conflict - two changes that cannot both be true - is firstmate's call, so append `needs-decision: {the two changes and why they cannot both hold}` and stop instead of resolving it yourself.
 EOF
 }

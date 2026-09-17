@@ -924,6 +924,8 @@ test_ship_brief_carries_cross_worker_awareness() {
       "$id: concurrent-work section closes the rebase window on a nonterminal done line"
     assert_grep "the final \`done:\` line your Definition of done ends on" "$brief" \
       "$id: concurrent-work section no longer keys the post-done handoff to the terminal done line"
+    assert_grep "when firstmate does steer you back to rebase, rebase" "$brief" \
+      "$id: post-done handoff lets a steered worker decline the rebase firstmate asked for"
     assert_grep "two changes that cannot both be true" "$brief" \
       "$id: concurrent-work section lost the semantic-conflict definition"
     assert_grep "instead of resolving it yourself" "$brief" \

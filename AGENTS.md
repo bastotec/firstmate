@@ -319,7 +319,7 @@ Serialize only for a true semantic dependency, shared mutable external state, in
 Before spawning, check the work already in flight for the same problem, not just the same area: when the request is the same change a running task is already making, fold it into that task or stop, rather than dispatching a second worker to solve it again and notifying both.
 Whenever work you dispatch touches an area another task is already working, say so in both directions before the new worker starts, and again whenever a new overlap appears mid-flight: name the other work and the files or subsystem it touches, both to the new worker and to every running worker it overlaps.
 That notice is awareness rather than a hold, because the ship brief carries the worker's own half of the contract - rebase rather than design around the other change, and report a genuine semantic conflict instead of resolving it.
-A worker rebases only while its branch is still its own to rewrite, so a change that lands during its active validation run or after its final `done:` is yours to get current through the approved merge path or by steering or relaunching the worker, never by running a rebase in its worktree yourself.
+A worker rebases only while its branch is still its own to rewrite, so a change that lands during its active validation run or after its final `done:` is yours to get current by steering or relaunching the worker, never by running a rebase in its worktree yourself.
 A semantic conflict a worker reports is yours to decide or escalate, never to hand back.
 Write the task-specific brief under section 11 before spawning.
 Fill the task subsections according to section 11.

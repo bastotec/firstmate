@@ -396,6 +396,8 @@ STUB
       "$mode: promoted worker's rebase window closes on a nonterminal done line"
     assert_grep "the final \`done:\` line your Definition of done ends on" "$payload" \
       "$mode: promoted worker was not told the handoff keys to its terminal done line"
+    assert_grep "when firstmate does steer you back to rebase, rebase" "$payload" \
+      "$mode: promoted worker may decline the rebase firstmate steers it back for"
     assert_grep "instead of resolving it yourself" "$payload" \
       "$mode: promoted worker was not told to hand a semantic conflict back"
   done
