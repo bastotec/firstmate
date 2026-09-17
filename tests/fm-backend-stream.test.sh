@@ -372,6 +372,37 @@ test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers() {
   pass "stream: a spawned agent's diagnostics stop accumulating once it has registered"
 }
 
+test_a_create_that_times_out_leaves_nothing_behind() {
+  # The half that matters most after a spawn is abandoned: the hub must not be
+  # left holding a live endpoint under that label. Nothing else can clear one -
+  # the agent is gone, and its registration would refuse every later attempt at
+  # the same task as a duplicate - so a failed create has to leave the fleet as
+  # it found it, and the operator's immediate retry has to work.
+  start_case_hub createtimeout --command-ack-secs 2
+  local label out real_url target
+  label="fm-slowhub-$$"
+  start_slow_stand_in 3
+  real_url=$URL
+  URL=$SLOW_URL
+  if out=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" 2>&1); then
+    URL=$real_url
+    fail "a create against a hub that answers too late should be refused, got '$out'"
+  fi
+  URL=$real_url
+  assert_equals "$(agent_pid_for "$label")" "" \
+    "an abandoned create must leave no agent holding a shell: $out"
+  assert_equals "$(printf '%s' "$(with_stream_env fm_backend_stream_api GET /v1/tasks)" \
+    | jq -r --arg l "$label" '[.tasks[] | select(.label==$l and (.closed_at | not))] | length')" \
+    0 "an abandoned create must leave no live endpoint registered"
+  # And the obvious next thing an operator does works.
+  target=$(create_endpoint "$label")
+  case "$target" in
+    *:[0-9a-f]*) ;;
+    *) fail "retrying the same task after a timed-out create should succeed, got '$target'" ;;
+  esac
+  pass "stream: a create that times out leaves no agent and no endpoint, and the retry succeeds"
+}
+
 test_a_hub_that_stays_slow_does_not_outlive_the_spawn() {
   # A hub that is prompt for the health check and the registration and then
   # goes slow, on the last call before the ready file and on everything after
@@ -656,6 +687,7 @@ test_status_return_channel_appends_on_the_owning_machine
 test_a_target_from_another_hub_is_refused
 test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error
 test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers
+test_a_create_that_times_out_leaves_nothing_behind
 test_a_hub_that_stays_slow_does_not_outlive_the_spawn
 test_a_slow_but_answering_hub_still_spawns
 test_a_hung_process_probe_cannot_outlive_the_startup_budget

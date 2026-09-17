@@ -144,16 +144,17 @@ def _ps_args(pid: str, until=None) -> str:
     return proc.stdout.decode("utf-8", "replace").strip()
 
 
-# The agent's whole startup attempt - every blocking operation from launch to
-# either the ready-file write or a finished abandonment, hub calls and the
-# subprocesses that read the endpoint's own state alike - runs against ONE
-# clock, so an operation added to that path is bounded by it without anyone
+# Every hub call on the startup path, and every subprocess that reads the
+# endpoint's own state for the first frame, runs against ONE clock, so an
+# operation of either kind added to that path is bounded by it without anyone
 # remembering to bound it. The budget is strictly under the window the adapter
 # waits for the ready file, so an agent that cannot come up has already given
 # up by the time the spawn abandons it rather than registering an endpoint
-# nobody waits for. The frame that closes a half-registered endpoint runs on
-# whatever is left of the clock and is skipped when nothing is: it makes the
-# next attempt tidier, while the registration is what has to succeed.
+# nobody waits for. Two things on the abandonment path sit outside the clock
+# and are known to: pty.close() can spend ~5s waiting for the process group to
+# go, so an abandonment can finish after the adapter's window; and the frame
+# that closes a half-registered endpoint runs on whatever is left and is
+# skipped when nothing is, because the registration is what has to succeed.
 STARTUP_BUDGET = 12.0
 
 
@@ -386,7 +387,6 @@ class HubClient:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.deadline = None
-        self._abandon_deadline = None
 
     def begin_startup(self) -> None:
         """Start the one clock every startup operation is bounded by."""

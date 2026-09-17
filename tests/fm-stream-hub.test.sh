@@ -520,6 +520,31 @@ test_kill_closes_the_exact_endpoint_and_leaves_its_sibling() {
   pass "hub: kill closes the exact endpoint and leaves its sibling running"
 }
 
+test_a_kill_closes_an_endpoint_whose_agent_never_answers() {
+  # Lifecycle point four is killing the exact endpoint, and an endpoint whose
+  # agent is gone is precisely when an operator reaches for it. Answering "the
+  # agent did not acknowledge" and leaving the endpoint live kills nothing, and
+  # the registration then refuses its own label for as long as the hub runs.
+  start_hub deadkill --command-ack-secs 2
+  local endpoint payload out
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  payload=$(jq -nc --arg id "$endpoint" \
+    '{endpoint_id: $id, machine: "box-a", label: "abandoned", cwd: "/tmp"}')
+  publish POST /v1/agent/endpoints "$payload" >/dev/null
+  assert_equals "$(api_code)" 201 "the endpoint should register"
+  view DELETE "/v1/tasks/$endpoint" >/dev/null
+  assert_equals "$(api_code)" 200 "closing an endpoint with no agent behind it should answer"
+  out=$(view GET /v1/tasks)
+  assert_equals "$(printf '%s' "$out" | jq -r --arg id "$endpoint" \
+    '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')" \
+    0 "the endpoint must be closed, not left live for the label to collide on"
+  # And the label is free again, which is the whole point of closing it.
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$(python3 -c 'import os; print(os.urandom(16).hex())')" \
+    '{endpoint_id: $id, machine: "box-a", label: "abandoned", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the same label should register again once the endpoint is closed"
+  pass "hub: a kill closes an endpoint whose agent never answers"
+}
+
 test_no_terminal_content_is_persisted_to_disk() {
   start_hub persistence
   local endpoint hits
@@ -700,6 +725,7 @@ test_the_stream_replays_the_ring_then_delivers_live_frames
 test_an_endpoint_runs_the_operators_own_shell_and_a_dead_one_is_refused
 test_the_status_channel_writes_on_the_owning_machine_only
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
+test_a_kill_closes_an_endpoint_whose_agent_never_answers
 test_no_terminal_content_is_persisted_to_disk
 test_malformed_and_unknown_requests_are_refused
 test_the_viewer_is_static_and_carries_no_terminal_content

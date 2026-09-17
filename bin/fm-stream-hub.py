@@ -861,7 +861,6 @@ class Machine:
         self.name = name
         self.first_seen = _now()
         self.last_seen = _now()
-        self.agent_id = ""
         self.queue: list = []
         self.pending: dict = {}
 
@@ -869,7 +868,6 @@ class Machine:
         silent_for = max(0.0, _now() - self.last_seen)
         return {
             "machine": self.name,
-            "agent_id": self.agent_id,
             "first_seen": self.first_seen,
             "last_seen": self.last_seen,
             "silent_for_secs": round(silent_for, 3),
@@ -932,15 +930,13 @@ class Hub:
 
     # --- machines ---------------------------------------------------------
 
-    def touch_machine(self, name: str, agent_id: str = "") -> "Machine":
+    def touch_machine(self, name: str) -> "Machine":
         with self.lock:
             machine = self.machines.get(name)
             if machine is None:
                 machine = Machine(name)
                 self.machines[name] = machine
             machine.last_seen = _now()
-            if agent_id:
-                machine.agent_id = agent_id
             return machine
 
     def touch_endpoint(self, endpoint_id: str) -> None:
@@ -1375,15 +1371,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         hub = self.server.hub
         tail = path[len("/v1/agent/"):]
 
-        if tail == "hello" and method == "POST":
-            payload = self._body()
-            machine = str(payload.get("machine") or "")
-            if not MACHINE_RE.match(machine):
-                raise HubError(HTTPStatus.BAD_REQUEST, "bad_machine", "malformed machine name")
-            hub.touch_machine(machine, str(payload.get("agent_id") or ""))
-            self._json(HTTPStatus.OK, {"ok": True, "protocol": HUB_PROTOCOL})
-            return
-
         if tail == "endpoints" and method == "POST":
             endpoint = hub.register_endpoint(self._body())
             self._json(HTTPStatus.CREATED, {"ok": True, "endpoint": endpoint.describe()})
@@ -1468,7 +1455,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if tail == "" and method == "DELETE":
             self._require(CLASS_CONTROL, query)
             endpoint = hub.get(endpoint_id)
-            hub.submit_command(endpoint, "kill", {"signal": "TERM"})
+            try:
+                hub.submit_command(endpoint, "kill", {"signal": "TERM"})
+            except HubError as exc:
+                if exc.code != "no_agent_ack":
+                    raise
+                # An agent that never answers cannot be waited for, and a kill
+                # that leaves the endpoint live has killed nothing: the
+                # registration would go on refusing its own label as a
+                # duplicate for as long as the hub runs. The worker's own
+                # machine owns the process; this closes the hub's record of it.
+                endpoint.mark_closed(None)
             self._json(HTTPStatus.OK, {
                 "ok": True,
                 "closed": endpoint.endpoint_id,
@@ -1778,9 +1775,14 @@ WEB_UI = """<!DOCTYPE html>
           {headers: {"Authorization": "Bearer " + token}})
       .then(function (r) {
         return r.text().then(function (t) {
-          // A refusal is not terminal output. Painting a 404 body into the
-          // pane would read as something the worker printed.
-          if (!r.ok) { throw new Error(t.slice(0, 300)); }
+          // A refusal is not terminal output. Painting its body into the pane
+          // would read as something the worker printed, so only the hub's own
+          // message crosses over, exactly as api() reports a failure.
+          if (!r.ok) {
+            var message = "";
+            try { message = (JSON.parse(t) || {}).message || ""; } catch (e) { message = ""; }
+            throw new Error(message || ("HTTP " + r.status));
+          }
           return t;
         });
       })

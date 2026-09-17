@@ -270,7 +270,7 @@ fm_backend_stream_machine() {
 # and never sent to the hub, which is what lets a worker on any machine report
 # into its own home's records.
 fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
-  local label=$1 cwd=$2 status_path=${3:-} tag machine ready endpoint token_file agent_log reason
+  local label=$1 cwd=$2 status_path=${3:-} tag machine ready endpoint token_file agent_log reason orphan
   tag=$(fm_backend_stream_hub_tag) || return 1
   machine=$(fm_backend_stream_machine) || return 1
   ready=$(mktemp "${TMPDIR:-/tmp}/fm-stream-ready.XXXXXX") || return 1
@@ -302,6 +302,15 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
   if [ ! -s "$ready" ]; then
     reason=$(tail -n 1 "$agent_log" 2>/dev/null)
     rm -f "$ready" "$token_file" "$agent_log"
+    # The attempt may have registered before it gave up, and a live endpoint
+    # nobody owns would refuse the next attempt at this same task as a
+    # duplicate label. Close it here, where its machine and label are still
+    # known; the hub closes its record even though the agent cannot answer.
+    orphan=$(fm_backend_stream_api GET /v1/tasks 2>/dev/null | jq -r \
+      --arg m "$machine" --arg l "$label" \
+      'first(.tasks[]? | select(.machine == $m and .label == $l and (.closed_at | not)) | .endpoint_id) // empty') \
+      || orphan=""
+    [ -n "$orphan" ] && fm_backend_stream_api DELETE "/v1/tasks/$orphan" >/dev/null 2>&1
     if [ -n "$reason" ]; then
       echo "error: the stream agent refused to start an endpoint for '$label': $reason" >&2
     else
