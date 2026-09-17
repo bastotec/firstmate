@@ -378,6 +378,14 @@ fm_backend_stream_parse_target() {  # <target>
 # fm_backend_stream_target_ready: the endpoint exists on the configured hub and,
 # when an expected label is given, is the one that carries it. The label check
 # keeps a recycled or mistaken endpoint id from being steered as this task.
+#
+# This probe answers from the first reply and takes no grace window, because
+# its callers - capture, current-path, input - need an answer now and ask again
+# when refused. So its 404 can be transient: the hub's registry is in memory,
+# and after a hub restart every endpoint is unknown until its agent registers
+# again seconds later. Never treat a 404 here as authoritative absence; the
+# settled answer to that question is fm_backend_stream_agent_state's `missing`,
+# which is the verdict that outlasts the re-registration window.
 fm_backend_stream_target_ready() {  # <target> [expected-label]
   local target=$1 expected=${2:-} out label
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || return 1

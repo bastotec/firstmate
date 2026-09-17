@@ -61,7 +61,11 @@
 #     fm-classify-lib.sh's authoritative status_open_decisions fold and reconciled
 #     against current_state; hints.pending_decision and hints.blocked_event are
 #     booleans derived from that set.
-#     endpoint.exists is the cheap local backend endpoint-presence read.
+#     endpoint.exists is the cheap local backend endpoint-presence read. For a
+#     stream target it defers to endpoint.agent_state, the only read that waits
+#     out a hub restart: false requires the verdict `missing`, a verdict from a
+#     held record (alive, dead, ambiguous) makes it true, and a rejoin still in
+#     flight leaves it null rather than claiming absence.
 #     endpoint.agent_alive is populated for local secondmates only, where it is
 #     useful return-channel supervision data; remote secondmates use "unknown"
 #     without a probe, and other tasks use "not_checked".
@@ -664,6 +668,24 @@ prefetch_task_observations() {  # <meta> <id>
         alive|dead|missing|ambiguous|unreadable|unverified) : ;;
         *) agent_state=unreadable ;;
       esac
+      # A stream endpoint's 404 is not authoritative absence: the hub keeps its
+      # registry in memory, so every endpoint answers 404 between a hub restart
+      # and the agent registering itself again. The presence probe answers from
+      # the first reply, so only the agent-state verdict, which waits that
+      # window out, settles the question. alive, dead and ambiguous are
+      # verdicts the hub could only give from a record it holds, so the
+      # endpoint is there; `missing` is the 404 that kept being the answer, so
+      # it is really gone; anything else is a rejoin still in flight and the
+      # honest answer is that this snapshot does not know. Rendering the cheap
+      # 404 instead is what lists a worker that is alive and back in seconds as
+      # absent, in the same row that reports its agent alive.
+      if [ "$backend" = stream ] && [ "$endpoint_exists" = false ]; then
+        case "$agent_state" in
+          alive|dead|ambiguous) endpoint_exists=true ;;
+          missing) : ;;
+          *) endpoint_exists=null ;;
+        esac
+      fi
       if [ "$(meta_value "$meta" kind)" = secondmate ]; then
         case "$agent_state" in
           alive) agent_alive=alive ;;

@@ -321,6 +321,69 @@ test_a_restarting_hub_never_reads_as_a_missing_worker() {
   pass "stream: a hub restart is waited out rather than reported as a missing worker"
 }
 
+test_the_fleet_listing_never_calls_a_rejoining_worker_absent() {
+  # The listing an operator reads has two endpoint reads per row: the cheap
+  # presence probe, which answers from the first reply, and the recovery-grade
+  # agent-state verdict, which waits out a hub that restarted. During a rejoin
+  # they disagree, and the row must not be rendered from the cheap one - an
+  # `absent` row for a worker that is alive and back within seconds is exactly
+  # the report this change exists to eliminate, and `alive` plus `absent` in
+  # one row is a snapshot contradicting itself.
+  start_case_hub snapshot-rejoin
+  local id label target home out
+  id="snapshotrejoin-$$"
+  label="fm-$id"
+  target=$(create_endpoint "$label")
+  home="$CASE_DIR/home"
+  mkdir -p "$home/state" "$home/data" "$home/projects/$id"
+  fm_write_meta "$home/state/$id.meta" \
+    "backend=stream" \
+    "window=$target" \
+    "worktree=$home/projects/$id" \
+    "project=alpha" \
+    "harness=claude" \
+    "kind=ship" \
+    "mode=ship"
+
+  restart_case_hub
+
+  # The precondition this case is about: the hub has forgotten the endpoint and
+  # the presence probe says so, while the agent is still running and about to
+  # register itself again.
+  with_stream_env fm_backend_target_exists stream "$target" "$label" >/dev/null 2>&1 \
+    && fail "the restarted hub should not know the endpoint yet; the rejoin window was missed"
+
+  out=$(FM_HOME="$home" FM_ROOT="$ROOT" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_STREAM_HUB="$URL" FM_STREAM_TOKEN="$TOKEN" FM_STREAM_MACHINE=box-test \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json) \
+    || fail "the fleet snapshot failed while a worker was rejoining"
+  printf '%s' "$out" | jq -e --arg id "$id" '
+    [.tasks[] | select(.id == $id)] | length == 1
+  ' >/dev/null || fail "the snapshot should carry exactly one row for the rejoining task: $out"
+  local state status exists
+  state=$(printf '%s' "$out" | jq -r --arg id "$id" '.tasks[] | select(.id == $id) | .endpoint.agent_state')
+  status=$(printf '%s' "$out" | jq -r --arg id "$id" '.tasks[] | select(.id == $id) | .endpoint.status')
+  exists=$(printf '%s' "$out" | jq -r --arg id "$id" '.tasks[] | select(.id == $id) | .endpoint.exists')
+  assert_not_equals missing "$state" \
+    "a worker re-registering with its hub must never read missing"
+  [ "$status" != absent ] \
+    || fail "a worker rejoining its restarted hub must not be listed absent: $out"
+  [ "$exists" != false ] \
+    || fail "the row must not claim absence the settled verdict does not support: $out"
+  case "$state" in
+    alive|dead|ambiguous)
+      assert_equals true "$exists" \
+        "a verdict the hub gave from a held record means the endpoint is there" ;;
+  esac
+  # And the worker is still steerable under the identity it kept, which is what
+  # the listing is read to decide.
+  with_stream_env fm_backend_send_text_submit stream "$target" 'echo LISTED-AFTER-RESTART' 3 0.2 0.2 >/dev/null \
+    || fail "the dispatcher refused to steer the worker the listing kept"
+  wait_for_capture "$target" LISTED-AFTER-RESTART \
+    || fail "a steer for the worker the listing kept must reach its terminal"
+  pass "stream: the fleet listing waits out a rejoin rather than calling the worker absent"
+}
+
 test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale() {
   # Staleness governs live READINGS. An agent-reported close carries the exit
   # code the owning agent watched the worker produce, so it is a recorded event
@@ -981,6 +1044,7 @@ test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor
 test_agent_state_reads_the_foreground_process_not_the_screen
 test_agent_state_separates_missing_unreachable_and_partitioned
 test_a_restarting_hub_never_reads_as_a_missing_worker
+test_the_fleet_listing_never_calls_a_rejoining_worker_absent
 test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale
 test_a_forced_close_gives_way_to_the_agents_own_later_report
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling

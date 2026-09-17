@@ -67,6 +67,15 @@ def main() -> int:
     agent = agent_module.Agent(identity, hub, ExitedPty(), options.endpoint)
     # The state a long outage leaves: the last attempt failed, so the next one
     # is not due for a long time yet and the growth behind it is at its ceiling.
+    # Staging it means writing the agent's own pace fields, so prove they are
+    # still the agent's: a rename would otherwise create stray attributes here,
+    # leave the real pace unspent, and let this case pass without ever reaching
+    # the window the closing frame has to survive.
+    for attribute in ("_register_not_before", "_register_backoff"):
+        if not hasattr(agent, attribute):
+            raise SystemExit(
+                "fm-stream-agent.py no longer has Agent.%s; this case can no "
+                "longer stage a spent re-registration pace" % attribute)
     agent._register_not_before = time.monotonic() + options.pace_secs
     agent._register_backoff = agent_module.REREGISTER_BACKOFF_MAX
     agent._post_frames([{
