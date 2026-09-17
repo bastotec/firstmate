@@ -32,6 +32,9 @@ VIEW_ONLY_TOKEN="viewonly-$$"
 API_CODE_FILE=""
 CASE_DIR=""
 URL=""
+HUB_PID=""
+HUB_READY=""
+STUB_JOURNAL=""
 # Labels carry the pid of THIS run. An interrupted run leaves its agents
 # behind - they outlive the hub they published to - and a fixed label would
 # then let agent_pid_for resolve one of those leftovers, silencing a dead
@@ -44,6 +47,36 @@ cleanup_helpers() {
 }
 trap 'cleanup_helpers; fm_test_cleanup' EXIT INT TERM
 
+# spawn_hub <port> [extra hub args...] -> sets URL HUB_PID HUB_READY
+# One owner for starting a hub against the CURRENT case directory, and the only
+# one that does not retire what the case is already running. start_hub is that
+# plus a fresh case; the restart cases need this alone, because their agents
+# have to outlive the hub - outliving it is the property under test.
+spawn_hub() {
+  local port=$1
+  shift
+  local waited=0 host bound pid
+  HUB_READY="$CASE_DIR/ready"
+  rm -f "$HUB_READY"
+  python3 "$HUB" serve --bind 127.0.0.1 --port "$port" \
+    --token-file "$CASE_DIR/tokens" --ready-file "$HUB_READY" "$@" \
+    >> "$CASE_DIR/log" 2>&1 &
+  pid=$!
+  # Disowned so retiring the previous case's hub does not print a job-control
+  # "Killed" notice into this suite's output.
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$HUB_READY" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$HUB_READY" ] || fail "hub did not report ready on port $port: $(cat "$CASE_DIR/log" 2>/dev/null)"
+  read -r host bound < "$HUB_READY"
+  URL="http://$host:$bound"
+  HUB_PID=$pid
+}
+
 # start_hub <case-name> [extra hub args...] -> sets CASE_DIR URL
 # Publishing, operating, and watching get SEPARATE tokens in every case, so a
 # test that accidentally used the wrong one fails rather than passing on a
@@ -51,7 +84,6 @@ trap 'cleanup_helpers; fm_test_cleanup' EXIT INT TERM
 start_hub() {
   local name=$1
   shift
-  local ready waited=0 host port pid
   cleanup_helpers
   CASE_DIR="$TMP_ROOT/$name"
   mkdir -p "$CASE_DIR/state" "$CASE_DIR/cwd"
@@ -60,24 +92,24 @@ start_hub() {
   chmod 600 "$CASE_DIR/tokens"
   printf '%s\n' "$PUBLISH_TOKEN" > "$CASE_DIR/publish-token"
   chmod 600 "$CASE_DIR/publish-token"
-  ready="$CASE_DIR/ready"
-  python3 "$HUB" serve --bind 127.0.0.1 --port 0 \
-    --token-file "$CASE_DIR/tokens" --ready-file "$ready" "$@" \
-    > "$CASE_DIR/log" 2>&1 &
-  pid=$!
-  # Disowned so retiring the previous case's hub does not print a job-control
-  # "Killed" notice into this suite's output.
-  disown "$pid" 2>/dev/null || true
-  fm_test_track_helper_pid "$pid"
+  API_CODE_FILE="$CASE_DIR/http-code"
+  spawn_hub 0 "$@"
+}
+
+# restart_hub - stop this case's hub and bring one back at the SAME address,
+# which is what a restart means to an agent that never moved. Nothing else is
+# touched: the agents keep running, and what they do about the hub underneath
+# them is the whole of what these cases ask.
+restart_hub() {
+  local port=${URL##*:} waited=0
+  kill "$HUB_PID" 2>/dev/null
   while [ "$waited" -lt 100 ]; do
-    [ -s "$ready" ] && break
+    [ -e "$HUB_READY" ] || break
     sleep 0.1
     waited=$((waited + 1))
   done
-  [ -s "$ready" ] || fail "hub did not report ready for case $name: $(cat "$CASE_DIR/log" 2>/dev/null)"
-  read -r host port < "$ready"
-  URL="http://$host:$port"
-  API_CODE_FILE="$CASE_DIR/http-code"
+  [ -e "$HUB_READY" ] && fail "the hub did not stop when asked"
+  spawn_hub "$port"
 }
 
 # api prints the response body and records the HTTP status in a FILE rather than
@@ -1120,6 +1152,323 @@ test_the_viewer_keeps_the_send_box_disabled_for_a_closed_worker() {
   pass "hub: a resolved send never re-enables the box for a closed worker"
 }
 
+test_a_restarted_hub_gets_its_workers_back() {
+  # The fleet-wide orphan. The hub's endpoint registry is in memory, so a hub
+  # that restarts has never heard of any worker it was serving: every running
+  # agent publishes into a record that no longer exists and is refused. The
+  # cost of that used to be the whole fleet at once - every worker still
+  # running, every one of them absent from the listing and unsteerable, until
+  # someone went to its own machine and dealt with it there.
+  start_hub reregister
+  local endpoint status agent_pid listed="" typed="" waited=0
+  status="$CASE_DIR/state/comeback.status"
+  endpoint=$(start_agent box-a comeback "$status")
+  agent_pid=$(agent_pid_for box-a comeback)
+  [ -n "$agent_pid" ] || fail "the agent should be running"
+  # A steer BEFORE the restart, so the one after it compares against a worker
+  # that was demonstrably steerable rather than asserting into a vacuum.
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo BEFORE-RESTART","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 "the worker should be steerable before the restart"
+  wait_for_capture "$endpoint" BEFORE-RESTART || fail "the worker never ran the first steer"
+
+  restart_hub
+
+  # The endpoint comes back under the id it always had. A new id would list a
+  # worker while stranding every durable record that names this one - the
+  # task's own binding, its steering, its status channel - so the id is the
+  # assertion here, not merely that some row reappeared.
+  while [ "$waited" -lt 300 ]; do
+    listed=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')
+    [ "$listed" = 1 ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$listed" 1 \
+    "the worker should reappear in the fleet listing under the endpoint id it already had"
+  assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r '.tasks | length')" 1 \
+    "coming back must not leave a second record behind for the same worker"
+  # Back in the listing is not back: a record with no state frame behind it
+  # reads unreadable, and supervision can do nothing with that. Registering and
+  # publishing state are two calls, so a reader can catch the endpoint between
+  # them - this waits for the pair rather than asserting on whichever half a
+  # poll happened to land in.
+  local out stale=""
+  waited=0
+  while [ "$waited" -lt 200 ]; do
+    out=$(view GET "/v1/tasks/$endpoint/processes")
+    stale=$(printf '%s' "$out" | jq -r '.stale')
+    [ "$stale" = false ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$(api_code)" 200 "the recovered endpoint should answer a state read"
+  assert_equals "$stale" false \
+    "the recovered endpoint should become readable rather than staying a record with no state behind it"
+  assert_equals "$(printf '%s' "$out" | jq -r '.alive')" true \
+    "a readable recovered endpoint should carry the verdict that its worker is running"
+  # And steerable, which is the half an operator actually notices.
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo AFTER-RESTART","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 "the recovered worker should take a steer again"
+  wait_for_capture "$endpoint" AFTER-RESTART \
+    || fail "the recovered worker should run what is typed into it"
+  # It is the same worker throughout: nothing was restarted on this machine,
+  # which is what makes this a recovery rather than a replacement.
+  assert_equals "$(agent_pid_for box-a comeback)" "$agent_pid" \
+    "the worker and its agent should be the same ones that were running before the restart"
+  # The identity is whole, so the local status channel still reaches the task's
+  # own record - the one thing that kept working while the hub was gone.
+  view POST "/v1/tasks/$endpoint/status" '{"state":"working","note":"back after the restart"}' >/dev/null
+  assert_equals "$(api_code)" 200 "the recovered endpoint should take a status line"
+  waited=0
+  while [ "$waited" -lt 200 ]; do
+    typed=$(cat "$status" 2>/dev/null || true)
+    case $typed in *"back after the restart"*) break ;; esac
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_contains "$typed" "working: back after the restart" \
+    "the recovered endpoint should still report into its own task's status record"
+  pass "hub: a worker whose hub restarted comes back under its own endpoint id and steers again"
+}
+
+# worker_ended <agent-pid> - true once nothing under that agent is still
+# running. A child that has exited but not been reaped is a zombie, and a
+# PAUSED agent cannot reap anything, so "the process is still listed" is not
+# the question - "is any of it still running" is.
+worker_ended() {
+  local child state
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    state=$(ps -o stat= -p "$child" 2>/dev/null | tr -d ' ')
+    case $state in
+      ""|Z*) : ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for() {
+  # The other half of a restart: the worker did not survive it. Its agent has
+  # an exit code and a closing frame to deliver, and a hub that forgot the
+  # endpoint refuses that frame like any other. Dropping it would leave the
+  # task's end unrecorded - the one outcome worse than an unlisted worker,
+  # because nothing afterwards would ever ask again.
+  start_hub reregister-exit
+  local endpoint agent_pid waited=0 closed="" ended=""
+  endpoint=$(start_agent box-a departing)
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo STILL-HERE","submit":true}' >/dev/null
+  wait_for_capture "$endpoint" STILL-HERE || fail "the worker never ran before the restart"
+  agent_pid=$(agent_pid_for box-a departing)
+  [ -n "$agent_pid" ] || fail "the agent should be running"
+  # The agent is paused for the whole outage, so everything below happens while
+  # it cannot know any of it: that is what makes the recovery afterwards its
+  # own work rather than a lucky overlap with the hub coming back.
+  kill -STOP "$agent_pid" || fail "could not pause the agent"
+  restart_hub
+  # KILL, not TERM: the endpoint runs an interactive shell, and an interactive
+  # shell ignores TERM. A case that only asked politely would resume an agent
+  # whose worker never left and assert nothing at all.
+  pkill -KILL -P "$agent_pid" 2>/dev/null \
+    || { kill -CONT "$agent_pid"; fail "could not end the worker under its agent"; }
+  waited=0
+  while [ "$waited" -lt 100 ]; do
+    worker_ended "$agent_pid" && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  worker_ended "$agent_pid" \
+    || { kill -CONT "$agent_pid"; fail "the worker outlived the signal, so this case would prove nothing"; }
+  kill -CONT "$agent_pid" || fail "could not resume the agent"
+  waited=0
+  while [ "$waited" -lt 400 ]; do
+    ended=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+      '[.tasks[] | select(.endpoint_id==$id)] | first | .closed_by // ""')
+    [ -n "$ended" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$ended" agent \
+    "the exit its agent watched should reach the hub that came back, attributed to that agent"
+  closed=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+    '[.tasks[] | select(.endpoint_id==$id)] | first | .endpoint_id')
+  assert_equals "$closed" "$endpoint" \
+    "the closed record should be the endpoint the task always named"
+  pass "hub: a worker that exited while the hub was down still reports its end to the hub that returns"
+}
+
+# start_stub <case-name> [stub args...] -> sets CASE_DIR URL STUB_JOURNAL
+# The re-registration pacing and refusal cases need a hub that keeps saying one
+# exact thing; tests/assets/stream-hub-stub.py owns what it answers and why a
+# real hub cannot be asked to do it.
+start_stub() {
+  local name=$1
+  shift
+  local ready waited=0 host port pid
+  cleanup_helpers
+  CASE_DIR="$TMP_ROOT/$name"
+  mkdir -p "$CASE_DIR/state" "$CASE_DIR/cwd"
+  printf '%s\n' "$PUBLISH_TOKEN" > "$CASE_DIR/publish-token"
+  chmod 600 "$CASE_DIR/publish-token"
+  API_CODE_FILE="$CASE_DIR/http-code"
+  STUB_JOURNAL="$CASE_DIR/journal"
+  ready="$CASE_DIR/stub-ready"
+  rm -f "$ready" "$STUB_JOURNAL"
+  python3 "$ROOT/tests/assets/stream-hub-stub.py" --port 0 --ready-file "$ready" \
+    --journal "$STUB_JOURNAL" "$@" > "$CASE_DIR/log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$ready" ] || fail "the hub stand-in did not bind for case $name: $(cat "$CASE_DIR/log" 2>/dev/null)"
+  read -r host port < "$ready"
+  URL="http://$host:$port"
+}
+
+# registrations - the journal's RE-registration attempts, one timestamp a line.
+# The first registration in the journal is the agent's startup, which nothing
+# here is about: counting it would read the gap between coming up and the first
+# recovery as an agent that failed to pace itself.
+registrations() {
+  grep -F 'POST /v1/agent/endpoints' "$STUB_JOURNAL" 2>/dev/null | tail -n +2 | awk '{print $1}'
+}
+
+# hub_requests - every request the agent has made, of any kind.
+hub_requests() {
+  grep -c . "$STUB_JOURNAL" 2>/dev/null || true
+}
+
+test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub() {
+  # A hub that has forgotten an endpoint and cannot take it back is the shape
+  # of a hub mid-restart, flapping, or refusing for a reason of its own. Every
+  # frame an agent publishes discovers the same thing, from three threads, for
+  # as long as it lasts - so without a floor under the attempts, one stranded
+  # worker becomes a hot loop and a stranded FLEET becomes a denial of service
+  # against the hub it is waiting for.
+  start_stub reregister-backoff --accept-registrations 1 --frames-ok-first 1
+  local status log attempts count previous gap smallest=""
+  status="$CASE_DIR/state/paced.status"
+  log="$CASE_DIR/agent.log"
+  python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+    --machine box-a --label "paced-$RUN" --cwd "$CASE_DIR/cwd" \
+    --status-path "$status" --ready-file "$CASE_DIR/paced.ready" \
+    --state-interval 0.5 --poll-secs 3 > "$log" 2>&1 &
+  local pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  local waited=0
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$CASE_DIR/paced.ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$CASE_DIR/paced.ready" ] || fail "the agent never registered against the stand-in: $(cat "$log")"
+  # Long enough for an unpaced agent to make dozens of attempts: the heartbeat
+  # alone is twice a second, and the worker's own output adds more.
+  sleep 10
+  attempts=$(registrations)
+  count=$(printf '%s\n' "$attempts" | grep -c . || true)
+  [ "$count" -ge 2 ] || fail "the agent should keep trying to come back, but attempted $count times"
+  [ "$count" -le 6 ] || fail "the agent attempted to re-register $count times in ten seconds, which is a hot loop"
+  # The floor is the property, not the count: no two attempts closer together
+  # than the shortest interval the agent is allowed to use.
+  previous=""
+  while read -r stamp; do
+    [ -n "$stamp" ] || continue
+    if [ -n "$previous" ]; then
+      gap=$(python3 -c 'import sys; print("%.3f" % (float(sys.argv[1]) - float(sys.argv[2])))' \
+        "$stamp" "$previous")
+      if [ -z "$smallest" ] || [ "$(python3 -c 'import sys; print(1 if float(sys.argv[1]) < float(sys.argv[2]) else 0)' "$gap" "$smallest")" = 1 ]; then
+        smallest=$gap
+      fi
+    fi
+    previous=$stamp
+  done <<EOF
+$attempts
+EOF
+  [ -n "$smallest" ] || fail "there were not enough attempts to measure the interval between them"
+  [ "$(python3 -c 'import sys; print(1 if float(sys.argv[1]) >= 1.5 else 0)' "$smallest")" = 1 ] \
+    || fail "two re-registration attempts were only ${smallest}s apart, so nothing is pacing them"
+  # None of this costs the worker: the pty is the one thing a hub cannot reach.
+  kill -0 "$pid" 2>/dev/null || fail "the agent should keep waiting for its hub, not exit"
+  [ -n "$(pgrep -P "$pid" 2>/dev/null)" ] || fail "the stranded agent should keep its worker running"
+  pass "hub: an agent the hub cannot take back paces its attempts instead of hammering it"
+}
+
+test_a_hub_that_refuses_the_agent_is_terminal_and_says_so() {
+  # Not every refusal is a hub to wait for. A credential it will not take and a
+  # protocol it no longer speaks are settled answers, and retrying either is a
+  # poll that never ends and that nobody ever sees - this agent's own output
+  # went to os.devnull the moment it registered. So it stops, and it says so on
+  # the one channel a hub cannot break: the task's own status record, written
+  # here on the worker's machine.
+  local status log pid waited=0 reported=""
+  for mode in credential protocol; do
+    case $mode in
+      credential)
+        start_stub "reregister-refused-$mode" --frames-ok-first 1 \
+          --frames-error unauthenticated:401
+        ;;
+      protocol)
+        # Protocol 2 for the startup check, and a hub that speaks something
+        # else by the time the agent asks to come back - a hub upgraded while
+        # it was down, which is exactly when this happens.
+        start_stub "reregister-refused-$mode" --frames-ok-first 1 \
+          --protocol 2 --protocol-after 99
+        ;;
+    esac
+    status="$CASE_DIR/state/refused.status"
+    log="$CASE_DIR/agent.log"
+    python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+      --machine box-a --label "refused-$mode-$RUN" --cwd "$CASE_DIR/cwd" \
+      --status-path "$status" --ready-file "$CASE_DIR/refused.ready" \
+      --state-interval 0.5 --poll-secs 3 > "$log" 2>&1 &
+    pid=$!
+    disown "$pid" 2>/dev/null || true
+    fm_test_track_helper_pid "$pid"
+    waited=0
+    while [ "$waited" -lt 150 ]; do
+      [ -s "$CASE_DIR/refused.ready" ] && break
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+    [ -s "$CASE_DIR/refused.ready" ] || fail "the agent never registered against the stand-in: $(cat "$log")"
+    waited=0
+    reported=""
+    while [ "$waited" -lt 200 ]; do
+      reported=$(cat "$status" 2>/dev/null || true)
+      case $reported in *blocked:*) break ;; esac
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+    assert_contains "$reported" "blocked: this worker cannot reach the fleet hub" \
+      "a $mode refusal should be reported where supervision reads it, not into a silenced stderr"
+    assert_equals "$(printf '%s\n' "$reported" | grep -c '^blocked:' || true)" 1 \
+      "the refusal should be reported once, not once per dropped frame"
+    # Terminal means terminal, and it is the whole conversation that ends, not
+    # just the registrations: a refused agent stops publishing and stops asking
+    # for commands too. Measured after the report, so a refusal discovered late
+    # cannot pass this by not having got round to asking yet.
+    local before after
+    before=$(hub_requests)
+    sleep 5
+    after=$(hub_requests)
+    assert_equals "$after" "$before" \
+      "a $mode refusal must end this agent's calls rather than become a poll against a hub that keeps saying no"
+    assert_equals "$(registrations | grep -c . || true)" 0 \
+      "a $mode refusal is not something to re-register through"
+    # And the worker is left exactly where it was, because a refused agent says
+    # nothing at all about the work its worker is in the middle of.
+    kill -0 "$pid" 2>/dev/null || fail "a refused agent should stand down, not exit"
+    [ -n "$(pgrep -P "$pid" 2>/dev/null)" ] || fail "a refused agent must keep its worker running"
+  done
+  pass "hub: a hub that refuses the agent ends the attempts and reports it where it can be read"
+}
+
 test_fm_stream_start_status_stop_round_trip() {
   # The operator path, through the real entry point rather than the API.
   local home out
@@ -1213,5 +1562,9 @@ test_the_viewer_is_static_and_carries_no_terminal_content
 test_the_viewer_renders_a_character_split_across_two_frames
 test_the_viewer_reports_a_refused_transcript_rather_than_painting_it
 test_the_viewer_keeps_the_send_box_disabled_for_a_closed_worker
+test_a_restarted_hub_gets_its_workers_back
+test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
+test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
+test_a_hub_that_refuses_the_agent_is_terminal_and_says_so
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home

@@ -20,6 +20,10 @@ What it owns, and why each stays here rather than at the hub:
     state/<id>.status directly.  That record and its path are local, so no local
     path is ever sent to a remote process - which is also what makes a worker on
     another machine work at all.
+  * The endpoint's identity.  The hub's registry is in memory, so a hub that
+    restarted has forgotten every endpoint it served.  The agent holds the id
+    and registers it again when the hub says it does not know it, which is why
+    a restarted hub costs observation rather than every running worker.
 
 Commands:
 
@@ -54,6 +58,7 @@ import errno
 import fcntl
 import json
 import os
+import random
 import re
 import signal
 import socket
@@ -67,7 +72,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "2.0.0"
+AGENT_VERSION = "2.1.0"
 AGENT_PROTOCOL = 2
 
 STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
@@ -376,7 +381,22 @@ class Pty:
             pass
 
 
-class Superseded(RuntimeError):
+class Refusal(RuntimeError):
+    """A refusal the hub STATED, carrying the code it named it with.
+
+    A hub that could not be reached is not one of these: it has said nothing,
+    and silence is an ordinary transient the retries already handle. The whole
+    of what this agent is allowed to act on - take an identity back, stand
+    down, stop for good - turns on the difference, so the two are different
+    types rather than one string an ill-judged substring match could confuse.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class Superseded(Refusal):
     """This endpoint's identity now belongs to another live endpoint.
 
     The one situation an agent cannot come back from: while it was out of
@@ -384,6 +404,70 @@ class Superseded(RuntimeError):
     and label. Publishing from here would put two workers behind one name, so
     the agent stops instead.
     """
+
+
+class Forgotten(Refusal):
+    """The hub has no record of this endpoint, so the agent can take it back.
+
+    The hub keeps its endpoint registry in memory only, so a hub that restarted
+    has never heard of any endpoint it was serving. That is the one refusal a
+    re-registration answers, and it is stated only by the hub itself - which is
+    why it is read from the hub's own code rather than inferred from a failed
+    connection, a state a returning hub passes through on its way back up.
+    """
+
+
+class Rejected(Refusal):
+    """The hub refuses this agent on terms no retry changes.
+
+    A credential it will not take and a protocol it no longer speaks are
+    settled answers, not transients. Retrying either is a poll against a hub
+    that keeps saying no, so this ends the agent's part instead and says so
+    where it can still be read.
+    """
+
+
+# The refusals that mean another live endpoint answers to this one's identity.
+# duplicate_label reaches an agent only on a registration, and it says exactly
+# what endpoint_superseded says on a publish: the name is taken.
+SUPERSEDING_REFUSALS = frozenset(("endpoint_superseded", "duplicate_label"))
+
+# The refusals no further attempt improves. endpoint_owned_elsewhere belongs
+# here rather than above because it is not a lost contest: this endpoint id is
+# recorded against a DIFFERENT machine, which is an identity collision an
+# operator has to resolve and an agent can only report.
+TERMINAL_REFUSALS = frozenset((
+    "unauthenticated", "wrong_token_class", "endpoint_owned_elsewhere"))
+
+# Re-registration pacing. The floor is short because a hub restart is over in
+# seconds and a worker is unwatchable and unsteerable until its agent is back;
+# the ceiling is what keeps a hub that is down for an hour from being polled by
+# every worker in the fleet. The jitter is what the restart case actually needs:
+# one restart strands every agent at once, so agents backing off by identical
+# amounts would return in lockstep and arrive as one burst against a hub that
+# has just come up.
+REREGISTER_BACKOFF_MIN = 2.0
+REREGISTER_BACKOFF_MAX = 60.0
+REREGISTER_JITTER = 0.25
+
+
+def registration(options: argparse.Namespace, endpoint_id: str) -> dict:
+    """This endpoint's identity, in the one spelling the hub is ever given.
+
+    The first registration and every one after it send exactly this, because
+    the endpoint id is what every durable record points at: the task's
+    metadata binding, the steering inbox reached through it, and the status
+    channel it reports into. A re-registration that varied here would come back
+    as a different worker and strand all three.
+    """
+    return {
+        "endpoint_id": endpoint_id,
+        "machine": options.machine,
+        "label": options.label,
+        "cwd": options.cwd,
+        "rows": options.rows,
+        "cols": options.cols,
+    }
 
 
 class HubClient:
@@ -430,10 +514,15 @@ class HubClient:
                 parsed = json.loads(body)
             except json.JSONDecodeError:
                 parsed = {"message": body.strip() or ("HTTP %d" % exc.code)}
+            code = str(parsed.get("error") or "")
             message = "hub refused %s %s: %s" % (method, path,
                                                  parsed.get("message") or exc.code)
-            if parsed.get("error") == "endpoint_superseded":
-                raise Superseded(message)
+            if code in SUPERSEDING_REFUSALS:
+                raise Superseded(code, message)
+            if code == "no_such_endpoint":
+                raise Forgotten(code, message)
+            if code in TERMINAL_REFUSALS:
+                raise Rejected(code, message)
             raise RuntimeError(message)
         except urllib.error.URLError as exc:
             raise RuntimeError("cannot reach the hub at %s: %s" % (self.base_url, exc.reason))
@@ -491,7 +580,23 @@ class Agent:
         # draining the pty - a worker whose output nobody reads eventually
         # blocks - but publishes nothing and takes no commands.
         self.stood_down = threading.Event()
+        # Set when the hub refuses this agent on terms no retry changes. It is
+        # separate from standing down because the two are reported differently:
+        # a lost name is the fleet working as designed, and a refused agent is
+        # a condition someone has to fix.
+        self.rejected = threading.Event()
+        self._refuse_lock = threading.Lock()
         self._backoff = 2.0
+        # Re-registration is serialized and paced. Three threads publish, so a
+        # forgotten endpoint is discovered several times over, and a hub that is
+        # down must see one attempt per backoff window rather than one per
+        # frame. The lock is only ever taken without blocking: a thread that
+        # finds an attempt already in flight has nothing to add by waiting for
+        # it, and the pty reader in particular must never be parked on a hub
+        # call it did not make.
+        self._register_lock = threading.Lock()
+        self._register_not_before = 0.0
+        self._register_backoff = REREGISTER_BACKOFF_MIN
 
     # --- publishing -------------------------------------------------------
 
@@ -500,19 +605,128 @@ class Agent:
         # holds, not a claim on the name, so standing down never swallows it:
         # an endpoint left open with no agent behind it is exactly what the
         # stand-down rule is there to avoid.
-        if self.stood_down.is_set() and not any(f.get("closed") for f in frames):
+        closing = any(f.get("closed") for f in frames)
+        if self.stood_down.is_set() and not closing:
             return
+        for attempt in (0, 1):
+            try:
+                self.hub.call("POST", "/v1/agent/frames",
+                              {"machine": self.machine, "frames": frames}, timeout=30.0)
+                return
+            except Forgotten as exc:
+                # The hub does not know this endpoint. Take the identity back
+                # and deliver these frames to the record that comes with it. A
+                # closing frame earns the same trip: a worker that exited while
+                # the hub was down still owes the fleet its exit, and without
+                # this its task would simply never be accounted for.
+                if attempt > 0:
+                    # A second refusal after a registration that just succeeded
+                    # is a race with another agent, not a hub to keep arguing
+                    # with. One retry, never a loop.
+                    sys.stderr.write("fm-stream-agent: the hub forgot endpoint %s again: "
+                                     "%s\n" % (self.endpoint_id, exc))
+                    return
+                if not self.recover_registration(exc, urgent=closing):
+                    return
+            except Superseded as exc:
+                self.give_up(exc)
+                return
+            except Rejected as exc:
+                self.refuse(exc)
+                return
+            except RuntimeError as exc:
+                # A hub that cannot be reached must not take the worker down
+                # with it: the pty keeps running and the next frame retries. The
+                # output that could not be published is lost from the hub's
+                # ring, which is a bounded history by design, not a transcript
+                # of record.
+                sys.stderr.write("fm-stream-agent: publish failed: %s\n" % exc)
+                return
+
+    def recover_registration(self, reason: Exception, urgent: bool = False) -> bool:
+        """Take this endpoint's identity back from a hub that forgot it.
+
+        The hub's registry lives in its memory, so a hub that restarted has
+        never heard of the endpoint this agent holds. Registering the SAME id
+        is what brings the worker back whole: it reappears in the fleet listing
+        under the id the task's own records name, which is what makes it
+        steerable again and what keeps its status channel and its steering
+        inbox pointing somewhere real. A fresh id would produce a listed worker
+        and strand every record that refers to it, so this never invents one.
+
+        False means the endpoint is not back and the caller should drop what it
+        was publishing: the hub was unreachable, the attempt is inside a backoff
+        window, or the answer was one this agent does not come back from.
+
+        An URGENT recovery is the closing frame's, and it skips that window for
+        the same reason every other rule here steps aside for a close: this
+        agent is about to exit, the frame says the worker is gone and carries
+        its exit code, and there is no later attempt to defer to. A pace exists
+        to stop an agent asking too often, not to make a task's end unrecorded.
+        The pause for the NEXT attempt is still written, so nothing this
+        borrows is free.
+        """
+        if self.stood_down.is_set() or self.rejected.is_set():
+            return False
+        if not self._register_lock.acquire(blocking=False):
+            return False
         try:
-            self.hub.call("POST", "/v1/agent/frames",
-                          {"machine": self.machine, "frames": frames}, timeout=30.0)
-        except Superseded as exc:
-            self.give_up(exc)
+            if self.stood_down.is_set() or self.rejected.is_set():
+                return False
+            if not urgent and time.monotonic() < self._register_not_before:
+                return False
+            self._register_not_before = time.monotonic() + self._register_backoff * (
+                1.0 + REREGISTER_JITTER * random.random())
+            try:
+                # The protocol is checked on the way back in for the same
+                # reason it is checked at startup: a hub that restarted may
+                # have been upgraded while it was down, and an agent that
+                # published into a protocol it does not implement would look
+                # present and behave wrongly.
+                health = self.hub.call("GET", "/v1/health", timeout=15.0)
+                protocol = health.get("protocol")
+                if protocol != AGENT_PROTOCOL:
+                    raise Rejected("protocol_mismatch",
+                                   "the hub at %s now speaks protocol %r but this agent "
+                                   "implements %d"
+                                   % (self.hub.base_url, protocol, AGENT_PROTOCOL))
+                self.hub.call("POST", "/v1/agent/endpoints",
+                              registration(self.options, self.endpoint_id),
+                              timeout=15.0)
+            except Superseded as exc:
+                # The next attempt at this task claimed the name while this
+                # agent was out of touch. Standing down is the same answer a
+                # lost contest gets anywhere else, and for the same reason.
+                self.give_up(exc)
+                return False
+            except Rejected as exc:
+                self.refuse(exc)
+                return False
+            except RuntimeError as exc:
+                sys.stderr.write("fm-stream-agent: could not re-register endpoint %s: %s\n"
+                                 % (self.endpoint_id, exc))
+                self._register_backoff = min(self._register_backoff * 2,
+                                             REREGISTER_BACKOFF_MAX)
+                return False
+            # Growth is reset by a registration the hub took, but the window
+            # scheduled above is not: even a hub that accepts every
+            # registration and still refuses every frame gets one attempt per
+            # floor rather than one per frame. The only case that pays for that
+            # is a hub answering two ways at once, and a worker is already back
+            # a moment after the one attempt that mattered.
+            self._register_backoff = REREGISTER_BACKOFF_MIN
+        finally:
+            self._register_lock.release()
+        try:
+            self.publish_initial_state()
         except RuntimeError as exc:
-            # A hub that cannot be reached must not take the worker down with
-            # it: the pty keeps running and the next frame retries. The output
-            # that could not be published is lost from the hub's ring, which is
-            # a bounded history by design, not a transcript of record.
-            sys.stderr.write("fm-stream-agent: publish failed: %s\n" % exc)
+            # The heartbeat publishes the next one within seconds, so a state
+            # frame lost here costs a moment of unreadability, not the recovery.
+            sys.stderr.write("fm-stream-agent: re-registered but could not publish "
+                             "state: %s\n" % exc)
+        sys.stderr.write("fm-stream-agent: re-registered endpoint %s with the hub at %s "
+                         "after: %s\n" % (self.endpoint_id, self.hub.base_url, reason))
+        return True
 
     def read_loop(self) -> None:
         """Publish pty output until the process ends."""
@@ -546,7 +760,10 @@ class Agent:
 
         This one raises where the heartbeat's publishes do not: a first state
         frame that never lands means startup has not finished, and startup is
-        the one moment where giving up cleanly beats carrying on.
+        the one moment where giving up cleanly beats carrying on. A recovered
+        registration sends the same frame for the same reason - an endpoint
+        back in the fleet listing that answers "no state yet" has not really
+        come back - and decides for itself what a failure there is worth.
         """
         self.hub.call("POST", "/v1/agent/frames",
                       {"machine": self.machine, "frames": [self.state_frame()]})
@@ -617,6 +834,37 @@ class Agent:
         sys.stderr.flush()
         self.stood_down.set()
 
+    def refuse(self, reason: Exception) -> None:
+        """Stop for good, and say so where it can still be read.
+
+        A credential the hub will not take and a protocol it no longer speaks
+        are settled answers, so this ends the agent's part rather than becoming
+        a poll against a hub that keeps saying no. The worker is left exactly
+        as a stand-down leaves it - running, holding whatever it was doing,
+        recoverable - because nothing about a refused agent says anything about
+        the work its worker is in the middle of.
+
+        Saying so is the harder half. This agent's own output went to
+        os.devnull the moment it registered, and the hub is the very thing
+        refusing it, so the one channel still open is the durable status record
+        on this machine: the same file the worker reports into, which
+        supervision reads whether or not anything is reachable. One line, once.
+        It names a condition someone has to fix, and repeating it for every
+        dropped frame would bury that under its own noise.
+        """
+        with self._refuse_lock:
+            if self.rejected.is_set():
+                return
+            self.rejected.set()
+            if self.status_path:
+                try:
+                    append_status(self.status_path, "blocked",
+                                  "this worker cannot reach the fleet hub: %s" % reason)
+                except (OSError, RuntimeError) as exc:
+                    sys.stderr.write("fm-stream-agent: could not report the refusal: %s\n"
+                                     % exc)
+        self.give_up(reason)
+
     def command_loop(self) -> None:
         """Long-poll the hub for this endpoint's commands and acknowledge each.
 
@@ -628,10 +876,21 @@ class Agent:
                 % (urllib.parse.quote(self.machine), self.endpoint_id,
                    int(self.options.poll_secs)))
         while not self.stop.is_set():
+            if self.stood_down.is_set():
+                # Standing down means taking no commands, whichever path
+                # reached it. A name this agent has lost and a hub that refuses
+                # it both make anything typed through here an act by a worker
+                # the fleet no longer believes is at this endpoint - and the
+                # publish path can reach either verdict, so this is where the
+                # loop notices rather than only where it raised.
+                return
             try:
                 answer = self.hub.call("GET", path, timeout=self.options.poll_secs + 15)
             except Superseded as exc:
                 self.give_up(exc)
+                return
+            except Rejected as exc:
+                self.refuse(exc)
                 return
             except RuntimeError as exc:
                 # Back off rather than spin. A hub outage must not take the
@@ -857,14 +1116,7 @@ def main(argv: list) -> int:
                             detail[-1] if detail else "no output"))
 
     try:
-        hub.call("POST", "/v1/agent/endpoints", {
-            "endpoint_id": endpoint_id,
-            "machine": options.machine,
-            "label": options.label,
-            "cwd": options.cwd,
-            "rows": options.rows,
-            "cols": options.cols,
-        })
+        hub.call("POST", "/v1/agent/endpoints", registration(options, endpoint_id))
         agent = Agent(options, hub, pty, endpoint_id)
         # Publish the first state frame BEFORE announcing readiness. The ready
         # file is what a spawn waits on, and the very next thing it may do is
