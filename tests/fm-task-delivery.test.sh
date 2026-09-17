@@ -59,6 +59,12 @@ fill_brief_subsections() {  # <file> <intent> <spec>
   printf '%s\n' "$content" > "$file"
 }
 
+# Print the generated "Other work in flight" section of a brief or a delivered
+# promotion message, so the two generation paths can be compared as outputs.
+concurrent_section() {  # <file>
+  awk '/^# Other work in flight$/ { emit = 1; print; next } emit && /^# / { exit } emit' "$1"
+}
+
 run_spawn() {  # <home> <fakebin> <spawn-args...>
   local home=$1 fakebin=$2
   shift 2
@@ -308,6 +314,7 @@ test_promote_refuses_a_symlinked_task_record() {
 # actually receive - for every supported mode.
 test_promotion_delivers_the_real_definition_of_done() {
   local home meta out sendroot payload mode id brief_dod delivered_dod
+  local brief_concurrent delivered_concurrent
   home="$TMP_ROOT/promote-dod/home"
   sendroot="$TMP_ROOT/promote-dod/sendroot"
   mkdir -p "$home/state" "$sendroot/bin"
@@ -367,6 +374,21 @@ STUB
     awk '/^# Definition of done$/ { emit=1 } emit' "$payload" > "$delivered_dod"
     cmp -s "$brief_dod" "$delivered_dod" \
       || fail "$mode: promotion and ordinary brief generation delivered different Definitions of done"
+
+    # A promoted scout edits code beside other running ships, so it must receive
+    # the same cross-worker awareness section a briefed ship gets - byte-identical,
+    # because a second copy of this contract is how the two drift apart. The
+    # section's own wording is asserted once, against the generated brief, in
+    # tests/fm-brief.test.sh; this comparison is what carries it to the promoted
+    # worker, so drift fails there or here rather than in a third copy.
+    brief_concurrent="$TMP_ROOT/promote-dod/brief-concurrent-$id"
+    delivered_concurrent="$TMP_ROOT/promote-dod/delivered-concurrent-$id"
+    concurrent_section "$home/data/$id/brief.md" > "$brief_concurrent"
+    concurrent_section "$payload" > "$delivered_concurrent"
+    [ -s "$delivered_concurrent" ] \
+      || fail "$mode: promoted worker did not receive the concurrent-work section"
+    cmp -s "$brief_concurrent" "$delivered_concurrent" \
+      || fail "$mode: promotion and ordinary brief generation delivered different concurrent-work sections"
   done
 
   payload="$TMP_ROOT/promote-dod/payload-promote-dod-no-mistakes"

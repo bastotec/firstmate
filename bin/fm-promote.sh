@@ -14,9 +14,12 @@
 # escalation rule and --yes ban. The instructions also carry `# Task` with
 # `## Captain's intent` preserved from the scout brief and promotion's ship-time
 # instructions under `## Firstmate spec`; the scout-time spec remains context but
-# is not relabeled as the ship spec. Promotion refuses leftover `{TASK}` /
-# `{FIRSTMATE_SPEC}` placeholders and a `## Captain's intent` line opening with
-# a Captain label or address (bin/fm-dod-lib.sh). A pre-subsection scout
+# is not relabeled as the ship spec. The promoted worker also receives the
+# "Other work in flight" section from that same owner, because a promoted scout
+# edits code beside other running ships and a scout brief never carried it.
+# Promotion refuses leftover `{TASK}` / `{FIRSTMATE_SPEC}` placeholders and a
+# `## Captain's intent` line opening with a Captain label or address
+# (bin/fm-dod-lib.sh). A pre-subsection scout
 # brief contributes only Task lines explicitly marked as captain words to intent.
 # A scout records no delivery posture, so promotion is where this task's delivery
 # contract is decided: --mode and --yolo are REQUIRED and written into the meta
@@ -204,6 +207,8 @@ EOF
     printf '\nThe no-mistakes ask-user escalation below supersedes the scout rule 6 escalation shape.\n'
     printf '%s\n' "$PROMOTION_ASK_USER_BLOCK"
   fi
+  printf '\n'
+  fm_concurrent_work_section
   printf '\n'
   fm_dod_block "$MODE" "$ID"
 }

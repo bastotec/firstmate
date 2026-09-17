@@ -63,6 +63,10 @@
 # Every scaffold also carries the steering-inbox receive-and-ack section:
 # process state/<id>.inbox/*.msg in order and acknowledge each by moving it to
 # handled/ (record, doorbell, and ladder owned by bin/fm-task-inbox-lib.sh).
+# Ship briefs also carry the "Other work in flight" section, rendered from its
+# single owner fm_concurrent_work_section in bin/fm-dod-lib.sh, which
+# bin/fm-promote.sh renders too so a promoted scout receives it as well.
+# Scouts and charters omit it: a report has nothing to rebase or conflict with.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -215,6 +219,11 @@ When a terminal message says an instruction is waiting there - and at any natura
 The move IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
 EOF
 INBOX_SECTION=${INBOX_SECTION%$'\n'}
+
+# The cross-worker awareness half of the parallel-work contract comes from its
+# single owner in bin/fm-dod-lib.sh, so the promoted-scout path renders the same
+# text rather than a second copy of it.
+CONCURRENT_SECTION=$(fm_concurrent_work_section)
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
@@ -503,6 +512,8 @@ $ASK_USER_BLOCK
    timed-out call was only waiting for a read while the run kept working.
 
 $INBOX_SECTION
+
+$CONCURRENT_SECTION
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.

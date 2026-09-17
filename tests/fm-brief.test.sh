@@ -889,6 +889,61 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
+# The cross-worker awareness contract (AGENTS.md section 7): a ship worker must
+# be told to rebase rather than design around concurrent work, when that rebase
+# is still its own to take, and to hand a genuine semantic conflict back instead
+# of resolving it. Asserting the phrasing that carries "not a hold" matters as
+# much as the section heading, because a reworded section that drops it would
+# reintroduce the serializing bias the dispatch rule forbids. Pipeline branch
+# ownership is the only thing that stops the rebase, and it is stated as a
+# prohibition so that a worker with no run on its branch - every no-mistakes
+# worker during implementation - still rebases; a `done:` line stops nothing
+# either, because the no-mistakes worker reports its terminal `done:` at
+# CI-ready while the run still owns the branch. Scouts and charters must NOT
+# carry the section: a report has nothing to rebase, and a duplicated copy
+# there would be a second owner.
+test_ship_brief_carries_cross_worker_awareness() {
+  local home id mode brief
+  home="$TMP_ROOT/crossworker-home"
+  mkdir -p "$home/data"
+  for id_mode in "brief-xw-nomistakes:no-mistakes" "brief-xw-directpr:direct-PR" "brief-xw-localonly:local-only"; do
+    id=${id_mode%%:*}
+    mode=${id_mode##*:}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$id: scaffold failed"
+    brief="$home/data/$id/brief.md"
+    assert_grep "# Other work in flight" "$brief" \
+      "$id: ship brief lost the concurrent-work section"
+    assert_grep "awareness, not a hold" "$brief" \
+      "$id: concurrent-work notice no longer says it is not a hold (reintroduces a serializing bias)"
+    assert_grep "rebase onto the updated default branch" "$brief" \
+      "$id: concurrent-work section no longer instructs a rebase"
+    assert_grep "rather than designing around it" "$brief" \
+      "$id: concurrent-work section no longer forbids designing around the other change"
+    assert_grep "Never rebase while the pipeline owns the branch" "$brief" \
+      "$id: concurrent-work section no longer bars a rebase of a pipeline-owned branch"
+    assert_grep "no run on the branch means it is yours to rewrite" "$brief" \
+      "$id: concurrent-work section gates the pre-run rebase on a custody confirmation no run has produced yet"
+    assert_no_grep "done:\` is not grounds to decline" "$brief" \
+      "$id: concurrent-work section reintroduced a done-line rebase window outside branch custody"
+    assert_grep "two changes that cannot both be true" "$brief" \
+      "$id: concurrent-work section lost the semantic-conflict definition"
+    assert_grep "instead of resolving it yourself" "$brief" \
+      "$id: concurrent-work section no longer forbids resolving a semantic conflict unilaterally"
+  done
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-xw-scout some-proj --scout >/dev/null 2>&1 \
+    || fail "scout scaffold failed"
+  assert_no_grep "# Other work in flight" "$home/data/brief-xw-scout/brief.md" \
+    "scout brief gained a ship-only concurrent-work section"
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
+    "$ROOT/bin/fm-brief.sh" brief-xw-sm --secondmate --no-projects >/dev/null 2>&1 \
+    || fail "secondmate scaffold failed"
+  assert_no_grep "# Other work in flight" "$home/data/brief-xw-sm/brief.md" \
+    "secondmate charter gained a ship-only concurrent-work section"
+  pass "fm-brief.sh: ship briefs carry the cross-worker awareness contract, scouts and charters do not"
+}
+
 test_worker_role_scope() {
   local kind home brief
   home="$TMP_ROOT/worker-role"
@@ -935,3 +990,4 @@ test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_scout_lavish_line_follows_presentation_floor
+test_ship_brief_carries_cross_worker_awareness
