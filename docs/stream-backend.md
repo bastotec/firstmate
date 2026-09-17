@@ -16,9 +16,8 @@ Three pieces, and the split matters:
   One agent owns one endpoint.
 - **The adapter** (`bin/backends/stream.sh`) is the runtime backend firstmate drives through the shared dispatcher.
 
-The hub owning no pseudoterminal is what makes a worker survive it.
-Stopping the hub, restarting it, or losing the network to it leaves every worker running, because the pty is held by the agent beside it.
-Supervision goes blind until the hub returns; the work does not stop.
+The hub owning no pseudoterminal is the load-bearing part of that split: it is what lets the hub fail without taking a worker with it.
+[When the hub is down](#when-the-hub-is-down) owns what that does and does not cost you.
 
 ## Setup
 
@@ -61,14 +60,41 @@ A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the n
 A bare token line grants viewing alone.
 A viewing token cannot register an endpoint, publish, or steer a worker.
 
-Cross-machine publishing is expected to ride an SSH tunnel, which firstmate does not create or manage for you.
-Nothing binds a public interface on your behalf; changing `--bind` is a deliberate act, and doing so without a tunnel or equivalent puts terminal contents and steering on the network.
+### The hub speaks plain HTTP
+
+There is no TLS anywhere in this backend, and nothing in it will warn you about that.
+
+Every byte is in the clear: the bearer token on each request, every keystroke sent to a worker, and every byte of terminal output that worker produces.
+Anyone who can read the path can read all of it, and anyone who can read a `publish` token can register endpoints and type into your workers.
+
+Loopback is the only setting where that is safe on its own.
+Cross-machine use means an SSH tunnel or an equivalent encrypted transport, which firstmate does not create, manage, or check for; a configured `https://` hub URL means only that something in front of the hub terminates TLS, not that the hub does.
+Nothing binds a public interface on your behalf, so changing `--bind` is a deliberate act - and doing it without a tunnel publishes your fleet's terminals and their control channel to that network.
 
 Terminal content is never written to disk.
 It lives only in each endpoint's bounded in-memory ring buffer, which exists so a late subscriber can catch up, and it is lost when the hub restarts.
 
 The status return channel writes on the machine that owns the endpoint.
 A status line travels as a command to that endpoint's own agent, which appends it to the local `state/<id>.status`, so the record is written where it belongs and never crosses the network as a path.
+
+## When the hub is down
+
+One hub means one blast radius, and it is worth being exact about its edges.
+
+The hub owns no pseudoterminal, so it cannot take a worker with it.
+While it is down, unreachable, or restarting:
+
+- Every worker keeps running, and keeps producing output into the pty its own agent holds.
+- Nothing can be watched, steered, captured, or killed through this backend, because every one of those routes is the hub.
+- Every endpoint reads stale, which is `unreadable`, never `dead`.
+  Supervision must not treat that as evidence a worker died, because it is evidence of nothing at all.
+- Status lines are the exception, and deliberately so: they are written by each agent on its own machine, so the durable record a task reports into keeps working while the hub is gone.
+
+When the hub returns, agents reconnect on their own and endpoints become readable again.
+What does not come back is the terminal output produced in the meantime: the ring buffer is in memory, so a hub restart starts every endpoint's scrollback from empty even though the workers never stopped.
+
+The operational shape of that is worth saying plainly.
+Losing the hub costs observation across the whole fleet at once, and costs no work.
 
 ## Limits
 
@@ -79,5 +105,4 @@ A status line travels as a command to that endpoint's own agent, which appends i
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.
 - An unreachable agent and a dead worker are indistinguishable from the hub, so a stale read carries no liveness verdict at all.
   Only one of those two states authorizes recovery, and reporting silence as death is how a healthy worker gets torn down.
-- The hub is a single point of observation, not of execution.
-  While it is down, workers keep working and nothing can watch or steer them.
+- The hub is a single point of observation, not of execution; [When the hub is down](#when-the-hub-is-down) owns that contract.
