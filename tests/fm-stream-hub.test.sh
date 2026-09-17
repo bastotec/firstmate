@@ -236,6 +236,25 @@ test_the_screen_read_answers_with_the_live_screen_and_cursor() {
   pass "hub: the screen read answers with the live screen and its cursor row"
 }
 
+test_capture_stays_readable_while_frames_are_arriving() {
+  # fm-peek polls capture every 100ms while the worker is talking, so the read
+  # and the publish genuinely overlap on a threading server. Rendering the
+  # screen without the endpoint's lock made that read fail intermittently with
+  # a 500, which fm-peek reports as an unreadable endpoint for a worker that is
+  # perfectly healthy. A quiet endpoint can never reach this, so this case
+  # keeps frames arriving for the whole read loop.
+  start_hub concurrent
+  local endpoint out
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
+    '{endpoint_id: $id, machine: "box-a", label: "chatty", cwd: "/tmp", rows: 4, cols: 40}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the chatty endpoint should register"
+  out=$(python3 "$ROOT/tests/assets/stream-hub-concurrent-capture.py" \
+    "$URL" "$endpoint" "$PUBLISH_TOKEN" "$VIEW_TOKEN")
+  assert_equals "$out" clean "capture must stay readable while frames arrive: $out"
+  pass "hub: capture answers a well-formed screen while frames are still arriving"
+}
+
 test_one_hub_lists_endpoints_from_several_machines() {
   start_hub fleet
   local a b out
@@ -513,6 +532,7 @@ test_every_data_route_requires_a_token
 test_a_viewing_token_cannot_register_an_endpoint_or_publish
 test_a_viewing_token_cannot_steer_or_close_a_worker
 test_the_screen_read_answers_with_the_live_screen_and_cursor
+test_capture_stays_readable_while_frames_are_arriving
 test_one_hub_lists_endpoints_from_several_machines
 test_input_reaches_the_endpoint_and_capture_reads_it_back
 test_input_with_no_agent_to_acknowledge_is_refused

@@ -74,9 +74,11 @@ serve options:
   --token-file PATH      file of token definitions, one per line, each either a
                          bare token (granting the default classes) or
                          "<classes>:<token>" where <classes> is a
-                         comma-separated subset of publish,subscribe.  A
-                         bare token grants subscribe only, so a viewing
-                         credential can never register an endpoint.
+                         comma-separated subset of publish,subscribe,control.
+                         A bare token grants subscribe only, so a viewing
+                         credential can never register an endpoint nor steer
+                         one; an operating credential is spelled
+                         "subscribe,control:<token>".
   --ring-bytes N         per-endpoint frame ring (default 262144)
   --scrollback N         per-endpoint rendered scrollback lines (default 2000)
   --state-max-age-secs N how old a published state frame may be before a state
@@ -1427,8 +1429,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if tail == "" and method == "DELETE":
             self._require(CLASS_CONTROL, query)
             endpoint = hub.get(endpoint_id)
-            hub.submit_command(endpoint, "kill",
-                               {"signal": _query_one(query, "signal", "TERM")})
+            hub.submit_command(endpoint, "kill", {"signal": "TERM"})
             self._json(HTTPStatus.OK, {
                 "ok": True,
                 "closed": endpoint.endpoint_id,
@@ -1479,7 +1480,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if tail == "capture" and method == "GET":
             lines = min(max(_query_int(query, "lines", 40), 1), hub.options.scrollback)
             ansi = _query_one(query, "format", "text") == "ansi"
-            rendered = endpoint.screen.tail_lines(lines, ansi=ansi)
+            with endpoint.lock:
+                rendered = endpoint.screen.tail_lines(lines, ansi=ansi)
             self._text(HTTPStatus.OK, "\n".join(rendered) + "\n", "text/plain; charset=utf-8")
             return
 
