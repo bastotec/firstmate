@@ -160,10 +160,10 @@ Build it only from the snapshot's `running` rows, in their order; the snapshot a
 
 | Agent | Where | Right now |
 |---|---|---|
-| build-helper | build server | Running. Its release PR is merged and it was cleaning up the worker it used, so nothing is in progress. |
-| developer-tools | this Mac | Running, idle. |
-| Fix the login redirect for developer-tools | this Mac | Running. It is validating the fix before opening a PR. |
-| billing | this Mac | Running, idle. Four billing decisions are waiting on you. |
+| mate-a | remote-host | Running. Its last PR is merged and nothing is in progress. |
+| mate-b | this Mac | Running, idle. |
+| Example task for mate-b | this Mac | Running. It is validating its change before opening a PR. |
+| mate-c | this Mac | Running, idle. A decision is waiting on you. |
 
 - **Agent** is the row's `name`; for a second mate's worker (`parent` set) add "for <parent>" after the name.
 - **Where** is the row's `where`: keep "this Mac" or "this machine" as given, and write a remote host as the plain place it names.
