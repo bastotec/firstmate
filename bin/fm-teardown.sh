@@ -2992,7 +2992,13 @@ require_task_endpoint_gone() {  # <kill-status>
 # Both retirement statuses sit outside the small numbers teardown and its
 # libraries already spend, because a status that names two conditions names
 # neither: the retirement would read someone else's failure as the one refusal
-# it may proceed past. The guard below keeps that true as teardown grows.
+# it may proceed past.
+#
+# The loop below pins exactly the constants it lists and nothing more. It is a
+# reader's check, not enforcement: a future refusal added as a bare `exit 71`,
+# or as a new constant nobody appends to that list, passes it silently. Making
+# it real would mean every teardown exit drawing its status from one shared
+# registry, which is follow-up work rather than part of this contract.
 FM_TEARDOWN_RUNTIME_REFUSAL_EXIT=71
 
 # The work-protection refusal, raised before anything on disk has been touched,

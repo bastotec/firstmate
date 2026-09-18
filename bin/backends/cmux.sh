@@ -614,13 +614,45 @@ fm_backend_cmux_window_of_workspace() {  # <workspace_id> -> "<window_id> <count
 # target is the last one in its window a throwaway sibling is created first,
 # leaving that window a fresh default workspace (never an fm-<home>- title, so
 # recovery/list_live ignore it) - cmux's own "closed the last tab" outcome.
+# fm_backend_cmux_workspace_inventory: every live workspace in this cmux, as
+# one `{"workspaces":[...]}` body.
+#
+# `workspace list --json` with no `--window` is scoped to the CURRENT window
+# only (see fm_backend_cmux_window_of_workspace), so it can never establish
+# that a workspace is gone: a task whose window is not the current one is
+# missing from it while its worker runs. Absence is only established by asking
+# EVERY window, which is what this does - the same walk that already answers
+# window membership.
+#
+# Fails when the window enumeration, or any single window's list, did not run
+# or did not parse. A partial inventory proves nothing about what it did not
+# see, and its caller turns that failure into `unknown`.
+fm_backend_cmux_workspace_inventory() {
+  local wins ids wid wss merged='[]'
+  wins=$(fm_backend_cmux_cli list-windows --json --id-format uuids 2>/dev/null) || return 1
+  printf '%s' "$wins" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
+  ids=$(printf '%s' "$wins" | jq -r '.[] | .id // empty' 2>/dev/null) || return 1
+  while IFS= read -r wid; do
+    [ -n "$wid" ] || continue
+    wss=$(fm_backend_cmux_cli workspace list --json --id-format uuids --window "$wid" 2>/dev/null) || return 1
+    merged=$(printf '%s' "$wss" | jq -c --argjson acc "$merged" '
+      if (.workspaces | type) == "array" then $acc + .workspaces else empty end
+    ' 2>/dev/null) || return 1
+    [ -n "$merged" ] || return 1
+  done <<FMEOF
+$ids
+FMEOF
+  printf '{"workspaces":%s}' "$merged"
+}
+
 # fm_backend_cmux_workspace_presence: classify one workspace as
-# dead|present|foreign|unknown from a structured `workspace list --json` read.
-# This is what makes the silent no-op above observable: `close-workspace`
-# answers `OK` whether or not it closed anything, so the close's own status can
-# never be the verdict. A listing that does not run, or that does not parse as
-# an array, is `unknown` - an unreachable cmux cannot tell a closed workspace
-# from one it simply could not see.
+# dead|present|foreign|unknown from a structured read of every window's
+# workspaces. This is what makes the silent no-op above observable:
+# `close-workspace` answers `OK` whether or not it closed anything, so the
+# close's own status can never be the verdict. A read that does not run, or
+# that does not parse, is `unknown` - an unreachable cmux cannot tell a closed
+# workspace from one it simply could not see, and neither can a read that saw
+# only one window.
 #
 # With an expected title the same listing answers the two further questions a
 # kill verdict needs. Whether a workspace that IS listed is still this task's:
@@ -635,7 +667,7 @@ fm_backend_cmux_window_of_workspace() {  # <workspace_id> -> "<window_id> <count
 # different one.
 fm_backend_cmux_workspace_presence() {  # <workspace_id> [expected-title] -> dead|present|foreign|unknown
   local wsid=$1 expected=${2:-} out matches title
-  out=$(fm_backend_cmux_cli workspace list --json --id-format uuids 2>/dev/null) || {
+  out=$(fm_backend_cmux_workspace_inventory) || {
     printf 'unknown'
     return 0
   }

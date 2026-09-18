@@ -1834,6 +1834,19 @@ SH
     *"nothing was retired"*) : ;;
     *) fail "the retirement did not say plainly that nothing was retired: $out" ;;
   esac
+  # The refusal has to be THIS one. Without naming the status and the restore
+  # failure, the assertion above passes for every refusal cleanup can make -
+  # including one from a mis-staged fixture that never reached the restore -
+  # and would go on passing if the work-gate status ever collided with this one
+  # again.
+  case "$out" in
+    *"process-event restoration failed"*) : ;;
+    *) fail "the run did not reach the process-event restore failure: $out" ;;
+  esac
+  case "$out" in
+    *"refused (status "*) : ;;
+    *) fail "the retirement did not name the cleanup status it refused on: $out" ;;
+  esac
   [ -e "$home/state/domain.meta" ] \
     || fail "a failed process-event restore retired the record that records it: $out"
   [ ! -e "$home/state/domain.endpoint-retired" ] \
