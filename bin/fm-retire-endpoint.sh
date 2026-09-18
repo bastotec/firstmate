@@ -63,7 +63,7 @@ for arg in "$@"; do
       usage
       exit 0
       ;;
-    '*'|all|ALL|-a|--all|*[][*?]*)
+    *[][*?]*)
       refuse "refusing '$arg': name each task id exactly - a wildcard or all-records form cannot say which workers you inspected"
       ;;
     -*)

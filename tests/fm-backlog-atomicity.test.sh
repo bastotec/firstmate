@@ -2213,13 +2213,16 @@ test_retiring_refuses_wildcards_and_unconfirmed_ids() {
   home=$(home_of "$case_dir")
   stage_unanswerable_task "$case_dir" "$id"
 
-  for form in '*' --all all; do
+  for form in '*' 'atomic-retire-*'; do
     rc=0
     out=$(run_retire "$case_dir" "$form" </dev/null) || rc=$?
-    [ "$rc" -ne 0 ] || fail "retirement accepted the all-records form '$form'"
+    [ "$rc" -ne 0 ] || fail "retirement accepted the wildcard form '$form'"
     assert_contains "$out" "name each task id exactly" \
       "the refusal of '$form' should say each id must be named"
   done
+  rc=0
+  out=$(run_retire "$case_dir" --all </dev/null) || rc=$?
+  [ "$rc" -ne 0 ] || fail "retirement accepted an all-records option"
   rc=0
   out=$(run_retire "$case_dir" "$id-typo" </dev/null) || rc=$?
   [ "$rc" -ne 0 ] || fail "retirement accepted an id with no durable record"
@@ -2233,6 +2236,15 @@ test_retiring_refuses_wildcards_and_unconfirmed_ids() {
   assert_present "$home/state/$id.meta" "a refused retirement removed the record anyway"
   [ "$(row_state "$case_dir" "$id")" = in_flight ] \
     || fail "a refused retirement moved the backlog row"
+
+  # Refusing wildcards must not cost a real record its only escape: a task
+  # whose id happens to read like an all-records word is an exact identity like
+  # any other, and the one command that can retire it has to accept it.
+  stage_unanswerable_task "$case_dir" all
+  out=$(printf 'all\n' | run_retire "$case_dir" all) \
+    || fail "a record whose id is literally 'all' should still be retirable: $out"
+  assert_absent "$home/state/all.meta" \
+    "the record named 'all' was refused as a wildcard rather than retired"
   pass "retirement requires exact record identities and refuses wildcards"
 }
 
