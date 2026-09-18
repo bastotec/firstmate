@@ -66,6 +66,10 @@ Provision a local persistent home and registry entry after the charter is filled
 bin/fm-home-seed.sh <id> <home|-> {<project>...|--no-projects}
 ```
 
+A seeded home delivers firstmate's OWN changes to the route its code root delivers to - the fork - rather than to the path it was cloned from, and keeps that local copy under the `code-root` remote; `bin/fm-home-seed.sh` refuses when the code root has no such route, because a home cloned from it would push a validated firstmate change into a directory and never open a pull request.
+Remote provisioning does the same on its own host ([`docs/remote-secondmates.md`](../../../docs/remote-secondmates.md#provision-a-route)).
+A home seeded before that gate existed still carries the old route and says so through the session-start `HOME_ROUTE` line; repointing it is a migration, not a seed.
+
 Provision a whole remote home through its configured SSH host with:
 
 ```sh

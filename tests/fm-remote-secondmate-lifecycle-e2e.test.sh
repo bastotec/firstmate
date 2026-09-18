@@ -974,6 +974,17 @@ if FM_SECONDMATE_CHARTER='Own iOS delivery on the build Mac.' \
   fail "remote seed allowed an existing id to move to another home"
 fi
 assert_grep "home: $REMOTE_HOME" "$PARENT/data/secondmates.md" "refused remote reassignment changed the durable route"
+# The home is cloned from that host's own Firstmate copy, which would leave the
+# copy's PATH as the home's delivery route for the firstmate repo itself: a
+# validated firstmate change made there would be pushed into that directory and
+# never open a pull request, with the absent PR as the only symptom. It must end
+# up on the route the code root delivers to, with that copy kept reachable by
+# name so the parent's sync can still hand it a commit the forge has never seen.
+[ "$(git -C "$REMOTE_HOME" remote get-url origin)" \
+  = "$(git -C "$REMOTE_ROOT" remote get-url origin)" ] \
+  || fail "the remote home delivers firstmate changes to $(git -C "$REMOTE_HOME" remote get-url origin), not the route its code root uses"
+[ "$(git -C "$REMOTE_HOME" remote get-url code-root)" = "$REMOTE_ROOT" ] \
+  || fail "the remote home lost that host's Firstmate copy as a named remote"
 pass "remote seed registers the route and provisions the whole home and project clone on that host"
 
 PROTOCOL_HOME="$TMP_ROOT/protocol-home"

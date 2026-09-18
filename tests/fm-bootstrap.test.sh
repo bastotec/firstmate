@@ -870,6 +870,73 @@ run_routine_bootstrap_fixture() {
     "$shell" "$ROOT/bin/fm-bootstrap.sh"
 }
 
+# A firstmate checkout whose own origin is a path on this host delivers a
+# validated firstmate change into that path and never opens a pull request. The
+# seed-time gate keeps new homes out of that state; this line is what reaches the
+# homes seeded before it existed, so it is pinned here as a session-start report.
+make_home_route_fixture() {
+  local case_dir=$1 origin=$2 root home fakebin
+  root="$case_dir/root"
+  home="$case_dir/home"
+  fm_git_identity
+  mkdir -p "$home/config" "$home/state"
+  printf '%s\n' manual > "$home/config/backlog-backend"
+  git init -q -b main "$root"
+  printf '%s\n' instructions > "$root/AGENTS.md"
+  mkdir -p "$root/bin"
+  git -C "$root" add -A
+  git -C "$root" commit -qm initial
+  [ -z "$origin" ] || git -C "$root" remote add origin "$origin"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  printf '%s|%s|%s\n' "$root" "$home" "$fakebin"
+}
+
+run_home_route_bootstrap() {
+  local case_dir=$1 origin=$2 fixture root home fakebin
+  fixture=$(make_home_route_fixture "$case_dir" "$origin")
+  root=${fixture%%|*}
+  fixture=${fixture#*|}
+  home=${fixture%%|*}
+  fakebin=${fixture#*|}
+  PATH="$fakebin:$BASE_PATH" FM_BACKEND=tmux FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_DETECT_ONLY=1 \
+    "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null
+}
+
+test_home_route_reports_a_local_delivery_target() {
+  local case_dir out
+
+  case_dir="$TMP_ROOT/home-route-local"
+  mkdir -p "$case_dir/elsewhere.git"
+  out=$(run_home_route_bootstrap "$case_dir" "$case_dir/elsewhere.git")
+  assert_contains "$out" "HOME_ROUTE:" "a local delivery target was not reported at session start"
+  assert_contains "$out" "$case_dir/elsewhere.git" "the HOME_ROUTE line did not name the target it would deliver to"
+  assert_contains "$out" "never opens a pull request" "the HOME_ROUTE line did not state the consequence"
+
+  # A file:// URL is never what a clone of a local checkout leaves behind - it is
+  # always configured on purpose - so it is a route, not the accident.
+  case_dir="$TMP_ROOT/home-route-file-url"
+  mkdir -p "$case_dir/elsewhere.git"
+  out=$(run_home_route_bootstrap "$case_dir" "file://$case_dir/elsewhere.git")
+  assert_not_contains "$out" "HOME_ROUTE:" "a deliberately configured file:// route was reported as the clone-inherited accident"
+
+  case_dir="$TMP_ROOT/home-route-fork"
+  out=$(run_home_route_bootstrap "$case_dir" "https://github.test/owner/firstmate.git")
+  assert_not_contains "$out" "HOME_ROUTE:" "a fork delivery route was reported as a problem"
+
+  case_dir="$TMP_ROOT/home-route-ssh"
+  out=$(run_home_route_bootstrap "$case_dir" "git@github.test:owner/firstmate.git")
+  assert_not_contains "$out" "HOME_ROUTE:" "an scp-like delivery route was reported as a problem"
+
+  # A checkout with no origin cannot push anywhere and says so at the push, so it
+  # is not this check's business and must not be turned into a session-start line.
+  case_dir="$TMP_ROOT/home-route-none"
+  out=$(run_home_route_bootstrap "$case_dir" "")
+  assert_not_contains "$out" "HOME_ROUTE:" "a checkout with no origin was reported as misdirected"
+
+  pass "session start reports a firstmate-repo delivery route that lands on this host"
+}
+
 test_routine_bootstrap_confirmations_are_silent() {
   local out
   out=$(run_routine_bootstrap_fixture bash "$TMP_ROOT/routine-silent")
@@ -1279,6 +1346,7 @@ test_fleet_sync_timeout_floor_preserves_small_fleets
 test_fleet_sync_timeout_explicit_override_wins
 test_fleet_sync_timeout_empty_override_uses_default
 test_fleet_sync_timeout_is_computed_before_launch
+test_home_route_reports_a_local_delivery_target
 test_routine_bootstrap_confirmations_are_silent
 test_routine_bootstrap_contract_runs_under_system_bash
 test_network_phase_partitions_the_run

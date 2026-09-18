@@ -13,7 +13,14 @@
 # record's origin is the URL the parent resolved and named, so this host clones
 # from it and re-validates it through bin/fm-project-origin-lib.sh instead of
 # trusting the sender. The remote code root is cloned into an absent home,
-# project origins are cloned on this host, the project registry and charter are
+# which would otherwise leave that host path as the home's own delivery route
+# for the firstmate repo itself, so the home is repointed at the route that copy
+# delivers to and keeps the copy itself under the code-root remote; a copy with
+# no such route refuses to provision, because a home cloned from it pushes a
+# validated firstmate change into a directory and never opens a pull request
+# (bin/fm-home-route-lib.sh owns that classification). The parent's sync still
+# reaches this home through the host's own copy by path, never through origin.
+# Project origins are cloned on this host, the project registry and charter are
 # published, the durable .fm-secondmate-parent record names this home's route to its parent as
 # "remote" - read by bin/fm-teardown.sh's cleanup gate so a delegated public
 # reply promise, which the subsystem can only carry on the parent's own
@@ -30,6 +37,8 @@ MAX_MANIFEST_BYTES=1048576
 
 # shellcheck source=bin/fm-project-origin-lib.sh
 . "$SCRIPT_DIR/fm-project-origin-lib.sh"
+# shellcheck source=bin/fm-home-route-lib.sh
+. "$SCRIPT_DIR/fm-home-route-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 
@@ -102,10 +111,51 @@ PROVISION_LOCK=
 PROVISION_LOCK_HELD=0
 CREATED_PROJECTS="$TMP/created-projects"
 : > "$CREATED_PROJECTS"
+HOME_REMOTES_CHANGED=0
+HOME_PRIOR_ORIGIN=
+HOME_PRIOR_CODE_ROOT=
 release_provision_lock() {
   if [ "$PROVISION_LOCK_HELD" -eq 1 ]; then
     fm_lock_release "$PROVISION_LOCK"
     PROVISION_LOCK_HELD=0
+  fi
+}
+# Leave this home delivering firstmate's OWN changes to the route this host's
+# Firstmate copy delivers to, rather than to the path it was cloned from. A home
+# that shares that copy's configuration is only checked, never written through.
+route_home_to_fork() {
+  local route
+  route=$(fm_home_route_url "$FM_ROOT")
+  fm_home_route_is_remote "$route" \
+    || die "this host's Firstmate copy at $FM_ROOT has no delivery route for the firstmate repo (its origin is ${route:-unset}); a home cloned from it would push a validated firstmate change to that target instead of opening a pull request"
+  if ! fm_home_route_standalone_repo "$FM_HOME"; then
+    fm_home_route_misdirected "$FM_HOME" >/dev/null \
+      && die "remote home shares a Firstmate configuration whose origin is the path it was cloned from, so a validated firstmate change made there never opens a pull request"
+    return 0
+  fi
+  HOME_PRIOR_ORIGIN=$(fm_home_route_url "$FM_HOME")
+  HOME_PRIOR_CODE_ROOT=$(git -C "$FM_HOME" remote get-url "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" 2>/dev/null || true)
+  HOME_REMOTES_CHANGED=1
+  git -C "$FM_HOME" remote set-url origin "$route" \
+    || die "could not point the remote home at the firstmate delivery route $route"
+  if [ -n "$HOME_PRIOR_CODE_ROOT" ]; then
+    git -C "$FM_HOME" remote set-url "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" "$FM_ROOT"
+  else
+    git -C "$FM_HOME" remote add "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" "$FM_ROOT"
+  fi || die "could not keep $FM_ROOT reachable from the remote home as $FM_HOME_ROUTE_CODE_ROOT_REMOTE"
+}
+
+# Put back the remotes route_home_to_fork rewrote. Only an EXISTING home needs
+# this: a home this run created is removed whole instead.
+restore_home_remotes() {
+  [ "$HOME_REMOTES_CHANGED" -eq 1 ] || return 0
+  if [ -n "$HOME_PRIOR_ORIGIN" ]; then
+    git -C "$FM_HOME" remote set-url origin "$HOME_PRIOR_ORIGIN" 2>/dev/null || true
+  fi
+  if [ -n "$HOME_PRIOR_CODE_ROOT" ]; then
+    git -C "$FM_HOME" remote set-url "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" "$HOME_PRIOR_CODE_ROOT" 2>/dev/null || true
+  else
+    git -C "$FM_HOME" remote remove "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" 2>/dev/null || true
   fi
 }
 restore_owned_file() { # <relative-path>
@@ -124,6 +174,7 @@ rollback() {
     if [ "$CREATED_HOME" -eq 1 ]; then
       rm -rf -- "$FM_HOME"
     elif [ "$EXISTING_HOME" -eq 1 ]; then
+      restore_home_remotes
       while IFS= read -r project; do
         [ -n "$project" ] && rm -rf -- "$FM_HOME/projects/$project"
       done < "$CREATED_PROJECTS"
@@ -217,6 +268,7 @@ else
   CREATED_HOME=1
   git clone --quiet -- "$FM_ROOT" "$FM_HOME" || die "could not clone the remote Firstmate home"
 fi
+route_home_to_fork
 for operational_dir in data state config projects; do
   operational_path="$FM_HOME/$operational_dir"
   if [ -e "$operational_path" ] || [ -L "$operational_path" ]; then
