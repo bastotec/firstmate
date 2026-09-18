@@ -11,7 +11,7 @@ The shared orchestrator behavior lives in [`AGENTS.md`](../AGENTS.md) - edit it 
 This section is the single owner of the top-level operational-home layout; producer script headers and their help own exact child-file fields and mutation contracts.
 The tracked code root contains the shared instruction, skill, documentation, workflow, and `bin/` surfaces, while each effective `FM_HOME` contains private operational directories.
 `data/` holds durable private fleet records such as the project and secondmate registries, captain preferences, optional shared captain preferences, learnings, backlog, briefs, scout reports, and explicitly installed content-addressed extension packages under `data/extensions/packages/`.
-`state/` holds runtime records such as task metadata, append-only status events, endpoint signals, watcher and wake-queue coordination, inactive terminal-outcome receipts under `state/terminal-outcomes/`, enabled extension working namespaces under `state/extensions/`, away-mode state, generated Relay artifacts, parent-side remote ledger copies under `state/secondmate-summary-cache/`, one-shot Bearings reconcile requests under `state/reconcile-notify/`, private secondmate config-reread generations with their retry and quarantine state, per-task steering-inbox records under `state/<id>.inbox/` (`bin/fm-task-inbox-lib.sh`), and parent-owned secondmate pending-reply records under `state/pending-replies/` (`bin/fm-pending-reply-lib.sh`).
+`state/` holds runtime records such as task metadata, append-only status events, endpoint signals, watcher and wake-queue coordination, inactive terminal-outcome receipts under `state/terminal-outcomes/`, enabled extension working namespaces under `state/extensions/`, away-mode state, generated Relay artifacts, parent-side remote ledger copies under `state/secondmate-summary-cache/`, one-shot Bearings reconcile requests under `state/reconcile-notify/`, private secondmate config-reread generations with their retry and quarantine state, per-task steering-inbox records under `state/<id>.inbox/` (`bin/fm-task-inbox-lib.sh`), optional possible-ask cursors, flags, and usage under `state/ask-triage/` (`bin/fm-ask-triage.sh`), and parent-owned secondmate pending-reply records under `state/pending-replies/` (`bin/fm-pending-reply-lib.sh`).
 `config/` holds local gitignored operating choices, including explicit extension bindings under `config/extensions.d/`, and `projects/` holds the local project clones that Firstmate reads but changes only through the narrow guarded and concrete captain-approved exceptions in `AGENTS.md`.
 Untracked files and directories whose names begin with `scratchpad` are also gitignored, so temporary scratch does not make porcelain-based secondmate sync guards treat a home as dirty.
 
@@ -217,6 +217,18 @@ An invalid value fails closed and surfaces the wake.
 The bound is required rather than cosmetic because churn and pane staleness read the same pane.
 The flag is a home-local supervision-noise preference and is not inherited by secondmate homes, which run their own crew mix.
 [`architecture.md`](architecture.md) owns the triage contract and `bin/fm-watch.sh`'s `signal_turnend_panes_churned` owns the exact evidence and fail-closed boundaries.
+
+## Possible-ask ranking (config/ask-triage-key-var)
+
+An optional pass ranks `working:` status lines that politely ask firstmate for something, such as a hedged "if you would rather keep it, say so", which the status vocabulary cannot declare and a keyword rule misses.
+It uses Jev (`typesafe-ai/jev`) on the Vercel AI Gateway through AI SDK 7's `experimental_evaluate`, and only ever adds prominence: a flagged line gets one row in a `POSSIBLE ASKS` section of the wake drain, printed once, while every line the drain showed before is still shown in full.
+It never reads, sends, or flags a `done:`, `failed:`, `needs-decision:`, `blocked:`, `resolved:`, `paused:`, `note:`, or any other non-`working:` line.
+The watcher starts the scorer detached at status-signal time and never waits on it, and the drain only reads the flags it left, so no drain, acknowledgement, or raw wake record ever waits on the network.
+It is inert until three things exist: Node, the pinned runtime installed with `npm ci --prefix bin/ask-triage --omit=dev` (gitignored `bin/ask-triage/node_modules/`), and a gateway key in `~/.secrets`.
+The key is read at call time from the `~/.secrets` variable named by the first line of the optional local, gitignored `config/ask-triage-key-var`; with that file absent the pass is inert, so naming the variable is the opt-in to spend, and the file is not inherited by secondmate homes.
+A timeout, error, missing key or runtime, or a probability under the threshold leaves the line unflagged, which is exactly the view without the pass.
+Only the status line text and a fixed question are sent to the vendor, and `bin/fm-ask-triage.sh cost` prices the recorded token usage at the published $0.042 per million input tokens, output free.
+`bin/fm-ask-triage.sh`'s header owns the scope, thresholds, bounds, state files, and failure behaviour.
 
 ## Gate defaults (.no-mistakes.yaml)
 
@@ -1149,6 +1161,8 @@ FM_SEND_RETRIES=3       # fm-send typed-plane Enter-retry attempts after typing 
 FM_SEND_SLEEP=0.4       # seconds between fm-send typed-plane submit checks
 FM_SEND_SETTLE=1        # seconds fm-send waits after a successful typed-plane submit; 0 disables
 FM_PENDING_REPLY_GRACE_SECS=120   # seconds after marked-request delivery before a completed turn without a correlated parent report is eligible for its one recovery repost
+FM_ASK_TRIAGE_KEY_VAR=            # overrides config/ask-triage-key-var: the ~/.secrets variable holding the gateway key for the possible-ask pass
+FM_ASK_TRIAGE_THRESHOLD=0.60      # possible-ask probability at or above which a working: line is flagged; bin/fm-ask-triage.sh owns the other bounds
 # sub-supervisor (bin/fm-supervise-daemon.sh); presence-gated via /afk
 FM_SUPERVISOR_BACKEND=             # optional supervisor pane backend override; tmux/herdr only, otherwise detects $TMUX_PANE then HERDR_ENV/HERDR_PANE_ID before tmux fallback
 FM_SUPERVISOR_TARGET=              # optional supervisor pane target override; tmux target or herdr <session>:<pane-id>, otherwise auto-detected

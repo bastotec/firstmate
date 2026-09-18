@@ -1818,6 +1818,24 @@ home_summary_refresh_detached() {
   HOME_SUMMARY_PID=$!
 }
 
+# Start the optional possible-ask scorer beside the wake path, never in it: it
+# is detached, never waited on, and its own lock and hard bound keep it from
+# piling up. bin/fm-ask-triage.sh owns scope, consent, and failure behaviour;
+# without its pinned runtime nothing is started at all.
+ASK_TRIAGE_PID=
+ask_triage_detached() {
+  [ -f "$SCRIPT_DIR/ask-triage/node_modules/ai/package.json" ] \
+    || [ -n "${FM_ASK_TRIAGE_HELPER:-}" ] || return 0
+  if [ -n "$ASK_TRIAGE_PID" ]; then
+    kill -0 "$ASK_TRIAGE_PID" 2>/dev/null && return 0
+    wait "$ASK_TRIAGE_PID" 2>/dev/null || true
+    ASK_TRIAGE_PID=
+  fi
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+    "$SCRIPT_DIR/fm-ask-triage.sh" score </dev/null >/dev/null 2>&1 &
+  ASK_TRIAGE_PID=$!
+}
+
 RECONCILE_REQUEST_PID=
 reconcile_requests_pending() {
   local request
@@ -2108,6 +2126,7 @@ while :; do
     # home_summary_refresh_detached for why publication stays off the beacon's
     # path. Publication failure stays side-band.
     home_summary_refresh_detached
+    ask_triage_detached
     files=""
     while IFS=$(printf '\t') read -r sf sig f; do
       [ -n "$sf" ] || continue
