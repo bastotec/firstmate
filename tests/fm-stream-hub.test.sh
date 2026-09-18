@@ -34,6 +34,11 @@ CASE_DIR=""
 URL=""
 HUB_PID=""
 HUB_READY=""
+# The hub arguments THIS case started with. A restart has to serve the same hub
+# the case set up - a case that tuned an acknowledgement window or any other
+# option would otherwise be measuring a default hub after the restart, which is
+# the half of the case that matters most.
+HUB_ARGS=()
 STUB_JOURNAL=""
 AGENT_PID=""
 # Labels carry the pid of THIS run. An interrupted run leaves its agents
@@ -85,6 +90,7 @@ spawn_hub() {
 start_hub() {
   local name=$1
   shift
+  HUB_ARGS=("$@")
   cleanup_helpers
   CASE_DIR="$TMP_ROOT/$name"
   mkdir -p "$CASE_DIR/state" "$CASE_DIR/cwd"
@@ -101,8 +107,13 @@ start_hub() {
 # which is what a restart means to an agent that never moved. Nothing else is
 # touched: the agents keep running, and what they do about the hub underneath
 # them is the whole of what these cases ask.
+# restart_hub [seconds-down] - stop this case's hub and bring the SAME hub back,
+# optionally leaving it down for a while first. The outage length is a parameter
+# because what an agent does during one depends on how long it lasts: a poll
+# that has been failing for half a minute is waiting on a different clock from
+# one that failed once.
 restart_hub() {
-  local port=${URL##*:} waited=0
+  local down=${1:-0} port=${URL##*:} waited=0
   kill "$HUB_PID" 2>/dev/null
   while [ "$waited" -lt 100 ]; do
     [ -e "$HUB_READY" ] || break
@@ -110,7 +121,8 @@ restart_hub() {
     waited=$((waited + 1))
   done
   [ -e "$HUB_READY" ] && fail "the hub did not stop when asked"
-  spawn_hub "$port"
+  [ "$down" != 0 ] && sleep "$down"
+  spawn_hub "$port" ${HUB_ARGS[@]+"${HUB_ARGS[@]}"}
 }
 
 # api prints the response body and records the HTTP status in a FILE rather than
@@ -1459,6 +1471,83 @@ EOF
   pass "hub: an agent the hub cannot take back paces its attempts instead of hammering it"
 }
 
+# outage_that_parks_the_poll <ack-window> - how long this case must leave the
+# hub down so that, when it comes back, the agent's command poll is still
+# parked for longer than the hub will hold a steer. Derived from the agent's
+# OWN backoff ladder rather than guessed: a case that hardcoded an outage would
+# quietly stop exercising the gap the day that ladder changed, which is the
+# failure mode of a test that keeps passing after its subject has moved.
+outage_that_parks_the_poll() {
+  python3 - "$AGENT" "$1" <<'EOF'
+import importlib.util, sys
+
+spec = importlib.util.spec_from_file_location("fm_stream_agent", sys.argv[1])
+agent = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(agent)
+ack = float(sys.argv[2])
+# The poll waits MIN, then twice that, and so on up to MAX, so its waits tile
+# the outage end to end. Find the first wait with enough left in it after the
+# hub returns, and return to the middle of that wait.
+wait, elapsed = agent.POLL_BACKOFF_MIN, 0.0
+for _ in range(64):
+    # Come back halfway through this wait: the furthest point from either edge,
+    # so neither a slow start nor a slow restart can land outside it.
+    if wait / 2.0 >= ack + 4.0:
+        print("%d" % round(elapsed + wait / 2.0))
+        break
+    elapsed += wait
+    wait = min(wait * 2.0, agent.POLL_BACKOFF_MAX)
+else:
+    raise SystemExit("no wait in the poll's ladder outlasts a %.1fs window" % ack)
+EOF
+}
+
+test_a_steer_lands_as_soon_as_the_worker_is_listed_again() {
+  # Back in the listing has to mean steerable, because that is what an operator
+  # reads it as. The command poll backs off while the hub is unreachable, so
+  # after a long outage it is parked on a wait many seconds wide when the hub
+  # returns. The state heartbeat discovers the return within a second and takes
+  # the endpoint back, so the listing says the worker is healthy - while the
+  # thread that receives steers is still asleep on a clock the outage set. A
+  # steer sent in that gap is not merely slow: the hub waits out its
+  # acknowledgement window and reports the input as NOT delivered, for a worker
+  # the fleet has just called well.
+  #
+  # Two clocks are being compared, so both are pinned. The hub's window is set
+  # here rather than left at its default, and the outage is computed from the
+  # agent's own ladder, so the case rests on the agent's real pace instead of
+  # on timing it does not control.
+  local ack=5 endpoint outage listed="" waited=0
+  start_hub reregister-steer --command-ack-secs "$ack"
+  outage=$(outage_that_parks_the_poll "$ack") \
+    || fail "could not derive an outage from the agent's poll backoff ladder"
+  endpoint=$(start_agent box-a parked)
+  # Steerable BEFORE the outage, so the assertion after it is a comparison
+  # rather than a claim into a vacuum.
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo BEFORE-OUTAGE","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 "the worker should be steerable before the outage"
+  wait_for_capture "$endpoint" BEFORE-OUTAGE || fail "the worker never ran the first steer"
+
+  restart_hub "$outage"
+
+  # The listing coming back is the starting gun: from here an operator would
+  # believe the worker is reachable, so from here it has to be.
+  while [ "$waited" -lt 300 ]; do
+    listed=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')
+    [ "$listed" = 1 ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$listed" 1 "the worker should reappear in the fleet listing after the outage"
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo AFTER-OUTAGE","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 \
+    "a steer sent the moment the worker is listed again should be delivered, not refused while its command poll sleeps off the outage"
+  wait_for_capture "$endpoint" AFTER-OUTAGE \
+    || fail "the worker should run what is typed into it as soon as the listing says it is back"
+  pass "hub: a worker listed again after a long outage takes a steer straight away"
+}
+
 test_an_accepted_registration_returns_the_pace_to_its_floor() {
   # The other end of pacing. A long outage grows the pause between attempts to
   # its ceiling, and then one attempt is accepted - which is proof the hub is
@@ -1580,6 +1669,7 @@ test_a_restarted_hub_gets_its_workers_back
 test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
 test_a_closing_frame_outlives_the_pace_its_own_outage_set
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
+test_a_steer_lands_as_soon_as_the_worker_is_listed_again
 test_an_accepted_registration_returns_the_pace_to_its_floor
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home

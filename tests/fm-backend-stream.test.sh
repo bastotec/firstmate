@@ -321,16 +321,35 @@ test_a_restarting_hub_never_reads_as_a_missing_worker() {
   pass "stream: a hub restart is waited out rather than reported as a missing worker"
 }
 
-test_the_fleet_listing_never_calls_a_rejoining_worker_absent() {
-  # The listing an operator reads has two endpoint reads per row: the cheap
-  # presence probe, which answers from the first reply, and the recovery-grade
-  # agent-state verdict, which waits out a hub that restarted. During a rejoin
-  # they disagree, and the row must not be rendered from the cheap one - an
-  # `absent` row for a worker that is alive and back within seconds is exactly
-  # the report this change exists to eliminate, and `alive` plus `absent` in
-  # one row is a snapshot contradicting itself.
+test_the_fleet_listing_reports_a_worker_that_came_back() {
+  # WHAT THIS COVERS, AND WHAT IT DELIBERATELY DOES NOT.
+  #
+  # Covered: a worker that lived through a hub restart is rendered by the fleet
+  # listing as present and steerable under the endpoint id it kept, rather than
+  # as a row the restart left behind.
+  #
+  # NOT covered: the row rendered DURING the rejoin, which is what
+  # fm-fleet-snapshot.sh's stream branch exists for - taking the recovery-grade
+  # verdict rather than the cheap presence probe while the two disagree. That
+  # behaviour has no executable test here, and the honest reason is that it
+  # cannot be timed deterministically from outside. The window is bounded above
+  # by the adapter's own rejoin grace (FM_BACKEND_STREAM_MISSING_GRACE_SECS, 6s
+  # - past it the verdict settles on `missing` and an absent row is correct)
+  # and below by how long a whole fm-fleet-snapshot.sh run takes to reach its
+  # presence probe, which is seconds of the same few. An earlier version of
+  # this case aimed at that window and hit it perhaps two runs in three: the
+  # third passed with the branch reverted, and a slower box failed it outright
+  # on correct code. Both halves are worse than a gap, because a case that
+  # reddens unrelated work or goes green with its subject removed teaches the
+  # wrong thing in both directions.
+  #
+  # The deferral itself is covered one level down, deterministically, by
+  # test_a_restarting_hub_never_reads_as_a_missing_worker above: it reads the
+  # classifier from the instant of the restart rather than racing a subprocess
+  # against it. What is untested is only that the snapshot consults that
+  # classifier instead of the cheap probe.
   start_case_hub snapshot-rejoin
-  local id label target home out
+  local id label target home out waited=0 back="" before=""
   id="snapshotrejoin-$$"
   label="fm-$id"
   target=$(create_endpoint "$label")
@@ -345,38 +364,51 @@ test_the_fleet_listing_never_calls_a_rejoining_worker_absent() {
     "kind=ship" \
     "mode=ship"
 
+  # What this worker reads as BEFORE the restart is the only thing the reading
+  # after it can honestly be compared with. An endpoint running nothing but the
+  # operator's shell does not read `alive`, so asserting a literal verdict here
+  # would be asserting the fixture rather than the recovery.
+  before=$(with_stream_env fm_backend_agent_state stream "$target")
+  [ "$before" != missing ] || fail "the worker should be readable before the restart"
+
   restart_case_hub
 
-  # The precondition this case is about: the hub has forgotten the endpoint and
-  # the presence probe says so, while the agent is still running and about to
-  # register itself again.
-  with_stream_env fm_backend_target_exists stream "$target" "$label" >/dev/null 2>&1 \
-    && fail "the restarted hub should not know the endpoint yet; the rejoin window was missed"
+  # Wait for the rejoin to have HAPPENED rather than racing it. That is what
+  # makes this case deterministic, and it is also exactly what it gives up: the
+  # row below is read after the window, never inside it.
+  while [ "$waited" -lt 150 ]; do
+    back=$(with_stream_env fm_backend_agent_state stream "$target")
+    [ "$back" = "$before" ] && break
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  assert_equals "$back" "$before" \
+    "the worker should read as it did before, under the endpoint id it kept"
 
   out=$(FM_HOME="$home" FM_ROOT="$ROOT" FM_CONFIG_OVERRIDE="$home/config" \
     FM_STREAM_HUB="$URL" FM_STREAM_TOKEN="$TOKEN" FM_STREAM_MACHINE=box-test \
     "$ROOT/bin/fm-fleet-snapshot.sh" --json) \
-    || fail "the fleet snapshot failed while a worker was rejoining"
+    || fail "the fleet snapshot failed after a worker came back"
   printf '%s' "$out" | jq -e --arg id "$id" '
     [.tasks[] | select(.id == $id)] | length == 1
-  ' >/dev/null || fail "the snapshot should carry exactly one row for the rejoining task: $out"
+  ' >/dev/null || fail "the snapshot should carry exactly one row for the recovered task: $out"
   local state status exists
   state=$(printf '%s' "$out" | jq -r --arg id "$id" '.tasks[] | select(.id == $id) | .endpoint.agent_state')
   status=$(printf '%s' "$out" | jq -r --arg id "$id" '.tasks[] | select(.id == $id) | .endpoint.status')
   exists=$(printf '%s' "$out" | jq -r --arg id "$id" '.tasks[] | select(.id == $id) | .endpoint.exists')
-  assert_not_equals missing "$state" \
-    "a worker re-registering with its hub must never read missing"
+  assert_equals "$state" "$before" \
+    "the listing should report the recovered worker exactly as it read before the restart"
   [ "$status" != absent ] \
-    || fail "a worker rejoining its restarted hub must not be listed absent: $out"
+    || fail "a worker that came back must not be listed absent: $out"
   [ "$exists" != false ] \
-    || fail "the row must not claim absence the settled verdict does not support: $out"
-  # And the worker is still steerable under the identity it kept, which is what
-  # the listing is read to decide.
+    || fail "the row must not claim absence for an endpoint the hub knows again: $out"
+  # And steerable under the identity it kept, which is what the listing is read
+  # to decide.
   with_stream_env fm_backend_send_text_submit stream "$target" 'echo LISTED-AFTER-RESTART' 3 0.2 0.2 >/dev/null \
     || fail "the dispatcher refused to steer the worker the listing kept"
   wait_for_capture "$target" LISTED-AFTER-RESTART \
     || fail "a steer for the worker the listing kept must reach its terminal"
-  pass "stream: the fleet listing waits out a rejoin rather than calling the worker absent"
+  pass "stream: the fleet listing reports a worker that lived through a hub restart"
 }
 
 test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale() {
@@ -1039,7 +1071,7 @@ test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor
 test_agent_state_reads_the_foreground_process_not_the_screen
 test_agent_state_separates_missing_unreachable_and_partitioned
 test_a_restarting_hub_never_reads_as_a_missing_worker
-test_the_fleet_listing_never_calls_a_rejoining_worker_absent
+test_the_fleet_listing_reports_a_worker_that_came_back
 test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale
 test_a_forced_close_gives_way_to_the_agents_own_later_report
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling

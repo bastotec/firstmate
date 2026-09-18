@@ -381,20 +381,17 @@ class Pty:
             pass
 
 
-class Refusal(RuntimeError):
-    """A refusal the hub STATED.
-
-    A hub that could not be reached is not one of these: it has said nothing,
-    and silence is an ordinary transient the retries already handle. The whole
-    of what this agent is allowed to act on - take an identity back, stand
-    down, stop for good - turns on the difference, so the two are different
-    types rather than one string an ill-judged substring match could confuse.
-    The code the hub named is read once, here, to pick the type; everything
-    downstream dispatches on the type alone.
-    """
+# The two types below are refusals the hub STATED. A hub that could not be
+# reached is neither of them: it has said nothing, and silence is an ordinary
+# transient the retries already handle. The whole of what this agent is allowed
+# to act on - take an identity back, stand down, stop for good - turns on the
+# difference, so these are distinct types rather than one string an ill-judged
+# substring match could confuse. The code the hub named is read once, where the
+# call is made, to pick the type; everything downstream dispatches on the type
+# alone and catches these by name.
 
 
-class Superseded(Refusal):
+class Superseded(RuntimeError):
     """This endpoint's identity now belongs to another live endpoint.
 
     The one situation an agent cannot come back from: while it was out of
@@ -404,7 +401,7 @@ class Superseded(Refusal):
     """
 
 
-class Forgotten(Refusal):
+class Forgotten(RuntimeError):
     """The hub has no record of this endpoint, so the agent can take it back.
 
     The hub keeps its endpoint registry in memory only, so a hub that restarted
@@ -427,6 +424,12 @@ SUPERSEDING_REFUSALS = frozenset(("endpoint_superseded", "duplicate_label"))
 # one restart strands every agent at once, so agents backing off by identical
 # amounts would return in lockstep and arrive as one burst against a hub that
 # has just come up.
+# The command poll's own pace while the hub cannot be reached. Named because
+# the wait an outage leaves the poll parked in is what decides how long after a
+# recovery a steer would otherwise be refused, so a test of that gap has to
+# derive its outage from the same ladder rather than assume one.
+POLL_BACKOFF_MIN = 2.0
+POLL_BACKOFF_MAX = 60.0
 REREGISTER_BACKOFF_MIN = 2.0
 REREGISTER_BACKOFF_MAX = 60.0
 REREGISTER_JITTER = 0.25
@@ -559,7 +562,17 @@ class Agent:
         # draining the pty - a worker whose output nobody reads eventually
         # blocks - but publishes nothing and takes no commands.
         self.stood_down = threading.Event()
-        self._backoff = 2.0
+        # Owned by the command thread alone: only command_loop reads or writes
+        # it, so the pace of the command poll is never a value two threads
+        # mutate between them. A recovery on another thread says only THAT the
+        # endpoint is back, through the event below, and the command thread
+        # decides for itself what that means for its own pace.
+        self._backoff = POLL_BACKOFF_MIN
+        # Set when this agent is back at an endpoint the hub knows, and when
+        # the agent is halting. Either makes a command poll waiting out a
+        # failed attempt pointless: the first because there is something to
+        # poll again, the second because there is nothing left to poll for.
+        self._poll_wake = threading.Event()
         # Re-registration is serialized and paced. Three threads publish, so a
         # forgotten endpoint is discovered several times over, and a hub that is
         # down must see one attempt per backoff window rather than one per
@@ -570,6 +583,18 @@ class Agent:
         self._register_lock = threading.Lock()
         self._register_not_before = 0.0
         self._register_backoff = REREGISTER_BACKOFF_MIN
+
+    def halt(self) -> None:
+        """End this agent, and wake whatever is waiting so it ends promptly.
+
+        The command poll waits out a failed attempt on an event rather than on
+        `stop`, so a stop that only set `stop` would leave that thread parked
+        for as long as its backoff had grown. Every place that ends the agent
+        comes through here, which is what keeps that from being something a
+        later stop site has to remember.
+        """
+        self.stop.set()
+        self._poll_wake.set()
 
     # --- publishing -------------------------------------------------------
 
@@ -685,6 +710,11 @@ class Agent:
             # frame lost here costs a moment of unreadability, not the recovery.
             sys.stderr.write("fm-stream-agent: re-registered but could not publish "
                              "state: %s\n" % exc)
+        # The command poll may be waiting out a failure of its own, and its
+        # wait was sized by an outage that is now over. Telling it the endpoint
+        # is back is what makes "steerable again" true at the same moment the
+        # fleet listing says so, rather than up to a backoff later.
+        self._poll_wake.set()
         sys.stderr.write("fm-stream-agent: re-registered endpoint %s with the hub at %s "
                          "after: %s\n" % (self.endpoint_id, self.hub.base_url, reason))
         return True
@@ -702,7 +732,7 @@ class Agent:
                 }])
         finally:
             self.reader_done.set()
-            self.stop.set()
+            self.halt()
 
     def state_frame(self) -> dict:
         until = self.hub.deadline
@@ -829,6 +859,16 @@ class Agent:
                 # publish path can reach either verdict, so this is where the
                 # loop notices rather than only where it raised.
                 return
+            # Cleared BEFORE the attempt, never before the wait below. A
+            # recovery can land at any instant, and the only window in which
+            # losing its signal would cost anything is between discovering this
+            # poll has failed and giving up on waiting. Clearing here puts that
+            # window ahead of the attempt instead of inside it: a recovery
+            # during the call, or during the wait, is still set when the wait
+            # looks. One that lands in the instant before the attempt is not
+            # lost either, because the attempt it would have prompted is the
+            # one about to be made.
+            self._poll_wake.clear()
             try:
                 answer = self.hub.call("GET", path, timeout=self.options.poll_secs + 15)
             except Superseded as exc:
@@ -840,10 +880,17 @@ class Agent:
                 # reconnects - but an agent whose hub is gone for good would
                 # otherwise poll a dead socket forever.
                 sys.stderr.write("fm-stream-agent: command poll failed: %s\n" % exc)
-                self.stop.wait(self._backoff)
-                self._backoff = min(self._backoff * 2, 60.0)
+                if not self._poll_wake.wait(self._backoff):
+                    self._backoff = min(self._backoff * 2, POLL_BACKOFF_MAX)
+                elif not self.stop.is_set():
+                    # The endpoint is back. The wait this poll's own failure
+                    # earned was sized by an outage that has ended, so serving
+                    # the rest of it would leave the worker listed and healthy
+                    # while a steer sent to it came back undelivered. Both the
+                    # wait and the growth behind it end here.
+                    self._backoff = POLL_BACKOFF_MIN
                 continue
-            self._backoff = 2.0
+            self._backoff = POLL_BACKOFF_MIN
             for command in answer.get("commands") or []:
                 self.command_busy.set()
                 try:
@@ -875,7 +922,7 @@ class Agent:
         commands.start()
 
         def _signalled(signum, frame) -> None:  # noqa: ARG001
-            self.stop.set()
+            self.halt()
             self.pty.close()
 
         signal.signal(signal.SIGTERM, _signalled)
