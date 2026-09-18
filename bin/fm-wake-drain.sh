@@ -609,6 +609,16 @@ print_status_presentation() {  # [<deduped-raw-rows>]
   return "$rc"
 }
 
+# Print the optional POSSIBLE ASKS section after everything above has been
+# presented. It only reads flags bin/fm-ask-triage.sh already wrote beside the
+# wake path, so no drain ever waits on its network call, and a failure here
+# leaves the rest of the drain exactly as it was. Main actor only: a branch
+# drain would spend a flag the supervisor itself never saw.
+print_possible_asks() {
+  [ "$ACTOR" = main ] || return 0
+  FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-ask-triage.sh" present </dev/null 2>/dev/null || true
+}
+
 # shellcheck disable=SC2317,SC2329 # Invoked by trap handlers below.
 cleanup() {
   local status=$?
@@ -778,6 +788,7 @@ if [ ! -s "$FM_WAKE_QUEUE" ]; then
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
   (print_status_presentation) || true
+  print_possible_asks
   if [ "$RECOVERY_ACK_REQUIRED" = true ]; then
     printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation %s\n' "${RECOVERY_MARKER_TOKEN##*:}" >&2
   fi
@@ -799,6 +810,7 @@ if [ "$ACTOR" = main ]; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     DRAIN_LOCK_HELD=false
     (print_status_presentation) || true
+  print_possible_asks
     assert_watcher_liveness
     exit 0
   fi
@@ -861,5 +873,6 @@ printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --a
   "$ACK_THROUGH" "${RECOVERY_MARKER_TOKEN##*:}" >&2
 
 (print_status_presentation "$RAW_ROWS") || true
+print_possible_asks
 assert_watcher_liveness
 exit 0

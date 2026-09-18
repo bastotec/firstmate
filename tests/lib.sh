@@ -47,6 +47,13 @@ umask 022
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
 
+# Keep the optional possible-ask pass (bin/fm-ask-triage.sh) off the network in
+# every suite: a developer machine with its runtime installed and a key in
+# ~/.secrets would otherwise let any watcher test spend a real model call.
+# tests/fm-ask-triage.test.sh points each case at its own synthetic secrets file.
+export FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+unset FM_ASK_TRIAGE_HELPER FM_ASK_TRIAGE_KEY_VAR
+
 # Clear the task-worker marker bin/fm-spawn.sh exports into ship and scout
 # panes. This suite builds git-init fixture repositories whose primary checkout
 # it runs a copied bin/fm-test-run.sh in, and that runner refuses the primary
