@@ -652,36 +652,6 @@ fm_backend_stream_agent_state() {  # <target>
   printf 'ambiguous'
 }
 
-# fm_backend_stream_endpoint_absent_from_settled_hub: the one qualification
-# that lets a 404 mean the endpoint is gone rather than merely unknown.
-#
-# A bare 404 is never enough (see fm_backend_stream_kill). It becomes proof of
-# absence only when all three hold:
-#   - the hub answers its own health check, so the read reached the hub that
-#     owns the record rather than failing somewhere before it;
-#   - that hub has been up longer than the window it gives a live agent to
-#     publish (state_max_age_secs), so every agent still running has had a
-#     full window to re-register after a restart. Uptime comes from the hub's
-#     own uptime_secs, never from subtracting started_at against a local
-#     clock: a caller on another machine does not share that clock, and skew
-#     would read a just-restarted hub as a settled one;
-#   - its task listing parses and does not carry this endpoint, so a listing
-#     that did not run cannot pass for one that answered.
-# A hub too old to report uptime_secs cannot be qualified this way, so it
-# stays unconfirmed.
-fm_backend_stream_endpoint_absent_from_settled_hub() {  # <endpoint-id>
-  local endpoint=$1 health tasks
-  health=$(fm_backend_stream_api GET /v1/health 2>/dev/null) || return 1
-  printf '%s' "$health" | jq -e '
-    (.uptime_secs) as $up | (.state_max_age_secs) as $window
-    | ($up | type) == "number" and ($window | type) == "number" and $up > $window
-  ' >/dev/null 2>&1 || return 1
-  tasks=$(fm_backend_stream_api GET /v1/tasks 2>/dev/null) || return 1
-  printf '%s' "$tasks" | jq -e --arg e "$endpoint" '
-    (.tasks | type) == "array" and (any(.tasks[]; .endpoint_id == $e) | not)
-  ' >/dev/null 2>&1 || return 1
-}
-
 # Return contract: bin/fm-backend.sh's fm_backend_kill header owns it. This is
 # the adapter the contract was written from: the hub already distinguishes a
 # kill the endpoint's own agent acknowledged from one it only presumed, and
@@ -711,16 +681,10 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
   # and every worker behind those 404s is still running. Absence from the table
   # is therefore a statement about the hub's own memory, never about a process
   # on another machine, so it is reported as unconfirmed with its own reason
-  # rather than folded into the generic read failure. The one 404 that DOES
-  # prove absence is the qualified one below
-  # (fm_backend_stream_endpoint_absent_from_settled_hub): a healthy hub, up
-  # past its own re-registration window, whose listing carries no such
-  # endpoint. Without it a record the hub genuinely pruned could never be
-  # retired at all.
+  # rather than folded into the generic read failure.
   task=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || api_rc=$?
   if [ "$api_rc" -ne 0 ]; then
     if [ "$api_rc" -eq 3 ]; then
-      fm_backend_stream_endpoint_absent_from_settled_hub "$FM_BACKEND_STREAM_ENDPOINT" && return 0
       echo "error: the stream hub has no record of $FM_BACKEND_STREAM_ENDPOINT, which is not the same" \
            "as its worker having stopped - a restarted hub serves that answer until its agents" \
            "re-register; the worker may still be running" >&2

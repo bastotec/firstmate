@@ -615,14 +615,21 @@ fm_backend_cmux_window_of_workspace() {  # <workspace_id> -> "<window_id> <count
 # leaving that window a fresh default workspace (never an fm-<home>- title, so
 # recovery/list_live ignore it) - cmux's own "closed the last tab" outcome.
 # fm_backend_cmux_workspace_presence: classify one workspace as
-# dead|present|unknown from a structured `workspace list --json` read. This is
-# what makes the silent no-op above observable: `close-workspace` answers `OK`
-# whether or not it closed anything, so the close's own status can never be
-# the verdict. A listing that does not run, or that does not parse as an
-# array, is `unknown` - an unreachable cmux cannot tell a closed workspace
+# dead|present|foreign|unknown from a structured `workspace list --json` read.
+# This is what makes the silent no-op above observable: `close-workspace`
+# answers `OK` whether or not it closed anything, so the close's own status can
+# never be the verdict. A listing that does not run, or that does not parse as
+# an array, is `unknown` - an unreachable cmux cannot tell a closed workspace
 # from one it simply could not see.
-fm_backend_cmux_workspace_presence() {  # <workspace_id> -> dead|present|unknown
-  local wsid=$1 out matches
+#
+# With an expected title the same listing answers the second question a kill
+# verdict needs: whether a workspace that IS listed is still this task's.
+# `foreign` is that proof - it is listed and carries another title, so this id
+# was reused and this task's endpoint is gone. A workspace whose title cannot
+# be read from the listing is `unknown`, never `foreign`, because an absent
+# title is not a different one.
+fm_backend_cmux_workspace_presence() {  # <workspace_id> [expected-title] -> dead|present|foreign|unknown
+  local wsid=$1 expected=${2:-} out matches title
   out=$(fm_backend_cmux_cli workspace list --json --id-format uuids 2>/dev/null) || {
     printf 'unknown'
     return 0
@@ -632,29 +639,49 @@ fm_backend_cmux_workspace_presence() {  # <workspace_id> -> dead|present|unknown
     | [.workspaces[] | select(.id == $id)] | length
   ' 2>/dev/null) || matches=
   case "$matches" in
-    0) printf 'dead' ;;
-    1) printf 'present' ;;
-    *) printf 'unknown' ;;
+    0) printf 'dead'; return 0 ;;
+    1) ;;
+    *) printf 'unknown'; return 0 ;;
   esac
+  if [ -n "$expected" ]; then
+    title=$(printf '%s' "$out" | jq -r --arg id "$wsid" '
+      select((.workspaces | type) == "array")
+      | [.workspaces[] | select(.id == $id) | .title // ""] | if length == 1 then .[0] else empty end
+    ' 2>/dev/null) || title=
+    if [ -z "$title" ]; then
+      printf 'unknown'
+      return 0
+    fi
+    if [ "$title" != "$expected" ]; then
+      printf 'foreign'
+      return 0
+    fi
+  fi
+  printf 'present'
 }
 
 # Return contract: bin/fm-backend.sh's fm_backend_kill header owns it. An
-# expected label that no longer resolves means the id names something other
-# than this task, which is a gone endpoint rather than an unconfirmed kill -
-# the same reading the stream adapter takes on a label mismatch.
+# expected label the SAME listing shows has moved to another workspace means
+# the id names something other than this task, which is a gone endpoint rather
+# than an unconfirmed kill - the same reading the stream adapter takes on a
+# label mismatch. A label that merely failed to resolve is not that proof.
 fm_backend_cmux_kill() {  # <target> [unused] [expected-label]
   local expected_label=${3:-} wsid wininfo win count
   if [ -n "$expected_label" ]; then
     if ! fm_backend_cmux_target_ready "$1" "$expected_label"; then
-      # target_ready answers one false for four different reasons, and only
-      # some of them are proof. Re-read the recorded workspace through the
-      # structured presence read: a listing that RAN and omits it means this
-      # endpoint is gone, a listing that shows it means the label now belongs
-      # to a stranger's workspace and this task's endpoint is gone either way,
-      # and a listing that failed proves neither.
+      # target_ready answers one false for four different reasons, including a
+      # transient `list-panes` failure against a workspace that is still ours
+      # and still running. Re-read the recorded workspace through the
+      # structured presence read, which answers from the listing itself: gone
+      # when it RAN and omits the workspace, gone when the workspace is listed
+      # under another title, and a refusal when the listing proves neither. A
+      # workspace still carrying our own title is live, so it falls through to
+      # the close-and-confirm path below rather than being reported gone.
       fm_backend_cmux_parse_target "$1" || return 1
-      case "$(fm_backend_cmux_workspace_presence "$FM_BACKEND_CMUX_WORKSPACE")" in
-        dead|present) return 0 ;;
+      case "$(fm_backend_cmux_workspace_presence "$FM_BACKEND_CMUX_WORKSPACE" \
+        "$(fm_backend_cmux_scoped_title "$expected_label")")" in
+        dead|foreign) return 0 ;;
+        present) ;;
         *)
           echo "error: cmux could not say whether workspace $FM_BACKEND_CMUX_WORKSPACE is gone, so" \
                "$1 was neither closed nor confirmed gone; the worker may still be running" >&2

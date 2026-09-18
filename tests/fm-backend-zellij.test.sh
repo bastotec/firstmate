@@ -833,6 +833,62 @@ test_kill_skips_recorded_tab_when_label_mismatches() {
   pass "fm_backend_zellij_kill: skips a stale recorded tab id whose label does not match"
 }
 
+# The ambiguity this repo documents and deliberately refuses: a legacy
+# bare-titled tab whose name is shared by another live tab (this home's
+# pre-migration tab plus a same-named tab from another home in the same
+# session). fm_backend_zellij_tab_matches_label refuses it on purpose, so the
+# label never resolves - but the pane is alive and nothing was closed, which
+# makes it an unconfirmed kill, never a gone endpoint.
+test_kill_reports_unconfirmed_when_the_label_is_ambiguous_and_the_pane_is_live() {
+  local dir fb out
+  dir="$TMP_ROOT/kill-label-ambiguous"; mkdir -p "$dir/responses"
+  # 1 tab_for_pane: pane 7 lives in tab 3. 2 and 3 are the label checks for the
+  # resolved and the recorded tab id, both reading the same ambiguous listing.
+  zellij_pane_response "$dir" 1 7 3
+  zellij_multi_tab_response "$dir" 2 3 fm-zghost 9 fm-zghost
+  zellij_multi_tab_response "$dir" 3 3 fm-zghost 9 fm-zghost
+  # 4 the pane read on the unresolved-label path: the pane is still live.
+  zellij_pane_response "$dir" 4 7 3
+  # 5/6 the proof attempt: the tab holding it, and its still-ambiguous name.
+  zellij_pane_response "$dir" 5 7 3
+  zellij_multi_tab_response "$dir" 6 3 fm-zghost 9 fm-zghost
+  fb=$(make_zellij_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST="firstmate" \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7 3 fm-zghost' "$ROOT" 2>&1 )
+  expect_code 2 $? "an ambiguous label over a live pane must report unconfirmed, never a gone endpoint"
+  assert_contains "$out" "may still be running" \
+    "an ambiguous label over a live pane should say the worker may still be running"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-tab-by-id' \
+    "kill should not close a tab it could not verify"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-pane' \
+    "kill should not close a pane once an expected task label is available"
+  pass "fm_backend_zellij_kill: an ambiguous label over a live pane is unconfirmed, not gone"
+}
+
+# The other half of that path: a tab read that RAN and shows the pane's tab
+# carrying a different name IS proof the id stopped naming this task.
+test_kill_reports_gone_when_the_pane_moved_to_a_differently_named_tab() {
+  local dir fb
+  dir="$TMP_ROOT/kill-label-moved"; mkdir -p "$dir/responses"
+  zellij_pane_response "$dir" 1 7 3
+  zellij_tab_response "$dir" 2 3 not-the-task
+  zellij_tab_response "$dir" 3 3 not-the-task
+  zellij_pane_response "$dir" 4 7 3
+  zellij_pane_response "$dir" 5 7 3
+  zellij_tab_response "$dir" 6 3 not-the-task
+  fb=$(make_zellij_fakebin "$dir")
+  PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST="firstmate" \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7 3 fm-zghost' "$ROOT"
+  expect_code 0 $? "a pane whose tab carries another name no longer belongs to this task"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-tab-by-id' \
+    "kill should not close a tab that belongs to someone else"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-pane' \
+    "kill should not close a pane that belongs to someone else"
+  pass "fm_backend_zellij_kill: a pane under a differently named tab still reads as gone"
+}
+
 test_kill_is_noop_when_session_absent() {
   local dir fb
   dir="$TMP_ROOT/kill-no-session"; mkdir -p "$dir/responses"
@@ -884,6 +940,10 @@ test_kill_names_a_zellij_that_could_not_run_at_all() {
     "a zellij that could not run should be named as the reason the listing was unreadable"
   assert_contains "$out" "may still be running" \
     "a zellij that could not run should still say the worker may still be running"
+  # The kill contract allows exactly one explanatory line, and callers that
+  # relay only the first one must get the cause AND the consequence.
+  [ "$(printf '%s\n' "$out" | grep -c .)" = 1 ] \
+    || fail "an unreadable listing should refuse in exactly one line, got: $out"
   pass "fm_backend_zellij_kill: a zellij that could not run is named, not reported as gone"
 }
 
@@ -1433,6 +1493,8 @@ test_kill_resolves_tab_and_closes_by_id
 test_kill_falls_back_to_close_pane_when_tab_lookup_empty
 test_kill_closes_recorded_tab_when_pane_already_gone
 test_kill_skips_recorded_tab_when_label_mismatches
+test_kill_reports_unconfirmed_when_the_label_is_ambiguous_and_the_pane_is_live
+test_kill_reports_gone_when_the_pane_moved_to_a_differently_named_tab
 test_kill_is_noop_when_session_absent
 test_kill_reports_unconfirmed_when_the_session_listing_fails
 test_kill_names_a_zellij_that_could_not_run_at_all

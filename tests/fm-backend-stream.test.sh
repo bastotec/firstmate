@@ -652,30 +652,26 @@ test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop() {
   pass "stream: a kill the hub cannot answer is reported as unconfirmed"
 }
 
-test_a_404_stays_unconfirmed_until_the_hub_has_settled() {
-  # The two directions of the one qualification that lets a 404 mean absence.
-  #
-  # A hub still inside its own re-registration window has told nobody anything:
-  # every live worker's agent may not have re-registered yet, so its 404s are
-  # statements about the hub's memory. Only once the hub has been up longer
-  # than that window does a listing without this endpoint become evidence the
-  # record was really pruned.
+test_a_404_stays_unconfirmed_however_long_the_hub_has_been_up() {
+  # Absence from the hub's table is never absence of the worker, and no amount
+  # of hub uptime converts one into the other: an agent registers exactly once
+  # and has no path back (docs/stream-backend.md), and the hub drops any
+  # endpoint whose agent has gone quiet for long enough - a partitioned or
+  # sleeping machine, whose worker is still running. A healthy, long-settled
+  # hub that lists nothing must therefore still refuse.
   local target out
-  # A window no test run can outlive, so this hub never counts as settled.
-  start_case_hub unsettled404 --state-max-age-secs 3600
-  target="$(with_stream_env fm_backend_stream_hub_tag):$(python3 -c 'import os; print(os.urandom(16).hex())')"
-  out=$(with_stream_env fm_backend_kill stream "$target" "" "fm-unsettled-$$" 2>&1) \
-    && fail "a 404 from a hub that has not settled must not report a confirmed stop"
-  assert_contains "$out" "re-register" \
-    "an unsettled hub's 404 should name the re-registration window that produces it"
-
-  # The same 404, from a hub that has been up past its own window.
-  start_case_hub settled404 --state-max-age-secs 0.2
+  start_case_hub aged404 --state-max-age-secs 0.2
   target="$(with_stream_env fm_backend_stream_hub_tag):$(python3 -c 'import os; print(os.urandom(16).hex())')"
   sleep 1
+  with_stream_env fm_backend_stream_api GET /v1/health >/dev/null \
+    || fail "the fixture hub should be healthy before the kill"
   out=$(with_stream_env fm_backend_kill stream "$target" "" "fm-pruned-$$" 2>&1) \
-    || fail "a settled hub that lists no such endpoint should retire it, got '$out'"
-  pass "stream: a 404 is unconfirmed until the hub has been up past its re-registration window"
+    && fail "a 404 from a healthy hub with an empty listing must not report a confirmed stop"
+  assert_contains "$out" "may still be running" \
+    "a hub-forgotten endpoint should say the worker may still be running"
+  assert_contains "$out" "re-register" \
+    "a hub-forgotten endpoint should keep naming the re-registration window that produces it"
+  pass "stream: a 404 stays unconfirmed however long the hub has been up"
 }
 
 test_a_target_from_another_hub_is_refused() {
@@ -1123,7 +1119,7 @@ test_a_forced_close_gives_way_to_the_agents_own_later_report
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_only_a_close_the_agent_reported_counts_as_a_stop
 test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop
-test_a_404_stays_unconfirmed_until_the_hub_has_settled
+test_a_404_stays_unconfirmed_however_long_the_hub_has_been_up
 test_status_return_channel_appends_on_the_owning_machine
 test_a_target_from_another_hub_is_refused
 test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error

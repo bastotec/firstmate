@@ -1148,6 +1148,40 @@ test_kill_label_path_reports_gone_when_the_listing_omits_the_label() {
   pass "fm_backend_cmux_kill: a listing that ran and omits the workspace still reads as gone"
 }
 
+# The label path's other false: target_ready also fails when the workspace is
+# ours, listed, and still running, and only a transient `list-panes` error kept
+# it from resolving the surface. The workspace listing is what tells those
+# apart, so a workspace still carrying OUR title is live and must be closed and
+# confirmed like any other - never reported gone on a read that proved nothing
+# about the worker.
+test_kill_label_path_closes_its_own_live_workspace_instead_of_reporting_gone() {
+  local dir fb out title
+  dir="$TMP_ROOT/kill-label-ours-live"; mkdir -p "$dir/responses"
+  title=$(cmux_expected_scoped_title fm-label)
+  # 1 target_ready title lookup: the workspace is ours. 2 and 3 are its two
+  # list-panes reads, both failing transiently, so target_ready returns false.
+  cmux_workspace_list_response "$dir" 1 "aaaaaaaa-0000-0000-0000-000000000000" "$title"
+  printf '1\n' > "$dir/responses/2.exit"
+  printf '1\n' > "$dir/responses/3.exit"
+  # 4 the presence re-read: listed, still ours, so the worker is still running.
+  cmux_workspace_list_response "$dir" 4 "aaaaaaaa-0000-0000-0000-000000000000" "$title"
+  # 5/6 window_of_workspace, 7 the close, 8 the listing it is confirmed
+  # against - where the close silently closed nothing, cmux's documented no-op.
+  cmux_windows_response "$dir" 5 "eeeeeeee-0000-0000-0000-000000000000" 2
+  cmux_workspace_list_response "$dir" 6 "aaaaaaaa-0000-0000-0000-000000000000" "$title" \
+    "ffffffff-0000-0000-0000-000000000000" "other"
+  cmux_workspace_list_response "$dir" 8 "aaaaaaaa-0000-0000-0000-000000000000" "$title"
+  fb=$(make_cmux_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/backends/cmux.sh"; fm_backend_cmux_kill "aaaaaaaa-0000-0000-0000-000000000000:bbbbbbbb-1111-1111-1111-111111111111" "" fm-label' "$ROOT" 2>&1 )
+  expect_code 2 $? "a workspace that is listed and still ours must never be reported gone"
+  assert_contains "$out" "may still be running" \
+    "a surviving workspace should say the worker may still be running"
+  assert_contains "$(cat "$dir/log")" $'\x1f''close-workspace'$'\x1f''--workspace'$'\x1f''aaaaaaaa-0000-0000-0000-000000000000' \
+    "kill should close its own live workspace rather than reporting it gone unread"
+  pass "fm_backend_cmux_kill: its own live workspace is closed and confirmed, not reported gone"
+}
+
 # --- list_live: label-based orphan discovery ---------------------------------
 
 test_list_live_filters_by_title_prefix() {
@@ -1249,5 +1283,6 @@ test_kill_reports_unconfirmed_when_the_workspace_survives
 test_kill_recovers_stale_target_by_label
 test_kill_label_path_reports_unconfirmed_when_the_listing_is_unreadable
 test_kill_label_path_reports_gone_when_the_listing_omits_the_label
+test_kill_label_path_closes_its_own_live_workspace_instead_of_reporting_gone
 test_list_live_filters_by_title_prefix
 test_secondmate_spawn_refuses_cmux_backend
