@@ -274,6 +274,7 @@ A remote route adds `host:` and `root:` before the existing fields and places th
 Use `fm-home-seed.sh validate` to check the complete operational registry contract documented by the command itself.
 The main first mate routes by reading those scopes with judgment; the project list is provisioning data, not exclusive ownership.
 Use `fm-home-seed.sh <id> - {<project>...|--no-projects}` to lease a fresh local firstmate worktree for the secondmate home.
+Seeding refuses when `FM_ROOT`'s `origin` is a local path or `file://` URL rather than the firstmate fork, because a home cloned from it would push a validated firstmate change into that directory and never open a pull request; a standalone home is repointed at that fork, and bootstrap's `HOME_ROUTE:` line reports a home seeded before this check.
 For remote provisioning, including supplied project origins, follow [Remote second mates](remote-secondmates.md#provision-a-route).
 Use the deliberate `--no-projects` signal only for a firstmate-repo domain that needs no separate project clones.
 It cannot be combined with a project list, and omitting both still fails loudly.
