@@ -218,6 +218,7 @@ Raw launch commands are not accepted for remote secondmates.
 Backends that already refuse secondmate launch, currently Orca, cmux, and stream, remain unsupported on the remote host.
 
 Startup liveness recovery relaunches a dead or missing remote second mate through this same command, so recovery passes the same readiness gate rather than a weaker one.
+A dead remote endpoint is removed before that relaunch, and a removal the backend cannot confirm refuses the launch instead of risking a duplicate mate beside a worker that may still be running.
 
 A persistent remote route's parent metadata intentionally has no local spawn-generation marker and identifies the route by its recorded host instead.
 The Bearings inventory-reconcile hook therefore accepts these markerless routes, revalidates the sampled host at delivery, and refuses a route that changed hosts; [`fm-secondmate-reconcile.sh`](../bin/fm-secondmate-reconcile.sh) owns the exact cooldown, identity, and reporting contract.

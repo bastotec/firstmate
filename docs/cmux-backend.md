@@ -121,6 +121,7 @@ Real tests share the captain's running app rather than creating an isolated cmux
 - A target can disappear after structural readiness and before the operation.
 - The only-workspace cleanup path leaves a fresh default workspace and cannot close the window.
 - Label lookup and recovery are currently scoped to the current cmux window, so a task moved to a non-current window is a known recovery blind spot.
+  The kill's absence read is the exception: it walks every window, so a workspace live in a non-current window is never confirmed gone ([verification/runtime-backends.md](verification/runtime-backends.md#endpoint-kill-confirmation)).
 - Workspace ids do not survive app relaunch and are never recovery authority.
 
 ## Regression entry points

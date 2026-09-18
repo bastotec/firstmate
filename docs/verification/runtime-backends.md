@@ -380,8 +380,10 @@ Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that 
   zellij exits nonzero for an empty session list as well as for a real failure, so the exit status alone cannot separate them: a zero exit means the listing ran, and otherwise only zellij's own documented empty-listing message reads as absence.
 - cmux confirms from a workspace inventory that omits the workspace, built by walking `list-windows --json` and asking each window for its own `workspace list --window` - `workspace list --json` alone is scoped to the current window, so it can never establish absence, only presence.
   A window enumeration that fails, or any single window's list that fails, is unconfirmed, and so is a window listing that parses but carries a window with no usable id, which enumerates nothing while looking like an answer: a partial inventory proves nothing about the windows it did not read.
-  `close-workspace` answers `OK` whether or not it closed anything (see [Closing the last workspace in a window](../cmux-backend.md)), so its status is never the verdict, and an unreadable cmux is unconfirmed.
+  `close-workspace` answers `OK` whether or not it closed anything (see [Current operation and safety](../cmux-backend.md#current-operation-and-safety)), so its status is never the verdict, and an unreadable cmux is unconfirmed.
   That also covers the expected-label path, which answers one false for several different reasons: a listing that ran and carries neither the recorded id nor this task's title, or that shows the id under another title, decides; a listing that failed is unconfirmed; and a workspace the listing still shows under this task's own title is live, so it is closed and confirmed under the recorded id, or - when only a differently numbered workspace carries that title after a cmux relaunch - reported unconfirmed rather than closed under an id the record never named.
+  The read that confirms the close carries the same expected title and is stricter than the pre-close one: only a listing that omits both the recorded id and this task's title confirms, so a relaunch that moved the worker to a new id is unconfirmed, and so is the recorded id now listed under another title.
+  That last answer decides only BEFORE the close, where it proves the id no longer names this task; taking it afterwards would report an endpoint gone without ever applying the relaunch rule, which is the one direction that could license removing records for a worker still running.
 - Orca confirms from an `orca terminal read` absence probe taken after the close, never from the close's own acceptance or refusal, because a close that answers positively and performs nothing is a real failure mode on another backend, and Orca refuses a close against a terminal it no longer has - ordinary already-absent cleanup that the probe, not the refusal, settles.
   Only a reachable runtime answers in its own `{"ok":false,...}` envelope, so that envelope proves reachability - not absence - while a transport failure that produces no envelope is unconfirmed.
   Its error codes are unenumerated, since no live Orca was available, so the probe reads absence only from this terminal's own not-found code, matched whole, and leaves every other refusal - including an app- or runtime-scoped not-found from a quit Orca - unconfirmed ([orca-backend.md](../orca-backend.md)).
@@ -428,6 +430,8 @@ ok - fm_backend_zellij_kill: an unreadable pane listing on the label path is unc
 ok - fm_backend_cmux_kill: a close that failed, one that silently closed nothing, and one nothing could confirm all report unconfirmed
 ok - fm_backend_cmux_kill: an unreadable listing on the label path is unconfirmed, not gone
 ok - fm_backend_cmux_kill: a listing that ran and omits the workspace still reads as gone
+ok - fm_backend_cmux_kill: a title still live under a new id after the close is unconfirmed, not gone
+ok - fm_backend_cmux_kill: a foreign title after the close is unconfirmed, not gone
 ok - fm_backend_cmux_kill: a window listing with no usable ids is unconfirmed, not gone
 ok - fm_backend_orca_kill: confirms a close with an absence read and reports every unproved close unconfirmed
 ok - stream: only a close the endpoint's own agent reported counts as a stop
@@ -440,6 +444,7 @@ That replacement must accept fractional seconds, since poll loops elsewhere in t
 
 The pending-close record carries the same distinction, because cleanup publishes it BEFORE it touches the endpoint, and session start replays such a record by removing the task record and closing the row.
 It is therefore published already stamped unconfirmed - at that moment nothing has proved the worker stopped, so every refusal between the publish and the endpoint gate inherits the stamp - and cleared only once that gate has passed, which is what keeps a cleanup interrupted after a proven kill replayable instead of a permanent hold.
+A clear that fails stops the cleanup before any record is removed, because carrying on would leave a marker still carrying the refusal with no task record behind it, a state neither replay nor a rerun can resolve; the records stay and a rerun finishes the close.
 `bin/fm-retire-endpoint.sh` publishes its own close stamped confirmed, because the operator's recorded assertion is the proof on that path.
 
 ```sh
@@ -450,12 +455,14 @@ bin/fm-test-run.sh tests/fm-backlog-atomicity.test.sh
 ok - completion marks a pending close whose worker could not be proved stopped, and recovery honours it
 ok - a refusal before the kill leaves its pending close unconfirmed, and replay honours it
 ok - an interrupt after a proven kill still replays its close
+ok - a pending close that could not be cleared keeps every record for a rerun
 ok - a retirement leaves a close session start can finish
 ok - session start refuses to replay a close whose worker was never proved stopped
 ok - session start still finishes an ordinary interrupted cleanup
 ```
 
 Two of those cases are what keep the refusal from becoming a permanent hold: a cleanup interrupted after a proven kill still replays, and so does the identical record without the stamp, so an ordinary interrupted cleanup is finished rather than stranded.
+The cmux post-close cases and these pending-close cases were observed on 2026-09-18; the tmux run remains the 2026-09-17 one dated above.
 
 ## Claude workspace trust
 

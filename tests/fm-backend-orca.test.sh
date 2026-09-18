@@ -834,6 +834,45 @@ test_spawn_releases_orca_resources_when_metadata_write_fails() {
   pass "fm-spawn.sh --backend orca: releases terminal and worktree on later aborts"
 }
 
+# The abort path closes an endpoint this spawn itself launched, at the one
+# moment when neither the abort trap nor a later teardown owns it yet. A close
+# nothing proved landed therefore leaves an agent running with no record behind
+# it, so spawn has to say so rather than swallow the adapter's refusal.
+test_spawn_reports_a_launch_endpoint_its_abort_could_not_close() {
+  local proj wt data state config id out status
+  id="orcaabortlivez8"
+  proj="$TMP_ROOT/abort-live-project"
+  wt="$TMP_ROOT/abort-live-wt"
+  data="$TMP_ROOT/abort-live-data"
+  state="$TMP_ROOT/abort-live-state"
+  config="$TMP_ROOT/abort-live-config"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
+  # A directory where the task record belongs: the metadata write fails, so the
+  # spawn aborts after the terminal has been created.
+  mkdir -p "$data/$id" "$state/$id.meta" "$config"
+  write_spawn_brief "$data" "$id"
+  orca_case abort-live
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-abort-live"}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-abort-live","path":"%s"}}}\n' "$wt" > "$RESP/3.out"
+  printf '{"ok":true,"result":{"terminal":{"handle":"term-abort-live"}}}\n' > "$RESP/4.out"
+  # The close is accepted, and the terminal still reads as live afterwards.
+  out=$( HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ORCA_TERMINAL_READ='{"ok":true,"result":{"terminal":{"tail":["still here"]}}}' \
+    FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --backend orca 2>&1 )
+  status=$?
+  [ "$status" -ne 0 ] || fail "an aborted Orca spawn whose endpoint is still live must not exit 0: $out"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-abort-live'$'\x1f''--json' \
+    "this case needs the abort to have attempted the close it could not confirm"
+  assert_contains "$out" "endpoint term-abort-live launched for $id could not be confirmed closed" \
+    "the abort said nothing about the endpoint it left running: $out"
+  assert_contains "$out" "needs to be stopped by hand" \
+    "the report should say what the operator has to do: $out"
+  pass "fm-spawn.sh --backend orca: reports a launch endpoint its abort could not confirm closed"
+}
+
 test_peek_send_and_crew_state_route_through_orca_meta() {
   local wt state id out neutral record body
   id="orcaiopathz2"
@@ -1458,6 +1497,7 @@ test_spawn_refuses_orca_nonisolated_worktree
 test_spawn_removes_orca_worktree_when_terminal_create_fails
 test_spawn_preserves_orca_metadata_when_abort_cleanup_fails
 test_spawn_releases_orca_resources_when_metadata_write_fails
+test_spawn_reports_a_launch_endpoint_its_abort_could_not_close
 test_peek_send_and_crew_state_route_through_orca_meta
 test_peek_and_crew_state_fail_closed_on_orca_error_json
 test_target_exists_rejects_orca_error_json

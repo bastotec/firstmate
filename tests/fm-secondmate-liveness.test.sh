@@ -295,7 +295,11 @@ case "${1:-}" in
     ;;
   new-window|kill-window)
     printf '%s\n' "$*" >> "${FM_TMUX_CALL_LOG:?}"
-    [ "${1:-}" = kill-window ] && : > "${FM_TMUX_CALL_LOG}.killed"
+    # FM_TEST_KILL_UNCONFIRMED=1 is the window that outlives its own kill: the
+    # call is accepted, and the inventory keeps listing it afterwards, so
+    # nothing can prove the worker there stopped.
+    [ "${1:-}" = kill-window ] && [ "${FM_TEST_KILL_UNCONFIRMED:-0}" != 1 ] \
+      && : > "${FM_TMUX_CALL_LOG}.killed"
     [ "${FM_TEST_FAIL_NEW_WINDOW:-0}" = 1 ] && [ "${1:-}" = new-window ] && exit 1
     [ "${1:-}" = new-window ] && rm -f "${FM_TMUX_CALL_LOG}.killed"
     exit 0
@@ -368,6 +372,30 @@ test_sweep_respawns_confirmed_dead_secondmate() {
   assert_contains "$(cat "$log")" "new-window" \
     "a confirmed-dead secondmate should actually be relaunched"
   pass "sweep: a confirmed-dead secondmate endpoint is killed and respawned"
+}
+
+# A relaunch onto an endpoint nothing proved gone is how a second agent gets
+# started beside a first one that may still be running. The sweep kills the
+# endpoint first for exactly that reason, so a kill whose own inventory still
+# lists the window has to stop the relaunch rather than be discarded.
+test_sweep_skips_relaunch_when_the_endpoint_kill_is_unconfirmed() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-kill-unconfirmed)
+  add_sm_home "$w" sm1 firstmate:fm-sm1
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log" FM_TEST_KILL_UNCONFIRMED=1)
+
+  assert_contains "$out" "secondmate sm1: skipped: the existing endpoint was not confirmed gone" \
+    "an unconfirmed kill must be reported rather than discarded: $out"
+  assert_contains "$(cat "$log")" "kill-window -t =firstmate:=fm-sm1" \
+    "this case needs the sweep to have attempted the kill it could not confirm"
+  assert_not_contains "$(cat "$log")" "new-window" \
+    "the sweep relaunched onto an endpoint nothing proved gone: $(cat "$log")"
+  assert_present "$w/home/state/sm1.meta" \
+    "the skipped secondmate lost its record"
+  pass "sweep: an endpoint whose kill nothing confirmed is reported and not relaunched onto"
 }
 
 test_sweep_leaves_alive_secondmate_untouched() {
@@ -545,6 +573,7 @@ test_tmux_agent_state_rejects_malformed_targets_before_probe
 test_herdr_agent_state_preserves_husk_classifier
 test_agent_state_dispatcher_and_compatibility
 test_sweep_respawns_confirmed_dead_secondmate
+test_sweep_skips_relaunch_when_the_endpoint_kill_is_unconfirmed
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_respawns_authoritatively_missing_pi_secondmate
 test_sweep_respawns_authoritatively_missing_pi_signed_secondmate
