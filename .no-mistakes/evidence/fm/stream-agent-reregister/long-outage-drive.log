@@ -1,0 +1,23 @@
+
+=== worker up: 127.0.0.1-50243:146f06d9e89f3033f2936674753b0a6e (agent pid 3155990) ===
+BEFORE
+
+=== (a) the hub goes down and STAYS down for 55s ===
+hub stopped
+hub has been gone for 55s - the agent's poll and re-registration backoff are both grown
+hub listening on http://127.0.0.1:50243
+rejoined the listing 0s after the hub returned
+box-drive	outage-worker-3155757	146f06d9e89f3033f2936674753b0a6e	live
+
+=== (b) a steer sent immediately on that listing must be DELIVERED ===
+steer accepted after 1s (a steer no agent acknowledges is refused instead)
+AFTER-LONG-OUTAGE
+
+=== (c) a SECOND restart right afterwards must be met at the pace floor ===
+hub stopped
+hub listening on http://127.0.0.1:50243
+rejoined the second restart in 4s
+AFTER-SECOND-RESTART
+agent pid unchanged throughout: 3155990 -> 3155990
+
+=== RESULT: PASS - a long outage, an immediate steer, and a second restart all recover ===

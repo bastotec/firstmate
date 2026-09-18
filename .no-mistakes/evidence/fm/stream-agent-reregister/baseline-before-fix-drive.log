@@ -1,0 +1,23 @@
+
+=== pre-change agent: /tmp/base-stream-agent.py ===
+hub listening on http://127.0.0.1:48715
+
+=== worker up and steerable before the restart ===
+box-drive	base-worker-3804862	f2a437b08d759ef4b45978f0248681b4	live
+steer accepted
+
+=== THE HUB RESTARTS ===
+hub stopped
+hub listening on http://127.0.0.1:48715
+
+=== 60 seconds later, the fleet listing still has no such worker ===
+--- fm-stream.sh tasks ---
+--- is the worker's endpoint listed? ---
+NOT LISTED - stranded
+--- the worker's own process is still running: ---
+3804993 Ssl  python3 /tmp/base-stream-agent.py serve --hub http://127.0.0.1:48715 --token-file /tmp/fm-stream-tok.W1J1Jp
+--- a steer aimed at it ---
+send result: 'send-failed' (exit 0)
+STEER NOT DELIVERED - the worker cannot be steered
+--- supervision verdict ---
+fm_backend_agent_state -> missing

@@ -1,0 +1,46 @@
+
+=== 1. operator starts the fleet hub ===
+hub listening on http://127.0.0.1:48881
+local hub process: 3128301
+hub at http://127.0.0.1:48881: protocol 2 version 2.0.0 endpoints 0
+
+=== 2. a task is spawned on the stream backend (real agent, real pty) ===
+target=127.0.0.1-48881:5a6d93348d87dc207922e70b78d083de
+agent pid=3128539
+
+=== 3. fm-stream.sh tasks - the worker is in the central listing ===
+box-drive	drive-worker-3128233	5a6d93348d87dc207922e70b78d083de	live
+
+=== 4. the operator steers it before the restart ===
+bash-5.3$ echo BEFORE-RESTART
+BEFORE-RESTART
+
+=== 5. THE HUB RESTARTS (stop, then start again on the same address) ===
+hub stopped
+fm-stream.sh: could not list endpoints: HTTP 000
+hub listening on http://127.0.0.1:48881
+
+=== 6. without anyone touching the worker's machine, it returns to the listing ===
+rejoined after 4.0s
+box-drive	drive-worker-3128233	5a6d93348d87dc207922e70b78d083de	live
+
+=== 7. it is the SAME endpoint id and the SAME agent process (identity kept) ===
+endpoint before restart: 5a6d93348d87dc207922e70b78d083de
+endpoint in listing:     5a6d93348d87dc207922e70b78d083de
+agent pid before: 3128539   after: 3128539
+
+=== 8. a steer sent the moment it is listed again is DELIVERED ===
+steer accepted 0.0s after the worker was listed again
+steer round trip 0.5s
+echo AFTER-RESTART
+AFTER-RESTART
+
+=== 9. supervision reads the same verdict it read before the restart ===
+fm_backend_agent_state before restart -> dead
+fm_backend_agent_state after  restart -> dead
+fm_backend_target_exists -> yes
+
+=== 10. its status channel still writes into the task's own record ===
+working: back after the restart
+
+=== RESULT: PASS - worker rejoined, kept its identity, and steers again ===
