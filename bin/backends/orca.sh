@@ -299,13 +299,15 @@ fm_backend_orca_send_text_submit() {  # <terminal-id> <text> <retries> <enter-sl
 # Output is parsed regardless of exit status, because a typed refusal may
 # arrive with either.
 #
-# One narrow exception keeps that inference honest: a CLI that wraps its OWN
-# connection failure in an ok:false envelope would otherwise read as absence,
-# so a connection-shaped error code or message stays `unknown`. The match is
-# deliberately narrow and one-directional - it can only downgrade a `dead` to
-# `unknown`, never the reverse. No live Orca was available to enumerate its
-# error codes, so anything unrecognized that is not connection-shaped is still
-# read as the runtime's own refusal; docs/orca-backend.md records that limit.
+# Absence is recognized from an explicit not-found code and from nothing else.
+# No live Orca was available to enumerate its error codes, so every other
+# refusal - an internal read failure, a permission or argument error, a rate
+# limit, a CLI wrapping its own connection failure in an envelope - is
+# `unknown`. Reading those as absence would let a kill report a stop for a
+# terminal that answered, which is the one answer this contract may never
+# give; a terminal that stays unretirable because Orca used an unexpected code
+# needs a human, and that is the smaller harm. docs/orca-backend.md records
+# the limit.
 fm_backend_orca_terminal_presence() {  # <terminal-id> -> dead|present|unknown
   local terminal=$1 out
   out=$(orca terminal read --terminal "$terminal" --limit 1 --json 2>/dev/null || true)
@@ -328,12 +330,7 @@ if (data.ok !== false) {
   process.exit(0);
 }
 const err = data.error || {};
-const probe = String(err.code || "") + " " + String(err.message || "");
-if (/connect|connection|refused|unreachable|timed?.?out|timeout|daemon|socket|econn/i.test(probe)) {
-  process.stdout.write("unknown");
-  process.exit(0);
-}
-process.stdout.write("dead");
+process.stdout.write(/not[_ -]?found/i.test(String(err.code || "")) ? "dead" : "unknown");
 ' 2>/dev/null || printf 'unknown'
 }
 

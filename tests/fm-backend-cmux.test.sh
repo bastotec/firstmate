@@ -1182,6 +1182,38 @@ test_kill_label_path_closes_its_own_live_workspace_instead_of_reporting_gone() {
   pass "fm_backend_cmux_kill: its own live workspace is closed and confirmed, not reported gone"
 }
 
+# The absence cmux itself manufactures: workspace ids do not survive an app
+# relaunch, so a recorded id can be legitimately missing from the listing while
+# the same task runs on under a new id carrying its title. Reading only the
+# recorded id would report that live worker gone, so the same listing decides -
+# the task is closed under the id it actually has now.
+test_kill_label_path_follows_a_relaunch_renumbered_workspace() {
+  local dir fb title
+  dir="$TMP_ROOT/kill-label-relaunched"; mkdir -p "$dir/responses"
+  title=$(cmux_expected_scoped_title fm-label)
+  # 1 target_ready's title lookup for the recorded id: absent, the workspace is
+  # listed under a new id. 2 its id-for-label retry, 3 the list-panes read that
+  # fails transiently, so target_ready still returns false.
+  cmux_workspace_list_response "$dir" 1 "cccccccc-2222-2222-2222-222222222222" "$title"
+  cmux_workspace_list_response "$dir" 2 "cccccccc-2222-2222-2222-222222222222" "$title"
+  printf '1\n' > "$dir/responses/3.exit"
+  # 4 the presence re-read: the recorded id is gone, this task's title is live.
+  cmux_workspace_list_response "$dir" 4 "cccccccc-2222-2222-2222-222222222222" "$title"
+  # 5/6 window_of_workspace for the renumbered id, 7 the close, 8 the listing
+  # that confirms it.
+  cmux_windows_response "$dir" 5 "eeeeeeee-0000-0000-0000-000000000000" 2
+  cmux_workspace_list_response "$dir" 6 "cccccccc-2222-2222-2222-222222222222" "$title" \
+    "ffffffff-0000-0000-0000-000000000000" "other"
+  cmux_workspace_list_response "$dir" 8 "ffffffff-0000-0000-0000-000000000000" "other"
+  fb=$(make_cmux_fakebin "$dir")
+  PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/backends/cmux.sh"; fm_backend_cmux_kill "aaaaaaaa-0000-0000-0000-000000000000:bbbbbbbb-1111-1111-1111-111111111111" "" fm-label' "$ROOT"
+  expect_code 0 $? "a relaunched workspace should be closed under its new id, not reported gone unread"
+  assert_contains "$(cat "$dir/log")" $'\x1f''close-workspace'$'\x1f''--workspace'$'\x1f''cccccccc-2222-2222-2222-222222222222' \
+    "kill should close the workspace that still carries this task's title"
+  pass "fm_backend_cmux_kill: a recorded id absent after a relaunch follows the task's live title"
+}
+
 # --- list_live: label-based orphan discovery ---------------------------------
 
 test_list_live_filters_by_title_prefix() {
@@ -1284,5 +1316,6 @@ test_kill_recovers_stale_target_by_label
 test_kill_label_path_reports_unconfirmed_when_the_listing_is_unreadable
 test_kill_label_path_reports_gone_when_the_listing_omits_the_label
 test_kill_label_path_closes_its_own_live_workspace_instead_of_reporting_gone
+test_kill_label_path_follows_a_relaunch_renumbered_workspace
 test_list_live_filters_by_title_prefix
 test_secondmate_spawn_refuses_cmux_backend

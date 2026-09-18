@@ -661,7 +661,7 @@ fm_backend_stream_agent_state() {  # <target>
 # worker on a hub that cannot be reached is a worker nothing has proved
 # stopped.
 fm_backend_stream_kill() {  # <target> [unused] [expected-label]
-  local target=$1 expected=${3:-} task out api_rc=0
+  local target=$1 expected=${3:-} task out label api_rc=0
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || {
     echo "error: '$target' does not address an endpoint on this home's stream hub, so nothing" \
          "could be closed or confirmed gone; the worker may still be running" >&2
@@ -696,8 +696,18 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
   fi
   if [ -n "$expected" ]; then
     # A mismatched label means the id names something other than this task, so
-    # closing it would destroy a stranger's endpoint.
-    [ "$(printf '%s' "$task" | jq -r '.task.label // empty' 2>/dev/null)" = "$expected" ] || return 0
+    # closing it would destroy a stranger's endpoint. Only a label the hub
+    # actually answered with says that: a body that does not parse, or one
+    # carrying no label at all, reads as empty here and would otherwise pass
+    # for every expected label at once - licensing record removal without so
+    # much as issuing the kill.
+    label=$(printf '%s' "$task" | jq -r '.task.label // empty' 2>/dev/null) || label=
+    if [ -z "$label" ]; then
+      echo "error: the stream hub's answer for $FM_BACKEND_STREAM_ENDPOINT carried no readable label," \
+           "so it was neither closed nor confirmed gone; the worker may still be running" >&2
+      return 2
+    fi
+    [ "$label" = "$expected" ] || return 0
   fi
   # An endpoint its own agent closed is the one confirmed stop there is: that
   # agent watched the worker exit and carried its exit code back. A record the
@@ -708,13 +718,20 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
          "$FM_BACKEND_STREAM_ENDPOINT; the worker may still be running" >&2
     return 2
   }
-  # The hub answers whether the owning agent actually took the kill. A record
-  # it closed on its own says nothing about the worker's process, and reporting
-  # that as a stop would let a task be treated as gone while it still runs.
+  # The hub answers whether the owning agent actually took the kill, and that
+  # answer has to be read rather than assumed: a record the hub closed on its
+  # own says nothing about the worker's process, and neither does a body this
+  # could not parse. Only an explicit true is a stop.
   case "$(printf '%s' "$out" | jq -r '.delivered' 2>/dev/null)" in
+    true) return 0 ;;
     false)
       echo "error: the stream hub closed its record for $FM_BACKEND_STREAM_ENDPOINT," \
            "but its agent never acknowledged the kill; the worker may still be running" >&2
+      return 2
+      ;;
+    *)
+      echo "error: the stream hub's answer to the kill for $FM_BACKEND_STREAM_ENDPOINT could not be" \
+           "read, so nothing confirms its agent took it; the worker may still be running" >&2
       return 2
       ;;
   esac

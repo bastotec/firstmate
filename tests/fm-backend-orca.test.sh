@@ -416,6 +416,19 @@ test_kill_confirms_the_close_with_an_absence_read() {
   assert_contains "$out" "could not say whether it is" \
     "a connection-shaped error should report an unknown absence read"
 
+  # Absence is read from an explicit not-found code and nothing else. Orca's
+  # error codes are unenumerated, so a typed refusal this adapter does not
+  # recognize - an internal read failure against a LIVE terminal, a permission
+  # or argument error, a rate limit - proves nothing and must never retire a
+  # record.
+  orca_case kill-accepted-unrecognized-error
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ORCA_TERMINAL_READ='{"ok":false,"error":{"code":"internal_error","message":"Failed to read terminal text"}}' \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_kill term-123' "$ROOT" 2>&1 )
+  expect_code 2 $? "an unrecognized error envelope must not be read as terminal absence"
+  assert_contains "$out" "may still be running" \
+    "an unrecognized error should say the worker may still be running"
+
   # A terminal the user already closed makes Orca REFUSE the close. That is the
   # ordinary already-absent case, so the refusal is not the verdict either: the
   # same absence read decides, and a typed not-found retires the task.

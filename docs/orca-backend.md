@@ -75,7 +75,8 @@ Orca's typed JSON envelope is what makes that read possible: only a runtime that
 - Escape is unsupported.
 - Orca exposes no stable CLI version or protocol marker, so readiness is the compatibility gate rather than a version floor.
 - The absence read behind a confirmed close has not been exercised against a live Orca, because none was available when it was written, so its error codes are unenumerated.
-- It therefore recognizes absence from the shape of the answer rather than from any particular code, and treats a connection-shaped error as unknown rather than as absence; anything it does not recognize reports an unconfirmed stop, which keeps cleanup from removing records for a worker nothing proved stopped.
+- It therefore recognizes absence only from an explicit not-found code, and reports an unconfirmed stop for every other refusal - a connection failure wrapped in an envelope, an internal read error, a permission or rate-limit code - which keeps cleanup from removing records for a worker nothing proved stopped.
+- The cost of that direction is accepted: if Orca names an already-closed terminal with some other code, that task's records stay until a human clears them, which is a far smaller harm than durable records removed for a running worker.
 - Only the verified terminal-handle and worktree result fields are accepted; speculative response shapes are rejected.
 - Orca's worktree shape is unverified against the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh`, which refuses any path that is not a linked git worktree sharing the project's git common dir, so a claude spawn on Orca fails loudly at that check rather than launching if Orca clones instead of linking.
 

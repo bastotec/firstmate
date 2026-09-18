@@ -1157,28 +1157,24 @@ fm_backlog_close_marker_write() {  # <state-dir> <id> <data-dir> <spawn-gen> [fl
     || { rm -f "$tmp"; return 1; }
 }
 
-# Both re-stampers below rewrite the whole record, so each carries the OTHER
-# flag through unchanged rather than silently clearing it.
-fm_backlog_close_marker_mark_cleanup_incomplete() {  # <state-dir> <marker-path> <id> <data-dir> <spawn-gen> <endpoint-unconfirmed: 0|1> [flag...]
-  local state=$1 marker=$2 id=$3 data=$4 spawn_gen=$5 endpoint_unconfirmed=$6 tmp
-  shift 6
+# fm_backlog_close_marker_restage: rewrite an already-published pending-close
+# record with a new set of flags. Every flag is a parameter rather than a
+# literal, because a re-stamp rewrites the WHOLE record: a caller that knew
+# only its own flag would silently clear the other one, which is how a
+# refusal's endpoint=unconfirmed - the line replay reads to keep a record for a
+# worker nothing proved stopped - would go missing on the next re-stamp.
+#
+# The endpoint-unconfirmed flag is written by a teardown that refused because
+# this task's worker could not be proved stopped. Teardown stages the record
+# BEFORE it touches the endpoint, so without that flag the refusal would leave
+# a record that still reads as an ordinary interrupted close, and the next
+# session start's replay would remove the very task record the refusal kept.
+fm_backlog_close_marker_restage() {  # <state-dir> <marker-path> <id> <data-dir> <spawn-gen> <cleanup-incomplete: 0|1> <endpoint-unconfirmed: 0|1> [flag...]
+  local state=$1 marker=$2 id=$3 data=$4 spawn_gen=$5 cleanup_incomplete=$6 endpoint_unconfirmed=$7 tmp
+  shift 7
   tmp="$state/.$id.backlog-close.${BASHPID:-$$}"
-  fm_backlog_close_marker_stage "$tmp" "$id" "$data" "$spawn_gen" "$state" 1 "$endpoint_unconfirmed" "$@" || return 1
-  fm_backlog_atomic_transition publish "$tmp" "$marker" "pending-close record" "$state" \
-    || { rm -f "$tmp"; return 1; }
-}
-
-# fm_backlog_close_marker_mark_endpoint_unconfirmed: record that teardown
-# refused because this task's worker could not be proved stopped. Teardown
-# stages the pending-close record BEFORE it touches the endpoint, so without
-# this the refusal would leave behind a record that still reads as an ordinary
-# interrupted close - and the next session start's replay would remove the very
-# task record the refusal kept, and close the row, for a worker nothing stopped.
-fm_backlog_close_marker_mark_endpoint_unconfirmed() {  # <state-dir> <marker-path> <id> <data-dir> <spawn-gen> <cleanup-incomplete: 0|1> [flag...]
-  local state=$1 marker=$2 id=$3 data=$4 spawn_gen=$5 cleanup_incomplete=$6 tmp
-  shift 6
-  tmp="$state/.$id.backlog-close.${BASHPID:-$$}"
-  fm_backlog_close_marker_stage "$tmp" "$id" "$data" "$spawn_gen" "$state" "$cleanup_incomplete" 1 "$@" || return 1
+  fm_backlog_close_marker_stage "$tmp" "$id" "$data" "$spawn_gen" "$state" \
+    "$cleanup_incomplete" "$endpoint_unconfirmed" "$@" || return 1
   fm_backlog_atomic_transition publish "$tmp" "$marker" "pending-close record" "$state" \
     || { rm -f "$tmp"; return 1; }
 }
@@ -1244,8 +1240,9 @@ fm_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data
       FM_BACKLOG_CLOSE_REPLAY_RESULT=endpoint_unconfirmed
       return 0
     fi
-    fm_backlog_close_marker_mark_cleanup_incomplete "$state" "$marker" "$id" "$data" \
-      "$marker_spawn_gen" "$endpoint_unconfirmed" "${mode_flags[@]+"${mode_flags[@]}"}" "${args[@]+"${args[@]}"}" \
+    fm_backlog_close_marker_restage "$state" "$marker" "$id" "$data" \
+      "$marker_spawn_gen" 1 "$endpoint_unconfirmed" \
+      "${mode_flags[@]+"${mode_flags[@]}"}" "${args[@]+"${args[@]}"}" \
       || return 1
     cleanup_incomplete=1
     fm_backlog_atomic_transition remove "$meta" "the interrupted task record" "$state" \

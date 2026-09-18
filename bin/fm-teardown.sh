@@ -2979,8 +2979,8 @@ mark_pending_close_endpoint_unconfirmed() {
   [ "$BACKLOG_CLOSED" = 1 ] || return 0
   marker=$(fm_backlog_close_marker_path "$STATE" "$ID") || return 0
   [ -e "$marker" ] || [ -L "$marker" ] || return 0
-  if ! fm_backlog_close_marker_mark_endpoint_unconfirmed "$STATE" "$marker" "$ID" "$DATA" \
-      "$META_SPAWN_GEN" 0 \
+  if ! fm_backlog_close_marker_restage "$STATE" "$marker" "$ID" "$DATA" \
+      "$META_SPAWN_GEN" 0 1 \
       "${BACKLOG_TRANSITION_FLAGS[@]+"${BACKLOG_TRANSITION_FLAGS[@]}"}" \
       "${BACKLOG_DONE_ARGS[@]+"${BACKLOG_DONE_ARGS[@]}"}"; then
     echo "error: the pending backlog close for $ID could not be marked unconfirmed ($FM_BACKLOG_TRANSITION_ERROR); remove $marker by hand before the next session start, or it will close this task's backlog item while its worker may still be running" >&2

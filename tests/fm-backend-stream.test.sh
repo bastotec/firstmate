@@ -674,6 +674,103 @@ test_a_404_stays_unconfirmed_however_long_the_hub_has_been_up() {
   pass "stream: a 404 stays unconfirmed however long the hub has been up"
 }
 
+test_an_answer_the_adapter_cannot_read_is_never_a_stop() {
+  # Every 2xx answer in the kill path is read for a specific value, and an
+  # answer that cannot be read is not that value. The narrowest real stand-in
+  # for a hub whose answers changed shape or arrived truncated: a server that
+  # authenticates like the real one and serves task and kill bodies this
+  # adapter cannot parse. None of them may retire a record - two of them would
+  # do it without the kill ever being issued.
+  local port waited=0 out target label
+  CASE_DIR="$TMP_ROOT/unreadable-answers"
+  mkdir -p "$CASE_DIR/home/config"
+  cleanup_helpers
+  label="fm-unreadable-$$"
+  python3 - "$CASE_DIR" "$TOKEN" "$label" <<'STANDIN' &
+import http.server, json, sys, threading
+case_dir, token, label = sys.argv[1], sys.argv[2], sys.argv[3]
+
+# The endpoint id selects the answer shape, so one stand-in covers every case.
+def task_body(endpoint):
+    if endpoint.startswith("a"):
+        return b"not json at all"
+    if endpoint.startswith("b"):
+        return json.dumps({"ok": True, "task": {"endpoint_id": endpoint}}).encode()
+    return json.dumps({"ok": True, "task": {"endpoint_id": endpoint, "label": label}}).encode()
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def _auth(self):
+        if self.headers.get("Authorization") != "Bearer " + token:
+            self.send_response(401); self.end_headers(); return False
+        return True
+
+    def _send(self, body):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if not self._auth():
+            return
+        self._send(task_body(self.path.rsplit("/", 1)[-1]))
+
+    def do_DELETE(self):
+        if not self._auth():
+            return
+        with open(case_dir + "/deletes", "a") as fh:
+            fh.write(self.path + "\n")
+        self._send(b'{"ok":true,')
+
+    def log_message(self, *a): pass
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+with open(case_dir + "/ready", "w") as fh:
+    fh.write("%d\n" % server.server_address[1])
+threading.Thread(target=server.serve_forever, daemon=True).start()
+threading.Event().wait()
+STANDIN
+  disown $! 2>/dev/null || true
+  fm_test_track_helper_pid "$!"
+  while [ "$waited" -lt 100 ]; do
+    [ -s "$CASE_DIR/ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$CASE_DIR/ready" ] || fail "the stand-in hub never reported a port"
+  read -r port < "$CASE_DIR/ready"
+  URL="http://127.0.0.1:$port"
+
+  # A task body that does not parse: the label check reads empty, which equals
+  # no expected label at all, so it must not pass for a mismatch.
+  target="$(with_stream_env fm_backend_stream_hub_tag):a0000000000000000000000000000000"
+  out=$(with_stream_env fm_backend_kill stream "$target" "" "$label" 2>&1) \
+    && fail "an unparseable task answer must not report a confirmed stop"
+  assert_contains "$out" "may still be running" \
+    "an unparseable task answer should say the worker may still be running"
+
+  # A 2xx task body carrying no label field at all reads exactly the same way.
+  target="$(with_stream_env fm_backend_stream_hub_tag):b0000000000000000000000000000000"
+  out=$(with_stream_env fm_backend_kill stream "$target" "" "$label" 2>&1) \
+    && fail "a task answer with no label must not report a confirmed stop"
+  assert_contains "$out" "no readable label" \
+    "a labelless task answer should name what it could not read"
+  [ ! -s "$CASE_DIR/deletes" ] \
+    || fail "a kill was issued for an answer the adapter could not read: $(cat "$CASE_DIR/deletes")"
+
+  # And the kill's own answer: the label matches, the DELETE is issued, and the
+  # hub's reply is truncated - so nothing says the owning agent took it.
+  target="$(with_stream_env fm_backend_stream_hub_tag):c0000000000000000000000000000000"
+  out=$(with_stream_env fm_backend_kill stream "$target" "" "$label" 2>&1) \
+    && fail "a kill answer that could not be read must not report a confirmed stop"
+  assert_contains "$out" "may still be running" \
+    "an unreadable kill answer should say the worker may still be running"
+  assert_grep "c0000000000000000000000000000000" "$CASE_DIR/deletes" \
+    "the kill should have been issued before its answer was judged unreadable"
+  pass "stream: task and kill answers the adapter cannot read are unconfirmed, never a stop"
+}
+
 test_a_target_from_another_hub_is_refused() {
   local target foreign
   start_case_hub foreign-tag
@@ -1120,6 +1217,7 @@ test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_only_a_close_the_agent_reported_counts_as_a_stop
 test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop
 test_a_404_stays_unconfirmed_however_long_the_hub_has_been_up
+test_an_answer_the_adapter_cannot_read_is_never_a_stop
 test_status_return_channel_appends_on_the_owning_machine
 test_a_target_from_another_hub_is_refused
 test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error
