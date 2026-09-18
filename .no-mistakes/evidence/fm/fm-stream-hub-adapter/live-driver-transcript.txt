@@ -1,0 +1,19 @@
+[   0.14s] hub up at http://127.0.0.1:65096
+[   1.20s] agent box-a/task-alpha registered endpoint 8fde2ee0b0cc4097d224ee557285929d
+[   2.28s] agent box-a/task-bravo registered endpoint d89659669fde30bde8148c2158f5af2f
+[   3.37s] agent box-b/task-alpha registered endpoint d290e9f18c459b937b2630ec59da5786
+[   3.38s] bridge serve started (pid 46875)
+[   6.45s] MARK phase=running-fleet
+[   6.47s] typed 'exit 0' into d89659669fde30bde8148c2158f5af2f
+[   6.47s] typed 'exit 5' into d290e9f18c459b937b2630ec59da5786
+[  12.55s] MARK phase=after-exits
+[  13.41s] agent box-a/task-bravo registered endpoint b39dda3dec8e29e0a5b91bc0536847eb
+[  16.41s] MARK phase=after-relaunch
+[  16.41s] hub /v1/tasks after relaunch lists: [('box-a', 'task-alpha', '8fde2ee0', None, None), ('box-a', 'task-bravo', 'd8965966', 'agent', 0), ('box-a', 'task-bravo', 'b39dda3d', None, None), ('box-b', 'task-alpha', 'd290e9f1', 'agent', 5)]
+[  16.52s] hub stopped; bridge alive=True
+[  19.60s] feed bytes during outage: before=21915 after=21915 (grew=False); bridge alive=True
+[  19.77s] hub restarted on the same port
+[  21.84s] restarted hub lists 0 tasks
+[  22.46s] agent box-c/task-charlie registered endpoint 6601127b65bdc79b9d43d68b08709f8b
+[  25.52s] MARK phase=after-hub-return; bridge alive=True
+[  25.54s] bridge stopped rc=130

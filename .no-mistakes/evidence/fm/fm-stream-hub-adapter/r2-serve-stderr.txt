@@ -1,0 +1,2 @@
+fm-stream-bridge: cannot reach the hub at http://127.0.0.1:50886: [Errno 61] Connection refused; emitting nothing until it answers
+fm-stream-bridge: the hub at http://127.0.0.1:50886 answers again

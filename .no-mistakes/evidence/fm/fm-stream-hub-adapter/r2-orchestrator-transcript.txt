@@ -1,0 +1,24 @@
+[   0.24s] hub up at http://127.0.0.1:50886
+[   1.13s] agent box-a/task-alpha registered endpoint 15bc470db577f2e1d1e0cbb6d327f0a3
+[   2.22s] agent box-a/task-bravo registered endpoint 9c05db420d467056da61c7d422c239fd
+[   3.27s] agent box-b/task-alpha registered endpoint c1e64a7b70b51c891fb161d4851795cc
+[   3.27s] bridge serve started pid 82732
+[   3.27s] relay on 47827
+[   4.94s] status {'bridge_alive': True, 'records': 9}
+[  55.46s] MARK phase=running-fleet
+[  56.29s] typed 'exit 0' into 9c05db420d467056da61c7d422c239fd
+[  56.31s] typed 'exit 5' into c1e64a7b70b51c891fb161d4851795cc
+[  63.37s] hub lists [('box-a', 'task-alpha', '15bc470d', None, None), ('box-a', 'task-bravo', '9c05db42', 'agent', 0), ('box-b', 'task-alpha', 'c1e64a7b', 'agent', 5)]
+[  63.38s] MARK phase=after-exits
+[  76.49s] MARK phase=before-relaunch
+[  77.70s] agent box-a/task-bravo registered endpoint 908f2f514cac81a6423164b0a9083435
+[  81.87s] hub lists [('box-a', 'task-alpha', '15bc470d', None, None), ('box-a', 'task-bravo', '9c05db42', 'agent', 0), ('box-a', 'task-bravo', '908f2f51', None, None), ('box-b', 'task-alpha', 'c1e64a7b', 'agent', 5)]
+[  81.88s] MARK phase=after-relaunch
+[  91.42s] hub stopped; bridge alive=True
+[  91.44s] status {'bridge_alive': True, 'records': 423}
+[  97.59s] status {'bridge_alive': True, 'records': 423}
+[ 105.89s] hub up at http://127.0.0.1:50886
+[ 109.00s] hub lists []
+[ 109.01s] status {'bridge_alive': True, 'records': 423}
+[ 110.35s] agent box-c/task-charlie registered endpoint 80b495fba943c0bb245c7179e4ca5320
+[ 114.45s] status {'bridge_alive': True, 'records': 430}

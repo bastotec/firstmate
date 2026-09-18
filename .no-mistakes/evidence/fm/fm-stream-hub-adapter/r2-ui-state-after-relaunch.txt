@@ -1,0 +1,1 @@
+result: "\"{\\\"pump\\\":{\\\"from\\\":378,\\\"ok\\\":378,\\\"rejected\\\":0},\\\"liveCheck\\\":{\\\"contributing\\\":1,\\\"expected\\\":4,\\\"freshness\\\":\\\"STALE / MISSING\\\",\\\"state\\\":\\\"PARTIAL / UNKNOWN\\\",\\\"total\\\":0}}\""

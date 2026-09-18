@@ -1,0 +1,7 @@
+total records: 381
+non-increasing per-leaf sequences: []
+ticks with >1 record for one leaf: 0
+box-a/task-bravo from seq 1: execution 9c05db42 state Unknown
+box-a/task-bravo from seq 87: execution 9c05db42 state Stopped
+box-a/task-bravo from seq 119: execution 908f2f51 state Unknown
+last bravo record: {"record": "leaf_heartbeat", "identity": {"fleet_id": "live-test", "leaf_worker_id": "box-a/task-bravo", "parent_mate_id": "box-a", "execution_id": "908f2f514cac81a6423164b0a9083435", "stream_epoch": 1789699370631}, "sequence": 127, "state": "Unknown", "clock": {"producer_monotonic_ms": 78929.141, "hub_arrival_ms": 78929.139}}

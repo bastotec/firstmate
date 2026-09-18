@@ -1,0 +1,4 @@
+serve alive after 3s of truncated hub answers (IncompleteRead)
+stdout bytes:        0
+stderr:
+fm-stream-bridge: cannot reach the hub at http://127.0.0.1:52094: IncompleteRead(11 bytes read, 989 more expected); emitting nothing until it answers

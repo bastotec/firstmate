@@ -1,0 +1,6 @@
+[   1.03s] agent box-a/task-alpha registered endpoint a33d9bd1f04c29c9c8a28cbff809ae1d
+[   1.65s] agent box-a/task-bravo registered endpoint 542ad6b5b0911c72f42b865ca4a99896
+[   2.50s] agent box-b/task-alpha registered endpoint 44920f769bd131a95803f9abbfcac9f9
+[   2.50s] relay on 47817, hub http://127.0.0.1:65323
+[  49.93s] typed 'exit 0' into 542ad6b5b0911c72f42b865ca4a99896
+[  49.94s] typed 'exit 5' into 44920f769bd131a95803f9abbfcac9f9

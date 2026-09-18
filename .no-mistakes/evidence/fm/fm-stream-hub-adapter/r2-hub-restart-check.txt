@@ -1,0 +1,9 @@
+{"ok": true}restarted hub lists:
+[]
+{"bridge_alive": true, "records": 423}
+bridge after hub restart with empty listing (3s):
+result: "\"{\\\"pump\\\":{\\\"from\\\":423,\\\"ok\\\":423,\\\"rejected\\\":0},\\\"liveCheck\\\":{\\\"contributing\\\":1,\\\"expected\\\":4,\\\"freshness\\\":\\\"STALE / MISSING\\\",\\\"state\\\":\\\"PARTIAL / UNKNOWN\\\",\\\"total\\\":0}}\""
+{"endpoint": "80b495fba943c0bb245c7179e4ca5320"}
+{"bridge_alive": true, "records": 430}
+bridge after box-c/task-charlie reports for 4s:
+result: "\"{\\\"pump\\\":{\\\"from\\\":430,\\\"ok\\\":430,\\\"rejected\\\":0},\\\"liveCheck\\\":{\\\"contributing\\\":0,\\\"expected\\\":5,\\\"freshness\\\":\\\"STALE / MISSING\\\",\\\"state\\\":\\\"PARTIAL / UNKNOWN\\\",\\\"total\\\":0}}\""

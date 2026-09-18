@@ -1,0 +1,6 @@
+before outage:
+result: "\"{\\\"pump\\\":{\\\"from\\\":420,\\\"ok\\\":420,\\\"rejected\\\":0},\\\"liveCheck\\\":{\\\"contributing\\\":1,\\\"expected\\\":4,\\\"freshness\\\":\\\"STALE / MISSING\\\",\\\"state\\\":\\\"PARTIAL / UNKNOWN\\\",\\\"total\\\":0}}\""
+{"ok": true}
+records at stop=423, 6s later={"bridge_alive": true, "records": 423}
+during outage (6s):
+result: "\"{\\\"pump\\\":{\\\"from\\\":423,\\\"ok\\\":423,\\\"rejected\\\":0},\\\"liveCheck\\\":{\\\"contributing\\\":1,\\\"expected\\\":4,\\\"freshness\\\":\\\"STALE / MISSING\\\",\\\"state\\\":\\\"PARTIAL / UNKNOWN\\\",\\\"total\\\":0}}\""

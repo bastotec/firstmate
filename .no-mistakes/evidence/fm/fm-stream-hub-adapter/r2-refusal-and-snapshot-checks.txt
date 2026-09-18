@@ -1,0 +1,13 @@
+# publish-only credential
+$ fm-stream-bridge.py serve --hub http://127.0.0.1:50886 --token-file /tmp/fmbridge-r2/run/publish-token
+  rc=2 stdout=0B stderr=fm-stream-bridge: the hub at http://127.0.0.1:50886 refused the credential for /v1/tasks (HTTP 403): the bridge needs a token holding the subscribe class
+# interval at the Bridge stale threshold
+$ fm-stream-bridge.py serve --hub http://127.0.0.1:50886 --token-file /tmp/fmbridge-r2/run/view-token --interval-ms 1500
+  rc=2 stdout=0B stderr=fm-stream-bridge: --interval-ms must be at least 50 and under 1500, the Bridge's stale threshold
+# unreachable hub, snapshot
+$ fm-stream-bridge.py snapshot --hub http://127.0.0.1:9 --token-file /tmp/fmbridge-r2/run/view-token
+  rc=1 stdout=0B stderr=fm-stream-bridge: cannot reach the hub at http://127.0.0.1:9: [Errno 61] Connection refused
+# live hub, view token, snapshot
+$ fm-stream-bridge.py snapshot --hub http://127.0.0.1:50886 --token-file /tmp/fmbridge-r2/run/view-token --fleet-id live-test
+  rc=0 stdout=300B stderr=
+{"record":"leaf_heartbeat","identity":{"fleet_id":"live-test","leaf_worker_id":"box-c/task-charlie","parent_mate_id":"box-c","execution_id":"80b495fba943c0bb245c7179e4ca5320","stream_epoch":1789699504223},"sequence":1,"state":"Unknown","clock":{"producer_monotonic_ms":0.563,"hub_arrival_ms":0.559}}

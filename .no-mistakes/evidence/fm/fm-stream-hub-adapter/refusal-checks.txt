@@ -1,0 +1,27 @@
+$ fm-stream-bridge.py serve --hub http://127.0.0.1:49928 --token-file /tmp/fmbridge-live/refrun/publish-token
+  # publish-only credential is refused
+  rc=2 stdout=''
+  stderr=fm-stream-bridge: the hub at http://127.0.0.1:49928 refused the credential for /v1/tasks (HTTP 403): the bridge needs a token holding the subscribe class
+$ fm-stream-bridge.py snapshot --hub http://127.0.0.1:49928 --token-file /tmp/fmbridge-live/refrun/bogus
+  # unknown token is refused
+  rc=2 stdout=''
+  stderr=fm-stream-bridge: the hub at http://127.0.0.1:49928 refused the credential for /v1/health (HTTP 401): the bridge needs a token holding the subscribe class
+$ fm-stream-bridge.py snapshot --hub http://127.0.0.1:49928 --token-file /tmp/fmbridge-live/refrun/absent
+  # missing token file
+  rc=2 stdout=''
+  stderr=fm-stream-bridge: cannot read the token file /tmp/fmbridge-live/refrun/absent: No such file or directory
+$ fm-stream-bridge.py serve --hub http://127.0.0.1:49928 --token-file /tmp/fmbridge-live/refrun/view-token --interval-ms 1500
+  # interval at the Bridge stale threshold is refused
+  rc=2 stdout=''
+  stderr=fm-stream-bridge: --interval-ms must be at least 50 and under 1500, the Bridge's stale threshold
+$ fm-stream-bridge.py snapshot --hub http://127.0.0.1:49928 --token-file /tmp/fmbridge-live/refrun/view-token
+  # snapshot against an empty hub emits nothing, exits 0
+  rc=0 stdout=''
+  stderr=
+$ fm-stream-bridge.py snapshot --hub http://127.0.0.1:9 --token-file /tmp/fmbridge-live/refrun/view-token
+  # unreachable hub: snapshot exits 1
+  rc=1 stdout=''
+  stderr=fm-stream-bridge: cannot reach the hub at http://127.0.0.1:9: [Errno 61] Connection refused
+$ fm-stream-bridge.py serve --hub http://127.0.0.1:9 --token-file /tmp/fmbridge-live/refrun/view-token
+  # unreachable hub: serve keeps running
+  still running after 3s (no exit), stdout=b''
