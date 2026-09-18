@@ -59,7 +59,8 @@ A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoi
 `bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from that worker's newest endpoint.
 It only reads the hub, holds a `subscribe` credential, opens no listening socket, and sends nothing to any worker.
 Its header owns the record mapping and every field the hub cannot supply; the short version is that the hub carries no token counter, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
-When the hub cannot be read it emits nothing, so the Bridge ages every worker out as stale rather than holding a last state.
+When the hub cannot be read it emits nothing.
+The Bridge's clock only moves when a record arrives, so during an outage, or after a hub restart that lists no endpoints, the Bridge keeps showing each worker's last state rather than aging it out as stale.
 
 The Bridge does not consume this feed yet.
 The record format follows the ingest contract in the Bridge UI project's `docs/telemetry.md`, which lives in that project, not this one.

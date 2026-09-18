@@ -27,7 +27,8 @@ carry is emitted in the contract's explicit unknown form rather than invented:
      newest listed endpoint is emitted.
      The wire format has no membership or removal record: a leaf is a member
      from its first record, and an endpoint the hub has dropped simply stops
-     being emitted, which the Bridge ages out as stale.
+     being emitted, which the Bridge ages out as stale once records for other
+     leaves move its clock past the stale threshold.
   2. Sequence and epoch.  Every record carries a per-leaf sequence that
      strictly increases for the life of one adapter process.  stream_epoch is
      the adapter's generation, so a restarted adapter starts a new epoch and
@@ -48,8 +49,10 @@ carry is emitted in the contract's explicit unknown form rather than invented:
      silent agent, a close the hub made on its own - is Unknown, because the
      hub cannot tell working from idle and never reads silence as death.
      There is no Idle: the hub has no signal that says a worker is idle.
-     When the hub cannot be read, nothing is emitted, so every leaf goes stale
-     on the Bridge's own clock rather than being held at its last state.
+     When the hub cannot be read, nothing is emitted.  The Bridge's clock
+     only moves when a record arrives, so during an outage (or after a hub
+     restart that lists no endpoints) it holds every leaf at its last state
+     rather than aging it out as stale.
   6. Leaf versus summary.  Only leaf records are emitted.  The adapter never
      sums anything and never emits a summary record.
 
