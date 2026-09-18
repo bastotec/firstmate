@@ -2956,7 +2956,14 @@ require_task_endpoint_gone() {  # <kill-status>
   verdict=$(fm_backend_kill_verdict "$1")
   [ "$verdict" != gone ] || return 0
   if task_operator_retirement; then
-    echo "warning: the endpoint $T for $ID was never confirmed gone - the backend's own line above says what it could see, and it may have reported the endpoint still there - so its records are being retired on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, on that assertion alone" >&2
+    case "$verdict" in
+      unconfirmed)
+        echo "warning: the endpoint $T for $ID was never confirmed gone - cleanup cannot tell whether the backend reported it still there or could not answer for it at all - so its records are being retired on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, on that assertion alone" >&2
+        ;;
+      *)
+        echo "warning: the endpoint $T for $ID could not be killed at all and no backend ever answered for it - so its records are being retired on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, on that assertion alone" >&2
+        ;;
+    esac
     return 0
   fi
   case "$verdict" in

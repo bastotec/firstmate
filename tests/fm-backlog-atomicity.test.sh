@@ -745,6 +745,36 @@ SH
     "spawn_gen=spawn-unanswerable" "decisions_reviewed=1" "decision_keys="
 }
 
+# stage_live_tmux_task: a task whose worktree is clean, so cleanup reaches the
+# kill, and whose tmux keeps listing the window after every kill it accepts -
+# the adapter's own still-present read. Nothing but that read stands between
+# this record and retirement.
+stage_live_tmux_task() {  # <case-dir> <id>
+  local case_dir=$1 id=$2 home
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  cat > "$case_dir/fakebin/tmux" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in
+  list-windows) printf 'fm-%s\n' '$id'; exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+  git init -q "$case_dir/project-$id"
+  git -C "$case_dir/project-$id" -c user.name=test -c user.email=test@example.invalid \
+    commit --allow-empty -qm base
+  git -C "$case_dir/project-$id" worktree add -q --detach "$case_dir/wt-$id" >/dev/null 2>&1
+  fm_write_meta "$home/state/$id.meta" \
+    "window=fmtest:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$case_dir/wt-$id" \
+    "project=$case_dir/project-$id" \
+    "harness=claude" "kind=ship" "mode=" "yolo=off" \
+    "spawn_gen=spawn-live" "decisions_reviewed=1" "decision_keys="
+}
+
 # stage_unanswerable_herdr_task: a task whose RUNTIME cannot answer at all -
 # the herdr server is gone, so cleanup refuses in the adapter itself, before
 # and beside the kill contract's own gate. Its worktree is already gone, so
@@ -2503,54 +2533,76 @@ test_retiring_records_who_asserted_it_and_when() {
   pass "a retirement carries who asserted it and when, and is consumed by the cleanup it authorizes"
 }
 
-# A retirement proceeds past a kill the backend answered POSITIVELY: the window
-# is still listed after its kill, so the worker may still be running, and the
-# records go anyway on the operator's assertion alone. That is deliberate, and
-# it is the one place this command removes a record against a runtime that
-# spoke. What must hold is that the operator is told before anything is
-# removed: the backend's own reason, and then cleanup naming the assertion the
-# removal rests on.
-test_retiring_past_a_still_present_endpoint_reports_it_before_removing() {
-  local case_dir home id out
+# A retirement proceeds past a kill nothing proved landed - here the window is
+# still listed after its kill, so a worker may well still be running - and the
+# records go anyway on the operator's assertion alone. What must hold is what
+# cleanup SAYS before it removes anything. The kill contract gives it one
+# unconfirmed verdict for both "the backend says it is still there" and "the
+# backend could not say", so its warning must claim neither and must name the
+# assertion the removal rests on, before the removal is reported.
+test_retiring_past_an_unconfirmed_kill_names_what_cleanup_cannot_tell() {
+  local case_dir home id out warn_line retired_line
   id=atomic-retire-present-c4
   case_dir=$(make_home retire-present)
   home=$(home_of "$case_dir")
-  add_item "$case_dir" "$id"
-  start_item "$case_dir" "$id"
-  # A tmux that answers every kill and still lists the window afterwards: the
-  # adapter's positive still-present read, not an unreadable backend.
-  cat > "$case_dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\${1:-}" in
-  list-windows) printf 'fm-%s\n' '$id'; exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tmux"
-  git init -q "$case_dir/project-$id"
-  git -C "$case_dir/project-$id" -c user.name=test -c user.email=test@example.invalid \
-    commit --allow-empty -qm base
-  git -C "$case_dir/project-$id" worktree add -q --detach "$case_dir/wt-$id" >/dev/null 2>&1
-  fm_write_meta "$home/state/$id.meta" \
-    "window=fmtest:fm-$id" \
-    "endpoint_task_id=$id" \
-    "worktree=$case_dir/wt-$id" \
-    "project=$case_dir/project-$id" \
-    "harness=claude" "kind=ship" "mode=" "yolo=off" \
-    "spawn_gen=spawn-present" "decisions_reviewed=1" "decision_keys="
+  stage_live_tmux_task "$case_dir" "$id"
 
   out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
-    || fail "a confirmed retirement should complete past a still-present endpoint: $out"
-  assert_contains "$out" "is still listed after its kill" \
-    "the run did not carry the backend's own still-present reason: $out"
-  assert_contains "$out" "was never confirmed gone" \
-    "the run did not say the endpoint was never confirmed gone: $out"
+    || fail "a confirmed retirement should complete past an unconfirmed kill: $out"
+  assert_contains "$out" \
+    "cannot tell whether the backend reported it still there or could not answer for it at all" \
+    "cleanup did not say which of the two answers it cannot tell apart: $out"
   assert_contains "$out" "on that assertion alone" \
-    "the run did not name the operator assertion the removal rests on: $out"
+    "cleanup did not name the operator assertion the removal rests on: $out"
+  warn_line=$(printf '%s\n' "$out" | grep -n "on that assertion alone" | head -1 | cut -d: -f1)
+  retired_line=$(printf '%s\n' "$out" | grep -n "retired; cleanup completed" | head -1 | cut -d: -f1)
+  [ -n "$warn_line" ] && [ -n "$retired_line" ] && [ "$warn_line" -lt "$retired_line" ] \
+    || fail "cleanup reported the removal before saying what it rests on: $out"
   assert_absent "$home/state/$id.meta" "the retirement left the record it retired"
   [ "$(row_state "$case_dir" "$id")" = "done" ] \
     || fail "the retirement left the backlog row at $(row_state "$case_dir" "$id"): $out"
-  pass "a retirement past a still-present endpoint reports it before removing the records"
+  pass "a retirement past an unconfirmed kill names what cleanup cannot tell apart"
+}
+
+# The other half of that split: an adapter that cannot be loaded at all. No
+# backend ever spoke, so cleanup must not describe an answer that does not
+# exist - the hedge that is honest for an unconfirmed kill would be a fresh
+# untrue sentence here. The endpoint's own adapter is missing from the bin
+# directory the run loads its libraries from, which is the only way this
+# verdict is reachable: every malformed target and unknown backend is refused
+# long before the kill.
+test_retiring_without_a_loadable_adapter_claims_no_backend_answer() {
+  local case_dir home id out lib f
+
+  id=atomic-retire-unloadable-d2
+  case_dir=$(make_home retire-unloadable)
+  home=$(home_of "$case_dir")
+  stage_live_tmux_task "$case_dir" "$id"
+  lib="$case_dir/binroot"
+  mkdir -p "$lib/backends"
+  for f in "$ROOT"/bin/*; do
+    [ -d "$f" ] || ln -s "$f" "$lib/$(basename "$f")"
+  done
+  for f in "$ROOT"/bin/backends/*; do
+    case "$(basename "$f")" in tmux.sh) continue ;; esac
+    ln -s "$f" "$lib/backends/$(basename "$f")"
+  done
+
+  out=$(printf '%s\n' "$id" | FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
+    PATH="$case_dir/fakebin:$PATH" "$lib/fm-retire-endpoint.sh" "$id" 2>&1) \
+    || fail "a confirmed retirement should complete without a loadable adapter: $out"
+  assert_contains "$out" "no backend ever answered for it" \
+    "cleanup did not say that no backend answered at all: $out"
+  case "$out" in
+    *"cannot tell whether the backend reported it still there"*)
+      fail "cleanup described a backend answer that never happened: $out" ;;
+  esac
+  assert_contains "$out" "on that assertion alone" \
+    "cleanup did not name the operator assertion the removal rests on: $out"
+  assert_absent "$home/state/$id.meta" "the retirement left the record it retired"
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "the retirement left the backlog row at $(row_state "$case_dir" "$id"): $out"
+  pass "a retirement with no loadable adapter claims no backend answer"
 }
 
 # Retiring a record is bookkeeping about the record, and work on disk is not
@@ -4077,7 +4129,8 @@ test_a_failed_confirm_stamp_keeps_every_record_for_a_rerun
 test_no_automatic_path_retires_an_unanswerable_record
 test_retiring_refuses_wildcards_and_unconfirmed_ids
 test_retiring_records_who_asserted_it_and_when
-test_retiring_past_a_still_present_endpoint_reports_it_before_removing
+test_retiring_past_an_unconfirmed_kill_names_what_cleanup_cannot_tell
+test_retiring_without_a_loadable_adapter_claims_no_backend_answer
 test_retiring_leaves_work_on_disk_byte_untouched
 test_retiring_needs_the_named_flag_to_override_a_runtime_refusal
 test_an_interrupt_mid_retirement_retires_nothing

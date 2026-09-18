@@ -89,10 +89,11 @@ What this reaches, exactly:
   honest cost: the task record and its backlog row are retired even when the
   backend answered that the endpoint is STILL THERE after its kill - no further
   flag is required, and your assertion is the only thing standing behind the
-  removal. Cleanup prints the backend's own reason immediately before it
-  retires anything, so read that line: if it says the endpoint is still listed
-  or still live, a worker may still be running behind the record you are
-  removing, and stopping it is then yours to do.
+  removal. Cleanup cannot tell you which it is: a backend that answers "still
+  there" and a backend that cannot answer at all reach cleanup as the same
+  unconfirmed verdict, so its warning claims neither and says only that the
+  endpoint was never confirmed gone. A worker may still be running behind the
+  record you are removing, and stopping it is then yours to do.
 
   Every other refusal stands and nothing is retired - an outcome that has not
   reached the parent channel, a backlog transition that cannot be replayed, a
