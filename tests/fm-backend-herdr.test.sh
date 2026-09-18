@@ -123,7 +123,8 @@ SH
 # (`.result.tab.tab_id` / `.result.root_pane.pane_id`, verified empirically
 # against the real binary); `pane close` removes the pane's single-pane tab
 # (closing a tab's only pane closes the tab); `workspace list` / `tab list` /
-# `pane list` reflect live state; `agent get <pane>` reports the pane's preset
+# `pane list` / `pane get` reflect live state, so the kill contract's
+# confirmation read answers from the same state the close mutated; `agent get <pane>` reports the pane's preset
 # agent_status (set via fake_herdr_set_agent_status, never through a CLI
 # call - mirrors an out-of-band agent registering itself) or an
 # agent_not_found error when none was preset (verified real-herdr behavior for
@@ -193,6 +194,16 @@ case "$cmd $sub" in
   "pane close")
     pane=${3:-}
     jq_state --arg p "$pane" '.tabs |= [.[]|select(.pane_id != $p)]' | save
+    ;;
+  "pane get")
+    # Reads the SAME live state `pane close` mutates, so a kill's confirmation
+    # is answered by what actually happened rather than rubber-stamped.
+    pane=${3:-}
+    if [ "$(jq_state -r --arg p "$pane" '[.tabs[]|select(.pane_id==$p)]|length')" = 1 ]; then
+      printf '{"result":{"pane":{"pane_id":"%s"}}}\n' "$pane"
+    else
+      printf '{"error":{"code":"pane_not_found","message":"pane target %s not found"}}\n' "$pane"
+    fi
     ;;
   "tab close")
     tab=${3:-}

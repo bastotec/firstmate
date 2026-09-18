@@ -2029,6 +2029,112 @@ test_recovery_replays_a_close_an_interrupted_cleanup_left_open() {
   pass "session start finishes a close an interrupted cleanup recorded but never landed"
 }
 
+# Cleanup stages its pending close BEFORE it touches the endpoint, so a
+# cleanup that refuses because nothing proved the worker stopped leaves that
+# record behind. Without the refusal written INTO the record, the next session
+# start would replay it - removing the very task record the refusal kept and
+# closing the row - for a worker that may still be running.
+# The two halves joined up: a cleanup that cannot prove the worker stopped must
+# write that refusal INTO the pending close it already staged, or the next
+# session start replays it and undoes the refusal.
+test_completion_marks_its_pending_close_when_the_worker_cannot_be_proved_stopped() {
+  local case_dir home id marker meta out rc=0
+  id=atomic-close-endpoint-unconfirmed-b9
+  case_dir=$(make_home close-endpoint-unconfirmed)
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id" scout
+  start_item "$case_dir" "$id"
+  # A tmux that accepts the kill and still lists the window afterwards: the
+  # close answered fine and closed nothing, so nothing proved the worker gone.
+  cat > "$case_dir/fakebin/tmux" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in
+  list-windows) printf 'fm-%s\n' '$id'; exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+  write_task_meta "$case_dir" "$id" scout '' \
+    "spawn_gen=spawn-close-unconfirmed" "decisions_reviewed=1" "decision_keys="
+  fm_write_meta "$home/state/$id.meta" \
+    "window=fmtest:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$case_dir/absent-worktree" \
+    "project=$case_dir/absent-project" \
+    "harness=claude" "kind=scout" "mode=" "yolo=off" \
+    "spawn_gen=spawn-close-unconfirmed" "decisions_reviewed=1" "decision_keys="
+  mkdir -p "$home/data/$id"
+  printf 'findings\n' > "$home/data/$id/report.md"
+  meta="$home/state/$id.meta"
+  marker="$home/state/$id.backlog-close"
+
+  out=$(run_teardown "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "cleanup reported success for a kill nothing proved landed: $out"
+  assert_contains "$out" "not confirmed gone" "cleanup did not report the unproven result: $out"
+  assert_present "$meta" "cleanup removed the task record it refused to finish"
+  assert_present "$marker" "cleanup discarded the pending close it had already staged"
+  assert_grep 'endpoint=unconfirmed' "$marker" \
+    "the pending close does not carry the refusal, so a restart would replay it"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "cleanup moved the backlog row for a worker nothing proved stopped"
+
+  # And the record it left behind is one recovery refuses to finish.
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "session start finished the close the refusal had marked unconfirmed: $out"
+  assert_present "$meta" "session start removed the record the refusal kept"
+  pass "completion marks a pending close whose worker could not be proved stopped, and recovery honours it"
+}
+
+test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped() {
+  local case_dir home id marker meta out
+  id=atomic-heal-endpoint-unconfirmed-b9
+  case_dir=$(make_home heal-endpoint-unconfirmed)
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  write_task_meta "$case_dir" "$id" ship no-mistakes "spawn_gen=spawn-heal-unconfirmed"
+  meta="$home/state/$id.meta"
+  marker="$home/state/$id.backlog-close"
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-heal-unconfirmed\nendpoint=unconfirmed\narg=--pr\narg=https://github.com/example/repo/pull/21\n' \
+    "$id" "$home/data" > "$marker"
+
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "session start closed the item for a worker nothing proved stopped: $out"
+  assert_present "$meta" \
+    "session start removed the task record that the cleanup refusal kept on purpose"
+  assert_present "$marker" \
+    "session start discarded the pending close instead of leaving it for a retry"
+  assert_contains "$out" "could not prove its worker stopped" \
+    "session start did not report the cleanup it deliberately left unfinished"
+  pass "session start refuses to replay a close whose worker was never proved stopped"
+}
+
+# The contrast that proves the line above is what makes the difference: the
+# same record without it replays exactly as before, so an ordinary interrupted
+# cleanup is still finished rather than being held forever.
+test_recovery_replays_the_same_close_without_the_unconfirmed_endpoint_line() {
+  local case_dir home id marker meta out
+  id=atomic-heal-endpoint-confirmed-b9
+  case_dir=$(make_home heal-endpoint-confirmed)
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  write_task_meta "$case_dir" "$id" ship no-mistakes "spawn_gen=spawn-heal-confirmed"
+  meta="$home/state/$id.meta"
+  marker="$home/state/$id.backlog-close"
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-heal-confirmed\narg=--pr\narg=https://github.com/example/repo/pull/22\n' \
+    "$id" "$home/data" > "$marker"
+
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "session start left an ordinary interrupted cleanup open: $out"
+  assert_absent "$meta" "an ordinary replay should remove the interrupted task record"
+  assert_absent "$marker" "an ordinary replay left its pending close behind"
+  pass "session start still finishes an ordinary interrupted cleanup"
+}
+
 test_recovery_backfills_a_recorded_link_on_an_already_done_item() {
   local case_dir id marker out
   id=atomic-heal-done-backfill-b9
@@ -3053,6 +3159,9 @@ test_recovery_marks_an_owned_record_in_flight
 test_recovery_rejects_an_internal_worker_record_symlink
 test_recovery_ignores_a_symlinked_worker_record
 test_recovery_replays_a_close_an_interrupted_cleanup_left_open
+test_completion_marks_its_pending_close_when_the_worker_cannot_be_proved_stopped
+test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped
+test_recovery_replays_the_same_close_without_the_unconfirmed_endpoint_line
 test_recovery_backfills_a_recorded_link_on_an_already_done_item
 test_recovery_preserves_a_close_when_the_backlog_cannot_be_read
 test_recovery_retry_preserves_incomplete_cleanup_warning

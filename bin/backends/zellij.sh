@@ -579,6 +579,41 @@ fm_backend_zellij_send_text_submit() {  # <target> <text> <retries> <enter-sleep
     "$target" "$retries" "$sleep_s" "$expected_label"
 }
 
+# fm_backend_zellij_session_presence: classify the backing session as
+# dead|present|unknown. fm_backend_zellij_session_exists cannot serve where a
+# kill verdict depends on it: it pipes the listing into `grep`, so a listing
+# that FAILED and a listing that ran and omitted this session are the same
+# false, and only one of those is proof the endpoint is gone.
+#
+# zellij exits nonzero for an empty session list as well as for a real
+# failure, so the exit status alone cannot separate them either; a zero exit
+# means the listing ran, and otherwise only zellij's own documented
+# empty-listing message does. Anything else is `unknown`.
+fm_backend_zellij_session_presence() {  # <session> -> dead|present|unknown
+  local session=$1 out rc
+  # Assigned through `if`, never as a bare `out=$(...)` followed by `$?`: the
+  # bare form aborts the enclosing command substitution under `set -e` before
+  # the status can be read, which would turn every nonzero listing into
+  # `unknown`. Mirrors fm_backend_tmux_window_presence.
+  if out=$(zellij list-sessions --short --no-formatting 2>&1); then
+    rc=0
+  else
+    rc=$?
+  fi
+  if printf '%s\n' "$out" | grep -qxF "$session"; then
+    printf 'present'
+    return 0
+  fi
+  if [ "$rc" -eq 0 ]; then
+    printf 'dead'
+    return 0
+  fi
+  case "$out" in
+    *'No active zellij sessions found'*) printf 'dead' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
 # fm_backend_zellij_pane_presence: classify one recorded pane as
 # dead|present|unknown from a structured `list-panes --json` read, never from
 # a close command's own exit status. fm_backend_zellij_pane_exists cannot
@@ -626,7 +661,14 @@ fm_backend_zellij_kill() {  # <target> [tab_id] [expected_label]
          "the worker may still be running" >&2
     return 2
   fi
-  fm_backend_zellij_session_exists "$FM_BACKEND_ZELLIJ_SESSION" || return 0
+  case "$(fm_backend_zellij_session_presence "$FM_BACKEND_ZELLIJ_SESSION")" in
+    dead) return 0 ;;
+    unknown)
+      echo "error: zellij could not say whether session $FM_BACKEND_ZELLIJ_SESSION still exists," \
+           "so $1 was neither closed nor confirmed gone; the worker may still be running" >&2
+      return 2
+      ;;
+  esac
   local tab_id fallback_tab_id=${2:-} expected_label=${3:-}
   tab_id=$(fm_backend_zellij_tab_for_pane "$FM_BACKEND_ZELLIJ_SESSION" "$FM_BACKEND_ZELLIJ_PANE" 2>/dev/null)
   if [ -n "$tab_id" ] && [ -n "$expected_label" ] && ! fm_backend_zellij_tab_matches_label "$FM_BACKEND_ZELLIJ_SESSION" "$tab_id" "$expected_label"; then
@@ -647,7 +689,18 @@ fm_backend_zellij_kill() {  # <target> [tab_id] [expected_label]
   elif [ -z "$expected_label" ]; then
     fm_backend_zellij_cli "$FM_BACKEND_ZELLIJ_SESSION" action close-pane --pane-id "$FM_BACKEND_ZELLIJ_PANE" >/dev/null 2>&1 || true
   else
-    return 0
+    # No tab id resolved for an expected label, which is a genuine gone only
+    # when a read that RAN says so: a live pane means the id now belongs to a
+    # stranger's tab, an absent pane means this endpoint is already gone, and
+    # a read that failed proves neither.
+    case "$(fm_backend_zellij_pane_presence "$FM_BACKEND_ZELLIJ_SESSION" "$FM_BACKEND_ZELLIJ_PANE")" in
+      dead|present) return 0 ;;
+      *)
+        echo "error: no zellij tab in $FM_BACKEND_ZELLIJ_SESSION carries the label for $1 and zellij" \
+             "could not say whether its pane is gone; the worker may still be running" >&2
+        return 2
+        ;;
+    esac
   fi
   case "$(fm_backend_zellij_pane_presence "$FM_BACKEND_ZELLIJ_SESSION" "$FM_BACKEND_ZELLIJ_PANE")" in
     dead) return 0 ;;

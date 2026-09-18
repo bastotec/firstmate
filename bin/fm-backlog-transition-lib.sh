@@ -69,7 +69,7 @@ FM_BACKLOG_ROW_ERROR=
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
 FM_BACKLOG_ROW_HOLD_KIND=
 # Set by fm_backlog_close_marker_replay: closed | closed_incomplete | retained |
-# retained_incomplete | answered | stale | noop.
+# retained_incomplete | answered | stale | endpoint_unconfirmed | noop.
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
 FM_BACKLOG_CLOSE_REPLAY_RESULT=
 
@@ -905,6 +905,7 @@ fm_backlog_close_marker_path() {  # <state-dir> <id>
 fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <expected-id> <state-dir>
   local marker=$1 authorized_data data_resolved expected_id=$3 state=$4
   local id='' data='' marker_spawn_gen='' cleanup_incomplete=0 mode=close line raw_bytes arg_value
+  local endpoint_unconfirmed=0 endpoint_count=0
   local url_tail url_authority url_path url_host url_port host_rest host_label host_valid
   local percent_tail percent_valid
   local id_count=0 data_count=0 spawn_gen_count=0 cleanup_incomplete_count=0 mode_count=0
@@ -913,6 +914,7 @@ fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
   FM_BACKLOG_CLOSE_VALIDATED_DATA=
   FM_BACKLOG_CLOSE_VALIDATED_SPAWN_GEN=
   FM_BACKLOG_CLOSE_VALIDATED_CLEANUP_INCOMPLETE=0
+  FM_BACKLOG_CLOSE_VALIDATED_ENDPOINT_UNCONFIRMED=0
   FM_BACKLOG_CLOSE_VALIDATED_MODE=close
   FM_BACKLOG_CLOSE_VALIDATED_ARGS=()
   fm_backlog_record_present "$marker" "pending-close record" "$state" || return 1
@@ -930,6 +932,7 @@ fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
       data=*) data=${line#data=}; data_count=$((data_count + 1)) ;;
       spawn_gen=*) marker_spawn_gen=${line#spawn_gen=}; spawn_gen_count=$((spawn_gen_count + 1)) ;;
       cleanup_incomplete=*) cleanup_incomplete=${line#cleanup_incomplete=}; cleanup_incomplete_count=$((cleanup_incomplete_count + 1)) ;;
+      endpoint=*) endpoint_unconfirmed=${line#endpoint=}; endpoint_count=$((endpoint_count + 1)) ;;
       mode=*) mode=${line#mode=}; mode_count=$((mode_count + 1)) ;;
       arg=*) args+=("${line#arg=}") ;;
       *) FM_BACKLOG_TRANSITION_ERROR="unreadable pending-close record $marker"; return 1 ;;
@@ -972,6 +975,18 @@ fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
     0|1) ;;
     *)
       FM_BACKLOG_TRANSITION_ERROR="invalid cleanup state in pending-close record $marker"
+      return 1
+      ;;
+  esac
+  if [ "$endpoint_count" -gt 1 ]; then
+    FM_BACKLOG_TRANSITION_ERROR="unreadable pending-close record $marker"
+    return 1
+  fi
+  case "$endpoint_unconfirmed" in
+    0) ;;
+    unconfirmed) endpoint_unconfirmed=1 ;;
+    *)
+      FM_BACKLOG_TRANSITION_ERROR="invalid endpoint state in pending-close record $marker"
       return 1
       ;;
   esac
@@ -1070,6 +1085,7 @@ fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
   FM_BACKLOG_CLOSE_VALIDATED_DATA=$data_resolved
   FM_BACKLOG_CLOSE_VALIDATED_SPAWN_GEN=$marker_spawn_gen
   FM_BACKLOG_CLOSE_VALIDATED_CLEANUP_INCOMPLETE=$cleanup_incomplete
+  FM_BACKLOG_CLOSE_VALIDATED_ENDPOINT_UNCONFIRMED=$endpoint_unconfirmed
   FM_BACKLOG_CLOSE_VALIDATED_MODE=$mode
   FM_BACKLOG_CLOSE_VALIDATED_ARGS=("${args[@]+"${args[@]}"}")
 }
@@ -1077,9 +1093,13 @@ fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
 # A leading `--retain` flag records the captain-held transition (`mode=retain`)
 # instead of a close; the remaining flags are the same completion links either
 # transition records.
-fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen> <state-dir> <cleanup-incomplete: 0|1> [--retain] [flag...]
-  local tmp=$1 id=$2 data spawn_gen=$4 state=$5 cleanup_incomplete=$6 arg previous_arg=''
-  local mode=close serialized_args=()
+#
+# `endpoint-unconfirmed` records that teardown could not prove this task's
+# worker stopped. It is written as `endpoint=unconfirmed`, and its ABSENCE
+# means 0, so every marker written before this field existed stays valid.
+fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen> <state-dir> <cleanup-incomplete: 0|1> <endpoint-unconfirmed: 0|1> [--retain] [flag...]
+  local tmp=$1 id=$2 data spawn_gen=$4 state=$5 cleanup_incomplete=$6 endpoint_unconfirmed=$7
+  local arg previous_arg='' mode=close serialized_args=()
   data=$(fm_backlog_data_absolute "$3") || {
     FM_BACKLOG_TRANSITION_ERROR="data directory cannot be resolved: $3"
     return 1
@@ -1093,7 +1113,11 @@ fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen
     0|1) ;;
     *) FM_BACKLOG_TRANSITION_ERROR="invalid pending-close cleanup state"; return 1 ;;
   esac
-  shift 6
+  case "$endpoint_unconfirmed" in
+    0|1) ;;
+    *) FM_BACKLOG_TRANSITION_ERROR="invalid pending-close endpoint state"; return 1 ;;
+  esac
+  shift 7
   if [ "${1:-}" = --retain ]; then
     mode=retain
     shift
@@ -1111,6 +1135,7 @@ fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen
     printf 'data=%s\n' "$data"
     printf 'spawn_gen=%s\n' "$spawn_gen"
     printf 'cleanup_incomplete=%s\n' "$cleanup_incomplete"
+    [ "$endpoint_unconfirmed" = 0 ] || printf 'endpoint=unconfirmed\n'
     [ "$mode" = close ] || printf 'mode=%s\n' "$mode"
     for arg in "${serialized_args[@]+"${serialized_args[@]}"}"; do
       printf 'arg=%s\n' "$arg"
@@ -1127,16 +1152,33 @@ fm_backlog_close_marker_write() {  # <state-dir> <id> <data-dir> <spawn-gen> [fl
   shift 4
   marker=$(fm_backlog_close_marker_path "$state" "$id") || return 1
   tmp="$state/.$id.backlog-close.${BASHPID:-$$}"
-  fm_backlog_close_marker_stage "$tmp" "$id" "$data" "$spawn_gen" "$state" 0 "$@" || return 1
+  fm_backlog_close_marker_stage "$tmp" "$id" "$data" "$spawn_gen" "$state" 0 0 "$@" || return 1
   fm_backlog_atomic_transition publish "$tmp" "$marker" "pending-close record" "$state" \
     || { rm -f "$tmp"; return 1; }
 }
 
-fm_backlog_close_marker_mark_cleanup_incomplete() {  # <state-dir> <marker-path> <id> <data-dir> <spawn-gen> [flag...]
-  local state=$1 marker=$2 id=$3 data=$4 spawn_gen=$5 tmp
-  shift 5
+# Both re-stampers below rewrite the whole record, so each carries the OTHER
+# flag through unchanged rather than silently clearing it.
+fm_backlog_close_marker_mark_cleanup_incomplete() {  # <state-dir> <marker-path> <id> <data-dir> <spawn-gen> <endpoint-unconfirmed: 0|1> [flag...]
+  local state=$1 marker=$2 id=$3 data=$4 spawn_gen=$5 endpoint_unconfirmed=$6 tmp
+  shift 6
   tmp="$state/.$id.backlog-close.${BASHPID:-$$}"
-  fm_backlog_close_marker_stage "$tmp" "$id" "$data" "$spawn_gen" "$state" 1 "$@" || return 1
+  fm_backlog_close_marker_stage "$tmp" "$id" "$data" "$spawn_gen" "$state" 1 "$endpoint_unconfirmed" "$@" || return 1
+  fm_backlog_atomic_transition publish "$tmp" "$marker" "pending-close record" "$state" \
+    || { rm -f "$tmp"; return 1; }
+}
+
+# fm_backlog_close_marker_mark_endpoint_unconfirmed: record that teardown
+# refused because this task's worker could not be proved stopped. Teardown
+# stages the pending-close record BEFORE it touches the endpoint, so without
+# this the refusal would leave behind a record that still reads as an ordinary
+# interrupted close - and the next session start's replay would remove the very
+# task record the refusal kept, and close the row, for a worker nothing stopped.
+fm_backlog_close_marker_mark_endpoint_unconfirmed() {  # <state-dir> <marker-path> <id> <data-dir> <spawn-gen> <cleanup-incomplete: 0|1> [flag...]
+  local state=$1 marker=$2 id=$3 data=$4 spawn_gen=$5 cleanup_incomplete=$6 tmp
+  shift 6
+  tmp="$state/.$id.backlog-close.${BASHPID:-$$}"
+  fm_backlog_close_marker_stage "$tmp" "$id" "$data" "$spawn_gen" "$state" "$cleanup_incomplete" 1 "$@" || return 1
   fm_backlog_atomic_transition publish "$tmp" "$marker" "pending-close record" "$state" \
     || { rm -f "$tmp"; return 1; }
 }
@@ -1158,6 +1200,7 @@ fm_backlog_close_marker_clear() {  # <state-dir> <id>
 fm_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data-dir>
   local state=$1 marker=$2 marker_name expected_id
   local id data marker_spawn_gen meta meta_spawn_gen row_state cleanup_incomplete mode
+  local endpoint_unconfirmed
   local args=() mode_flags=()
   FM_BACKLOG_CLOSE_REPLAY_RESULT=noop
   fm_backlog_directory_present "$state" "state directory" || return 1
@@ -1172,6 +1215,7 @@ fm_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data
   data=$FM_BACKLOG_CLOSE_VALIDATED_DATA
   marker_spawn_gen=$FM_BACKLOG_CLOSE_VALIDATED_SPAWN_GEN
   cleanup_incomplete=$FM_BACKLOG_CLOSE_VALIDATED_CLEANUP_INCOMPLETE
+  endpoint_unconfirmed=$FM_BACKLOG_CLOSE_VALIDATED_ENDPOINT_UNCONFIRMED
   mode=$FM_BACKLOG_CLOSE_VALIDATED_MODE
   [ "$mode" = close ] || mode_flags=(--retain)
   args=("${FM_BACKLOG_CLOSE_VALIDATED_ARGS[@]+"${FM_BACKLOG_CLOSE_VALIDATED_ARGS[@]}"}")
@@ -1191,12 +1235,27 @@ fm_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data
       FM_BACKLOG_CLOSE_REPLAY_RESULT=stale
       return 0
     fi
+    # A teardown that could not prove this task's worker stopped kept every
+    # durable record on purpose. Replay must not undo that: removing the meta
+    # and closing the row here is exactly the quiet cleanup the refusal
+    # promised would not happen, and nothing has learned anything about the
+    # worker since. The record stays for a rerun, which re-runs the kill.
+    if [ "$endpoint_unconfirmed" = 1 ]; then
+      FM_BACKLOG_CLOSE_REPLAY_RESULT=endpoint_unconfirmed
+      return 0
+    fi
     fm_backlog_close_marker_mark_cleanup_incomplete "$state" "$marker" "$id" "$data" \
-      "$marker_spawn_gen" "${mode_flags[@]+"${mode_flags[@]}"}" "${args[@]+"${args[@]}"}" \
+      "$marker_spawn_gen" "$endpoint_unconfirmed" "${mode_flags[@]+"${mode_flags[@]}"}" "${args[@]+"${args[@]}"}" \
       || return 1
     cleanup_incomplete=1
     fm_backlog_atomic_transition remove "$meta" "the interrupted task record" "$state" \
       || return 1
+  elif [ "$endpoint_unconfirmed" = 1 ]; then
+    # Same refusal, with the task record already gone: the row is the last
+    # record still saying this work is in flight, so replay leaves it alone
+    # rather than reporting a worker stopped that nothing stopped.
+    FM_BACKLOG_CLOSE_REPLAY_RESULT=endpoint_unconfirmed
+    return 0
   fi
   if fm_backlog_row_probe "$data" "$id"; then
     row_state=$FM_BACKLOG_ROW_STATE

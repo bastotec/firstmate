@@ -2947,9 +2947,10 @@ preflight_firstmate_home_herdr_children() {  # <home>
 # Deliberately not bypassed by --force. Discard authority is authority over
 # this task's unlanded WORK, never a reason to record a worker as stopped that
 # nothing has stopped - the same boundary the Herdr structured-presence gate
-# (fm_backend_herdr_endpoint_confirmed_gone) has always held here. The adapter has already written its one explanatory line to
-# stderr by the time this runs; this adds what the refusal means for the
-# records, and does not restate it.
+# (fm_backend_herdr_endpoint_confirmed_gone) has always held here.
+# The adapter has already written its one explanatory line to stderr by the
+# time this runs; this adds what the refusal means for the records, and does
+# not restate it.
 require_task_endpoint_gone() {  # <kill-status>
   case "$(fm_backend_kill_verdict "$1")" in
     gone) return 0 ;;
@@ -2960,7 +2961,30 @@ require_task_endpoint_gone() {  # <kill-status>
       echo "error: the endpoint $T for $ID could not be killed at all; retaining every durable task record - rerun cleanup once the worker can be proved stopped" >&2
       ;;
   esac
+  mark_pending_close_endpoint_unconfirmed
   return 1
+}
+
+# mark_pending_close_endpoint_unconfirmed: carry this refusal into the pending
+# close record. The record is staged BEFORE the endpoint is touched, so without
+# this stamp it still reads as an ordinary interrupted close, and the next
+# session start would replay it - removing the task record this refusal just
+# kept and closing the row, for a worker nothing proved stopped. Stamping it
+# makes replay refuse for the same reason this did.
+#
+# A failed stamp is itself reported and never silently tolerated, because the
+# unstamped record is exactly the one that would be replayed.
+mark_pending_close_endpoint_unconfirmed() {
+  local marker
+  [ "$BACKLOG_CLOSED" = 1 ] || return 0
+  marker=$(fm_backlog_close_marker_path "$STATE" "$ID") || return 0
+  [ -e "$marker" ] || [ -L "$marker" ] || return 0
+  if ! fm_backlog_close_marker_mark_endpoint_unconfirmed "$STATE" "$marker" "$ID" "$DATA" \
+      "$META_SPAWN_GEN" 0 \
+      "${BACKLOG_TRANSITION_FLAGS[@]+"${BACKLOG_TRANSITION_FLAGS[@]}"}" \
+      "${BACKLOG_DONE_ARGS[@]+"${BACKLOG_DONE_ARGS[@]}"}"; then
+    echo "error: the pending backlog close for $ID could not be marked unconfirmed ($FM_BACKLOG_TRANSITION_ERROR); remove $marker by hand before the next session start, or it will close this task's backlog item while its worker may still be running" >&2
+  fi
 }
 
 # require_child_endpoint_gone: apply the shared kill contract

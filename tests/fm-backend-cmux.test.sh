@@ -1108,6 +1108,46 @@ test_kill_recovers_stale_target_by_label() {
   pass "fm_backend_cmux_kill: recovers stale workspace/surface ids by expected label"
 }
 
+# The label path answers one false for several different reasons, and only
+# some of them are proof. An unreadable workspace listing used to leave kill
+# reporting a gone endpoint; it must report the shared contract's unconfirmed
+# result instead (bin/fm-backend.sh's fm_backend_kill).
+test_kill_label_path_reports_unconfirmed_when_the_listing_is_unreadable() {
+  local dir fb out
+  dir="$TMP_ROOT/kill-label-unreadable"; mkdir -p "$dir/responses"
+  # 1 and 2 are target_ready's title lookup and id-for-label retry, both
+  # unreadable; 3 is the presence re-read, unreadable for the same reason.
+  printf '1\n' > "$dir/responses/1.exit"
+  printf '1\n' > "$dir/responses/2.exit"
+  printf '1\n' > "$dir/responses/3.exit"
+  fb=$(make_cmux_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/backends/cmux.sh"; fm_backend_cmux_kill "aaaaaaaa-0000-0000-0000-000000000000:bbbbbbbb-1111-1111-1111-111111111111" "" fm-label' "$ROOT" 2>&1 )
+  expect_code 2 $? "an unreadable workspace listing must report unconfirmed, never a gone endpoint"
+  assert_contains "$out" "may still be running" \
+    "an unreadable listing should say the worker may still be running"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-workspace' \
+    "kill should not close anything it could not read"
+  pass "fm_backend_cmux_kill: an unreadable listing on the label path is unconfirmed, not gone"
+}
+
+# The same path, with a listing that RAN and does not carry the label: that id
+# no longer names this task, so this endpoint is gone and cleanup may proceed.
+test_kill_label_path_reports_gone_when_the_listing_omits_the_label() {
+  local dir fb
+  dir="$TMP_ROOT/kill-label-absent"; mkdir -p "$dir/responses"
+  cmux_workspace_list_response "$dir" 1 "ffffffff-0000-0000-0000-000000000000" "other"
+  cmux_workspace_list_response "$dir" 2 "ffffffff-0000-0000-0000-000000000000" "other"
+  cmux_workspace_list_response "$dir" 3 "ffffffff-0000-0000-0000-000000000000" "other"
+  fb=$(make_cmux_fakebin "$dir")
+  PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/backends/cmux.sh"; fm_backend_cmux_kill "aaaaaaaa-0000-0000-0000-000000000000:bbbbbbbb-1111-1111-1111-111111111111" "" fm-label' "$ROOT"
+  expect_code 0 $? "a listing that ran and omits the workspace is an already-absent endpoint"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-workspace' \
+    "kill should not close a workspace that is already absent"
+  pass "fm_backend_cmux_kill: a listing that ran and omits the workspace still reads as gone"
+}
+
 # --- list_live: label-based orphan discovery ---------------------------------
 
 test_list_live_filters_by_title_prefix() {
@@ -1207,5 +1247,7 @@ test_kill_closes_workspace_directly_when_not_last
 test_kill_adds_sibling_when_last_in_window
 test_kill_reports_unconfirmed_when_the_workspace_survives
 test_kill_recovers_stale_target_by_label
+test_kill_label_path_reports_unconfirmed_when_the_listing_is_unreadable
+test_kill_label_path_reports_gone_when_the_listing_omits_the_label
 test_list_live_filters_by_title_prefix
 test_secondmate_spawn_refuses_cmux_backend

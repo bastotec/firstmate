@@ -595,9 +595,12 @@ fm_backend_cmux_window_of_workspace() {  # <workspace_id> -> "<window_id> <count
   done < <(printf '%s' "$wins" | jq -r '.[]? | .id' 2>/dev/null)
 }
 
-# fm_backend_cmux_kill: remove the task's whole workspace, best-effort (mirrors
-# every other backend's `kill` `|| true` contract). A cmux task owns one
+# fm_backend_cmux_kill: remove the task's whole workspace. A cmux task owns one
 # workspace, so teardown reclaims that workspace and all of its surfaces.
+# The verdict is the shared kill contract's (bin/fm-backend.sh's
+# fm_backend_kill), not a best-effort `|| true`: this is the adapter that
+# proves why a close's own answer can never be the verdict, since
+# `close-workspace` returns `OK` whether or not it closed anything.
 #
 # The selected-workspace teardown bug (docs/cmux-backend.md "Closing the last
 # workspace in a window"): cmux keeps every window at >=1 workspace, so
@@ -642,7 +645,23 @@ fm_backend_cmux_workspace_presence() {  # <workspace_id> -> dead|present|unknown
 fm_backend_cmux_kill() {  # <target> [unused] [expected-label]
   local expected_label=${3:-} wsid wininfo win count
   if [ -n "$expected_label" ]; then
-    fm_backend_cmux_target_ready "$1" "$expected_label" || return 0
+    if ! fm_backend_cmux_target_ready "$1" "$expected_label"; then
+      # target_ready answers one false for four different reasons, and only
+      # some of them are proof. Re-read the recorded workspace through the
+      # structured presence read: a listing that RAN and omits it means this
+      # endpoint is gone, a listing that shows it means the label now belongs
+      # to a stranger's workspace and this task's endpoint is gone either way,
+      # and a listing that failed proves neither.
+      fm_backend_cmux_parse_target "$1" || return 1
+      case "$(fm_backend_cmux_workspace_presence "$FM_BACKEND_CMUX_WORKSPACE")" in
+        dead|present) return 0 ;;
+        *)
+          echo "error: cmux could not say whether workspace $FM_BACKEND_CMUX_WORKSPACE is gone, so" \
+               "$1 was neither closed nor confirmed gone; the worker may still be running" >&2
+          return 2
+          ;;
+      esac
+    fi
   else
     fm_backend_cmux_parse_target "$1" || return 1
   fi

@@ -814,6 +814,20 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
 #
 # Only 0 licenses removing the task's durable records. Both nonzero returns
 # mean the endpoint's identity must be retained so a later rerun can retry.
+#
+# What the third value is for, since no caller branches on it. Every call site
+# splits two ways - gone, or not gone - and none behaves differently for
+# UNCONFIRMED than for UNSUPPORTED. The distinction is kept anyway, and only
+# reporting acts on it, for two reasons. UNSUPPORTED is not new: it is the
+# return this function already used for an empty target, an unknown backend,
+# and an adapter that could not be sourced, and folding those into UNCONFIRMED
+# would make firstmate say "the worker may still be running" about a call that
+# never named a running worker - a fresh untrue statement of exactly the kind
+# this contract exists to remove. The two also need different operator action:
+# an UNCONFIRMED kill is worth rerunning once the backend can answer for the
+# endpoint, while an UNSUPPORTED one will return the same answer forever until
+# the call or the configuration is fixed. A caller that needs to tell them
+# apart should use fm_backend_kill_verdict rather than re-deriving the numbers.
 fm_backend_kill() {  # <backend> <target> [tab-id] [expected-label]
   local backend=$1
   shift
@@ -830,9 +844,11 @@ fm_backend_kill() {  # <backend> <target> [tab-id] [expected-label]
   esac
 }
 
-# fm_backend_kill_verdict: name one fm_backend_kill status, so callers branch
-# on the contract's words rather than re-deriving its numbers at six call
-# sites. The contract itself is owned by fm_backend_kill above.
+# fm_backend_kill_verdict: name one fm_backend_kill status, so callers that
+# need the reason read the contract's words rather than re-deriving its numbers
+# at six call sites. Callers deciding only whether cleanup may proceed should
+# test the status for zero instead; the contract above owns why both nonzero
+# values exist when no caller branches between them.
 fm_backend_kill_verdict() {  # <status> -> gone|unconfirmed|unsupported
   case "$1" in
     0) printf 'gone' ;;

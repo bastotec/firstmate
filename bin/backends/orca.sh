@@ -284,14 +284,63 @@ fm_backend_orca_send_text_submit() {  # <terminal-id> <text> <retries> <enter-sl
     "$terminal" "$retries" "$sleep_s"
 }
 
+# fm_backend_orca_terminal_presence: classify one terminal as
+# dead|present|unknown from Orca's own typed JSON envelope, never from the
+# close command's exit status. The cmux adapter is why this read exists at
+# all: `close-workspace` there answers `OK` whether or not it closed anything,
+# so a close's own acknowledgement cannot be the verdict for any backend.
+#
+# The envelope itself is what separates absence from unreachability, with no
+# dependence on an error string: Orca answers `{"ok":false,"error":{...}}`
+# only when the runtime received the call and refused it, so a well-formed
+# ok:false envelope proves the runtime is reachable AND that this terminal is
+# not. A runtime that cannot be reached produces no envelope at all - a
+# transport failure, empty output, or unparseable text - which is `unknown`.
+# Output is parsed regardless of exit status, because a typed refusal may
+# arrive with either.
+#
+# One narrow exception keeps that inference honest: a CLI that wraps its OWN
+# connection failure in an ok:false envelope would otherwise read as absence,
+# so a connection-shaped error code or message stays `unknown`. The match is
+# deliberately narrow and one-directional - it can only downgrade a `dead` to
+# `unknown`, never the reverse. No live Orca was available to enumerate its
+# error codes, so anything unrecognized that is not connection-shaped is still
+# read as the runtime's own refusal; docs/orca-backend.md records that limit.
+fm_backend_orca_terminal_presence() {  # <terminal-id> -> dead|present|unknown
+  local terminal=$1 out
+  out=$(orca terminal read --terminal "$terminal" --limit 1 --json 2>/dev/null || true)
+  [ -n "$out" ] || { printf 'unknown'; return 0; }
+  printf '%s' "$out" | node -e '
+const fs = require("fs");
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch (err) {
+  process.stdout.write("unknown");
+  process.exit(0);
+}
+if (data === null || typeof data !== "object" || !("ok" in data)) {
+  process.stdout.write("unknown");
+  process.exit(0);
+}
+if (data.ok !== false) {
+  process.stdout.write("present");
+  process.exit(0);
+}
+const err = data.error || {};
+const probe = String(err.code || "") + " " + String(err.message || "");
+if (/connect|connection|refused|unreachable|timed?.?out|timeout|daemon|socket|econn/i.test(probe)) {
+  process.stdout.write("unknown");
+  process.exit(0);
+}
+process.stdout.write("dead");
+' 2>/dev/null || printf 'unknown'
+}
+
 # Return contract: bin/fm-backend.sh's fm_backend_kill header owns it.
-# Orca is the one backend with no read that separates a closed terminal from
-# an unreachable runtime: `orca terminal read` fails the same way for both, so
-# it cannot serve as the follow-up confirmation the other adapters use. What
-# Orca does give is a typed answer to the close itself, and an accepted
-# `terminal close` is a positive acknowledgement rather than a confirmation by
-# omission - so that answer is the verdict here, and a refused, failed, or
-# unattemptable close is unconfirmed.
+# Orca accepts the close with a typed answer, but an accepted close is still
+# the close speaking about itself, so the verdict comes from the separate
+# absence read above - the same shape every other adapter uses.
 fm_backend_orca_kill() {  # <terminal-id>
   local terminal=${1:-}
   [ -n "$terminal" ] || return 1
@@ -305,4 +354,17 @@ fm_backend_orca_kill() {  # <terminal-id>
          "the worker may still be running" >&2
     return 2
   }
+  case "$(fm_backend_orca_terminal_presence "$terminal")" in
+    dead) return 0 ;;
+    present)
+      echo "error: Orca accepted the close for terminal $terminal but it still reads as live;" \
+           "the worker may still be running" >&2
+      return 2
+      ;;
+    *)
+      echo "error: Orca accepted the close for terminal $terminal but could not say whether it is" \
+           "gone; the worker may still be running" >&2
+      return 2
+      ;;
+  esac
 }

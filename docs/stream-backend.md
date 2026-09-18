@@ -163,6 +163,9 @@ That refusal is what an agent registers itself again on, under the endpoint id i
 Listed and steerable arrive together rather than one after the other, because the thread that receives steers is told the endpoint is back at the moment it comes back rather than finding out on its own schedule.
 The residual is small and worth stating: the two are separate calls, so a steer aimed at the instant between a worker being listed again and its next command poll reaching the hub can still be reported undelivered, and is delivered on the retry.
 
+This is why a kill against an endpoint the hub does not have reports an unconfirmed stop rather than a gone endpoint.
+Absence from the task table is a statement about the hub's own memory, never about a process on another machine, and every worker behind those answers while a hub is restarting is still running.
+
 The identity is the point.
 The endpoint id an agent re-registers is the one the task's own records name, so its metadata binding, its steering and its status channel all keep meaning what they meant; an agent that came back under a fresh id would be listed while every record pointing at it was stranded, which is a worse outcome than staying away.
 The history does not come back with it.

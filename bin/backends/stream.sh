@@ -661,7 +661,7 @@ fm_backend_stream_agent_state() {  # <target>
 # worker on a hub that cannot be reached is a worker nothing has proved
 # stopped.
 fm_backend_stream_kill() {  # <target> [unused] [expected-label]
-  local target=$1 expected=${3:-} task out
+  local target=$1 expected=${3:-} task out api_rc=0
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || {
     echo "error: '$target' does not address an endpoint on this home's stream hub, so nothing" \
          "could be closed or confirmed gone; the worker may still be running" >&2
@@ -672,11 +672,28 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
   # neither, so it is reported rather than taken for a stop - a hub that cannot
   # be reached, or that forgot an endpoint it stopped hearing from, knows
   # nothing about whether that worker is still running.
-  task=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
-    echo "error: the stream hub could not say what $FM_BACKEND_STREAM_ENDPOINT is;" \
-         "the worker may still be running" >&2
+  #
+  # A bare 404 is the one that looks like an answer and is not. The simple
+  # reading - the hub has no such task, so the endpoint is gone - is wrong here
+  # because the hub's task table is not durable truth about workers: it is
+  # rebuilt by the agents that register into it. A hub that restarts serves 404
+  # for every endpoint until each agent re-registers (docs/stream-backend.md),
+  # and every worker behind those 404s is still running. Absence from the table
+  # is therefore a statement about the hub's own memory, never about a process
+  # on another machine, so it is reported as unconfirmed with its own reason
+  # rather than folded into the generic read failure.
+  task=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || api_rc=$?
+  if [ "$api_rc" -ne 0 ]; then
+    if [ "$api_rc" -eq 3 ]; then
+      echo "error: the stream hub has no record of $FM_BACKEND_STREAM_ENDPOINT, which is not the same" \
+           "as its worker having stopped - a restarted hub serves that answer until its agents" \
+           "re-register; the worker may still be running" >&2
+    else
+      echo "error: the stream hub could not say what $FM_BACKEND_STREAM_ENDPOINT is;" \
+           "the worker may still be running" >&2
+    fi
     return 2
-  }
+  fi
   if [ -n "$expected" ]; then
     # A mismatched label means the id names something other than this task, so
     # closing it would destroy a stranger's endpoint.

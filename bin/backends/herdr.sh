@@ -3269,9 +3269,12 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
   done
 }
 
-# fm_backend_herdr_kill: remove the task's pane, best-effort (mirrors
-# tmux-kill-window's `|| true` contract). Verified: closing a tab's only pane
-# closes the tab too, so a separate tab close is unnecessary.
+# fm_backend_herdr_kill_serialized: perform the close itself. It reports no
+# verdict and never decides one - fm_backend_herdr_kill below confirms the
+# result with a structured presence read, under the same lock this ran under,
+# and owns the shared kill contract's answer (bin/fm-backend.sh's
+# fm_backend_kill). Verified: closing a tab's only pane closes the tab too, so
+# a separate tab close is unnecessary.
 # When the close would empty a non-focused workspace, Herdr 0.7.5's explicit
 # close moves focus to that workspace's neighbor with no restore anywhere in
 # this path, so the kill follows the same focus-safe removal plan as

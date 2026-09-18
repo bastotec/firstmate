@@ -47,8 +47,12 @@ if [ "${1:-}" = --version ]; then
   exit 0
 fi
 if [ "${1:-}" = list-sessions ]; then
+  if [ -n "${FM_ZELLIJ_SESSION_LIST_ERROR:-}" ]; then
+    printf '%s\n' "$FM_ZELLIJ_SESSION_LIST_ERROR" >&2
+    exit "${FM_ZELLIJ_SESSION_LIST_EXIT:-1}"
+  fi
   printf '%s\n' "${FM_ZELLIJ_SESSION_LIST:-}"
-  exit 0
+  exit "${FM_ZELLIJ_SESSION_LIST_EXIT:-0}"
 fi
 if [ "${1:-}" = attach ]; then
   exit "${FM_ZELLIJ_ATTACH_EXIT:-0}"
@@ -813,6 +817,8 @@ test_kill_skips_recorded_tab_when_label_mismatches() {
   dir="$TMP_ROOT/kill-recorded-tab-mismatch"; mkdir -p "$dir/responses"
   printf '[]\n' > "$dir/responses/1.out"
   printf '[{"tab_id":3,"name":"not-the-task"}]\n' > "$dir/responses/2.out"
+  # A mismatched label is only a gone endpoint once a listing that RAN says so.
+  printf '[]\n' > "$dir/responses/3.out"
   fb=$(make_zellij_fakebin "$dir")
   PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
     FM_ZELLIJ_SESSION_LIST="firstmate" \
@@ -836,6 +842,55 @@ test_kill_is_noop_when_session_absent() {
     bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT"
   expect_code 0 $? "an already-absent session is ordinary idempotent cleanup, not a refusal"
   pass "fm_backend_zellij_kill: never fails when the target session no longer exists"
+}
+
+# The whole point of the kill contract: a read that FAILED proves nothing, so
+# it can never be reported as a gone endpoint. zellij exits nonzero both for an
+# empty session list and for a real failure, so the two must be told apart by
+# more than the exit status.
+test_kill_reports_unconfirmed_when_the_session_listing_fails() {
+  local dir fb out
+  dir="$TMP_ROOT/kill-session-listing-failed"; mkdir -p "$dir/responses"
+  fb=$(make_zellij_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST_ERROR="error: could not connect to the zellij server" \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT" 2>&1 )
+  expect_code 2 $? "a session listing that failed must report unconfirmed, never a gone endpoint"
+  assert_contains "$out" "may still be running" \
+    "a failed session listing should say the worker may still be running"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-tab-by-id' \
+    "kill should not close anything when it cannot read the session listing"
+  pass "fm_backend_zellij_kill: a session listing that failed is unconfirmed, not gone"
+}
+
+# zellij's own empty-listing answer is nonzero too, and that one IS proof.
+test_kill_treats_the_empty_session_listing_as_gone() {
+  local dir fb
+  dir="$TMP_ROOT/kill-session-listing-empty"; mkdir -p "$dir/responses"
+  fb=$(make_zellij_fakebin "$dir")
+  PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST_ERROR="No active zellij sessions found." \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT"
+  expect_code 0 $? "zellij's own empty-listing answer is an already-absent endpoint, not a refusal"
+  pass "fm_backend_zellij_kill: zellij's nonzero empty-listing answer still reads as gone"
+}
+
+# The same rule on the label path: no tab carries the label AND the pane
+# listing failed, so nothing proved this endpoint gone.
+test_kill_reports_unconfirmed_when_the_label_path_cannot_read_panes() {
+  local dir fb out
+  dir="$TMP_ROOT/kill-label-unreadable"; mkdir -p "$dir/responses"
+  printf '[]\n' > "$dir/responses/1.out"
+  printf '[{"tab_id":3,"name":"not-the-task"}]\n' > "$dir/responses/2.out"
+  printf '1\n' > "$dir/responses/3.exit"
+  fb=$(make_zellij_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST="firstmate" \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7 3 fm-zghost' "$ROOT" 2>&1 )
+  expect_code 2 $? "an unreadable pane listing must report unconfirmed, never a gone endpoint"
+  assert_contains "$out" "may still be running" \
+    "an unreadable pane listing should say the worker may still be running"
+  pass "fm_backend_zellij_kill: an unreadable pane listing on the label path is unconfirmed"
 }
 
 test_teardown_passes_recorded_tab_id_to_zellij_kill() {
@@ -909,6 +964,10 @@ test_forced_secondmate_teardown_kills_zellij_children_with_child_home_tag() {
   # The child's close is confirmed against 4.out before any of that child's
   # durable identity records may be erased.
   printf '[]\n' > "$dir/responses/4.out"
+  # The secondmate's OWN endpoint is confirmed the same way afterwards (calls 5
+  # and 6 resolve no tab for it, so 7 is the pane listing that settles it). The
+  # child tag is this test's subject; the parent close just has to be provable.
+  printf '[]\n' > "$dir/responses/7.out"
   fb=$(make_zellij_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_ROOT_OVERRIDE="$ROOT" \
@@ -1351,6 +1410,9 @@ test_kill_falls_back_to_close_pane_when_tab_lookup_empty
 test_kill_closes_recorded_tab_when_pane_already_gone
 test_kill_skips_recorded_tab_when_label_mismatches
 test_kill_is_noop_when_session_absent
+test_kill_reports_unconfirmed_when_the_session_listing_fails
+test_kill_treats_the_empty_session_listing_as_gone
+test_kill_reports_unconfirmed_when_the_label_path_cannot_read_panes
 test_teardown_passes_recorded_tab_id_to_zellij_kill
 test_forced_secondmate_teardown_kills_zellij_children_with_child_home_tag
 test_send_text_submit_detects_landed_send

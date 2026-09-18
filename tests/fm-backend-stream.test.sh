@@ -641,6 +641,14 @@ test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop() {
     && fail "a kill the hub could not answer must not report a confirmed stop"
   assert_contains "$out" "may still be running" \
     "an unanswerable kill should say the worker may still be running"
+  # The reason matters as much as the verdict here. A restarted hub serves this
+  # same answer for every live endpoint until its agents re-register, so an
+  # unknown endpoint must be reported as the hub's own missing record rather
+  # than as a worker that stopped.
+  assert_contains "$out" "has no record of" \
+    "an unknown endpoint should be reported as the hub's missing record"
+  assert_contains "$out" "re-register" \
+    "an unknown endpoint should name the re-registration window that produces it"
   pass "stream: a kill the hub cannot answer is reported as unconfirmed"
 }
 

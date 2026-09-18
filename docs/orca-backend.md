@@ -63,6 +63,9 @@ Before release, cleanup resolves the recorded Orca worktree id and verifies its 
 A missing, unreadable, or mismatched identity preserves metadata and stops rather than deleting anything.
 After those checks, Firstmate closes the exact terminal and releases the exact worktree with Orca's worktree command.
 It never raw-deletes an Orca worktree.
+An accepted close is not by itself the verdict, because a close that answers positively and performs nothing is a real failure mode on another backend.
+Firstmate confirms the close with a separate read of the terminal and only then reports the endpoint gone, under the shared kill contract `fm_backend_kill` in `bin/fm-backend.sh` owns.
+Orca's typed JSON envelope is what makes that read possible: only a runtime that received the call answers `{"ok":false,...}` at all, so that envelope means the runtime is reachable and this terminal is not, while a transport failure that produces no envelope proves nothing and reports an unconfirmed stop.
 
 ## Active limits
 
@@ -71,6 +74,8 @@ It never raw-deletes an Orca worktree.
 - Secondmate spawns are unsupported.
 - Escape is unsupported.
 - Orca exposes no stable CLI version or protocol marker, so readiness is the compatibility gate rather than a version floor.
+- The absence read behind a confirmed close has not been exercised against a live Orca, because none was available when it was written, so its error codes are unenumerated.
+- It therefore recognizes absence from the shape of the answer rather than from any particular code, and treats a connection-shaped error as unknown rather than as absence; anything it does not recognize reports an unconfirmed stop, which keeps cleanup from removing records for a worker nothing proved stopped.
 - Only the verified terminal-handle and worktree result fields are accepted; speculative response shapes are rejected.
 - Orca's worktree shape is unverified against the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh`, which refuses any path that is not a linked git worktree sharing the project's git common dir, so a claude spawn on Orca fails loudly at that check rather than launching if Orca clones instead of linking.
 

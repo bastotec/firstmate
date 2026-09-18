@@ -46,6 +46,25 @@ if [ "${1:-}" = status ] && [ "${FM_ORCA_STATUS_RESPONSE:-ready}" != sequence ];
   printf '{"ok":true,"result":{"runtime":{"reachable":true,"state":"ready"}}}\n'
   exit 0
 fi
+# The kill absence probe (`terminal read --limit 1`) is answered separately
+# from the ordered response queue, exactly as `status` is: it runs after every
+# close, so counting it would renumber every other canned response. Its default
+# is the typed not-found envelope a reachable Orca returns for a terminal that
+# is really gone, which is what an accepted close is supposed to leave behind.
+if [ "${1:-}" = terminal ] && [ "${2:-}" = read ]; then
+  for a in "$@"; do
+    if [ "$a" = --limit ]; then limit_next=1; continue; fi
+    if [ "${limit_next:-}" = 1 ]; then limit_value=$a; limit_next=; fi
+  done
+  if [ "${limit_value:-}" = 1 ]; then
+    if [ -n "${FM_ORCA_TERMINAL_READ+set}" ]; then
+      [ -z "$FM_ORCA_TERMINAL_READ" ] || printf '%s\n' "$FM_ORCA_TERMINAL_READ"
+    else
+      printf '{"ok":false,"error":{"code":"TERMINAL_NOT_FOUND","message":"no such terminal"}}\n'
+    fi
+    exit "${FM_ORCA_TERMINAL_READ_EXIT:-0}"
+  fi
+fi
 n=$next
 echo "$n" > "$COUNT_FILE"
 if [ -f "$RESP/$n.exit" ]; then
@@ -352,19 +371,50 @@ test_send_key_refuses_escape_until_supported() {
   pass "fm_backend_orca_send_key: refuses Escape instead of mapping it to interrupt"
 }
 
-# Orca has no read that separates a closed terminal from an unreachable
-# runtime, so its own typed answer to the close is the whole verdict
-# (bin/fm-backend.sh's fm_backend_kill owns the contract): an accepted close
-# reports the endpoint gone, and a refused one reports unconfirmed rather than
-# being discarded.
-test_kill_reports_the_close_orca_answered() {
+# An accepted close is still the close speaking about itself, so the verdict
+# comes from a separate absence read (bin/fm-backend.sh's fm_backend_kill owns
+# the contract). Orca's typed JSON envelope is what separates a terminal that
+# is gone from a runtime that could not be reached: only a reachable runtime
+# answers `{"ok":false,...}` at all.
+test_kill_confirms_the_close_with_an_absence_read() {
   local out
-  orca_case kill-accepted
+  # Call 1 is `terminal close`, call 2 is the `terminal read` absence probe.
+  orca_case kill-confirmed-absent
   PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_kill term-123' "$ROOT"
-  expect_code 0 $? "an accepted Orca close should report the endpoint gone"
+  expect_code 0 $? "a close confirmed by an absence read should report the endpoint gone"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-123'$'\x1f''--json' \
     "kill did not call orca terminal close"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''read'$'\x1f''--terminal'$'\x1f''term-123' \
+    "kill did not confirm the close with an absence read"
+
+  # The cmux lesson: an accepted close that closed nothing must not report gone.
+  orca_case kill-accepted-still-live
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ORCA_TERMINAL_READ='{"ok":true,"result":{"terminal":{"tail":["still here"]}}}' \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_kill term-123' "$ROOT" 2>&1 )
+  expect_code 2 $? "a terminal that still reads live after an accepted close must report unconfirmed"
+  assert_contains "$out" "still reads as live" \
+    "a live-after-close terminal should say so"
+
+  # No envelope at all is an unreachable runtime, which proves nothing.
+  orca_case kill-accepted-unreadable
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ORCA_TERMINAL_READ='' FM_ORCA_TERMINAL_READ_EXIT=1 \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_kill term-123' "$ROOT" 2>&1 )
+  expect_code 2 $? "a close nothing could confirm must report unconfirmed, not success"
+  assert_contains "$out" "may still be running" \
+    "an unconfirmed Orca close should say the worker may still be running"
+
+  # A CLI that wraps its OWN connection failure in an envelope must not be
+  # read as the terminal being absent.
+  orca_case kill-accepted-connection-error
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ORCA_TERMINAL_READ='{"ok":false,"error":{"code":"ECONNREFUSED","message":"connection refused"}}' \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_kill term-123' "$ROOT" 2>&1 )
+  expect_code 2 $? "a connection-shaped error must not be read as terminal absence"
+  assert_contains "$out" "could not say whether it is" \
+    "a connection-shaped error should report an unknown absence read"
 
   orca_case kill-refused
   printf '1\n' > "$RESP/1.exit"
@@ -375,7 +425,7 @@ test_kill_reports_the_close_orca_answered() {
     "an unconfirmed Orca close should say the worker may still be running"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-123'$'\x1f''--json' \
     "kill did not attempt orca terminal close before reporting"
-  pass "fm_backend_orca_kill: reports gone for a close Orca accepted and unconfirmed for one it refused"
+  pass "fm_backend_orca_kill: confirms a close with an absence read and reports every unproved close unconfirmed"
 }
 
 test_remove_worktree_refuses_empty_id() {
@@ -1356,7 +1406,7 @@ test_send_helpers_reject_orca_error_json
 test_send_key_enter_and_interrupt
 test_send_key_refuses_unknown_key
 test_send_key_refuses_escape_until_supported
-test_kill_reports_the_close_orca_answered
+test_kill_confirms_the_close_with_an_absence_read
 test_remove_worktree_refuses_empty_id
 test_remove_worktree_rejects_orca_error_json
 test_worktree_path_resolves_id

@@ -1301,6 +1301,12 @@ backlog_record_reconcile() {
         answered)
           echo "BOOTSTRAP_INFO: finished the interrupted cleanup for $label; the captain had already answered its call"
           ;;
+        endpoint_unconfirmed)
+          # Not BOOTSTRAP_INFO: a cleanup refused because nothing could prove
+          # this worker stopped, and replay deliberately changed nothing, so
+          # this needs a person rather than reporting a finished fact.
+          echo "BACKLOG_RECONCILE: $label: cleanup could not prove its worker stopped, so its records and backlog item are intact; confirm the worker is stopped, then re-run cleanup"
+          ;;
       esac
     else
       echo "BACKLOG_RECONCILE: $label: recorded backlog close could not be replayed: $FM_BACKLOG_TRANSITION_ERROR"
