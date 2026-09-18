@@ -42,6 +42,7 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-pr-lib.sh
@@ -195,6 +196,14 @@ retirement_done_args() {  # <id>
   esac
 }
 
+# Whether this home's backlog is firstmate's to transition at all is one
+# question with one owner: fm_backlog_transition_applies, the gate cleanup
+# consults for the same decision. A home that selects manual editing, one that
+# keeps no markdown backlog, and a secondmate are all exempt - the record is
+# retired and their backlog is left exactly as the operator keeps it, rather
+# than hand-edited here or made permanently unretirable by a row read that
+# cannot apply.
+#
 # A row that could not be READ is not an absent row: removing the task record
 # behind one would leave the row asserting work in flight that nothing is
 # doing, which is this change's own defect wearing the other face. Only a
@@ -202,13 +211,24 @@ retirement_done_args() {  # <id>
 # with its deliverable, exactly as cleanup and the session-start replay do, so
 # a retirement never quietly answers the captain's own question.
 retire_records_only() {  # <id>
-  local id=$1 meta="$STATE/$id.meta" marker mode=close probe_rc=0 marker_flags=()
+  local id=$1 meta="$STATE/$id.meta" marker mode=close probe_rc=0 gate_rc=0 marker_flags=()
+  fm_backlog_transition_applies "$CONFIG" "$DATA" "$(fm_meta_get "$meta" kind)" || gate_rc=$?
+  if [ "$gate_rc" -eq 2 ]; then
+    FM_BACKLOG_TRANSITION_ERROR="${FM_BACKLOG_TRANSITION_ERROR:-the backlog data directory is inaccessible}"
+    return 1
+  fi
+  if [ "$gate_rc" -ne 0 ]; then
+    echo "note: $id's backlog row is not firstmate's to transition ($FM_BACKLOG_TRANSITION_SKIP); its task record is retired and the backlog is left as it is" >&2
+    fm_backlog_atomic_transition remove "$meta" "task record" "$STATE" || return 1
+    rm -f "$STATE/$id.turn-ended" "$STATE/$id.progress"
+    return 0
+  fi
   marker=$(fm_backlog_close_marker_path "$STATE" "$id") || return 1
   retirement_done_args "$id" || return 1
   fm_backlog_row_probe "$DATA" "$id" || probe_rc=$?
   if [ "$probe_rc" -ne 0 ]; then
     if [ "$FM_BACKLOG_ROW_RESULT" != not_found ]; then
-      FM_BACKLOG_TRANSITION_ERROR=${FM_BACKLOG_ROW_ERROR:-the backlog row could not be read}
+      FM_BACKLOG_TRANSITION_ERROR="${FM_BACKLOG_ROW_ERROR:-the backlog row could not be read}"
       return 1
     fi
     fm_backlog_atomic_transition remove "$meta" "task record" "$STATE" || return 1

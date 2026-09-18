@@ -2494,6 +2494,32 @@ test_a_captain_held_row_is_retained_not_closed() {
   pass "a captain-held row is retained with its deliverable, not closed as done"
 }
 
+# Whether the backlog is firstmate's to transition is the library's single
+# gate, and a home that selects manual editing is exempt from it. The record is
+# still the retirement's to retire; the operator's own backlog file is not
+# firstmate's to rewrite, here any more than in cleanup.
+test_a_manual_backlog_home_is_retired_without_touching_its_backlog() {
+  local case_dir home id out before after
+  id=atomic-retire-manual-b9
+  case_dir=$(make_home retire-manual)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task_with_work "$case_dir" "$id"
+  printf '%s\n' manual > "$home/config/backlog-backend"
+  before=$(cat "$(backlog_of "$case_dir")")
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
+    || fail "a manual-backlog home should still retire its record: $out"
+  assert_absent "$home/state/$id.meta" "the record was not retired: $out"
+  after=$(cat "$(backlog_of "$case_dir")")
+  [ "$before" = "$after" ] \
+    || fail "the retirement hand-edited a backlog the home keeps manually"
+  assert_absent "$home/state/$id.backlog-close" \
+    "the retirement staged a pending close for a backlog it must not transition"
+  assert_contains "$out" "manual editing" \
+    "the retirement did not say why it left the backlog alone"
+  pass "a manual-backlog home retires its record and its backlog is left as the operator keeps it"
+}
+
 test_retirement_help_states_what_the_operator_is_asserting() {
   local case_dir out
   case_dir=$(make_home retire-help)
@@ -3589,6 +3615,7 @@ test_an_interrupt_mid_retirement_retires_nothing
 test_a_refusal_that_is_not_the_work_gate_retires_nothing
 test_a_backlog_row_that_cannot_be_read_refuses_rather_than_retiring
 test_a_captain_held_row_is_retained_not_closed
+test_a_manual_backlog_home_is_retired_without_touching_its_backlog
 test_retirement_help_states_what_the_operator_is_asserting
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped
 test_recovery_replays_the_same_close_without_the_unconfirmed_endpoint_line
