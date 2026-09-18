@@ -1,0 +1,11 @@
+# Regression proof: neuter the endpoint gate, and the real-tmux cleanup case fails.
+# Mutation applied to bin/fm-teardown.sh require_task_endpoint_gone():
+#   return 0   # pre-change behaviour - an unconfirmed kill is discarded
+
+## WITH the gate (target commit 0a27923):
+ok - fm-teardown: an unconfirmed endpoint kill keeps every durable record, while an already-absent endpoint and a confirmed kill both stay successful
+FM_TEST_END 2026-09-18T16:13:16Z tests/fm-teardown-endpoint-safety.test.sh exit=0 duration_ms=39081 gate_skip=false
+
+## WITHOUT the gate (mutated):
+not ok - cleanup reported success for a kill nothing proved landed
+FM_TEST_END 2026-09-18T16:23:23Z tests/fm-teardown-endpoint-safety.test.sh exit=1 duration_ms=32230 gate_skip=false

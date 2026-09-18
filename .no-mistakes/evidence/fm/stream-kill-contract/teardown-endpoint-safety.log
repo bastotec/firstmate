@@ -1,3 +1,4 @@
+FM_TEST_BEGIN 2026-09-18T16:12:37Z tests/fm-teardown-endpoint-safety.test.sh family=backend-dispatch expected_gate_skip=none
 ok - fm-teardown: missing, empty, malformed, ambiguous, and task-mismatched endpoints refuse before every mutation or runtime call
 ok - fm-teardown: a concurrent lifecycle action refuses before mutation
 ok - fm-teardown: non-pool cleanup ignores unrelated task publication locks
@@ -18,7 +19,46 @@ ok - Treehouse project locking anchors at the local root for main-home, local-se
 ok - fm-teardown: a remote-seeded secondmate home returns its own uncontested pool slot
 ok - fm-teardown: slot ownership across a remote-seeded home and its local child still refuses
 ok - Treehouse project locking still serializes two homes across the remote-seeded boundary
-
-real	0m28.224s
-user	0m10.766s
-sys	0m17.392s
+FM_TEST_END 2026-09-18T16:13:16Z tests/fm-teardown-endpoint-safety.test.sh exit=0 duration_ms=39081 gate_skip=false
+FM_TEST_BEGIN 2026-09-18T16:13:16Z tests/fm-remote-secondmate-lifecycle-e2e.test.sh family=secondmate expected_gate_skip=none
+ok - overlapping remote home provisioning serializes through publication and rollback
+ok - remote seed rollback preserves serialized competing routes
+ok - unknown readiness preserves its route and brief for reconciliation
+ok - remote seeding checks, repairs, and re-checks readiness, then stops on a remaining gap
+ok - remote seeding proceeds once the repair closes every gap
+ok - remote seeding provisions a supplied origin without touching the primary project tree
+ok - remote provisioning re-validates a supplied origin at the receiving host
+ok - seeding carries bitbucket, self-hosted, and scp-like origins through to the remote clone
+ok - remote seed registers the route and provisions the whole home and project clone on that host
+ok - remote inheritance rejects incomplete and superseded payload generations
+ok - mixed local and remote routes validate without migration
+ok - remote spawn launches on the remote-local backend and records a host-qualified route
+ok - legacy and mismatched remote endpoints fail closed before backend access
+ok - non-herdr remote endpoints are refused without changing either route
+ok - an agent-less remote endpoint whose kill nothing confirmed is refused, not relaunched onto
+ok - remote spawn serializes inheritance through launch publication
+cannot retire terminal source; it remains registered: remote-reply-ios
+ok - marked send and routed reply complete through the existing parent correlation owner
+cannot retire terminal source; it remains registered: remote-reply-ios
+ok - partial remote inheritance retains reread intent through bootstrap convergence
+ok - config push and bootstrap serialize remote inheritance convergence
+cannot retire terminal source; it remains registered: remote-reply-ios
+ok - remote inherited config retains and retries a failed live reread nudge
+cannot retire terminal source; it remains registered: remote-reply-ios
+cannot retire terminal source; it remains registered: remote-reply-ios
+cannot retire terminal source; it remains registered: remote-reply-ios
+ok - fleet snapshot projects mixed local and remote structured state
+ok - remote update imports and fast-forwards the persistent home on its configured host
+ok - the remote restart verb delegates to the host-local control plane and refuses before stopping anything
+ok - startup repairs remote readiness before probing without relaunching
+ok - the host-local state read steps around a stale shadowing herdr client
+ok - startup reports alive legacy backends without changing their routes
+ok - unreachable no-ledger remote state remains explicit with no local respawn or failover
+ok - remote retirement refuses child work, then removes only its own endpoint while a shared-session sibling survives
+ALL TESTS PASSED
+FM_TEST_END 2026-09-18T16:21:05Z tests/fm-remote-secondmate-lifecycle-e2e.test.sh exit=0 duration_ms=469007 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=508274
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=1 duration_ms=39081 failed=0
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=469007 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-remote-secondmate-lifecycle-e2e.test.sh duration_ms=469007
+FM_TEST_SLOWEST rank=2 script=tests/fm-teardown-endpoint-safety.test.sh duration_ms=39081

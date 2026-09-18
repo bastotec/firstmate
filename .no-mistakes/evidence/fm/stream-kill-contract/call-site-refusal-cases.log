@@ -1,0 +1,4 @@
+ok - an agent-less remote endpoint whose kill nothing confirmed is refused, not relaunched onto
+ok - fm-spawn.sh --backend orca: reports a launch endpoint its abort could not confirm closed
+ok - sweep: an endpoint whose kill nothing confirmed is reported and not relaunched onto
+ok - a cleanup that fails its process-event restore retires nothing

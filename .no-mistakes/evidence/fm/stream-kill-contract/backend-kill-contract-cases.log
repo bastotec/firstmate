@@ -1,0 +1,33 @@
+ok - stream: kill closes the exact endpoint and leaves its sibling running
+ok - stream: only a close the endpoint's own agent reported counts as a stop
+ok - stream: a kill the hub cannot answer is reported as unconfirmed
+ok - stream: a 404 stays unconfirmed however long the hub has been up
+ok - stream: task and kill answers the adapter cannot read are unconfirmed, never a stop
+ok - stream: an unaddressable target reports whether a worker was ever named
+ok - stream: a spawned agent's diagnostics stop accumulating once it has registered
+ok - real tmux: a kill whose server cannot be read reports unconfirmed and leaves the window running
+ok - real tmux: kill reports gone for the window it removed and for one already absent, and unsupported for a backend with no implementation
+ok - fm_backend_zellij_kill: resolves the owning tab id fresh and calls close-tab-by-id (never a bare close-pane)
+ok - fm_backend_zellij_kill: falls back to close-pane when the owning tab cannot be resolved
+ok - fm_backend_zellij_kill: closes the recorded tab id only after label verification
+ok - fm_backend_zellij_kill: skips a stale recorded tab id whose label does not match
+ok - fm_backend_zellij_kill: an ambiguous label over a live pane is unconfirmed, not gone
+ok - fm_backend_zellij_kill: a pane under a differently named tab still reads as gone
+ok - fm_backend_zellij_kill: never fails when the target session no longer exists
+ok - fm_backend_zellij_kill: a session listing that failed is unconfirmed, not gone
+ok - fm_backend_zellij_kill: a zellij that could not run is named, not reported as gone
+ok - fm_backend_zellij_kill: zellij's nonzero empty-listing answer still reads as gone
+ok - fm_backend_zellij_kill: an unreadable pane listing on the label path is unconfirmed
+ok - fm_backend_orca_kill: confirms a close with an absence read and reports every unproved close unconfirmed
+ok - fm_backend_cmux_kill: closes the task workspace directly when it is not the last in its window
+ok - fm_backend_cmux_kill: adds a throwaway sibling then closes the target when it is the last workspace in its window
+ok - fm_backend_cmux_kill: a close that failed, one that silently closed nothing, and one nothing could confirm all report unconfirmed
+ok - fm_backend_cmux_kill: recovers stale workspace/surface ids by expected label
+ok - fm_backend_cmux_kill: an unreadable listing on the label path is unconfirmed, not gone
+ok - fm_backend_cmux_kill: a listing that ran and omits the workspace still reads as gone
+ok - fm_backend_cmux_kill: its own live workspace is closed and confirmed, not reported gone
+ok - fm_backend_cmux_kill: a live title under an id the record never named is unconfirmed, not gone
+ok - fm_backend_cmux_kill: a title still live under a new id after the close is unconfirmed, not gone
+ok - fm_backend_cmux_kill: a foreign title after the close is unconfirmed, not gone
+ok - fm_backend_cmux_kill: a workspace live in a non-current window is never reported gone
+ok - fm_backend_cmux_kill: a window listing with no usable ids is unconfirmed, not gone

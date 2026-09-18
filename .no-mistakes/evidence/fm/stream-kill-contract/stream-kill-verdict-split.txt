@@ -1,0 +1,10 @@
+# Driving the real fm_backend_kill contract (bin/fm-backend.sh) as a caller does.
+# Home is configured for the stream hub at $FM_STREAM_HUB=http://127.0.0.1:9911
+
+$ fm_backend_kill stream 'not-an-endpoint-address'
+error: 'not-an-endpoint-address' is not a stream endpoint address (expected <hub-tag>:<endpoint-id>), so no worker was ever named and no kill could be attempted
+exit=1  ->  fm_backend_kill_verdict=unsupported
+
+$ fm_backend_kill stream 'otherhub-9999:abc123'
+error: 'otherhub-9999:abc123' does not address an endpoint on this home's stream hub, so nothing could be closed or confirmed gone; the worker may still be running
+exit=2  ->  fm_backend_kill_verdict=unconfirmed

@@ -1,0 +1,63 @@
+usage: fm-retire-endpoint.sh [--override-runtime-refusal] <task-id> [<task-id>...]
+
+Retires the durable records - the task record and its backlog row - of tasks
+whose runtime endpoint no backend can answer for, after you confirm the ids by
+typing them back.
+
+Use it only when the endpoint is hub-unanswerable: the backend that owned the
+worker can no longer say anything about it - a stream hub that was restarted or
+rebuilt and no longer has the endpoint - so cleanup can never prove the worker
+stopped and keeps refusing.
+
+By naming a record here you assert, from your own inspection of the machine
+that ran it, that no worker is still running behind it. Cleanup will not make
+that assertion for you, and --force does not make it either.
+
+What this reaches, exactly:
+
+  Cleanup runs first and finishes the job whenever its own gates allow. Two of
+  its refusals are proceeded past. The first is cleanup's work-protection gate
+  - unlanded or uncommitted work in the worktree - which refuses before
+  anything on disk has been touched. The records are then retired and NOTHING
+  on disk is touched: the worktree, any uncommitted work in it, the task branch
+  and the task's data are left exactly as they are, and are named in the
+  output. Dealing with them is then yours, under your own authority: this
+  command never discards work, and never passes --force to anything.
+
+  The second is cleanup's unconfirmed-kill gate, and it is this command's
+  honest cost: the task record and its backlog row are retired even when the
+  backend answered that the endpoint is STILL THERE after its kill - no further
+  flag is required, and your assertion is the only thing standing behind the
+  removal. Cleanup cannot tell you which it is: a backend that answers "still
+  there" and a backend that cannot answer at all reach cleanup as the same
+  unconfirmed verdict, so its warning claims neither and says only that the
+  endpoint was never confirmed gone. A worker may still be running behind the
+  record you are removing, and stopping it is then yours to do.
+
+  Every other refusal stands and nothing is retired - an outcome that has not
+  reached the parent channel, a backlog transition that cannot be replayed, a
+  runtime refusal only --override-runtime-refusal proceeds past. Read cleanup's
+  own message and resolve it. A cleanup that fails only AFTER removing the task
+  record is reported as what it is: the run names the record that is already
+  gone and the pending close left behind, rather than claiming nothing was
+  retired.
+
+  --override-runtime-refusal additionally overrides a RUNTIME's own refusal to
+  answer for this task's endpoint: a herdr server that cannot be reached at
+  all. Without the flag that refusal stands and nothing is retired. The
+  override is recorded with your name and the time, exactly like the retirement
+  itself.
+
+  Every run appends one line to state/endpoint-retirements.log recording your
+  ASSERTION - that you, at that time, asserted the named record should be
+  retired, and whether the override was used. It is written before anything is
+  removed, so nothing is ever removed without it; cleanup may still refuse
+  afterwards and retire nothing, and no outcome is written back to the line.
+
+  Out of reach: a record in another home - a secondmate's own state directory -
+  must be retired by running this command against that home. A child endpoint
+  refused during a parent's forced home cleanup is not reachable at all, from
+  here or from that home, because nothing can leave a retirement standing for
+  that sweep to read.
+
+Every id must be named exactly; wildcards and all-records forms are refused.

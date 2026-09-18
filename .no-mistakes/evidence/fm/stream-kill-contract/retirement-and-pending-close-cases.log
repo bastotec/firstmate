@@ -1,0 +1,25 @@
+ok - completion marks a pending close whose worker could not be proved stopped, and recovery honours it
+ok - a herdr refusal leaves its pending close stamped, and recovery honours it
+ok - a refusal before the kill leaves its pending close unconfirmed, and replay honours it
+ok - an interrupt after a proven kill still replays its close
+ok - a pending close that could not be cleared keeps every record for a rerun
+ok - no automatic path retires a record no backend can answer for
+ok - retirement requires exact record identities and refuses wildcards
+ok - a retirement carries who asserted it and when, and is consumed by the cleanup it authorizes
+ok - a retirement past an unconfirmed kill names what cleanup cannot tell apart
+ok - a retirement with no loadable adapter claims no backend answer
+ok - a retirement leaves work on disk byte-untouched and names what remains
+ok - only the named override flag retires a record whose runtime refused, and it is recorded
+ok - an interrupt during a retirement retires nothing and leaves no authorization
+ok - a refusal other than the work gate stops the retirement
+ok - a cleanup that failed partway is reported as partial, not as a no-op
+ok - a backlog row that cannot be read refuses the retirement instead of losing the record
+ok - a manual-backlog home retires its record and its backlog is left as the operator keeps it
+ok - a record-only retirement takes its pending close with it
+ok - a retirement records the record, its author, the time and the override durably
+ok - a retirement that cannot record its author retires nothing
+ok - a retirement keeps its record when the pending close cannot be cleared
+ok - a retirement leaves a close session start can finish
+ok - the retirement command's help states the condition it is for
+ok - session start preserves a pending close across a transient backlog read failure
+ok - a retained pending close is never started by reconciliation
