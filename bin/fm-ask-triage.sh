@@ -48,7 +48,8 @@
 #   pending/<id>.flag   "<task>\t<probability>\t<status line>" awaiting present
 #   presented/<id>.flag retired flags, pruned after seven days
 #   usage.log           "<epoch>\t<calls>\t<input tokens>\t<output tokens>\t<ms>\t<outcome>"
-#                       per helper run; carries no line text; trimmed to 2000 rows
+#                       per helper run; carries no line text; past 2000 rows
+#                       it is trimmed to the newest 1500
 #   .score.lock/        the single-scorer lock, holding the owner pid
 # cost prices input tokens at FM_ASK_TRIAGE_PRICE_PER_MTOK dollars per million
 # (default 0.042, the published Jev rate; output is free).
