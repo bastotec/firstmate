@@ -1,0 +1,35 @@
+ok - stream: create yields a hub-bound target the dispatcher can resolve
+ok - stream: a dispatcher send reaches the endpoint and capture reads it back
+ok - stream: capture returns only the requested tail through the dispatcher
+ok - stream: the composer capture keeps a blank screen apart from the cursor row
+ok - stream: agent state reads the endpoint's foreground process
+ok - stream: agent state separates a missing endpoint, a partition, and an unreachable hub
+ok - stream: a hub restart is waited out rather than reported as a missing worker
+ok - stream: the fleet listing reports a worker that lived through a hub restart
+ok - stream: an agent-reported exit stays dead past staleness, a forced close does not
+ok - stream: an agent's own close outranks a forced one that landed first
+ok - stream: kill closes the exact endpoint and leaves its sibling running
+ok - stream: only a close the endpoint's own agent reported counts as a stop
+ok - stream: a kill the hub cannot answer is reported as unconfirmed
+ok - stream: the status return channel appends through the normal status protocol
+ok - stream: a target recorded against another hub is refused, not redirected
+ok - stream: a spawn whose endpoint shell cannot start reports the shell's own error
+ok - stream: a spawned agent's diagnostics stop accumulating once it has registered
+ok - stream: a create that times out leaves no agent and no endpoint, and the retry succeeds
+ok - stream: a failed create never closes another home's endpoint under the same label
+ok - stream: a startup against a permanently slow hub gives up inside its own budget
+ok - stream: a hub that answers slowly but inside the window still spawns
+ok - stream: a hung process probe cannot outlive the startup budget
+ok - stream: an unreachable hub refuses loudly and names the start command
+ok - stream: the hub URL prefers configuration, then a hub this home started, then the default
+ok - stream: a rejected token refuses rather than retrying unauthenticated
+ok - stream: a hub announcing another protocol is refused, not driven on guessed routes
+ok - stream: a missing dependency refuses loudly and names the tool
+ok - stream: a missing token is reported rather than crashing the caller
+ok - stream: a secondmate spawn is refused until its launch semantics exist
+ok - stream: cleanup validation binds a record to the hub that created it
+ok - stream: the key vocabulary is exactly the control plane's four keys
+
+real	3m13.361s
+user	0m11.213s
+sys	0m16.279s

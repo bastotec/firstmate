@@ -1,0 +1,19 @@
+wrote a new hub token to /tmp/stream-longoutage.yBnRTI/home/config/stream-token
+
+=== hub up at shipped defaults (command acknowledgement window 20s) ===
+hub listening on http://127.0.0.1:51459
+worker endpoint: 9f37a2c9c01e7cb77fa495b3e1758d81
+steerable before the outage:
+BEFORE-OUTAGE
+
+=== the hub is taken down for 35 seconds - long enough to park the agent's command poll on a 32s wait ===
+hub stopped
+hub listening on http://127.0.0.1:51459
+
+=== the operator waits only for the worker to be listed again, then steers at once ===
+listed again after 4s: demo-box	parked-worker-3082151	9f37a2c9c01e7cb77fa495b3e1758d81	live
+POST /v1/tasks/<id>/input -> HTTP 200 after 0s
+{"delivered": "9f37a2c9c01e7cb77fa495b3e1758d81", "ok": true}
+the worker ran the steer sent the instant it was listed:
+echo AFTER-LONG-OUTAGE
+AFTER-LONG-OUTAGE

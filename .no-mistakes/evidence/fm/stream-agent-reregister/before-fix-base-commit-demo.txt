@@ -1,0 +1,28 @@
+
+=== operator creates this home's hub credential and starts the fleet hub ===
+wrote a new hub token to /tmp/stream-rejoin-demo.RaQcul/home/config/stream-token
+hub listening on http://127.0.0.1:38657
+local hub process: 3120776
+hub at http://127.0.0.1:38657: protocol 2 version 2.0.0 endpoints 0
+
+=== a stream-backed task is spawned (the adapter path fm-spawn.sh uses) ===
+task target recorded by firstmate: 127.0.0.1-38657:9f7ed2c944ab1bee885d551de5b25d58
+
+=== fm-stream.sh tasks - the fleet listing before the restart ===
+demo-box	demo-worker-3120709	9f7ed2c944ab1bee885d551de5b25d58	live
+
+=== the operator steers the worker before the restart ===
+bash-5.3$ echo MARKER-BEFORE-RESTART
+MARKER-BEFORE-RESTART
+
+=== the hub is restarted (its endpoint registry is memory only) ===
+hub stopped
+-- listing while the hub is down --
+fm-stream.sh: could not list endpoints: HTTP 000
+(no hub to answer, as expected)
+hub listening on http://127.0.0.1:38657
+-- listing the instant the hub is back: it has never heard of any worker --
+(empty above = the restarted hub forgot every endpoint)
+
+=== nobody touches the worker's machine; the operator just watches the listing ===
+FAIL: the worker never came back to the listing

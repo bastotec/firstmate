@@ -1,0 +1,42 @@
+
+=== operator creates this home's hub credential and starts the fleet hub ===
+wrote a new hub token to /tmp/stream-rejoin-demo.HuIKXw/home/config/stream-token
+hub listening on http://127.0.0.1:52539
+local hub process: 3038499
+hub at http://127.0.0.1:52539: protocol 2 version 2.0.0 endpoints 0
+
+=== a stream-backed task is spawned (the adapter path fm-spawn.sh uses) ===
+task target recorded by firstmate: 127.0.0.1-52539:6a547ddb70abbe55bde1c5650a830f80
+
+=== fm-stream.sh tasks - the fleet listing before the restart ===
+demo-box	demo-worker-3038230	6a547ddb70abbe55bde1c5650a830f80	live
+
+=== the operator steers the worker before the restart ===
+bash-5.3$ echo MARKER-BEFORE-RESTART
+MARKER-BEFORE-RESTART
+
+=== the hub is restarted (its endpoint registry is memory only) ===
+hub stopped
+-- listing while the hub is down --
+fm-stream.sh: could not list endpoints: HTTP 000
+(no hub to answer, as expected)
+hub listening on http://127.0.0.1:52539
+-- listing the instant the hub is back: it has never heard of any worker --
+(empty above = the restarted hub forgot every endpoint)
+
+=== nobody touches the worker's machine; the operator just watches the listing ===
+the worker reappeared after 4s, with no operator intervention:
+demo-box	demo-worker-3038230	6a547ddb70abbe55bde1c5650a830f80	live
+endpoint id before the restart: 6a547ddb70abbe55bde1c5650a830f80
+endpoint id after  the restart: 6a547ddb70abbe55bde1c5650a830f80
+
+=== the operator steers the recovered worker ===
+steer accepted and acknowledged by the worker's own agent
+capture reads the steered command back off the recovered worker:
+echo MARKER-AFTER-RESTART
+MARKER-AFTER-RESTART
+
+=== state read through the dispatcher after the recovery ===
+dead
+=== the worker's exit is still accounted for under the id that names it ===
+demo-box	demo-worker-3038230	6a547ddb70abbe55bde1c5650a830f80	closed

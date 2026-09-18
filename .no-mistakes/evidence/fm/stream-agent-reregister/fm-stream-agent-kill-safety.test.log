@@ -1,0 +1,16 @@
+ok - stream agent kill safety: endpoint-is-session-leader
+ok - stream agent kill safety: recorded-pgid-matches-kernel
+ok - stream agent kill safety: live-endpoint-is-killed
+ok - stream agent kill safety: reaped-endpoint-is-not-signalled
+ok - stream agent kill safety: concurrent-reap-never-escapes
+ok - stream agent kill safety: refuses-own-process-group
+ok - stream agent kill safety: refuses-own-session
+ok - stream agent kill safety: the refusal names the group it would not signal
+ok - stream agent kill safety: the suite's kill guard refuses itself
+ok - stream agent kill safety: the suite's kill guard refuses an ancestor
+ok - stream agent kill safety: the suite's kill guard refuses pid 1
+ok - stream agent kill safety: the suite's kill guard still signals a helper it started
+
+real	0m7.349s
+user	0m0.429s
+sys	0m0.425s
