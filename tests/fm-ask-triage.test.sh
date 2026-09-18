@@ -117,8 +117,10 @@ test_drain_adds_a_section_and_hides_nothing() {
 
   drain "$plain" "$plain/drain.out" || fail "plain drain failed"
   drain "$flagged" "$flagged/drain.out" || fail "flagged drain failed"
-  sed "s#$plain/#CASE/#g" "$plain/drain.out" > "$plain/drain.norm"
-  sed "s#$flagged/#CASE/#g" "$flagged/drain.out" > "$flagged/drain.norm"
+  # The raw wake row leads with its enqueue epoch, which may differ between the
+  # two cases by a second; everything else must match byte for byte.
+  sed -e "s#$plain/#CASE/#g" -e 's/^[0-9][0-9]*\t/EPOCH\t/' "$plain/drain.out" > "$plain/drain.norm"
+  sed -e "s#$flagged/#CASE/#g" -e 's/^[0-9][0-9]*\t/EPOCH\t/' "$flagged/drain.out" > "$flagged/drain.norm"
   grep -F 'signal: t1.status' "$plain/drain.norm" >/dev/null || fail "setup error: the plain drain showed no wake: $(cat "$plain/drain.norm")"
   while IFS= read -r line; do
     grep -Fx -- "$line" "$flagged/drain.norm" >/dev/null \

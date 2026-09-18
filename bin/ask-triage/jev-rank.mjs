@@ -21,9 +21,12 @@
 // FM_ASK_TRIAGE_TIMEOUT_MS bounds the whole run (default 4000).
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 
-const MODEL_ID = 'typesafe-ai/jev';
-const QUESTION = {
+export const MODEL_ID = 'typesafe-ai/jev';
+export const MAX_CHARS = 4000;
+// Exported so an evaluation harness can measure exactly the question that ships.
+export const QUESTION = {
   type: 'boolean',
   instructions:
     'This is a progress update a worker agent wrote to the supervisor that manages it. ' +
@@ -67,7 +70,9 @@ async function main() {
   } catch {
     return fail('bad-input', 2);
   }
-  const lines = input.split('\n').filter((l) => l.trim() !== '');
+  // A runaway line is cut to MAX_CHARS characters to bound spend; the cap sits
+  // well above real progress lines because a soft ask usually closes the line.
+  const lines = input.split('\n').filter((l) => l.trim() !== '').map((l) => l.slice(0, MAX_CHARS));
   if (lines.length === 0) {
     process.stdout.write('usage\t0\t0\t0\t0\n');
     return;
@@ -112,4 +117,6 @@ async function main() {
   process.stdout.write(rows.join('\n') + '\n');
 }
 
-main().catch(() => fail('error', 1));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(() => fail('error', 1));
+}

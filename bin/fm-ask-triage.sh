@@ -169,7 +169,7 @@ collect_file() {  # <status-file>
     pos=$((pos + ${#line} + 1))
     line=${line//$'\r'/}
     [ "$(status_line_verb "$line")" = working ] || continue
-    CANDIDATES="$CANDIDATES$task"$'\t'"$id"$'\t'"${line:0:2000}"$'\n'
+    CANDIDATES="$CANDIDATES$task"$'\t'"$id"$'\t'"$line"$'\n'
   done <<EOF
 $end
 EOF
