@@ -1,0 +1,11 @@
+=== old: cwd=decoy-old/cwd, dirname yields empty for the arm/library paths (inner fork refused, outer survives), no FM_HOME
+/tmp/armtest.gN5N/old/bin/fm-watch-arm.sh: line 65: /tmp/armtest.gN5N/decoy-old/cwd/fm-wake-lib.sh: No such file or directory
+/tmp/armtest.gN5N/old/bin/fm-watch-arm.sh: line 68: STATE: unbound variable
+exit=1
+state in caller's (decoy) tree: 
+state in real home: none
+=== new: cwd=decoy-new/cwd, dirname yields empty for the arm/library paths (inner fork refused, outer survives), no FM_HOME
+watcher: FAILED - FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS must be whole seconds from 1 to 600
+exit=1
+state in caller's (decoy) tree: 
+state in real home: /tmp/armtest.gN5N/new/state

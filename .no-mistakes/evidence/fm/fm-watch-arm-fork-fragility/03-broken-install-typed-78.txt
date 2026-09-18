@@ -1,0 +1,12 @@
+=== arm alone in a directory (wake library missing)
+./lonely/fm-watch-arm.sh: line 136: /tmp/armtest.gN5N/lonely/fm-wake-lib.sh: No such file or directory
+watcher: FAILED - broken install: /tmp/armtest.gN5N/lonely/fm-wake-lib.sh is missing or unreadable, so this arm cannot load the wake library. Nothing is watching this home.
+exit=78
+=== truncated wake library ('if [')
+/tmp/armtest.gN5N/broken/fm-wake-lib.sh: line 3: syntax error: unexpected end of file
+watcher: FAILED - broken install: /tmp/armtest.gN5N/broken/fm-wake-lib.sh did not define STATE, so this arm has no home to watch. Nothing is watching this home.
+exit=78
+=== truncated wake library, fork also refused
+/tmp/armtest.gN5N/broken/fm-wake-lib.sh: line 3: syntax error: unexpected end of file
+watcher: FAILED - broken install: /tmp/armtest.gN5N/broken/fm-wake-lib.sh did not define STATE, so this arm has no home to watch. Nothing is watching this home.
+exit=78

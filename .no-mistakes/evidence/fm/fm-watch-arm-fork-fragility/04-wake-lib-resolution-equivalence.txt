@@ -1,0 +1,10 @@
+Old (c0125ddf) vs new (d169484f) bin/fm-wake-lib.sh, sourced with each path shape; version label normalized to X
+SHAPE                MATCH  FM_WAKE_LIB_DIR | FM_WAKE_DEFAULT_ROOT | FM_HOME
+absolute             same   /tmp/armtest.gN5N/X/bin | /tmp/armtest.gN5N/X | FM_HOME=/tmp/armtest.gN5N/X
+relative             same   /tmp/armtest.gN5N/X/bin | /tmp/armtest.gN5N/X | FM_HOME=/tmp/armtest.gN5N/X
+dot-relative         same   /tmp/armtest.gN5N/X/bin | /tmp/armtest.gN5N/X | FM_HOME=/tmp/armtest.gN5N/X
+dot-bare             same   /tmp/armtest.gN5N/X/bin | /tmp/armtest.gN5N/X | FM_HOME=/tmp/armtest.gN5N/X
+bare-name            same   /tmp/armtest.gN5N/X/bin | /tmp/armtest.gN5N/X | FM_HOME=/tmp/armtest.gN5N/X
+symlinked-dir        same   /tmp/armtest.gN5N/linkdir-X | /tmp/armtest.gN5N | FM_HOME=/tmp/armtest.gN5N
+symlinked-file       same   /tmp/armtest.gN5N/filelink-X | /tmp/armtest.gN5N | FM_HOME=/tmp/armtest.gN5N
+relative-from-root   same   /tmp/armtest.gN5N/X/bin | /tmp/armtest.gN5N/X | FM_HOME=/tmp/armtest.gN5N/X

@@ -1,0 +1,9 @@
+=== old: cd <checkout root> && ulimit -u 1 && exec bin/fm-watch-arm.sh
+/tmp/armtest.gN5N/old/bin/fm-watch-arm.sh: fork: Resource temporarily unavailable
+exit=128
+state dir created: none
+=== new: cd <checkout root> && ulimit -u 1 && exec bin/fm-watch-arm.sh
+/tmp/armtest.gN5N/new/bin/fm-wake-lib.sh: fork: Resource temporarily unavailable
+watcher: FAILED - out of process capacity: this machine refused to create a process, so startup was killed before it could arm (any "fork: Resource temporarily unavailable" line above is that refusal). The install is fine - /tmp/armtest.gN5N/new/bin/fm-wake-lib.sh is present and readable. Nothing is watching this home; reduce process pressure, then re-arm.
+exit=75
+state dir created: none

@@ -1,0 +1,7 @@
+$ cd <isolated home> && bin/fm-watch-arm.sh   # no FM_HOME/FM_STATE_OVERRIDE; home derived by the fork-free resolver
+watcher: started pid=41014 (beacon fresh)
+lock holder pid: 41014 (alive: yes)
+beacon: /tmp/armtest.gN5N/happyhome/state/.last-watcher-beat
+$ printf 'done: fixture finished' > state/demo.status
+arm exit=0
+signal: /tmp/armtest.gN5N/happyhome/state/demo.status
