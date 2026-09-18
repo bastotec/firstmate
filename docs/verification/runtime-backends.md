@@ -379,7 +379,7 @@ Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that 
   An expected label that merely failed to resolve is not proof either: the label check refuses an ambiguous legacy bare title exactly as it refuses a real mismatch, so a live pane under an unproven label is unconfirmed.
   zellij exits nonzero for an empty session list as well as for a real failure, so the exit status alone cannot separate them: a zero exit means the listing ran, and otherwise only zellij's own documented empty-listing message reads as absence.
 - cmux confirms from a workspace inventory that omits the workspace, built by walking `list-windows --json` and asking each window for its own `workspace list --window` - `workspace list --json` alone is scoped to the current window, so it can never establish absence, only presence.
-  A window enumeration that fails, or any single window's list that fails, is unconfirmed: a partial inventory proves nothing about the windows it did not read.
+  A window enumeration that fails, or any single window's list that fails, is unconfirmed, and so is a window listing that parses but carries a window with no usable id, which enumerates nothing while looking like an answer: a partial inventory proves nothing about the windows it did not read.
   `close-workspace` answers `OK` whether or not it closed anything (see [Closing the last workspace in a window](../cmux-backend.md)), so its status is never the verdict, and an unreadable cmux is unconfirmed.
   That also covers the expected-label path, which answers one false for several different reasons: a listing that ran and carries neither the recorded id nor this task's title, or that shows the id under another title, decides; a listing that failed is unconfirmed; and a workspace the listing still shows under this task's own title is live, so it is closed and confirmed under the recorded id, or - when only a differently numbered workspace carries that title after a cmux relaunch - reported unconfirmed rather than closed under an id the record never named.
 - Orca confirms from an `orca terminal read` absence probe taken after the close, never from the close's own acceptance or refusal, because a close that answers positively and performs nothing is a real failure mode on another backend, and Orca refuses a close against a terminal it no longer has - ordinary already-absent cleanup that the probe, not the refusal, settles.
@@ -428,6 +428,7 @@ ok - fm_backend_zellij_kill: an unreadable pane listing on the label path is unc
 ok - fm_backend_cmux_kill: a close that failed, one that silently closed nothing, and one nothing could confirm all report unconfirmed
 ok - fm_backend_cmux_kill: an unreadable listing on the label path is unconfirmed, not gone
 ok - fm_backend_cmux_kill: a listing that ran and omits the workspace still reads as gone
+ok - fm_backend_cmux_kill: a window listing with no usable ids is unconfirmed, not gone
 ok - fm_backend_orca_kill: confirms a close with an absence read and reports every unproved close unconfirmed
 ok - stream: only a close the endpoint's own agent reported counts as a stop
 ok - stream: a kill the hub cannot answer is reported as unconfirmed
@@ -437,7 +438,9 @@ One unrelated case in the Herdr suite needs a real long-running binary reachable
 On such a build the suite stops at that case before reaching its kill cases, and running them on their own does not help; the run above supplied a single-purpose `sleep` earlier on `PATH` so the whole suite executes.
 That replacement must accept fractional seconds, since poll loops elsewhere in the suites use them.
 
-The pending-close record carries the same distinction, because cleanup stages it BEFORE it touches the endpoint: a refusal that left it unmarked would be undone by the next session start, which replays the record by removing the task record and closing the row.
+The pending-close record carries the same distinction, because cleanup publishes it BEFORE it touches the endpoint, and session start replays such a record by removing the task record and closing the row.
+It is therefore published already stamped unconfirmed - at that moment nothing has proved the worker stopped, so every refusal between the publish and the endpoint gate inherits the stamp - and cleared only once that gate has passed, which is what keeps a cleanup interrupted after a proven kill replayable instead of a permanent hold.
+`bin/fm-retire-endpoint.sh` publishes its own close stamped confirmed, because the operator's recorded assertion is the proof on that path.
 
 ```sh
 bin/fm-test-run.sh tests/fm-backlog-atomicity.test.sh
@@ -445,11 +448,14 @@ bin/fm-test-run.sh tests/fm-backlog-atomicity.test.sh
 
 ```text
 ok - completion marks a pending close whose worker could not be proved stopped, and recovery honours it
+ok - a refusal before the kill leaves its pending close unconfirmed, and replay honours it
+ok - an interrupt after a proven kill still replays its close
+ok - a retirement leaves a close session start can finish
 ok - session start refuses to replay a close whose worker was never proved stopped
 ok - session start still finishes an ordinary interrupted cleanup
 ```
 
-The last case is what keeps the refusal from becoming a permanent hold: the identical record without the refusal still replays, so an ordinary interrupted cleanup is finished rather than stranded.
+Two of those cases are what keep the refusal from becoming a permanent hold: a cleanup interrupted after a proven kill still replays, and so does the identical record without the stamp, so an ordinary interrupted cleanup is finished rather than stranded.
 
 ## Claude workspace trust
 
