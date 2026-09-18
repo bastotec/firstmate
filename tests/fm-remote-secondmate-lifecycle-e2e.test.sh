@@ -579,6 +579,55 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
     'the converged rerun did not switch the route'
   pass 'a rerun that drops a published record is refused by name while one that only changes bytes converges'
 
+  # The receipt - the bundle plus the digest naming it - is the only record that
+  # tells this host which snapshot it carries, and a home that is already live is
+  # the one place it is not published by a whole-home rename. A copy killed
+  # part-way through must therefore never be observable on the live receipt:
+  # the home keeps a bundle that still parses and a digest that still names it,
+  # and the next attempt converges instead of needing hand repair.
+  receipt_home="$TMP_ROOT/migrated-drop-work"
+  printf 'report rewritten again, after the receipt copy was killed\n' > "$TMP_ROOT/receipt.report"
+  jq --arg b64 "$(base64 < "$TMP_ROOT/receipt.report" | tr -d '\n')" \
+     --arg sha "$(shasum -a 256 "$TMP_ROOT/receipt.report" | awk '{print $1}')" \
+     '.records |= map(if .path == "data/report/report.md" then .bytes = $b64 | .sha256 = $sha else . end)' \
+     "$receipt_home/.fm-migration/bundle.json" > "$TMP_ROOT/receipt-bundle.json" \
+    || fail 'could not build the next migration snapshot for the receipt crash'
+  receipt_digest=$(shasum -a 256 "$TMP_ROOT/receipt-bundle.json" | awk '{print $1}')
+  mkdir -p "$TMP_ROOT/crashbin"
+  cat > "$TMP_ROOT/crashbin/cp" <<'SH'
+#!/usr/bin/env bash
+# A kill part-way through the receipt copy: whatever the copy was writing to
+# keeps a truncated prefix, and the caller sees the copy fail.
+set -u
+dest=${!#}
+case "$dest" in
+  */.fm-migration/bundle.json*) head -c 40 -- "$1" > "$dest"; exit 137 ;;
+esac
+exec /bin/cp "$@"
+SH
+  chmod +x "$TMP_ROOT/crashbin/cp"
+  if PATH="$TMP_ROOT/crashbin:$PATH" FM_HOME="$receipt_home" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+      "$REMOTE_ROOT/bin/fm-remote-home-provision.sh" --migration drop-work "$receipt_digest" \
+      < "$TMP_ROOT/receipt-bundle.json" > "$TMP_ROOT/receipt-crash.out" 2>&1; then
+    fail 'a receipt copy killed part-way through still reported the migration verified'
+  fi
+  jq -e . "$receipt_home/.fm-migration/bundle.json" > /dev/null 2>&1 \
+    || fail "a killed receipt copy left the live home holding a half-written bundle: $(cat "$TMP_ROOT/receipt-crash.out")"
+  [ "$(shasum -a 256 "$receipt_home/.fm-migration/bundle.json" | awk '{print $1}')" \
+    = "$(cat "$receipt_home/.fm-migration/digest")" ] \
+    || fail 'a killed receipt copy left the live bundle and its digest disagreeing'
+  FM_HOME="$receipt_home" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+    "$REMOTE_ROOT/bin/fm-remote-home-provision.sh" --migration drop-work "$receipt_digest" \
+    < "$TMP_ROOT/receipt-bundle.json" > "$TMP_ROOT/receipt-rerun.out" 2>&1 \
+    || fail "the rerun after a killed receipt copy could not read the home: $(cat "$TMP_ROOT/receipt-rerun.out")"
+  cmp -s "$TMP_ROOT/receipt.report" "$receipt_home/data/report/report.md" \
+    || fail 'the rerun after a killed receipt copy did not land the newer record'
+  cmp -s "$TMP_ROOT/receipt-bundle.json" "$receipt_home/.fm-migration/bundle.json" \
+    || fail 'the converged rerun did not publish the bundle its digest names'
+  [ "$(cat "$receipt_home/.fm-migration/digest")" = "$receipt_digest" ] \
+    || fail 'the converged rerun did not publish its own receipt digest'
+  pass 'a receipt copy killed part-way through never reaches the live receipt, and the next attempt converges'
+
   migration_source guard-work
   lock_session() {
     FM_HOME="$TMP_ROOT/source-guard-work" FM_STATE_OVERRIDE="$TMP_ROOT/source-guard-work/state" \
