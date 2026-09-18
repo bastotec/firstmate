@@ -3342,7 +3342,7 @@ fm_backend_herdr_kill_serialized() {  # <session> <pane>
 fm_backend_herdr_kill() {  # <target>
   fm_backend_herdr_parse_target "$1" || return 1
   local session=$FM_BACKEND_HERDR_SESSION pane=$FM_BACKEND_HERDR_PANE
-  local lock_path attempt=0 lock_held=0 confirmed=0
+  local lock_path attempt=0 lock_held=0 confirmed=0 close_diag=
   if ! fm_backend_herdr_target_ready "$1"; then
     echo "error: the herdr server for session $session could not be reached, so pane $pane" \
          "could not be closed or confirmed gone; the worker may still be running" >&2
@@ -3363,7 +3363,7 @@ fm_backend_herdr_kill() {  # <target>
     done
   fi
   if [ "$lock_held" = 1 ]; then
-    fm_backend_herdr_kill_serialized "$session" "$pane"
+    close_diag=$(fm_backend_herdr_kill_serialized "$session" "$pane" 2>&1 >/dev/null)
     # Confirmed under the same lock the close ran under, so no other holder can
     # change what this reads. It is the same structured read teardown's own
     # gate uses, which is why a pane the close never removed - and one that was
@@ -3377,8 +3377,12 @@ fm_backend_herdr_kill() {  # <target>
          "was left open rather than closed unlocked; the worker may still be running" >&2
     return 2
   fi
-  [ "$confirmed" = 1 ] && return 0
-  echo "error: herdr pane $pane is not confirmed gone after its close; the worker may still be running" >&2
+  if [ "$confirmed" = 1 ]; then
+    [ -z "$close_diag" ] || printf '%s\n' "$close_diag" >&2
+    return 0
+  fi
+  close_diag=${close_diag//$'\n'/; }
+  echo "error: herdr pane $pane is not confirmed gone after its close; the worker may still be running${close_diag:+ (the close reported: $close_diag)}" >&2
   return 2
 }
 

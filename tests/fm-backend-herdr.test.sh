@@ -2902,6 +2902,80 @@ test_kill_refuses_when_presentation_lock_is_unavailable() {
   pass "fm_backend_herdr_kill: an unavailable session lock defers the pane close and reports it unconfirmed"
 }
 
+# The kill contract (bin/fm-backend.sh's fm_backend_kill header) promises
+# callers exactly ONE explanatory line on an unconfirmed kill, and both
+# callers that relay it (bin/fm-bootstrap.sh, bin/fm-remote-secondmate-control.sh)
+# take the first captured line. The repositioning close path runs diagnostics
+# of its own before the verdict exists, so this proves they cannot displace
+# the contract line.
+test_kill_repositioning_path_reports_one_explanatory_line() {
+  local dir out status lines first
+  dir="$TMP_ROOT/kill-reposition-one-line"; mkdir -p "$dir"
+  : > "$dir/mover.log"
+  printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w2","active_tab_id":"w2:t2","focused":false},{"workspace_id":"w1","active_tab_id":"w1:t1","focused":true},{"workspace_id":"w3","active_tab_id":"w3:t1","focused":false}]}}' > "$dir/workspaces.json"
+  printf '%s\n' '{"schemas":{"request":{"oneOf":[{"properties":{"method":{"const":"workspace.move"}}}],"$defs":{"WorkspaceMoveParams":{"required":["workspace_id","insert_index"],"properties":{"insert_index":{"type":"integer"}}}}}}}' > "$dir/schema.json"
+  cat > "$dir/mover" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$FM_FAKE_MOVER_LOG"
+n=$(wc -l < "$FM_FAKE_MOVER_LOG" | tr -d ' ')
+if [ "$n" = 1 ]; then
+  printf '%s\n' '{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","focused":true},{"workspace_id":"w3","focused":false},{"workspace_id":"w2","focused":false}]}}'
+else
+  printf '%s\n' '{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w2","focused":false},{"workspace_id":"w1","focused":true},{"workspace_id":"w3","focused":false}]}}'
+fi
+SH
+  chmod +x "$dir/mover"
+  out=$(DIR="$dir" ROOT="$ROOT" FM_FAKE_MOVER_LOG="$dir/mover.log" \
+    FM_BACKEND_HERDR_WORKSPACE_MOVER="$dir/mover" \
+    FM_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS=1 \
+    bash -c '
+      . "$ROOT/bin/backends/herdr.sh"
+      fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+      fm_backend_herdr_presentation_session_lock_path() { printf "%s" "$DIR/lock"; }
+      fm_lock_try_acquire() { return 0; }
+      fm_lock_release() { return 0; }
+      fm_backend_herdr_presentation_session_socket_path() { printf "%s" "$DIR/fmtest.sock"; }
+      fm_backend_herdr_cli() {
+        local session=$1 n
+        shift
+        case "$*" in
+          "workspace list") cat "$DIR/workspaces.json" ;;
+          "tab list --workspace w1") printf "%s\n" "{\"result\":{\"tabs\":[{\"tab_id\":\"w1:t1\",\"workspace_id\":\"w1\",\"focused\":true}]}}" ;;
+          "tab list --workspace w2") printf "%s\n" "{\"result\":{\"tabs\":[{\"tab_id\":\"w2:t2\",\"workspace_id\":\"w2\",\"focused\":false}]}}" ;;
+          "pane list --workspace w2") printf "%s\n" "{\"result\":{\"panes\":[{\"pane_id\":\"w2:p2\",\"tab_id\":\"w2:t2\"}]}}" ;;
+          "pane get w2:p2")
+            n=$(( $(cat "$DIR/pane-gets" 2>/dev/null || echo 0) + 1 ))
+            printf "%s\n" "$n" > "$DIR/pane-gets"
+            case "$n" in
+              1) printf "%s\n" "{\"result\":{\"pane\":{\"pane_id\":\"w2:p2\",\"tab_id\":\"w2:t2\",\"workspace_id\":\"w2\"}}}" ;;
+              2) printf "%s\n" "{\"error\":{\"code\":\"pane_not_found\"}}" ;;
+              *) return 1 ;;
+            esac
+            ;;
+          "pane close w2:p2") return 0 ;;
+          "status --json") printf "%s\n" "{\"client\":{\"protocol\":16},\"server\":{\"running\":true}}" ;;
+          "api schema --json") cat "$DIR/schema.json" ;;
+          *) return 1 ;;
+        esac
+      }
+      fm_backend_herdr_kill fmtest:w2:p2
+    ' 2>&1)
+  status=$?
+  expect_code 2 "$status" "a repositioning kill whose pane is not proved gone must report unconfirmed"
+  [ -s "$dir/mover.log" ] || fail "this case did not take the repositioning close path at all"
+  lines=$(printf '%s\n' "$out" | grep -c .)
+  [ "$lines" = 1 ] || fail "an unconfirmed herdr kill must write exactly one explanatory line, got $lines: $out"
+  first=$(printf '%s\n' "$out" | head -n 1)
+  assert_contains "$first" "is not confirmed gone after its close" \
+    "the line a caller relays is not the adapter's own kill verdict"
+  assert_contains "$first" "may still be running" \
+    "the relayed line does not say the worker may still be running"
+  assert_contains "$first" "repositioned workspace" \
+    "the close's own diagnostic was dropped instead of folded into the contract line"
+  pass "fm_backend_herdr_kill: the repositioning path still reports exactly one relayable reason"
+}
+
 test_endpoint_confirmed_gone_gates_on_structured_presence() {
   local out
   out=$(bash -c '
@@ -5354,6 +5428,7 @@ test_kill_emptying_non_focused_uses_pane_death
 test_kill_focused_workspace_stays_plain_close
 test_endpoint_confirmed_gone_gates_on_structured_presence
 test_kill_refuses_when_presentation_lock_is_unavailable
+test_kill_repositioning_path_reports_one_explanatory_line
 test_projection_seeded_prune_refuses_active_tab
 test_projection_label_builder_uses_corner_and_strips_owner_prefixes
 test_projection_order_moves_only_exact_new_workspace_and_preserves_relative_order
