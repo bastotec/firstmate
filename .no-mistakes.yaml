@@ -48,8 +48,9 @@ test:
     through the suites for the area it touches - prove the change works, and prove
     the regression fails without it - rather than constructing a new rig of your
     own.
-    Skip any suite whose own file declares `fm_live_gate default-on`: those
-    launch real harnesses and real terminal servers on this machine.
+    Skip any suite that opens with `fm_live_gate default-on` - a top-level call,
+    not any occurrence of the string: those launch real harnesses and real
+    terminal servers on this machine.
     Out of scope here: standing up rigs of your own - live tmux servers, dirty
     worktrees, fake agent binaries, or reusable lab factories - beyond what the
     suites under tests/ already set up.
