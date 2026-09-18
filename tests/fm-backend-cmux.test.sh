@@ -1226,6 +1226,52 @@ test_kill_label_path_refuses_when_only_the_title_is_still_live() {
   pass "fm_backend_cmux_kill: a live title under an id the record never named is unconfirmed, not gone"
 }
 
+# The same manufactured absence, one call later. Here the target resolved on
+# the way in, so the kill never had to consult the title - and cmux relaunched
+# between the close and the inventory that confirms it. The recorded id is gone
+# from the listing while this task's title runs on under a new one, and it is
+# this read, not the pre-close one, whose answer licenses removing every
+# durable record, so it has to apply the same rule.
+test_kill_confirming_read_refuses_when_a_relaunch_moved_the_title() {
+  local dir out title
+  dir="$TMP_ROOT/kill-relaunch-after-close"; mkdir -p "$dir/fakebin"
+  title=$(cmux_expected_scoped_title fm-label)
+  cat > "$dir/fakebin/cmux" <<SH
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "\$*" >> "$dir/log"
+case "\${1:-}" in
+  version) printf 'cmux 0.64.17 (97) [abcdef1]\n'; exit 0 ;;
+  ping) printf 'PONG\n'; exit 0 ;;
+esac
+case "\$*" in
+  *close-workspace*) : > "$dir/relaunched"; printf 'OK\n' ;;
+  *list-windows*)
+    printf '%s\n' '[{"id":"eeeeeeee-0000-0000-0000-000000000000","workspace_count":2}]'
+    ;;
+  *"workspace list"*)
+    if [ -f "$dir/relaunched" ]; then
+      printf '%s\n' '{"workspaces":[{"id":"cccccccc-2222-2222-2222-222222222222","title":"$title"},{"id":"ffffffff-0000-0000-0000-000000000000","title":"other"}]}'
+    else
+      printf '%s\n' '{"workspaces":[{"id":"aaaaaaaa-0000-0000-0000-000000000000","title":"$title"},{"id":"ffffffff-0000-0000-0000-000000000000","title":"other"}]}'
+    fi
+    ;;
+  *list-panes*)
+    printf '%s\n' '{"panes":[{"id":"pppppppp-0000-0000-0000-000000000000","surface_ids":["bbbbbbbb-1111-1111-1111-111111111111"]}]}'
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/fakebin/cmux"
+  : > "$dir/log"
+  out=$( PATH="$dir/fakebin:$PATH" \
+    bash -c '. "$0/bin/backends/cmux.sh"; fm_backend_cmux_kill "aaaaaaaa-0000-0000-0000-000000000000:bbbbbbbb-1111-1111-1111-111111111111" "" fm-label' "$ROOT" 2>&1 )
+  expect_code 2 $? "a relaunch between the close and its confirmation must never read as a gone endpoint"
+  assert_contains "$out" "may still be running" \
+    "the refusal should say the worker may still be running"
+  pass "fm_backend_cmux_kill: a title still live under a new id after the close is unconfirmed, not gone"
+}
+
 # An inventory has to enumerate something to say anything. A window listing
 # that parses but carries a window with no usable id enumerates nothing, which
 # is a read that failed wearing the shape of an answer.
@@ -1400,6 +1446,7 @@ test_kill_label_path_reports_unconfirmed_when_the_listing_is_unreadable
 test_kill_label_path_reports_gone_when_the_listing_omits_the_label
 test_kill_label_path_closes_its_own_live_workspace_instead_of_reporting_gone
 test_kill_label_path_refuses_when_only_the_title_is_still_live
+test_kill_confirming_read_refuses_when_a_relaunch_moved_the_title
 test_kill_does_not_report_gone_for_a_workspace_live_in_another_window
 test_kill_refuses_a_window_listing_with_no_usable_ids
 test_list_live_filters_by_title_prefix

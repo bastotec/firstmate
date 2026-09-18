@@ -512,6 +512,35 @@ SH
   chmod +x "$case_dir/fakebin/tasks-axi"
 }
 
+# fail_the_confirm_stamp_after_a_proven_kill: let the kill be proved, then fail
+# exactly one thing - the re-stage that clears the pending close of its
+# publish-time refusal. The staged record is validated by reading its bytes, so
+# refusing that one read for the staged file alone leaves every other write in
+# the run working, which is the transient shape this guards against.
+fail_the_confirm_stamp_after_a_proven_kill() {  # <case-dir>
+  local case_dir=$1 real
+  real=$(command -v perl)
+  cat > "$case_dir/fakebin/tmux" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in
+  kill-window) : > "$case_dir/kill-proved"; exit 0 ;;
+  list-windows) exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+  cat > "$case_dir/fakebin/perl" <<SH
+#!/usr/bin/env bash
+if [ -f "$case_dir/kill-proved" ] && [ ! -f "$case_dir/stamp-refused" ]; then
+  case "\$*" in
+    *.backlog-close.*) : > "$case_dir/stamp-refused"; exit 1 ;;
+  esac
+fi
+exec "$real" "\$@"
+SH
+  chmod +x "$case_dir/fakebin/perl"
+}
+
 # stage_confirmed_kill_task: the ordinary shape - a scout whose deliverable is
 # in place and whose endpoint answers its kill by no longer being listed, so
 # cleanup's endpoint gate passes.
@@ -2219,9 +2248,10 @@ SH
 }
 
 # The Herdr path reaches the same refusal through its own structured-presence
-# gate rather than through the shared kill contract, so it has to stamp the
-# pending close for itself - otherwise the one backend with the oldest refusal
-# is the one whose refusal a restart undoes.
+# gate rather than through the shared kill contract, so it inherits the
+# publish-time stamp like every other path; what this case proves is that the
+# herdr gate does not clear it, because clearing it is what a passed endpoint
+# gate alone may do.
 # The pending close is published BEFORE the endpoint is touched, and several
 # refusals sit between that publish and the kill - a treehouse return that
 # fails is the documented real one. A record published as an ordinary
@@ -2254,6 +2284,47 @@ test_an_interrupt_after_a_proven_kill_still_replays_its_close() {
     || fail "session start did not finish a close whose kill was proved: $out"
   assert_absent "$marker" "session start left the close it finished"
   pass "an interrupt after a proven kill still replays its close"
+}
+
+# Clearing the stamp is the last thing standing between a proved kill and the
+# record removal, so a clear that fails has to stop the run: carrying on would
+# remove the task record while its marker still carries the refusal, and a
+# stamped marker with no record behind it is one neither replay nor a rerun nor
+# bin/fm-retire-endpoint.sh can resolve.
+test_a_failed_confirm_stamp_keeps_every_record_for_a_rerun() {
+  local case_dir home id marker meta out rc=0
+  id=atomic-close-confirm-stamp-b9
+  case_dir=$(make_home close-confirm-stamp)
+  home=$(home_of "$case_dir")
+  stage_confirmed_kill_task "$case_dir" "$id"
+  fail_the_confirm_stamp_after_a_proven_kill "$case_dir"
+  meta="$home/state/$id.meta"
+  marker="$home/state/$id.backlog-close"
+
+  out=$(run_teardown "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "cleanup reported success though it never cleared its pending close: $out"
+  assert_present "$meta" \
+    "cleanup removed the task record under a marker it could not clear, leaving nothing able to resolve it"
+  assert_present "$marker" "cleanup discarded the pending close it had already published"
+  assert_grep 'endpoint=unconfirmed' "$marker" \
+    "the pending close lost the refusal it was published with"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "cleanup moved the backlog row for a close it could not finish"
+
+  # The marker still has its own record behind it, so replay holds rather than
+  # closing the row, and the rerun this refusal promised can finish the close.
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "session start finished a close whose pending record still carries the refusal: $out"
+  assert_present "$meta" "session start removed the record the refusal kept"
+
+  rc=0
+  out=$(run_teardown "$case_dir" "$id") || rc=$?
+  [ "$rc" -eq 0 ] || fail "the rerun this refusal left the close for could not finish it: $out"
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "the rerun did not finish the close the refusal kept: $out"
+  assert_absent "$marker" "the rerun left the pending close it finished"
+  pass "a pending close that could not be cleared keeps every record for a rerun"
 }
 
 test_a_refusal_before_the_kill_leaves_its_pending_close_unconfirmed() {
@@ -2338,7 +2409,7 @@ SH
   [ "$(row_state "$case_dir" "$id")" = in_flight ] \
     || fail "session start finished the close the herdr refusal had withheld: $out"
   assert_present "$meta" "session start removed the record the herdr refusal kept"
-  pass "a herdr refusal marks its pending close, and recovery honours it"
+  pass "a herdr refusal leaves its pending close stamped, and recovery honours it"
 }
 
 # A record no backend can ever answer for would otherwise be kept forever: the
@@ -3952,6 +4023,7 @@ test_completion_marks_its_pending_close_when_the_worker_cannot_be_proved_stopped
 test_a_herdr_refusal_marks_its_pending_close_too
 test_a_refusal_before_the_kill_leaves_its_pending_close_unconfirmed
 test_an_interrupt_after_a_proven_kill_still_replays_its_close
+test_a_failed_confirm_stamp_keeps_every_record_for_a_rerun
 test_no_automatic_path_retires_an_unanswerable_record
 test_retiring_refuses_wildcards_and_unconfirmed_ids
 test_retiring_records_who_asserted_it_and_when

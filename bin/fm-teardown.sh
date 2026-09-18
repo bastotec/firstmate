@@ -3056,8 +3056,11 @@ task_operator_retirement() {  # [runtime-refusal]
 # at the next session start, exactly as it always did; one interrupted before
 # it is left for a human, because nothing had proved the worker stopped yet.
 #
-# A failed clear is reported, not fatal: it leaves the close for a rerun rather
-# than for replay, which is the safe direction.
+# A failed clear stops the run before any record is removed, because that is
+# the only way it genuinely leaves the close for a rerun: carrying on would
+# remove the task record under a marker still carrying the refusal, and a
+# stamped marker outliving its own record is one no replay and no rerun can
+# resolve.
 mark_pending_close_endpoint_confirmed() {
   local marker
   [ "$BACKLOG_CLOSED" = 1 ] || return 0
@@ -3067,7 +3070,8 @@ mark_pending_close_endpoint_confirmed() {
       "$META_SPAWN_GEN" 0 0 \
       "${BACKLOG_TRANSITION_FLAGS[@]+"${BACKLOG_TRANSITION_FLAGS[@]}"}" \
       "${BACKLOG_DONE_ARGS[@]+"${BACKLOG_DONE_ARGS[@]}"}"; then
-    echo "warning: the pending backlog close for $ID could not be marked endpoint-confirmed ($FM_BACKLOG_TRANSITION_ERROR); an interrupted cleanup will be left for a rerun rather than replayed" >&2
+    echo "error: the pending backlog close for $ID could not be marked endpoint-confirmed ($FM_BACKLOG_TRANSITION_ERROR); retaining every durable task record so a rerun can finish this close" >&2
+    return 1
   fi
 }
 
@@ -3599,7 +3603,7 @@ if [ "$BACKEND" = herdr ]; then
     fi
   fi
 fi
-mark_pending_close_endpoint_confirmed
+mark_pending_close_endpoint_confirmed || exit 1
 if [ "$KIND" != secondmate ]; then
   if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
       "$SCRIPT_DIR/fm-inactive-reconcile.sh" report "$ID"; then
