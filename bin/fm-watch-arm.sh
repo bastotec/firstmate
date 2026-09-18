@@ -109,6 +109,7 @@ WAKE_LIB="$SCRIPT_DIR/fm-wake-lib.sh"
 #   watcher: FAILED - broken install: ...       exit 78 (EX_CONFIG)
 #   watcher: FAILED - out of process capacity   exit 75 (EX_TEMPFAIL)
 ARM_BOOTSTRAP_STAGE=start
+# shellcheck disable=SC2329 # Invoked by the EXIT trap below.
 arm_bootstrap_guard() {
   [ "$ARM_BOOTSTRAP_STAGE" = ready ] && return 0
   if [ ! -r "$WAKE_LIB" ]; then
