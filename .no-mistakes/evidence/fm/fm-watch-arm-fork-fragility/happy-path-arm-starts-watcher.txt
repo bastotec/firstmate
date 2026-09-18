@@ -1,0 +1,8 @@
+=== HEAD: cd <home> && bin/fm-watch-arm.sh  (documented manual form, run as a tracked background task; no FM_HOME/FM_STATE_OVERRIDE)
+watcher: started pid=80293 (beacon fresh)
+-> lock pid: 80293 alive=yes
+-> lock watcher-path: $T/home/bin/fm-watch.sh
+-> beacon present in own home: yes
+
+=== HEAD: second arm, absolute path from foreign cwd /tmp, while the first watcher is live
+watcher: attached pid=80293 (beacon 2s)

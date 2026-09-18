@@ -1,0 +1,48 @@
+=== BASE: wake library missing
+$T/BASE-missing/fm-watch-arm.sh: line 65: $T/BASE-missing/fm-wake-lib.sh: No such file or directory
+$T/BASE-missing/fm-watch-arm.sh: line 68: STATE: unbound variable
+exit=
+
+=== BASE: wake library unreadable
+$T/BASE-unreadable/fm-watch-arm.sh: line 65: $T/BASE-unreadable/fm-wake-lib.sh: Permission denied
+$T/BASE-unreadable/fm-watch-arm.sh: line 68: STATE: unbound variable
+exit=
+
+=== BASE: wake library unparseable
+$T/BASE-unparseable/fm-wake-lib.sh: line 3: syntax error: unexpected end of file
+$T/BASE-unparseable/fm-watch-arm.sh: line 68: STATE: unbound variable
+exit=
+
+=== BASE: wake library no-state
+$T/BASE-no-state/fm-watch-arm.sh: line 68: STATE: unbound variable
+exit=
+
+=== HEAD: wake library missing
+$T/HEAD-missing/fm-watch-arm.sh: line 141: $T/HEAD-missing/fm-wake-lib.sh: No such file or directory
+watcher: FAILED - broken install: $T/HEAD-missing/fm-wake-lib.sh is missing or unreadable, so this arm cannot load the wake library. Nothing is watching this home.
+exit=
+
+=== HEAD: wake library unreadable
+$T/HEAD-unreadable/fm-watch-arm.sh: line 141: $T/HEAD-unreadable/fm-wake-lib.sh: Permission denied
+watcher: FAILED - broken install: $T/HEAD-unreadable/fm-wake-lib.sh is missing or unreadable, so this arm cannot load the wake library. Nothing is watching this home.
+exit=
+
+=== HEAD: wake library unparseable
+$T/HEAD-unparseable/fm-wake-lib.sh: line 3: syntax error: unexpected end of file
+watcher: FAILED - broken install: $T/HEAD-unparseable/fm-wake-lib.sh did not define STATE, so this arm has no home to watch. Nothing is watching this home.
+exit=
+
+=== HEAD: wake library no-state
+watcher: FAILED - broken install: $T/HEAD-no-state/fm-wake-lib.sh did not define STATE, so this arm has no home to watch. Nothing is watching this home.
+exit=
+
+
+Exit codes (same runs, captured without a pipe):
+BASE missing exit=1
+BASE unreadable exit=1
+BASE unparseable exit=1
+BASE no-state exit=1
+HEAD missing exit=78
+HEAD unreadable exit=78
+HEAD unparseable exit=78
+HEAD no-state exit=78

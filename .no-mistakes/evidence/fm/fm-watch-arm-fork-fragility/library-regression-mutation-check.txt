@@ -1,0 +1,2 @@
+Mutation check: HEAD tree with bin/fm-wake-lib.sh reverted to the base (forking) bootstrap, running only the library regression test:
+not ok - the arm armed the caller's directory instead of its own home: watcher: FAILED - FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS must be whole seconds from 1 to 600

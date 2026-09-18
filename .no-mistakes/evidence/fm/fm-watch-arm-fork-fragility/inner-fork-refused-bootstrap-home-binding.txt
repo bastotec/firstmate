@@ -1,0 +1,15 @@
+dirname stand-in: returns empty ONLY for fm-watch-arm.sh / fm-wake-lib.sh paths (the incident's inner-fork-refused, outer-survives interleaving at the bootstrap); every other call reaches the real tool.
+
+=== BASE: cd $T/BASE-decoy/cwd && $T/BASE-home/bin/fm-watch-arm.sh   (no FM_HOME/FM_ROOT/FM_STATE_OVERRIDE)
+$T/BASE-home/bin/fm-watch-arm.sh: line 65: $T/BASE-decoy/cwd/fm-wake-lib.sh: No such file or directory
+$T/BASE-home/bin/fm-watch-arm.sh: line 68: STATE: unbound variable
+exit=1
+-> own home state dir: MISSING
+-> state dirs under caller's dir: 
+
+=== HEAD: cd $T/HEAD-decoy/cwd && $T/HEAD-home/bin/fm-watch-arm.sh   (no FM_HOME/FM_ROOT/FM_STATE_OVERRIDE)
+watcher: FAILED - FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS must be whole seconds from 1 to 600
+exit=1
+-> own home state dir: .watch-cycle-exits.log 
+-> state dirs under caller's dir: 
+

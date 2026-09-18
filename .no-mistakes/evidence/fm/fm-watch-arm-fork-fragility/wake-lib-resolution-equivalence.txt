@@ -1,0 +1,8 @@
+Sourcing the real fm-wake-lib.sh (base vs head) and printing FM_WAKE_LIB_DIR | FM_WAKE_DEFAULT_ROOT | STATE. $T/<BASE|HEAD> prefix normalized to $R.
+SHAPE                              MATCH  HEAD value
+absolute                           same   $R/r/bin | $R/r | $R/r/state
+relative-bin                       same   $R/r/bin | $R/r | $R/r/state
+dot-relative                       same   $R/r/bin | $R/r | $R/r/state
+bare-name                          same   $R/r/bin | $R/r | $R/r/state
+symlinked-dir                      same   $R/linkroot/bin | $R/linkroot | $R/linkroot/state
+symlinked-file                     same   $R/other | $R | $R/state

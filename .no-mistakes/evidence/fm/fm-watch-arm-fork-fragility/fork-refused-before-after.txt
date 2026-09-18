@@ -1,0 +1,30 @@
+=== BASE (/bin/bash) - ulimit -u 1, cwd=/tmp/fmfork.qQJP/cwd, arm=/tmp/fmbase.65fm/bin/fm-watch-arm.sh
+/tmp/fmbase.65fm/bin/fm-watch-arm.sh: fork: Resource temporarily unavailable
+exit=128
+beacon: ls: /tmp/fmfork.qQJP/state-BASE/.last-watcher-beat: No such file or directory
+
+=== HEAD (/bin/bash) - ulimit -u 1, cwd=/tmp/fmfork.qQJP/cwd, arm=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S3K4DCSQN8T1HT9W4BFJM8/bin/fm-watch-arm.sh
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S3K4DCSQN8T1HT9W4BFJM8/bin/fm-wake-lib.sh: fork: Resource temporarily unavailable
+watcher: FAILED - out of process capacity: this machine refused to create a process, so startup was killed before it could arm (any "fork: Resource temporarily unavailable" line above is that refusal). The install is fine - /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S3K4DCSQN8T1HT9W4BFJM8/bin/fm-wake-lib.sh is present and readable. Nothing is watching this home; reduce process pressure, then re-arm.
+exit=75
+beacon: ls: /tmp/fmfork.qQJP/state-HEAD/.last-watcher-beat: No such file or directory
+
+=== BASE (/opt/homebrew/bin/bash) - ulimit -u 1, cwd=/tmp/fmfork.qQJP/cwd, arm=/tmp/fmbase.65fm/bin/fm-watch-arm.sh
+/tmp/fmbase.65fm/bin/fm-watch-arm.sh: fork: retry: Resource temporarily unavailable
+/tmp/fmbase.65fm/bin/fm-watch-arm.sh: fork: retry: Resource temporarily unavailable
+/tmp/fmbase.65fm/bin/fm-watch-arm.sh: fork: retry: Resource temporarily unavailable
+/tmp/fmbase.65fm/bin/fm-watch-arm.sh: fork: retry: Resource temporarily unavailable
+/tmp/fmbase.65fm/bin/fm-watch-arm.sh: fork: Resource temporarily unavailable
+exit=254
+beacon: ls: /tmp/fmfork.qQJP/state-BASE/.last-watcher-beat: No such file or directory
+
+=== HEAD (/opt/homebrew/bin/bash) - ulimit -u 1, cwd=/tmp/fmfork.qQJP/cwd, arm=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S3K4DCSQN8T1HT9W4BFJM8/bin/fm-watch-arm.sh
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S3K4DCSQN8T1HT9W4BFJM8/bin/fm-wake-lib.sh: fork: retry: Resource temporarily unavailable
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S3K4DCSQN8T1HT9W4BFJM8/bin/fm-wake-lib.sh: fork: retry: Resource temporarily unavailable
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S3K4DCSQN8T1HT9W4BFJM8/bin/fm-wake-lib.sh: fork: retry: Resource temporarily unavailable
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S3K4DCSQN8T1HT9W4BFJM8/bin/fm-wake-lib.sh: fork: retry: Resource temporarily unavailable
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S3K4DCSQN8T1HT9W4BFJM8/bin/fm-wake-lib.sh: fork: Resource temporarily unavailable
+watcher: FAILED - out of process capacity: this machine refused to create a process, so startup was killed before it could arm (any "fork: Resource temporarily unavailable" line above is that refusal). The install is fine - /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S3K4DCSQN8T1HT9W4BFJM8/bin/fm-wake-lib.sh is present and readable. Nothing is watching this home; reduce process pressure, then re-arm.
+exit=75
+beacon: ls: /tmp/fmfork.qQJP/state-HEAD/.last-watcher-beat: No such file or directory
+

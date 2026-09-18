@@ -1,0 +1,26 @@
+=== BASE: arm run from foreign cwd /tmp/fminter.BhDR/BASE-decoy/cwd, dirname yields empty (inner fork refused, outer substitution survives), no FM_HOME/FM_STATE_OVERRIDE
+$T/BASE-home/bin/fm-watch-arm.sh: line 65: $T/BASE-decoy/cwd/fm-wake-lib.sh: No such file or directory
+$T/BASE-home/bin/fm-watch-arm.sh: line 68: STATE: unbound variable
+exit=
+own home state dir exists: no
+decoy (caller) state dirs created: 
+
+=== HEAD: arm run from foreign cwd /tmp/fminter.BhDR/HEAD-decoy/cwd, dirname yields empty (inner fork refused, outer substitution survives), no FM_HOME/FM_STATE_OVERRIDE
+$T/HEAD-home/bin/fm-watch.sh: line 132: $T/HEAD-decoy/cwd/fm-push-transition-lib.sh: No such file or directory
+$T/HEAD-home/bin/fm-watch.sh: line 134: $T/HEAD-decoy/cwd/fm-pr-lib.sh: No such file or directory
+$T/HEAD-home/bin/fm-watch.sh: line 138: $T/HEAD-decoy/cwd/fm-procevent-lib.sh: No such file or directory
+$T/HEAD-home/bin/fm-watch.sh: line 149: $T/HEAD-decoy/cwd/fm-merge-outcome-lib.sh: No such file or directory
+$T/HEAD-home/bin/fm-watch.sh: line 153: $T/HEAD-decoy/cwd/fm-merge-authority-lib.sh: No such file or directory
+$T/HEAD-home/bin/fm-watch.sh: line 155: $T/HEAD-decoy/cwd/fm-x-lib.sh: No such file or directory
+$T/HEAD-home/bin/fm-watch.sh: line 157: $T/HEAD-decoy/cwd/fm-check-lib.sh: No such file or directory
+$T/HEAD-home/bin/fm-watch.sh: line 162: $T/HEAD-decoy/cwd/fm-pending-reply-lib.sh: No such file or directory
+$T/HEAD-home/bin/fm-watch.sh: line 164: $T/HEAD-decoy/cwd/fm-busy-lib.sh: No such file or directory
+$T/HEAD-home/bin/fm-watch.sh: line 170: $T/HEAD-decoy/cwd/fm-task-inbox-lib.sh: No such file or directory
+$T/HEAD-home/bin/fm-watch.sh: line 175: $T/HEAD-decoy/cwd/fm-afk-contract.sh: No such file or directory
+$T/HEAD-home/bin/fm-watch.sh: line 214: fm_poll_derived_grace: command not found
+$T/HEAD-home/bin/fm-watch.sh: line 285: FM_PAUSE_RESURFACE_SECS_DEFAULT: unbound variable
+watcher: FAILED - watcher cycle exited 1 without an actionable reason
+exit=
+own home state dir exists: yes
+decoy (caller) state dirs created: $T/HEAD-decoy/state 
+
