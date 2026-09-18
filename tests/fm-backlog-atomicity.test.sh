@@ -1991,7 +1991,7 @@ test_interrupted_destructive_cleanup_keeps_its_records_for_a_rerun() {
   assert_present "$home/state/$id.meta" \
     "restart removed the record for a worker the interrupted cleanup never killed"
   assert_present "$marker" "restart discarded the close a rerun still needs"
-  assert_contains "$out" "could not prove its worker stopped" \
+  assert_contains "$out" "still records an unproved stop" \
     "restart did not report why it left the cleanup for a rerun"
   pass "an interrupt before the kill keeps every record for a rerun"
 }
@@ -2807,7 +2807,7 @@ test_a_record_only_retirement_takes_its_pending_close_with_it() {
 
   # And session start has nothing left to refuse over.
   out=$(run_bootstrap "$case_dir")
-  assert_not_contains "$out" "could not prove its worker stopped" \
+  assert_not_contains "$out" "still records an unproved stop" \
     "session start still reports a refusal for a record that was retired: $out"
   pass "a record-only retirement takes its pending close with it"
 }
@@ -2966,7 +2966,7 @@ test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped() {
     "session start removed the task record that the cleanup refusal kept on purpose"
   assert_present "$marker" \
     "session start discarded the pending close instead of leaving it for a retry"
-  assert_contains "$out" "could not prove its worker stopped" \
+  assert_contains "$out" "still records an unproved stop" \
     "session start did not report the cleanup it deliberately left unfinished"
   pass "session start refuses to replay a close whose worker was never proved stopped"
 }

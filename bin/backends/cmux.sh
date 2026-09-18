@@ -757,7 +757,7 @@ fm_backend_cmux_kill() {  # <target> [unused] [expected-label]
   fm_backend_cmux_cli close-workspace --workspace "$wsid" >/dev/null 2>&1 || true
   case "$(fm_backend_cmux_workspace_presence "$wsid" \
       "${expected_label:+$(fm_backend_cmux_scoped_title "$expected_label")}")" in
-    dead|foreign) return 0 ;;
+    dead) return 0 ;;
     present)
       echo "error: cmux workspace $wsid is still listed after its close; the worker may still be running" >&2
       return 2
