@@ -1,0 +1,9 @@
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.3jhEnq/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+                ^
+
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+    at file:///tmp/fm-pi-branch-extension.3jhEnq/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466:17
+
+Node.js v22.23.2: expected exit 0, got 1
+exit=1

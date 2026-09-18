@@ -1,0 +1,76 @@
+--- stall=60ms variant=prechange run=1 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.MoWNCk/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+--- stall=60ms variant=prechange run=2 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.WT5uec/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+--- stall=60ms variant=prechange run=3 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.iVpFd2/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+--- stall=60ms variant=prechange run=4 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.XZBMoE/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+--- stall=60ms variant=prechange run=5 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.t2gXov/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+--- stall=60ms variant=prechange run=6 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.PgaZ4r/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+--- stall=60ms variant=prechange run=7 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.8mtIAw/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+--- stall=60ms variant=prechange run=8 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.OVX5Lt/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+--- stall=60ms variant=prechange run=9 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.MhSfWz/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+--- stall=60ms variant=prechange run=10 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.sPAioR/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+stall=60ms variant=prechange: pass=0 fail=10
+stall=60ms variant=fixed: pass=10 fail=0
+--- stall=400ms variant=prechange run=1 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2TJPT2RM5XZBPRM7DQC9EJV/[eval1]:142
+TypeError: finishReplacementPrompt is not a function
+--- stall=400ms variant=prechange run=2 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2TJPT2RM5XZBPRM7DQC9EJV/[eval1]:142
+TypeError: finishReplacementPrompt is not a function
+--- stall=400ms variant=prechange run=3 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2TJPT2RM5XZBPRM7DQC9EJV/[eval1]:142
+TypeError: finishReplacementPrompt is not a function
+--- stall=400ms variant=prechange run=4 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2TJPT2RM5XZBPRM7DQC9EJV/[eval1]:142
+TypeError: finishReplacementPrompt is not a function
+--- stall=400ms variant=prechange run=5 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2TJPT2RM5XZBPRM7DQC9EJV/[eval1]:142
+TypeError: finishReplacementPrompt is not a function
+--- stall=400ms variant=prechange run=6 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2TJPT2RM5XZBPRM7DQC9EJV/[eval1]:142
+TypeError: finishReplacementPrompt is not a function
+--- stall=400ms variant=prechange run=7 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2TJPT2RM5XZBPRM7DQC9EJV/[eval1]:142
+TypeError: finishReplacementPrompt is not a function
+--- stall=400ms variant=prechange run=8 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2TJPT2RM5XZBPRM7DQC9EJV/[eval1]:142
+TypeError: finishReplacementPrompt is not a function
+--- stall=400ms variant=prechange run=9 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2TJPT2RM5XZBPRM7DQC9EJV/[eval1]:142
+TypeError: finishReplacementPrompt is not a function
+--- stall=400ms variant=prechange run=10 FAILED ---
+not ok - captain outcomes must be processed through a sequence-bound acknowledgement and re-presented until then: file:///tmp/fm-pi-branch-extension.tEY1Zk/processing-turn-root/.pi/extensions/fm-branch-supervision.ts:1466
+          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+Error: supervision branch prompt settled but produced no durable outcome for its claimed wake rows
+stall=400ms variant=prechange: pass=0 fail=10
+stall=400ms variant=fixed: pass=10 fail=0
+no-stall fixed case: pass=25 fail=0 (25 runs)
