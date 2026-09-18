@@ -1371,7 +1371,16 @@ let finishReplacementPrompt;
 globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finishReplacementPrompt = resolve; });
 const replacementOffer = dispatch("signal: after replacement");
 if (!replacementOffer.accepted) throw new Error("branch refused a wake after the replacement");
-await settle(() => (globalThis.__fmSessions ?? []).length === 2, "replacement branch session");
+// Wait for the replacement wake's PROMPT, not merely for its session to be
+// built. The extension records a durable-outcome baseline immediately before
+// session.prompt() and settles the wake only if a report advances past it.
+// The branch session exists several asynchronous steps earlier - mirror
+// flush, ownership read, queue scan, eligible-row grant - so a report driven
+// from that gap is already inside the baseline, the prompt then looks like it
+// produced nothing, and the settlement rejects with "no durable outcome".
+// A real branch model can only reach the report tool from inside its own
+// prompt, which is the ordering this wait restores.
+await settle(() => (globalThis.__fmPrompts ?? []).length === 2, "replacement branch wake prompt");
 const report2 = globalThis.__fmSessions[1].options.customTools.find((tool) => tool.name === "fm_branch_report");
 const beforePair = requests().length;
 const second = await report2.execute("captain-2", { task: "branch-driver", verdict: "captain", summary: "PR https://example.com/pr/e is ready for review" }, undefined, undefined, {});
