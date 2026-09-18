@@ -875,7 +875,7 @@ run_routine_bootstrap_fixture() {
 # seed-time gate keeps new homes out of that state; this line is what reaches the
 # homes seeded before it existed, so it is pinned here as a session-start report.
 make_home_route_fixture() {
-  local case_dir=$1 origin=$2 root home fakebin
+  local case_dir=$1 origin=$2 gate_origin=${3-} root home fakebin
   root="$case_dir/root"
   home="$case_dir/home"
   fm_git_identity
@@ -887,13 +887,20 @@ make_home_route_fixture() {
   git -C "$root" add -A
   git -C "$root" commit -qm initial
   [ -z "$origin" ] || git -C "$root" remote add origin "$origin"
+  # A validation pipeline registration: a gate repository holding the origin it
+  # saved when the checkout was initialized, reached through the no-mistakes remote.
+  if [ -n "$gate_origin" ]; then
+    git init -q --bare "$case_dir/gate.git"
+    git -C "$case_dir/gate.git" remote add origin "$gate_origin"
+    git -C "$root" remote add no-mistakes "$case_dir/gate.git"
+  fi
   fakebin=$(make_fake_toolchain "$case_dir")
   printf '%s|%s|%s\n' "$root" "$home" "$fakebin"
 }
 
 run_home_route_bootstrap() {
-  local case_dir=$1 origin=$2 fixture root home fakebin
-  fixture=$(make_home_route_fixture "$case_dir" "$origin")
+  local case_dir=$1 origin=$2 gate_origin=${3-} fixture root home fakebin
+  fixture=$(make_home_route_fixture "$case_dir" "$origin" "$gate_origin")
   root=${fixture%%|*}
   fixture=${fixture#*|}
   home=${fixture%%|*}
@@ -913,12 +920,29 @@ test_home_route_reports_a_local_delivery_target() {
   assert_contains "$out" "$case_dir/elsewhere.git" "the HOME_ROUTE line did not name the target it would deliver to"
   assert_contains "$out" "never opens a pull request" "the HOME_ROUTE line did not state the consequence"
 
-  # A file:// URL is never what a clone of a local checkout leaves behind - it is
-  # always configured on purpose - so it is a route, not the accident.
+  # A file:// URL reaches the same local directory and fails the same silent way.
   case_dir="$TMP_ROOT/home-route-file-url"
   mkdir -p "$case_dir/elsewhere.git"
   out=$(run_home_route_bootstrap "$case_dir" "file://$case_dir/elsewhere.git")
-  assert_not_contains "$out" "HOME_ROUTE:" "a deliberately configured file:// route was reported as the clone-inherited accident"
+  assert_contains "$out" "HOME_ROUTE:" "a file:// delivery target was not reported at session start"
+  assert_contains "$out" "file://$case_dir/elsewhere.git" "the HOME_ROUTE line did not name the file:// target"
+
+  # Repointing origin alone does not move a validation pipeline that was already
+  # registered against the path: the saved registration is what a validated
+  # change is pushed through, so it is reported, and the report never repairs it.
+  case_dir="$TMP_ROOT/home-route-gate-local"
+  mkdir -p "$case_dir/elsewhere.git"
+  out=$(run_home_route_bootstrap "$case_dir" "https://github.test/owner/firstmate.git" "$case_dir/elsewhere.git")
+  assert_contains "$out" "HOME_ROUTE:" "a local validation pipeline registration was not reported at session start"
+  assert_contains "$out" "validation pipeline registration at $case_dir/gate.git still delivers to $case_dir/elsewhere.git" \
+    "the HOME_ROUTE line did not name the local registration"
+  assert_contains "$out" "re-run no-mistakes init" "the HOME_ROUTE line did not say the saved registration must follow"
+  [ "$(git -C "$case_dir/gate.git" remote get-url origin)" = "$case_dir/elsewhere.git" ] \
+    || fail "session start repaired the validation pipeline registration instead of only reporting it"
+
+  case_dir="$TMP_ROOT/home-route-gate-fork"
+  out=$(run_home_route_bootstrap "$case_dir" "https://github.test/owner/firstmate.git" "https://github.test/owner/firstmate.git")
+  assert_not_contains "$out" "HOME_ROUTE:" "a validation pipeline registered against the fork was reported as a problem"
 
   case_dir="$TMP_ROOT/home-route-fork"
   out=$(run_home_route_bootstrap "$case_dir" "https://github.test/owner/firstmate.git")

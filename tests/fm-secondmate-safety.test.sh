@@ -1093,13 +1093,12 @@ make_forked_code_root() {
 }
 
 test_home_seed_routes_a_seeded_home_to_the_fork() {
-  local home subhome fmroot fmroot_abs
+  local home subhome fmroot unseen
   home="$TMP_ROOT/route-home"
   subhome="$TMP_ROOT/route-subhome"
   fmroot="$TMP_ROOT/route-fmroot"
   mkdir -p "$home/projects" "$home/data" "$home/state"
   make_forked_code_root "$fmroot" >/dev/null
-  fmroot_abs=$(cd "$fmroot" && pwd -P)
 
   FM_HOME="$home" FM_ROOT_OVERRIDE="$fmroot" FM_SECONDMATE_CHARTER='firstmate self-development' \
     FM_SECONDMATE_SCOPE='firstmate repo work' \
@@ -1108,14 +1107,21 @@ test_home_seed_routes_a_seeded_home_to_the_fork() {
 
   [ "$(git -C "$subhome" remote get-url origin)" = "$FORK_ROUTE" ] \
     || fail "seeded home delivers firstmate changes to $(git -C "$subhome" remote get-url origin), not the fork"
-  [ "$(git -C "$subhome" remote get-url code-root)" = "$fmroot_abs" ] \
-    || fail "seeded home lost the local code root as a named remote"
-  # The parent's sync hands a commit to the home and looks for it in the host's
-  # own copy first; that leg names the code-root PATH, so rerouting origin must
-  # leave it able to import a commit the fork has never seen.
-  git -C "$fmroot" fetch --quiet --no-tags -- "$subhome" HEAD 2>/dev/null \
-    || fail "the seeded home is no longer readable from the code root"
-  pass "home seeding routes a seeded home to the fork and keeps the code root named"
+  # The parent's sync hands a commit to the home and imports it from the host's
+  # own copy by PATH before it ever tries origin (import_home_commit in
+  # bin/fm-remote-secondmate-control.sh). A commit the fork has never seen - the
+  # fork route here is unreachable - must still arrive that way once origin is
+  # the fork.
+  git -C "$fmroot" commit --quiet --allow-empty -m 'code-root commit the fork never saw'
+  unseen=$(git -C "$fmroot" rev-parse HEAD)
+  if git -C "$subhome" cat-file -e "$unseen^{commit}" 2>/dev/null; then
+    fail "the seeded home already held the commit it was meant to import"
+  fi
+  if ! git -C "$subhome" fetch --quiet --no-tags -- "$fmroot" "$unseen" 2>/dev/null \
+    || ! git -C "$subhome" cat-file -e "$unseen^{commit}" 2>/dev/null; then
+    fail "the seeded home cannot import a code-root commit by path once origin is the fork"
+  fi
+  pass "home seeding routes a seeded home to the fork and still imports from the code root by path"
 }
 
 test_home_seed_refuses_a_code_root_that_has_no_fork_route() {
@@ -1141,7 +1147,57 @@ test_home_seed_refuses_a_code_root_that_has_no_fork_route() {
   if [ -f "$home/data/secondmates.md" ] && grep -F -- '- fdev ' "$home/data/secondmates.md" >/dev/null; then
     fail "seed registered a route it refused to provision"
   fi
+
+  # A file:// URL reaches the same local directory and fails the same silent way,
+  # so it is no more a route than the bare path is.
+  git -C "$fmroot" remote set-url origin "file://$(cd "$ROOT" && pwd -P)"
+  if FM_HOME="$home" FM_ROOT_OVERRIDE="$fmroot" FM_SECONDMATE_CHARTER='firstmate self-development' \
+    FM_SECONDMATE_SCOPE='firstmate repo work' \
+    "$ROOT/bin/fm-home-seed.sh" fdev "$subhome" --no-projects >/dev/null 2>"$err"; then
+    fail "seed accepted a code root whose delivery route is a file:// URL"
+  fi
+  grep -F 'has no delivery route for the firstmate repo' "$err" >/dev/null \
+    || fail "seed did not refuse the file:// route as a missing delivery route"
+  [ ! -e "$subhome" ] || fail "seed created a home before refusing a file:// delivery route"
   pass "home seeding refuses a code root that cannot name the fork"
+}
+
+# A home that already ran the validation pipeline saved its origin in that
+# pipeline's gate repository at the time, and that saved copy is what a validated
+# change is pushed through. Reseeding repoints the home's own origin but never
+# rewrites that registration, so a home whose registration still names a path
+# must be refused rather than blessed.
+test_home_seed_refuses_a_home_whose_pipeline_registration_is_local() {
+  local home subhome fmroot gate err
+  home="$TMP_ROOT/gate-route-home"
+  subhome="$TMP_ROOT/gate-route-subhome"
+  fmroot="$TMP_ROOT/gate-route-fmroot"
+  gate="$TMP_ROOT/gate-route-gate.git"
+  err="$TMP_ROOT/gate-route.err"
+  mkdir -p "$home/projects" "$home/data" "$home/state"
+  make_forked_code_root "$fmroot" >/dev/null
+  # An existing standalone home seeded the old way, with origin the code-root path
+  # and a gate registered from that origin.
+  git clone --quiet "$fmroot" "$subhome"
+  git init --quiet --bare "$gate"
+  git -C "$gate" remote add origin "$fmroot"
+  git -C "$subhome" remote add no-mistakes "$gate"
+
+  if FM_HOME="$home" FM_ROOT_OVERRIDE="$fmroot" FM_SECONDMATE_CHARTER='firstmate self-development' \
+    FM_SECONDMATE_SCOPE='firstmate repo work' \
+    "$ROOT/bin/fm-home-seed.sh" fdev "$subhome" --no-projects >/dev/null 2>"$err"; then
+    fail "seed blessed a home whose validation pipeline registration still delivers to a path"
+  fi
+  grep -F "validation pipeline registration at $gate still delivers to $fmroot" "$err" >/dev/null \
+    || fail "seed did not name the local pipeline registration: $(cat "$err")"
+  [ "$(git -C "$subhome" remote get-url origin)" = "$fmroot" ] \
+    || fail "a refused reseed did not restore the home's own origin"
+  [ "$(git -C "$gate" remote get-url origin)" = "$fmroot" ] \
+    || fail "seeding rewrote the pipeline registration instead of refusing"
+  if [ -f "$home/data/secondmates.md" ] && grep -F -- '- fdev ' "$home/data/secondmates.md" >/dev/null; then
+    fail "seed registered a home it refused"
+  fi
+  pass "home seeding refuses a home whose pipeline registration still delivers to a path"
 }
 
 test_home_seed_leaves_linked_worktree_remotes_alone() {
@@ -1168,9 +1224,8 @@ test_home_seed_leaves_linked_worktree_remotes_alone() {
     || fail "a leased linked-worktree home did not inherit the fork route"
   [ "$(git -C "$fmroot" remote get-url origin)" = "$FORK_ROUTE" ] \
     || fail "seeding rewrote the code root's own origin through a linked worktree"
-  if git -C "$fmroot" remote get-url code-root >/dev/null 2>&1; then
-    fail "seeding added a remote to the code root's shared configuration"
-  fi
+  [ "$(git -C "$fmroot" remote)" = origin ] \
+    || fail "seeding added a remote to the code root's shared configuration"
   pass "home seeding never writes remotes through a linked-worktree home"
 }
 
@@ -3088,6 +3143,7 @@ test_home_seed_refuses_reassigning_existing_id_to_different_home
 test_home_seed_refuses_home_overlapping_registered_home
 test_home_seed_routes_a_seeded_home_to_the_fork
 test_home_seed_refuses_a_code_root_that_has_no_fork_route
+test_home_seed_refuses_a_home_whose_pipeline_registration_is_local
 test_home_seed_leaves_linked_worktree_remotes_alone
 test_home_seed_refuses_remote_backed_project_without_origin
 test_home_seed_refuses_existing_remote_backed_project_with_wrong_origin

@@ -52,13 +52,14 @@
 #          failed names whether the endpoint was missing or agent-less.
 #          Already-live and successfully relaunched secondmates are silent
 #          unless FM_BOOTSTRAP_VERBOSE_FACTS=1 requests BOOTSTRAP_INFO facts.
-#          A HOME_ROUTE line means this home's firstmate-repo delivery route is a
-#          local filesystem path rather than a remote, so a validated change to
-#          firstmate itself made here is pushed into that path and never opens a
-#          pull request - the seed-time gate in bin/fm-home-seed.sh prevents new
-#          homes from reaching that state, and this line reaches the ones seeded
-#          before it existed. Detect-only, and never repaired here: repointing a
-#          live home is its own migration.
+#          A HOME_ROUTE line means this home's firstmate-repo delivery route - its
+#          checkout's origin, or the origin its validation pipeline registration
+#          saved - is a local filesystem path rather than a remote, so a validated
+#          change to firstmate itself made here is pushed into that path and never
+#          opens a pull request - the seed-time gate in bin/fm-home-seed.sh
+#          prevents new homes from reaching that state, and this line reaches the
+#          ones seeded before it existed. Detect-only, and never repaired here:
+#          repointing a live home and its registration is its own migration.
 #          A TANGLE line means the firstmate primary checkout (FM_ROOT) is stranded
 #          on a feature branch instead of its default branch - a crewmate's work
 #          landed in the primary instead of its own worktree; restore it per the line.
@@ -1496,7 +1497,7 @@ detect_local_config() {
   # standalone clone before the seed-time gate existed still carries the host
   # path it was cloned from, and only says so by never producing a PR.
   route_problem=$(fm_home_route_misdirected "$FM_ROOT") && \
-    echo "HOME_ROUTE: this home ships firstmate's own changes from $FM_ROOT, and $route_problem - a validated change is pushed there and never opens a pull request; repoint that checkout's origin at the firstmate fork"
+    echo "HOME_ROUTE: this home ships firstmate's own changes from $FM_ROOT, and $route_problem - a validated change is pushed there and never opens a pull request; repoint that checkout's origin at the firstmate fork, then re-run no-mistakes init there so its saved validation registration follows"
   crew=
   [ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
   if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && [ -n "$crew" ] && [ "$crew" != "default" ]; then

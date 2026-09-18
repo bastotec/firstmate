@@ -15,11 +15,11 @@
 # trusting the sender. The remote code root is cloned into an absent home,
 # which would otherwise leave that host path as the home's own delivery route
 # for the firstmate repo itself, so the home is repointed at the route that copy
-# delivers to and keeps the copy itself under the code-root remote; a copy with
-# no such route refuses to provision, because a home cloned from it pushes a
-# validated firstmate change into a directory and never opens a pull request
-# (bin/fm-home-route-lib.sh owns that classification). The parent's sync still
-# reaches this home through the host's own copy by path, never through origin.
+# delivers to; a copy with no such route refuses to provision, because a home
+# cloned from it pushes a validated firstmate change into a directory and never
+# opens a pull request (bin/fm-home-route-lib.sh owns that classification). The
+# parent's sync still reaches this home through the host's own copy by path,
+# never through a named remote.
 # Project origins are cloned on this host, the project registry and charter are
 # published, the durable .fm-secondmate-parent record names this home's route to its parent as
 # "remote" - read by bin/fm-teardown.sh's cleanup gate so a delegated public
@@ -113,7 +113,6 @@ CREATED_PROJECTS="$TMP/created-projects"
 : > "$CREATED_PROJECTS"
 HOME_REMOTES_CHANGED=0
 HOME_PRIOR_ORIGIN=
-HOME_PRIOR_CODE_ROOT=
 release_provision_lock() {
   if [ "$PROVISION_LOCK_HELD" -eq 1 ]; then
     fm_lock_release "$PROVISION_LOCK"
@@ -122,40 +121,30 @@ release_provision_lock() {
 }
 # Leave this home delivering firstmate's OWN changes to the route this host's
 # Firstmate copy delivers to, rather than to the path it was cloned from. A home
-# that shares that copy's configuration is only checked, never written through.
+# that shares that copy's configuration is only checked, never written through,
+# and an existing home whose validation pipeline was registered against the old
+# path is refused rather than rewritten.
 route_home_to_fork() {
-  local route
+  local route reason
   route=$(fm_home_route_url "$FM_ROOT")
   fm_home_route_is_remote "$route" \
     || die "this host's Firstmate copy at $FM_ROOT has no delivery route for the firstmate repo (its origin is ${route:-unset}); a home cloned from it would push a validated firstmate change to that target instead of opening a pull request"
-  if ! fm_home_route_standalone_repo "$FM_HOME"; then
-    fm_home_route_misdirected "$FM_HOME" >/dev/null \
-      && die "remote home shares a Firstmate configuration whose origin is the path it was cloned from, so a validated firstmate change made there never opens a pull request"
-    return 0
+  if fm_home_route_standalone_repo "$FM_HOME"; then
+    HOME_PRIOR_ORIGIN=$(fm_home_route_url "$FM_HOME")
+    HOME_REMOTES_CHANGED=1
+    git -C "$FM_HOME" remote set-url origin "$route" \
+      || die "could not point the remote home at the firstmate delivery route $route"
   fi
-  HOME_PRIOR_ORIGIN=$(fm_home_route_url "$FM_HOME")
-  HOME_PRIOR_CODE_ROOT=$(git -C "$FM_HOME" remote get-url "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" 2>/dev/null || true)
-  HOME_REMOTES_CHANGED=1
-  git -C "$FM_HOME" remote set-url origin "$route" \
-    || die "could not point the remote home at the firstmate delivery route $route"
-  if [ -n "$HOME_PRIOR_CODE_ROOT" ]; then
-    git -C "$FM_HOME" remote set-url "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" "$FM_ROOT"
-  else
-    git -C "$FM_HOME" remote add "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" "$FM_ROOT"
-  fi || die "could not keep $FM_ROOT reachable from the remote home as $FM_HOME_ROUTE_CODE_ROOT_REMOTE"
+  reason=$(fm_home_route_misdirected "$FM_HOME") || return 0
+  die "remote home would deliver firstmate's own changes to the wrong place: $reason; a validated firstmate change made there never opens a pull request"
 }
 
-# Put back the remotes route_home_to_fork rewrote. Only an EXISTING home needs
+# Put back the origin route_home_to_fork rewrote. Only an EXISTING home needs
 # this: a home this run created is removed whole instead.
 restore_home_remotes() {
   [ "$HOME_REMOTES_CHANGED" -eq 1 ] || return 0
   if [ -n "$HOME_PRIOR_ORIGIN" ]; then
     git -C "$FM_HOME" remote set-url origin "$HOME_PRIOR_ORIGIN" 2>/dev/null || true
-  fi
-  if [ -n "$HOME_PRIOR_CODE_ROOT" ]; then
-    git -C "$FM_HOME" remote set-url "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" "$HOME_PRIOR_CODE_ROOT" 2>/dev/null || true
-  else
-    git -C "$FM_HOME" remote remove "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" 2>/dev/null || true
   fi
 }
 restore_owned_file() { # <relative-path>

@@ -20,14 +20,14 @@
 #       the .fm-secondmate-home identity marker, and data/secondmates.md is updated.
 #       Every home seeding blesses is left delivering firstmate's OWN changes to
 #       the route the code root delivers to, never to the path it was cloned
-#       from: a standalone
-#       home has its origin repointed there and keeps the local code root under
-#       the code-root remote, while a linked worktree already reads the code
-#       root's remotes and is never rewritten through. A code root with no such
-#       route fails the seed, because a home cloned from it would push a
-#       validated firstmate change into a directory and never open a pull
-#       request (bin/fm-home-route-lib.sh owns that classification, and
-#       bin/fm-bootstrap.sh's HOME_ROUTE line reaches homes seeded before this).
+#       from: a standalone home has its origin repointed there, while a linked
+#       worktree already reads the code root's remotes and is never rewritten
+#       through. A code root with no such route fails the seed, because a home
+#       cloned from it would push a validated firstmate change into a directory
+#       and never open a pull request (bin/fm-home-route-lib.sh owns that
+#       classification, and bin/fm-bootstrap.sh's HOME_ROUTE line reaches homes
+#       seeded before this). The parent's sync imports a commit into a home from
+#       the code root by path, so the home needs no remote naming it.
 #       Seeding is transactional: on validation, clone, init, or registry failure,
 #       generated briefs, new homes, new project clones, rewritten home remotes,
 #       and registry edits are rolled back. Treehouse-acquired homes are returned
@@ -435,9 +435,9 @@ code_root_delivery_route() {
 }
 
 # Point a home the seed itself created at the fork rather than at the code-root
-# path it came from, and keep that local copy reachable under its own remote
-# name. A linked worktree is left alone: it reads the code root's remotes, which
-# already name the fork, and writing them here would rewrite the code root's own.
+# path it came from. A linked worktree is left alone: it reads the code root's
+# remotes, which already name the fork, and writing them here would rewrite the
+# code root's own.
 # The existing refs/remotes/origin/* stay valid on a rerouted clone: the fork and
 # the code root are the same repository, so the first fetch refreshes them, and
 # default_branch()'s origin/HEAD keeps resolving with no network at seed time.
@@ -445,18 +445,12 @@ route_seeded_home_to_fork() {
   local home=$1 route=$2
   fm_home_route_standalone_repo "$home" || return 0
   SEED_HOME_PRIOR_ORIGIN=$(fm_home_route_url "$home")
-  SEED_HOME_PRIOR_CODE_ROOT=$(git -C "$home" remote get-url "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" 2>/dev/null || true)
   SEED_HOME_REMOTES_CHANGED=1
   git -C "$home" remote set-url origin "$route" \
     || { echo "error: could not point $home at the firstmate delivery route $route" >&2; return 1; }
-  if [ -n "$SEED_HOME_PRIOR_CODE_ROOT" ]; then
-    git -C "$home" remote set-url "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" "$FM_ROOT"
-  else
-    git -C "$home" remote add "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" "$FM_ROOT"
-  fi || { echo "error: could not keep $FM_ROOT reachable from $home as $FM_HOME_ROUTE_CODE_ROOT_REMOTE" >&2; return 1; }
 }
 
-# Put back the remotes route_seeded_home_to_fork rewrote, for a rollback that
+# Put back the origin route_seeded_home_to_fork rewrote, for a rollback that
 # leaves a preexisting home in place. A home this seed created or leased is
 # removed or returned whole instead, so it never reaches here.
 restore_seeded_home_remotes() {
@@ -464,11 +458,6 @@ restore_seeded_home_remotes() {
   [ "${SEED_HOME_REMOTES_CHANGED:-0}" = 1 ] || return 0
   if [ -n "${SEED_HOME_PRIOR_ORIGIN:-}" ]; then
     git -C "$home" remote set-url origin "$SEED_HOME_PRIOR_ORIGIN" 2>/dev/null || true
-  fi
-  if [ -n "${SEED_HOME_PRIOR_CODE_ROOT:-}" ]; then
-    git -C "$home" remote set-url "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" "$SEED_HOME_PRIOR_CODE_ROOT" 2>/dev/null || true
-  else
-    git -C "$home" remote remove "$FM_HOME_ROUTE_CODE_ROOT_REMOTE" 2>/dev/null || true
   fi
 }
 
@@ -502,15 +491,16 @@ verify_firstmate_home() {
 
 # The seed's backstop, run after routing: refuse to leave a home whose finished
 # firstmate changes would be pushed somewhere on this host and silently never
-# become a pull request. Routing already settled every home with its own object
-# store, so what reaches this refusal is a home routing must not touch - a linked
-# worktree whose shared configuration is misdirected.
+# become a pull request. Routing settles a home's own origin, so what reaches
+# this refusal is a home routing must not touch - a linked worktree whose shared
+# configuration is misdirected - or an existing home whose validation pipeline
+# was already registered against the old path, which seeding never rewrites.
 validate_home_delivery_route() {
   local home=$1 reason
   reason=$(fm_home_route_misdirected "$home") || return 0
   echo "error: secondmate home $home would deliver firstmate's own changes to the wrong place: $reason" >&2
   echo "error: a validated firstmate change made there is pushed to that target and never opens a pull request" >&2
-  echo "error: point its origin at the firstmate fork before seeding it" >&2
+  echo "error: point its origin at the firstmate fork, re-run no-mistakes init there if its validation registration is the target, then seed again" >&2
   return 1
 }
 
@@ -617,7 +607,6 @@ SEED_MARKER_EXISTED=0
 SEED_PARENT_MARKER_EXISTED=0
 SEED_HOME_REMOTES_CHANGED=0
 SEED_HOME_PRIOR_ORIGIN=
-SEED_HOME_PRIOR_CODE_ROOT=
 
 restore_seed_file() {
   local existed=$1 backup=$2 path=$3
@@ -942,7 +931,6 @@ seed_home() {
   SEED_MARKER_EXISTED=0
   SEED_HOME_REMOTES_CHANGED=0
   SEED_HOME_PRIOR_ORIGIN=
-  SEED_HOME_PRIOR_CODE_ROOT=
   if [ -f "$REG" ]; then
     SEED_PARENT_REG_EXISTED=1
     cp "$REG" "$SEED_BACKUP_DIR/parent-secondmates.md"

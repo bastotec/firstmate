@@ -129,6 +129,9 @@ git init -q --bare "$REMOTE_ORIGIN"
 git -C "$REMOTE_ROOT" remote add origin "file://$REMOTE_ORIGIN"
 git -C "$REMOTE_ROOT" push -q -u origin main
 git --git-dir="$REMOTE_ORIGIN" symbolic-ref HEAD refs/heads/main
+# Every home cloned from this code root takes its origin as the delivery route,
+# and a local route - file:// included - is refused; nothing here fetches it.
+git -C "$REMOTE_ROOT" remote set-url origin "forge.test:$REMOTE_ORIGIN"
 
 git init -q --bare "$TMP_ROOT/alpha.git"
 git -C "$PARENT/projects" init -q -b main alpha
