@@ -218,10 +218,13 @@ What it touches, and what it does not:
 - It retires RECORDS: the durable task record and, where firstmate owns the transition, the task's backlog row.
   A home whose backlog is kept manually, or which keeps no backlog file, has its row left exactly as the operator keeps it.
 - Cleanup runs first and finishes the job properly whenever its own gates allow.
-  The single refusal the retirement proceeds past is cleanup's work-protection gate, which refuses before anything on disk has been touched.
+  The first of two refusals the retirement proceeds past is cleanup's work-protection gate, which refuses before anything on disk has been touched.
   In that case the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
   It never discards work and never passes `--force` to anything.
-- Every other cleanup refusal stands and nothing is retired - an outcome that has not reached the parent channel, a backlog transition that cannot be replayed, a runtime that still answers.
+- The second is cleanup's unconfirmed-kill gate, and it is the command's honest cost: the records are retired even for an endpoint the backend still reports present after its kill, with no further flag, on your assertion alone.
+  Cleanup cannot tell you which case you are in - a backend answering "still there" and a backend that cannot answer at all reach it as the same unconfirmed verdict, so its warning claims neither and says only that the endpoint was never confirmed gone.
+  A worker may still be running behind a record retired that way, and stopping it is yours to do.
+- Every other cleanup refusal stands and nothing is retired - an outcome that has not reached the parent channel, a backlog transition that cannot be replayed.
   The one exception is a cleanup that fails only after it has already removed the durable task record: the run reports that partial state, naming the record that is gone and the pending close left behind, instead of claiming nothing was retired.
 
 `--override-runtime-refusal` additionally proceeds past a RUNTIME's own refusal to answer for the endpoint - a herdr server that cannot be reached at all, for instance.

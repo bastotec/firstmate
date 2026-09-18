@@ -791,6 +791,32 @@ test_a_target_from_another_hub_is_refused() {
   pass "stream: a target recorded against another hub is refused, not redirected"
 }
 
+# Both refusals happen before the hub is ever called, and the kill contract
+# (bin/fm-backend.sh's fm_backend_kill header) reports them differently because
+# they are different facts about the worker: a tag for another hub names a real
+# worker this home cannot reach, which nothing has proved stopped, while a
+# string that is not an endpoint address names no worker at all. Cleanup turns
+# the verdict into what it tells an operator retiring the record, so an
+# unsupported target must not be described as a backend that could not answer.
+test_an_unaddressable_target_reports_whether_a_worker_was_ever_named() {
+  local foreign out rc
+  start_case_hub target-fault
+  foreign="somewhere-else-9999:$(python3 -c 'import os; print(os.urandom(16).hex())')"
+  rc=0
+  out=$(with_stream_env fm_backend_kill stream "$foreign" 2>&1) || rc=$?
+  assert_equals "$rc" 2 "a target on another hub names a worker nothing proved stopped: $out"
+  assert_contains "$out" "may still be running" \
+    "a foreign-hub kill should say the worker may still be running"
+  rc=0
+  out=$(with_stream_env fm_backend_kill stream "not-an-endpoint-address" 2>&1) || rc=$?
+  assert_equals "$rc" 1 "a malformed target named no worker, so no kill was ever attempted: $out"
+  case "$out" in
+    *"may still be running"*)
+      fail "a target that named no worker must not report one that may be running: $out" ;;
+  esac
+  pass "stream: an unaddressable target reports whether a worker was ever named"
+}
+
 test_hub_url_prefers_configuration_then_a_locally_started_hub() {
   # `hub start --port N` used to leave every other command resolving the
   # default port: the hub was up, and status, web, and every task command
@@ -1220,6 +1246,7 @@ test_a_404_stays_unconfirmed_however_long_the_hub_has_been_up
 test_an_answer_the_adapter_cannot_read_is_never_a_stop
 test_status_return_channel_appends_on_the_owning_machine
 test_a_target_from_another_hub_is_refused
+test_an_unaddressable_target_reports_whether_a_worker_was_ever_named
 test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error
 test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers
 test_a_create_that_times_out_leaves_nothing_behind

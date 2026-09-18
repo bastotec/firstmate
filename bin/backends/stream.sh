@@ -378,19 +378,27 @@ fm_backend_stream_parse_target() {  # <target>
   local target=$1 tag endpoint configured
   FM_BACKEND_STREAM_TAG=
   FM_BACKEND_STREAM_ENDPOINT=
+  # Why a refusal reason and not just a status: a string that names no endpoint
+  # at all and a real endpoint on another hub are different facts about the
+  # worker, and the kill contract reports them differently.
+  FM_BACKEND_STREAM_TARGET_FAULT=unaddressable
   case "$target" in
     *:*) ;;
-    *) echo "error: malformed stream target '$target' (expected <hub-tag>:<endpoint-id>)" >&2; return 1 ;;
+    *) FM_BACKEND_STREAM_TARGET_FAULT=malformed
+       echo "error: malformed stream target '$target' (expected <hub-tag>:<endpoint-id>)" >&2; return 1 ;;
   esac
   tag=${target%%:*}
   endpoint=${target#*:}
   case "$endpoint" in
-    *:*|'') echo "error: malformed stream target '$target' (expected <hub-tag>:<endpoint-id>)" >&2; return 1 ;;
+    *:*|'') FM_BACKEND_STREAM_TARGET_FAULT=malformed
+            echo "error: malformed stream target '$target' (expected <hub-tag>:<endpoint-id>)" >&2; return 1 ;;
   esac
   case "$endpoint" in
-    *[!0-9a-f]*) echo "error: malformed stream endpoint id in '$target'" >&2; return 1 ;;
+    *[!0-9a-f]*) FM_BACKEND_STREAM_TARGET_FAULT=malformed
+                 echo "error: malformed stream endpoint id in '$target'" >&2; return 1 ;;
   esac
-  [ -n "$tag" ] || { echo "error: malformed stream target '$target' (empty hub tag)" >&2; return 1; }
+  [ -n "$tag" ] || { FM_BACKEND_STREAM_TARGET_FAULT=malformed
+    echo "error: malformed stream target '$target' (empty hub tag)" >&2; return 1; }
   configured=$(fm_backend_stream_hub_tag) || return 1
   [ "$tag" = "$configured" ] || {
     echo "error: endpoint '$target' belongs to hub '$tag' but this home is configured for '$configured'; refusing to address a different hub" >&2
@@ -656,13 +664,20 @@ fm_backend_stream_agent_state() {  # <target>
 # the adapter the contract was written from: the hub already distinguishes a
 # kill the endpoint's own agent acknowledged from one it only presumed, and
 # every unacknowledged answer here is the contract's unconfirmed result.
-# A target this home cannot address - a malformed string, or one tagged for a
-# hub other than the configured one - is unconfirmed too rather than gone: a
-# worker on a hub that cannot be reached is a worker nothing has proved
-# stopped.
+# A target tagged for a hub other than the configured one is unconfirmed rather
+# than gone: a worker on a hub that cannot be reached is a worker nothing has
+# proved stopped. A malformed string is the contract's unsupported result
+# instead, exactly as it is for every other adapter - it names no endpoint on
+# any hub, so no worker was ever addressed and there is no answer about one to
+# report.
 fm_backend_stream_kill() {  # <target> [unused] [expected-label]
   local target=$1 expected=${3:-} task out label api_rc=0
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || {
+    if [ "$FM_BACKEND_STREAM_TARGET_FAULT" = malformed ]; then
+      echo "error: '$target' is not a stream endpoint address (expected <hub-tag>:<endpoint-id>)," \
+           "so no worker was ever named and no kill could be attempted" >&2
+      return 1
+    fi
     echo "error: '$target' does not address an endpoint on this home's stream hub, so nothing" \
          "could be closed or confirmed gone; the worker may still be running" >&2
     return 2
