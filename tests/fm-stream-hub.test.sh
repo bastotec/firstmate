@@ -40,7 +40,6 @@ HUB_READY=""
 # the half of the case that matters most.
 HUB_ARGS=()
 STUB_JOURNAL=""
-AGENT_PID=""
 # Labels carry the pid of THIS run. An interrupted run leaves its agents
 # behind - they outlive the hub they published to - and a fixed label would
 # then let agent_pid_for resolve one of those leftovers, silencing a dead
@@ -103,10 +102,6 @@ start_hub() {
   spawn_hub 0 "$@"
 }
 
-# restart_hub - stop this case's hub and bring one back at the SAME address,
-# which is what a restart means to an agent that never moved. Nothing else is
-# touched: the agents keep running, and what they do about the hub underneath
-# them is the whole of what these cases ask.
 # restart_hub [seconds-down] - stop this case's hub and bring the SAME hub back,
 # optionally leaving it down for a while first. The outage length is a parameter
 # because what an agent does during one depends on how long it lasts: a poll
@@ -1374,6 +1369,32 @@ test_a_closing_frame_outlives_the_pace_its_own_outage_set() {
   pass "hub: a closing frame is delivered even when the agent's re-registration pace is spent"
 }
 
+test_a_closing_frame_waits_out_a_recovery_already_in_flight() {
+  # The other way a hub restart takes the lock away from a closing frame. The
+  # worker exits while one of the agent's own threads is already inside a
+  # re-registration for the same forgotten endpoint, so the close arrives to
+  # find the agent's registration taken. Giving up there is the same loss as
+  # dropping the frame outright - the endpoint is back at the hub seconds
+  # later, but the agent has returned from run() and nothing ever posts the
+  # task's end or its exit code again.
+  start_hub closing-contended
+  local endpoint task
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  python3 "$ROOT/tests/assets/stream-agent-closing-frame.py" --hub "$URL" \
+    --token "$PUBLISH_TOKEN" --machine box-a --label "contended-$RUN" \
+    --endpoint "$endpoint" --exit-code 9 --pace-secs 600 --hold-lock-secs 1 \
+    > "$CASE_DIR/closing.log" 2>&1 \
+    || fail "the closing publisher failed: $(cat "$CASE_DIR/closing.log")"
+  task=$(view GET "/v1/tasks/$endpoint")
+  assert_equals "$(api_code)" 200 \
+    "the hub should hold a record for the endpoint the closing frame named"
+  assert_equals "$(printf '%s' "$task" | jq -r '.task.closed_by')" agent \
+    "the end its agent watched should be recorded even though a recovery held the lock"
+  assert_equals "$(printf '%s' "$task" | jq -r '.task.exit_code')" 9 \
+    "the exit code the closing frame carried should be the one on the record"
+  pass "hub: a closing frame survives a re-registration already in flight on another thread"
+}
+
 # start_stub <case-name> [stub args...] -> sets CASE_DIR URL STUB_JOURNAL
 # The re-registration pacing and refusal cases need a hub that keeps saying one
 # exact thing; tests/assets/stream-hub-stub.py owns what it answers and why a
@@ -1668,6 +1689,7 @@ test_the_viewer_keeps_the_send_box_disabled_for_a_closed_worker
 test_a_restarted_hub_gets_its_workers_back
 test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
 test_a_closing_frame_outlives_the_pace_its_own_outage_set
+test_a_closing_frame_waits_out_a_recovery_already_in_flight
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
 test_a_steer_lands_as_soon_as_the_worker_is_listed_again
 test_an_accepted_registration_returns_the_pace_to_its_floor

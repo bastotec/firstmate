@@ -434,6 +434,27 @@ REREGISTER_BACKOFF_MIN = 2.0
 REREGISTER_BACKOFF_MAX = 60.0
 REREGISTER_JITTER = 0.25
 
+# How long the CLOSING frame's recovery waits for a recovery already in flight
+# on another thread. It is the one frame with no next attempt behind it, so
+# finding the lock taken and giving up loses the task's end and its exit code
+# outright. Both ends of the number:
+#   - It has to outlast an ordinary contended attempt. The only thing holding
+#     that lock is one POST /v1/agent/endpoints; the state frame that follows a
+#     successful one is published after the lock is released, so the hold is
+#     that round trip and nothing else. A closing frame only reaches this path
+#     by being told no_such_endpoint, which a hub that is up has to say, so the
+#     attempt being waited for is talking to a live hub: connect, request, the
+#     hub's registry lock, reply - well under a second, and a few times that
+#     while a just-restarted hub absorbs the fleet's reconnect burst.
+#   - It has to keep teardown prompt. run() has already spent up to 15s waiting
+#     out a command acknowledgement, 5s for the reader's EOF and 5s joining it
+#     before this frame is posted at all, and the post itself allows 30s. Three
+#     seconds is a small addition to that, and it is paid once, not per attempt.
+# It also deliberately falls short of the 15s timeout on the call being waited
+# for: a registration still running at three seconds is a hub that is hanging,
+# and its answer would not have carried this frame either.
+FINAL_REGISTER_WAIT_SECS = 3.0
+
 
 def registration(options: argparse.Namespace, endpoint_id: str) -> dict:
     """This endpoint's identity, in the one spelling the hub is ever given.
@@ -576,10 +597,12 @@ class Agent:
         # Re-registration is serialized and paced. Three threads publish, so a
         # forgotten endpoint is discovered several times over, and a hub that is
         # down must see one attempt per backoff window rather than one per
-        # frame. The lock is only ever taken without blocking: a thread that
-        # finds an attempt already in flight has nothing to add by waiting for
-        # it, and the pty reader in particular must never be parked on a hub
-        # call it did not make.
+        # frame. Ordinary recoveries take the lock without blocking: a thread
+        # that finds an attempt already in flight has nothing to add by waiting
+        # for it, and the pty reader in particular must never be parked on a hub
+        # call it did not make. The closing frame is the exception, and waits
+        # the bounded FINAL_REGISTER_WAIT_SECS below, because what it would
+        # drop is not retried by anything.
         self._register_lock = threading.Lock()
         self._register_not_before = 0.0
         self._register_backoff = REREGISTER_BACKOFF_MIN
@@ -658,13 +681,19 @@ class Agent:
         last call the agent will ever make, so there is no next attempt to
         space out and nothing to protect the hub from - while the frame it
         carries is the task's end and its exit code, which nothing afterwards
-        would ever ask for again. It is still ONE attempt on ordinary timeouts:
-        it never waits for an attempt already in flight, and an agent whose hub
-        is still down exits rather than holding its teardown open.
+        would ever ask for again. It is still ONE attempt on ordinary timeouts,
+        and an agent whose hub is still down exits rather than holding its
+        teardown open - but it does wait, for FINAL_REGISTER_WAIT_SECS and no
+        longer, on a recovery already in flight, because a frame dropped for a
+        lock another thread happens to hold is dropped for good.
         """
         if self.stood_down.is_set():
             return False
-        if not self._register_lock.acquire(blocking=False):
+        if final:
+            acquired = self._register_lock.acquire(timeout=FINAL_REGISTER_WAIT_SECS)
+        else:
+            acquired = self._register_lock.acquire(blocking=False)
+        if not acquired:
             return False
         try:
             if self.stood_down.is_set():
