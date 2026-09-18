@@ -54,6 +54,31 @@ Ordinary supervision does not need any of that.
 
 A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoint_task_id=` binding.
 
+## Bridge feed
+
+`bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per endpoint per tick.
+It only reads the hub, holds a `subscribe` credential, opens no listening socket, and sends nothing to any worker.
+Its header owns the record mapping and every field the hub cannot supply; the short version is that the hub carries no token counter, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
+When the hub cannot be read it emits nothing, so the Bridge ages every worker out as stale rather than holding a last state.
+
+Run it on the host that runs the hub:
+
+1. Give it its own read-only credential: add a bare token line to `config/stream-hub-tokens` and put the same token alone in a 0600 file for the adapter.
+   A home still on the single `config/stream-token` has no such file, and creating one replaces that token's every-class grant, so write the home's own `publish,subscribe,control:<token>` line into it as well.
+   The hub reads its token file only at start, and a hub restart strands every running worker, so make this change while no stream work is running.
+2. Start it against the local hub:
+
+   ```
+   bin/fm-stream-bridge.py serve --hub http://127.0.0.1:7717 --token-file <file> --fleet-id <name>
+   ```
+
+3. To read the feed from another machine, run that same command over SSH from the reading machine and consume its stdout, which keeps the feed inside the SSH session and needs nothing listening on the hub host.
+   There is no network listener for the feed.
+
+`bin/fm-stream-bridge.py snapshot` prints one tick and exits, and `translate` replays recorded hub listings, which is how its tests drive it.
+`bin/fm-stream-bridge.py compare` sets the feed's rendered state for each of this home's stream-backed tasks against `bin/fm-crew-state.sh`, and flags a worker the feed calls stopped while the pane read says it is working.
+Nothing runs it automatically.
+
 ## Security
 
 The hub binds `127.0.0.1` by default and every data route requires a bearer token; the static viewer page is the one exception.
@@ -156,7 +181,7 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
 
 - Experimental, with no dedicated real-backend CI lane.
   [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) is the live guard that proves each installed harness is still classified through the hub, and the command that refreshes the dated per-harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md).
-  The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, and `tests/fm-stream-agent-kill-safety.test.sh`.
+  The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, and `tests/fm-stream-bridge.test.sh`.
 - No secondmate support.
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.
 - An unreachable agent and a dead worker are indistinguishable from the hub, so a stale read carries no liveness verdict at all.
