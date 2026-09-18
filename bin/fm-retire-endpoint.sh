@@ -259,8 +259,8 @@ report_what_remains() {  # <id> <worktree>
 # bin/fm-teardown.sh's own statuses: the runtime refusal this retirement did
 # not override, and the work-protection refusal - the only one it proceeds
 # past, raised before anything on disk has been touched.
-RUNTIME_REFUSAL_EXIT=3
-WORK_GATE_EXIT=4
+RUNTIME_REFUSAL_EXIT=71
+WORK_GATE_EXIT=72
 
 retired_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 retired_by=$(id -un 2>/dev/null || printf '%s' "${USER:-unknown}")

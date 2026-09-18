@@ -2988,7 +2988,12 @@ require_task_endpoint_gone() {  # <kill-status>
 # A runtime refusal an operator retirement did not override exits with this
 # status, so bin/fm-retire-endpoint.sh can tell that one refusal apart from
 # every other and name the flag that answers it rather than guessing.
-FM_TEARDOWN_RUNTIME_REFUSAL_EXIT=3
+#
+# Both retirement statuses sit outside the small numbers teardown and its
+# libraries already spend, because a status that names two conditions names
+# neither: the retirement would read someone else's failure as the one refusal
+# it may proceed past. The guard below keeps that true as teardown grows.
+FM_TEARDOWN_RUNTIME_REFUSAL_EXIT=71
 
 # The work-protection refusal, raised before anything on disk has been touched,
 # gets its own status - but only when this run is an operator retirement, which
@@ -3000,7 +3005,17 @@ FM_TEARDOWN_RUNTIME_REFUSAL_EXIT=3
 # not the record it retires. Every other refusal protects something a
 # retirement has no say over - an undelivered outcome, an unreplayable backlog
 # - and keeps its plain status so the retirement stops there.
-FM_TEARDOWN_WORK_GATE_EXIT=4
+FM_TEARDOWN_WORK_GATE_EXIT=72
+for reserved_status in 0 1 "$TEARDOWN_TREEHOUSE_LOCK_REFUSED" \
+  "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED" "$TEARDOWN_PROCEVENT_RESTORE_FAILED" \
+  "$TEARDOWN_SLOT_REASSIGNED_RC" "$FM_LEASE_REFUSE_EXIT"; do
+  if [ "$reserved_status" = "$FM_TEARDOWN_RUNTIME_REFUSAL_EXIT" ] \
+    || [ "$reserved_status" = "$FM_TEARDOWN_WORK_GATE_EXIT" ]; then
+    echo "error: teardown exit status $reserved_status now names two different conditions, so an operator retirement cannot tell the refusal it may proceed past from one it may not; give the new condition a status of its own" >&2
+    exit 1
+  fi
+done
+
 work_gate_refusal_exit() {
   if task_operator_retirement; then
     exit "$FM_TEARDOWN_WORK_GATE_EXIT"
