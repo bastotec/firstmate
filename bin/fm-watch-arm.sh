@@ -32,6 +32,11 @@
 #   watcher: FAILED - cycle ended without an actionable reason
 #                                                        - a clean cycle ended with no wake and no
 #                                                          verified healthy successor
+#   watcher: FAILED - out of process capacity ...        - the machine refused to create a process
+#                                                          before this arm could load its library
+#                                                          (exit 75)
+#   watcher: FAILED - broken install: ...                - the wake library is missing, unreadable,
+#                                                          or came back defining no STATE (exit 78)
 # It NEVER reports started/attached/healthy off a stale beacon or a dead/reused pid: a
 # stale-beacon or dead-pid holder either self-heals (the fresh child steals the
 # dead lock per the singleton self-eviction/steal path and is confirmed) or this
@@ -60,9 +65,84 @@
 # (secondmate homes run the same script) and would kill siblings.
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Bootstrap WITHOUT forking. `dirname` is an external command and `$( ... )` is a
+# subshell, so the old
+#   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# needed fork() twice before this script had done anything. When fork() was
+# refused the inner substitution came back empty, `cd ""` left the CALLER's
+# working directory in place, and SCRIPT_DIR silently became wherever firstmate
+# happened to be standing - so the wake-library source below missed with a "No
+# such file or directory" naming a path with no bin/ in it, `set -u` aborted on
+# STATE, and the whole thing read like a broken install while supervision was
+# simply absent. Parameter expansion and $PWD are builtins and cannot fail that
+# way. For every invocation shape a shipped caller uses the result is the same
+# directory the old line produced: absolute, relative, bare-name and
+# symlinked-directory paths all resolve to the same place, and a symlinked
+# script FILE is left unresolved exactly as `cd ... && pwd` left it. It is NOT
+# canonicalized: a path carrying `.` or `..` segments (bin/../bin/fm-watch-arm.sh)
+# keeps them where `cd ... && pwd` dropped them. $WATCH is compared byte-for-byte
+# with the watcher path the lock records, so an arm invoked that way would not
+# recognize the watcher it just launched. No shipped caller invokes it that way.
+ARM_SELF="${BASH_SOURCE[0]}"
+case "$ARM_SELF" in
+  */*) SCRIPT_DIR="${ARM_SELF%/*}"; [ -n "$SCRIPT_DIR" ] || SCRIPT_DIR=/ ;;
+  *) SCRIPT_DIR="$PWD" ;;
+esac
+case "$SCRIPT_DIR" in
+  /*) ;;
+  *)
+    SCRIPT_DIR="${SCRIPT_DIR#./}"
+    if [ "$SCRIPT_DIR" = . ]; then
+      SCRIPT_DIR="$PWD"
+    elif [ "$PWD" = / ]; then
+      SCRIPT_DIR="/$SCRIPT_DIR"
+    else
+      SCRIPT_DIR="$PWD/$SCRIPT_DIR"
+    fi
+    ;;
+esac
+WAKE_LIB="$SCRIPT_DIR/fm-wake-lib.sh"
+
+# Anything that aborts before the wake library is loaded leaves this home with no
+# watcher, so the abort has to say that in this script's own status vocabulary
+# rather than leaving a raw shell diagnostic to be read as an install problem.
+# bash treats a refused fork() as fatal - it kills the shell mid-line on every
+# supported version rather than returning an error - so an EXIT trap is the only
+# thing that still runs to report it. This one uses builtins only, so it can
+# never need the fork it is reporting on:
+#   watcher: FAILED - broken install: ...       exit 78 (EX_CONFIG)
+#   watcher: FAILED - out of process capacity   exit 75 (EX_TEMPFAIL)
+ARM_BOOTSTRAP_STAGE=start
+# shellcheck disable=SC2329 # Invoked by the EXIT trap below.
+arm_bootstrap_guard() {
+  [ "$ARM_BOOTSTRAP_STAGE" = ready ] && return 0
+  if [ ! -r "$WAKE_LIB" ]; then
+    printf 'watcher: FAILED - broken install: %s is missing or unreadable, so this arm cannot load the wake library. Nothing is watching this home.\n' "$WAKE_LIB" >&2
+    exit 78
+  fi
+  if [ "$ARM_BOOTSTRAP_STAGE" = returned ]; then
+    printf 'watcher: FAILED - broken install: %s did not define STATE, so this arm has no home to watch. Nothing is watching this home.\n' "$WAKE_LIB" >&2
+    exit 78
+  fi
+  printf 'watcher: FAILED - out of process capacity: this machine refused to create a process, so startup was killed before it could arm (any "fork: Resource temporarily unavailable" line above is that refusal). The install is fine - %s is present and readable. Nothing is watching this home; reduce process pressure, then re-arm.\n' "$WAKE_LIB" >&2
+  exit 75
+}
+trap 'arm_bootstrap_guard' EXIT
+
+# The stage advances on control COMING BACK from the source, whatever status it
+# came back with. A refused fork kills the shell mid-line, so a return at all is
+# proof this was not the capacity failure, and the guard must then talk about the
+# install: a library that is present but unparseable, or one that parsed and
+# defined no STATE, are both broken installs. The library's own return value is
+# deliberately NOT treated as fatal - STATE being defined is the real test of a
+# usable load, and making the tail of fm-wake-lib.sh load-bearing here would turn
+# an unrelated future edit into a silent refusal to arm.
 # shellcheck source=bin/fm-wake-lib.sh
-. "$SCRIPT_DIR/fm-wake-lib.sh"
+. "$WAKE_LIB" || :
+ARM_BOOTSTRAP_STAGE=returned
+[ -n "${STATE:-}" ] || exit 1
+ARM_BOOTSTRAP_STAGE=ready
+trap - EXIT
 
 WATCH="$SCRIPT_DIR/fm-watch.sh"
 WATCH_LOCK="$STATE/.watch.lock"

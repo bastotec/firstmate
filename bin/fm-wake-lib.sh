@@ -1,8 +1,37 @@
 #!/usr/bin/env bash
 # Shared durable wake queue and portable lock helpers.
 
-FM_WAKE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FM_WAKE_DEFAULT_ROOT="$(cd "$FM_WAKE_LIB_DIR/.." && pwd)"
+# Resolved with builtins only, the same way bin/fm-watch-arm.sh resolves its own
+# directory. `dirname` is an external command and `$( ... )` is a subshell, so the
+# old
+#   FM_WAKE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# needed fork() twice before anything sourcing this library had a home. A refused
+# fork leaves the inner substitution empty, `cd ""` keeps the CALLER's working
+# directory, and every value below - FM_ROOT, FM_HOME, STATE - then silently
+# describes whichever directory firstmate happened to be standing in, with no
+# error to notice. Parameter expansion and $PWD cannot fail that way. Absolute,
+# relative, bare-name and symlinked-directory paths resolve to the same place the
+# old line did, and a symlinked library FILE is left unresolved exactly as
+# `cd ... && pwd` left it.
+case "${BASH_SOURCE[0]}" in
+  */*) FM_WAKE_LIB_DIR="${BASH_SOURCE[0]%/*}"; [ -n "$FM_WAKE_LIB_DIR" ] || FM_WAKE_LIB_DIR=/ ;;
+  *) FM_WAKE_LIB_DIR="$PWD" ;;
+esac
+case "$FM_WAKE_LIB_DIR" in
+  /*) ;;
+  *)
+    FM_WAKE_LIB_DIR="${FM_WAKE_LIB_DIR#./}"
+    if [ "$FM_WAKE_LIB_DIR" = . ]; then
+      FM_WAKE_LIB_DIR="$PWD"
+    elif [ "$PWD" = / ]; then
+      FM_WAKE_LIB_DIR="/$FM_WAKE_LIB_DIR"
+    else
+      FM_WAKE_LIB_DIR="$PWD/$FM_WAKE_LIB_DIR"
+    fi
+    ;;
+esac
+FM_WAKE_DEFAULT_ROOT="${FM_WAKE_LIB_DIR%/*}"
+[ -n "$FM_WAKE_DEFAULT_ROOT" ] || FM_WAKE_DEFAULT_ROOT=/
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_WAKE_DEFAULT_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-${STATE:-$FM_HOME/state}}"
