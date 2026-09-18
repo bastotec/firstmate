@@ -1,0 +1,5 @@
+== cap test vs pre-fix e45302f7 ==
+not ok - expected each file's two newest lines, got: working: b2
+working: b3, say so
+== cap test vs HEAD 39197480 ==
+ok - the line cap applies per status file and keeps that file's newest lines

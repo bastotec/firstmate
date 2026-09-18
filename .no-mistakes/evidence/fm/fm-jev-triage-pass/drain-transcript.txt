@@ -1,0 +1,27 @@
+$ fm-ask-triage.sh score   (stub model: "say so" -> 0.93, else 0.04)
+--- lines sent to the model:
+working: rebased onto main; if you would rather keep the old flag, say so
+working: tests pass, opening the PR next
+
+$ fm-wake-drain.sh
+1789735981	1	signal	t1.status	signal: t1.status
+wake annotation: unread wake-EVENT since last drain, not current state: t1.status: working: rebased onto main; if you would rather keep the old flag, say so
+wake annotation: unread wake-EVENT since last drain, not current state: t1.status: needs-decision [key=q1]: pick A or B, say so
+wake annotation: latest wake-EVENT observed at drain, not current state: t1.status: working: tests pass, opening the PR next
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t1 [key=q1] needs-decision: pick A or B, say so
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+POSSIBLE ASKS (working: lines a model ranked as likely asking firstmate for something; each is also shown wherever the drain shows it today):
+t1 [p=0.9300] working: rebased onto main; if you would rather keep the old flag, say so
+
+$ fm-wake-drain.sh   (second drain: flag already presented)
+1789735981	1	signal	t1.status	signal: t1.status
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+t1 [key=q1] needs-decision: pick A or B, say so
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+$ fm-ask-triage.sh cost
+runs=1 calls=2 input_tokens=780 output_tokens=0
+per_line_input_tokens=390.0 per_line_cost_usd=0.000016380
+mean_run_ms=7 total_cost_usd=0.000032760
+outcome_ok=1

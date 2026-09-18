@@ -1,0 +1,14 @@
+FM_TEST_BEGIN 2026-09-18T12:49:39Z tests/fm-ask-triage.test.sh family=unclassified expected_gate_skip=none
+ok - only working: lines are sent or flagged, even when every line reads like an ask
+ok - a flag only adds a POSSIBLE ASKS section; every line the drain showed is still shown
+ok - a possible ask is presented once and a rescore does not raise it again
+ok - the drain never calls the model; an unscored line is shown exactly as today
+ok - timeout, error, bad output, a failed line, and low probability all leave the line unflagged
+ok - with no key or no runtime the pass does nothing and says nothing
+ok - the scorer starts at the drain's presentation point and reads only complete lines
+not ok - expected only the unpresented line to be sent, got: working: if you would rather keep the old flag, say so
+working: tests pass
+FM_TEST_END 2026-09-18T12:49:57Z tests/fm-ask-triage.test.sh exit=1 duration_ms=18015 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=18281
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=18015 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-ask-triage.test.sh duration_ms=18015
