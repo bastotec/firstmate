@@ -1,0 +1,11 @@
+Prescribed invocation: FM_LIVE=0 bin/fm-test-run.sh tests/<subject>.test.sh (from .no-mistakes.yaml test.instructions)
+
+Motivating lifecycle suites (fm-recover-missing-dirty-guard area):
+  tests/fm-control-recover-missing.test.sh  rc=0  88s   gate_skip=false
+  tests/fm-control.test.sh                  rc=0  95s   gate_skip=false
+  tests/fm-control-relaunch.test.sh         rc=0  302s  gate_skip=false
+  total ~8 min, well under the 30 min agent budget both timed-out runs hit
+
+Live-gated suites under the same invocation (must not launch real harnesses):
+  tests/fm-harness-liveness-drift-live-e2e.test.sh  rc=0  <1s  "skip: live: disabled by FM_LIVE=0"  gate_skip=true
+  tests/fm-stream-agent-live-e2e.test.sh (outside live-harness-optin family)  rc=0  <1s  gate_skip=true

@@ -1,0 +1,31 @@
+{
+  "families": [
+    {
+      "count": 1,
+      "duration_ms": 532,
+      "failed": 0,
+      "name": "live-harness-optin"
+    }
+  ],
+  "finished_at": "2026-09-18T00:48:19Z",
+  "run_id": "fm-test-run-1789692498789-13217",
+  "scripts": [
+    {
+      "duration_ms": 532,
+      "exit": 0,
+      "expected_gate_skip": "live-capability",
+      "family": "live-harness-optin",
+      "gate_skip": true,
+      "gate_skip_reason": "live: disabled by FM_LIVE=0",
+      "path": "tests/fm-harness-liveness-drift-live-e2e.test.sh"
+    }
+  ],
+  "selection": "scripts;jobs=1",
+  "started_at": "2026-09-18T00:48:18Z",
+  "summary": {
+    "duration_ms": 1372,
+    "failed": 0,
+    "skipped_gate": 1,
+    "total": 1
+  }
+}

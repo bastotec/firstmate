@@ -1,0 +1,11 @@
+{
+  "test_keys": [
+    "instructions",
+    "evidence"
+  ],
+  "evidence": {
+    "store_in_repo": true
+  },
+  "commands_test_present": false,
+  "instructions": "The repository's suites under tests/ are the rig for this product: they drive\nthe real firstmate scripts against real worktrees and real processes, with\nPATH-shimmed terminal and harness binaries. bin/fm-test-run.sh is the\nauthority on which suites exist; run one with\n`FM_LIVE=0 bin/fm-test-run.sh tests/<subject>.test.sh` - FM_LIVE=0 makes the\nlive-gated suites self-skip, since those launch real harnesses and real\nterminal servers on this machine. Drive the change through the suites for the\narea it touches - prove the change works, and prove the regression fails\nwithout it.\nOut of scope here: standing up rigs of your own - live tmux servers, dirty\nworktrees, fake agent binaries, or reusable lab factories - beyond what the\nsuites under tests/ already set up.\n"
+}
