@@ -33,6 +33,10 @@ SHIM_DIR=
 trap cleanup_all EXIT
 
 cleanup_all() {
+  # Restore the socket first: a case that makes it unreadable can fail between
+  # the chmod and its own restore, and a teardown that cannot reach the server
+  # would leave it - and an unreadable socket - behind for the whole session.
+  [ -z "${UNREADABLE_SOCKET_PATH:-}" ] || chmod 700 "$UNREADABLE_SOCKET_PATH" 2>/dev/null || true
   "$REAL_TMUX" -L "$SOCKET" kill-server >/dev/null 2>&1 || true
   [ -n "${SHIM_DIR:-}" ] && rm -rf "$SHIM_DIR"
 }
@@ -174,12 +178,14 @@ else
     || fail "could not create the window for the unreadable-server case"
   SOCKET_PATH=$(tmux display-message -p '#{socket_path}') \
     || fail "could not read the real tmux socket path"
+  UNREADABLE_SOCKET_PATH=$SOCKET_PATH
   chmod 000 "$SOCKET_PATH" || fail "could not make the tmux socket unreadable"
   set +e
   out=$(fm_backend_kill tmux "$SESSION:$UNREADABLE_WINDOW" 2>&1)
   rc=$?
   set -e
   chmod 700 "$SOCKET_PATH" || fail "could not restore the tmux socket"
+  UNREADABLE_SOCKET_PATH=
   [ "$rc" -eq 2 ] || fail "a kill against an unreadable server must report unconfirmed (2), got $rc: $out"
   case "$out" in
     *"may still be running"*) : ;;

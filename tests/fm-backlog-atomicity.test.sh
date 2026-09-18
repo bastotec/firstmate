@@ -620,6 +620,42 @@ run_teardown() {  # <case-dir> <id> [args...]
     "$TEARDOWN" "$@" 2>&1
 }
 
+run_retire() {  # <case-dir> <args...>
+  local case_dir=$1
+  shift
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" \
+    PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-retire-endpoint.sh" "$@" 2>&1
+}
+
+# stage_unanswerable_task: a task whose kill is accepted and closes nothing, so
+# no read can ever prove its worker stopped - the shape a stream hub leaves
+# behind when it no longer has the endpoint. Echoes nothing; the caller owns
+# the ids.
+stage_unanswerable_task() {  # <case-dir> <id>
+  local case_dir=$1 id=$2 home
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id" scout
+  start_item "$case_dir" "$id"
+  cat > "$case_dir/fakebin/tmux" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in
+  list-windows) printf 'fm-%s\n' '$id'; exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+  fm_write_meta "$home/state/$id.meta" \
+    "window=fmtest:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$case_dir/absent-worktree" \
+    "project=$case_dir/absent-project" \
+    "harness=claude" "kind=scout" "mode=" "yolo=off" \
+    "spawn_gen=spawn-unanswerable" "decisions_reviewed=1" "decision_keys="
+  mkdir -p "$home/data/$id"
+  printf 'findings\n' > "$home/data/$id/report.md"
+}
+
 run_bootstrap() {  # <case-dir>
   local case_dir=$1
   FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" \
@@ -2142,6 +2178,96 @@ SH
   pass "a herdr refusal marks its pending close, and recovery honours it"
 }
 
+# A record no backend can ever answer for would otherwise be kept forever: the
+# kill contract refuses on an unproven stop, --force does not lift it, and
+# nothing automatic may decide the worker died. The escape is a human saying so
+# about named records, and these are the terms that make it an escape rather
+# than a second bypass.
+test_no_automatic_path_retires_an_unanswerable_record() {
+  local case_dir home id out rc=0
+  id=atomic-retire-automatic-b9
+  case_dir=$(make_home retire-automatic)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task "$case_dir" "$id"
+
+  # Cleanup, the rerun an operator is told to try, and session-start recovery:
+  # every automatic path over this record, and none of them may retire it.
+  out=$(run_teardown "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "cleanup retired a record nothing proved stopped: $out"
+  rc=0
+  out=$(run_teardown "$case_dir" "$id" --force) || rc=$?
+  [ "$rc" -ne 0 ] || fail "--force retired a record nothing proved stopped: $out"
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "session start retired a record nothing proved stopped: $out"
+  assert_present "$home/state/$id.meta" "an automatic path removed the record it could not prove"
+  assert_absent "$home/state/$id.endpoint-retired" \
+    "an automatic path wrote the operator retirement that only a human may make"
+  pass "no automatic path retires a record no backend can answer for"
+}
+
+test_retiring_refuses_wildcards_and_unconfirmed_ids() {
+  local case_dir home id out rc=0
+  id=atomic-retire-exact-b9
+  case_dir=$(make_home retire-exact)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task "$case_dir" "$id"
+
+  for form in '*' --all all; do
+    rc=0
+    out=$(run_retire "$case_dir" "$form" </dev/null) || rc=$?
+    [ "$rc" -ne 0 ] || fail "retirement accepted the all-records form '$form'"
+    assert_contains "$out" "name each task id exactly" \
+      "the refusal of '$form' should say each id must be named"
+  done
+  rc=0
+  out=$(run_retire "$case_dir" "$id-typo" </dev/null) || rc=$?
+  [ "$rc" -ne 0 ] || fail "retirement accepted an id with no durable record"
+
+  # Naming the right id is not enough either: the operator types it back, and
+  # anything else leaves every record where it was.
+  rc=0
+  out=$(printf 'yes\n' | run_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "retirement proceeded without the ids typed back"
+  assert_contains "$out" "do not match" "an unconfirmed retirement should say what failed"
+  assert_present "$home/state/$id.meta" "a refused retirement removed the record anyway"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "a refused retirement moved the backlog row"
+  pass "retirement requires exact record identities and refuses wildcards"
+}
+
+test_retiring_records_who_asserted_it_and_when() {
+  local case_dir home id out
+  id=atomic-retire-attested-b9
+  case_dir=$(make_home retire-attested)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task "$case_dir" "$id"
+  run_teardown "$case_dir" "$id" >/dev/null 2>&1 || true
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
+    || fail "a confirmed retirement should complete: $out"
+  assert_contains "$out" "$(id -un)" "the retirement did not record who asserted it: $out"
+  printf '%s' "$out" | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' \
+    || fail "the retirement did not record when it was asserted: $out"
+  assert_absent "$home/state/$id.meta" "a confirmed retirement left the record it retired"
+  assert_absent "$home/state/$id.endpoint-retired" \
+    "the retirement was left behind to authorize a later automatic cleanup"
+  [ "$(row_state "$case_dir" "$id")" = done ] \
+    || fail "a confirmed retirement left the backlog row at $(row_state "$case_dir" "$id"): $out"
+  pass "a retirement carries who asserted it and when, and is consumed by the cleanup it authorizes"
+}
+
+test_retirement_help_states_what_the_operator_is_asserting() {
+  local case_dir out
+  case_dir=$(make_home retire-help)
+  out=$(run_retire "$case_dir" --help </dev/null) || fail "--help should succeed: $out"
+  assert_contains "$out" "hub-unanswerable" \
+    "the help does not name the condition this command is for"
+  assert_contains "$out" "no worker is still running" \
+    "the help does not say what the operator is asserting"
+  pass "the retirement command's help states the condition it is for"
+}
+
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped() {
   local case_dir home id marker meta out
   id=atomic-heal-endpoint-unconfirmed-b9
@@ -3217,6 +3343,10 @@ test_recovery_ignores_a_symlinked_worker_record
 test_recovery_replays_a_close_an_interrupted_cleanup_left_open
 test_completion_marks_its_pending_close_when_the_worker_cannot_be_proved_stopped
 test_a_herdr_refusal_marks_its_pending_close_too
+test_no_automatic_path_retires_an_unanswerable_record
+test_retiring_refuses_wildcards_and_unconfirmed_ids
+test_retiring_records_who_asserted_it_and_when
+test_retirement_help_states_what_the_operator_is_asserting
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped
 test_recovery_replays_the_same_close_without_the_unconfirmed_endpoint_line
 test_recovery_backfills_a_recorded_link_on_an_already_done_item

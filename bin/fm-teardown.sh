@@ -2952,17 +2952,40 @@ preflight_firstmate_home_herdr_children() {  # <home>
 # time this runs; this adds what the refusal means for the records, and does
 # not restate it.
 require_task_endpoint_gone() {  # <kill-status>
-  case "$(fm_backend_kill_verdict "$1")" in
-    gone) return 0 ;;
+  local verdict
+  verdict=$(fm_backend_kill_verdict "$1")
+  [ "$verdict" != gone ] || return 0
+  consume_operator_endpoint_retirement && return 0
+  case "$verdict" in
     unconfirmed)
-      echo "error: the endpoint $T for $ID is not confirmed gone after its kill; retaining every durable task record - rerun cleanup once the worker can be proved stopped" >&2
+      echo "error: the endpoint $T for $ID is not confirmed gone after its kill; retaining every durable task record - rerun cleanup once the worker can be proved stopped, or retire the record with bin/fm-retire-endpoint.sh if no backend can ever answer for it" >&2
       ;;
     *)
-      echo "error: the endpoint $T for $ID could not be killed at all; retaining every durable task record - rerun cleanup once the worker can be proved stopped" >&2
+      echo "error: the endpoint $T for $ID could not be killed at all; retaining every durable task record - rerun cleanup once the worker can be proved stopped, or retire the record with bin/fm-retire-endpoint.sh if no backend can ever answer for it" >&2
       ;;
   esac
   mark_pending_close_endpoint_unconfirmed
   return 1
+}
+
+# consume_operator_endpoint_retirement: honour one operator retirement for this
+# exact task incarnation. The record is written only by bin/fm-retire-endpoint.sh,
+# which a human runs after naming the task and typing its id back; nothing in
+# firstmate writes one, so no automatic path reaches this. It is consumed here
+# rather than left behind, so it authorizes exactly the one cleanup the operator
+# asked for and never a later automatic run.
+consume_operator_endpoint_retirement() {
+  local note="$STATE/$ID.endpoint-retired" noted_id noted_gen by at
+  [ -f "$note" ] && [ ! -L "$note" ] || return 1
+  noted_id=$(fm_meta_get "$note" id)
+  noted_gen=$(fm_meta_get "$note" spawn_gen)
+  by=$(fm_meta_get "$note" retired_by)
+  at=$(fm_meta_get "$note" retired_at)
+  [ "$noted_id" = "$ID" ] || return 1
+  [ "$noted_gen" = "$(fm_meta_get "$META" spawn_gen)" ] || return 1
+  [ -n "$by" ] && [ -n "$at" ] || return 1
+  rm -f "$note" || return 1
+  echo "warning: the endpoint $T for $ID was never confirmed gone; retiring its records on the retirement $by recorded at $at" >&2
 }
 
 # mark_pending_close_endpoint_unconfirmed: carry this refusal into the pending

@@ -65,7 +65,7 @@ After those checks, Firstmate closes the exact terminal and releases the exact w
 It never raw-deletes an Orca worktree.
 An accepted close is not by itself the verdict, because a close that answers positively and performs nothing is a real failure mode on another backend.
 Firstmate confirms the close with a separate read of the terminal and only then reports the endpoint gone, under the shared kill contract `fm_backend_kill` in `bin/fm-backend.sh` owns.
-Orca's typed JSON envelope is what makes that read possible: only a runtime that received the call answers `{"ok":false,...}` at all, so that envelope means the runtime is reachable and this terminal is not, while a transport failure that produces no envelope proves nothing and reports an unconfirmed stop.
+Orca's typed JSON envelope is what makes that read possible: only a runtime that received the call answers `{"ok":false,...}` at all, so that envelope proves the runtime is reachable - and absence is then read from an explicit not-found code and from nothing else, while every other envelope, and a transport failure that produces no envelope at all, proves nothing and reports an unconfirmed stop.
 
 ## Active limits
 
