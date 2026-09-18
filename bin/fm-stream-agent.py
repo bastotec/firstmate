@@ -703,6 +703,11 @@ class Agent:
                 1.0 + REREGISTER_JITTER * random.random())
         finally:
             self._register_lock.release()
+        # The command poll may be waiting out a failure of its own, and its
+        # wait was sized by an outage that is now over. Telling it the endpoint
+        # is back is what makes "steerable again" true at the same moment the
+        # fleet listing says so, rather than up to a backoff later.
+        self._poll_wake.set()
         try:
             self.publish_initial_state(timeout=15.0)
         except RuntimeError as exc:
@@ -710,11 +715,6 @@ class Agent:
             # frame lost here costs a moment of unreadability, not the recovery.
             sys.stderr.write("fm-stream-agent: re-registered but could not publish "
                              "state: %s\n" % exc)
-        # The command poll may be waiting out a failure of its own, and its
-        # wait was sized by an outage that is now over. Telling it the endpoint
-        # is back is what makes "steerable again" true at the same moment the
-        # fleet listing says so, rather than up to a backoff later.
-        self._poll_wake.set()
         sys.stderr.write("fm-stream-agent: re-registered endpoint %s with the hub at %s "
                          "after: %s\n" % (self.endpoint_id, self.hub.base_url, reason))
         return True
