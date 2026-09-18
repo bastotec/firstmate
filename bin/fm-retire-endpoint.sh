@@ -92,9 +92,11 @@ What this reaches, exactly:
   override is recorded with your name and the time, exactly like the retirement
   itself.
 
-  Every retirement appends one line to state/endpoint-retirements.log naming
-  the record, you, the time, and whether the override was used - written before
-  anything is removed, so nothing is ever removed without it.
+  Every run appends one line to state/endpoint-retirements.log recording your
+  ASSERTION - that you, at that time, asserted the named record should be
+  retired, and whether the override was used. It is written before anything is
+  removed, so nothing is ever removed without it; cleanup may still refuse
+  afterwards and retire nothing, and no outcome is written back to the line.
 
   Out of reach: a record in another home - a secondmate's own state directory -
   must be retired by running this command against that home. A child endpoint
@@ -265,12 +267,17 @@ retire_records_only() {  # <id>
   rm -f "$STATE/$id.turn-ended" "$STATE/$id.progress"
 }
 
-report_what_remains() {  # <id> <worktree>
-  local id=$1 wt=$2 remaining=()
+# The work gate refuses BEFORE any kill is attempted, so on this path the
+# endpoint was never closed and never read. The record that named it is now
+# gone, so this is the last place it is written down: an operator must not be
+# left unaware of the one thing that may still be executing.
+report_what_remains() {  # <id> <worktree> <endpoint>
+  local id=$1 wt=$2 endpoint=$3 remaining=()
+  echo "note: $id's records are retired and nothing on disk was touched; no kill was attempted, so its endpoint ${endpoint:-(none recorded)} was neither closed nor checked" >&2
   [ -z "$wt" ] || [ ! -d "$wt" ] || remaining+=("$wt")
   [ ! -d "$DATA/$id" ] || remaining+=("$DATA/$id")
   [ "${#remaining[@]}" -gt 0 ] || return 0
-  echo "note: $id's records are retired and nothing on disk was touched; these remain for you to handle:" >&2
+  echo "note: these remain for you to handle:" >&2
   printf '  %s\n' "${remaining[@]}" >&2
 }
 
@@ -282,17 +289,19 @@ WORK_GATE_EXIT=72
 
 # The durable answer to "who asserted this stop, and when". The retirement note
 # is consumed by the cleanup it authorizes and this command's own output is
-# only stderr, so without this line nothing on disk would say who retired a
-# record once the record itself is gone - the one question an incident review
-# asks about this command.
+# only stderr, so without this line nothing on disk would say who asserted a
+# record should be retired once the record itself is gone - the one question an
+# incident review asks about this command.
 #
-# Appended BEFORE anything is removed, and a failed append refuses that record
-# outright: removing durable records with no recorded author is exactly the
-# state this exists to prevent. One line per retirement, append-only, nothing
-# else - it is read by people, not by firstmate.
+# Each line records an ASSERTION, not a completed retirement: it has to be
+# appended BEFORE anything is removed, so that no record is ever removed with
+# no recorded author, and cleanup can still refuse afterwards and retire
+# nothing. A failed append refuses that record outright. One line per
+# assertion, append-only, with no outcome written back - it is read by people,
+# not by firstmate.
 RETIREMENT_LOG="$STATE/endpoint-retirements.log"
-record_retirement() {  # <id>
-  printf '%s\t%s\tretired_by=%s\toverride_runtime_refusal=%s\n' \
+record_retirement_assertion() {  # <id>
+  printf '%s\tasserted\t%s\tby=%s\toverride_runtime_refusal=%s\n' \
     "$retired_at" "$1" "$retired_by" "$OVERRIDE_RUNTIME_REFUSAL" >> "$RETIREMENT_LOG"
 }
 
@@ -301,9 +310,10 @@ retired_by=$(id -un 2>/dev/null || printf '%s' "${USER:-unknown}")
 status=0
 for id in "${IDS[@]}"; do
   worktree=$(fm_meta_get "$STATE/$id.meta" worktree)
-  if ! record_retirement "$id"; then
+  endpoint=$(fm_backend_target_of_meta "$STATE/$id.meta")
+  if ! record_retirement_assertion "$id"; then
     status=1
-    echo "error: $id's retirement could not be recorded in $RETIREMENT_LOG; nothing was retired - a record is never removed without a durable author" >&2
+    echo "error: the assertion that $id should be retired could not be recorded in $RETIREMENT_LOG; nothing was retired - a record is never removed without a durable author" >&2
     continue
   fi
   NOTE="$STATE/$id.endpoint-retired"
@@ -329,7 +339,7 @@ for id in "${IDS[@]}"; do
     echo "error: cleanup for $id refused (status $teardown_rc) for a reason this retirement does not answer for; nothing was retired - cleanup's own message above says what it is protecting" >&2
   elif retire_records_only "$id"; then
     echo "warning: cleanup for $id refused over the work in its worktree, before touching anything on disk; its records are retired on the retirement recorded for $retired_by at $retired_at" >&2
-    report_what_remains "$id" "$worktree"
+    report_what_remains "$id" "$worktree" "$endpoint"
   else
     status=1
     echo "error: $id's records could not be retired ($FM_BACKLOG_TRANSITION_ERROR); inspect $STATE/$id.meta and this task's backlog row before retrying" >&2

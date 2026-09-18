@@ -1146,13 +1146,23 @@ fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen
 }
 
 # Record the exact close a teardown is about to perform.
+#
+# Published already carrying endpoint=unconfirmed, because at publish time
+# nothing has yet proved this task's worker stopped: every refusal between here
+# and the endpoint gate - a failed worktree return, an unmatched Orca worktree
+# id, a delivery that never reached the parent channel - would otherwise leave
+# a record replay reads as an ordinary interrupted close and finishes, removing
+# the task record and closing the row for a worker nobody even asked to stop.
+# Teardown re-stages it to confirmed once its endpoint gate has passed, so an
+# interrupted close after a proven kill still replays; an interruption before
+# that is left for a human rather than completed.
 fm_backlog_close_marker_write() {  # <state-dir> <id> <data-dir> <spawn-gen> [flag...]
   local state=$1 id=$2 data=$3 spawn_gen=$4 marker tmp
   fm_backlog_directory_present "$state" "state directory" || return 1
   shift 4
   marker=$(fm_backlog_close_marker_path "$state" "$id") || return 1
   tmp="$state/.$id.backlog-close.${BASHPID:-$$}"
-  fm_backlog_close_marker_stage "$tmp" "$id" "$data" "$spawn_gen" "$state" 0 0 "$@" || return 1
+  fm_backlog_close_marker_stage "$tmp" "$id" "$data" "$spawn_gen" "$state" 0 1 "$@" || return 1
   fm_backlog_atomic_transition publish "$tmp" "$marker" "pending-close record" "$state" \
     || { rm -f "$tmp"; return 1; }
 }

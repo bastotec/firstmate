@@ -625,13 +625,18 @@ fm_backend_cmux_window_of_workspace() {  # <workspace_id> -> "<window_id> <count
 # window membership.
 #
 # Fails when the window enumeration, or any single window's list, did not run
-# or did not parse. A partial inventory proves nothing about what it did not
-# see, and its caller turns that failure into `unknown`.
+# or did not parse - including a window listing that parses but carries a
+# window without a usable id, which enumerates nothing while looking like an
+# answer. A partial inventory proves nothing about what it did not see, and its
+# caller turns that failure into `unknown`. An array with no windows at all is
+# a real answer: no windows, no workspaces.
 fm_backend_cmux_workspace_inventory() {
   local wins ids wid wss merged='[]'
   wins=$(fm_backend_cmux_cli list-windows --json --id-format uuids 2>/dev/null) || return 1
-  printf '%s' "$wins" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
-  ids=$(printf '%s' "$wins" | jq -r '.[] | .id // empty' 2>/dev/null) || return 1
+  printf '%s' "$wins" | jq -e '
+    type == "array" and (all(.[]; ((.id // "") | tostring) != ""))
+  ' >/dev/null 2>&1 || return 1
+  ids=$(printf '%s' "$wins" | jq -r '.[] | .id' 2>/dev/null) || return 1
   while IFS= read -r wid; do
     [ -n "$wid" ] || continue
     wss=$(fm_backend_cmux_cli workspace list --json --id-format uuids --window "$wid" 2>/dev/null) || return 1

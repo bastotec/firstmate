@@ -1226,6 +1226,28 @@ test_kill_label_path_refuses_when_only_the_title_is_still_live() {
   pass "fm_backend_cmux_kill: a live title under an id the record never named is unconfirmed, not gone"
 }
 
+# An inventory has to enumerate something to say anything. A window listing
+# that parses but carries a window with no usable id enumerates nothing, which
+# is a read that failed wearing the shape of an answer.
+test_kill_refuses_a_window_listing_with_no_usable_ids() {
+  local dir fb out
+  dir="$TMP_ROOT/kill-window-ids-unusable"; mkdir -p "$dir/responses"
+  # 1/2: target_ready's title lookup and id-for-label retry find nothing.
+  cmux_workspace_list_response "$dir" 1 "ffffffff-0000-0000-0000-000000000000" "other"
+  cmux_workspace_list_response "$dir" 2 "ffffffff-0000-0000-0000-000000000000" "other"
+  # 3: the windows listing parses as an array and carries no window id.
+  printf '%s' '[{"title":"main"}]' > "$dir/responses/3.out"
+  fb=$(make_cmux_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/backends/cmux.sh"; fm_backend_cmux_kill "aaaaaaaa-0000-0000-0000-000000000000:bbbbbbbb-1111-1111-1111-111111111111" "" fm-label' "$ROOT" 2>&1 )
+  expect_code 2 $? "a window listing with no usable ids must report unconfirmed, never a gone endpoint"
+  assert_contains "$out" "may still be running" \
+    "an inventory that enumerated nothing should say the worker may still be running"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-workspace' \
+    "kill should not close anything from an inventory that enumerated nothing"
+  pass "fm_backend_cmux_kill: a window listing with no usable ids is unconfirmed, not gone"
+}
+
 # The blind spot `workspace list --json` alone has: it answers for the CURRENT
 # window only, so a task whose window is not the current one is missing from it
 # while its worker runs. Absence has to be established against every window, or
@@ -1379,5 +1401,6 @@ test_kill_label_path_reports_gone_when_the_listing_omits_the_label
 test_kill_label_path_closes_its_own_live_workspace_instead_of_reporting_gone
 test_kill_label_path_refuses_when_only_the_title_is_still_live
 test_kill_does_not_report_gone_for_a_workspace_live_in_another_window
+test_kill_refuses_a_window_listing_with_no_usable_ids
 test_list_live_filters_by_title_prefix
 test_secondmate_spawn_refuses_cmux_backend

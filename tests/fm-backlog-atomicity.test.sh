@@ -1874,7 +1874,12 @@ test_completion_fails_loudly_and_records_the_close_it_still_owes() {
   pass "completion refuses to report success while its item is still open, and records what it owes"
 }
 
-test_interrupted_destructive_cleanup_leaves_a_recoverable_close() {
+# An interrupt during the worktree return lands BEFORE the endpoint is killed,
+# so nothing has proved the worker stopped. The close is published already
+# carrying that, and recovery honours it: finishing the close here would remove
+# the task record and mark the row done for a worker cleanup never even asked
+# to stop. The records are kept for a human instead.
+test_interrupted_destructive_cleanup_keeps_its_records_for_a_rerun() {
   local case_dir home id marker out rc=0
   id=atomic-close-destructive-interrupt-b8
   case_dir=$(make_home close-destructive-interrupt "$id")
@@ -1892,15 +1897,18 @@ test_interrupted_destructive_cleanup_leaves_a_recoverable_close() {
     "interrupted destructive cleanup lost the task incarnation"
   [ "$(row_state "$case_dir" "$id")" = in_flight ] \
     || fail "interrupted cleanup changed the backlog before recovery"
+  assert_grep 'endpoint=unconfirmed' "$marker" \
+    "a close published before the kill does not carry the unproven endpoint"
 
   out=$(run_bootstrap "$case_dir")
-  [ "$(row_state "$case_dir" "$id")" = "done" ] \
-    || fail "restart left interrupted cleanup In flight: $out"
-  assert_absent "$marker" "restart retained the recovered close marker"
-  assert_absent "$home/state/$id.meta" "restart retained the interrupted task record"
-  assert_contains "$out" "endpoint or local copy may remain" \
-    "restart silently hid potentially incomplete physical cleanup"
-  pass "restart recovers closes recorded before destructive cleanup"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "restart closed the row for a worker the interrupted cleanup never killed: $out"
+  assert_present "$home/state/$id.meta" \
+    "restart removed the record for a worker the interrupted cleanup never killed"
+  assert_present "$marker" "restart discarded the close a rerun still needs"
+  assert_contains "$out" "could not prove its worker stopped" \
+    "restart did not report why it left the cleanup for a rerun"
+  pass "an interrupt before the kill keeps every record for a rerun"
 }
 
 test_completion_refuses_a_close_target_symlinked_to_a_directory() {
@@ -2158,6 +2166,46 @@ SH
 # gate rather than through the shared kill contract, so it has to stamp the
 # pending close for itself - otherwise the one backend with the oldest refusal
 # is the one whose refusal a restart undoes.
+# The pending close is published BEFORE the endpoint is touched, and several
+# refusals sit between that publish and the kill - a treehouse return that
+# fails is the documented real one. A record published as an ordinary
+# interrupted close would be replayed at the next session start, removing the
+# task record and closing the row for a worker cleanup never even asked to
+# stop. So it is published already carrying the refusal, and only a passed
+# endpoint gate clears it.
+test_a_refusal_before_the_kill_leaves_its_pending_close_unconfirmed() {
+  local case_dir home id marker out rc=0
+  id=atomic-close-before-kill-b9
+  case_dir=$(make_home close-before-kill)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task_with_work "$case_dir" "$id"
+  marker="$home/state/$id.backlog-close"
+  # A treehouse return that fails, which aborts cleanup after the pending close
+  # is published and before any kill is attempted.
+  cat > "$case_dir/fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+echo "treehouse: pool is unavailable" >&2
+exit 1
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  # --force so the work gate, which refuses earlier, is not what stops this.
+  out=$(run_teardown "$case_dir" "$id" --force) || rc=$?
+  [ "$rc" -ne 0 ] || fail "cleanup reported success after its worktree return failed: $out"
+  assert_present "$marker" "cleanup discarded the pending close it had already published"
+  assert_grep 'endpoint=unconfirmed' "$marker" \
+    "the pending close does not carry the refusal, so a restart would replay it"
+  assert_not_contains "$out" "kill-window" "the endpoint was killed before the refusal"
+
+  # And replay honours it: the record stays and the row stays in flight.
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "session start closed the row for a worker cleanup never asked to stop: $out"
+  assert_present "$home/state/$id.meta" \
+    "session start removed the record for a worker cleanup never asked to stop: $out"
+  pass "a refusal before the kill leaves its pending close unconfirmed, and replay honours it"
+}
+
 test_a_herdr_refusal_marks_its_pending_close_too() {
   local case_dir home id marker meta out rc=0
   id=atomic-close-herdr-unconfirmed-b9
@@ -2325,6 +2373,12 @@ test_retiring_leaves_work_on_disk_byte_untouched() {
     "the retirement did not say the work was left alone"
   assert_contains "$out" "$case_dir/wt-$id" \
     "the retirement did not name the worktree it left behind"
+  # Cleanup refused before any kill, so the endpoint was never closed and never
+  # read - and the record that named it is now gone.
+  assert_contains "$out" "fmtest:fm-$id" \
+    "the retirement did not name the endpoint nothing closed"
+  assert_contains "$out" "neither closed nor checked" \
+    "the retirement did not say the endpoint was never closed or checked"
   pass "a retirement leaves work on disk byte-untouched and names what remains"
 }
 
@@ -2423,6 +2477,13 @@ test_a_refusal_that_is_not_the_work_gate_retires_nothing() {
     || fail "a refusal this retirement does not answer for still moved the row: $out"
   assert_contains "$out" "nothing was retired" \
     "the refusal should say plainly that nothing was retired"
+  # The line is written before cleanup runs and is never written back to, so it
+  # records what the operator asserted rather than a retirement that happened:
+  # here the assertion stands and the record does too.
+  assert_grep "	$id	" "$home/state/endpoint-retirements.log" \
+    "the operator's assertion was not recorded before cleanup refused"
+  assert_present "$home/state/$id.meta" \
+    "the record the assertion named was removed by a refused run: $out"
   pass "a refusal other than the work gate stops the retirement"
 }
 
@@ -2573,8 +2634,12 @@ test_a_retirement_records_its_author_durably() {
   line=$(grep -F "	$id	" "$log") \
     || fail "the retirement log does not name the record it retired: $(cat "$log")"
   case "$line" in
-    *"retired_by=$(id -un)"*) : ;;
+    *"by=$(id -un)"*) : ;;
     *) fail "the retirement log does not name who asserted it: $line" ;;
+  esac
+  case "$line" in
+    *"	asserted	"*) : ;;
+    *) fail "the log line does not read as an assertion: $line" ;;
   esac
   case "$line" in
     *override_runtime_refusal=0*) : ;;
@@ -3703,7 +3768,7 @@ test_trailing_newline_data_path_fails_closed
 test_control_character_data_path_is_refused_before_cleanup
 test_completion_preserves_records_when_meta_removal_fails
 test_completion_fails_loudly_and_records_the_close_it_still_owes
-test_interrupted_destructive_cleanup_leaves_a_recoverable_close
+test_interrupted_destructive_cleanup_keeps_its_records_for_a_rerun
 test_completion_refuses_a_close_target_symlinked_to_a_directory
 test_completion_fails_when_its_close_marker_cannot_be_removed
 test_recovery_retries_when_a_close_marker_cannot_be_removed
@@ -3715,6 +3780,7 @@ test_recovery_ignores_a_symlinked_worker_record
 test_recovery_replays_a_close_an_interrupted_cleanup_left_open
 test_completion_marks_its_pending_close_when_the_worker_cannot_be_proved_stopped
 test_a_herdr_refusal_marks_its_pending_close_too
+test_a_refusal_before_the_kill_leaves_its_pending_close_unconfirmed
 test_no_automatic_path_retires_an_unanswerable_record
 test_retiring_refuses_wildcards_and_unconfirmed_ids
 test_retiring_records_who_asserted_it_and_when

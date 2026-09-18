@@ -3071,6 +3071,29 @@ mark_pending_close_endpoint_unconfirmed() {
   fi
 }
 
+# mark_pending_close_endpoint_confirmed: the other half of the publish-time
+# stamp. A pending close is published carrying endpoint=unconfirmed
+# (bin/fm-backlog-transition-lib.sh's fm_backlog_close_marker_write), so this
+# clears it once - and only once - this task's endpoint gate has passed and the
+# worker is proved stopped. An interrupted close after that point still replays
+# at the next session start, exactly as it always did; one interrupted before
+# it is left for a human, because nothing had proved the worker stopped yet.
+#
+# A failed clear is reported, not fatal: it leaves the close for a rerun rather
+# than for replay, which is the safe direction.
+mark_pending_close_endpoint_confirmed() {
+  local marker
+  [ "$BACKLOG_CLOSED" = 1 ] || return 0
+  marker=$(fm_backlog_close_marker_path "$STATE" "$ID") || return 0
+  [ -e "$marker" ] || [ -L "$marker" ] || return 0
+  if ! fm_backlog_close_marker_restage "$STATE" "$marker" "$ID" "$DATA" \
+      "$META_SPAWN_GEN" 0 0 \
+      "${BACKLOG_TRANSITION_FLAGS[@]+"${BACKLOG_TRANSITION_FLAGS[@]}"}" \
+      "${BACKLOG_DONE_ARGS[@]+"${BACKLOG_DONE_ARGS[@]}"}"; then
+    echo "warning: the pending backlog close for $ID could not be marked endpoint-confirmed ($FM_BACKLOG_TRANSITION_ERROR); an interrupted cleanup will be left for a rerun rather than replayed" >&2
+  fi
+}
+
 # require_child_endpoint_gone: apply the shared kill contract
 # (bin/fm-backend.sh's fm_backend_kill) to one child endpoint during forced
 # firstmate-home cleanup. Only a confirmed-gone endpoint lets this sweep go on
@@ -3599,6 +3622,7 @@ if [ "$BACKEND" = herdr ]; then
     fi
   fi
 fi
+mark_pending_close_endpoint_confirmed
 if [ "$KIND" != secondmate ]; then
   if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
       "$SCRIPT_DIR/fm-inactive-reconcile.sh" report "$ID"; then
