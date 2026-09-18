@@ -17,14 +17,17 @@
 # score runs detached from bin/fm-watch.sh at status-signal time and is never
 # waited on; bin/fm-wake-drain.sh calls present, which reads local files only and
 # never touches the network.
-# score reads each status file from its own per-file byte cursor, starting a file
-# it has never seen at the drain's presentation cursor so it scores only lines
-# the supervisor has not been shown yet, and only complete newline-terminated
-# lines.
-# It sends at most FM_ASK_TRIAGE_MAX_LINES (default 20) of the newest new lines
-# per pass to bin/ask-triage/jev-rank.mjs under a hard bound of
-# FM_ASK_TRIAGE_TIMEOUT seconds (default 6), and flags a line whose probability
-# is at least FM_ASK_TRIAGE_THRESHOLD (default 0.60).
+# score reads each status file from the later of its own per-file byte cursor
+# and the drain's presentation cursor, so it scores only lines the supervisor
+# has not been shown yet, and only complete newline-terminated lines.
+# A file it has never seen, or whose identity changed, starts at the
+# presentation cursor alone; with that unreadable too it starts at the file end.
+# Per pass it sends at most FM_ASK_TRIAGE_MAX_LINES (default 20) of each status
+# file's newest new complete working: lines to bin/ask-triage/jev-rank.mjs;
+# older new lines past that cap are skipped, never scored late.
+# The helper runs under a hard bound of FM_ASK_TRIAGE_TIMEOUT seconds (default
+# 6), and a line is flagged when its probability is at least
+# FM_ASK_TRIAGE_THRESHOLD (default 0.60).
 # A single non-blocking lock lets one scorer run at a time; a running scorer
 # re-scans before it exits, so a line appended during its run is not stranded.
 #
@@ -139,7 +142,7 @@ log_usage() {  # <calls> <in> <out> <ms> <outcome>
 # Collect new complete working: lines from one status file into $CANDIDATES as
 # "<task>\t<id>\t<line>" rows and stage its advanced cursor in $CURSOR_UPDATES.
 collect_file() {  # <status-file>
-  local f=$1 task cursor ident cur_ident offset size span end line id pos
+  local f=$1 task cursor ident cur_ident offset presented size span end line id pos file_rows=
   task=${f##*/}; task=${task%.status}
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
   cursor="$DIR/$task.cursor"
@@ -150,11 +153,14 @@ collect_file() {  # <status-file>
   ident=; offset=
   if [ -f "$cursor" ]; then IFS=$(printf '\t') read -r ident offset < "$cursor" || true; fi
   case "$offset" in ''|*[!0-9]*) ident= ;; esac
+  presented=$(status_presentation_cursor_offset "$f" 2>/dev/null) || presented=
+  case "$presented" in *[!0-9]*) presented= ;; esac
   if [ -z "$ident" ] || [ "$ident" != "$cur_ident" ] || [ "$offset" -gt "$size" ]; then
-    offset=$(status_presentation_cursor_offset "$f" 2>/dev/null) || offset=$size
-    case "$offset" in ''|*[!0-9]*) offset=$size ;; esac
-    [ "$offset" -le "$size" ] || offset=$size
+    offset=${presented:-$size}
+  elif [ -n "$presented" ] && [ "$presented" -gt "$offset" ]; then
+    offset=$presented
   fi
+  [ "$offset" -le "$size" ] || offset=$size
   [ "$offset" -lt "$size" ] || return 0
   span=$(_fm_status_read_span "$f" "$offset" "$((size - offset))" && printf x) || return 0
   span=${span%x}
@@ -169,10 +175,11 @@ collect_file() {  # <status-file>
     pos=$((pos + ${#line} + 1))
     line=${line//$'\r'/}
     [ "$(status_line_verb "$line")" = working ] || continue
-    CANDIDATES="$CANDIDATES$task"$'\t'"$id"$'\t'"$line"$'\n'
+    file_rows="$file_rows$task"$'\t'"$id"$'\t'"$line"$'\n'
   done <<EOF
 $end
 EOF
+  [ -z "$file_rows" ] || CANDIDATES="$CANDIDATES$(printf '%s' "$file_rows" | tail -n "$MAX_LINES")"$'\n'
   CURSOR_UPDATES="$CURSOR_UPDATES$task"$'\t'"$cur_ident"$'\t'"$((offset + ${#end} + 1))"$'\n'
 }
 
@@ -198,7 +205,7 @@ score_once() {  # -> 0 when it found lines to score
   done
   [ -n "$CURSOR_UPDATES" ] || return 1
   if [ -z "$CANDIDATES" ]; then commit_cursors; return 1; fi
-  rows=$(printf '%s' "$CANDIDATES" | tail -n "$MAX_LINES")
+  rows=${CANDIDATES%$'\n'}
   input=$(mktemp "$DIR/.input.XXXXXX") || return 1
   printf '%s\n' "$rows" | cut -f3- > "$input"
   if out=$(run_helper "$input" 2>/dev/null); then :; else

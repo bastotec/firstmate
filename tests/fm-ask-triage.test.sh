@@ -239,6 +239,38 @@ test_scores_only_unpresented_complete_lines() {
   pass "the scorer starts at the drain's presentation point and reads only complete lines"
 }
 
+test_never_scores_a_line_the_drain_already_presented() {
+  local dir
+  dir=$(new_case presented-late)
+  printf 'working: rebased onto main\n' > "$dir/state/t9.status"
+  triage "$dir" score || fail "first score exited nonzero"
+  # The watcher was down for this append, so only the drain sees it.
+  printf 'working: if you would rather keep the old flag, say so\n' >> "$dir/state/t9.status"
+  append_wake "$dir/state" signal t9.status "signal: t9.status" || fail "queueing the wake failed"
+  drain "$dir" "$dir/drain.out" || fail "drain failed"
+  grep -F 'if you would rather keep the old flag, say so' "$dir/drain.out" >/dev/null \
+    || fail "setup error: the drain did not present the ask: $(cat "$dir/drain.out")"
+  printf 'working: tests pass\n' >> "$dir/state/t9.status"
+  : > "$dir/sent.log"
+  triage "$dir" score || fail "second score exited nonzero"
+  [ "$(cat "$dir/sent.log")" = 'working: tests pass' ] \
+    || fail "expected only the unpresented line to be sent, got: $(cat "$dir/sent.log")"
+  [ "$(pending_count "$dir")" -eq 0 ] || fail "a line the drain already presented was flagged late"
+  pass "a known file resumes at the later of its own cursor and the drain's, so a presented line is never scored late"
+}
+
+test_line_cap_keeps_each_files_newest_lines() {
+  local dir
+  dir=$(new_case per-file-cap)
+  printf 'working: a1\nworking: a2\nworking: a3, say so\n' > "$dir/state/a.status"
+  printf 'working: b1\nworking: b2\nworking: b3, say so\n' > "$dir/state/b.status"
+  triage "$dir" score FM_ASK_TRIAGE_MAX_LINES=2 || fail "score exited nonzero"
+  [ "$(cat "$dir/sent.log")" = "$(printf 'working: a2\nworking: a3, say so\nworking: b2\nworking: b3, say so')" ] \
+    || fail "expected each file's two newest lines, got: $(cat "$dir/sent.log")"
+  [ "$(pending_count "$dir")" -eq 2 ] || fail "expected both files' newest asks flagged, got $(pending_count "$dir")"
+  pass "the line cap applies per status file and keeps that file's newest lines"
+}
+
 test_held_while_away_daemon_owns_the_drain() {
   local dir
   dir=$(new_case away)
@@ -294,5 +326,7 @@ test_drain_never_runs_the_scorer
 test_failures_leave_the_view_unchanged
 test_inert_without_key_or_runtime
 test_scores_only_unpresented_complete_lines
+test_never_scores_a_line_the_drain_already_presented
+test_line_cap_keeps_each_files_newest_lines
 test_held_while_away_daemon_owns_the_drain
 test_watcher_starts_the_scorer_without_waiting
