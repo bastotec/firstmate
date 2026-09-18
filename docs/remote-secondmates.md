@@ -17,7 +17,7 @@ Use ordinary public-key authentication, strict host-key verification, and a dedi
 Do not enable agent forwarding for Firstmate.
 `fm-on.sh` also disables agent forwarding, forwarding setup, and configured `SendEnv` patterns on every call, and arms bounded SSH dead-peer detection so a vanished host (a reboot, a dropped link) fails within a bounded window instead of hanging indefinitely; its [script header](../bin/fm-on.sh) owns the keepalive defaults and environment overrides.
 
-Clone Firstmate on the remote host at an absolute code-root path.
+Clone Firstmate on the remote host at an absolute code-root path, from the firstmate fork's network URL; provisioning refuses a copy whose `origin` is a local path or `file://` URL (see [Provision a route](#provision-a-route)).
 Expose that clone's fixed entrypoint on the account's non-interactive SSH `PATH`, for example:
 
 ```sh
@@ -139,6 +139,8 @@ The project's registered delivery mode still comes from this machine's `data/pro
 
 The seed records `host:`, `root:`, and `home:` in `data/secondmates.md`, gates the host on readiness, sends a bounded manifest, and lets the remote host clone its own Firstmate home and project origins.
 In the primary home, its durable registration effects are limited to that route and the charter brief under `data/<id>`; launch records are created only when the secondmate is launched.
+That home is cloned from the host's own Firstmate copy, so provisioning repoints it at the route that copy delivers to; otherwise a validated change to the firstmate repo made from that home would be pushed into a directory on its own host and never open a pull request.
+The parent's sync still imports a commit into the home from that copy by path, before trying `origin`, so nothing about handing it a commit changes.
 Readiness starts with a read-only check; when that check reports a gap, it runs `--fix` and then a second read-only check whose verdict decides, so the operator never has to run the repair by hand and a repair is never trusted on its own word.
 A host that stays red prints the doctor's remaining gaps and their operator steps, restores the registry, and creates nothing on the remote host.
 It does not copy project trees or the primary process environment.

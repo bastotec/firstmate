@@ -107,6 +107,23 @@ git init -q --bare "$REMOTE_ORIGIN"
 git -C "$REMOTE_ROOT" remote add origin "file://$REMOTE_ORIGIN"
 git -C "$REMOTE_ROOT" push -q -u origin main
 git --git-dir="$REMOTE_ORIGIN" symbolic-ref HEAD refs/heads/main
+# The code root's origin is the delivery route every home cloned from it takes,
+# and a route on the local filesystem - file:// included - is refused as one, so
+# it names a forge host. The remote update case below really fetches it, so this
+# repository alone gets a transport that serves that host from the local bare
+# repository; host-side jobs run under env -i, so it lives in this repository's
+# config rather than in the environment, and FM_SSH_BIN is untouched.
+REMOTE_FORGE_ROUTE="forge.test:$REMOTE_ORIGIN"
+cat > "$FAKEBIN/forge-ssh" <<SH
+#!/usr/bin/env bash
+# git runs this as ssh for $REMOTE_FORGE_ROUTE: host, then the remote git command.
+eval "set -- \${!#}"
+exec '$(command -v git)' "\${1#git-}" "\$2"
+SH
+chmod +x "$FAKEBIN/forge-ssh"
+git -C "$REMOTE_ROOT" config core.sshCommand "$FAKEBIN/forge-ssh"
+git -C "$REMOTE_ROOT" config ssh.variant simple
+git -C "$REMOTE_ROOT" remote set-url origin "$REMOTE_FORGE_ROUTE"
 
 # One remote-backed direct-PR project. The remote home clones its origin, never
 # the primary working tree.
@@ -974,6 +991,13 @@ if FM_SECONDMATE_CHARTER='Own iOS delivery on the build Mac.' \
   fail "remote seed allowed an existing id to move to another home"
 fi
 assert_grep "home: $REMOTE_HOME" "$PARENT/data/secondmates.md" "refused remote reassignment changed the durable route"
+# The home is cloned from that host's own Firstmate copy, which would leave the
+# copy's PATH as the home's delivery route for the firstmate repo itself: a
+# validated firstmate change made there would be pushed into that directory and
+# never open a pull request, with the absent PR as the only symptom. It must end
+# up on the route the code root delivers to.
+[ "$(git -C "$REMOTE_HOME" remote get-url origin)" = "$REMOTE_FORGE_ROUTE" ] \
+  || fail "the remote home delivers firstmate changes to $(git -C "$REMOTE_HOME" remote get-url origin), not the route its code root uses"
 pass "remote seed registers the route and provisions the whole home and project clone on that host"
 
 PROTOCOL_HOME="$TMP_ROOT/protocol-home"
