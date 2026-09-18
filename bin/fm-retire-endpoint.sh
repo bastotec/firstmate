@@ -21,14 +21,20 @@
 # their name and the time they made it.
 #
 # Retiring a record is RECORD bookkeeping and nothing else. Cleanup runs first,
-# because when its own gates allow it, it does the whole job properly. When
-# cleanup refuses - unlanded work in the worktree is the ordinary reason - the
-# records are still retired and NOTHING on disk is touched: no worktree is
-# returned, no branch deleted, no file stashed or discarded. What remains is
-# named in the output, because an operator who retires a record must never
-# thereby lose work, and must never be left unaware that work is still sitting
-# there. That is also why no --force is accepted or forwarded here: discarding
-# work is a different authority, exercised with a different command.
+# because when its own gates allow it, it does the whole job properly. Exactly
+# one of its refusals is proceeded past: the work-protection gate, which runs
+# before anything on disk has been touched. Work on disk is not the record this
+# retires, so the records are retired and the worktree, its uncommitted work,
+# the task branch and the task's data are all left exactly as they were, and
+# named in the output - an operator who retires a record must never thereby
+# lose work, nor be left unaware that work is still sitting there. That is also
+# why no --force is accepted or forwarded here: discarding work is a different
+# authority, exercised with a different command.
+#
+# Every OTHER refusal stands and stops the retirement, because each protects
+# something no retirement has a say over: an outcome that never reached the
+# parent channel and must stay retryable, a backlog transition that cannot be
+# replayed, a runtime that still answers.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -64,23 +70,30 @@ that assertion for you, and --force does not make it either.
 
 What this reaches, exactly:
 
-  Cleanup runs first and finishes the job whenever its own gates allow. If
-  cleanup refuses - unlanded work in the worktree is the ordinary reason - the
-  records are retired anyway and NOTHING on disk is touched. The worktree, any
-  uncommitted work in it, the task branch and the task's data are left exactly
-  as they are, and are named in the output. Dealing with them is then yours,
-  under your own authority: this command never discards work, and never passes
-  --force to anything.
+  Cleanup runs first and finishes the job whenever its own gates allow. The one
+  refusal this proceeds past is cleanup's work-protection gate - unlanded or
+  uncommitted work in the worktree - which refuses before anything on disk has
+  been touched. The records are then retired and NOTHING on disk is touched:
+  the worktree, any uncommitted work in it, the task branch and the task's data
+  are left exactly as they are, and are named in the output. Dealing with them
+  is then yours, under your own authority: this command never discards work,
+  and never passes --force to anything.
 
-  --override-runtime-refusal additionally overrides a RUNTIME's own refusal:
-  a herdr server that cannot be reached at all, or a child endpoint whose kill
-  nothing answered during forced home cleanup. Without the flag those refusals
-  stand and nothing is retired. The override is recorded with your name and the
-  time, exactly like the retirement itself.
+  Every other refusal stands and nothing is retired - an outcome that has not
+  reached the parent channel, a backlog transition that cannot be replayed, a
+  runtime that still answers. Read cleanup's own message and resolve it.
 
-  A record that lives in another home - a secondmate's own state directory -
-  is out of reach from here even with the flag; run this command against that
-  home to retire it.
+  --override-runtime-refusal additionally overrides a RUNTIME's own refusal to
+  answer for this task's endpoint: a herdr server that cannot be reached at
+  all. Without the flag that refusal stands and nothing is retired. The
+  override is recorded with your name and the time, exactly like the retirement
+  itself.
+
+  Out of reach: a record in another home - a secondmate's own state directory -
+  must be retired by running this command against that home. A child endpoint
+  refused during a parent's forced home cleanup is not reachable at all, from
+  here or from that home, because nothing can leave a retirement standing for
+  that sweep to read.
 
 Every id must be named exactly; wildcards and all-records forms are refused.
 EOF
@@ -130,7 +143,16 @@ cleanup_note() {
   [ -z "$NOTE" ] || rm -f "$NOTE"
   NOTE=
 }
-trap cleanup_note EXIT INT TERM
+# An interrupt must ABORT the retirement, not just tidy up after it: without
+# the exit, bash runs the handler and carries on into the record removal, so
+# the operator's own Ctrl-C would be what retires the records.
+abort_on_signal() {
+  cleanup_note
+  echo "error: interrupted; nothing further was retired" >&2
+  exit 130
+}
+trap cleanup_note EXIT
+trap abort_on_signal INT TERM
 
 echo "About to retire the durable records of:" >&2
 for id in "${IDS[@]}"; do
@@ -149,16 +171,59 @@ set +f
 # Record bookkeeping only: the task record and its backlog row, through the
 # same transition that owns that pairing for cleanup. Nothing here reads or
 # writes anything outside the state directory.
+# The deliverable a closed or retained row carries, derived from this task's
+# own record exactly as cleanup derives it.
+RETIRE_DONE_ARGS=()
+retirement_done_args() {  # <id>
+  local id=$1 meta="$STATE/$id.meta" kind mode pr data_relative
+  RETIRE_DONE_ARGS=()
+  kind=$(fm_meta_get "$meta" kind)
+  mode=$(fm_meta_get "$meta" mode)
+  pr=$(fm_meta_get "$meta" pr)
+  case "$kind" in
+    scout)
+      data_relative=$(fm_backlog_data_relative "$DATA") || return 1
+      RETIRE_DONE_ARGS=(--report "$data_relative/$id/report.md")
+      ;;
+    *)
+      if [ "$mode" = local-only ]; then
+        RETIRE_DONE_ARGS=(--note "local main")
+      elif [ -n "$pr" ]; then
+        RETIRE_DONE_ARGS=(--pr "$pr")
+      fi
+      ;;
+  esac
+}
+
+# A row that could not be READ is not an absent row: removing the task record
+# behind one would leave the row asserting work in flight that nothing is
+# doing, which is this change's own defect wearing the other face. Only a
+# not-found answer is absence. A captain-held row takes the retain transition
+# with its deliverable, exactly as cleanup and the session-start replay do, so
+# a retirement never quietly answers the captain's own question.
 retire_records_only() {  # <id>
-  local id=$1 meta="$STATE/$id.meta" marker
+  local id=$1 meta="$STATE/$id.meta" marker mode=close probe_rc=0 marker_flags=()
   marker=$(fm_backlog_close_marker_path "$STATE" "$id") || return 1
-  if fm_backlog_row_probe "$DATA" "$id"; then
-    fm_backlog_close_marker_write "$STATE" "$id" "$DATA" \
-      "$(fm_meta_get "$meta" spawn_gen)" || return 1
-    fm_backlog_atomic_transition close "$meta" "$marker" "$DATA" "$id" "$STATE" || return 1
-  else
+  retirement_done_args "$id" || return 1
+  fm_backlog_row_probe "$DATA" "$id" || probe_rc=$?
+  if [ "$probe_rc" -ne 0 ]; then
+    if [ "$FM_BACKLOG_ROW_RESULT" != not_found ]; then
+      FM_BACKLOG_TRANSITION_ERROR=${FM_BACKLOG_ROW_ERROR:-the backlog row could not be read}
+      return 1
+    fi
     fm_backlog_atomic_transition remove "$meta" "task record" "$STATE" || return 1
+    rm -f "$STATE/$id.turn-ended" "$STATE/$id.progress"
+    return 0
   fi
+  if [ "${FM_BACKLOG_ROW_STATE%% *}" != done ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" = captain ]; then
+    mode=retain
+    marker_flags=(--retain)
+  fi
+  fm_backlog_close_marker_write "$STATE" "$id" "$DATA" "$(fm_meta_get "$meta" spawn_gen)" \
+    "${marker_flags[@]+"${marker_flags[@]}"}" \
+    "${RETIRE_DONE_ARGS[@]+"${RETIRE_DONE_ARGS[@]}"}" || return 1
+  fm_backlog_atomic_transition "$mode" "$meta" "$marker" "$DATA" "$id" "$STATE" \
+    "${RETIRE_DONE_ARGS[@]+"${RETIRE_DONE_ARGS[@]}"}" || return 1
   rm -f "$STATE/$id.turn-ended" "$STATE/$id.progress"
 }
 
@@ -171,9 +236,11 @@ report_what_remains() {  # <id> <worktree>
   printf '  %s\n' "${remaining[@]}" >&2
 }
 
-# bin/fm-teardown.sh's own status for a runtime refusal this retirement did
-# not override, which is the one refusal that must retire nothing.
+# bin/fm-teardown.sh's own statuses: the runtime refusal this retirement did
+# not override, and the work-protection refusal - the only one it proceeds
+# past, raised before anything on disk has been touched.
 RUNTIME_REFUSAL_EXIT=3
+WORK_GATE_EXIT=4
 
 retired_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 retired_by=$(id -un 2>/dev/null || printf '%s' "${USER:-unknown}")
@@ -198,8 +265,11 @@ for id in "${IDS[@]}"; do
   elif [ "$teardown_rc" = "$RUNTIME_REFUSAL_EXIT" ]; then
     status=1
     echo "error: $id's runtime refused to answer and this retirement did not override that; nothing was retired - rerun with --override-runtime-refusal if that runtime can never answer for this record again" >&2
+  elif [ "$teardown_rc" != "$WORK_GATE_EXIT" ]; then
+    status=1
+    echo "error: cleanup for $id refused (status $teardown_rc) for a reason this retirement does not answer for; nothing was retired - cleanup's own message above says what it is protecting" >&2
   elif retire_records_only "$id"; then
-    echo "warning: cleanup for $id did not complete; its records are retired on the retirement recorded for $retired_by at $retired_at, and nothing on disk was touched" >&2
+    echo "warning: cleanup for $id refused over the work in its worktree, before touching anything on disk; its records are retired on the retirement recorded for $retired_by at $retired_at" >&2
     report_what_remains "$id" "$worktree"
   else
     status=1

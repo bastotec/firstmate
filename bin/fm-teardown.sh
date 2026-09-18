@@ -2990,37 +2990,47 @@ require_task_endpoint_gone() {  # <kill-status>
 # every other and name the flag that answers it rather than guessing.
 FM_TEARDOWN_RUNTIME_REFUSAL_EXIT=3
 
-consume_operator_retirement() {  # <state-dir> <id> <meta> <require-override: 0|1>
-  local state=$1 id=$2 meta=$3 require_override=$4
-  local note="$state/$id.endpoint-retired" noted_id noted_gen by at override
-  [ -f "$note" ] && [ ! -L "$note" ] || return 1
-  noted_id=$(fm_meta_get "$note" id)
-  noted_gen=$(fm_meta_get "$note" spawn_gen)
-  by=$(fm_meta_get "$note" retired_by)
-  at=$(fm_meta_get "$note" retired_at)
-  override=$(fm_meta_get "$note" runtime_refusal_override)
-  [ "$noted_id" = "$id" ] || return 1
-  [ "$noted_gen" = "$(fm_meta_get "$meta" spawn_gen)" ] || return 1
-  [ -n "$by" ] && [ -n "$at" ] || return 1
-  [ "$require_override" = 0 ] || [ "$override" = 1 ] || return 1
-  rm -f "$note" || return 1
-  OPERATOR_RETIREMENT_BY=$by
-  OPERATOR_RETIREMENT_AT=$at
+# The work-protection refusal, raised before anything on disk has been touched,
+# gets its own status - but only when this run is an operator retirement, which
+# is the only caller that can tell the statuses apart. Every ordinary teardown
+# keeps refusing with its plain status, so the refusal an operator reads and
+# every existing caller sees is unchanged.
+#
+# It is the ONE refusal a retirement may proceed past, because work on disk is
+# not the record it retires. Every other refusal protects something a
+# retirement has no say over - an undelivered outcome, an unreplayable backlog
+# - and keeps its plain status so the retirement stops there.
+FM_TEARDOWN_WORK_GATE_EXIT=4
+work_gate_refusal_exit() {
+  if task_operator_retirement; then
+    exit "$FM_TEARDOWN_WORK_GATE_EXIT"
+  fi
+  exit 1
 }
 
-# This task's own retirement, cached: the herdr preflight and the endpoint
-# gates can both reach it, and the note is only there to be consumed once.
+# Read once and consumed on first use, because the herdr preflight and the
+# endpoint gate can both reach it and a retirement authorizes exactly one
+# cleanup.
 OPERATOR_RETIREMENT_STATE=unread
 OPERATOR_RETIREMENT_BY=
 OPERATOR_RETIREMENT_AT=
 OPERATOR_RETIREMENT_OVERRIDE=0
 task_operator_retirement() {  # [runtime-refusal]
+  local note="$STATE/$ID.endpoint-retired" noted_id noted_gen
   if [ "$OPERATOR_RETIREMENT_STATE" = unread ]; then
-    OPERATOR_RETIREMENT_OVERRIDE=$(fm_meta_get "$STATE/$ID.endpoint-retired" runtime_refusal_override)
-    if consume_operator_retirement "$STATE" "$ID" "$META" 0; then
-      OPERATOR_RETIREMENT_STATE=present
-    else
-      OPERATOR_RETIREMENT_STATE=absent
+    OPERATOR_RETIREMENT_STATE=absent
+    if [ -f "$note" ] && [ ! -L "$note" ]; then
+      noted_id=$(fm_meta_get "$note" id)
+      noted_gen=$(fm_meta_get "$note" spawn_gen)
+      OPERATOR_RETIREMENT_BY=$(fm_meta_get "$note" retired_by)
+      OPERATOR_RETIREMENT_AT=$(fm_meta_get "$note" retired_at)
+      OPERATOR_RETIREMENT_OVERRIDE=$(fm_meta_get "$note" runtime_refusal_override)
+      if [ "$noted_id" = "$ID" ] \
+        && [ "$noted_gen" = "$(fm_meta_get "$META" spawn_gen)" ] \
+        && [ -n "$OPERATOR_RETIREMENT_BY" ] && [ -n "$OPERATOR_RETIREMENT_AT" ] \
+        && rm -f "$note"; then
+        OPERATOR_RETIREMENT_STATE=present
+      fi
     fi
   fi
   [ "$OPERATOR_RETIREMENT_STATE" = present ] || return 1
@@ -3055,15 +3065,9 @@ mark_pending_close_endpoint_unconfirmed() {
 # to erase that child's durable identity records; a kill nothing proved landed
 # stops the sweep with the adapter's own reason, exactly as this sweep's own
 # Herdr branch already does with fm_backend_herdr_endpoint_confirmed_gone.
-require_child_endpoint_gone() {  # <child-id> <child-target> <kill-status> <child-state-dir>
+require_child_endpoint_gone() {  # <child-id> <child-target> <kill-status>
   case "$(fm_backend_kill_verdict "$3")" in
     gone) return 0 ;;
-  esac
-  if consume_operator_retirement "${4:-}" "$1" "${4:-}/$1.meta" 1; then
-    echo "warning: the endpoint $2 for child $1 was never confirmed gone; erasing its records on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, which overrode the runtime's refusal" >&2
-    return 0
-  fi
-  case "$(fm_backend_kill_verdict "$3")" in
     unconfirmed)
       echo "error: the endpoint $2 for child $1 is not confirmed gone after its kill; retaining that child's durable identity records and stopping forced cleanup" >&2
       ;;
@@ -3114,11 +3118,11 @@ cleanup_firstmate_home_children() {
         # cleanup must verify child tabs as that child home, not the parent.
         ( unset FM_ROOT_OVERRIDE; FM_HOME=$home FM_ROOT=$home fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" ) \
           && child_kill_rc=0 || child_kill_rc=$?
-        require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" "$sub_state" || return 1
+        require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" || return 1
       else
         fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" \
           && child_kill_rc=0 || child_kill_rc=$?
-        require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" "$sub_state" || return 1
+        require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" || return 1
       fi
     fi
     if [ "$child_kind" = secondmate ]; then
@@ -3317,10 +3321,10 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   else
     safety_rc=$?
     if [ "$safety_rc" -eq "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED" ]; then
-      cleanup_stale_lock_for_safety_check "$WT" || exit 1
-      validate_worktree_teardown_safety || exit 1
+      cleanup_stale_lock_for_safety_check "$WT" || work_gate_refusal_exit
+      validate_worktree_teardown_safety || work_gate_refusal_exit
     else
-      exit 1
+      work_gate_refusal_exit
     fi
   fi
 fi

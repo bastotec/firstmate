@@ -2359,6 +2359,141 @@ test_retiring_needs_the_named_flag_to_override_a_runtime_refusal() {
   pass "only the named override flag retires a record whose runtime refused, and it is recorded"
 }
 
+# The operator's own abort must abort the retirement. A handler that only
+# tidied up let bash carry on into the record removal, so Ctrl-C was what
+# retired the records.
+test_an_interrupt_mid_retirement_retires_nothing() {
+  local case_dir home id real pid script_pid waited=0
+  id=atomic-retire-interrupt-b9
+  case_dir=$(make_home retire-interrupt)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task_with_work "$case_dir" "$id"
+  real=$(command -v tasks-axi)
+  cat > "$case_dir/fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = show ] && [ -e "$case_dir/stall" ]; then
+  : > "$case_dir/stalling"
+  sleep 3
+fi
+exec "$real" "\$@"
+SH
+  chmod +x "$case_dir/fakebin/tasks-axi"
+  : > "$case_dir/stall"
+
+  printf '%s\n' "$id" | run_retire "$case_dir" "$id" > "$case_dir/retire.out" 2>&1 &
+  pid=$!
+  while [ "$waited" -lt 100 ]; do
+    [ -e "$case_dir/stalling" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -e "$case_dir/stalling" ] || { kill "$pid" 2>/dev/null || true; fail "the retirement never reached a backlog read"; }
+  script_pid=$(pgrep -f "fm-retire-endpoint.sh.*$id" | head -1)
+  [ -n "$script_pid" ] || { kill "$pid" 2>/dev/null || true; fail "the retirement process could not be found"; }
+  kill -TERM "$script_pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null && fail "an interrupted retirement should not report success"
+  rm -f "$case_dir/stall"
+
+  assert_present "$home/state/$id.meta" \
+    "the operator's own interrupt retired the record: $(cat "$case_dir/retire.out")"
+  assert_absent "$home/state/$id.endpoint-retired" \
+    "an interrupted retirement left its authorization behind"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "an interrupted retirement moved the backlog row"
+  pass "an interrupt during a retirement retires nothing and leaves no authorization"
+}
+
+# Only the work-protection refusal is the retirement's to proceed past. Every
+# other refusal protects something a retirement has no say over - here a scout
+# whose report never landed - so the records stay for the rerun that can fix it.
+test_a_refusal_that_is_not_the_work_gate_retires_nothing() {
+  local case_dir home id out rc=0
+  id=atomic-retire-other-refusal-b9
+  case_dir=$(make_home retire-other-refusal)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_herdr_task "$case_dir" "$id"
+  rm -f "$home/data/$id/report.md"
+  rm -f "$case_dir/fakebin/herdr"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "a refusal that is not the work gate must retire nothing: $out"
+  assert_present "$home/state/$id.meta" \
+    "a refusal this retirement does not answer for still removed the record: $out"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "a refusal this retirement does not answer for still moved the row: $out"
+  assert_contains "$out" "nothing was retired" \
+    "the refusal should say plainly that nothing was retired"
+  pass "a refusal other than the work gate stops the retirement"
+}
+
+# A row that could not be READ is not an absent row. Removing the record behind
+# one would leave the row asserting work in flight with nothing behind it.
+test_a_backlog_row_that_cannot_be_read_refuses_rather_than_retiring() {
+  local case_dir home id out rc=0 real
+  id=atomic-retire-unreadable-row-b9
+  case_dir=$(make_home retire-unreadable-row)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task_with_work "$case_dir" "$id"
+  # Only the RETIREMENT's own row read wedges - cleanup's reads answer normally,
+  # so cleanup still refuses over the work and the retirement reaches its own
+  # bookkeeping with a row it cannot read. The shim tells the two apart by
+  # which script is running it.
+  real=$(command -v tasks-axi)
+  cat > "$case_dir/fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+caller_chain() {
+  local pid=\$PPID args chain=
+  while [ -n "\$pid" ] && [ "\$pid" -gt 1 ] 2>/dev/null; do
+    args=\$(ps -o args= -p "\$pid" 2>/dev/null || true)
+    chain="\$chain \$args"
+    pid=\$(ps -o ppid= -p "\$pid" 2>/dev/null | tr -d ' ')
+  done
+  printf '%s' "\$chain"
+}
+if [ "\${1:-}" = show ]; then
+  case "\$(caller_chain)" in
+    *fm-teardown.sh*) ;;
+    *fm-retire-endpoint.sh*)
+      echo "error: the backlog is wedged" >&2
+      exit 1
+      ;;
+  esac
+fi
+exec "$real" "\$@"
+SH
+  chmod +x "$case_dir/fakebin/tasks-axi"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "an unreadable row must not be retired as an absent one: $out"
+  assert_present "$home/state/$id.meta" \
+    "the record behind an unreadable row was removed: $out"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "the row moved even though it could not be read: $out"
+  pass "a backlog row that cannot be read refuses the retirement instead of losing the record"
+}
+
+# A captain-held row is the captain's own question. Retiring the record must
+# return it to Queued with its deliverable, exactly as cleanup and session-start
+# replay do, rather than answering it as done.
+test_a_captain_held_row_is_retained_not_closed() {
+  local case_dir home id out
+  id=atomic-retire-held-b9
+  case_dir=$(make_home retire-held)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task_with_work "$case_dir" "$id"
+  tasks-axi hold "$id" --reason "captain decision pending" --kind captain \
+    --file "$(backlog_of "$case_dir")" >/dev/null
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
+    || fail "the retirement should complete for a captain-held row: $out"
+  assert_absent "$home/state/$id.meta" "the record was not retired"
+  [ "$(row_state "$case_dir" "$id")" != done ] \
+    || fail "the retirement answered the captain's own question as done: $out"
+  assert_grep 'held: yes' "$(tasks-axi show "$id" --file "$(backlog_of "$case_dir")" > "$case_dir/row.out"; printf '%s' "$case_dir/row.out")" \
+    "the retirement dropped the captain's hold"
+  pass "a captain-held row is retained with its deliverable, not closed as done"
+}
+
 test_retirement_help_states_what_the_operator_is_asserting() {
   local case_dir out
   case_dir=$(make_home retire-help)
@@ -3450,6 +3585,10 @@ test_retiring_refuses_wildcards_and_unconfirmed_ids
 test_retiring_records_who_asserted_it_and_when
 test_retiring_leaves_work_on_disk_byte_untouched
 test_retiring_needs_the_named_flag_to_override_a_runtime_refusal
+test_an_interrupt_mid_retirement_retires_nothing
+test_a_refusal_that_is_not_the_work_gate_retires_nothing
+test_a_backlog_row_that_cannot_be_read_refuses_rather_than_retiring
+test_a_captain_held_row_is_retained_not_closed
 test_retirement_help_states_what_the_operator_is_asserting
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped
 test_recovery_replays_the_same_close_without_the_unconfirmed_endpoint_line
