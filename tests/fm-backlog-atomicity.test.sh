@@ -2553,6 +2553,82 @@ test_a_record_only_retirement_takes_its_pending_close_with_it() {
   pass "a record-only retirement takes its pending close with it"
 }
 
+# The one question an incident review asks about this command is who asserted
+# the stop and when. The note it writes is consumed by the cleanup it
+# authorizes and its own messages are only stderr, so the answer has to outlive
+# the records it removes.
+test_a_retirement_records_its_author_durably() {
+  local case_dir home id out log line
+  id=atomic-retire-logged-b9
+  case_dir=$(make_home retire-logged)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task_with_work "$case_dir" "$id"
+  log="$home/state/endpoint-retirements.log"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
+    || fail "the retirement should complete: $out"
+  assert_absent "$home/state/$id.meta" "the record was not retired: $out"
+  # The log is this command's own durable output contract, read by people.
+  [ -s "$log" ] || fail "the retirement recorded no durable author"
+  line=$(grep -F "	$id	" "$log") \
+    || fail "the retirement log does not name the record it retired: $(cat "$log")"
+  case "$line" in
+    *"retired_by=$(id -un)"*) : ;;
+    *) fail "the retirement log does not name who asserted it: $line" ;;
+  esac
+  case "$line" in
+    *override_runtime_refusal=0*) : ;;
+    *) fail "the retirement log does not say whether the override was used: $line" ;;
+  esac
+  printf '%s' "$line" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' \
+    || fail "the retirement log does not say when it was asserted: $line"
+  pass "a retirement records the record, its author, the time and the override durably"
+}
+
+# And the author is recorded FIRST: a retirement whose line cannot be appended
+# removes nothing, because a record removed with no recorded author is the
+# state that log exists to prevent.
+test_a_retirement_that_cannot_record_its_author_retires_nothing() {
+  local case_dir home id out rc=0
+  id=atomic-retire-unlogged-b9
+  case_dir=$(make_home retire-unlogged)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task_with_work "$case_dir" "$id"
+  # Nothing can append here, for any user.
+  mkdir -p "$home/state/endpoint-retirements.log"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "a retirement that could not record its author reported success: $out"
+  assert_present "$home/state/$id.meta" \
+    "the record was removed with no recorded author: $out"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "the backlog row moved for a retirement that recorded no author: $out"
+  assert_contains "$out" "nothing was retired" \
+    "the refusal should say plainly that nothing was retired"
+  pass "a retirement that cannot record its author retires nothing"
+}
+
+# The pending close goes before the record, never after: a clear that fails
+# once the record is gone leaves a stamped marker nothing can resolve.
+test_a_retirement_keeps_its_record_when_the_pending_close_cannot_be_cleared() {
+  local case_dir home id out rc=0 marker
+  id=atomic-retire-stuck-marker-b9
+  case_dir=$(make_home retire-stuck-marker)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task_with_work "$case_dir" "$id"
+  printf '%s\n' manual > "$home/config/backlog-backend"
+  marker="$home/state/$id.backlog-close"
+  # A pending close the marker rules refuse to remove: a symlink is not a
+  # record this may unlink.
+  ln -s "$home/data" "$marker"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "a retirement that could not clear its pending close reported success: $out"
+  assert_present "$home/state/$id.meta" \
+    "the record was removed while its pending close survived: $out"
+  pass "a retirement keeps its record when the pending close cannot be cleared"
+}
+
 test_retirement_help_states_what_the_operator_is_asserting() {
   local case_dir out
   case_dir=$(make_home retire-help)
@@ -3650,6 +3726,9 @@ test_a_backlog_row_that_cannot_be_read_refuses_rather_than_retiring
 test_a_captain_held_row_is_retained_not_closed
 test_a_manual_backlog_home_is_retired_without_touching_its_backlog
 test_a_record_only_retirement_takes_its_pending_close_with_it
+test_a_retirement_records_its_author_durably
+test_a_retirement_that_cannot_record_its_author_retires_nothing
+test_a_retirement_keeps_its_record_when_the_pending_close_cannot_be_cleared
 test_retirement_help_states_what_the_operator_is_asserting
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped
 test_recovery_replays_the_same_close_without_the_unconfirmed_endpoint_line

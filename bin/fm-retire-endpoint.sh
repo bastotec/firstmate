@@ -92,6 +92,10 @@ What this reaches, exactly:
   override is recorded with your name and the time, exactly like the retirement
   itself.
 
+  Every retirement appends one line to state/endpoint-retirements.log naming
+  the record, you, the time, and whether the override was used - written before
+  anything is removed, so nothing is ever removed without it.
+
   Out of reach: a record in another home - a secondmate's own state directory -
   must be retired by running this command against that home. A child endpoint
   refused during a parent's forced home cleanup is not reachable at all, from
@@ -207,10 +211,14 @@ retirement_done_args() {  # <id>
 # cannot apply.
 #
 # Both record-only paths clear any pending close this task left behind, the way
-# the transition below consumes it. A stamped marker outliving its own task
-# record is unresolvable: session-start replay reads its endpoint=unconfirmed
-# and refuses, cleanup refuses because there is no endpoint metadata left to
-# validate, and this command refuses because there is no record to retire.
+# the transition below consumes it, and they clear it BEFORE the record goes.
+# A stamped marker outliving its own task record is unresolvable: session-start
+# replay reads its endpoint=unconfirmed and refuses, cleanup refuses because
+# there is no endpoint metadata left to validate, and this command refuses
+# because there is no record to retire. The reverse order is harmless - a
+# marker cleared while the record survives leaves replay nothing to replay and
+# cleanup free to rerun - so a clear that fails stops the retirement with every
+# record still in place.
 #
 # A row that could not be READ is not an absent row: removing the task record
 # behind one would leave the row asserting work in flight that nothing is
@@ -227,8 +235,8 @@ retire_records_only() {  # <id>
   fi
   if [ "$gate_rc" -ne 0 ]; then
     echo "note: $id's backlog row is not firstmate's to transition ($FM_BACKLOG_TRANSITION_SKIP); its task record is retired and the backlog is left as it is" >&2
-    fm_backlog_atomic_transition remove "$meta" "task record" "$STATE" || return 1
     fm_backlog_close_marker_clear "$STATE" "$id" || return 1
+    fm_backlog_atomic_transition remove "$meta" "task record" "$STATE" || return 1
     rm -f "$STATE/$id.turn-ended" "$STATE/$id.progress"
     return 0
   fi
@@ -240,8 +248,8 @@ retire_records_only() {  # <id>
       FM_BACKLOG_TRANSITION_ERROR="${FM_BACKLOG_ROW_ERROR:-the backlog row could not be read}"
       return 1
     fi
-    fm_backlog_atomic_transition remove "$meta" "task record" "$STATE" || return 1
     fm_backlog_close_marker_clear "$STATE" "$id" || return 1
+    fm_backlog_atomic_transition remove "$meta" "task record" "$STATE" || return 1
     rm -f "$STATE/$id.turn-ended" "$STATE/$id.progress"
     return 0
   fi
@@ -272,11 +280,32 @@ report_what_remains() {  # <id> <worktree>
 RUNTIME_REFUSAL_EXIT=71
 WORK_GATE_EXIT=72
 
+# The durable answer to "who asserted this stop, and when". The retirement note
+# is consumed by the cleanup it authorizes and this command's own output is
+# only stderr, so without this line nothing on disk would say who retired a
+# record once the record itself is gone - the one question an incident review
+# asks about this command.
+#
+# Appended BEFORE anything is removed, and a failed append refuses that record
+# outright: removing durable records with no recorded author is exactly the
+# state this exists to prevent. One line per retirement, append-only, nothing
+# else - it is read by people, not by firstmate.
+RETIREMENT_LOG="$STATE/endpoint-retirements.log"
+record_retirement() {  # <id>
+  printf '%s\t%s\tretired_by=%s\toverride_runtime_refusal=%s\n' \
+    "$retired_at" "$1" "$retired_by" "$OVERRIDE_RUNTIME_REFUSAL" >> "$RETIREMENT_LOG"
+}
+
 retired_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 retired_by=$(id -un 2>/dev/null || printf '%s' "${USER:-unknown}")
 status=0
 for id in "${IDS[@]}"; do
   worktree=$(fm_meta_get "$STATE/$id.meta" worktree)
+  if ! record_retirement "$id"; then
+    status=1
+    echo "error: $id's retirement could not be recorded in $RETIREMENT_LOG; nothing was retired - a record is never removed without a durable author" >&2
+    continue
+  fi
   NOTE="$STATE/$id.endpoint-retired"
   {
     printf 'id=%s\n' "$id"

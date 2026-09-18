@@ -209,7 +209,8 @@ Nothing in firstmate invokes it, and it names each id exactly - wildcards and al
 
 By naming a record you assert, from your own inspection of the machine that ran it, that no worker is still running behind it.
 That is the hub-unanswerable condition: the backend that owned the worker can no longer say anything about it, so no read will ever settle the question.
-Your username and the time are recorded with the retirement.
+Your username and the time are recorded with the retirement: every run appends one line to `state/endpoint-retirements.log` naming the record, who asserted it, when, and whether the runtime-refusal override was used.
+That line is written before anything is removed, and a retirement whose line cannot be appended retires nothing - a record is never removed without a durable author.
 
 What it touches, and what it does not:
 
