@@ -75,10 +75,14 @@ set -u
 # such file or directory" naming a path with no bin/ in it, `set -u` aborted on
 # STATE, and the whole thing read like a broken install while supervision was
 # simply absent. Parameter expansion and $PWD are builtins and cannot fail that
-# way. The result is the same directory the old line produced for every
-# invocation shape that works today: absolute, relative, bare-name and
+# way. For every invocation shape a shipped caller uses the result is the same
+# directory the old line produced: absolute, relative, bare-name and
 # symlinked-directory paths all resolve to the same place, and a symlinked
-# script FILE is left unresolved exactly as `cd ... && pwd` left it.
+# script FILE is left unresolved exactly as `cd ... && pwd` left it. It is NOT
+# canonicalized: a path carrying `.` or `..` segments (bin/../bin/fm-watch-arm.sh)
+# keeps them where `cd ... && pwd` dropped them. $WATCH is compared byte-for-byte
+# with the watcher path the lock records, so an arm invoked that way would not
+# recognize the watcher it just launched. No shipped caller invokes it that way.
 ARM_SELF="${BASH_SOURCE[0]}"
 case "$ARM_SELF" in
   */*) SCRIPT_DIR="${ARM_SELF%/*}"; [ -n "$SCRIPT_DIR" ] || SCRIPT_DIR=/ ;;
