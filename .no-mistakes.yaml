@@ -33,8 +33,26 @@ document:
 commands:
   lint: 'bin/fm-lint.sh'
 
-# Publish each run's test evidence to the orphan no-mistakes/evidence branch linked from the PR.
-# The evidence is not committed to the feature or default branch.
+# Trusted scope bound for the Test step; this block owns that policy.
+# With no commands.test the step decides what to run, and on terminal, pane, process
+# or worktree lifecycle changes that invites standing up live rigs until the agent
+# budget runs out. Keep it to the targeted-validation scope plus the concrete
+# out-of-scope list below.
 test:
+  instructions: |
+    The repository's suites under tests/ are the rig for this product: they drive
+    the real firstmate scripts against real worktrees and real processes, with
+    PATH-shimmed terminal and harness binaries. bin/fm-test-run.sh is the
+    authority on which suites exist; run one with
+    `FM_LIVE=0 bin/fm-test-run.sh tests/<subject>.test.sh` - FM_LIVE=0 makes the
+    live-gated suites self-skip, since those launch real harnesses and real
+    terminal servers on this machine. Drive the change through the suites for the
+    area it touches - prove the change works, and prove the regression fails
+    without it.
+    Out of scope here: standing up rigs of your own - live tmux servers, dirty
+    worktrees, fake agent binaries, or reusable lab factories - beyond what the
+    suites under tests/ already set up.
+  # Publish each run's test evidence to the orphan no-mistakes/evidence branch linked from the PR.
+  # The evidence is not committed to the feature or default branch.
   evidence:
     store_in_repo: true
