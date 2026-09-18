@@ -1,0 +1,26 @@
+FM_TEST_BEGIN 2026-09-18T12:39:27Z tests/fm-remote-secondmate-lifecycle-e2e.test.sh family=secondmate expected_gate_skip=none
+ok - migration refuses children and doctor gaps, converges a rerun that finds new steering, preserves exact durable bytes and correlations, excludes secrets, and relaunches the same identity
+ok - known launch failure restores route while preserving both stopped copies, and its rerun retries the launch without re-landing records
+ok - unknown launch preserves remote placement and converges without duplicates or touching the local sibling
+ok - a snapshot past the ordinary remote job ceiling stages, reaches the worker, and completes
+ok - a rerun that drops a published record is refused by name while one that only changes bytes converges
+ok - a receipt copy killed part-way through never reaches the live receipt, and the next attempt converges
+MVKILL crash output: error: cannot publish the migration receipt
+MVKILL after crash: bundle-parses=yes bundle-sha=f9718d27b42ad125c95b868678a89c88eb68f612d217735f1b0e125c2db54c35 digest=de92c262bf2b2f71ee2075eb5f3d1fcfb78409170fec981f906e629b1f19bde6 new=f9718d27b42ad125c95b868678a89c88eb68f612d217735f1b0e125c2db54c35
+MVKILL sidecars: .
+..
+bundle.json
+digest
+digest.tmp.72067
+original-charter.md
+original-parent
+state
+MVKILL rerun output: verified-migration: drop-work f9718d27b42ad125c95b868678a89c88eb68f612d217735f1b0e125c2db54c35
+ok - VALIDATION: a kill between the bundle and digest renames converges on rerun
+ok - a local refusal names its cause and leaves the source unfrozen and startable
+ok - migration clones registered project origins on the host and refuses a local-only project
+ALL TESTS PASSED
+FM_TEST_END 2026-09-18T12:47:22Z tests/fm-remote-secondmate-lifecycle-e2e.test.sh exit=0 duration_ms=474696 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=475093
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=474696 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-remote-secondmate-lifecycle-e2e.test.sh duration_ms=474696

@@ -1,0 +1,14 @@
+FM_TEST_BEGIN 2026-09-18T12:33:09Z tests/fm-remote-secondmate-lifecycle-e2e.test.sh family=secondmate expected_gate_skip=none
+ok - migration refuses children and doctor gaps, converges a rerun that finds new steering, preserves exact durable bytes and correlations, excludes secrets, and relaunches the same identity
+ok - known launch failure restores route while preserving both stopped copies, and its rerun retries the launch without re-landing records
+ok - unknown launch preserves remote placement and converges without duplicates or touching the local sibling
+ok - a snapshot past the ordinary remote job ceiling stages, reaches the worker, and completes
+ok - a rerun that drops a published record is refused by name while one that only changes bytes converges
+ok - a receipt copy killed part-way through never reaches the live receipt, and the next attempt converges
+ok - a local refusal names its cause and leaves the source unfrozen and startable
+ok - migration clones registered project origins on the host and refuses a local-only project
+ALL TESTS PASSED
+FM_TEST_END 2026-09-18T12:38:54Z tests/fm-remote-secondmate-lifecycle-e2e.test.sh exit=0 duration_ms=344631 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=344980
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=344631 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-remote-secondmate-lifecycle-e2e.test.sh duration_ms=344631
