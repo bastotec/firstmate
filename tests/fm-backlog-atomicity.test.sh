@@ -2520,6 +2520,39 @@ test_a_manual_backlog_home_is_retired_without_touching_its_backlog() {
   pass "a manual-backlog home retires its record and its backlog is left as the operator keeps it"
 }
 
+# A retirement that takes a record-only path must take the pending close with
+# it. A stamped marker outliving its own task record is unresolvable by every
+# supported command: session-start replay reads its endpoint=unconfirmed and
+# refuses, cleanup has no endpoint metadata left to validate, and the
+# retirement has no record left to retire - so the row stays in flight and
+# every session start repeats advice that cannot work.
+test_a_record_only_retirement_takes_its_pending_close_with_it() {
+  local case_dir home id marker out
+  id=atomic-retire-marker-leak-b9
+  case_dir=$(make_home retire-marker-leak)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task_with_work "$case_dir" "$id"
+  marker="$home/state/$id.backlog-close"
+  # The marker a refused cleanup leaves behind, carrying its own refusal.
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-unanswerable\ncleanup_incomplete=0\nendpoint=unconfirmed\n' \
+    "$id" "$home/data" > "$marker"
+  # A home that keeps its backlog by hand: the retirement retires the record
+  # without transitioning the row, which is the record-only path.
+  printf '%s\n' manual > "$home/config/backlog-backend"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
+    || fail "the retirement should complete on the record-only path: $out"
+  assert_absent "$home/state/$id.meta" "the record was not retired: $out"
+  assert_absent "$marker" \
+    "the retirement left a pending close no command can ever resolve"
+
+  # And session start has nothing left to refuse over.
+  out=$(run_bootstrap "$case_dir")
+  assert_not_contains "$out" "could not prove its worker stopped" \
+    "session start still reports a refusal for a record that was retired: $out"
+  pass "a record-only retirement takes its pending close with it"
+}
+
 test_retirement_help_states_what_the_operator_is_asserting() {
   local case_dir out
   case_dir=$(make_home retire-help)
@@ -3616,6 +3649,7 @@ test_a_refusal_that_is_not_the_work_gate_retires_nothing
 test_a_backlog_row_that_cannot_be_read_refuses_rather_than_retiring
 test_a_captain_held_row_is_retained_not_closed
 test_a_manual_backlog_home_is_retired_without_touching_its_backlog
+test_a_record_only_retirement_takes_its_pending_close_with_it
 test_retirement_help_states_what_the_operator_is_asserting
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped
 test_recovery_replays_the_same_close_without_the_unconfirmed_endpoint_line

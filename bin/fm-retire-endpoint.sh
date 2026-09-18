@@ -9,16 +9,18 @@
 # backend cannot answer would otherwise stay forever. This is the one way they
 # are ever retired, and it runs only when a human names them.
 #
-# Why this rather than an automatic rule. The obvious one for the stream hub -
-# report an endpoint gone when a healthy hub's task listing omits it - is
-# unsafe here: a worker's agent registers exactly once and has no way back
-# (docs/stream-backend.md), so a hub restart empties the listing while every
-# worker keeps running, and that rule would read every live worker as gone.
-# That is the same unsafety as the settled-hub qualification this branch
-# already reverted. No machine on this branch can tell a record the hub pruned
-# from a live worker behind a partition. A human looking at the machine can,
-# and this is where they say so - which is why the assertion is recorded with
-# their name and the time they made it.
+# Why this rather than an automatic rule, and how it came to exist. The rule
+# first asked for was the obvious one for the stream hub: report an endpoint
+# gone when a healthy hub's task listing omits it. It was implemented, and then
+# reverted, because it is unsafe here - a worker's agent registers exactly once
+# and has no way back (docs/stream-backend.md), so a hub restart empties the
+# listing while every worker keeps running, and the rule would have read every
+# live worker as gone. Reverting it alone would have left every stream record
+# unretirable after a hub restart, so this command was authorized in its place.
+# No machine on this branch can tell a record the hub pruned from a live worker
+# behind a partition. A human looking at the machine can, and this is where
+# they say so - which is why the assertion is recorded with their name and the
+# time they made it. docs/stream-backend.md carries the operator-facing entry.
 #
 # Retiring a record is RECORD bookkeeping and nothing else. Cleanup runs first,
 # because when its own gates allow it, it does the whole job properly. Exactly
@@ -204,6 +206,12 @@ retirement_done_args() {  # <id>
 # than hand-edited here or made permanently unretirable by a row read that
 # cannot apply.
 #
+# Both record-only paths clear any pending close this task left behind, the way
+# the transition below consumes it. A stamped marker outliving its own task
+# record is unresolvable: session-start replay reads its endpoint=unconfirmed
+# and refuses, cleanup refuses because there is no endpoint metadata left to
+# validate, and this command refuses because there is no record to retire.
+#
 # A row that could not be READ is not an absent row: removing the task record
 # behind one would leave the row asserting work in flight that nothing is
 # doing, which is this change's own defect wearing the other face. Only a
@@ -220,6 +228,7 @@ retire_records_only() {  # <id>
   if [ "$gate_rc" -ne 0 ]; then
     echo "note: $id's backlog row is not firstmate's to transition ($FM_BACKLOG_TRANSITION_SKIP); its task record is retired and the backlog is left as it is" >&2
     fm_backlog_atomic_transition remove "$meta" "task record" "$STATE" || return 1
+    fm_backlog_close_marker_clear "$STATE" "$id" || return 1
     rm -f "$STATE/$id.turn-ended" "$STATE/$id.progress"
     return 0
   fi
@@ -232,6 +241,7 @@ retire_records_only() {  # <id>
       return 1
     fi
     fm_backlog_atomic_transition remove "$meta" "task record" "$STATE" || return 1
+    fm_backlog_close_marker_clear "$STATE" "$id" || return 1
     rm -f "$STATE/$id.turn-ended" "$STATE/$id.progress"
     return 0
   fi

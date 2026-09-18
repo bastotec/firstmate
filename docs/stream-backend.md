@@ -199,6 +199,33 @@ Everything else the hub can say is kept, including a credential it will not take
 So a refusal that is not a lost name is waited out on the same backoff as an unreachable hub, and the worker is there when the hub is right again.
 In either case the worker itself is left running and untouched, because a refused agent says nothing at all about the work its worker is in the middle of.
 
+## Retiring a record no backend can answer for
+
+Cleanup removes a task's durable records only once a backend has proved the worker stopped, and `--force` does not lift that: it authorizes discarding unlanded WORK, never asserting a stop nobody observed.
+A hub restart leaves records in exactly that state - the hub has never heard of the endpoint, a kill against it reports an unconfirmed stop, and no later read can change that answer - so cleanup refuses every time and the record would stay forever.
+
+`bin/fm-retire-endpoint.sh <task-id> [<task-id>...]` is the one way such a record is retired, and only a human runs it.
+Nothing in firstmate invokes it, and it names each id exactly - wildcards and all-records forms are refused - then asks you to type those ids back before anything is written.
+
+By naming a record you assert, from your own inspection of the machine that ran it, that no worker is still running behind it.
+That is the hub-unanswerable condition: the backend that owned the worker can no longer say anything about it, so no read will ever settle the question.
+Your username and the time are recorded with the retirement.
+
+What it touches, and what it does not:
+
+- It retires RECORDS: the durable task record and, where firstmate owns the transition, the task's backlog row.
+  A home whose backlog is kept manually, or which keeps no backlog file, has its row left exactly as the operator keeps it.
+- Cleanup runs first and finishes the job properly whenever its own gates allow.
+  The single refusal the retirement proceeds past is cleanup's work-protection gate, which refuses before anything on disk has been touched.
+  In that case the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
+  It never discards work and never passes `--force` to anything.
+- Every other cleanup refusal stands and nothing is retired - an outcome that has not reached the parent channel, a backlog transition that cannot be replayed, a runtime that still answers.
+
+`--override-runtime-refusal` additionally proceeds past a RUNTIME's own refusal to answer for the endpoint - a herdr server that cannot be reached at all, for instance.
+Without the flag that refusal stands and nothing is retired; with it, the override is recorded alongside the retirement with your name and the time.
+
+The command is not stream-specific, but the stream hub's restart behavior above is the condition it exists for.
+
 ## When the hub is down
 
 One hub means one blast radius, and it is worth being exact about its edges.

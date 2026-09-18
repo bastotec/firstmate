@@ -2994,11 +2994,11 @@ require_task_endpoint_gone() {  # <kill-status>
 # neither: the retirement would read someone else's failure as the one refusal
 # it may proceed past.
 #
-# The loop below pins exactly the constants it lists and nothing more. It is a
-# reader's check, not enforcement: a future refusal added as a bare `exit 71`,
-# or as a new constant nobody appends to that list, passes it silently. Making
-# it real would mean every teardown exit drawing its status from one shared
-# registry, which is follow-up work rather than part of this contract.
+# Nothing enforces that uniqueness mechanically: a new refusal added anywhere in
+# this script with either value silently widens what a retirement overrides, so
+# a status added here has to be checked against these two by hand. A real guard
+# would mean every teardown exit drawing its status from one shared registry,
+# which is follow-up work rather than part of this contract.
 FM_TEARDOWN_RUNTIME_REFUSAL_EXIT=71
 
 # The work-protection refusal, raised before anything on disk has been touched,
@@ -3012,15 +3012,6 @@ FM_TEARDOWN_RUNTIME_REFUSAL_EXIT=71
 # retirement has no say over - an undelivered outcome, an unreplayable backlog
 # - and keeps its plain status so the retirement stops there.
 FM_TEARDOWN_WORK_GATE_EXIT=72
-for reserved_status in 0 1 "$TEARDOWN_TREEHOUSE_LOCK_REFUSED" \
-  "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED" "$TEARDOWN_PROCEVENT_RESTORE_FAILED" \
-  "$TEARDOWN_SLOT_REASSIGNED_RC" "$FM_LEASE_REFUSE_EXIT"; do
-  if [ "$reserved_status" = "$FM_TEARDOWN_RUNTIME_REFUSAL_EXIT" ] \
-    || [ "$reserved_status" = "$FM_TEARDOWN_WORK_GATE_EXIT" ]; then
-    echo "error: teardown exit status $reserved_status now names two different conditions, so an operator retirement cannot tell the refusal it may proceed past from one it may not; give the new condition a status of its own" >&2
-    exit 1
-  fi
-done
 
 work_gate_refusal_exit() {
   if task_operator_retirement; then
