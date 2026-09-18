@@ -1162,7 +1162,7 @@ FM_SEND_SLEEP=0.4       # seconds between fm-send typed-plane submit checks
 FM_SEND_SETTLE=1        # seconds fm-send waits after a successful typed-plane submit; 0 disables
 FM_PENDING_REPLY_GRACE_SECS=120   # seconds after marked-request delivery before a completed turn without a correlated parent report is eligible for its one recovery repost
 FM_ASK_TRIAGE_KEY_VAR=            # overrides config/ask-triage-key-var: the ~/.secrets variable holding the gateway key for the possible-ask pass
-FM_ASK_TRIAGE_THRESHOLD=0.70      # possible-ask probability at or above which a working: line is flagged; bin/fm-ask-triage.sh owns the other bounds
+FM_ASK_TRIAGE_THRESHOLD=0.60      # possible-ask probability at or above which a working: line is flagged; bin/fm-ask-triage.sh owns the other bounds
 # sub-supervisor (bin/fm-supervise-daemon.sh); presence-gated via /afk
 FM_SUPERVISOR_BACKEND=             # optional supervisor pane backend override; tmux/herdr only, otherwise detects $TMUX_PANE then HERDR_ENV/HERDR_PANE_ID before tmux fallback
 FM_SUPERVISOR_TARGET=              # optional supervisor pane target override; tmux target or herdr <session>:<pane-id>, otherwise auto-detected

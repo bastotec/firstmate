@@ -24,7 +24,7 @@
 # It sends at most FM_ASK_TRIAGE_MAX_LINES (default 20) of the newest new lines
 # per pass to bin/ask-triage/jev-rank.mjs under a hard bound of
 # FM_ASK_TRIAGE_TIMEOUT seconds (default 6), and flags a line whose probability
-# is at least FM_ASK_TRIAGE_THRESHOLD (default 0.70).
+# is at least FM_ASK_TRIAGE_THRESHOLD (default 0.60).
 # A single non-blocking lock lets one scorer run at a time; a running scorer
 # re-scans before it exits, so a line appended during its run is not stranded.
 #
@@ -70,8 +70,8 @@ MAX_LINES=${FM_ASK_TRIAGE_MAX_LINES:-20}
 case "$MAX_LINES" in ''|*[!0-9]*|0) MAX_LINES=20 ;; esac
 TIMEOUT=${FM_ASK_TRIAGE_TIMEOUT:-6}
 case "$TIMEOUT" in ''|*[!0-9]*|0) TIMEOUT=6 ;; esac
-THRESHOLD=${FM_ASK_TRIAGE_THRESHOLD:-0.70}
-case "$THRESHOLD" in ''|*[!0-9.]*) THRESHOLD=0.70 ;; esac
+THRESHOLD=${FM_ASK_TRIAGE_THRESHOLD:-0.60}
+case "$THRESHOLD" in ''|*[!0-9.]*) THRESHOLD=0.60 ;; esac
 
 key_var() {
   local name=${FM_ASK_TRIAGE_KEY_VAR:-}

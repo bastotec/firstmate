@@ -38,7 +38,7 @@ while IFS= read -r line; do
   case "${FM_TEST_STUB_MODE:-say-so}" in
     all-high) printf '0.9900\n' ;;
     dash) printf -- '-\n' ;;
-    low) printf '0.6000\n' ;;
+    low) printf '0.5000\n' ;;
     *) case "$line" in *"say so"*) printf '0.9300\n' ;; *) printf '0.0400\n' ;; esac ;;
   esac
 done < "$input"
