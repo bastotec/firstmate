@@ -1180,15 +1180,15 @@ fm_backlog_close_marker_write() {  # <state-dir> <id> <data-dir> <spawn-gen> <en
 # fm_backlog_close_marker_restage: rewrite an already-published pending-close
 # record with a new set of flags. Every flag is a parameter rather than a
 # literal, because a re-stamp rewrites the WHOLE record: a caller that knew
-# only its own flag would silently clear the other one, which is how a
-# refusal's endpoint=unconfirmed - the line replay reads to keep a record for a
-# worker nothing proved stopped - would go missing on the next re-stamp.
+# only its own flag would silently clear the other one, and endpoint=unconfirmed
+# - the line replay reads to keep a record for a worker nothing proved stopped -
+# is exactly the line that must not go missing that way.
 #
-# The endpoint-unconfirmed flag is written by a teardown that refused because
-# this task's worker could not be proved stopped. Teardown stages the record
-# BEFORE it touches the endpoint, so without that flag the refusal would leave
-# a record that still reads as an ordinary interrupted close, and the next
-# session start's replay would remove the very task record the refusal kept.
+# The endpoint state itself is decided at publish time, by
+# fm_backlog_close_marker_write above, which owns why. Re-stamping only ever
+# settles it afterwards: teardown clears it to confirmed once its endpoint gate
+# has proved the worker stopped, and replay carries the published value through
+# unchanged when it marks a close cleanup-incomplete.
 fm_backlog_close_marker_restage() {  # <state-dir> <marker-path> <id> <data-dir> <spawn-gen> <cleanup-incomplete: 0|1> <endpoint-unconfirmed: 0|1> [flag...]
   local state=$1 marker=$2 id=$3 data=$4 spawn_gen=$5 cleanup_incomplete=$6 endpoint_unconfirmed=$7 tmp
   shift 7

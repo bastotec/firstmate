@@ -222,6 +222,7 @@ What it touches, and what it does not:
   In that case the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
   It never discards work and never passes `--force` to anything.
 - Every other cleanup refusal stands and nothing is retired - an outcome that has not reached the parent channel, a backlog transition that cannot be replayed, a runtime that still answers.
+  The one exception is a cleanup that fails only after it has already removed the durable task record: the run reports that partial state, naming the record that is gone and the pending close left behind, instead of claiming nothing was retired.
 
 `--override-runtime-refusal` additionally proceeds past a RUNTIME's own refusal to answer for the endpoint - a herdr server that cannot be reached at all, for instance.
 Without the flag that refusal stands and nothing is retired; with it, the override is recorded alongside the retirement with your name and the time.
