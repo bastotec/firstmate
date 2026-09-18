@@ -33,7 +33,8 @@
 # present.
 # The key lives in the secrets file (FM_ASK_TRIAGE_SECRETS, default ~/.secrets)
 # under the variable named by FM_ASK_TRIAGE_KEY_VAR, else the first line of
-# config/ask-triage-key-var, else AI_GATEWAY_API_KEY.
+# config/ask-triage-key-var; with neither there is no default and the pass is
+# inert, so naming the variable is the opt-in to spend.
 # This script only checks that the variable is defined there; the helper reads
 # the value at call time and nothing prints, logs, or passes it.
 # A timeout, error, missing key or runtime, unreadable output, or a probability
@@ -78,7 +79,7 @@ key_var() {
     IFS= read -r name < "$CONFIG/ask-triage-key-var" || true
     name=${name//[[:space:]]/}
   fi
-  [ -n "$name" ] || name=AI_GATEWAY_API_KEY
+  [ -n "$name" ] || return 1
   case "$name" in [A-Za-z_]*) ;; *) return 1 ;; esac
   case "$name" in *[!A-Za-z0-9_]*) return 1 ;; esac
   printf '%s' "$name"

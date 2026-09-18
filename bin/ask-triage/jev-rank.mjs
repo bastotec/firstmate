@@ -14,8 +14,8 @@
 // Failure: one row "error<TAB><reason>" and a nonzero exit.
 //
 // The key is read at call time from the secrets file (FM_ASK_TRIAGE_SECRETS,
-// default ~/.secrets) under the variable named by FM_ASK_TRIAGE_KEY_VAR
-// (default AI_GATEWAY_API_KEY). The file is parsed, never executed, and the key
+// default ~/.secrets) under the variable named by FM_ASK_TRIAGE_KEY_VAR, which
+// has no default. The file is parsed, never executed, and the key
 // value is never printed. Only each line's text and the fixed question below
 // are sent to the vendor.
 // FM_ASK_TRIAGE_TIMEOUT_MS bounds the whole run (default 4000).
@@ -41,7 +41,7 @@ function fail(reason, code) {
 }
 
 function readKey() {
-  const name = process.env.FM_ASK_TRIAGE_KEY_VAR || 'AI_GATEWAY_API_KEY';
+  const name = process.env.FM_ASK_TRIAGE_KEY_VAR || '';
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return '';
   const path = process.env.FM_ASK_TRIAGE_SECRETS || `${homedir()}/.secrets`;
   let text;

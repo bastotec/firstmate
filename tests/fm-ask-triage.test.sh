@@ -190,6 +190,22 @@ test_inert_without_key_or_runtime() {
   [ ! -s "$dir/sent.log" ] || fail "score without a key called the model"
   [ ! -e "$dir/state/ask-triage" ] || fail "score without a key wrote state"
 
+  # No key setting at all is inert even when the secrets file holds a key.
+  dir=$(new_case no-key-setting)
+  printf 'working: if you would rather keep it, say so\n' > "$dir/state/t5.status"
+  printf 'export AI_GATEWAY_API_KEY=synthetic-not-a-key\n' >> "$dir/secrets"
+  env -u FM_ASK_TRIAGE_KEY_VAR FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_ASK_TRIAGE_SECRETS="$dir/secrets" FM_ASK_TRIAGE_HELPER="$dir/stub-helper" FM_TEST_STUB_LOG="$dir/sent.log" \
+    "$TRIAGE" score > "$dir/score.out" 2>&1 || fail "score without a key setting exited nonzero"
+  [ ! -s "$dir/sent.log" ] || fail "score without a key setting called the model"
+  [ ! -e "$dir/state/ask-triage" ] || fail "score without a key setting wrote state"
+  mkdir -p "$dir/config"
+  printf 'FM_TEST_GATEWAY_KEY\n' > "$dir/config/ask-triage-key-var"
+  env -u FM_ASK_TRIAGE_KEY_VAR FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_ASK_TRIAGE_SECRETS="$dir/secrets" FM_ASK_TRIAGE_HELPER="$dir/stub-helper" FM_TEST_STUB_LOG="$dir/sent.log" \
+    "$TRIAGE" score || fail "score with a configured key name exited nonzero"
+  [ -s "$dir/sent.log" ] || fail "the configured key name did not enable the pass"
+
   dir=$(new_case no-runtime)
   printf 'working: if you would rather keep it, say so\n' > "$dir/state/t5.status"
   bin="$dir/bin"

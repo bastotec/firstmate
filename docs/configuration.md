@@ -225,7 +225,7 @@ It uses Jev (`typesafe-ai/jev`) on the Vercel AI Gateway through AI SDK 7's `exp
 It never reads, sends, or flags a `done:`, `failed:`, `needs-decision:`, `blocked:`, `resolved:`, `paused:`, `note:`, or any other non-`working:` line.
 The watcher starts the scorer detached at status-signal time and never waits on it, and the drain only reads the flags it left, so no drain, acknowledgement, or raw wake record ever waits on the network.
 It is inert until three things exist: Node, the pinned runtime installed with `npm ci --prefix bin/ask-triage --omit=dev` (gitignored `bin/ask-triage/node_modules/`), and a gateway key in `~/.secrets`.
-The key is read at call time from the variable named by the first line of the optional local, gitignored `config/ask-triage-key-var`, or `AI_GATEWAY_API_KEY` when that file is absent; naming the variable is the opt-in to spend, and the file is not inherited by secondmate homes.
+The key is read at call time from the `~/.secrets` variable named by the first line of the optional local, gitignored `config/ask-triage-key-var`; with that file absent the pass is inert, so naming the variable is the opt-in to spend, and the file is not inherited by secondmate homes.
 A timeout, error, missing key or runtime, or a probability under the threshold leaves the line unflagged, which is exactly the view without the pass.
 Only the status line text and a fixed question are sent to the vendor, and `bin/fm-ask-triage.sh cost` prices the recorded token usage at the published $0.042 per million input tokens, output free.
 `bin/fm-ask-triage.sh`'s header owns the scope, thresholds, bounds, state files, and failure behaviour.
