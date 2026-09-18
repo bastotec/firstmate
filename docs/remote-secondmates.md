@@ -193,6 +193,9 @@ A migration that fails on the host after staging began leaves that attempt's sta
 Each holds that attempt's bundle and a decoded copy of the same durable records - the charter, backlog, memory, reports, and configuration - so unlanded work is never removed automatically; only an attempt that completes its publication or verification clears its own staging.
 Removing a retained one is a manual operator step (`rm -rf <remote-home-parent>/.fm-migration-<id>.XXXXXX`), and it is only safe once that attempt's work is confirmed present in the published remote home or in the local archive.
 
+A rerun killed while refreshing a home already published on the host never leaves that home's migration receipt half-written: each half is renamed over the live file, so the home always holds a bundle that parses, and a kill between the two renames leaves a digest that no longer names the bundle beside it, which the next rerun converges.
+That step can leave an inert `bundle.json.tmp.*` or `digest.tmp.*` sidecar in the home's `.fm-migration/`, which nothing reads and no operator step has to clear.
+
 The original home is left behind as a frozen archive, not deleted.
 A `.fm-home-migration` marker in it refuses a session lock, a spawn, a local launch, and a reseed, so the same identity cannot end up running in two places while the archive is still around for rollback.
 The freeze outlives a route rollback on purpose: a restored local route points at a home that still refuses to start, because the remote copy of the same identity also exists at that moment.
