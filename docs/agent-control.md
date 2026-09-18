@@ -56,7 +56,8 @@ It is not deterministic across the verified adapters: codex, grok, and gemini re
 
 ## Transactional relaunch
 
-`relaunch` and `recover-missing` are the only verbs that change durable records, so each runs as a transaction with a journal at `state/<id>.control-relaunch`, the prior record preserved beside it, and a ship or scout's prior instructions preserved when a progress note is appended.
+`relaunch` and `recover-missing` are the only verbs that change durable records, so each runs as a transaction with a journal at `state/<id>.control-relaunch`, a best-effort copy of the prior record kept beside it for the operator, and a ship or scout's prior instructions preserved when a progress note is appended.
+Only the instructions are ever rolled back from those copies; the record copy is never written back over the live record, because every other writer takes the per-task record lock this plane does not hold.
 
 1. **Resolve the profile.**
    An explicit `--harness`, `--model`, `--effort`, or `--account-slot` wins.
@@ -112,10 +113,11 @@ There are two ways out:
 ### Failure and rollback
 
 - A refusal **before** the agent is stopped leaves the durable record and the instructions byte-identical.
-- A launch failure **after** the agent is stopped restores the prior durable record, keeps the progress note so a later recovery still has it, marks the journal `failed:launching`, and reports plainly that no agent is running and where the work is preserved.
+- A launch failure **after** the agent is stopped keeps the prior durable record, keeps the progress note so a later recovery still has it, marks the journal `failed:launching`, and reports plainly that no agent is running and where the work is preserved.
 - If the launch owner already published the new record but no running agent can be confirmed, the new record is kept: the task is recorded on the new harness with no agent confirmed, which is exactly what recovery reconciles.
   Rewriting it back to the old harness would be a second, worse inaccuracy.
-- A `recover-missing` failure while the terminal is being recreated restores the prior record and the prior instructions byte-exact, because no agent was ever touched in that phase.
+- A `recover-missing` failure while the terminal is being recreated restores the prior instructions byte-exact, because no agent was ever touched in that phase.
+  The durable record is left exactly as it stands rather than restored, because nothing in that phase writes it: restoring it could only revert another writer's change, and the phase is long enough - window creation plus the settle wait - for an armed merge poll's `pr=` line to land inside it.
 - A `recover-missing` failure because the new shell never settles to agent-free never claims an agent was stopped: the terminal was recreated, the handover could not be completed, and the pane was just measured as not agent-free, so no bare shell, `dead` endpoint, or ready-to-`relaunch` state is claimed for it.
 - A `recover-missing` failure at the launch itself never claims an agent was stopped either, and names the state the operator is now in: the recreated terminal holds a bare shell, so the endpoint reads `dead` rather than `missing` and the verb that retries it is `relaunch`.
   That holds because the durable record is published before the launch command is sent, so reaching this failure means nothing was ever typed into the pane.
@@ -171,5 +173,5 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 
 - `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, rollback after a failed launch, and an already-armed merge poll still authenticating after the record rewrite.
-- `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery: the success path under the recorded handle for both losses (a missing window in a live session, and a whole gone session recreated before it), the live, ambiguous, absent-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, a rescue succeeding on a copy full of uncommitted work and leaving every one of those changes byte-identical, the refusal when the session cannot be recreated, the recorded profile surviving a differing configured secondmate pin, the refused profile flags, the basename-harness and unsupported-backend refusals, a still-starting shell being waited out rather than handed over and the refusal when it never settles, and the message after a failed launch handoff.
+- `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery: the success path under the recorded handle for both losses (a missing window in a live session, and a whole gone session recreated before it), the live, ambiguous, absent-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, a rescue succeeding on a copy full of uncommitted work and leaving every one of those changes byte-identical, the refusal when the session cannot be recreated, the recorded profile surviving a differing configured secondmate pin, the refused profile flags, the basename-harness and unsupported-backend refusals, a still-starting shell being waited out rather than handed over and the refusal when it never settles, a failed recreation rolling the progress note back while leaving a concurrent write to the durable record in place, and the message after a failed launch handoff.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
