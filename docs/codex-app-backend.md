@@ -11,7 +11,7 @@ A future Codex App backend must satisfy the same lifecycle contract as terminal-
 1. Create a task endpoint and return a durable thread id.
 2. Send the initial instructions and later operator messages to that endpoint.
 3. Read enough live state or bounded transcript to supervise the task.
-4. Archive, kill, or otherwise stop the exact endpoint.
+4. Archive, kill, or otherwise stop the exact endpoint, and answer a separate read that proves it is gone - the shared kill contract owned by `fm_backend_kill` in `bin/fm-backend.sh` accepts no stop it cannot confirm.
 5. Let the thread append Firstmate's normal lifecycle lines to `state/<id>.status`.
 
 The status return channel is mandatory.

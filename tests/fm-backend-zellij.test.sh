@@ -47,8 +47,12 @@ if [ "${1:-}" = --version ]; then
   exit 0
 fi
 if [ "${1:-}" = list-sessions ]; then
+  if [ -n "${FM_ZELLIJ_SESSION_LIST_ERROR:-}" ]; then
+    printf '%s\n' "$FM_ZELLIJ_SESSION_LIST_ERROR" >&2
+    exit "${FM_ZELLIJ_SESSION_LIST_EXIT:-1}"
+  fi
   printf '%s\n' "${FM_ZELLIJ_SESSION_LIST:-}"
-  exit 0
+  exit "${FM_ZELLIJ_SESSION_LIST_EXIT:-0}"
 fi
 if [ "${1:-}" = attach ]; then
   exit "${FM_ZELLIJ_ATTACH_EXIT:-0}"
@@ -752,11 +756,16 @@ test_kill_resolves_tab_and_closes_by_id() {
   dir="$TMP_ROOT/kill"; mkdir -p "$dir/responses"
   zellij_pane_response "$dir" 1 7 3
   printf '[{"id":7,"tab_id":3,"is_plugin":false}]\n' > "$dir/responses/2.out"
+  # 2.out answers the close itself; 3.out is the confirmation listing, with the
+  # pane gone - what makes this a confirmed kill rather than an unconfirmed one.
+  printf '[]\n' > "$dir/responses/3.out"
   fb=$(make_zellij_fakebin "$dir")
   PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
     FM_ZELLIJ_SESSION_LIST="firstmate" \
     bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT"
-  expect_code 0 $? "kill should succeed (best-effort)"
+  expect_code 0 $? "a close the listing confirms should report the endpoint gone"
+  [ "$(grep -acF -- $'\x1f''list-panes'$'\x1f''--json' "$dir/log")" = 2 ] \
+    || fail "kill should read the pane listing twice - once to resolve the tab, once after the close to confirm it landed: $(cat -v "$dir/log")"
   zellij_assert_call_order "$dir/log" $'\x1f''list-panes'$'\x1f''--json' $'\x1f''close-tab-by-id' \
     "kill did not verify the pane before close-tab-by-id"
   assert_contains "$(cat "$dir/log")" $'\x1f''close-tab-by-id'$'\x1f''3' \
@@ -768,11 +777,12 @@ test_kill_falls_back_to_close_pane_when_tab_lookup_empty() {
   local dir fb
   dir="$TMP_ROOT/kill-fallback"; mkdir -p "$dir/responses"
   printf '[]\n' > "$dir/responses/1.out"
+  printf '[]\n' > "$dir/responses/3.out"
   fb=$(make_zellij_fakebin "$dir")
   PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
     FM_ZELLIJ_SESSION_LIST="firstmate" \
     bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT"
-  expect_code 0 $? "kill must stay best-effort even when the tab lookup comes up empty"
+  expect_code 0 $? "a confirmed close-pane fallback should report the endpoint gone"
   zellij_assert_call_order "$dir/log" $'\x1f''list-panes'$'\x1f''--json' $'\x1f''close-pane' \
     "kill did not verify the pane before close-pane fallback"
   assert_contains "$(cat "$dir/log")" $'\x1f''close-pane'$'\x1f''--pane-id'$'\x1f''7' \
@@ -785,11 +795,12 @@ test_kill_closes_recorded_tab_when_pane_already_gone() {
   dir="$TMP_ROOT/kill-recorded-tab"; mkdir -p "$dir/responses"
   printf '[]\n' > "$dir/responses/1.out"
   printf '[{"tab_id":3,"name":"fm-zghost"}]\n' > "$dir/responses/2.out"
+  printf '[]\n' > "$dir/responses/4.out"
   fb=$(make_zellij_fakebin "$dir")
   PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
     FM_ZELLIJ_SESSION_LIST="firstmate" \
     bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7 3 fm-zghost' "$ROOT"
-  expect_code 0 $? "kill must stay best-effort even when only the recorded tab id is usable"
+  expect_code 0 $? "a confirmed recorded-tab close should report the endpoint gone"
   zellij_assert_call_order "$dir/log" $'\x1f''list-panes'$'\x1f''--json' $'\x1f''list-tabs'$'\x1f''--json' \
     "kill did not verify the recorded tab id by label before closing it"
   zellij_assert_call_order "$dir/log" $'\x1f''list-tabs'$'\x1f''--json' $'\x1f''close-tab-by-id' \
@@ -806,11 +817,13 @@ test_kill_skips_recorded_tab_when_label_mismatches() {
   dir="$TMP_ROOT/kill-recorded-tab-mismatch"; mkdir -p "$dir/responses"
   printf '[]\n' > "$dir/responses/1.out"
   printf '[{"tab_id":3,"name":"not-the-task"}]\n' > "$dir/responses/2.out"
+  # A mismatched label is only a gone endpoint once a listing that RAN says so.
+  printf '[]\n' > "$dir/responses/3.out"
   fb=$(make_zellij_fakebin "$dir")
   PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
     FM_ZELLIJ_SESSION_LIST="firstmate" \
     bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7 3 fm-zghost' "$ROOT"
-  expect_code 0 $? "kill must stay best-effort when the recorded tab id no longer belongs to the task"
+  expect_code 0 $? "an id that no longer carries this task's label is a gone endpoint, not an unconfirmed kill"
   zellij_assert_call_order "$dir/log" $'\x1f''list-panes'$'\x1f''--json' $'\x1f''list-tabs'$'\x1f''--json' \
     "kill did not verify the recorded tab id by label"
   assert_not_contains "$(cat "$dir/log")" $'\x1f''close-tab-by-id' \
@@ -820,6 +833,62 @@ test_kill_skips_recorded_tab_when_label_mismatches() {
   pass "fm_backend_zellij_kill: skips a stale recorded tab id whose label does not match"
 }
 
+# The ambiguity this repo documents and deliberately refuses: a legacy
+# bare-titled tab whose name is shared by another live tab (this home's
+# pre-migration tab plus a same-named tab from another home in the same
+# session). fm_backend_zellij_tab_matches_label refuses it on purpose, so the
+# label never resolves - but the pane is alive and nothing was closed, which
+# makes it an unconfirmed kill, never a gone endpoint.
+test_kill_reports_unconfirmed_when_the_label_is_ambiguous_and_the_pane_is_live() {
+  local dir fb out
+  dir="$TMP_ROOT/kill-label-ambiguous"; mkdir -p "$dir/responses"
+  # 1 tab_for_pane: pane 7 lives in tab 3. 2 and 3 are the label checks for the
+  # resolved and the recorded tab id, both reading the same ambiguous listing.
+  zellij_pane_response "$dir" 1 7 3
+  zellij_multi_tab_response "$dir" 2 3 fm-zghost 9 fm-zghost
+  zellij_multi_tab_response "$dir" 3 3 fm-zghost 9 fm-zghost
+  # 4 the pane read on the unresolved-label path: the pane is still live.
+  zellij_pane_response "$dir" 4 7 3
+  # 5/6 the proof attempt: the tab holding it, and its still-ambiguous name.
+  zellij_pane_response "$dir" 5 7 3
+  zellij_multi_tab_response "$dir" 6 3 fm-zghost 9 fm-zghost
+  fb=$(make_zellij_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST="firstmate" \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7 3 fm-zghost' "$ROOT" 2>&1 )
+  expect_code 2 $? "an ambiguous label over a live pane must report unconfirmed, never a gone endpoint"
+  assert_contains "$out" "may still be running" \
+    "an ambiguous label over a live pane should say the worker may still be running"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-tab-by-id' \
+    "kill should not close a tab it could not verify"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-pane' \
+    "kill should not close a pane once an expected task label is available"
+  pass "fm_backend_zellij_kill: an ambiguous label over a live pane is unconfirmed, not gone"
+}
+
+# The other half of that path: a tab read that RAN and shows the pane's tab
+# carrying a different name IS proof the id stopped naming this task.
+test_kill_reports_gone_when_the_pane_moved_to_a_differently_named_tab() {
+  local dir fb
+  dir="$TMP_ROOT/kill-label-moved"; mkdir -p "$dir/responses"
+  zellij_pane_response "$dir" 1 7 3
+  zellij_tab_response "$dir" 2 3 not-the-task
+  zellij_tab_response "$dir" 3 3 not-the-task
+  zellij_pane_response "$dir" 4 7 3
+  zellij_pane_response "$dir" 5 7 3
+  zellij_tab_response "$dir" 6 3 not-the-task
+  fb=$(make_zellij_fakebin "$dir")
+  PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST="firstmate" \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7 3 fm-zghost' "$ROOT"
+  expect_code 0 $? "a pane whose tab carries another name no longer belongs to this task"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-tab-by-id' \
+    "kill should not close a tab that belongs to someone else"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-pane' \
+    "kill should not close a pane that belongs to someone else"
+  pass "fm_backend_zellij_kill: a pane under a differently named tab still reads as gone"
+}
+
 test_kill_is_noop_when_session_absent() {
   local dir fb
   dir="$TMP_ROOT/kill-no-session"; mkdir -p "$dir/responses"
@@ -827,8 +896,85 @@ test_kill_is_noop_when_session_absent() {
   PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
     FM_ZELLIJ_SESSION_LIST="" \
     bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT"
-  expect_code 0 $? "kill must stay best-effort (never fail) even when the session is already gone"
+  expect_code 0 $? "an already-absent session is ordinary idempotent cleanup, not a refusal"
   pass "fm_backend_zellij_kill: never fails when the target session no longer exists"
+}
+
+# The whole point of the kill contract: a read that FAILED proves nothing, so
+# it can never be reported as a gone endpoint. zellij exits nonzero both for an
+# empty session list and for a real failure, so the two must be told apart by
+# more than the exit status.
+test_kill_reports_unconfirmed_when_the_session_listing_fails() {
+  local dir fb out
+  dir="$TMP_ROOT/kill-session-listing-failed"; mkdir -p "$dir/responses"
+  fb=$(make_zellij_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST_ERROR="error: could not connect to the zellij server" \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT" 2>&1 )
+  expect_code 2 $? "a session listing that failed must report unconfirmed, never a gone endpoint"
+  assert_contains "$out" "may still be running" \
+    "a failed session listing should say the worker may still be running"
+  # The refusal alone does not tell an operator what to fix. Every unreadable
+  # listing - unreachable server, missing CLI, version mismatch - arrives at
+  # the same verdict, so the listing's own words have to come with it.
+  assert_contains "$out" "could not connect to the zellij server" \
+    "an unreadable session listing should quote why it could not be read"
+  assert_not_contains "$(cat "$dir/log")" $'\x1f''close-tab-by-id' \
+    "kill should not close anything when it cannot read the session listing"
+  pass "fm_backend_zellij_kill: a session listing that failed is unconfirmed, not gone"
+}
+
+# The missing-CLI shape of the same rule: there is one owner of "the listing
+# could not be read", and it has to name this cause rather than leave an
+# operator reading an unreachable-server message for an uninstalled zellij.
+test_kill_names_a_zellij_that_could_not_run_at_all() {
+  local dir fb out
+  dir="$TMP_ROOT/kill-session-listing-no-cli"; mkdir -p "$dir/responses"
+  fb=$(make_zellij_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST_ERROR="bash: zellij: command not found" \
+    FM_ZELLIJ_SESSION_LIST_EXIT=127 \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT" 2>&1 )
+  expect_code 2 $? "a zellij that could not run must report unconfirmed, never a gone endpoint"
+  assert_contains "$out" "command not found" \
+    "a zellij that could not run should be named as the reason the listing was unreadable"
+  assert_contains "$out" "may still be running" \
+    "a zellij that could not run should still say the worker may still be running"
+  # The kill contract allows exactly one explanatory line, and callers that
+  # relay only the first one must get the cause AND the consequence.
+  [ "$(printf '%s\n' "$out" | grep -c .)" = 1 ] \
+    || fail "an unreadable listing should refuse in exactly one line, got: $out"
+  pass "fm_backend_zellij_kill: a zellij that could not run is named, not reported as gone"
+}
+
+# zellij's own empty-listing answer is nonzero too, and that one IS proof.
+test_kill_treats_the_empty_session_listing_as_gone() {
+  local dir fb
+  dir="$TMP_ROOT/kill-session-listing-empty"; mkdir -p "$dir/responses"
+  fb=$(make_zellij_fakebin "$dir")
+  PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST_ERROR="No active zellij sessions found." \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT"
+  expect_code 0 $? "zellij's own empty-listing answer is an already-absent endpoint, not a refusal"
+  pass "fm_backend_zellij_kill: zellij's nonzero empty-listing answer still reads as gone"
+}
+
+# The same rule on the label path: no tab carries the label AND the pane
+# listing failed, so nothing proved this endpoint gone.
+test_kill_reports_unconfirmed_when_the_label_path_cannot_read_panes() {
+  local dir fb out
+  dir="$TMP_ROOT/kill-label-unreadable"; mkdir -p "$dir/responses"
+  printf '[]\n' > "$dir/responses/1.out"
+  printf '[{"tab_id":3,"name":"not-the-task"}]\n' > "$dir/responses/2.out"
+  printf '1\n' > "$dir/responses/3.exit"
+  fb=$(make_zellij_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST="firstmate" \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7 3 fm-zghost' "$ROOT" 2>&1 )
+  expect_code 2 $? "an unreadable pane listing must report unconfirmed, never a gone endpoint"
+  assert_contains "$out" "may still be running" \
+    "an unreadable pane listing should say the worker may still be running"
+  pass "fm_backend_zellij_kill: an unreadable pane listing on the label path is unconfirmed"
 }
 
 test_teardown_passes_recorded_tab_id_to_zellij_kill() {
@@ -850,6 +996,9 @@ test_teardown_passes_recorded_tab_id_to_zellij_kill() {
     "decision_keys="
   printf '[]\n' > "$dir/responses/1.out"
   printf '[{"tab_id":3,"name":"fm-zghost"}]\n' > "$dir/responses/2.out"
+  # 4.out is the listing the close is confirmed against; without a pane gone
+  # there, cleanup refuses rather than removing the task's durable records.
+  printf '[]\n' > "$dir/responses/4.out"
   fb=$(make_zellij_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" FM_ZELLIJ_SESSION_LIST="firstmate" \
@@ -896,6 +1045,13 @@ test_forced_secondmate_teardown_kills_zellij_children_with_child_home_tag() {
   zellij_pane_response "$dir" 1 7 4
   zellij_tab_response "$dir" 2 4 "$child_title"
   printf '[]\n' > "$dir/responses/3.out"
+  # The child's close is confirmed against 4.out before any of that child's
+  # durable identity records may be erased.
+  printf '[]\n' > "$dir/responses/4.out"
+  # The secondmate's OWN endpoint is confirmed the same way afterwards (calls 5
+  # and 6 resolve no tab for it, so 7 is the pane listing that settles it). The
+  # child tag is this test's subject; the parent close just has to be provable.
+  printf '[]\n' > "$dir/responses/7.out"
   fb=$(make_zellij_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_ROOT_OVERRIDE="$ROOT" \
@@ -1337,7 +1493,13 @@ test_kill_resolves_tab_and_closes_by_id
 test_kill_falls_back_to_close_pane_when_tab_lookup_empty
 test_kill_closes_recorded_tab_when_pane_already_gone
 test_kill_skips_recorded_tab_when_label_mismatches
+test_kill_reports_unconfirmed_when_the_label_is_ambiguous_and_the_pane_is_live
+test_kill_reports_gone_when_the_pane_moved_to_a_differently_named_tab
 test_kill_is_noop_when_session_absent
+test_kill_reports_unconfirmed_when_the_session_listing_fails
+test_kill_names_a_zellij_that_could_not_run_at_all
+test_kill_treats_the_empty_session_listing_as_gone
+test_kill_reports_unconfirmed_when_the_label_path_cannot_read_panes
 test_teardown_passes_recorded_tab_id_to_zellij_kill
 test_forced_secondmate_teardown_kills_zellij_children_with_child_home_tag
 test_send_text_submit_detects_landed_send

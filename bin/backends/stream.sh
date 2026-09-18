@@ -378,19 +378,27 @@ fm_backend_stream_parse_target() {  # <target>
   local target=$1 tag endpoint configured
   FM_BACKEND_STREAM_TAG=
   FM_BACKEND_STREAM_ENDPOINT=
+  # Why a refusal reason and not just a status: a string that names no endpoint
+  # at all and a real endpoint on another hub are different facts about the
+  # worker, and the kill contract reports them differently.
+  FM_BACKEND_STREAM_TARGET_FAULT=unaddressable
   case "$target" in
     *:*) ;;
-    *) echo "error: malformed stream target '$target' (expected <hub-tag>:<endpoint-id>)" >&2; return 1 ;;
+    *) FM_BACKEND_STREAM_TARGET_FAULT=malformed
+       echo "error: malformed stream target '$target' (expected <hub-tag>:<endpoint-id>)" >&2; return 1 ;;
   esac
   tag=${target%%:*}
   endpoint=${target#*:}
   case "$endpoint" in
-    *:*|'') echo "error: malformed stream target '$target' (expected <hub-tag>:<endpoint-id>)" >&2; return 1 ;;
+    *:*|'') FM_BACKEND_STREAM_TARGET_FAULT=malformed
+            echo "error: malformed stream target '$target' (expected <hub-tag>:<endpoint-id>)" >&2; return 1 ;;
   esac
   case "$endpoint" in
-    *[!0-9a-f]*) echo "error: malformed stream endpoint id in '$target'" >&2; return 1 ;;
+    *[!0-9a-f]*) FM_BACKEND_STREAM_TARGET_FAULT=malformed
+                 echo "error: malformed stream endpoint id in '$target'" >&2; return 1 ;;
   esac
-  [ -n "$tag" ] || { echo "error: malformed stream target '$target' (empty hub tag)" >&2; return 1; }
+  [ -n "$tag" ] || { FM_BACKEND_STREAM_TARGET_FAULT=malformed
+    echo "error: malformed stream target '$target' (empty hub tag)" >&2; return 1; }
   configured=$(fm_backend_stream_hub_tag) || return 1
   [ "$tag" = "$configured" ] || {
     echo "error: endpoint '$target' belongs to hub '$tag' but this home is configured for '$configured'; refusing to address a different hub" >&2
@@ -652,23 +660,69 @@ fm_backend_stream_agent_state() {  # <target>
   printf 'ambiguous'
 }
 
+# Return contract: bin/fm-backend.sh's fm_backend_kill header owns it. This is
+# the adapter the contract was written from: the hub already distinguishes a
+# kill the endpoint's own agent acknowledged from one it only presumed, and
+# every unacknowledged answer here is the contract's unconfirmed result.
+# A target tagged for a hub other than the configured one is unconfirmed rather
+# than gone: a worker on a hub that cannot be reached is a worker nothing has
+# proved stopped. A malformed string is the contract's unsupported result
+# instead, exactly as it is for every other adapter - it names no endpoint on
+# any hub, so no worker was ever addressed and there is no answer about one to
+# report.
 fm_backend_stream_kill() {  # <target> [unused] [expected-label]
-  local target=$1 expected=${3:-} task out
-  fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || return 0
+  local target=$1 expected=${3:-} task out label api_rc=0
+  fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || {
+    if [ "$FM_BACKEND_STREAM_TARGET_FAULT" = malformed ]; then
+      echo "error: '$target' is not a stream endpoint address (expected <hub-tag>:<endpoint-id>)," \
+           "so no worker was ever named and no kill could be attempted" >&2
+      return 1
+    fi
+    echo "error: '$target' does not address an endpoint on this home's stream hub, so nothing" \
+         "could be closed or confirmed gone; the worker may still be running" >&2
+    return 2
+  }
   # One read answers both questions this needs: whose task this id names, and
   # whether the hub already watched the worker go. A read that FAILS answers
   # neither, so it is reported rather than taken for a stop - a hub that cannot
   # be reached, or that forgot an endpoint it stopped hearing from, knows
   # nothing about whether that worker is still running.
-  task=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
-    echo "error: the stream hub could not say what $FM_BACKEND_STREAM_ENDPOINT is;" \
-         "the worker may still be running" >&2
-    return 1
-  }
+  #
+  # A bare 404 is the one that looks like an answer and is not. The simple
+  # reading - the hub has no such task, so the endpoint is gone - is wrong here
+  # because the hub's task table is not durable truth about workers: it is
+  # rebuilt by the agents that register into it. A hub that restarts serves 404
+  # for every endpoint until each agent re-registers (docs/stream-backend.md),
+  # and every worker behind those 404s is still running. Absence from the table
+  # is therefore a statement about the hub's own memory, never about a process
+  # on another machine, so it is reported as unconfirmed with its own reason
+  # rather than folded into the generic read failure.
+  task=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || api_rc=$?
+  if [ "$api_rc" -ne 0 ]; then
+    if [ "$api_rc" -eq 3 ]; then
+      echo "error: the stream hub has no record of $FM_BACKEND_STREAM_ENDPOINT, which is not the same" \
+           "as its worker having stopped - a restarted hub serves that answer until its agents" \
+           "re-register; the worker may still be running" >&2
+    else
+      echo "error: the stream hub could not say what $FM_BACKEND_STREAM_ENDPOINT is;" \
+           "the worker may still be running" >&2
+    fi
+    return 2
+  fi
   if [ -n "$expected" ]; then
     # A mismatched label means the id names something other than this task, so
-    # closing it would destroy a stranger's endpoint.
-    [ "$(printf '%s' "$task" | jq -r '.task.label // empty' 2>/dev/null)" = "$expected" ] || return 0
+    # closing it would destroy a stranger's endpoint. Only a label the hub
+    # actually answered with says that: a body that does not parse, or one
+    # carrying no label at all, reads as empty here and would otherwise pass
+    # for every expected label at once - licensing record removal without so
+    # much as issuing the kill.
+    label=$(printf '%s' "$task" | jq -r '.task.label // empty' 2>/dev/null) || label=
+    if [ -z "$label" ]; then
+      echo "error: the stream hub's answer for $FM_BACKEND_STREAM_ENDPOINT carried no readable label," \
+           "so it was neither closed nor confirmed gone; the worker may still be running" >&2
+      return 2
+    fi
+    [ "$label" = "$expected" ] || return 0
   fi
   # An endpoint its own agent closed is the one confirmed stop there is: that
   # agent watched the worker exit and carried its exit code back. A record the
@@ -677,16 +731,23 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
   out=$(fm_backend_stream_api DELETE "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
     echo "error: the stream hub refused or never answered the kill for" \
          "$FM_BACKEND_STREAM_ENDPOINT; the worker may still be running" >&2
-    return 1
+    return 2
   }
-  # The hub answers whether the owning agent actually took the kill. A record
-  # it closed on its own says nothing about the worker's process, and reporting
-  # that as a stop would let a task be treated as gone while it still runs.
+  # The hub answers whether the owning agent actually took the kill, and that
+  # answer has to be read rather than assumed: a record the hub closed on its
+  # own says nothing about the worker's process, and neither does a body this
+  # could not parse. Only an explicit true is a stop.
   case "$(printf '%s' "$out" | jq -r '.delivered' 2>/dev/null)" in
+    true) return 0 ;;
     false)
       echo "error: the stream hub closed its record for $FM_BACKEND_STREAM_ENDPOINT," \
            "but its agent never acknowledged the kill; the worker may still be running" >&2
-      return 1
+      return 2
+      ;;
+    *)
+      echo "error: the stream hub's answer to the kill for $FM_BACKEND_STREAM_ENDPOINT could not be" \
+           "read, so nothing confirms its agent took it; the worker may still be running" >&2
+      return 2
       ;;
   esac
 }

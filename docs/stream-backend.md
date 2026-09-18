@@ -129,8 +129,7 @@ An endpoint carries `closed_by`: `agent` when its own agent reported the worker 
 A kill against an endpoint already closed by its agent reports success without asking again - that agent watched the worker exit, which is the best evidence there will ever be - while every other outcome, `closed_by: hub` included, reports an unconfirmed stop.
 A close record moves from presumption to fact and never the reverse: a `hub` close is what the hub assumed about a worker it could not reach, so when that agent comes back and reports its own worker's exit, its report takes the record over - attribution and exit code together - and the endpoint then reads as one the agent closed.
 A hub close can never take over an agent's, and it never overwrites the exit code an agent recorded, which is what keeps an unacknowledged kill from ever claiming confirmation.
-Today that is where the distinction stops, because every caller of the shared `fm_backend_kill` discards its status and its stderr, so firstmate's teardown proceeds as it would after any other kill.
-Making those call sites honour a refused kill is a cross-backend change and is follow-up work.
+That distinction now reaches every caller: an unacknowledged kill is the shared kill contract's unconfirmed result, `fm_backend_kill` in `bin/fm-backend.sh` owns it, and cleanup keeps the task's durable records rather than recording a worker as gone that nothing has stopped.
 
 ## When the hub has not heard from an agent
 
@@ -164,6 +163,9 @@ That refusal is what an agent registers itself again on, under the endpoint id i
 Listed and steerable arrive together rather than one after the other, because the thread that receives steers is told the endpoint is back at the moment it comes back rather than finding out on its own schedule.
 The residual is small and worth stating: the two are separate calls, so a steer aimed at the instant between a worker being listed again and its next command poll reaching the hub can still be reported undelivered, and is delivered on the retry.
 
+This is why a kill against an endpoint the hub does not have reports an unconfirmed stop rather than a gone endpoint.
+Absence from the task table is a statement about the hub's own memory, never about a process on another machine, and every worker behind those answers while a hub is restarting is still running.
+
 The identity is the point.
 The endpoint id an agent re-registers is the one the task's own records name, so its metadata binding, its steering and its status channel all keep meaning what they meant; an agent that came back under a fresh id would be listed while every record pointing at it was stranded, which is a worse outcome than staying away.
 The history does not come back with it.
@@ -196,6 +198,39 @@ An agent that comes back to find another endpoint already answering to its machi
 Everything else the hub can say is kept, including a credential it will not take: the hub reads its tokens once at startup, so a hub that came back with the wrong token file refuses the whole fleet at once, and an agent that treated that as settled would strand every worker permanently over a condition that ends the moment the hub is restarted correctly.
 So a refusal that is not a lost name is waited out on the same backoff as an unreachable hub, and the worker is there when the hub is right again.
 In either case the worker itself is left running and untouched, because a refused agent says nothing at all about the work its worker is in the middle of.
+
+## Retiring a record no backend can answer for
+
+Cleanup removes a task's durable records only once a backend has proved the worker stopped, and `--force` does not lift that: it authorizes discarding unlanded WORK, never asserting a stop nobody observed.
+A hub restart leaves records in exactly that state - the hub has never heard of the endpoint, a kill against it reports an unconfirmed stop, and no later read can change that answer - so cleanup refuses every time and the record would stay forever.
+
+`bin/fm-retire-endpoint.sh <task-id> [<task-id>...]` is the one way such a record is retired, and only a human runs it.
+Nothing in firstmate invokes it, and it names each id exactly - wildcards and all-records forms are refused - then asks you to type those ids back before anything is written.
+
+By naming a record you assert, from your own inspection of the machine that ran it, that no worker is still running behind it.
+That is the hub-unanswerable condition: the backend that owned the worker can no longer say anything about it, so no read will ever settle the question.
+Your username and the time are recorded with the assertion: every run appends one line to `state/endpoint-retirements.log` recording that a named person asserted, at a named time, that a named record should be retired, and whether the runtime-refusal override was used.
+That line is written before anything is removed, and a run whose line cannot be appended retires nothing - a record is never removed without a durable author.
+Because it is written first, cleanup can still refuse afterwards and retire nothing: each line records the assertion that was made, not an outcome, and no outcome is written back to it.
+
+What it touches, and what it does not:
+
+- It retires RECORDS: the durable task record and, where firstmate owns the transition, the task's backlog row.
+  A home whose backlog is kept manually, or which keeps no backlog file, has its row left exactly as the operator keeps it.
+- Cleanup runs first and finishes the job properly whenever its own gates allow.
+  The first of two refusals the retirement proceeds past is cleanup's work-protection gate, which refuses before anything on disk has been touched.
+  In that case the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
+  It never discards work and never passes `--force` to anything.
+- The second is cleanup's unconfirmed-kill gate, and it is the command's honest cost: the records are retired even for an endpoint the backend still reports present after its kill, with no further flag, on your assertion alone.
+  Cleanup cannot tell you which case you are in - a backend answering "still there" and a backend that cannot answer at all reach it as the same unconfirmed verdict, so its warning claims neither and says only that the endpoint was never confirmed gone.
+  A worker may still be running behind a record retired that way, and stopping it is yours to do.
+- Every other cleanup refusal stands and nothing is retired - an outcome that has not reached the parent channel, a backlog transition that cannot be replayed.
+  The one exception is a cleanup that fails only after it has already removed the durable task record: the run reports that partial state, naming the record that is gone and the pending close left behind, instead of claiming nothing was retired.
+
+`--override-runtime-refusal` additionally proceeds past a RUNTIME's own refusal to answer for the endpoint - a herdr server that cannot be reached at all, for instance.
+Without the flag that refusal stands and nothing is retired; with it, the override is recorded alongside the retirement with your name and the time.
+
+The command is not stream-specific, but the stream hub's restart behavior above is the condition it exists for.
 
 ## When the hub is down
 

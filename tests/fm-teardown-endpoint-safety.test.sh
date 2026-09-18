@@ -341,6 +341,79 @@ isolated_tmux_window_exists() {  # <dir> <socket> <session> <window>
     | grep -Fqx "$4"
 }
 
+# A close a backend accepts and does not perform is a real, documented shape,
+# not a hypothetical: cmux's `close-workspace` answers OK and leaves the last
+# workspace in its window standing (docs/cmux-backend.md "Closing the last
+# workspace in a window"). This fixture reproduces exactly that class against a
+# REAL tmux server - every read, including the inventory the verdict comes
+# from, is the real one, and only the close is suppressed - so the assertions
+# below are about what cleanup does with a worker that is provably still
+# there, never about a rewritten classifier.
+test_unconfirmed_endpoint_kill_refuses_record_removal() {
+  local dir socket socket_id session='unconfirmed kill' id=unconfirmed target=fm-unconfirmed rc
+  [ -n "$REAL_TMUX" ] || { echo "skip - tmux not installed"; return 0; }
+  dir=$(make_case unconfirmed-kill)
+  socket=dedicated.sock
+  socket_id="$dir/$socket"
+  ( cd "$dir" && env -u TMUX -u TMUX_PANE "$REAL_TMUX" -S "$socket" new-session -d -s "$session" -n control )
+  ( cd "$dir" && env -u TMUX -u TMUX_PANE "$REAL_TMUX" -S "$socket" new-window -d -t "$session:" -n "$target" )
+  : > "$dir/suppress-kill"
+  cat > "$dir/fakebin/tmux" <<SH
+#!/usr/bin/env bash
+set -eu
+printf 'tmux' >> "\${FM_RUNTIME_LOG:?}"
+printf ' <%s>' "\$@" >> "\${FM_RUNTIME_LOG:?}"
+printf '\n' >> "\${FM_RUNTIME_LOG:?}"
+if [ -e '$dir/suppress-kill' ] && [ "\${1:-}" = kill-window ]; then
+  exit 0
+fi
+cd '$dir'
+exec '$REAL_TMUX' -S '$socket' "\$@"
+SH
+  chmod +x "$dir/fakebin/tmux"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=$session:$target" "endpoint_task_id=$id" \
+    "worktree=$dir/nonexistent-worktree" "project=$dir/nonexistent-project" \
+    "kind=scout" "mode=no-mistakes"
+
+  set +e
+  env -u TMUX -u TMUX_PANE FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    "$TEARDOWN" "$id" --force > "$dir/unconfirmed.out" 2> "$dir/unconfirmed.err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "cleanup reported success for a kill nothing proved landed"
+  isolated_tmux_window_exists "$dir" "$socket" "$session" "$target" \
+    || fail "the unconfirmed case is vacuous: the window was actually removed"
+  assert_present "$dir/home/state/$id.meta" \
+    "cleanup removed the durable endpoint record while its worker was still running"
+  assert_contains "$(cat "$dir/unconfirmed.err")" "not confirmed gone" \
+    "cleanup did not report the unproven result: $(cat "$dir/unconfirmed.err")"
+
+  # An already-absent endpoint is ordinary idempotent cleanup and must stay a
+  # success, so the same contract cannot be satisfied by refusing everything.
+  # shellcheck disable=SC2016 # $1 and $2 expand inside the isolated child shell.
+  env -u TMUX -u TMUX_PANE FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    bash -c '. "$1/bin/fm-backend.sh"; fm_backend_kill tmux "$2"' _ "$ROOT" "$session:fm-never-existed" \
+    > "$dir/absent.out" 2> "$dir/absent.err" \
+    || fail "a kill against an endpoint that was never there must stay a success: $(cat "$dir/absent.err")"
+  [ ! -s "$dir/absent.err" ] || fail "an already-absent endpoint should say nothing: $(cat "$dir/absent.err")"
+
+  # The same cleanup, once the close is performed for real, removes the record.
+  rm -f "$dir/suppress-kill"
+  env -u TMUX -u TMUX_PANE FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    "$TEARDOWN" "$id" --force > "$dir/confirmed.out" 2> "$dir/confirmed.err" \
+    || fail "cleanup failed after a kill the backend confirmed: $(cat "$dir/confirmed.err")"
+  isolated_tmux_window_exists "$dir" "$socket" "$session" "$target" \
+    && fail "the confirmed case did not actually remove the window"
+  assert_absent "$dir/home/state/$id.meta" \
+    "cleanup kept the durable endpoint record after a confirmed kill"
+
+  ( cd "$dir" && env -u TMUX -u TMUX_PANE "$REAL_TMUX" -S "$socket" kill-server 2>/dev/null ) || true
+  pass "fm-teardown: an unconfirmed endpoint kill keeps every durable record, while an already-absent endpoint and a confirmed kill both stay successful"
+}
+
 test_isolated_tmux_invalid_and_valid_cleanup() {
   local dir socket socket_id session='endpoint safety' target_id=target control=control target=fm-target
   local prefix_target=fm-prefix prefix_survivor=fm-prefix2 rc
@@ -980,6 +1053,7 @@ test_supported_backend_endpoint_records_validate
 test_tmux_empty_target_refuses_without_invocation
 test_recorded_process_identity_cleanup_is_exact
 test_isolated_tmux_invalid_and_valid_cleanup
+test_unconfirmed_endpoint_kill_refuses_record_removal
 test_bare_relative_origin_shares_project_lock_with_clone
 test_reused_pool_slot_refuses_before_touching_the_other_task
 test_cross_home_pool_slot_collision_refuses

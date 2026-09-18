@@ -165,9 +165,52 @@ fm_backend_tmux_send_literal() {  # <target> <text>
   tmux send-keys -t "$1" -l "$2"
 }
 
-# fm_backend_tmux_kill: remove one explicitly named task window, best-effort.
-# Empty, omitted, and malformed targets return nonzero before invoking tmux so
-# tmux can never interpret an empty target as the caller's current window.
+# fm_backend_tmux_window_presence: classify one recorded window as
+# dead|present|unknown from a tmux session inventory, never from a kill or
+# pane command's own exit status. Tmux silently falls back to the active
+# window when a named target is absent, so only a SUCCESSFUL inventory that
+# omits the exact window - or a definitive missing-session/no-server answer -
+# proves the window gone; every other inventory failure is a transient tmux
+# problem that cannot tell a closed window from an unreachable server.
+# This is the single owner of that reading: fm_backend_tmux_kill confirms with
+# it and fm_backend_tmux_agent_state opens with it.
+fm_backend_tmux_window_presence() {  # <session> <window> -> dead|present|unknown
+  local session=$1 window=$2 windows inventory_status
+  if [ -z "$session" ] || [ -z "$window" ]; then
+    printf 'unknown'
+    return 0
+  fi
+  if windows=$(LC_ALL=C tmux list-windows -t "$session" -F '#{window_name}' 2>&1); then
+    inventory_status=0
+  else
+    inventory_status=$?
+  fi
+  if [ "$inventory_status" -ne 0 ]; then
+    case "$windows" in
+      *"can't find session:"*|*"no server running on "*|*"error connecting to "*" (No such file or directory)"|*"error connecting to "*" (Connection refused)")
+        printf 'dead'
+        ;;
+      *)
+        printf 'unknown'
+        ;;
+    esac
+    return 0
+  fi
+  if printf '%s\n' "$windows" | grep -Fqx "$window"; then
+    printf 'present'
+  else
+    printf 'dead'
+  fi
+}
+
+# fm_backend_tmux_kill: remove one explicitly named task window. Empty,
+# omitted, and malformed targets return nonzero before invoking tmux so tmux
+# can never interpret an empty target as the caller's current window.
+#
+# Return contract: bin/fm-backend.sh's fm_backend_kill header owns it.
+# `tmux kill-window` reports nothing useful of its own - it exits nonzero for
+# an already-gone window exactly as it does for an unreachable server - so the
+# verdict comes from the inventory read above instead.
 fm_backend_tmux_kill() {  # <target>
   local target=${1:-} session window
   case "$target" in
@@ -181,6 +224,17 @@ fm_backend_tmux_kill() {  # <target>
     :*|*:|*:*:*) return 1 ;;
   esac
   tmux kill-window -t "=$session:=$window" 2>/dev/null || true
+  case "$(fm_backend_tmux_window_presence "$session" "$window")" in
+    dead) return 0 ;;
+    present)
+      echo "error: tmux window $target is still listed after its kill; the worker may still be running" >&2
+      return 2
+      ;;
+    *)
+      echo "error: tmux could not say whether window $target is gone after its kill; the worker may still be running" >&2
+      return 2
+      ;;
+  esac
 }
 
 # fm_backend_tmux_current_command: <target>'s live foreground process name -
@@ -298,7 +352,7 @@ fm_backend_tmux_foreground_argv0s() {  # <target>
 # authoritative for the negative verdicts, since it is the only source that can
 # distinguish a truly idle pane from a rewritten process title.
 fm_backend_tmux_agent_state() {  # <target>
-  local target=$1 comm session window windows inventory_status
+  local target=$1 comm session window
   local foreground argv0s name pid fg_seen=0 fg_shell=0 fg_other=0
   case "$target" in
     *:*:*|'':*|*:'') printf 'unreadable'; return 0 ;;
@@ -307,26 +361,10 @@ fm_backend_tmux_agent_state() {  # <target>
   esac
   session=${target%%:*}
   window=${target#*:}
-  if windows=$(LC_ALL=C tmux list-windows -t "$session" -F '#{window_name}' 2>&1); then
-    inventory_status=0
-  else
-    inventory_status=$?
-  fi
-  if [ "$inventory_status" -ne 0 ]; then
-    case "$windows" in
-      *"can't find session:"*|*"no server running on "*|*"error connecting to "*" (No such file or directory)"|*"error connecting to "*" (Connection refused)")
-        printf 'missing'
-        ;;
-      *)
-        printf 'unreadable'
-        ;;
-    esac
-    return 0
-  fi
-  if ! printf '%s\n' "$windows" | grep -Fqx "$window"; then
-    printf 'missing'
-    return 0
-  fi
+  case "$(fm_backend_tmux_window_presence "$session" "$window")" in
+    dead) printf 'missing'; return 0 ;;
+    unknown) printf 'unreadable'; return 0 ;;
+  esac
 
   foreground=$(fm_backend_tmux_foreground_comms "$target")
   while IFS= read -r name; do

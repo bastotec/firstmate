@@ -284,7 +284,96 @@ fm_backend_orca_send_text_submit() {  # <terminal-id> <text> <retries> <enter-sl
     "$terminal" "$retries" "$sleep_s"
 }
 
+# fm_backend_orca_terminal_presence: classify one terminal as
+# dead|present|unknown from Orca's own typed JSON envelope, never from the
+# close command's exit status. The cmux adapter is why this read exists at
+# all: `close-workspace` there answers `OK` whether or not it closed anything,
+# so a close's own acknowledgement cannot be the verdict for any backend.
+#
+# The envelope itself is what separates absence from unreachability, with no
+# dependence on an error string: Orca answers `{"ok":false,"error":{...}}`
+# only when the runtime received the call and refused it, so a well-formed
+# ok:false envelope proves the runtime is reachable AND that this terminal is
+# not. A runtime that cannot be reached produces no envelope at all - a
+# transport failure, empty output, or unparseable text - which is `unknown`.
+# Output is parsed regardless of exit status, because a typed refusal may
+# arrive with either.
+#
+# Absence is recognized from the TERMINAL's own not-found code and from nothing
+# else. The code must name this terminal, matched whole rather than by a
+# contained token: a quit app answers about itself, and an `APP_NOT_FOUND` or
+# `RUNTIME_NOT_FOUND` from a CLI that never reached the terminal says nothing
+# about whether that terminal, or its worker, is still there.
+# No live Orca was available to enumerate its error codes, so every other
+# refusal - an internal read failure, a permission or argument error, a rate
+# limit, a CLI wrapping its own connection failure in an envelope - is
+# `unknown`. Reading those as absence would let a kill report a stop for a
+# terminal that answered, which is the one answer this contract may never
+# give; a terminal that stays unretirable because Orca used an unexpected code
+# needs a human, and that is the smaller harm. docs/orca-backend.md records
+# the limit.
+fm_backend_orca_terminal_presence() {  # <terminal-id> -> dead|present|unknown
+  local terminal=$1 out
+  out=$(orca terminal read --terminal "$terminal" --limit 1 --json 2>/dev/null || true)
+  [ -n "$out" ] || { printf 'unknown'; return 0; }
+  printf '%s' "$out" | node -e '
+const fs = require("fs");
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch (err) {
+  process.stdout.write("unknown");
+  process.exit(0);
+}
+if (data === null || typeof data !== "object" || !("ok" in data)) {
+  process.stdout.write("unknown");
+  process.exit(0);
+}
+if (data.ok !== false) {
+  process.stdout.write("present");
+  process.exit(0);
+}
+const err = data.error || {};
+const code = String(err.code || "").trim();
+process.stdout.write(/^terminal[_ -]?not[_ -]?found$/i.test(code) ? "dead" : "unknown");
+' 2>/dev/null || printf 'unknown'
+}
+
+# Return contract: bin/fm-backend.sh's fm_backend_kill header owns it.
+# Orca accepts the close with a typed answer, but an accepted close is still
+# the close speaking about itself, so the verdict comes from the separate
+# absence read above - the same shape every other adapter uses.
 fm_backend_orca_kill() {  # <terminal-id>
-  fm_backend_orca_tool_check || return 0
-  orca terminal close --terminal "$1" --json >/dev/null 2>&1 || true
+  local terminal=${1:-}
+  [ -n "$terminal" ] || return 1
+  fm_backend_orca_tool_check || {
+    echo "error: the Orca CLI is unavailable, so terminal $terminal could not be closed or" \
+         "confirmed gone; the worker may still be running" >&2
+    return 2
+  }
+  # A refused close runs the same absence read as an accepted one rather than
+  # becoming the verdict itself: Orca refuses a close against a terminal it no
+  # longer has, which is ordinary already-absent cleanup, and taking the
+  # refusal at face value would leave that task's records unremovable forever.
+  orca terminal close --terminal "$terminal" --json >/dev/null 2>&1 || {
+    case "$(fm_backend_orca_terminal_presence "$terminal")" in
+      dead) return 0 ;;
+    esac
+    echo "error: 'orca terminal close' did not accept the close for terminal $terminal" \
+         "and it is not confirmed gone; the worker may still be running" >&2
+    return 2
+  }
+  case "$(fm_backend_orca_terminal_presence "$terminal")" in
+    dead) return 0 ;;
+    present)
+      echo "error: Orca accepted the close for terminal $terminal but it still reads as live;" \
+           "the worker may still be running" >&2
+      return 2
+      ;;
+    *)
+      echo "error: Orca accepted the close for terminal $terminal but could not say whether it is" \
+           "gone; the worker may still be running" >&2
+      return 2
+      ;;
+  esac
 }

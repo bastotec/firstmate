@@ -58,6 +58,9 @@ When any diagnostic needs captain attention, report the plain consequence and re
   Verify process reaping, the local-copy return, and endpoint closure, then reconcile any surviving resource.
 - `BOOTSTRAP_INFO: kept the captain call for <id> open with its deliverable recorded after interrupted cleanup; its endpoint or local copy may remain and should be reconciled` - replay retained the captain-held item, but physical cleanup was interrupted.
   Verify process reaping, the local-copy return, and endpoint closure without closing or lifting the captain's call, then reconcile any surviving resource.
+- `BACKLOG_RECONCILE: <id>: its pending close still records an unproved stop, so nothing was replayed and its records and backlog item are intact; re-run cleanup, which re-checks the endpoint` - the pending close was staged for a worker nothing proved stopped, so replay deliberately changed nothing rather than recording a worker as gone.
+  Rerunning session start will not move it: re-run the task's cleanup, which re-checks the endpoint and finishes the close once the worker can be proved stopped.
+  The record does not say why the stop is unproved, so do not report the worker as stopped or still running; if no backend can ever answer for that endpoint, retirement is the operator's own call through `bin/fm-retire-endpoint.sh`.
 - `BACKLOG_RECONCILE: <id>: recorded backlog close could not be replayed: <reason>` - this session start found a pending-close record carrying a close or retention transition but could not land it.
   A valid teardown record proves the transition was authorized and recorded, but physical cleanup may be partial: verify process reaping, the local-copy return, and endpoint closure before assuming those resources are gone.
   A validation error means the record cannot be trusted, so do not assume cleanup completed or follow any path or argument stored in it.

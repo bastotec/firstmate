@@ -595,9 +595,12 @@ fm_backend_cmux_window_of_workspace() {  # <workspace_id> -> "<window_id> <count
   done < <(printf '%s' "$wins" | jq -r '.[]? | .id' 2>/dev/null)
 }
 
-# fm_backend_cmux_kill: remove the task's whole workspace, best-effort (mirrors
-# every other backend's `kill` `|| true` contract). A cmux task owns one
+# fm_backend_cmux_kill: remove the task's whole workspace. A cmux task owns one
 # workspace, so teardown reclaims that workspace and all of its surfaces.
+# The verdict is the shared kill contract's (bin/fm-backend.sh's
+# fm_backend_kill), not a best-effort `|| true`: this is the adapter that
+# proves why a close's own answer can never be the verdict, since
+# `close-workspace` returns `OK` whether or not it closed anything.
 #
 # The selected-workspace teardown bug (docs/cmux-backend.md "Closing the last
 # workspace in a window"): cmux keeps every window at >=1 workspace, so
@@ -611,12 +614,138 @@ fm_backend_cmux_window_of_workspace() {  # <workspace_id> -> "<window_id> <count
 # target is the last one in its window a throwaway sibling is created first,
 # leaving that window a fresh default workspace (never an fm-<home>- title, so
 # recovery/list_live ignore it) - cmux's own "closed the last tab" outcome.
+# fm_backend_cmux_workspace_inventory: every live workspace in this cmux, as
+# one `{"workspaces":[...]}` body.
+#
+# `workspace list --json` with no `--window` is scoped to the CURRENT window
+# only (see fm_backend_cmux_window_of_workspace), so it can never establish
+# that a workspace is gone: a task whose window is not the current one is
+# missing from it while its worker runs. Absence is only established by asking
+# EVERY window, which is what this does - the same walk that already answers
+# window membership.
+#
+# Fails when the window enumeration, or any single window's list, did not run
+# or did not parse - including a window listing that parses but carries a
+# window without a usable id, which enumerates nothing while looking like an
+# answer. A partial inventory proves nothing about what it did not see, and its
+# caller turns that failure into `unknown`. An array with no windows at all is
+# a real answer: no windows, no workspaces.
+fm_backend_cmux_workspace_inventory() {
+  local wins ids wid wss merged='[]'
+  wins=$(fm_backend_cmux_cli list-windows --json --id-format uuids 2>/dev/null) || return 1
+  printf '%s' "$wins" | jq -e '
+    type == "array" and (all(.[]; ((.id // "") | tostring) != ""))
+  ' >/dev/null 2>&1 || return 1
+  ids=$(printf '%s' "$wins" | jq -r '.[] | .id' 2>/dev/null) || return 1
+  while IFS= read -r wid; do
+    [ -n "$wid" ] || continue
+    wss=$(fm_backend_cmux_cli workspace list --json --id-format uuids --window "$wid" 2>/dev/null) || return 1
+    merged=$(printf '%s' "$wss" | jq -c --argjson acc "$merged" '
+      if (.workspaces | type) == "array" then $acc + .workspaces else empty end
+    ' 2>/dev/null) || return 1
+    [ -n "$merged" ] || return 1
+  done <<FMEOF
+$ids
+FMEOF
+  printf '{"workspaces":%s}' "$merged"
+}
+
+# fm_backend_cmux_workspace_presence: classify one workspace as
+# dead|present|foreign|unknown from a structured read of every window's
+# workspaces. This is what makes the silent no-op above observable:
+# `close-workspace` answers `OK` whether or not it closed anything, so the
+# close's own status can never be the verdict. A read that does not run, or
+# that does not parse, is `unknown` - an unreachable cmux cannot tell a closed
+# workspace from one it simply could not see, and neither can a read that saw
+# only one window.
+#
+# With an expected title the same listing answers the two further questions a
+# kill verdict needs. Whether a workspace that IS listed is still this task's:
+# `foreign` is that proof - it is listed and carries another title, so this id
+# was reused and this task's endpoint is gone. And whether a RECORDED id that
+# is absent means the task is gone: cmux does not keep workspace ids across an
+# app relaunch, so a listing that omits the recorded id while carrying this
+# task's title is not absence at all - the worker is live under an id this
+# record never named, which is `unknown`. Only a listing carrying neither the
+# id nor the title is `dead`. A workspace whose title cannot be read from the
+# listing is `unknown` too, never `foreign`, because an absent title is not a
+# different one.
+fm_backend_cmux_workspace_presence() {  # <workspace_id> [expected-title] -> dead|present|foreign|unknown
+  local wsid=$1 expected=${2:-} out matches title
+  out=$(fm_backend_cmux_workspace_inventory) || {
+    printf 'unknown'
+    return 0
+  }
+  matches=$(printf '%s' "$out" | jq -r --arg id "$wsid" '
+    select((.workspaces | type) == "array")
+    | [.workspaces[] | select(.id == $id)] | length
+  ' 2>/dev/null) || matches=
+  case "$matches" in
+    0)
+      if [ -n "$expected" ] && printf '%s' "$out" | jq -e --arg want "$expected" '
+        select((.workspaces | type) == "array")
+        | any(.workspaces[]; (.title // "") == $want)
+      ' >/dev/null 2>&1; then
+        printf 'unknown'
+        return 0
+      fi
+      printf 'dead'
+      return 0
+      ;;
+    1) ;;
+    *) printf 'unknown'; return 0 ;;
+  esac
+  if [ -n "$expected" ]; then
+    title=$(printf '%s' "$out" | jq -r --arg id "$wsid" '
+      select((.workspaces | type) == "array")
+      | [.workspaces[] | select(.id == $id) | .title // ""] | if length == 1 then .[0] else empty end
+    ' 2>/dev/null) || title=
+    if [ -z "$title" ]; then
+      printf 'unknown'
+      return 0
+    fi
+    if [ "$title" != "$expected" ]; then
+      printf 'foreign'
+      return 0
+    fi
+  fi
+  printf 'present'
+}
+
+# Return contract: bin/fm-backend.sh's fm_backend_kill header owns it. An
+# expected label the SAME listing shows has moved to another workspace means
+# the id names something other than this task, which is a gone endpoint rather
+# than an unconfirmed kill - the same reading the stream adapter takes on a
+# label mismatch. A label that merely failed to resolve is not that proof.
 fm_backend_cmux_kill() {  # <target> [unused] [expected-label]
-  local expected_label=${3:-} wsid wininfo win count
+  local expected_label=${3:-} wsid wininfo win count state
   if [ -n "$expected_label" ]; then
-    fm_backend_cmux_target_ready "$1" "$expected_label" || return 0
+    if ! fm_backend_cmux_target_ready "$1" "$expected_label"; then
+      # target_ready answers one false for four different reasons, including a
+      # transient `list-panes` failure against a workspace that is still ours
+      # and still running. Re-read the recorded workspace through the
+      # structured presence read, which answers from the listing itself: gone
+      # when it RAN and carries neither this id nor this task's title, gone
+      # when the id is listed under another title, and a refusal when the
+      # listing proves neither. A workspace still carrying our own title under
+      # this id is live, so it is closed and confirmed below; one carrying that
+      # title under an id this record never named is a refusal, because closing
+      # a target the record does not identify is not this kill's to make.
+      fm_backend_cmux_parse_target "$1" || return 1
+      state=$(fm_backend_cmux_workspace_presence "$FM_BACKEND_CMUX_WORKSPACE" \
+        "$(fm_backend_cmux_scoped_title "$expected_label")")
+      case "$state" in
+        dead|foreign) return 0 ;;
+        present) ;;
+        *)
+          echo "error: cmux could not say whether workspace $FM_BACKEND_CMUX_WORKSPACE is gone, so" \
+               "$1 was neither closed nor confirmed gone; the worker may still be running" >&2
+          return 2
+          ;;
+      esac
+    fi
   else
-    fm_backend_cmux_parse_target "$1" || return 0
+    fm_backend_cmux_parse_target "$1" || return 1
   fi
   wsid=$FM_BACKEND_CMUX_WORKSPACE
   wininfo=$(fm_backend_cmux_window_of_workspace "$wsid")
@@ -626,6 +755,19 @@ fm_backend_cmux_kill() {  # <target> [unused] [expected-label]
     fm_backend_cmux_cli new-workspace --window "$win" --focus false --id-format uuids >/dev/null 2>&1 || true
   fi
   fm_backend_cmux_cli close-workspace --workspace "$wsid" >/dev/null 2>&1 || true
+  case "$(fm_backend_cmux_workspace_presence "$wsid" \
+      "${expected_label:+$(fm_backend_cmux_scoped_title "$expected_label")}")" in
+    dead) return 0 ;;
+    present)
+      echo "error: cmux workspace $wsid is still listed after its close; the worker may still be running" >&2
+      return 2
+      ;;
+    *)
+      echo "error: cmux could not say whether workspace $wsid is gone after its close;" \
+           "the worker may still be running" >&2
+      return 2
+      ;;
+  esac
 }
 
 # fm_backend_cmux_list_live: recovery/orphan discovery. Lists every workspace

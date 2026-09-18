@@ -788,10 +788,47 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
   esac
 }
 
-# fm_backend_kill: remove the task's session endpoint (best-effort; a
-# nonexistent/already-gone target is not an error - callers already swallow
-# failures here exactly as the inline `tmux kill-window ... || true` did).
-fm_backend_kill() {  # <backend> <target>
+# fm_backend_kill: remove the task's session endpoint.
+#
+# This header is the single owner of the kill return contract. Every adapter
+# below returns one of these, and every caller must distinguish all three,
+# because a durable record that says a worker is gone while that worker may
+# still be running is the exact failure this contract exists to prevent:
+#
+#   0  GONE. The endpoint is not there any more, and something the backend
+#      itself reported says so: either this call removed it and a structured
+#      follow-up read confirmed the removal, or the endpoint was already
+#      absent before the call. An already-absent endpoint is ordinary
+#      idempotent cleanup and stays a success, never a refusal.
+#   2  UNCONFIRMED. The kill was attempted, or deliberately skipped, and
+#      nothing proved the endpoint gone - the backend refused it, never
+#      answered, answered without acknowledging it, or could only be read in a
+#      way that cannot tell a removed endpoint from an unreachable one. The
+#      worker may still be running. Exactly one explanatory line is written to
+#      stderr; callers relay it rather than inventing their own.
+#   1  UNSUPPORTED. The kill could never be attempted at all: an empty or
+#      malformed target, a backend with no kill implementation, or an adapter
+#      that could not be sourced. This says nothing about the worker either,
+#      but the reason is firstmate's own call shape rather than the backend's
+#      answer, so it is reported differently.
+#
+# Only 0 licenses removing the task's durable records. Both nonzero returns
+# mean the endpoint's identity must be retained so a later rerun can retry.
+#
+# What the third value is for, since no caller branches on it. Every call site
+# splits two ways - gone, or not gone - and none behaves differently for
+# UNCONFIRMED than for UNSUPPORTED. The distinction is kept anyway, and only
+# reporting acts on it, for two reasons. UNSUPPORTED is not new: it is the
+# return this function already used for an empty target, an unknown backend,
+# and an adapter that could not be sourced, and folding those into UNCONFIRMED
+# would make firstmate say "the worker may still be running" about a call that
+# never named a running worker - a fresh untrue statement of exactly the kind
+# this contract exists to remove. The two also need different operator action:
+# an UNCONFIRMED kill is worth rerunning once the backend can answer for the
+# endpoint, while an UNSUPPORTED one will return the same answer forever until
+# the call or the configuration is fixed. A caller that needs to tell them
+# apart should use fm_backend_kill_verdict rather than re-deriving the numbers.
+fm_backend_kill() {  # <backend> <target> [tab-id] [expected-label]
   local backend=$1
   shift
   [ -n "${1:-}" ] || { echo "error: refusing empty backend kill target" >&2; return 1; }
@@ -804,6 +841,19 @@ fm_backend_kill() {  # <backend> <target>
     cmux) fm_backend_cmux_kill "$@" ;;
     stream) fm_backend_stream_kill "$@" ;;
     *) echo "error: no kill implementation for backend '$backend'" >&2; return 1 ;;
+  esac
+}
+
+# fm_backend_kill_verdict: name one fm_backend_kill status, so callers that
+# need the reason read the contract's words rather than re-deriving its numbers
+# at six call sites. Callers deciding only whether cleanup may proceed should
+# test the status for zero instead; the contract above owns why both nonzero
+# values exist when no caller branches between them.
+fm_backend_kill_verdict() {  # <status> -> gone|unconfirmed|unsupported
+  case "$1" in
+    0) printf 'gone' ;;
+    2) printf 'unconfirmed' ;;
+    *) printf 'unsupported' ;;
   esac
 }
 

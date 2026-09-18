@@ -1210,6 +1210,43 @@ mv -f "$TMP_ROOT/remote-ios-before-legacy.meta" "$remote_route_meta"
 rm -f "$TMUX_STATE"
 pass "non-herdr remote endpoints are refused without changing either route"
 
+# An agent-less endpoint frees its id for a relaunch only once the backend
+# CONFIRMS its close. The shared kill contract (bin/fm-backend.sh's
+# fm_backend_kill) is what stands between this host's control plane and a
+# duplicate worker: a close the adapter cannot prove landed must refuse the
+# launch here, carrying the adapter's own reason, rather than starting a second
+# agent over a first one that may still be running.
+unconfirmed_pane=$(sed -n 's/^herdr_pane_id=//p' "$remote_route_meta")
+[ -n "$unconfirmed_pane" ] || fail "remote route metadata carries no herdr pane to close"
+cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-unconfirmed-kill.meta"
+cp "$HERDR_STATE" "$TMP_ROOT/herdr-before-unconfirmed-kill.state"
+# The registration is gone but the pane is still standing: the agent-less state
+# the launch path treats as a reusable id.
+jq --arg p "$unconfirmed_pane" 'del(.typed[$p]) | del(.working[$p])' \
+  "$TMP_ROOT/herdr-before-unconfirmed-kill.state" > "$HERDR_STATE"
+[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = dead ] \
+  || fail "an agent-less remote pane was not projected dead, so the relaunch gate is not the case under test"
+: > "$TMP_ROOT/herdr-send-fail.close"   # every close leaves its pane standing
+set +e
+remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios codex - - herdr \
+  > "$TMP_ROOT/unconfirmed-kill-refusal.out" 2>&1
+unconfirmed_kill_rc=$?
+set -e
+rm -f "$TMP_ROOT/herdr-send-fail.close"
+[ "$unconfirmed_kill_rc" -ne 0 ] || fail "remote control launched over an endpoint whose kill nothing confirmed"
+assert_grep "was not confirmed gone, so this launch would risk a duplicate" \
+  "$TMP_ROOT/unconfirmed-kill-refusal.out" "the refusal did not say the unconfirmed kill risks a duplicate"
+assert_grep "may still be running" "$TMP_ROOT/unconfirmed-kill-refusal.out" \
+  "the refusal did not carry the adapter's own reason"
+[ "$(jq -r --arg p "$unconfirmed_pane" '[.tabs[]|select(.pane_id==$p)]|length' "$HERDR_STATE")" = 1 ] \
+  || fail "the refused launch lost the endpoint pane it could not confirm closed"
+[ "$(jq '.tabs|length' "$HERDR_STATE")" = "$(jq '.tabs|length' "$TMP_ROOT/herdr-before-unconfirmed-kill.state")" ] \
+  || fail "the refused launch created a second endpoint on the remote host"
+cmp -s "$TMP_ROOT/remote-ios-before-unconfirmed-kill.meta" "$remote_route_meta" \
+  || fail "the refused launch rewrote the endpoint metadata it could not confirm closed"
+mv -f "$TMP_ROOT/herdr-before-unconfirmed-kill.state" "$HERDR_STATE"
+pass "an agent-less remote endpoint whose kill nothing confirmed is refused, not relaunched onto"
+
 rm -f "$TMP_ROOT/inherit.entered" "$TMP_ROOT/inherit.release" "$TMP_ROOT/inherit.payload"
 cat > "$PARENT/data/captain-shared.md" <<'EOF'
 # Shared captain preferences

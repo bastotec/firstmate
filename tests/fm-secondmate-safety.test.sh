@@ -1785,6 +1785,77 @@ test_secondmate_teardown_sweeps_process_events_before_removal() {
   pass "normal secondmate teardown sweeps process events before removal"
 }
 
+# The operator retirement (bin/fm-retire-endpoint.sh) proceeds past exactly one
+# cleanup refusal - the work-protection gate - and tells it apart by cleanup's
+# exit status. A process-event restore that fails is a DESTRUCTIVE failure with
+# its own status: the child home's registrations are already gone and could not
+# be put back, and the parent's task record is the only thing left that says so.
+# The retirement must read that as a refusal it does not answer for and retire
+# nothing.
+test_retirement_retires_nothing_when_process_event_restore_fails() {
+  local home subhome fakebin log sweep_log registrations out rc=0
+  home="$TMP_ROOT/procevent-restore-home"
+  subhome="$TMP_ROOT/procevent-restore-subhome"
+  registrations="$TMP_ROOT/procevent-restore-registrations"
+  sweep_log="$TMP_ROOT/procevent-restore-sweep.log"
+  mkdir -p "$home/state" "$home/data" "$subhome/state" "$registrations" "$subhome/bin"
+  mark_firstmate_home "$subhome"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'adapter=lavish\n' > "$registrations/source.source"
+  # The registration directory is a symlink, so the restore that follows a
+  # failed sweep cannot write the registrations back where they belong.
+  ln -s "$registrations" "$subhome/state/procevent"
+  # A sweep that passes its preflight and then fails, which is what sends
+  # cleanup into the restore path in the first place.
+  cat > "$subhome/bin/fm-procevent.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+case "${1:-}" in
+  sweep-home)
+    [ "${2:-}" = --preflight ] || exit 1
+    exit 0
+    ;;
+  *) exit 2 ;;
+esac
+SH
+  chmod +x "$subhome/bin/fm-procevent.sh"
+  : > "$sweep_log"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/procevent-restore-fake")
+  log="$TMP_ROOT/procevent-restore-fake/tmux.log"
+
+  out=$(printf 'domain\n' | PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/procevent-restore-fake/pane.txt" \
+    FM_FAKE_PROCEVENT_SWEEP_LOG="$sweep_log" \
+    "$ROOT/bin/fm-retire-endpoint.sh" domain 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "the retirement reported success after a failed process-event restore: $out"
+  case "$out" in
+    *"nothing was retired"*) : ;;
+    *) fail "the retirement did not say plainly that nothing was retired: $out" ;;
+  esac
+  # The refusal has to be THIS one. Without naming the status and the restore
+  # failure, the assertion above passes for every refusal cleanup can make -
+  # including one from a mis-staged fixture that never reached the restore -
+  # and would go on passing if the work-gate status ever collided with this one
+  # again.
+  case "$out" in
+    *"process-event restoration failed"*) : ;;
+    *) fail "the run did not reach the process-event restore failure: $out" ;;
+  esac
+  case "$out" in
+    *"refused (status "*) : ;;
+    *) fail "the retirement did not name the cleanup status it refused on: $out" ;;
+  esac
+  [ -e "$home/state/domain.meta" ] \
+    || fail "a failed process-event restore retired the record that records it: $out"
+  [ ! -e "$home/state/domain.endpoint-retired" ] \
+    || fail "the retirement left its authorization behind"
+  grep -F -- '- domain ' "$home/data/secondmates.md" >/dev/null \
+    || fail "a failed process-event restore removed the secondmate route"
+  pass "a cleanup that fails its process-event restore retires nothing"
+}
+
 test_secondmate_teardown_refuses_process_events_without_sweep_script() {
   local home subhome fakebin log err claim_root
   home="$TMP_ROOT/procevent-refusal-home"
@@ -3161,6 +3232,7 @@ test_secondmate_teardown_retires_empty_home
 test_secondmate_teardown_refuses_ambiguous_and_mismatched_registry_bindings
 test_secondmate_teardown_sweeps_process_events_before_removal
 test_secondmate_teardown_refuses_process_events_without_sweep_script
+test_retirement_retires_nothing_when_process_event_restore_fails
 test_secondmate_teardown_preserves_process_events_on_later_refusal
 test_secondmate_force_teardown_sweeps_nested_homes
 test_secondmate_force_teardown_preserves_nested_restore_status
