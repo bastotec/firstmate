@@ -84,7 +84,10 @@ What this reaches, exactly:
 
   Every other refusal stands and nothing is retired - an outcome that has not
   reached the parent channel, a backlog transition that cannot be replayed, a
-  runtime that still answers. Read cleanup's own message and resolve it.
+  runtime that still answers. Read cleanup's own message and resolve it. A
+  cleanup that fails only AFTER removing the task record is reported as what it
+  is: the run names the record that is already gone and the pending close left
+  behind, rather than claiming nothing was retired.
 
   --override-runtime-refusal additionally overrides a RUNTIME's own refusal to
   answer for this task's endpoint: a herdr server that cannot be reached at
@@ -289,6 +292,24 @@ report_what_remains() {  # <id> <worktree> <endpoint>
   printf '  %s\n' "${remaining[@]}" >&2
 }
 
+# A refusal this retirement does not answer for is not always a no-op: the
+# close transition removes the task record BEFORE it writes the row, so a
+# cleanup that fails there has already retired the record this command was
+# asked to retire. Saying "nothing was retired" then asserts something untrue
+# about durable state, which is the class of defect this command exists to
+# remove. The record is the thing that decides which sentence is true, so it is
+# the thing that is asked.
+report_partial_cleanup() {  # <id> <status>
+  local id=$1 rc=$2 marker
+  marker=$(fm_backlog_close_marker_path "$STATE" "$id")
+  echo "error: cleanup for $id refused (status $rc) for a reason this retirement does not answer for, after it had already removed the durable task record $STATE/$id.meta; cleanup's own message above says what it refused over" >&2
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    echo "note: the pending close $marker remains, so the next session start finishes $id's backlog row; nothing further was retired here" >&2
+  else
+    echo "note: no pending close remains for $id, so its backlog row is in whatever state cleanup's own message describes; nothing further was retired here" >&2
+  fi
+}
+
 # bin/fm-teardown.sh's own statuses: the runtime refusal this retirement did
 # not override, and the work-protection refusal - the only one it proceeds
 # past, raised before anything on disk has been touched.
@@ -344,7 +365,11 @@ for id in "${IDS[@]}"; do
     echo "error: $id's runtime refused to answer and this retirement did not override that; nothing was retired - rerun with --override-runtime-refusal if that runtime can never answer for this record again" >&2
   elif [ "$teardown_rc" != "$WORK_GATE_EXIT" ]; then
     status=1
-    echo "error: cleanup for $id refused (status $teardown_rc) for a reason this retirement does not answer for; nothing was retired - cleanup's own message above says what it is protecting" >&2
+    if [ -e "$STATE/$id.meta" ] || [ -L "$STATE/$id.meta" ]; then
+      echo "error: cleanup for $id refused (status $teardown_rc) for a reason this retirement does not answer for; nothing was retired - cleanup's own message above says what it is protecting" >&2
+    else
+      report_partial_cleanup "$id" "$teardown_rc"
+    fi
   elif retire_records_only "$id"; then
     echo "warning: cleanup for $id refused over the work in its worktree, before touching anything on disk; its records are retired on the retirement recorded for $retired_by at $retired_at" >&2
     report_what_remains "$id" "$worktree" "$endpoint"

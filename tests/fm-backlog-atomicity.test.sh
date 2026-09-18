@@ -2570,6 +2570,50 @@ test_a_refusal_that_is_not_the_work_gate_retires_nothing() {
   pass "a refusal other than the work gate stops the retirement"
 }
 
+# The twin of the case above: the same generic refusal, but reached AFTER
+# cleanup has already removed the task record. Reporting "nothing was retired"
+# there states something untrue about durable state - the very class of defect
+# this command exists to remove - so a cleanup that failed partway has to say
+# what was done and what still remains instead.
+test_a_cleanup_that_failed_partway_is_not_reported_as_a_no_op() {
+  local case_dir home id marker out rc=0 real
+  id=atomic-retire-partial-cleanup-b9
+  case_dir=$(make_home retire-partial-cleanup)
+  home=$(home_of "$case_dir")
+  stage_confirmed_kill_task "$case_dir" "$id"
+  marker="$home/state/$id.backlog-close"
+  # The backlog row cannot be resolved by the time cleanup comes to close it,
+  # so cleanup removes the task record, publishes its pending close and only
+  # then fails - a refusal this retirement does not answer for, raised once the
+  # record it was asked to retire is already gone.
+  real=$(command -v tasks-axi)
+  cat > "$case_dir/fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = "done" ]; then
+  echo "tasks-axi: no such item" >&2
+  exit 1
+fi
+exec "$real" "\$@"
+SH
+  chmod +x "$case_dir/fakebin/tasks-axi"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "a cleanup that failed partway must not report success: $out"
+  assert_absent "$home/state/$id.meta" \
+    "this case needs cleanup to have removed the record before it failed: $out"
+  assert_present "$marker" \
+    "this case needs the pending close cleanup published before it failed: $out"
+  case "$out" in
+    *"nothing was retired"*)
+      fail "the retirement claimed nothing was retired though the task record is gone: $out" ;;
+  esac
+  assert_contains "$out" "$home/state/$id.meta" \
+    "the refusal does not name the task record cleanup had already removed"
+  assert_contains "$out" "$marker" \
+    "the refusal does not name the pending close that remains behind"
+  pass "a cleanup that failed partway is reported as partial, not as a no-op"
+}
+
 # A row that could not be READ is not an absent row. Removing the record behind
 # one would leave the row asserting work in flight with nothing behind it.
 test_a_backlog_row_that_cannot_be_read_refuses_rather_than_retiring() {
@@ -3915,6 +3959,7 @@ test_retiring_leaves_work_on_disk_byte_untouched
 test_retiring_needs_the_named_flag_to_override_a_runtime_refusal
 test_an_interrupt_mid_retirement_retires_nothing
 test_a_refusal_that_is_not_the_work_gate_retires_nothing
+test_a_cleanup_that_failed_partway_is_not_reported_as_a_no_op
 test_a_backlog_row_that_cannot_be_read_refuses_rather_than_retiring
 test_a_captain_held_row_is_retained_not_closed
 test_a_manual_backlog_home_is_retired_without_touching_its_backlog
