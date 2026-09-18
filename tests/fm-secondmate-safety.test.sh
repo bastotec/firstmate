@@ -1112,7 +1112,7 @@ test_home_seed_routes_a_seeded_home_to_the_fork() {
   # bin/fm-remote-secondmate-control.sh). A commit the fork has never seen - the
   # fork route here is unreachable - must still arrive that way once origin is
   # the fork.
-  git -C "$fmroot" commit --quiet --allow-empty -m 'code-root commit the fork never saw'
+  git -C "$fmroot" -c user.name=Test -c user.email=test@example.com commit --quiet --allow-empty -m 'code-root commit the fork never saw'
   unseen=$(git -C "$fmroot" rev-parse HEAD)
   if git -C "$subhome" cat-file -e "$unseen^{commit}" 2>/dev/null; then
     fail "the seeded home already held the commit it was meant to import"

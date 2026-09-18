@@ -97,6 +97,9 @@ git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
 git -C "$REMOTE_ROOT" add .
 git -C "$REMOTE_ROOT" commit -qm 'remote fixture root'
+# Every home cloned from this code root takes its origin as the delivery route,
+# and a code root with no route is refused; nothing here fetches it.
+git -C "$REMOTE_ROOT" remote add origin "forge.test:$TMP_ROOT/remote-origin.git"
 
 cat > "$FAKEBIN/fake-ssh" <<'SH'
 #!/usr/bin/env bash
