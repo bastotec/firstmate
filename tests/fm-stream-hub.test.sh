@@ -1459,6 +1459,29 @@ EOF
   pass "hub: an agent the hub cannot take back paces its attempts instead of hammering it"
 }
 
+test_an_accepted_registration_returns_the_pace_to_its_floor() {
+  # The other end of pacing. A long outage grows the pause between attempts to
+  # its ceiling, and then one attempt is accepted - which is proof the hub is
+  # answering again, and so proof that the pause it was serving is over. A hub
+  # that forgets the endpoint again a moment later is the case this is for: a
+  # second restart, or a hub taking registrations while it still refuses
+  # frames. Carrying the spent ceiling forward would hold the worker out of the
+  # listing, and out of reach of a steer, for a minute it no longer owes.
+  start_stub reregister-floor --accept-registrations -1 --frames-ok-first 8
+  local endpoint attempts
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  python3 "$ROOT/tests/assets/stream-agent-rejoin-pace.py" --hub "$URL" \
+    --token "$PUBLISH_TOKEN" --machine box-a --label "rejoined-$RUN" \
+    --endpoint "$endpoint" --settle-secs 3 > "$CASE_DIR/rejoin.log" 2>&1 \
+    || fail "the second recovery never happened: $(cat "$CASE_DIR/rejoin.log")"
+  # Every registration here is a recovery, so unlike the pacing case above
+  # there is no startup attempt to discount.
+  attempts=$(grep -c -F 'POST /v1/agent/endpoints' "$STUB_JOURNAL" || true)
+  assert_equals "$attempts" 2 \
+    "both recoveries should have reached the hub, three seconds apart"
+  pass "hub: a registration the hub accepts returns the agent's pace to its floor"
+}
+
 test_fm_stream_start_status_stop_round_trip() {
   # The operator path, through the real entry point rather than the API.
   local home out
@@ -1557,5 +1580,6 @@ test_a_restarted_hub_gets_its_workers_back
 test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
 test_a_closing_frame_outlives_the_pace_its_own_outage_set
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
+test_an_accepted_registration_returns_the_pace_to_its_floor
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home

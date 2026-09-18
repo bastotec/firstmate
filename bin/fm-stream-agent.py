@@ -665,13 +665,17 @@ class Agent:
                 self._register_backoff = min(self._register_backoff * 2,
                                              REREGISTER_BACKOFF_MAX)
                 return False
-            # Growth is reset by a registration the hub took, but the window
-            # scheduled above is not: even a hub that accepts every
-            # registration and still refuses every frame gets one attempt per
-            # floor rather than one per frame. The only case that pays for that
-            # is a hub answering two ways at once, and a worker is already back
-            # a moment after the one attempt that mattered.
+            # A registration the hub took resets the pace itself, not only its
+            # growth: the window scheduled above was sized by a ladder this
+            # answer has just spent, and leaving it in place would bar the next
+            # recovery for as long as the failures before it had earned. Both
+            # go back to the floor together, so the case that pays for pacing
+            # here - a hub that accepts every registration and still refuses
+            # every frame - gets one attempt per floor rather than one per
+            # frame, which is the rule this pace exists to enforce.
             self._register_backoff = REREGISTER_BACKOFF_MIN
+            self._register_not_before = time.monotonic() + REREGISTER_BACKOFF_MIN * (
+                1.0 + REREGISTER_JITTER * random.random())
         finally:
             self._register_lock.release()
         try:
