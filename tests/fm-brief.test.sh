@@ -260,7 +260,7 @@ test_ship_mode_is_explicit_not_registry() {
   brief="$home/data/brief-explicit-a5/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
     || fail "registered direct-PR posture overrode the explicit --mode"
-  assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
+  assert_grep "start the no-mistakes pipeline yourself" "$brief" \
     "explicit no-mistakes brief did not render the pipeline definition of done"
 
   # An unregistered project is not a blocker either, because nothing is looked up.
@@ -374,6 +374,65 @@ test_no_mistakes_dod_wording() {
   assert_no_grep "no-mistakes refuses" "$brief" \
     "no-mistakes DOD must not claim the tool itself refuses --yes"
   pass "fm-brief.sh: no-mistakes DOD keeps its apostrophe prose and bans --yes outright"
+}
+
+# A no-mistakes worker's only done is an open PR with green checks: it starts the
+# pipeline itself after its implementation commit, never hands a bare local
+# commit back as done, and never ends a turn while a run is open.
+# shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+test_no_mistakes_done_is_green_pr_and_worker_starts_pipeline() {
+  local home id brief dod done_lines mode other
+  home="$TMP_ROOT/done-contract-home"
+  mkdir -p "$home/data"
+  id="brief-done-contract-e1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "no-mistakes brief should scaffold"
+  brief="$home/data/$id/brief.md"
+  dod=$(awk '/^# Definition of done$/ { emit=1 } /^# Current no-mistakes intent contract$/ { emit=0 } emit' "$brief")
+  [ -n "$dod" ] || fail "no-mistakes brief rendered no Definition of done"
+
+  assert_contains "$dod" "a local commit is not done" \
+    "no-mistakes DOD must say a bare local commit is not done"
+  assert_contains "$dod" "start the no-mistakes pipeline yourself right away" \
+    "no-mistakes DOD must have the worker start the pipeline after its implementation commit"
+  assert_contains "$dod" "firstmate does not trigger it" \
+    "no-mistakes DOD must say firstmate no longer triggers validation"
+  assert_not_contains "$dod" "Firstmate will then instruct you to run /no-mistakes" \
+    "no-mistakes DOD still hands validation back to firstmate"
+  assert_not_contains "$dod" 'append `done: {summary}`' \
+    "no-mistakes DOD still asks for a bare done line before validation"
+  assert_contains "$dod" "your harness's own skill mechanism for \`/no-mistakes\`" \
+    "no-mistakes DOD must say how the worker starts the pipeline"
+  done_lines=$(printf '%s\n' "$dod" | grep -o '`done: [^`]*`' | sort -u)
+  assert_equals "$done_lines" '`done: PR {url} checks green`' \
+    "no-mistakes DOD must name exactly one done line, the green PR"
+
+  assert_contains "$dod" "While a run is open, never end your turn without a live poll" \
+    "no-mistakes DOD must forbid ending a turn while a run is open"
+  assert_contains "$dod" 'a `needs-decision:` or `blocked:` escalation that is waiting on firstmate, or a terminal failure reported as `failed:`' \
+    "no-mistakes DOD must list the only allowed stops"
+  assert_contains "$dod" "When status has not changed across two polls, read the whole status" \
+    "no-mistakes DOD must require reading the whole status when polls stop changing"
+  assert_contains "$dod" '`next_action`, and `branch_sync`' \
+    "no-mistakes DOD must name the status fields that show a run already ended"
+  [ "$(printf '%s\n' "$dod" | grep -c 'background the drive call')" -eq 1 ] \
+    || fail "no-mistakes DOD must keep one background-and-poll paragraph"
+
+  # Direct-PR and local-only keep their own done lines and never start the pipeline.
+  for mode in direct-PR local-only; do
+    other="brief-done-contract-$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$other" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode brief should scaffold"
+    assert_no_grep "start the no-mistakes pipeline yourself" "$home/data/$other/brief.md" \
+      "$mode brief was told to start the no-mistakes pipeline"
+    assert_no_grep "never end your turn without a live poll" "$home/data/$other/brief.md" \
+      "$mode brief received the pipeline turn rule"
+  done
+  assert_grep 'append `done: PR {url}` to the status file and stop' "$home/data/brief-done-contract-direct-pr/brief.md" \
+    "direct-PR brief lost its ready line"
+  assert_grep 'append `done: ready in branch fm/brief-done-contract-local-only`' "$home/data/brief-done-contract-local-only/brief.md" \
+    "local-only brief lost its ready line"
+  pass "fm-brief.sh: no-mistakes done is a green PR the worker drives itself, and the turn stays live while a run is open"
 }
 
 test_ask_user_escalation_format() {
@@ -976,6 +1035,7 @@ test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
+test_no_mistakes_done_is_green_pr_and_worker_starts_pipeline
 test_ask_user_escalation_format
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
