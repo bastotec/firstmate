@@ -2086,6 +2086,62 @@ SH
   pass "completion marks a pending close whose worker could not be proved stopped, and recovery honours it"
 }
 
+# The Herdr path reaches the same refusal through its own structured-presence
+# gate rather than through the shared kill contract, so it has to stamp the
+# pending close for itself - otherwise the one backend with the oldest refusal
+# is the one whose refusal a restart undoes.
+test_a_herdr_refusal_marks_its_pending_close_too() {
+  local case_dir home id marker meta out rc=0
+  id=atomic-close-herdr-unconfirmed-b9
+  case_dir=$(make_home close-herdr-unconfirmed)
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id" scout
+  start_item "$case_dir" "$id"
+  # A herdr whose pane keeps reading present: the close runs and closes
+  # nothing, so the exact pane is never confirmed gone.
+  cat > "$case_dir/fakebin/herdr" <<SH
+#!/usr/bin/env bash
+set -u
+case "\${1:-} \${2:-}" in
+  "status --json") printf '%s\n' '{"server":{"running":true}}' ;;
+  "session list") printf '%s\n' '{"sessions":[{"name":"lab","running":true,"socket_path":"$case_dir/herdr.sock"}]}' ;;
+  "workspace list") printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"wG","active_tab_id":"wG:tQ"}]}}' ;;
+  "tab list") printf '%s\n' '{"result":{"tabs":[{"tab_id":"wG:tQ","workspace_id":"wG"}]}}' ;;
+  "pane list") printf '%s\n' '{"result":{"panes":[{"pane_id":"wG:pQ","tab_id":"wG:tQ"}]}}' ;;
+  "pane get") printf '%s\n' '{"result":{"pane":{"pane_id":"wG:pQ","tab_id":"wG:tQ","workspace_id":"wG"}}}' ;;
+  "agent get") printf '%s\n' '{"error":{"code":"agent_not_found"}}' >&2; exit 1 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/herdr"
+  fm_write_meta "$home/state/$id.meta" \
+    "window=lab:wG:pQ" \
+    "endpoint_task_id=$id" \
+    "worktree=$case_dir/absent-worktree" \
+    "project=$case_dir/absent-project" \
+    "harness=claude" "kind=scout" "mode=" "yolo=off" \
+    "backend=herdr" "herdr_session=lab" "herdr_workspace_id=wG" \
+    "herdr_tab_id=wG:tQ" "herdr_pane_id=wG:pQ" \
+    "spawn_gen=spawn-close-herdr-unconfirmed" "decisions_reviewed=1" "decision_keys="
+  mkdir -p "$home/data/$id"
+  printf 'findings\n' > "$home/data/$id/report.md"
+  meta="$home/state/$id.meta"
+  marker="$home/state/$id.backlog-close"
+
+  out=$(run_teardown "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "herdr cleanup reported success for a pane nothing proved closed: $out"
+  assert_present "$meta" "herdr cleanup removed the task record it refused to finish"
+  assert_present "$marker" "herdr cleanup discarded the pending close it had already staged"
+  assert_grep 'endpoint=unconfirmed' "$marker" \
+    "the herdr refusal is not written into the pending close, so a restart would replay it"
+
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "session start finished the close the herdr refusal had withheld: $out"
+  assert_present "$meta" "session start removed the record the herdr refusal kept"
+  pass "a herdr refusal marks its pending close, and recovery honours it"
+}
+
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped() {
   local case_dir home id marker meta out
   id=atomic-heal-endpoint-unconfirmed-b9
@@ -3160,6 +3216,7 @@ test_recovery_rejects_an_internal_worker_record_symlink
 test_recovery_ignores_a_symlinked_worker_record
 test_recovery_replays_a_close_an_interrupted_cleanup_left_open
 test_completion_marks_its_pending_close_when_the_worker_cannot_be_proved_stopped
+test_a_herdr_refusal_marks_its_pending_close_too
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped
 test_recovery_replays_the_same_close_without_the_unconfirmed_endpoint_line
 test_recovery_backfills_a_recorded_link_on_an_already_done_item

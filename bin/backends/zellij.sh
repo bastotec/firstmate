@@ -589,6 +589,12 @@ fm_backend_zellij_send_text_submit() {  # <target> <text> <retries> <enter-sleep
 # failure, so the exit status alone cannot separate them either; a zero exit
 # means the listing ran, and otherwise only zellij's own documented
 # empty-listing message does. Anything else is `unknown`.
+#
+# An `unknown` also reports WHY on stderr, quoting the failing listing's own
+# first line. This is the sole owner of the unreadable-listing rule, so a
+# missing binary, an unreachable server, and a version-mismatched client all
+# arrive here, and "could not say" alone would leave an operator unable to
+# tell which one they have.
 fm_backend_zellij_session_presence() {  # <session> -> dead|present|unknown
   local session=$1 out rc
   # Assigned through `if`, never as a bare `out=$(...)` followed by `$?`: the
@@ -610,7 +616,10 @@ fm_backend_zellij_session_presence() {  # <session> -> dead|present|unknown
   fi
   case "$out" in
     *'No active zellij sessions found'*) printf 'dead' ;;
-    *) printf 'unknown' ;;
+    *)
+      echo "error: 'zellij list-sessions' could not be read (exit $rc): $(printf '%s\n' "$out" | head -n 1)" >&2
+      printf 'unknown'
+      ;;
   esac
 }
 
@@ -656,11 +665,6 @@ fm_backend_zellij_pane_presence() {  # <session> <pane_id> -> dead|present|unkno
 # endpoint.
 fm_backend_zellij_kill() {  # <target> [tab_id] [expected_label]
   fm_backend_zellij_parse_target "$1" || return 1
-  if ! command -v zellij >/dev/null 2>&1; then
-    echo "error: the zellij CLI is unavailable, so $1 could not be closed or confirmed gone;" \
-         "the worker may still be running" >&2
-    return 2
-  fi
   case "$(fm_backend_zellij_session_presence "$FM_BACKEND_ZELLIJ_SESSION")" in
     dead) return 0 ;;
     unknown)

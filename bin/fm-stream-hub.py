@@ -1439,6 +1439,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "protocol": HUB_PROTOCOL,
                 "version": HUB_VERSION,
                 "started_at": hub.started_at,
+                # Uptime is served alongside started_at because a caller on
+                # another machine cannot subtract a clock it does not share:
+                # teardown decides whether this hub has been up long enough
+                # for its agents to have re-registered, and clock skew there
+                # would turn a just-restarted hub into a settled one.
+                "uptime_secs": max(0.0, _now() - hub.started_at),
                 "endpoints": len(hub.list_endpoints()),
                 "state_max_age_secs": hub.options.state_max_age_secs,
                 "command_ack_secs": hub.options.command_ack_secs,

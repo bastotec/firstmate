@@ -349,9 +349,16 @@ fm_backend_orca_kill() {  # <terminal-id>
          "confirmed gone; the worker may still be running" >&2
     return 2
   }
+  # A refused close runs the same absence read as an accepted one rather than
+  # becoming the verdict itself: Orca refuses a close against a terminal it no
+  # longer has, which is ordinary already-absent cleanup, and taking the
+  # refusal at face value would leave that task's records unremovable forever.
   orca terminal close --terminal "$terminal" --json >/dev/null 2>&1 || {
-    echo "error: 'orca terminal close' did not accept the close for terminal $terminal;" \
-         "the worker may still be running" >&2
+    case "$(fm_backend_orca_terminal_presence "$terminal")" in
+      dead) return 0 ;;
+    esac
+    echo "error: 'orca terminal close' did not accept the close for terminal $terminal" \
+         "and it is not confirmed gone; the worker may still be running" >&2
     return 2
   }
   case "$(fm_backend_orca_terminal_presence "$terminal")" in

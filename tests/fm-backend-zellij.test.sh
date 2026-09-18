@@ -858,9 +858,33 @@ test_kill_reports_unconfirmed_when_the_session_listing_fails() {
   expect_code 2 $? "a session listing that failed must report unconfirmed, never a gone endpoint"
   assert_contains "$out" "may still be running" \
     "a failed session listing should say the worker may still be running"
+  # The refusal alone does not tell an operator what to fix. Every unreadable
+  # listing - unreachable server, missing CLI, version mismatch - arrives at
+  # the same verdict, so the listing's own words have to come with it.
+  assert_contains "$out" "could not connect to the zellij server" \
+    "an unreadable session listing should quote why it could not be read"
   assert_not_contains "$(cat "$dir/log")" $'\x1f''close-tab-by-id' \
     "kill should not close anything when it cannot read the session listing"
   pass "fm_backend_zellij_kill: a session listing that failed is unconfirmed, not gone"
+}
+
+# The missing-CLI shape of the same rule: there is one owner of "the listing
+# could not be read", and it has to name this cause rather than leave an
+# operator reading an unreachable-server message for an uninstalled zellij.
+test_kill_names_a_zellij_that_could_not_run_at_all() {
+  local dir fb out
+  dir="$TMP_ROOT/kill-session-listing-no-cli"; mkdir -p "$dir/responses"
+  fb=$(make_zellij_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST_ERROR="bash: zellij: command not found" \
+    FM_ZELLIJ_SESSION_LIST_EXIT=127 \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_kill firstmate:7' "$ROOT" 2>&1 )
+  expect_code 2 $? "a zellij that could not run must report unconfirmed, never a gone endpoint"
+  assert_contains "$out" "command not found" \
+    "a zellij that could not run should be named as the reason the listing was unreadable"
+  assert_contains "$out" "may still be running" \
+    "a zellij that could not run should still say the worker may still be running"
+  pass "fm_backend_zellij_kill: a zellij that could not run is named, not reported as gone"
 }
 
 # zellij's own empty-listing answer is nonzero too, and that one IS proof.
@@ -1411,6 +1435,7 @@ test_kill_closes_recorded_tab_when_pane_already_gone
 test_kill_skips_recorded_tab_when_label_mismatches
 test_kill_is_noop_when_session_absent
 test_kill_reports_unconfirmed_when_the_session_listing_fails
+test_kill_names_a_zellij_that_could_not_run_at_all
 test_kill_treats_the_empty_session_listing_as_gone
 test_kill_reports_unconfirmed_when_the_label_path_cannot_read_panes
 test_teardown_passes_recorded_tab_id_to_zellij_kill

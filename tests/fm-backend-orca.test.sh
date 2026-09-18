@@ -416,11 +416,23 @@ test_kill_confirms_the_close_with_an_absence_read() {
   assert_contains "$out" "could not say whether it is" \
     "a connection-shaped error should report an unknown absence read"
 
-  orca_case kill-refused
+  # A terminal the user already closed makes Orca REFUSE the close. That is the
+  # ordinary already-absent case, so the refusal is not the verdict either: the
+  # same absence read decides, and a typed not-found retires the task.
+  orca_case kill-refused-already-gone
+  printf '1\n' > "$RESP/1.exit"
+  PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_kill term-123' "$ROOT"
+  expect_code 0 $? "a refused close against an already-absent terminal should report the endpoint gone"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''read'$'\x1f''--terminal'$'\x1f''term-123' \
+    "a refused close should still run the absence read"
+
+  orca_case kill-refused-unreadable
   printf '1\n' > "$RESP/1.exit"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ORCA_TERMINAL_READ='' FM_ORCA_TERMINAL_READ_EXIT=1 \
     bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_kill term-123' "$ROOT" 2>&1 )
-  expect_code 2 $? "a close Orca did not accept must report unconfirmed, not success"
+  expect_code 2 $? "a refused close nothing could confirm must report unconfirmed, not success"
   assert_contains "$out" "may still be running" \
     "an unconfirmed Orca close should say the worker may still be running"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-123'$'\x1f''--json' \
