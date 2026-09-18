@@ -388,8 +388,9 @@ Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that 
   Only a reachable runtime answers in its own `{"ok":false,...}` envelope, so that envelope proves reachability - not absence - while a transport failure that produces no envelope is unconfirmed.
   Its error codes are unenumerated, since no live Orca was available, so the probe reads absence only from this terminal's own not-found code, matched whole, and leaves every other refusal - including an app- or runtime-scoped not-found from a quit Orca - unconfirmed ([orca-backend.md](../orca-backend.md)).
 - stream confirms only from the endpoint's own agent, either a record it closed after watching the worker exit or a kill the hub reports it took.
-  A hub that cannot answer, a record the hub closed by itself, and a target this home cannot address are unconfirmed ([stream-backend.md](../stream-backend.md)).
-  So is an answer that cannot be read: a label mismatch needs a label the hub actually returned, and a kill needs an explicit `delivered: true`, because a body that does not parse is not either of those values.
+  A hub that cannot answer, a record the hub closed by itself, and a target tagged for a different hub are unconfirmed - the last of those names a real worker this home simply cannot reach ([stream-backend.md](../stream-backend.md)).
+  A target that is not an endpoint address at all is unsupported rather than unconfirmed: no worker was ever named and no hub was reached, so there is no answer about one to report.
+  An answer that cannot be read is unconfirmed too: a label mismatch needs a label the hub actually returned, and a kill needs an explicit `delivered: true`, because a body that does not parse is not either of those values.
   An endpoint the hub has no record of is unconfirmed too, and is reported with its own reason: the task table is rebuilt by the agents that register into it, so a restarted hub serves that answer for every live endpoint until its agents re-register.
   Nothing automatic ever upgrades that answer - on this branch an agent registers once and has no way back, so a listing-based rule would read every live worker as gone after a hub restart. A record no backend can ever answer for is retired only by `bin/fm-retire-endpoint.sh`, which a human runs against named task ids and which records that assertion - who made it and when - before anything is removed.
 
@@ -436,6 +437,7 @@ ok - fm_backend_cmux_kill: a window listing with no usable ids is unconfirmed, n
 ok - fm_backend_orca_kill: confirms a close with an absence read and reports every unproved close unconfirmed
 ok - stream: only a close the endpoint's own agent reported counts as a stop
 ok - stream: a kill the hub cannot answer is reported as unconfirmed
+ok - stream: an unaddressable target reports whether a worker was ever named
 ```
 
 One unrelated case in the Herdr suite needs a real long-running binary reachable under the name `pi`, because it symlinks `sleep` under that name and a multi-call coreutils build dispatches on `argv[0]` and refuses with `unknown program 'pi'`.
