@@ -24,7 +24,9 @@
 #
 # Every invocation is appended verbatim to <log-file>, so a test reads back what
 # the remote pane received. Creating <send-fail-flag> makes every pane write
-# fail, which is how a test simulates an endpoint that cannot be reached.
+# fail, which is how a test simulates an endpoint that cannot be reached, and
+# creating "<send-fail-flag>.close" makes every pane close fail with the pane
+# left standing, which is how a test simulates a close no read can confirm.
 
 install_remote_herdr_fixture() { # <remote-root> <state> <log> <send-fail> <socket>
   local remote_root=$1 state=$2 log=$3 send_fail=$4 socket=$5 script="$1/bin/herdr"
@@ -35,6 +37,7 @@ set -u
 STATE='$state'
 LOG='$log'
 SEND_FAIL='$send_fail'
+CLOSE_FAIL='$send_fail.close'
 SOCKET='$socket'
 SH
   cat >> "$script" <<'SH'
@@ -87,6 +90,7 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "pane close")
+    [ ! -f "$CLOSE_FAIL" ] || exit 1
     jq_state --arg p "${3:-}" \
       '.tabs |= [.[]|select(.pane_id != $p)]
        | .typed |= with_entries(select(.key != $p))
