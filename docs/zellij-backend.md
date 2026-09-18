@@ -89,6 +89,7 @@ A short viewport may expose fewer lines than requested.
 
 Closing a pane leaves an empty tab.
 Cleanup resolves and verifies the owning tab, then uses `close-tab-by-id` so both the task pane and tab disappear.
+Because the CLI's exit status is not meaningful, the close is never the verdict: a separate listing read decides whether the endpoint is gone, and a listing that did not run or did not parse leaves the task's records intact ([verification/runtime-backends.md](verification/runtime-backends.md#endpoint-kill-confirmation)).
 Real test cleanup uses only an isolated non-`firstmate` session and the guard in `tests/zellij-test-safety.sh`; it never calls all-session deletion commands.
 
 ## Active limits

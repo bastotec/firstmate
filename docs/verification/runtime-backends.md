@@ -374,6 +374,7 @@ Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that 
   Every other inventory failure is unconfirmed: `kill-window` exits nonzero for an already-gone window exactly as it does for an unreachable server, so its own status is never the verdict.
 - Herdr confirms from `pane get`'s structured `pane_not_found`, read under the same presentation lock the close ran under.
   A refused lock, an unreachable server, a still-present pane, and an unparseable answer are unconfirmed.
+  The focus-safe close path writes its own diagnostics - a repositioned workspace it could not confirm removed, for instance - and the kill captures them so they cannot be mistaken for its verdict: an unconfirmed kill folds them into its single refusal line, and a confirmed one reports them after the close has already been proved.
 - Zellij confirms from an `action list-panes --json` listing that omits the pane, from a `list-sessions` run that omits the session, and from a `list-tabs` read that ran and shows the task's pane under a tab carrying some other name.
   A listing that does not run or does not parse is unconfirmed, including an absent zellij CLI: one classifier owns that answer and folds the failing listing's own first line into the single refusal line, so the refusal names its cause without exceeding the contract.
   An expected label that merely failed to resolve is not proof either: the label check refuses an ambiguous legacy bare title exactly as it refuses a real mismatch, so a live pane under an unproven label is unconfirmed.
@@ -423,6 +424,7 @@ Observed output, bounded to the kill-contract cases:
 
 ```text
 ok - fm_backend_herdr_kill: an unavailable session lock defers the pane close and reports it unconfirmed
+ok - fm_backend_herdr_kill: the repositioning path still reports exactly one relayable reason
 ok - fm_backend_herdr_kill: a close that failed and one that left the pane standing both report unconfirmed
 ok - fm_backend_zellij_kill: never fails when the target session no longer exists
 ok - fm_backend_zellij_kill: a session listing that failed is unconfirmed, not gone
@@ -464,7 +466,7 @@ ok - session start still finishes an ordinary interrupted cleanup
 ```
 
 Two of those cases are what keep the refusal from becoming a permanent hold: a cleanup interrupted after a proven kill still replays, and so does the identical record without the stamp, so an ordinary interrupted cleanup is finished rather than stranded.
-The cmux post-close cases and these pending-close cases were observed on 2026-09-18; the tmux run remains the 2026-09-17 one dated above.
+The herdr repositioning case, the cmux post-close cases and these pending-close cases were observed on 2026-09-18; the tmux run remains the 2026-09-17 one dated above.
 
 ## Claude workspace trust
 
