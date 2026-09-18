@@ -2913,6 +2913,7 @@ test_kill_repositioning_path_reports_one_explanatory_line() {
   dir="$TMP_ROOT/kill-reposition-one-line"; mkdir -p "$dir"
   : > "$dir/mover.log"
   printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w2","active_tab_id":"w2:t2","focused":false},{"workspace_id":"w1","active_tab_id":"w1:t1","focused":true},{"workspace_id":"w3","active_tab_id":"w3:t1","focused":false}]}}' > "$dir/workspaces.json"
+  # shellcheck disable=SC2016 # $defs is JSON Schema's own keyword inside a single-quoted JSON literal; double quotes would expand it and corrupt the fixture.
   printf '%s\n' '{"schemas":{"request":{"oneOf":[{"properties":{"method":{"const":"workspace.move"}}}],"$defs":{"WorkspaceMoveParams":{"required":["workspace_id","insert_index"],"properties":{"insert_index":{"type":"integer"}}}}}}}' > "$dir/schema.json"
   cat > "$dir/mover" <<'SH'
 #!/usr/bin/env bash
