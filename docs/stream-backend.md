@@ -157,10 +157,45 @@ A record nothing has been heard from for the full retention period is dropped; a
 There is one case with no way back: the agent speaks again to find another endpoint already answering to its machine and label, because the next attempt at that task claimed the name while it was out of touch.
 The hub refuses that agent, and it stops rather than let two workers answer to one identity.
 
-A hub RESTART is a different matter, and a harsher one.
-Endpoints live in the hub's memory only, so a restarted hub has never heard of any of them: a running agent's next publish is refused with `no_such_endpoint`, and an agent registers exactly once and has no path back.
-Every worker on every machine keeps running, invisible to the fleet listing and unsteerable, until it is dealt with on its own machine.
-Re-registering a returning agent is follow-up work, not something this backend does today.
+## When the hub restarts
+
+Endpoints live in the hub's memory only, so a restarted hub has never heard of any of them and refuses a running agent's next publish with `no_such_endpoint`.
+That refusal is what an agent registers itself again on, under the endpoint id it already held, so a worker returns to the fleet listing and to steering without anyone touching the machine it runs on.
+Listed and steerable arrive together rather than one after the other, because the thread that receives steers is told the endpoint is back at the moment it comes back rather than finding out on its own schedule.
+The residual is small and worth stating: the two are separate calls, so a steer aimed at the instant between a worker being listed again and its next command poll reaching the hub can still be reported undelivered, and is delivered on the retry.
+
+The identity is the point.
+The endpoint id an agent re-registers is the one the task's own records name, so its metadata binding, its steering and its status channel all keep meaning what they meant; an agent that came back under a fresh id would be listed while every record pointing at it was stranded, which is a worse outcome than staying away.
+The history does not come back with it.
+The ring buffer was in memory too, so the terminal output produced while the hub was gone is lost and that endpoint's scrollback starts again from the reconnect.
+
+A worker coming back this way must not lose its identity to the replacement its own absence provoked.
+Inside the restart window every stream endpoint reads unknown to the hub, so something may well start a fresh worker for the same task under the same name; registering it is not what decides the contest.
+A record the hub has never heard from stands for no worker, so it takes no name from the agent that is publishing under it - the rule the hub already applied to publishing, applied to registering too, so the contest is decided by which agent speaks rather than by which one registered first.
+That is a narrow protection, and worth being exact about: a replacement publishes its own first state frame immediately after registering, so the interval in which it stands for nothing at all is the gap between those two calls.
+Past it, the recovering agent is the one refused - correctly, because by then two workers really do answer to one name and the one the hub has heard from is the one it can account for.
+Readers on this side wait that window out rather than call the worker gone: a hub 404 has to keep being the answer for longer than a re-registration takes before it is reported as `missing`, because inside it the endpoint is about to exist again and a steer dropped there is a steer dropped on a healthy worker.
+The cheap presence probe behind capture, current-path and input answers from the first reply and keeps paying nothing for the window, so it is the steering paths that ask again; the fleet listing, which an operator reads once, takes its endpoint verdict from the classifier instead, and reports a rejoin in flight as unknown rather than absent.
+What that window covers is one rejoin attempt, not the whole recovery: it is sized against the first attempt an agent makes after a restart, because the read is itself bounded by the caller that asks for it and there is no room to sit through the backoff ladder as well.
+An agent whose first attempt met a hub that was not ready yet waits out its own backoff, and for that stretch a healthy worker on its way back is reported `missing` - supervision treats that like a dead worker and escalates the pending steer, which takes that steer off the delivery ladder rather than ringing it again.
+
+`no_such_endpoint` is the only thing an agent acts on here, and only the hub states it.
+A failed connection is not that, and is never treated as it: a hub on its way back up passes through exactly that state, and a returning hub that still holds the record must not be re-registered against.
+An agent finds out through its own publishing, so an endpoint with nothing to say comes back on its state heartbeat rather than waiting for its worker to print something.
+
+Attempts are paced rather than repeated.
+One restart strands every agent in the fleet at once, so an agent leaves at least a couple of seconds between attempts, backs further off while the hub cannot take it back, and spreads the wait by a random margin so the fleet does not return in one burst against a hub that has only just come up.
+A registration the hub takes ends the widening and the wait behind it together, so a hub that forgets the same endpoint again a moment later - a second restart, or a hub taking registrations while it still refuses frames - is met at that couple of seconds rather than at the wait the outage before it had grown.
+A worker whose own process ended while the hub was down is recovered the same way and on the same terms: if the hub is back by the time its agent posts the closing frame, the agent takes the identity back in order to deliver it, so the task's end and its exit code land under the id that names them rather than being lost with the record that was meant to hold them.
+Its closing frame is the one thing the pace does not apply to: pacing exists to stop an agent asking again and again, and a closing frame is the last call that agent will ever make, so it takes its one attempt whether or not the wait from an earlier attempt has run out.
+That is the whole of the licence. It is one attempt on ordinary timeouts, and an agent whose hub is still down exits rather than holding its teardown open.
+The single thing it does wait for is a recovery already in flight on another of the agent's own threads, and only for a few seconds: a heartbeat that met the same forgotten endpoint holds the agent's registration to itself for one round trip, and a closing frame that gave up there would be dropped for good rather than retried.
+
+One answer ends the attempts instead of continuing them, and only one.
+An agent that comes back to find another endpoint already answering to its machine and label stands down exactly as it would have anywhere else, because two workers behind one identity is the outcome worse than any lost endpoint.
+Everything else the hub can say is kept, including a credential it will not take: the hub reads its tokens once at startup, so a hub that came back with the wrong token file refuses the whole fleet at once, and an agent that treated that as settled would strand every worker permanently over a condition that ends the moment the hub is restarted correctly.
+So a refusal that is not a lost name is waited out on the same backoff as an unreachable hub, and the worker is there when the hub is right again.
+In either case the worker itself is left running and untouched, because a refused agent says nothing at all about the work its worker is in the middle of.
 
 ## When the hub is down
 
@@ -176,11 +211,11 @@ While it is down, unreachable, or restarting:
 - Status lines are the exception, and deliberately so: they are written by each agent on its own machine, so the durable record a task reports into keeps working while the hub is gone.
 
 A hub that was merely unreachable comes back to the same endpoints, and agents pick up where they left off.
-A hub that RESTARTED comes back to none: its endpoints were in memory, so every running agent is stranded - refused with `no_such_endpoint` on its next publish, with no way to register again - and its worker goes on running unlisted and unsteerable until someone deals with it on its own machine.
+A hub that RESTARTED comes back to none, and each agent registers its own endpoint again; [When the hub restarts](#when-the-hub-restarts) owns what that recovers and what it does not.
 Either way the terminal output produced in the meantime is gone, because the ring buffer is in memory too.
 
 The operational shape of that is worth saying plainly.
-Losing the hub costs observation across the whole fleet at once, and costs no work; restarting it costs every running worker its place in the fleet until it is restarted too.
+Losing the hub costs observation across the whole fleet at once, and costs no work.
 
 ## Limits
 

@@ -108,10 +108,12 @@ start_slow_stand_in_delay() {  # <delay-secs> <stall-spec>
 
 # create_endpoint -> "<tag>:<endpoint-id>", the exact target shape a task's
 # durable record carries. This starts a real local agent, exactly as a spawn
-# would.
-create_endpoint() {  # <label> [status-path]
-  local label=$1 status=${2:-} pair pid
-  pair=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" "$status") \
+# would. <state-interval> pins that agent's heartbeat for cases whose subject
+# is the recovery the heartbeat drives; left empty, the agent keeps the
+# heartbeat every spawn ships with.
+create_endpoint() {  # <label> [status-path] [state-interval]
+  local label=$1 status=${2:-} interval=${3:-} pair pid
+  pair=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" "$status" "$interval") \
     || fail "creating endpoint $label failed"
   # The adapter starts the agent DETACHED, exactly as a spawn does, so it is not
   # a job of this shell and the trap would not reap it. Record it by pid.
@@ -251,6 +253,174 @@ test_agent_state_separates_missing_unreachable_and_partitioned() {
   state=$(with_stream_env fm_backend_agent_state stream "$target")
   assert_equals "$state" unreadable "an unreachable hub should classify as unreadable"
   pass "stream: agent state separates a missing endpoint, a partition, and an unreachable hub"
+}
+
+# restart_case_hub - stop this case's hub and bring one back at the SAME
+# address, which is what a restart means to an agent that never moved. The
+# agents keep running: outliving the hub is the property under test.
+restart_case_hub() {
+  local port=${URL##*:} waited=0 ready="$CASE_DIR/ready" pid host bound
+  kill "$HUB_PID" 2>/dev/null
+  while [ "$waited" -lt 100 ]; do
+    [ -e "$ready" ] || break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -e "$ready" ] && fail "the hub did not stop when asked"
+  python3 "$HUB" serve --bind 127.0.0.1 --port "$port" \
+    --token-file "$CASE_DIR/tokens" --ready-file "$ready" >> "$CASE_DIR/log" 2>&1 &
+  pid=$!
+  HUB_PID=$pid
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  waited=0
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$ready" ] || fail "the hub did not come back: $(cat "$CASE_DIR/log" 2>/dev/null)"
+  read -r host bound < "$ready"
+  URL="http://$host:$bound"
+}
+
+test_a_restarting_hub_never_reads_as_a_missing_worker() {
+  # The hub keeps its endpoint registry in memory, so between a restart and
+  # each agent registering itself again, every endpoint answers 404. That
+  # window is a recovery, not a verdict: `missing` folds into `dead` for every
+  # caller of fm_backend_agent_alive, and the steer paths escalate `dead|missing`
+  # by dropping a pending steer - on a worker that is alive and coming back.
+  start_case_hub restart-not-missing
+  local target before after waited=0
+  # The adapter's own spawn, with the heartbeat PINNED to a second. That
+  # heartbeat is what discovers the restart, and the 6s grace window clears the
+  # shipped 5s one by well under a second once the per-heartbeat frame build
+  # and the registration round trip are counted (see the derivation at
+  # bin/backends/stream.sh). Run at shipped defaults this case would therefore
+  # redden on a loaded box while the adapter was behaving correctly. What it
+  # gives up by pinning is the margin itself: it proves the window is waited
+  # out rather than treated as a verdict, not that 5s of it fits in 6s.
+  target=$(create_endpoint "fm-restart-$$" "" 1)
+  before=$(with_stream_env fm_backend_agent_state stream "$target")
+  [ "$before" != missing ] || fail "the endpoint should be known before the restart"
+  [ "$before" != unreadable ] || fail "the endpoint should be readable before the restart"
+
+  restart_case_hub
+
+  # Read it repeatedly across the whole recovery, because the defect is a
+  # verdict taken DURING the window, not the one it settles on afterwards.
+  while [ "$waited" -lt 30 ]; do
+    after=$(with_stream_env fm_backend_agent_state stream "$target")
+    [ "$after" != missing ] \
+      || fail "a worker re-registering with its hub must never read missing"
+    [ "$after" = "$before" ] && break
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  assert_equals "$after" "$before" \
+    "the worker should read exactly as it did before, under the endpoint id it kept"
+  # The half an operator notices: a steer aimed at a worker that lived through
+  # the restart still reaches its terminal.
+  with_stream_env fm_backend_send_text_submit stream "$target" 'echo AFTER-RESTART' 3 0.2 0.2 >/dev/null \
+    || fail "the dispatcher refused to steer a worker that came back"
+  wait_for_capture "$target" AFTER-RESTART \
+    || fail "a steer for a worker that returns in seconds must not be dropped"
+  pass "stream: a hub restart is waited out rather than reported as a missing worker"
+}
+
+test_the_fleet_listing_reports_a_worker_that_came_back() {
+  # WHAT THIS COVERS, AND WHAT IT DELIBERATELY DOES NOT.
+  #
+  # Covered: a worker that lived through a hub restart is rendered by the fleet
+  # listing as present and steerable under the endpoint id it kept, rather than
+  # as a row the restart left behind.
+  #
+  # NOT covered: the row rendered DURING the rejoin, which is what
+  # fm-fleet-snapshot.sh's stream branch exists for - taking the recovery-grade
+  # verdict rather than the cheap presence probe while the two disagree. That
+  # behaviour has no executable test here, and the honest reason is that it
+  # cannot be timed deterministically from outside. The window is bounded above
+  # by the adapter's own rejoin grace (FM_BACKEND_STREAM_MISSING_GRACE_SECS, 6s
+  # - past it the verdict settles on `missing` and an absent row is correct)
+  # and below by how long a whole fm-fleet-snapshot.sh run takes to reach its
+  # presence probe, which is seconds of the same few. An earlier version of
+  # this case aimed at that window and hit it perhaps two runs in three: the
+  # third passed with the branch reverted, and a slower box failed it outright
+  # on correct code. Both halves are worse than a gap, because a case that
+  # reddens unrelated work or goes green with its subject removed teaches the
+  # wrong thing in both directions.
+  #
+  # The deferral itself is covered one level down, deterministically, by
+  # test_a_restarting_hub_never_reads_as_a_missing_worker above: it reads the
+  # classifier from the instant of the restart rather than racing a subprocess
+  # against it. What is untested is only that the snapshot consults that
+  # classifier instead of the cheap probe.
+  start_case_hub snapshot-rejoin
+  local id label target home out deadline back="" before=""
+  id="snapshotrejoin-$$"
+  label="fm-$id"
+  target=$(create_endpoint "$label" "" 1)
+  home="$CASE_DIR/home"
+  mkdir -p "$home/state" "$home/data" "$home/projects/$id"
+  fm_write_meta "$home/state/$id.meta" \
+    "backend=stream" \
+    "window=$target" \
+    "worktree=$home/projects/$id" \
+    "project=alpha" \
+    "harness=claude" \
+    "kind=ship" \
+    "mode=ship"
+
+  # What this worker reads as BEFORE the restart is the only thing the reading
+  # after it can honestly be compared with. An endpoint running nothing but the
+  # operator's shell does not read `alive`, so asserting a literal verdict here
+  # would be asserting the fixture rather than the recovery.
+  before=$(with_stream_env fm_backend_agent_state stream "$target")
+  [ "$before" != missing ] || fail "the worker should be readable before the restart"
+
+  restart_case_hub
+
+  # Wait for the rejoin to have HAPPENED rather than racing it. That is what
+  # makes this case deterministic, and it is also exactly what it gives up: the
+  # row below is read after the window, never inside it.
+  #
+  # Bounded on the WALL CLOCK, computed once, not on an iteration count: on the
+  # regression this case guards - an agent that never re-registers - every read
+  # below sleeps out the classifier's whole 6s grace window, so a count would
+  # buy minutes of spinning instead of a prompt red.
+  deadline=$(( $(date +%s) + 30 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    back=$(with_stream_env fm_backend_agent_state stream "$target")
+    [ "$back" = "$before" ] && break
+    sleep 0.2
+  done
+  assert_equals "$back" "$before" \
+    "the worker should read as it did before, under the endpoint id it kept"
+
+  out=$(FM_HOME="$home" FM_ROOT="$ROOT" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_STREAM_HUB="$URL" FM_STREAM_TOKEN="$TOKEN" FM_STREAM_MACHINE=box-test \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json) \
+    || fail "the fleet snapshot failed after a worker came back"
+  printf '%s' "$out" | jq -e --arg id "$id" '
+    [.tasks[] | select(.id == $id)] | length == 1
+  ' >/dev/null || fail "the snapshot should carry exactly one row for the recovered task: $out"
+  local state status exists
+  state=$(printf '%s' "$out" | jq -r --arg id "$id" '.tasks[] | select(.id == $id) | .endpoint.agent_state')
+  status=$(printf '%s' "$out" | jq -r --arg id "$id" '.tasks[] | select(.id == $id) | .endpoint.status')
+  exists=$(printf '%s' "$out" | jq -r --arg id "$id" '.tasks[] | select(.id == $id) | .endpoint.exists')
+  assert_equals "$state" "$before" \
+    "the listing should report the recovered worker exactly as it read before the restart"
+  [ "$status" != absent ] \
+    || fail "a worker that came back must not be listed absent: $out"
+  [ "$exists" != false ] \
+    || fail "the row must not claim absence for an endpoint the hub knows again: $out"
+  # And steerable under the identity it kept, which is what the listing is read
+  # to decide.
+  with_stream_env fm_backend_send_text_submit stream "$target" 'echo LISTED-AFTER-RESTART' 3 0.2 0.2 >/dev/null \
+    || fail "the dispatcher refused to steer the worker the listing kept"
+  wait_for_capture "$target" LISTED-AFTER-RESTART \
+    || fail "a steer for the worker the listing kept must reach its terminal"
+  pass "stream: the fleet listing reports a worker that lived through a hub restart"
 }
 
 test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale() {
@@ -912,6 +1082,8 @@ test_capture_is_bounded_by_the_requested_line_count
 test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor
 test_agent_state_reads_the_foreground_process_not_the_screen
 test_agent_state_separates_missing_unreachable_and_partitioned
+test_a_restarting_hub_never_reads_as_a_missing_worker
+test_the_fleet_listing_reports_a_worker_that_came_back
 test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale
 test_a_forced_close_gives_way_to_the_agents_own_later_report
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling

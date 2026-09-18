@@ -43,6 +43,48 @@ FM_BACKEND_STREAM_PROTOCOL=2
 FM_BACKEND_STREAM_DEFAULT_URL="http://127.0.0.1:7717"
 FM_BACKEND_STREAM_AGENT_BIN="$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agent.py"
 
+# How long a 404 has to keep being the answer before it counts as `missing`.
+# A hub that restarted has forgotten every endpoint until each agent registers
+# itself again, so a verdict taken inside that window is about the hub rather
+# than the worker.
+#
+# The number is derived from both ends, and both matter.
+#   Lower bound - what it has to outlast, which is three terms, not one. An
+#   agent discovers the hub forgot it only by publishing, and an idle worker
+#   publishes nothing but its state heartbeat, so the wait comes first: at
+#   shipped defaults every 5s (bin/fm-stream-agent.py's --state-interval
+#   default, capped by the hub's state_max_age_secs/3). Then the frame BUILD,
+#   which is not free - state_loop shells out through Pty.foreground_processes
+#   and foreground_cwd before it posts anything, so a tenth of a second when
+#   the box is idle and appreciably more when it is not. Then the 404 and the
+#   registration round trip it answers with.
+#   Upper bound - what it has to fit inside. Callers bound this classifier:
+#   fm-fleet-snapshot.sh gives 10s to a whole crew-state read, of which this
+#   probe is one part, so a torn-down endpoint has to reach `missing` well
+#   within that rather than timing the caller out and folding to unknown.
+# 6s therefore clears the lower bound by well under a second at shipped
+# defaults, and a box loaded enough to make the ps/lsof pair or the
+# registration POST take that second over spends the window: the classifier
+# then says `missing` about a worker that is healthy and rejoining, with the
+# consequences spelled out below. Widening is not available - the 10s caller
+# bound leaves no room - so the constant stands at 6 and the thin margin is
+# part of what it costs.
+#
+# So what the window covers is precisely one case: a rejoin that succeeds on
+# the FIRST attempt the agent makes after a restart. It does not cover a rejoin
+# delayed behind a failed attempt. An attempt that times out or meets a hub
+# still coming up doubles that agent's re-registration backoff and pushes the
+# next attempt out by it (bin/fm-stream-agent.py's REREGISTER_BACKOFF_MIN ->
+# REREGISTER_BACKOFF_MAX with jitter), which can be far longer than this
+# window; the endpoint is then reported `missing` while its worker is healthy
+# and still coming back. That verdict is not retried into harmlessness later:
+# fm-watch.sh treats `missing` like `dead` and escalates the pending steer, and
+# fm_task_inbox_due_action stays quiet for an escalated record, so the steer
+# leaves the delivery ladder rather than being rung again. Widening the window
+# to cover the backoff ladder is not available here - it would blow the 10s
+# caller bound above - so that cost is real and stands.
+FM_BACKEND_STREAM_MISSING_GRACE_SECS=6
+
 # The last HTTP status fm_backend_stream_api saw. Initialised at source time so
 # an error path that runs before any request - a missing token, an unreachable
 # hub - can report it without tripping `set -u` in a caller.
@@ -269,8 +311,8 @@ fm_backend_stream_machine() {
 # where its process runs. <status-path> and <cwd> are handed to that local agent
 # and never sent to the hub, which is what lets a worker on any machine report
 # into its own home's records.
-fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
-  local label=$1 cwd=$2 status_path=${3:-} tag machine ready endpoint token_file agent_log reason
+fm_backend_stream_create_task() {  # <label> <cwd> [status-path] [state-interval]
+  local label=$1 cwd=$2 status_path=${3:-} state_interval=${4:-} tag machine ready endpoint token_file agent_log reason
   tag=$(fm_backend_stream_hub_tag) || return 1
   machine=$(fm_backend_stream_machine) || return 1
   ready=$(mktemp "${TMPDIR:-/tmp}/fm-stream-ready.XXXXXX") || return 1
@@ -282,6 +324,10 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
   # cannot start - is the only account of why a spawn failed, so it is kept
   # rather than discarded into /dev/null. The credential still reaches the agent
   # through a file, never a command line.
+  local -a heartbeat=()
+  if [ -n "$state_interval" ]; then
+    heartbeat=(--state-interval "$state_interval")
+  fi
   (
     setsid python3 "$FM_BACKEND_STREAM_AGENT_BIN" serve \
       --hub "$(fm_backend_stream_hub_url)" \
@@ -291,6 +337,7 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
       --cwd "$cwd" \
       --status-path "$status_path" \
       --ready-file "$ready" \
+      "${heartbeat[@]+"${heartbeat[@]}"}" \
       >"$agent_log" 2>&1 < /dev/null &
   )
   local waited=0
@@ -358,6 +405,14 @@ fm_backend_stream_parse_target() {  # <target>
 # fm_backend_stream_target_ready: the endpoint exists on the configured hub and,
 # when an expected label is given, is the one that carries it. The label check
 # keeps a recycled or mistaken endpoint id from being steered as this task.
+#
+# This probe answers from the first reply and takes no grace window, because
+# its callers - capture, current-path, input - need an answer now and ask again
+# when refused. So its 404 can be transient: the hub's registry is in memory,
+# and after a hub restart every endpoint is unknown until its agent registers
+# again seconds later. Never treat a 404 here as authoritative absence; the
+# settled answer to that question is fm_backend_stream_agent_state's `missing`,
+# which is the verdict that outlasts the re-registration window.
 fm_backend_stream_target_ready() {  # <target> [expected-label]
   local target=$1 expected=${2:-} out label
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || return 1
@@ -494,7 +549,8 @@ fm_backend_stream_send_text_submit() {  # <target> <text> <retries> <enter-sleep
 # fm_backend_stream_agent_state: the recovery-grade classifier. See
 # bin/fm-backend.sh's fm_backend_agent_state for the shared vocabulary.
 #
-#   missing    the hub answered and has no such endpoint (404).
+#   missing    the hub answered and has no such endpoint (404), and went on
+#              saying so for long enough that no agent is still coming back.
 #   dead       the owning agent POSITIVELY reported the process gone, or a
 #              foreground group that is nothing but shells.
 #   alive      a verified harness is in that reported foreground group.
@@ -516,9 +572,23 @@ fm_backend_stream_send_text_submit() {  # <target> <text> <retries> <enter-sleep
 # a process name means, so every backend gives the same verdict.
 fm_backend_stream_agent_state() {  # <target>
   local target=$1 out stale alive count classified seen=0 shell_seen=0 other_seen=0
-  local index name argv0 args status=0
+  local index name argv0 args status=0 waited=0
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || { printf 'unreadable'; return 0; }
-  out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT/processes" 2>/dev/null) || status=$?
+  # A 404 is no longer a settled answer on its own. The hub keeps its endpoint
+  # registry in memory, so a hub that restarted has no such endpoint for anyone
+  # until each agent registers itself again - which happens within seconds and
+  # without an operator. Reporting `missing` from the first 404 is what drops a
+  # pending steer for a worker that is about to be back, so it has to keep
+  # being the answer before it counts as one. A hub that really has forgotten
+  # an endpoint says so every time and still reaches `missing`, just later.
+  while :; do
+    status=0
+    out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT/processes" 2>/dev/null) || status=$?
+    [ "$status" -eq 3 ] || break
+    [ "$waited" -lt "$FM_BACKEND_STREAM_MISSING_GRACE_SECS" ] || break
+    waited=$((waited + 1))
+    sleep 1
+  done
   if [ "$status" -ne 0 ]; then
     case "$status" in
       3) printf 'missing' ;;

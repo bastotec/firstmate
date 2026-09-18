@@ -32,6 +32,14 @@ VIEW_ONLY_TOKEN="viewonly-$$"
 API_CODE_FILE=""
 CASE_DIR=""
 URL=""
+HUB_PID=""
+HUB_READY=""
+# The hub arguments THIS case started with. A restart has to serve the same hub
+# the case set up - a case that tuned an acknowledgement window or any other
+# option would otherwise be measuring a default hub after the restart, which is
+# the half of the case that matters most.
+HUB_ARGS=()
+STUB_JOURNAL=""
 # Labels carry the pid of THIS run. An interrupted run leaves its agents
 # behind - they outlive the hub they published to - and a fixed label would
 # then let agent_pid_for resolve one of those leftovers, silencing a dead
@@ -44,6 +52,36 @@ cleanup_helpers() {
 }
 trap 'cleanup_helpers; fm_test_cleanup' EXIT INT TERM
 
+# spawn_hub <port> [extra hub args...] -> sets URL HUB_PID HUB_READY
+# One owner for starting a hub against the CURRENT case directory, and the only
+# one that does not retire what the case is already running. start_hub is that
+# plus a fresh case; the restart cases need this alone, because their agents
+# have to outlive the hub - outliving it is the property under test.
+spawn_hub() {
+  local port=$1
+  shift
+  local waited=0 host bound pid
+  HUB_READY="$CASE_DIR/ready"
+  rm -f "$HUB_READY"
+  python3 "$HUB" serve --bind 127.0.0.1 --port "$port" \
+    --token-file "$CASE_DIR/tokens" --ready-file "$HUB_READY" "$@" \
+    >> "$CASE_DIR/log" 2>&1 &
+  pid=$!
+  # Disowned so retiring the previous case's hub does not print a job-control
+  # "Killed" notice into this suite's output.
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$HUB_READY" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$HUB_READY" ] || fail "hub did not report ready on port $port: $(cat "$CASE_DIR/log" 2>/dev/null)"
+  read -r host bound < "$HUB_READY"
+  URL="http://$host:$bound"
+  HUB_PID=$pid
+}
+
 # start_hub <case-name> [extra hub args...] -> sets CASE_DIR URL
 # Publishing, operating, and watching get SEPARATE tokens in every case, so a
 # test that accidentally used the wrong one fails rather than passing on a
@@ -51,7 +89,7 @@ trap 'cleanup_helpers; fm_test_cleanup' EXIT INT TERM
 start_hub() {
   local name=$1
   shift
-  local ready waited=0 host port pid
+  HUB_ARGS=("$@")
   cleanup_helpers
   CASE_DIR="$TMP_ROOT/$name"
   mkdir -p "$CASE_DIR/state" "$CASE_DIR/cwd"
@@ -60,24 +98,26 @@ start_hub() {
   chmod 600 "$CASE_DIR/tokens"
   printf '%s\n' "$PUBLISH_TOKEN" > "$CASE_DIR/publish-token"
   chmod 600 "$CASE_DIR/publish-token"
-  ready="$CASE_DIR/ready"
-  python3 "$HUB" serve --bind 127.0.0.1 --port 0 \
-    --token-file "$CASE_DIR/tokens" --ready-file "$ready" "$@" \
-    > "$CASE_DIR/log" 2>&1 &
-  pid=$!
-  # Disowned so retiring the previous case's hub does not print a job-control
-  # "Killed" notice into this suite's output.
-  disown "$pid" 2>/dev/null || true
-  fm_test_track_helper_pid "$pid"
+  API_CODE_FILE="$CASE_DIR/http-code"
+  spawn_hub 0 "$@"
+}
+
+# restart_hub [seconds-down] - stop this case's hub and bring the SAME hub back,
+# optionally leaving it down for a while first. The outage length is a parameter
+# because what an agent does during one depends on how long it lasts: a poll
+# that has been failing for half a minute is waiting on a different clock from
+# one that failed once.
+restart_hub() {
+  local down=${1:-0} port=${URL##*:} waited=0
+  kill "$HUB_PID" 2>/dev/null
   while [ "$waited" -lt 100 ]; do
-    [ -s "$ready" ] && break
+    [ -e "$HUB_READY" ] || break
     sleep 0.1
     waited=$((waited + 1))
   done
-  [ -s "$ready" ] || fail "hub did not report ready for case $name: $(cat "$CASE_DIR/log" 2>/dev/null)"
-  read -r host port < "$ready"
-  URL="http://$host:$port"
-  API_CODE_FILE="$CASE_DIR/http-code"
+  [ -e "$HUB_READY" ] && fail "the hub did not stop when asked"
+  [ "$down" != 0 ] && sleep "$down"
+  spawn_hub "$port" ${HUB_ARGS[@]+"${HUB_ARGS[@]}"}
 }
 
 # api prints the response body and records the HTTP status in a FILE rather than
@@ -699,6 +739,45 @@ test_a_returning_agent_whose_name_was_taken_is_refused() {
   pass "hub: a returning agent whose name was taken is refused rather than revived"
 }
 
+test_a_registration_takes_no_name_from_the_agent_recovering_it() {
+  # The restart window's own hazard. While the hub knew nothing, every endpoint
+  # read unknown, so something started a REPLACEMENT worker for the task under
+  # the same machine and label. It has registered and never published. The
+  # original agent - whose worker is still running - then recovers its own
+  # endpoint id, and must not lose the task's identity to a record that stands
+  # for nothing yet. Registering is not proof, on this path exactly as on the
+  # publish path.
+  start_hub register-unproven
+  local replacement recovering out
+  replacement=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  recovering=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$replacement" --arg l "held-$RUN" \
+    '{endpoint_id: $id, machine: "box-a", label: $l, cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the replacement should register"
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$recovering" --arg l "held-$RUN" \
+    '{endpoint_id: $id, machine: "box-a", label: $l, cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 \
+    "a record nothing has been heard from must not refuse the agent recovering that name"
+  # The agent that publishes is the one that holds it, which is the rule the
+  # publish path already stated; the loser is told so rather than left to
+  # publish into a fleet where its name means someone else.
+  publish POST /v1/agent/frames "$(jq -nc --arg id "$recovering" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')" >/dev/null
+  assert_equals "$(api_code)" 200 "the recovering agent should publish under its own id"
+  out=$(publish POST /v1/agent/frames "$(jq -nc --arg id "$replacement" \
+    '{machine: "box-a", frames: [{endpoint_id: $id, b64: "aGVsbG8K"}]}')")
+  assert_equals "$(api_code)" 410 "the replacement must not publish under a name another worker holds"
+  assert_equals "$(printf '%s' "$out" | jq -r '.error')" endpoint_superseded \
+    "it should be told the name is served by another endpoint"
+  # And the name is genuinely held now, so the duplicate rule still refuses the
+  # next claim on it: the check was narrowed, not removed.
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$(python3 -c 'import os; print(os.urandom(16).hex())')" \
+    --arg l "held-$RUN" '{endpoint_id: $id, machine: "box-a", label: $l, cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 409 \
+    "an endpoint whose agent is publishing should still hold its label against a new claim"
+  pass "hub: a registration nothing stands behind takes no name from the agent recovering it"
+}
+
 test_a_name_contest_is_settled_by_which_agent_is_heard_from() {
   # Two records, one name, and nothing heard from either - the shape a paused
   # hub leaves behind. The name belongs to whichever agent comes back, because
@@ -1120,6 +1199,399 @@ test_the_viewer_keeps_the_send_box_disabled_for_a_closed_worker() {
   pass "hub: a resolved send never re-enables the box for a closed worker"
 }
 
+test_a_restarted_hub_gets_its_workers_back() {
+  # The fleet-wide orphan. The hub's endpoint registry is in memory, so a hub
+  # that restarts has never heard of any worker it was serving: every running
+  # agent publishes into a record that no longer exists and is refused. The
+  # cost of that used to be the whole fleet at once - every worker still
+  # running, every one of them absent from the listing and unsteerable, until
+  # someone went to its own machine and dealt with it there.
+  start_hub reregister
+  local endpoint status agent_pid listed="" typed="" waited=0
+  status="$CASE_DIR/state/comeback.status"
+  endpoint=$(start_agent box-a comeback "$status")
+  agent_pid=$(agent_pid_for box-a comeback)
+  [ -n "$agent_pid" ] || fail "the agent should be running"
+  # A steer BEFORE the restart, so the one after it compares against a worker
+  # that was demonstrably steerable rather than asserting into a vacuum.
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo BEFORE-RESTART","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 "the worker should be steerable before the restart"
+  wait_for_capture "$endpoint" BEFORE-RESTART || fail "the worker never ran the first steer"
+
+  restart_hub
+
+  # The endpoint comes back under the id it always had. A new id would list a
+  # worker while stranding every durable record that names this one - the
+  # task's own binding, its steering, its status channel - so the id is the
+  # assertion here, not merely that some row reappeared.
+  while [ "$waited" -lt 300 ]; do
+    listed=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')
+    [ "$listed" = 1 ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$listed" 1 \
+    "the worker should reappear in the fleet listing under the endpoint id it already had"
+  assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r '.tasks | length')" 1 \
+    "coming back must not leave a second record behind for the same worker"
+  # Back in the listing is not back: a record with no state frame behind it
+  # reads unreadable, and supervision can do nothing with that. Registering and
+  # publishing state are two calls, so a reader can catch the endpoint between
+  # them - this waits for the pair rather than asserting on whichever half a
+  # poll happened to land in.
+  local out stale=""
+  waited=0
+  while [ "$waited" -lt 200 ]; do
+    out=$(view GET "/v1/tasks/$endpoint/processes")
+    stale=$(printf '%s' "$out" | jq -r '.stale')
+    [ "$stale" = false ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$(api_code)" 200 "the recovered endpoint should answer a state read"
+  assert_equals "$stale" false \
+    "the recovered endpoint should become readable rather than staying a record with no state behind it"
+  assert_equals "$(printf '%s' "$out" | jq -r '.alive')" true \
+    "a readable recovered endpoint should carry the verdict that its worker is running"
+  # And steerable, which is the half an operator actually notices.
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo AFTER-RESTART","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 "the recovered worker should take a steer again"
+  wait_for_capture "$endpoint" AFTER-RESTART \
+    || fail "the recovered worker should run what is typed into it"
+  # It is the same worker throughout: nothing was restarted on this machine,
+  # which is what makes this a recovery rather than a replacement.
+  assert_equals "$(agent_pid_for box-a comeback)" "$agent_pid" \
+    "the worker and its agent should be the same ones that were running before the restart"
+  # The identity is whole, so the local status channel still reaches the task's
+  # own record - the one thing that kept working while the hub was gone.
+  view POST "/v1/tasks/$endpoint/status" '{"state":"working","note":"back after the restart"}' >/dev/null
+  assert_equals "$(api_code)" 200 "the recovered endpoint should take a status line"
+  waited=0
+  while [ "$waited" -lt 200 ]; do
+    typed=$(cat "$status" 2>/dev/null || true)
+    case $typed in *"back after the restart"*) break ;; esac
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_contains "$typed" "working: back after the restart" \
+    "the recovered endpoint should still report into its own task's status record"
+  pass "hub: a worker whose hub restarted comes back under its own endpoint id and steers again"
+}
+
+# worker_ended <agent-pid> - true once nothing under that agent is still
+# running. A child that has exited but not been reaped is a zombie, and a
+# PAUSED agent cannot reap anything, so "the process is still listed" is not
+# the question - "is any of it still running" is.
+worker_ended() {
+  local child state
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    state=$(ps -o stat= -p "$child" 2>/dev/null | tr -d ' ')
+    case $state in
+      ""|Z*) : ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for() {
+  # The other half of a restart: the worker did not survive it. Its agent has
+  # an exit code and a closing frame to deliver, and a hub that forgot the
+  # endpoint refuses that frame like any other. Dropping it would leave the
+  # task's end unrecorded - the one outcome worse than an unlisted worker,
+  # because nothing afterwards would ever ask again.
+  start_hub reregister-exit
+  local endpoint agent_pid waited=0 closed="" ended=""
+  endpoint=$(start_agent box-a departing)
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo STILL-HERE","submit":true}' >/dev/null
+  wait_for_capture "$endpoint" STILL-HERE || fail "the worker never ran before the restart"
+  agent_pid=$(agent_pid_for box-a departing)
+  [ -n "$agent_pid" ] || fail "the agent should be running"
+  # The agent is paused for the whole outage, so everything below happens while
+  # it cannot know any of it: that is what makes the recovery afterwards its
+  # own work rather than a lucky overlap with the hub coming back.
+  kill -STOP "$agent_pid" || fail "could not pause the agent"
+  restart_hub
+  # KILL, not TERM: the endpoint runs an interactive shell, and an interactive
+  # shell ignores TERM. A case that only asked politely would resume an agent
+  # whose worker never left and assert nothing at all.
+  pkill -KILL -P "$agent_pid" 2>/dev/null \
+    || { kill -CONT "$agent_pid"; fail "could not end the worker under its agent"; }
+  waited=0
+  while [ "$waited" -lt 100 ]; do
+    worker_ended "$agent_pid" && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  worker_ended "$agent_pid" \
+    || { kill -CONT "$agent_pid"; fail "the worker outlived the signal, so this case would prove nothing"; }
+  kill -CONT "$agent_pid" || fail "could not resume the agent"
+  waited=0
+  while [ "$waited" -lt 400 ]; do
+    ended=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+      '[.tasks[] | select(.endpoint_id==$id)] | first | .closed_by // ""')
+    [ -n "$ended" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$ended" agent \
+    "the exit its agent watched should reach the hub that came back, attributed to that agent"
+  closed=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+    '[.tasks[] | select(.endpoint_id==$id)] | first | .endpoint_id')
+  assert_equals "$closed" "$endpoint" \
+    "the closed record should be the endpoint the task always named"
+  pass "hub: a worker that exited while the hub was down still reports its end to the hub that returns"
+}
+
+test_a_closing_frame_outlives_the_pace_its_own_outage_set() {
+  # The other half of an outage that ends badly. While the hub was gone the
+  # agent tried to come back and was refused, so it is waiting out a long pause
+  # before it tries again - and then the hub returns and the worker exits
+  # inside that pause. The close it owes the fleet must not be what the pause
+  # swallows: a frame dropped here is a task whose end and exit code are
+  # recorded nowhere, and nothing afterwards ever asks again.
+  start_hub closing-pace
+  local endpoint task
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  python3 "$ROOT/tests/assets/stream-agent-closing-frame.py" --hub "$URL" \
+    --token "$PUBLISH_TOKEN" --machine box-a --label "departing-$RUN" \
+    --endpoint "$endpoint" --exit-code 7 --pace-secs 600 \
+    > "$CASE_DIR/closing.log" 2>&1 \
+    || fail "the closing publisher failed: $(cat "$CASE_DIR/closing.log")"
+  task=$(view GET "/v1/tasks/$endpoint")
+  assert_equals "$(api_code)" 200 \
+    "the hub should hold a record for the endpoint the closing frame named"
+  assert_equals "$(printf '%s' "$task" | jq -r '.task.closed_by')" agent \
+    "the end its agent watched should be recorded, and attributed to that agent"
+  assert_equals "$(printf '%s' "$task" | jq -r '.task.exit_code')" 7 \
+    "the exit code the closing frame carried should be the one on the record"
+  pass "hub: a closing frame is delivered even when the agent's re-registration pace is spent"
+}
+
+test_a_closing_frame_waits_out_a_recovery_already_in_flight() {
+  # The other way a hub restart takes the lock away from a closing frame. The
+  # worker exits while one of the agent's own threads is already inside a
+  # re-registration for the same forgotten endpoint, so the close arrives to
+  # find the agent's registration taken. Giving up there is the same loss as
+  # dropping the frame outright - the endpoint is back at the hub seconds
+  # later, but the agent has returned from run() and nothing ever posts the
+  # task's end or its exit code again.
+  start_hub closing-contended
+  local endpoint task
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  python3 "$ROOT/tests/assets/stream-agent-closing-frame.py" --hub "$URL" \
+    --token "$PUBLISH_TOKEN" --machine box-a --label "contended-$RUN" \
+    --endpoint "$endpoint" --exit-code 9 --pace-secs 600 --hold-lock-secs 1 \
+    > "$CASE_DIR/closing.log" 2>&1 \
+    || fail "the closing publisher failed: $(cat "$CASE_DIR/closing.log")"
+  task=$(view GET "/v1/tasks/$endpoint")
+  assert_equals "$(api_code)" 200 \
+    "the hub should hold a record for the endpoint the closing frame named"
+  assert_equals "$(printf '%s' "$task" | jq -r '.task.closed_by')" agent \
+    "the end its agent watched should be recorded even though a recovery held the lock"
+  assert_equals "$(printf '%s' "$task" | jq -r '.task.exit_code')" 9 \
+    "the exit code the closing frame carried should be the one on the record"
+  pass "hub: a closing frame survives a re-registration already in flight on another thread"
+}
+
+# start_stub <case-name> [stub args...] -> sets CASE_DIR URL STUB_JOURNAL
+# The re-registration pacing and refusal cases need a hub that keeps saying one
+# exact thing; tests/assets/stream-hub-stub.py owns what it answers and why a
+# real hub cannot be asked to do it.
+start_stub() {
+  local name=$1
+  shift
+  local ready waited=0 host port pid
+  cleanup_helpers
+  CASE_DIR="$TMP_ROOT/$name"
+  mkdir -p "$CASE_DIR/state" "$CASE_DIR/cwd"
+  printf '%s\n' "$PUBLISH_TOKEN" > "$CASE_DIR/publish-token"
+  chmod 600 "$CASE_DIR/publish-token"
+  API_CODE_FILE="$CASE_DIR/http-code"
+  STUB_JOURNAL="$CASE_DIR/journal"
+  ready="$CASE_DIR/stub-ready"
+  rm -f "$ready" "$STUB_JOURNAL"
+  python3 "$ROOT/tests/assets/stream-hub-stub.py" --port 0 --ready-file "$ready" \
+    --journal "$STUB_JOURNAL" "$@" > "$CASE_DIR/log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$ready" ] || fail "the hub stand-in did not bind for case $name: $(cat "$CASE_DIR/log" 2>/dev/null)"
+  read -r host port < "$ready"
+  URL="http://$host:$port"
+}
+
+# registrations - the journal's RE-registration attempts, one timestamp a line.
+# The first registration in the journal is the agent's startup, which nothing
+# here is about: counting it would read the gap between coming up and the first
+# recovery as an agent that failed to pace itself.
+registrations() {
+  grep -F 'POST /v1/agent/endpoints' "$STUB_JOURNAL" 2>/dev/null | tail -n +2 | awk '{print $1}'
+}
+
+test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub() {
+  # A hub that has forgotten an endpoint and cannot take it back is the shape
+  # of a hub mid-restart, flapping, or refusing for a reason of its own. Every
+  # frame an agent publishes discovers the same thing, from three threads, for
+  # as long as it lasts - so without a floor under the attempts, one stranded
+  # worker becomes a hot loop and a stranded FLEET becomes a denial of service
+  # against the hub it is waiting for.
+  start_stub reregister-backoff --accept-registrations 1 --frames-ok-first 1
+  local status log attempts count previous gap smallest=""
+  status="$CASE_DIR/state/paced.status"
+  log="$CASE_DIR/agent.log"
+  python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+    --machine box-a --label "paced-$RUN" --cwd "$CASE_DIR/cwd" \
+    --status-path "$status" --ready-file "$CASE_DIR/paced.ready" \
+    --state-interval 0.5 --poll-secs 3 > "$log" 2>&1 &
+  local pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  local waited=0
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$CASE_DIR/paced.ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$CASE_DIR/paced.ready" ] || fail "the agent never registered against the stand-in: $(cat "$log")"
+  # Long enough for an unpaced agent to make dozens of attempts: the heartbeat
+  # alone is twice a second, and the worker's own output adds more.
+  sleep 10
+  attempts=$(registrations)
+  count=$(printf '%s\n' "$attempts" | grep -c . || true)
+  [ "$count" -ge 2 ] || fail "the agent should keep trying to come back, but attempted $count times"
+  [ "$count" -le 6 ] || fail "the agent attempted to re-register $count times in ten seconds, which is a hot loop"
+  # The floor is the property, not the count: no two attempts closer together
+  # than the shortest interval the agent is allowed to use.
+  previous=""
+  while read -r stamp; do
+    [ -n "$stamp" ] || continue
+    if [ -n "$previous" ]; then
+      gap=$(python3 -c 'import sys; print("%.3f" % (float(sys.argv[1]) - float(sys.argv[2])))' \
+        "$stamp" "$previous")
+      if [ -z "$smallest" ] || [ "$(python3 -c 'import sys; print(1 if float(sys.argv[1]) < float(sys.argv[2]) else 0)' "$gap" "$smallest")" = 1 ]; then
+        smallest=$gap
+      fi
+    fi
+    previous=$stamp
+  done <<EOF
+$attempts
+EOF
+  [ -n "$smallest" ] || fail "there were not enough attempts to measure the interval between them"
+  [ "$(python3 -c 'import sys; print(1 if float(sys.argv[1]) >= 1.5 else 0)' "$smallest")" = 1 ] \
+    || fail "two re-registration attempts were only ${smallest}s apart, so nothing is pacing them"
+  # None of this costs the worker: the pty is the one thing a hub cannot reach.
+  kill -0 "$pid" 2>/dev/null || fail "the agent should keep waiting for its hub, not exit"
+  [ -n "$(pgrep -P "$pid" 2>/dev/null)" ] || fail "the stranded agent should keep its worker running"
+  pass "hub: an agent the hub cannot take back paces its attempts instead of hammering it"
+}
+
+# outage_that_parks_the_poll <ack-window> - how long this case must leave the
+# hub down so that, when it comes back, the agent's command poll is still
+# parked for longer than the hub will hold a steer. Derived from the agent's
+# OWN backoff ladder rather than guessed: a case that hardcoded an outage would
+# quietly stop exercising the gap the day that ladder changed, which is the
+# failure mode of a test that keeps passing after its subject has moved.
+outage_that_parks_the_poll() {
+  python3 - "$AGENT" "$1" <<'EOF'
+import importlib.util, sys
+
+spec = importlib.util.spec_from_file_location("fm_stream_agent", sys.argv[1])
+agent = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(agent)
+ack = float(sys.argv[2])
+# The poll waits MIN, then twice that, and so on up to MAX, so its waits tile
+# the outage end to end. Find the first wait with enough left in it after the
+# hub returns, and return to the middle of that wait.
+wait, elapsed = agent.POLL_BACKOFF_MIN, 0.0
+for _ in range(64):
+    # Come back halfway through this wait: the furthest point from either edge,
+    # so neither a slow start nor a slow restart can land outside it.
+    if wait / 2.0 >= ack + 4.0:
+        print("%d" % round(elapsed + wait / 2.0))
+        break
+    elapsed += wait
+    wait = min(wait * 2.0, agent.POLL_BACKOFF_MAX)
+else:
+    raise SystemExit("no wait in the poll's ladder outlasts a %.1fs window" % ack)
+EOF
+}
+
+test_a_steer_lands_as_soon_as_the_worker_is_listed_again() {
+  # Back in the listing has to mean steerable, because that is what an operator
+  # reads it as. The command poll backs off while the hub is unreachable, so
+  # after a long outage it is parked on a wait many seconds wide when the hub
+  # returns. The state heartbeat discovers the return within a second and takes
+  # the endpoint back, so the listing says the worker is healthy - while the
+  # thread that receives steers is still asleep on a clock the outage set. A
+  # steer sent in that gap is not merely slow: the hub waits out its
+  # acknowledgement window and reports the input as NOT delivered, for a worker
+  # the fleet has just called well.
+  #
+  # Two clocks are being compared, so both are pinned. The hub's window is set
+  # here rather than left at its default, and the outage is computed from the
+  # agent's own ladder, so the case rests on the agent's real pace instead of
+  # on timing it does not control.
+  local ack=5 endpoint outage listed="" waited=0
+  start_hub reregister-steer --command-ack-secs "$ack"
+  outage=$(outage_that_parks_the_poll "$ack") \
+    || fail "could not derive an outage from the agent's poll backoff ladder"
+  endpoint=$(start_agent box-a parked)
+  # Steerable BEFORE the outage, so the assertion after it is a comparison
+  # rather than a claim into a vacuum.
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo BEFORE-OUTAGE","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 "the worker should be steerable before the outage"
+  wait_for_capture "$endpoint" BEFORE-OUTAGE || fail "the worker never ran the first steer"
+
+  restart_hub "$outage"
+
+  # The listing coming back is the starting gun: from here an operator would
+  # believe the worker is reachable, so from here it has to be.
+  while [ "$waited" -lt 300 ]; do
+    listed=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')
+    [ "$listed" = 1 ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$listed" 1 "the worker should reappear in the fleet listing after the outage"
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo AFTER-OUTAGE","submit":true}' >/dev/null
+  assert_equals "$(api_code)" 200 \
+    "a steer sent the moment the worker is listed again should be delivered, not refused while its command poll sleeps off the outage"
+  wait_for_capture "$endpoint" AFTER-OUTAGE \
+    || fail "the worker should run what is typed into it as soon as the listing says it is back"
+  pass "hub: a worker listed again after a long outage takes a steer straight away"
+}
+
+test_an_accepted_registration_returns_the_pace_to_its_floor() {
+  # The other end of pacing. A long outage grows the pause between attempts to
+  # its ceiling, and then one attempt is accepted - which is proof the hub is
+  # answering again, and so proof that the pause it was serving is over. A hub
+  # that forgets the endpoint again a moment later is the case this is for: a
+  # second restart, or a hub taking registrations while it still refuses
+  # frames. Carrying the spent ceiling forward would hold the worker out of the
+  # listing, and out of reach of a steer, for a minute it no longer owes.
+  start_stub reregister-floor --accept-registrations -1 --frames-ok-first 8
+  local endpoint attempts
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  python3 "$ROOT/tests/assets/stream-agent-rejoin-pace.py" --hub "$URL" \
+    --token "$PUBLISH_TOKEN" --machine box-a --label "rejoined-$RUN" \
+    --endpoint "$endpoint" --settle-secs 3 > "$CASE_DIR/rejoin.log" 2>&1 \
+    || fail "the second recovery never happened: $(cat "$CASE_DIR/rejoin.log")"
+  # Every registration here is a recovery, so unlike the pacing case above
+  # there is no startup attempt to discount.
+  attempts=$(grep -c -F 'POST /v1/agent/endpoints' "$STUB_JOURNAL" || true)
+  assert_equals "$attempts" 2 \
+    "both recoveries should have reached the hub, three seconds apart"
+  pass "hub: a registration the hub accepts returns the agent's pace to its floor"
+}
+
 test_fm_stream_start_status_stop_round_trip() {
   # The operator path, through the real entry point rather than the API.
   local home out
@@ -1200,6 +1672,7 @@ test_a_kill_closes_an_endpoint_whose_agent_never_answers
 test_a_worker_the_hub_has_not_heard_from_keeps_its_place
 test_an_agent_that_speaks_again_takes_the_presumption_back
 test_a_returning_agent_whose_name_was_taken_is_refused
+test_a_registration_takes_no_name_from_the_agent_recovering_it
 test_a_name_contest_is_settled_by_which_agent_is_heard_from
 test_a_publishing_worker_keeps_its_name_against_an_empty_record
 test_a_worker_that_loses_its_name_keeps_its_worker
@@ -1213,5 +1686,12 @@ test_the_viewer_is_static_and_carries_no_terminal_content
 test_the_viewer_renders_a_character_split_across_two_frames
 test_the_viewer_reports_a_refused_transcript_rather_than_painting_it
 test_the_viewer_keeps_the_send_box_disabled_for_a_closed_worker
+test_a_restarted_hub_gets_its_workers_back
+test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
+test_a_closing_frame_outlives_the_pace_its_own_outage_set
+test_a_closing_frame_waits_out_a_recovery_already_in_flight
+test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
+test_a_steer_lands_as_soon_as_the_worker_is_listed_again
+test_an_accepted_registration_returns_the_pace_to_its_floor
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home

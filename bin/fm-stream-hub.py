@@ -1102,6 +1102,15 @@ class Hub:
             for other in self.endpoints.values():
                 if other.closed_at or other.presumed_gone:
                     continue
+                # The same rule agent_spoke applies on the publish path, and
+                # for the same reason: registering is not proof. A record
+                # nothing has ever been heard from stands for no worker, so it
+                # takes no name from the agent that is about to publish under
+                # it - which is exactly what a worker recovering its own
+                # endpoint from a restarted hub is doing, against a
+                # replacement that was started while the hub knew nothing.
+                if not other.heard_from:
+                    continue
                 if other.machine == machine and other.label == label:
                     raise HubError(HTTPStatus.CONFLICT, "duplicate_label",
                                    "machine %s already has a live endpoint labelled %s"
