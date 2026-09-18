@@ -2503,6 +2503,56 @@ test_retiring_records_who_asserted_it_and_when() {
   pass "a retirement carries who asserted it and when, and is consumed by the cleanup it authorizes"
 }
 
+# A retirement proceeds past a kill the backend answered POSITIVELY: the window
+# is still listed after its kill, so the worker may still be running, and the
+# records go anyway on the operator's assertion alone. That is deliberate, and
+# it is the one place this command removes a record against a runtime that
+# spoke. What must hold is that the operator is told before anything is
+# removed: the backend's own reason, and then cleanup naming the assertion the
+# removal rests on.
+test_retiring_past_a_still_present_endpoint_reports_it_before_removing() {
+  local case_dir home id out
+  id=atomic-retire-present-c4
+  case_dir=$(make_home retire-present)
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  # A tmux that answers every kill and still lists the window afterwards: the
+  # adapter's positive still-present read, not an unreadable backend.
+  cat > "$case_dir/fakebin/tmux" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in
+  list-windows) printf 'fm-%s\n' '$id'; exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+  git init -q "$case_dir/project-$id"
+  git -C "$case_dir/project-$id" -c user.name=test -c user.email=test@example.invalid \
+    commit --allow-empty -qm base
+  git -C "$case_dir/project-$id" worktree add -q --detach "$case_dir/wt-$id" >/dev/null 2>&1
+  fm_write_meta "$home/state/$id.meta" \
+    "window=fmtest:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$case_dir/wt-$id" \
+    "project=$case_dir/project-$id" \
+    "harness=claude" "kind=ship" "mode=" "yolo=off" \
+    "spawn_gen=spawn-present" "decisions_reviewed=1" "decision_keys="
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
+    || fail "a confirmed retirement should complete past a still-present endpoint: $out"
+  assert_contains "$out" "is still listed after its kill" \
+    "the run did not carry the backend's own still-present reason: $out"
+  assert_contains "$out" "was never confirmed gone" \
+    "the run did not say the endpoint was never confirmed gone: $out"
+  assert_contains "$out" "on that assertion alone" \
+    "the run did not name the operator assertion the removal rests on: $out"
+  assert_absent "$home/state/$id.meta" "the retirement left the record it retired"
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "the retirement left the backlog row at $(row_state "$case_dir" "$id"): $out"
+  pass "a retirement past a still-present endpoint reports it before removing the records"
+}
+
 # Retiring a record is bookkeeping about the record, and work on disk is not
 # the record. Cleanup refuses here - the worktree holds uncommitted work - and
 # the retirement still lands, with every byte of that work exactly where it
@@ -4027,6 +4077,7 @@ test_a_failed_confirm_stamp_keeps_every_record_for_a_rerun
 test_no_automatic_path_retires_an_unanswerable_record
 test_retiring_refuses_wildcards_and_unconfirmed_ids
 test_retiring_records_who_asserted_it_and_when
+test_retiring_past_a_still_present_endpoint_reports_it_before_removing
 test_retiring_leaves_work_on_disk_byte_untouched
 test_retiring_needs_the_named_flag_to_override_a_runtime_refusal
 test_an_interrupt_mid_retirement_retires_nothing

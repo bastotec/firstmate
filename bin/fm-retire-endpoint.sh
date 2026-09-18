@@ -23,11 +23,14 @@
 # time they made it. docs/stream-backend.md carries the operator-facing entry.
 #
 # Retiring a record is RECORD bookkeeping and nothing else. Cleanup runs first,
-# because when its own gates allow it, it does the whole job properly. Exactly
-# one of its refusals is proceeded past: the work-protection gate, which runs
-# before anything on disk has been touched. Work on disk is not the record this
-# retires, so the records are retired and the worktree, its uncommitted work,
-# the task branch and the task's data are all left exactly as they were, and
+# because when its own gates allow it, it does the whole job properly. Two of
+# its refusals are proceeded past: the work-protection gate, which runs before
+# anything on disk has been touched, and the unconfirmed-kill gate, which is
+# the whole point of the command and its honest cost - the records go even when
+# the backend answered that the endpoint is still there after its kill, on the
+# operator's assertion alone. Work on disk is not the record this retires, so
+# the records are retired and the worktree, its uncommitted work, the task
+# branch and the task's data are all left exactly as they were, and
 # named in the output - an operator who retires a record must never thereby
 # lose work, nor be left unaware that work is still sitting there. That is also
 # why no --force is accepted or forwarded here: discarding work is a different
@@ -36,7 +39,7 @@
 # Every OTHER refusal stands and stops the retirement, because each protects
 # something no retirement has a say over: an outcome that never reached the
 # parent channel and must stay retryable, a backlog transition that cannot be
-# replayed, a runtime that still answers.
+# replayed, a runtime refusal only --override-runtime-refusal proceeds past.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -73,21 +76,31 @@ that assertion for you, and --force does not make it either.
 
 What this reaches, exactly:
 
-  Cleanup runs first and finishes the job whenever its own gates allow. The one
-  refusal this proceeds past is cleanup's work-protection gate - unlanded or
-  uncommitted work in the worktree - which refuses before anything on disk has
-  been touched. The records are then retired and NOTHING on disk is touched:
-  the worktree, any uncommitted work in it, the task branch and the task's data
-  are left exactly as they are, and are named in the output. Dealing with them
-  is then yours, under your own authority: this command never discards work,
-  and never passes --force to anything.
+  Cleanup runs first and finishes the job whenever its own gates allow. Two of
+  its refusals are proceeded past. The first is cleanup's work-protection gate
+  - unlanded or uncommitted work in the worktree - which refuses before
+  anything on disk has been touched. The records are then retired and NOTHING
+  on disk is touched: the worktree, any uncommitted work in it, the task branch
+  and the task's data are left exactly as they are, and are named in the
+  output. Dealing with them is then yours, under your own authority: this
+  command never discards work, and never passes --force to anything.
+
+  The second is cleanup's unconfirmed-kill gate, and it is this command's
+  honest cost: the task record and its backlog row are retired even when the
+  backend answered that the endpoint is STILL THERE after its kill - no further
+  flag is required, and your assertion is the only thing standing behind the
+  removal. Cleanup prints the backend's own reason immediately before it
+  retires anything, so read that line: if it says the endpoint is still listed
+  or still live, a worker may still be running behind the record you are
+  removing, and stopping it is then yours to do.
 
   Every other refusal stands and nothing is retired - an outcome that has not
   reached the parent channel, a backlog transition that cannot be replayed, a
-  runtime that still answers. Read cleanup's own message and resolve it. A
-  cleanup that fails only AFTER removing the task record is reported as what it
-  is: the run names the record that is already gone and the pending close left
-  behind, rather than claiming nothing was retired.
+  runtime refusal only --override-runtime-refusal proceeds past. Read cleanup's
+  own message and resolve it. A cleanup that fails only AFTER removing the task
+  record is reported as what it is: the run names the record that is already
+  gone and the pending close left behind, rather than claiming nothing was
+  retired.
 
   --override-runtime-refusal additionally overrides a RUNTIME's own refusal to
   answer for this task's endpoint: a herdr server that cannot be reached at
