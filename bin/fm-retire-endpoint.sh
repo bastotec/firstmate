@@ -172,6 +172,7 @@ cleanup_note() {
 # An interrupt must ABORT the retirement, not just tidy up after it: without
 # the exit, bash runs the handler and carries on into the record removal, so
 # the operator's own Ctrl-C would be what retires the records.
+# shellcheck disable=SC2329 # Registered by the INT/TERM trap two lines below.
 abort_on_signal() {
   cleanup_note
   echo "error: interrupted; nothing further was retired" >&2

@@ -25,9 +25,25 @@ make_fake_tmux() {
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
+killed=
+[ -z "${FM_FAKE_TMUX_LOG:-}" ] || killed="$FM_FAKE_TMUX_LOG.killed"
 case "${1:-}" in
-  has-session|new-session|new-window|send-keys|kill-window)
+  has-session|new-session|new-window|send-keys)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    exit 0
+    ;;
+  kill-window)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    # A real kill-window removes the window, and the inventory read is what
+    # confirms the kill, so a killed window must stop being listed here.
+    target=
+    prev=
+    for arg in "$@"; do
+      if [ "$prev" = -t ]; then target=$arg; break; fi
+      prev=$arg
+    done
+    target=${target//=/}
+    { [ -z "$target" ] || [ -z "$killed" ]; } || printf '%s\n' "$target" >> "$killed"
     exit 0
     ;;
   list-windows)
@@ -39,6 +55,11 @@ case "${1:-}" in
     done
     while IFS= read -r recorded; do
       [ -n "$recorded" ] || continue
+      if [ -n "$killed" ] && [ -s "$killed" ] \
+         && { grep -Fqx "$recorded" "$killed" \
+              || grep -Fqx "$session:${recorded#*:}" "$killed"; }; then
+        continue
+      fi
       if [ -z "$session" ]; then
         printf '%s\n' "$recorded"
         continue

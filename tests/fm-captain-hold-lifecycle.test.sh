@@ -80,6 +80,32 @@ tasks_in() {  # <home> <tasks-axi args...>
   (cd "$home" && tasks-axi "$@")
 }
 
+# interrupt_cleanup_after_the_endpoint_gate <home>
+# Fail the retain transition's first row mutation exactly once, leaving
+# "<home>/retain-interrupted" behind as proof it fired. Cleanup then stops AFTER
+# its endpoint gate has proved the worker stopped, which is the interruption
+# session start replays: a cleanup that fails BEFORE that gate keeps its pending
+# close stamped with the unproved stop and is held for a rerun instead
+# (docs/captain-hold-lifecycle.md).
+interrupt_cleanup_after_the_endpoint_gate() {  # <home>
+  local home=$1
+  [ -n "$TASKS_AXI_BIN" ] || fail "the interrupted-cleanup fixture needs tasks-axi"
+  cat > "$home/fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+body=0
+for a in "\$@"; do
+  [ "\$a" = --body-file ] && body=1
+done
+if [ "\${1:-}" = update ] && [ "\$body" = 1 ] && [ ! -f "$home/retain-interrupted" ]; then
+  : > "$home/retain-interrupted"
+  echo "fake tasks-axi: the retained deliverable could not be recorded" >&2
+  exit 1
+fi
+exec "$TASKS_AXI_BIN" "\$@"
+SH
+  chmod +x "$home/fakebin/tasks-axi"
+}
+
 run_captain() {  # <home> <command args...>
   local home=$1
   shift
@@ -2850,6 +2876,10 @@ test_retained_row_artifacts_survive_captain_answers() {
 # an ordinary close stages first. A cleanup that fails part-way therefore leaves
 # the row exactly as it was, and the next session start finishes the retention
 # instead of closing the captain's question.
+# The interruption is staged AFTER the endpoint gate, at the retain transition's
+# own first row mutation: that is the interruption session start replays. A
+# cleanup that fails BEFORE that gate keeps its pending close stamped with the
+# unproved stop and is held for a rerun instead (docs/captain-hold-lifecycle.md).
 test_interrupted_cleanup_keeps_the_captain_call_recoverable() {
   local home id wt show rc bootstrap
   home=$(make_home teardown-held-interrupted)
@@ -2868,11 +2898,7 @@ test_interrupted_cleanup_keeps_the_captain_call_recoverable() {
     || fail "could not hold the cleanup-failure fixture"
   run_captain "$home" complete "$id" "$id" >/dev/null \
     || fail "completion gate failed for the cleanup-failure fixture"
-  cat > "$home/fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-exit 1
-SH
-  chmod +x "$home/fakebin/treehouse"
+  interrupt_cleanup_after_the_endpoint_gate "$home"
 
   set +e
   PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
@@ -2881,8 +2907,8 @@ SH
     > "$home/teardown.out" 2> "$home/teardown.err"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "cleanup succeeded despite the failed worktree return"
-  assert_present "$home/state/$id.meta" "a failed cleanup removed the task record"
+  [ "$rc" -ne 0 ] || fail "cleanup succeeded despite the failed retention"
+  assert_present "$home/retain-interrupted" "the fixture never reached the retain transition"
   assert_present "$home/state/$id.backlog-close" \
     "a failed cleanup lost the pending record that replays the retention"
   show=$(tasks_in "$home" show "$id" --full) || fail "a failed cleanup erased the captain call"
@@ -2891,7 +2917,6 @@ SH
   assert_not_contains "$show" "Deliverable of the finished work" \
     "the deliverable was recorded before destructive cleanup succeeded"
 
-  fm_fake_exit0 "$home/fakebin" treehouse
   bootstrap=$(PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_CONFIG_OVERRIDE="$home/config" FM_BOOTSTRAP_NETWORK=skip \
@@ -2927,11 +2952,7 @@ test_answer_before_cleanup_replay_preserves_the_retained_report() {
     >/dev/null || fail "could not hold the answer-before-replay fixture"
   run_captain "$home" complete "$id" "$id" >/dev/null \
     || fail "completion gate failed for the answer-before-replay fixture"
-  cat > "$home/fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-exit 1
-SH
-  chmod +x "$home/fakebin/treehouse"
+  interrupt_cleanup_after_the_endpoint_gate "$home"
 
   set +e
   PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
@@ -2940,14 +2961,14 @@ SH
     > "$home/teardown.out" 2> "$home/teardown.err"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "cleanup succeeded despite the failed worktree return"
+  [ "$rc" -ne 0 ] || fail "cleanup succeeded despite the failed retention"
+  assert_present "$home/retain-interrupted" "the fixture never reached the retain transition"
   assert_present "$home/state/$id.backlog-close" \
     "the interrupted cleanup lost its retained-artifact record"
 
   printf 'Proceed with the reported result.\n' > "$home/answer.txt"
   run_captain "$home" answer "$id" --decision-file "$home/answer.txt" >/dev/null \
     || fail "the captain could not answer before cleanup replay"
-  fm_fake_exit0 "$home/fakebin" treehouse
   bootstrap=$(PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_CONFIG_OVERRIDE="$home/config" FM_BOOTSTRAP_NETWORK=skip \
@@ -3045,11 +3066,7 @@ EOF
     FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$home/config" \
     "$ROOT/bin/fm-captain-hold.sh" complete "$id" "$id" >/dev/null \
     || fail "completion gate failed for the relocated answer-before-replay fixture"
-  cat > "$home/fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-exit 1
-SH
-  chmod +x "$home/fakebin/treehouse"
+  interrupt_cleanup_after_the_endpoint_gate "$home"
 
   set +e
   PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
@@ -3058,7 +3075,8 @@ SH
     > "$home/teardown.out" 2> "$home/teardown.err"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "relocated cleanup succeeded despite the failed worktree return"
+  [ "$rc" -ne 0 ] || fail "relocated cleanup succeeded despite the failed retention"
+  assert_present "$home/retain-interrupted" "the fixture never reached the retain transition"
   assert_present "$home/state/$id.backlog-close" \
     "the interrupted relocated cleanup lost its pending record"
 
@@ -3072,7 +3090,6 @@ SH
   assert_contains "$show" "state: done" "the relocated report kept the answered call open"
   assert_contains "$show" "held: no" "the relocated report kept the answered call held"
 
-  fm_fake_exit0 "$home/fakebin" treehouse
   bootstrap=$(PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$data" \
     FM_CONFIG_OVERRIDE="$home/config" FM_BOOTSTRAP_NETWORK=skip \

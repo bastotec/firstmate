@@ -614,15 +614,35 @@ test_bootstrap_nudge_retry_refuses_changed_home() {
 # (default:wA:p2), so fm-send with the printed target fell back to tmux and failed
 # while fm-<id> resolved through current meta.
 make_nudge_herdr_fake() {
-  local dir=$1 stale=$2 fresh=$3 fakebin
+  local dir=$1 stale=$2 fresh=$3 fakebin closed
   fakebin=$(fm_fakebin "$dir")
+  # A real `pane close` removes the pane, and the recovery sweep only relaunches
+  # onto an endpoint a structured read proves gone, so the fake records each
+  # close and answers pane_not_found for the panes it closed.
+  closed="$dir/closed-panes"
+  rm -f "$closed"
   cat > "$fakebin/herdr" <<SH
 #!/usr/bin/env bash
 set -u
 cmd=\${1:-}; sub=\${2:-}; arg=\${3:-}
+closed='$closed'
+if [ -n "\$arg" ] && [ -s "\$closed" ] && grep -Fqx "\$arg" "\$closed"; then
+  case "\$cmd \$sub" in
+    "pane get") printf '{"error":{"code":"pane_not_found","message":"closed"}}\n' >&2; exit 0 ;;
+    "agent get") printf '{"error":{"code":"agent_not_found","message":"closed"}}\n' >&2; exit 0 ;;
+  esac
+fi
 case "\$cmd \$sub" in
+  "pane close")
+    printf '%s\n' "\$arg" >> "\$closed"
+    exit 0
+    ;;
   "status --json")
     printf '{"client":{"version":"0.7.1","protocol":14},"server":{"running":true}}\n'
+    ;;
+  "session list")
+    printf '{"sessions":[{"name":"%s","running":true,"socket_path":"%s"}]}\n' \
+      '${stale%%:*}' '$dir/herdr.sock'
     ;;
   "pane get")
     if [ "\$arg" = "${stale#*:}" ]; then
