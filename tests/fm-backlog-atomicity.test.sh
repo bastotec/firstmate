@@ -483,6 +483,62 @@ SH
   chmod +x "$case_dir/fakebin/treehouse"
 }
 
+# interrupt_teardown_during_backlog_close: kill teardown while it runs the
+# backlog close itself - after its endpoint gate has passed, so the kill it is
+# closing for was proved. The task record is already removed by then and the
+# pending close is on disk, which is exactly the window the confirmed stamp
+# exists for.
+interrupt_teardown_during_backlog_close() {  # <case-dir>
+  local case_dir=$1 real
+  real=$(command -v tasks-axi)
+  cat > "$case_dir/fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = done ] && [ ! -f "$case_dir/teardown-interrupted" ]; then
+  : > "$case_dir/teardown-interrupted"
+  pid=\$PPID
+  while [ -n "\$pid" ] && [ "\$pid" -gt 1 ] 2>/dev/null; do
+    case "\$(ps -o args= -p "\$pid" 2>/dev/null || true)" in
+      *fm-teardown.sh*)
+        kill -TERM "\$pid"
+        kill -TERM \$\$
+        ;;
+    esac
+    pid=\$(ps -o ppid= -p "\$pid" 2>/dev/null | tr -d ' ')
+  done
+  exit 1
+fi
+exec "$real" "\$@"
+SH
+  chmod +x "$case_dir/fakebin/tasks-axi"
+}
+
+# stage_confirmed_kill_task: the ordinary shape - a scout whose deliverable is
+# in place and whose endpoint answers its kill by no longer being listed, so
+# cleanup's endpoint gate passes.
+stage_confirmed_kill_task() {  # <case-dir> <id>
+  local case_dir=$1 id=$2 home
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id" scout
+  start_item "$case_dir" "$id"
+  cat > "$case_dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list-windows) exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+  fm_write_meta "$home/state/$id.meta" \
+    "window=fmtest:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$case_dir/absent-worktree" \
+    "project=$case_dir/absent-project" \
+    "harness=claude" "kind=scout" "mode=" "yolo=off" \
+    "spawn_gen=spawn-confirmed-kill" "decisions_reviewed=1" "decision_keys="
+  mkdir -p "$home/data/$id"
+  printf 'findings\n' > "$home/data/$id/report.md"
+}
+
 interrupt_kimi_readiness() {  # <case-dir>
   local case_dir=$1 home
   home=$(home_of "$case_dir")
@@ -2173,6 +2229,33 @@ SH
 # task record and closing the row for a worker cleanup never even asked to
 # stop. So it is published already carrying the refusal, and only a passed
 # endpoint gate clears it.
+# The other side of the same stamp: once the endpoint gate has passed, the
+# worker IS proved stopped, so the pending close is cleared of the refusal and
+# an interrupted cleanup replays exactly as it always did. Without that clear,
+# every cleanup interrupted after a proven kill would become a permanent hold
+# for a human to unpick.
+test_an_interrupt_after_a_proven_kill_still_replays_its_close() {
+  local case_dir home id marker out rc=0
+  id=atomic-close-after-kill-b9
+  case_dir=$(make_home close-after-kill)
+  home=$(home_of "$case_dir")
+  stage_confirmed_kill_task "$case_dir" "$id"
+  marker="$home/state/$id.backlog-close"
+  interrupt_teardown_during_backlog_close "$case_dir"
+
+  out=$(run_teardown "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "the interrupted cleanup reported success: $out"
+  assert_present "$marker" "the interrupted cleanup discarded its pending close"
+  assert_no_grep 'endpoint=unconfirmed' "$marker" \
+    "a close whose kill was proved still carries the refusal, so replay would hold it forever"
+
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = done ] \
+    || fail "session start did not finish a close whose kill was proved: $out"
+  assert_absent "$marker" "session start left the close it finished"
+  pass "an interrupt after a proven kill still replays its close"
+}
+
 test_a_refusal_before_the_kill_leaves_its_pending_close_unconfirmed() {
   local case_dir home id marker out rc=0
   id=atomic-close-before-kill-b9
@@ -2692,6 +2775,49 @@ test_a_retirement_keeps_its_record_when_the_pending_close_cannot_be_cleared() {
   assert_present "$home/state/$id.meta" \
     "the record was removed while its pending close survived: $out"
   pass "a retirement keeps its record when the pending close cannot be cleared"
+}
+
+# The retirement runs the same close transition cleanup does, and that
+# transition removes the task record BEFORE it writes the row. A failure or a
+# kill between the two leaves the pending close with no record behind it, so
+# what that close carries decides whether session start can ever finish it: the
+# operator has already asserted this endpoint is unanswerable, so it must not
+# read as an unproved kill awaiting a rerun that can never happen.
+test_a_retirement_leaves_a_close_session_start_can_finish() {
+  local case_dir home id marker out rc=0 real
+  id=atomic-retire-row-write-fails-b9
+  case_dir=$(make_home retire-row-write-fails)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task_with_work "$case_dir" "$id"
+  marker="$home/state/$id.backlog-close"
+  # The row write fails while the retirement is mid-transition; everything else
+  # answers normally, and the failure is lifted before session start runs.
+  real=$(command -v tasks-axi)
+  cat > "$case_dir/fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = done ] && [ -e "$case_dir/fail-done" ]; then
+  echo "tasks-axi: the backlog could not be written" >&2
+  exit 1
+fi
+exec "$real" "\$@"
+SH
+  chmod +x "$case_dir/fakebin/tasks-axi"
+  : > "$case_dir/fail-done"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "the retirement reported success though its row write failed: $out"
+  assert_absent "$home/state/$id.meta" \
+    "this case needs the transition to have removed the record before failing: $out"
+  assert_present "$marker" "the failed transition discarded the close it still owes"
+  assert_no_grep 'endpoint=unconfirmed' "$marker" \
+    "the retirement left a close that reads as an unproved kill, which nothing can ever finish"
+
+  rm -f "$case_dir/fail-done"
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = done ] \
+    || fail "session start could not finish the retirement's own close: $out"
+  assert_absent "$marker" "session start left the close it finished"
+  pass "a retirement leaves a close session start can finish"
 }
 
 test_retirement_help_states_what_the_operator_is_asserting() {
@@ -3781,6 +3907,7 @@ test_recovery_replays_a_close_an_interrupted_cleanup_left_open
 test_completion_marks_its_pending_close_when_the_worker_cannot_be_proved_stopped
 test_a_herdr_refusal_marks_its_pending_close_too
 test_a_refusal_before_the_kill_leaves_its_pending_close_unconfirmed
+test_an_interrupt_after_a_proven_kill_still_replays_its_close
 test_no_automatic_path_retires_an_unanswerable_record
 test_retiring_refuses_wildcards_and_unconfirmed_ids
 test_retiring_records_who_asserted_it_and_when
@@ -3795,6 +3922,7 @@ test_a_record_only_retirement_takes_its_pending_close_with_it
 test_a_retirement_records_its_author_durably
 test_a_retirement_that_cannot_record_its_author_retires_nothing
 test_a_retirement_keeps_its_record_when_the_pending_close_cannot_be_cleared
+test_a_retirement_leaves_a_close_session_start_can_finish
 test_retirement_help_states_what_the_operator_is_asserting
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped
 test_recovery_replays_the_same_close_without_the_unconfirmed_endpoint_line

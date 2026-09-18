@@ -212,6 +212,14 @@ retirement_done_args() {  # <id>
 # than hand-edited here or made permanently unretirable by a row read that
 # cannot apply.
 #
+# The pending close this path publishes is stamped CONFIRMED, not inherited
+# from teardown's publish-unconfirmed default: the operator has asserted this
+# endpoint is unanswerable, and that assertion is already recorded. A marker
+# left behind here - the close transition removes the task record before it
+# writes the row, so a failure or a kill between the two leaves one - must stay
+# something session-start replay can finish. An unconfirmed one would instead
+# hold a row in flight forever with no record left to retire.
+#
 # Both record-only paths clear any pending close this task left behind, the way
 # the transition below consumes it, and they clear it BEFORE the record goes.
 # A stamped marker outliving its own task record is unresolvable: session-start
@@ -259,7 +267,7 @@ retire_records_only() {  # <id>
     mode=retain
     marker_flags=(--retain)
   fi
-  fm_backlog_close_marker_write "$STATE" "$id" "$DATA" "$(fm_meta_get "$meta" spawn_gen)" \
+  fm_backlog_close_marker_write "$STATE" "$id" "$DATA" "$(fm_meta_get "$meta" spawn_gen)" 0 \
     "${marker_flags[@]+"${marker_flags[@]}"}" \
     "${RETIRE_DONE_ARGS[@]+"${RETIRE_DONE_ARGS[@]}"}" || return 1
   fm_backlog_atomic_transition "$mode" "$meta" "$marker" "$DATA" "$id" "$STATE" \
