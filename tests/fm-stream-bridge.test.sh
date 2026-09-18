@@ -122,7 +122,7 @@ test_recorded_traffic_replays_into_the_bridge_record_shape() {
   out=$(recorded_session | python3 "$BRIDGE" translate --fleet-id fleet-t --epoch 7) \
     || fail "translate refused a well-formed recording: $out"
   assert_equals "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" 6 \
-    "every tick should emit one record per listed endpoint"
+    "every tick should emit one record per leaf"
   # The exact key sets of the UI's recorded leaf_heartbeat line, in its order.
   assert_equals "$(printf '%s\n' "$out" | jq -c 'keys_unsorted' | sort -u)" \
     '["record","identity","sequence","state","clock"]' "record keys should match the UI's feed"
@@ -186,6 +186,31 @@ test_malformed_input_is_refused_or_left_out() {
   out=$(printf '{"at_ms": 5}\n' | python3 "$BRIDGE" translate 2>&1)
   assert_equals "$?" 2 "a recording with no listing should be refused"
   pass "bridge: malformed recordings are refused and malformed endpoints left out"
+}
+
+test_a_relaunched_leaf_is_emitted_once_from_its_newest_endpoint() {
+  local old=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa relaunched=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb out tick
+  tick=$(jq -nc --arg o "$old" --arg n "$relaunched" '{listing: {tasks: [
+      {endpoint_id: $o, machine: "m", label: "t1", closed_by: "agent", exit_code: 2},
+      {endpoint_id: $n, machine: "m", label: "t1", closed_by: null, exit_code: null}]}}')
+  out=$( { printf '%s\n' "$tick" | jq -c '.at_ms = 0'
+           jq -nc --arg o "$old" '{at_ms: 500, listing: {tasks: [
+             {endpoint_id: $o, machine: "m", label: "t1", closed_by: "agent", exit_code: 2}]}}'
+           printf '%s\n' "$tick" | jq -c '.at_ms = 1000'; } \
+    | python3 "$BRIDGE" translate) || fail "translate refused the relaunch recording: $out"
+  assert_equals "$(printf '%s\n' "$out" | jq -r '[.sequence, .identity.execution_id, .state] | @tsv' | tr '\n' ' ')" \
+    "$(printf '1\t%s\tUnknown 2\t%s\tFailed 3\t%s\tUnknown ' "$relaunched" "$old" "$relaunched")" \
+    "a leaf should get one record per tick, from its newest endpoint, on one rising sequence"
+
+  start_hub relaunch
+  old=$(new_id); relaunched=$(new_id)
+  register "$old" box-a "t-$RUN"
+  close_endpoint "$old" box-a 2
+  register "$relaunched" box-a "t-$RUN"
+  out=$(snapshot) || fail "snapshot failed against a healthy hub: $out"
+  assert_equals "$(printf '%s\n' "$out" | jq -r --arg l "box-a/t-$RUN" 'select(.identity.leaf_worker_id == $l) | [.identity.execution_id, .state] | @tsv')" \
+    "$(printf '%s\tUnknown' "$relaunched")" "the real hub's relaunch should surface only the new execution"
+  pass "bridge: a relaunched leaf is emitted once, from its newest endpoint"
 }
 
 test_a_snapshot_reads_the_real_hub() {
@@ -372,6 +397,7 @@ SH
 test_recorded_traffic_replays_into_the_bridge_record_shape
 test_only_an_agent_reported_exit_is_a_verdict
 test_malformed_input_is_refused_or_left_out
+test_a_relaunched_leaf_is_emitted_once_from_its_newest_endpoint
 test_a_snapshot_reads_the_real_hub
 test_a_real_agents_worker_exit_reaches_the_bridge
 test_serve_streams_ticks_and_goes_silent_without_the_hub

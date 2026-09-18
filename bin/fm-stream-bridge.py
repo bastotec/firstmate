@@ -23,6 +23,8 @@ carry is emitted in the contract's explicit unknown form rather than invented:
      leaf_worker_id is "<machine>/<label>", the task as that home spells it,
      so one label on two homes is two leaves.  execution_id is the hub's
      durable endpoint id, so a relaunch is a new execution of the same leaf.
+     The hub keeps a superseded endpoint listed for a while, so only a leaf's
+     newest listed endpoint is emitted.
      The wire format has no membership or removal record: a leaf is a member
      from its first record, and an endpoint the hub has dropped simply stops
      being emitted, which the Bridge ages out as stale.
@@ -38,7 +40,7 @@ carry is emitted in the contract's explicit unknown form rather than invented:
      milliseconds since the adapter started, taken when the record is built.
      hub_arrival_ms is the same clock, taken when the hub answer the record is
      built from arrived.  Both restart at 0 with a new stream_epoch.
-  5. Heartbeats.  Every tick emits one fresh leaf_heartbeat for EVERY endpoint
+  5. Heartbeats.  Every tick emits one fresh leaf_heartbeat for EVERY leaf
      the hub lists, which is also the reconnect snapshot and the membership
      coverage.  The hub's only positive verdict is an agent reporting its own
      worker gone, so that alone yields Stopped (exit 0, a signal, or no code)
@@ -102,6 +104,7 @@ says so on stderr once, emits nothing, and retries every tick.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import math
 import os
@@ -164,11 +167,11 @@ class Bridge:
         self.sequences: dict = {}
 
     def translate(self, listing: dict, at_ms: float, received_ms: float) -> list:
-        """One hub /v1/tasks answer -> one heartbeat per well-formed endpoint."""
+        """One hub /v1/tasks answer -> one heartbeat per leaf, from its newest endpoint."""
         tasks = listing.get("tasks") if isinstance(listing, dict) else None
         if not isinstance(tasks, list):
             raise BridgeError("the hub listing carries no tasks array")
-        records = []
+        newest = {}
         for task in tasks:
             if not isinstance(task, dict):
                 continue
@@ -182,10 +185,15 @@ class Bridge:
                 # a leaf, and guessing its identity would be worse than
                 # leaving it out.
                 continue
-            leaf = "%s/%s" % (machine, label)
-            key = (leaf, endpoint_id)
-            sequence = self.sequences.get(key, 0) + 1
-            self.sequences[key] = sequence
+            # The hub lists a machine's endpoints oldest first, so a relaunch
+            # replaces the record it superseded, which may linger listed.
+            newest["%s/%s" % (machine, label)] = task
+        records = []
+        for leaf, task in newest.items():
+            machine = task["machine"]
+            endpoint_id = task["endpoint_id"]
+            sequence = self.sequences.get(leaf, 0) + 1
+            self.sequences[leaf] = sequence
             records.append({
                 "record": "leaf_heartbeat",
                 "identity": {
@@ -247,7 +255,8 @@ class HubClient:
                     % (self.url, path, exc.code))
             raise HubUnreachable("the hub at %s answered %s with HTTP %d"
                                  % (self.url, path, exc.code))
-        except (urllib.error.URLError, OSError, ValueError) as exc:
+        except (urllib.error.URLError, OSError, ValueError,
+                http.client.HTTPException) as exc:
             reason = getattr(exc, "reason", exc)
             raise HubUnreachable("cannot reach the hub at %s: %s" % (self.url, reason))
         try:
