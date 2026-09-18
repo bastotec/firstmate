@@ -1,0 +1,30 @@
+=== A worker window is live; the backend accepts the close but never performs it ===
+  control
+  fm-worker7
+
+$ fm-teardown.sh worker7 --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: tmux window unconfirmed kill:fm-worker7 is still listed after its kill; the worker may still be running
+error: the endpoint unconfirmed kill:fm-worker7 for worker7 is not confirmed gone after its kill; retaining every durable task record - rerun cleanup once the worker can be proved stopped, or retire the record with bin/fm-retire-endpoint.sh if no backend can ever answer for it
+exit status: 1
+
+--- worker window after the refusal ---
+  control
+  fm-worker7
+--- durable task record after the refusal ---
+  state/worker7.meta
+
+=== Same cleanup once the close really lands ===
+$ fm-teardown.sh worker7 --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+teardown worker7 complete (window unconfirmed kill:fm-worker7, worktree /tmp/fm-manual-O2XN/gone-worktree)
+Backlog: worker7 just finished (this home keeps no markdown backlog at /tmp/fm-manual-O2XN/home/data/backlog.md). Update /tmp/fm-manual-O2XN/home/data/backlog.md - move worker7 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+exit status: 0
+--- worker window after the confirmed kill ---
+  control
+--- durable task record after the confirmed kill ---
+  state/home-summary.json
+  state/terminal-outcomes
+
+=== An endpoint that was never there stays ordinary idempotent success ===
+exit status: 0 (no output above means the already-absent endpoint said nothing)

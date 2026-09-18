@@ -1,0 +1,43 @@
+=== hub-unanswerable record: the backend accepts the close and closes nothing ===
+$ fm-teardown.sh hub9 --force
+exit status: 1
+error: tmux window fmtest:fm-hub9 is still listed after its kill; the worker may still be running
+error: the endpoint fmtest:fm-hub9 for hub9 is not confirmed gone after its kill; retaining every durable task record - rerun cleanup once the worker can be proved stopped, or retire the record with bin/fm-retire-endpoint.sh if no backend can ever answer for it
+--- backlog row after the refusal ---
+## In flight
+- [ ] hub9 - investigate the stream hub restart (kind: scout) (since 2026-09-18)
+
+## Queued
+
+=== Operator retirement: mistyped confirmation ===
+exit status: 1
+About to retire the durable records of:
+  hub9 (endpoint fmtest:fm-hub9)
+Type those ids to confirm no worker is still running behind them: error: the ids typed back do not match the ids named; nothing was retired
+--- record still present ---
+hub9.backlog-close
+hub9.meta
+
+=== Operator retirement: id typed back ===
+exit status: 0
+About to retire the durable records of:
+  hub9 (endpoint fmtest:fm-hub9)
+Type those ids to confirm no worker is still running behind them: error: tmux window fmtest:fm-hub9 is still listed after its kill; the worker may still be running
+warning: the endpoint fmtest:fm-hub9 for hub9 was never confirmed gone; retiring its records on the retirement bruno recorded at 2026-09-18T11:15:59Z
+teardown hub9 complete (window fmtest:fm-hub9, worktree /tmp/fm-retire2-1V2V/absent-worktree)
+Backlog: hub9 is closed in /tmp/fm-retire2-1V2V/home/data/backlog.md. Run bin/fm-tasks-axi.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+note: hub9 retired; cleanup completed under the retirement recorded for bruno at 2026-09-18T11:15:59Z
+
+--- durable retirement log ---
+2026-09-18T11:15:59Z	asserted	hub9	by=bruno	override_runtime_refusal=0
+--- state after retirement ---
+endpoint-retirements.log
+home-summary.json
+terminal-outcomes
+--- backlog after retirement ---
+# Backlog
+
+## In flight
+## Queued
+## Done
+- [x] hub9 - investigate the stream hub restart data/hub9/report.md (kind: scout) (reported 2026-09-18)

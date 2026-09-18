@@ -1,0 +1,24 @@
+=== A cleanup interrupted after its pending close was recorded, for a worker nobody proved stopped ===
+--- pending-close marker left on disk ---
+id=hub9
+data=/tmp/fm-retire-3NX4/home/data
+spawn_gen=spawn-hub9
+cleanup_incomplete=0
+endpoint=unconfirmed
+arg=--report
+arg=data/hub9/report.md
+
+$ fm-bootstrap.sh        (the next session start replays pending closes)
+BACKLOG_RECONCILE: hub9: cleanup could not prove its worker stopped, so its records and backlog item are intact; confirm the worker is stopped, then re-run cleanup
+bootstrap exit status: 0
+
+--- durable task record after replay (kept) ---
+endpoint-retirements.log
+hub9.backlog-close
+hub9.meta
+--- backlog row after replay (still In flight) ---
+## In flight
+
+- hub9 - investigate the stream hub restart (scout)
+
+## Queued

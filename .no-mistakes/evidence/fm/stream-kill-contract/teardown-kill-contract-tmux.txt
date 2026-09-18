@@ -1,0 +1,73 @@
+# Live cleanup / kill-contract transcript (real fm-teardown.sh, fm-retire-endpoint.sh, real tmux, real tasks-axi backlog)
+
+================ A: a kill the backend confirmed closes the row ================
+[before] backlog row: in_flight   record: /tmp/fmlive/run/confirmed/home/state/live-a.meta
+[before] tmux windows: placeholder fm-live-a 
+teardown live-a complete (window isolated:fm-live-a, worktree /tmp/fmlive/run/confirmed/missing-worktree)
+Backlog: live-a is closed in /tmp/fmlive/run/confirmed/home/data/backlog.md. Run bin/fm-tasks-axi.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+[exit] 0
+[after] backlog row: done
+[after] tmux windows: placeholder 
+[after] task record present: no
+
+================ B: a kill nothing could confirm refuses and keeps every record ================
+[before] worker pid in the task window: 1567407 (sleep 900)
+[before] tmux answers: error connecting to /tmp/fmlive/run/unconfirmed/sockdir/tmux.sock (Permission denied)
+error: tmux could not say whether window isolated:fm-live-b is gone after its kill; the worker may still be running
+error: the endpoint isolated:fm-live-b for live-b is not confirmed gone after its kill; retaining every durable task record - rerun cleanup once the worker can be proved stopped, or retire the record with bin/fm-retire-endpoint.sh if no backend can ever answer for it
+[exit] 1
+[after] backlog row: in_flight
+[after] task record present: yes
+[after] pending close markers: live-b.backlog-close
+[after] worker still running: 1567407 sleep 900
+
+================ D: the operator retires B's unanswerable record ================
+About to retire the durable records of:
+  live-b (endpoint isolated:fm-live-b)
+Type those ids to confirm no worker is still running behind them: error: tmux could not say whether window isolated:fm-live-b is gone after its kill; the worker may still be running
+warning: the endpoint isolated:fm-live-b for live-b was never confirmed gone; retiring its records on the retirement bruno recorded at 2026-09-18T11:54:56Z
+teardown live-b complete (window isolated:fm-live-b, worktree /tmp/fmlive/run/unconfirmed/missing-worktree)
+Backlog: live-b is closed in /tmp/fmlive/run/unconfirmed/home/data/backlog.md. Run bin/fm-tasks-axi.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+note: live-b retired; cleanup completed under the retirement recorded for bruno at 2026-09-18T11:54:56Z
+[exit] 0
+[after] backlog row: done
+[after] task record present: no
+[after] retirement log:
+2026-09-18T11:54:56Z	asserted	live-b	by=bruno	override_runtime_refusal=0
+
+================ B2: after an unconfirmed kill, session start must NOT close the row ================
+[teardown exit] 1
+[marker on disk]
+id=live-b2
+data=/tmp/fmlive/run2/replay/home/data
+spawn_gen=spawn-live-live-b2
+cleanup_incomplete=0
+endpoint=unconfirmed
+arg=--note
+arg=local%20main
+[row before session start] in_flight
+BACKLOG_RECONCILE: live-b2: cleanup could not prove its worker stopped, so its records and backlog item are intact; confirm the worker is stopped, then re-run cleanup
+[row after session start] in_flight
+[record after session start] present
+
+================ E: retirement reports a cleanup that failed AFTER removing the record ================
+[row for live-e] (unresolvable)
+About to retire the durable records of:
+  live-e (endpoint isolated:fm-live-e)
+Type those ids to confirm no worker is still running behind them: error: live-e's endpoint and local copy are cleaned up, but its backlog item could not be closed atomically (error: "Task \"live-e\" not found in this backlog"); the pending close is recorded and the next session start retries it
+error: cleanup for live-e refused (status 1) for a reason this retirement does not answer for, after it had already removed the durable task record /tmp/fmlive/run2/partial/home/state/live-e.meta; cleanup's own message above says what it refused over
+note: the pending close /tmp/fmlive/run2/partial/home/state/live-e.backlog-close remains, so the next session start finishes live-e's backlog row; nothing further was retired here
+[exit] 1
+[record] gone
+[state dir] endpoint-retirements.log
+live-e.backlog-close
+terminal-outcomes
+================ Adversarial: an endpoint that was ALREADY gone is still an ordinary success ================
+[before] the task's window does not exist on a healthy tmux server:
+placeholder
+[before] backlog row: in_flight
+teardown live-absent complete (window isolated:fm-live-absent, worktree /tmp/fmlive/run4/missing-worktree)
+Backlog: live-absent is closed in /tmp/fmlive/run4/home/data/backlog.md. Run bin/fm-tasks-axi.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+[exit] 0
+[after] backlog row: done
+[after] task record: gone

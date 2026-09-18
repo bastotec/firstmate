@@ -1,0 +1,23 @@
+--- starting the real stream hub ---
+hub up at http://127.0.0.1:35485
+--- starting a real endpoint (real agent owning a real pty) ---
+endpoint: 127.0.0.1-35485:81949a699c20c15ab2fd37bb967e4dae
+agent pid=1408848  worker(shell under its pty) pid=1408912
+
+================ C: the endpoint's own agent cannot acknowledge the kill ================
+[setup] stopping the agent process so nothing can acknowledge a kill (the worker keeps running)
+[before] backlog row: in_flight   record: present
+error: the stream hub closed its record for 81949a699c20c15ab2fd37bb967e4dae, but its agent never acknowledged the kill; the worker may still be running
+error: the endpoint 127.0.0.1-35485:81949a699c20c15ab2fd37bb967e4dae for live-stream is not confirmed gone after its kill; retaining every durable task record - rerun cleanup once the worker can be proved stopped, or retire the record with bin/fm-retire-endpoint.sh if no backend can ever answer for it
+[exit] 1
+[after] backlog row: in_flight
+[after] task record: present
+[after] worker process: 1408912 /bin/bash --norc --noprofile -i
+
+================ C2: same task, once its agent can answer again ================
+teardown live-stream complete (window 127.0.0.1-35485:81949a699c20c15ab2fd37bb967e4dae, worktree /tmp/fmlive/run3/missing-worktree)
+Backlog: live-stream is closed in /tmp/fmlive/run3/home/data/backlog.md. Run bin/fm-tasks-axi.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.
+[exit] 0
+[after] backlog row: done
+[after] task record: gone
+[after] worker process: gone

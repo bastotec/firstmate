@@ -1,0 +1,13 @@
+@1
+ok - real tmux: fm_backend_tmux_create_task creates a window and refuses a duplicate
+ok - real tmux: fm_backend_tmux_send_text_line sends literal text and submits with Enter
+ok - real tmux: fm_backend_tmux_send_literal + fm_backend_tmux_send_key Enter submit as two separate steps
+ok - real tmux: fm_backend_tmux_capture's -S -N bound trims old history for a small window and reaches it for a large one
+ok - real tmux: fm_backend_tmux_resolve_bare_selector (list-live) finds the created window by name
+ok - real tmux: fm_backend_tmux_resolve_bare_selector fails for a window that does not exist
+ok - real tmux: a kill whose server cannot be read reports unconfirmed and leaves the window running
+ok - real tmux: kill reports gone for the window it removed and for one already absent, and unsupported for a backend with no implementation
+
+real	0m0.312s
+user	0m0.116s
+sys	0m0.200s

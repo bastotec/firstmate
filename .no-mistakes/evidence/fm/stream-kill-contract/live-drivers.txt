@@ -1,0 +1,268 @@
+# driver scripts used to produce the transcripts
+
+##### live.sh
+#!/usr/bin/env bash
+# Live driver: real fm-teardown.sh / fm-retire-endpoint.sh against real tmux,
+# a real tasks-axi markdown backlog, and an isolated firstmate home.
+set -u
+ROOT=/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2T2C8HBHWQM834RZBYP0XZ6
+BASE=/tmp/fmlive/run
+export FM_GATE_REFUSE_BYPASS=1
+unset TASKS_AXI_BACKEND 2>/dev/null || true
+
+make_case() { # <name> <id>
+  local n=$1 id=$2
+  local d="$BASE/$n"
+  rm -rf "$d"; mkdir -p "$d/home/state" "$d/home/data" "$d/home/config" "$d/bin" "$d/project" "$d/sockdir"
+  touch "$d/home/state/.last-watcher-beat"
+  printf '%s\n' claude > "$d/home/config/crew-harness"
+  printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' > "$d/home/data/backlog.md"
+  cat > "$d/home/.tasks.toml" <<'EOF'
+backend = "markdown"
+
+[markdown]
+path = "data/backlog.md"
+EOF
+  mkdir -p "$d/home/data/$id"
+  git init -q "$d/project"
+  git -C "$d/project" -c user.name=t -c user.email=t@e.invalid commit --allow-empty -qm base
+  tasks-axi add "$id" "item for $id" --kind ship --file "$d/home/data/backlog.md" >/dev/null
+  tasks-axi start "$id" --file "$d/home/data/backlog.md" >/dev/null
+  printf '%s\n' "$d"
+}
+row_state() { tasks-axi show "$2" --file "$1/home/data/backlog.md" 2>/dev/null | sed -n 's/^  state: *//p' | head -1; }
+
+start_window() { # <dir> <id> -> starts a real tmux server + the task's window
+  local d=$1 id=$2
+  local sock="$d/sockdir/tmux.sock"
+  TMUX_TMPDIR="$d" tmux -S "$sock" new-session -d -s isolated -n placeholder 'sleep 900'
+  TMUX_TMPDIR="$d" tmux -S "$sock" new-window -d -n "fm-$id" 'sleep 900'
+  cat > "$d/bin/tmux" <<SH
+#!/usr/bin/env bash
+exec /usr/bin/tmux -S "$sock" "\$@"
+SH
+  chmod +x "$d/bin/tmux"
+}
+write_meta() { # <dir> <id>
+  cat > "$1/home/state/$2.meta" <<M
+id=$2
+window=isolated:fm-$2
+endpoint_task_id=$2
+backend=tmux
+worktree=$1/missing-worktree
+project=$1/project
+harness=claude
+kind=ship
+mode=local-only
+yolo=off
+spawn_gen=spawn-live-$2
+decisions_reviewed=1
+decision_keys=
+M
+}
+teardown() { # <dir> <id> [args...]
+  local d=$1 id=$2; shift 2
+  FM_HOME="$d/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$d/bin:$PATH" \
+    "$ROOT/bin/fm-teardown.sh" "$id" "$@" 2>&1 | grep -v '^●'
+  return "${PIPESTATUS[0]}"
+}
+
+banner() { echo; echo "================ $* ================"; }
+
+# ---------------------------------------------------------------- scenario A
+banner "A: a kill the backend confirmed closes the row"
+D=$(make_case confirmed live-a); ID=live-a
+start_window "$D" "$ID"; write_meta "$D" "$ID"
+echo "[before] backlog row: $(row_state "$D" "$ID")   record: $(ls "$D/home/state/$ID.meta")"
+echo "[before] tmux windows: $("$D/bin/tmux" list-windows -t isolated -F '#{window_name}' | tr '\n' ' ')"
+teardown "$D" "$ID"; echo "[exit] $?"
+echo "[after] backlog row: $(row_state "$D" "$ID")"
+echo "[after] tmux windows: $("$D/bin/tmux" list-windows -t isolated -F '#{window_name}' | tr '\n' ' ')"
+echo "[after] task record present: $([ -e "$D/home/state/$ID.meta" ] && echo yes || echo no)"
+"$D/bin/tmux" kill-server 2>/dev/null
+
+# ---------------------------------------------------------------- scenario B
+banner "B: a kill nothing could confirm refuses and keeps every record"
+D=$(make_case unconfirmed live-b); ID=live-b
+start_window "$D" "$ID"; write_meta "$D" "$ID"
+WPID=$("$D/bin/tmux" list-windows -t isolated -F '#{window_name} #{pane_pid}' | awk -v w="fm-$ID" '$1==w{print $2}')
+echo "[before] worker pid in the task window: $WPID ($(ps -o cmd= -p "$WPID"))"
+chmod 000 "$D/sockdir"   # the tmux server can no longer be reached by this client
+echo "[before] tmux answers: $("$D/bin/tmux" list-windows -t isolated 2>&1 | head -1)"
+teardown "$D" "$ID" --force; echo "[exit] $?"
+echo "[after] backlog row: $(row_state "$D" "$ID")"
+echo "[after] task record present: $([ -e "$D/home/state/$ID.meta" ] && echo yes || echo no)"
+echo "[after] pending close markers: $(ls "$D/home/state" | grep -i 'close\|pending' || echo none)"
+echo "[after] worker still running: $(ps -o pid=,cmd= -p "$WPID" 2>/dev/null || echo 'no')"
+
+# ---------------------------------------------------------------- scenario D
+banner "D: the operator retires B's unanswerable record"
+printf '%s\n' "$ID" > "$D/typed"
+FM_HOME="$D/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$D/bin:$PATH" \
+  "$ROOT/bin/fm-retire-endpoint.sh" "$ID" < "$D/typed" > "$D/retire.out" 2>&1; RC=$?
+grep -v '^●' "$D/retire.out"
+echo "[exit] $RC"
+echo "[after] backlog row: $(row_state "$D" "$ID")"
+echo "[after] task record present: $([ -e "$D/home/state/$ID.meta" ] && echo yes || echo no)"
+echo "[after] retirement log:"; cat "$D/home/state/endpoint-retirements.log"
+chmod 700 "$D/sockdir"; "$D/bin/tmux" kill-server 2>/dev/null
+
+##### live2.sh
+#!/usr/bin/env bash
+set -u
+ROOT=/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2T2C8HBHWQM834RZBYP0XZ6
+BASE=/tmp/fmlive/run2
+export FM_GATE_REFUSE_BYPASS=1
+unset TASKS_AXI_BACKEND 2>/dev/null || true
+source /dev/stdin <<'FN'
+FN
+make_case() { local n=$1 id=$2; local d="$BASE/$n"
+  rm -rf "$d"; mkdir -p "$d/home/state" "$d/home/data" "$d/home/config" "$d/bin" "$d/project" "$d/sockdir"
+  touch "$d/home/state/.last-watcher-beat"; printf '%s\n' claude > "$d/home/config/crew-harness"
+  printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' > "$d/home/data/backlog.md"
+  printf 'backend = "markdown"\n\n[markdown]\npath = "data/backlog.md"\n' > "$d/home/.tasks.toml"
+  mkdir -p "$d/home/data/$id"; git init -q "$d/project"
+  git -C "$d/project" -c user.name=t -c user.email=t@e.invalid commit --allow-empty -qm base
+  tasks-axi add "$id" "item for $id" --kind ship --file "$d/home/data/backlog.md" >/dev/null
+  tasks-axi start "$id" --file "$d/home/data/backlog.md" >/dev/null
+  printf '%s\n' "$d"; }
+row_state() { tasks-axi show "$2" --file "$1/home/data/backlog.md" 2>/dev/null | sed -n 's/^  state: *//p' | head -1; }
+start_window() { local d=$1 id=$2; local sock="$d/sockdir/tmux.sock"
+  TMUX_TMPDIR="$d" tmux -S "$sock" new-session -d -s isolated -n placeholder 'sleep 900'
+  TMUX_TMPDIR="$d" tmux -S "$sock" new-window -d -n "fm-$id" 'sleep 900'
+  printf '#!/usr/bin/env bash\nexec /usr/bin/tmux -S "%s" "$@"\n' "$sock" > "$d/bin/tmux"; chmod +x "$d/bin/tmux"; }
+write_meta() { cat > "$1/home/state/$2.meta" <<M
+id=$2
+window=isolated:fm-$2
+endpoint_task_id=$2
+backend=tmux
+worktree=$1/missing-worktree
+project=$1/project
+harness=claude
+kind=ship
+mode=local-only
+yolo=off
+spawn_gen=spawn-live-$2
+decisions_reviewed=1
+decision_keys=
+M
+}
+teardown() { local d=$1 id=$2; shift 2
+  FM_HOME="$d/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$d/bin:$PATH" "$ROOT/bin/fm-teardown.sh" "$id" "$@" 2>&1 | grep -v '^●'
+  return "${PIPESTATUS[0]}"; }
+banner() { echo; echo "================ $* ================"; }
+
+# ------------------------------------------------- B2: the refusal survives a session start
+banner "B2: after an unconfirmed kill, session start must NOT close the row"
+D=$(make_case replay live-b2); ID=live-b2
+start_window "$D" "$ID"; write_meta "$D" "$ID"
+chmod 000 "$D/sockdir"
+teardown "$D" "$ID" --force >/dev/null 2>&1; echo "[teardown exit] $?"
+echo "[marker on disk]"; sed -n '1,20p' "$D/home/state/$ID.backlog-close"
+echo "[row before session start] $(row_state "$D" "$ID")"
+FM_HOME="$D/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$D/bin:$PATH" \
+  "$ROOT/bin/fm-bootstrap.sh" 2>&1 | grep -iE 'close|replay|pending|live-b2' | head -10
+echo "[row after session start] $(row_state "$D" "$ID")"
+echo "[record after session start] $([ -e "$D/home/state/$ID.meta" ] && echo present || echo gone)"
+chmod 700 "$D/sockdir"; "$D/bin/tmux" kill-server 2>/dev/null
+
+# ------------------------------------------------- E: partial cleanup reporting
+banner "E: retirement reports a cleanup that failed AFTER removing the record"
+D=$(make_case partial live-e); ID=live-e
+start_window "$D" "$ID"; write_meta "$D" "$ID"
+# the backlog row this home holds for the task is renamed out from under it
+sed -i "s/$ID/live-e-renamed/g" "$D/home/data/backlog.md"
+echo "[row for $ID] $(row_state "$D" "$ID" || true)(unresolvable)"
+printf '%s\n' "$ID" > "$D/typed"
+FM_HOME="$D/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$D/bin:$PATH" \
+  "$ROOT/bin/fm-retire-endpoint.sh" "$ID" < "$D/typed" > "$D/retire.out" 2>&1; RC=$?
+grep -v '^●' "$D/retire.out"
+echo "[exit] $RC"
+echo "[record] $([ -e "$D/home/state/$ID.meta" ] && echo present || echo gone)"
+echo "[state dir] $(ls "$D/home/state")"
+"$D/bin/tmux" kill-server 2>/dev/null
+
+##### live3_stream.sh
+#!/usr/bin/env bash
+set -u
+ROOT=/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2T2C8HBHWQM834RZBYP0XZ6
+D=/tmp/fmlive/run3; rm -rf "$D"; mkdir -p "$D/home/state" "$D/home/data" "$D/home/config" "$D/cwd" "$D/project"
+export FM_GATE_REFUSE_BYPASS=1
+unset TASKS_AXI_BACKEND 2>/dev/null || true
+ID=live-stream
+touch "$D/home/state/.last-watcher-beat"; printf 'claude\n' > "$D/home/config/crew-harness"
+printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' > "$D/home/data/backlog.md"
+printf 'backend = "markdown"\n\n[markdown]\npath = "data/backlog.md"\n' > "$D/home/.tasks.toml"
+mkdir -p "$D/home/data/$ID"
+git init -q "$D/project"; git -C "$D/project" -c user.name=t -c user.email=t@e.invalid commit --allow-empty -qm base
+tasks-axi add "$ID" "item for $ID" --kind ship --file "$D/home/data/backlog.md" >/dev/null
+tasks-axi start "$ID" --file "$D/home/data/backlog.md" >/dev/null
+row_state() { tasks-axi show "$ID" --file "$D/home/data/backlog.md" 2>/dev/null | sed -n 's/^  state: *//p' | head -1; }
+
+TOKEN="live-token-$$"
+printf 'publish,subscribe,control:%s\n' "$TOKEN" > "$D/tokens"; chmod 600 "$D/tokens"
+echo "--- starting the real stream hub ---"
+python3 "$ROOT/bin/fm-stream-hub.py" serve --bind 127.0.0.1 --port 0 --token-file "$D/tokens" \
+  --ready-file "$D/ready" --command-ack-secs 3 > "$D/hub.log" 2>&1 &
+HUB=$!
+for i in $(seq 100); do [ -s "$D/ready" ] && break; sleep 0.1; done
+read -r host port < "$D/ready"; URL="http://$host:$port"
+echo "hub up at $URL"
+printf '%s\n' "$URL" > "$D/home/config/stream-hub"
+printf '%s\n' "$TOKEN" > "$D/home/config/stream-token"; chmod 600 "$D/home/config/stream-token"
+
+echo "--- starting a real endpoint (real agent owning a real pty) ---"
+PAIR=$(
+  export FM_STREAM_HUB="$URL" FM_STREAM_TOKEN="$TOKEN" FM_STREAM_MACHINE=box-live
+  export FM_HOME="$D/home" FM_ROOT="$ROOT" FM_CONFIG_OVERRIDE="$D/home/config"
+  . "$ROOT/bin/fm-backend.sh"; fm_backend_source stream
+  fm_backend_stream_create_task "fm-$ID" "$D/cwd"
+) || { echo "create failed"; exit 1; }
+TAG=${PAIR%% *}; EP=${PAIR##* }
+echo "endpoint: $TAG:$EP"
+AGENT=$(ps -eo pid,args | awk -v l="--label fm-$ID" 'index($0,"fm-stream-agent.py") && index($0,l) && !index($0,"awk"){print $1; exit}')
+WORKER=$(pgrep -P "$AGENT" | head -1)
+echo "agent pid=$AGENT  worker(shell under its pty) pid=$WORKER"
+
+cat > "$D/home/state/$ID.meta" <<M
+id=$ID
+window=$TAG:$EP
+endpoint_task_id=$ID
+backend=stream
+stream_hub=$URL
+stream_endpoint_id=$EP
+worktree=$D/missing-worktree
+project=$D/project
+harness=claude
+kind=ship
+mode=local-only
+yolo=off
+spawn_gen=spawn-$ID
+decisions_reviewed=1
+decision_keys=
+M
+
+echo
+echo "================ C: the endpoint's own agent cannot acknowledge the kill ================"
+echo "[setup] stopping the agent process so nothing can acknowledge a kill (the worker keeps running)"
+kill -STOP "$AGENT"
+echo "[before] backlog row: $(row_state)   record: present"
+FM_HOME="$D/home" FM_ROOT_OVERRIDE="$ROOT" FM_STREAM_HUB="$URL" FM_STREAM_TOKEN="$TOKEN" FM_STREAM_MACHINE=box-live \
+  "$ROOT/bin/fm-teardown.sh" "$ID" --force 2>&1 | grep -v '^●'
+echo "[exit] ${PIPESTATUS[0]}"
+echo "[after] backlog row: $(row_state)"
+echo "[after] task record: $([ -e "$D/home/state/$ID.meta" ] && echo present || echo gone)"
+echo "[after] worker process: $(ps -o pid=,cmd= -p "$WORKER" 2>/dev/null || echo gone)"
+kill -CONT "$AGENT" 2>/dev/null
+
+echo
+echo "================ C2: same task, once its agent can answer again ================"
+sleep 1
+FM_HOME="$D/home" FM_ROOT_OVERRIDE="$ROOT" FM_STREAM_HUB="$URL" FM_STREAM_TOKEN="$TOKEN" FM_STREAM_MACHINE=box-live \
+  "$ROOT/bin/fm-teardown.sh" "$ID" --force 2>&1 | grep -v '^●'
+echo "[exit] ${PIPESTATUS[0]}"
+echo "[after] backlog row: $(row_state)"
+echo "[after] task record: $([ -e "$D/home/state/$ID.meta" ] && echo present || echo gone)"
+sleep 1
+echo "[after] worker process: $(ps -o pid=,cmd= -p "$WORKER" 2>/dev/null || echo gone)"
+kill "$AGENT" 2>/dev/null; kill "$HUB" 2>/dev/null

@@ -1,0 +1,15 @@
+=== A secondmate whose agent is gone, on an endpoint whose close is never confirmed ===
+--- windows on the real tmux server before session start ---
+  control
+  fm-domain
+
+$ fm-bootstrap.sh    (the close is accepted but the window survives)
+SECONDMATE_LIVENESS: secondmate domain: skipped: the existing endpoint was not confirmed gone, so no relaunch was attempted (backend=tmux): error: tmux window firstmate:fm-domain is still listed after its kill; the worker may still be running
+--- windows after session start: no second agent started beside the first ---
+  control
+  fm-domain
+
+=== Control: the same sweep once the close really lands ===
+SECONDMATE_LIVENESS: secondmate domain: respawn failed after confirmed agent absence on existing endpoint: error: /tmp/fm-boot-KdQu/sub is not a firstmate home (missing AGENTS.md)
+--- windows after the confirmed close: the dead endpoint is gone and relaunch was attempted ---
+  control

@@ -1,0 +1,19 @@
+ok - fm_backend_herdr_version_check: accepts the current protocol (14)
+ok - fm_backend_herdr_version_check: refuses an old protocol loudly
+ok - fm_backend_herdr_version_check: refuses loudly when herdr is not installed
+ok - fm_backend_herdr_workspace_label: a primary home (no marker) resolves to 'firstmate'
+ok - fm_backend_herdr_workspace_label: a secondmate home (.fm-secondmate-home) resolves to '2ndmate-<id>'
+ok - fm_backend_herdr_workspace_label: trims whitespace around the marker's secondmate id
+ok - fm_backend_herdr_workspace_label: an empty marker file falls back to the primary label 'firstmate'
+ok - fm_backend_herdr_workspace_label: two different secondmate homes get two different, non-colliding labels
+ok - fm_backend_herdr_cli: sets HERDR_SESSION AND appends a trailing --session flag on every call
+ok - herdr client selection: a live pane behind a stale shadowing client reads alive
+ok - herdr recovery-grade read: a stopped server means missing there, and nowhere else
+ok - herdr stale registration: a shell-only pane with a lingering Pi record is agent-free with an explicit reason
+ok - herdr stale registration: no registered status can outrank a shell-only process view
+ok - herdr stale registration: a registered agent with a live Pi foreground process still reads alive
+ok - herdr stale registration: only a shell-only pane demotes a registration
+ok - herdr stale registration: a transient prompt helper settles into stale-agent instead of reading live
+ok - herdr stale registration: an exhausted settle window still reads a non-shell foreground as live
+coreutils: unknown program 'pi'
+not ok - a registered agent with a live agent-named descendant must stay live/alive, got 'unknown unreadable refused'
