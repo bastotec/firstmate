@@ -36,7 +36,7 @@
 #                                                          before this arm could load its library
 #                                                          (exit 75)
 #   watcher: FAILED - broken install: ...                - the wake library is missing, unreadable,
-#                                                          or defines no STATE (exit 78)
+#                                                          or came back defining no STATE (exit 78)
 # It NEVER reports started/attached/healthy off a stale beacon or a dead/reused pid: a
 # stale-beacon or dead-pid holder either self-heals (the fresh child steals the
 # dead lock per the singleton self-eviction/steal path and is confirmed) or this
@@ -110,15 +110,13 @@ WAKE_LIB="$SCRIPT_DIR/fm-wake-lib.sh"
 #   watcher: FAILED - out of process capacity   exit 75 (EX_TEMPFAIL)
 ARM_BOOTSTRAP_STAGE=start
 arm_bootstrap_guard() {
-  case "$ARM_BOOTSTRAP_STAGE" in
-    ready) return 0 ;;
-    loaded)
-      printf 'watcher: FAILED - broken install: %s loaded but did not define STATE, so this arm has no home to watch. Nothing is watching this home.\n' "$WAKE_LIB" >&2
-      exit 78
-      ;;
-  esac
+  [ "$ARM_BOOTSTRAP_STAGE" = ready ] && return 0
   if [ ! -r "$WAKE_LIB" ]; then
     printf 'watcher: FAILED - broken install: %s is missing or unreadable, so this arm cannot load the wake library. Nothing is watching this home.\n' "$WAKE_LIB" >&2
+    exit 78
+  fi
+  if [ "$ARM_BOOTSTRAP_STAGE" = returned ]; then
+    printf 'watcher: FAILED - broken install: %s did not define STATE, so this arm has no home to watch. Nothing is watching this home.\n' "$WAKE_LIB" >&2
     exit 78
   fi
   printf 'watcher: FAILED - out of process capacity: this machine refused to create a process, so startup was killed before it could arm (any "fork: Resource temporarily unavailable" line above is that refusal). The install is fine - %s is present and readable. Nothing is watching this home; reduce process pressure, then re-arm.\n' "$WAKE_LIB" >&2
@@ -126,15 +124,17 @@ arm_bootstrap_guard() {
 }
 trap 'arm_bootstrap_guard' EXIT
 
-# The stage advances only on a source that actually ran, so a library that is
-# present but broken is reported as the broken install it is. The library's own
-# return value is deliberately NOT treated as fatal - STATE being defined is the
-# real test of a usable load, and making the tail of fm-wake-lib.sh load-bearing
-# here would turn an unrelated future edit into a silent refusal to arm.
+# The stage advances on control COMING BACK from the source, whatever status it
+# came back with. A refused fork kills the shell mid-line, so a return at all is
+# proof this was not the capacity failure, and the guard must then talk about the
+# install: a library that is present but unparseable, or one that parsed and
+# defined no STATE, are both broken installs. The library's own return value is
+# deliberately NOT treated as fatal - STATE being defined is the real test of a
+# usable load, and making the tail of fm-wake-lib.sh load-bearing here would turn
+# an unrelated future edit into a silent refusal to arm.
 # shellcheck source=bin/fm-wake-lib.sh
-if . "$WAKE_LIB"; then
-  ARM_BOOTSTRAP_STAGE=loaded
-fi
+. "$WAKE_LIB" || :
+ARM_BOOTSTRAP_STAGE=returned
 [ -n "${STATE:-}" ] || exit 1
 ARM_BOOTSTRAP_STAGE=ready
 trap - EXIT

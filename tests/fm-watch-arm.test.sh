@@ -968,6 +968,104 @@ test_arm_resolves_its_own_directory_from_a_foreign_working_directory() {
   pass "watch-arm: the arm resolves its own directory from any working directory"
 }
 
+# Resolving the arm's own directory without forking is only half the invariant:
+# the wake library it sources derives FM_ROOT/FM_HOME/STATE the same way, one line
+# later, and THAT is where the arm learns which home it is supervising. The
+# incident's interleaving is the dangerous one - the inner helper is refused while
+# the enclosing substitution survives - because there is no crash to notice: the
+# library would quietly take the CALLER's working directory for its own, and the
+# arm would then create, lock and watch a completely different home's state
+# without printing a single failure line. The RLIMIT_NPROC probe above cannot
+# reach this, because a limit low enough to refuse a fork kills the shell outright
+# on the first one. So this drives the real arm out of a real home, from a foreign
+# working directory, with the external helpers a forking bootstrap would reach for
+# failing empty exactly as a refused fork leaves them, and asserts on the home the
+# arm actually operated on.
+test_arm_binds_to_its_own_home_when_bootstrap_helpers_cannot_run() {
+  local dir realhome realbin decoy cwd shim armout status helper real_helper
+
+  dir=$(make_case library-bootstrap-helpers)
+  realhome="$dir/realhome"
+  realbin="$realhome/bin"
+  decoy="$dir/decoy"
+  cwd="$decoy/cwd"
+  shim="$dir/shim"
+  armout="$dir/arm.out"
+  mkdir -p "$realbin" "$realhome/data" "$cwd" "$shim"
+  ln -s "$ROOT/bin/"* "$realbin/"
+
+  # A refused fork leaves the enclosing `$(...)` holding an empty string, so the
+  # stand-ins produce exactly that, and only for the wake library's own path -
+  # every other call still reaches the real tool, so nothing downstream is
+  # sabotaged by proxy.
+  for helper in dirname basename realpath readlink; do
+    real_helper=$(command -v "$helper" 2>/dev/null) || continue
+    cat > "$shim/$helper" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in
+  *fm-wake-lib.sh) exit 1 ;;
+esac
+exec "$real_helper" "\$@"
+SH
+    chmod +x "$shim/$helper"
+  done
+
+  # FM_HOME, FM_ROOT, FM_ROOT_OVERRIDE and FM_STATE_OVERRIDE all short-circuit the
+  # derivation under test, and the shared harness exports FM_ROOT_OVERRIDE, so the
+  # arm has to run without any of them - exactly as bin/fm-claude-stop-autoarm.sh
+  # invokes it. An unusable launch-confirm window then ends the cycle promptly;
+  # reaching that refusal at all proves the library loaded and STATE was defined.
+  ( cd "$cwd" && env -u FM_HOME -u FM_ROOT -u FM_ROOT_OVERRIDE -u FM_STATE_OVERRIDE \
+    PATH="$shim:$PATH" FM_ARM_CONFIRM_TIMEOUT=5 \
+    FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=5s \
+    "$realbin/fm-watch-arm.sh" > "$armout" 2>&1 )
+  status=$?
+
+  [ ! -e "$decoy/state" ] \
+    || fail "the arm armed the caller's directory instead of its own home: $(cat "$armout")"
+  [ -d "$realhome/state" ] \
+    || fail "the arm never took ownership of its own home's state: $(cat "$armout")"
+  ! grep -qF 'No such file or directory' "$armout" \
+    || fail "the arm looked for its library in the caller's directory: $(cat "$armout")"
+  ! grep -q '^watcher: FAILED - broken install' "$armout" \
+    || fail "a working install was misread as broken: $(cat "$armout")"
+  grep -qF 'FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS' "$armout" \
+    || fail "the arm did not reach its own validation logic: $(cat "$armout")"
+  [ "$status" -ne 0 ] \
+    || fail "the arm reported success despite an unusable confirm window: $(cat "$armout")"
+  pass "watch-arm: the arm binds to its own home when bootstrap helpers cannot run"
+}
+
+# A wake library that is present and readable but UNPARSEABLE - a truncated or
+# half-written install - is a broken install, and control coming back from the
+# source at all proves no fork was refused. Reporting it as process exhaustion is
+# the incident's own mislabel in reverse, so the two typed exits must not blur.
+test_arm_reports_an_unparseable_wake_library_as_a_broken_install() {
+  local dir home state lonely armout status
+  dir=$(make_case unparseable-wake-library)
+  home="$dir/home"
+  state="$dir/state"
+  lonely="$dir/lonely"
+  armout="$dir/arm.out"
+  mkdir -p "$home/data" "$lonely"
+  cp "$WATCH_ARM" "$lonely/fm-watch-arm.sh"
+  printf '#!/usr/bin/env bash\nif [\n' > "$lonely/fm-wake-lib.sh"
+
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
+    "$lonely/fm-watch-arm.sh" > "$armout" 2>&1
+  status=$?
+
+  grep -q '^watcher: FAILED - broken install' "$armout" \
+    || fail "an unparseable wake library was not reported as a broken install: $(cat "$armout")"
+  grep -qF "$lonely/fm-wake-lib.sh" "$armout" \
+    || fail "the refusal did not name the file it could not load: $(cat "$armout")"
+  ! grep -qF 'out of process capacity' "$armout" \
+    || fail "a broken install was blamed on process capacity: $(cat "$armout")"
+  [ "$status" -eq 78 ] \
+    || fail "an unparseable wake library exited $status, not the typed 78: $(cat "$armout")"
+  pass "watch-arm: an unparseable wake library is a broken install, not a resource problem"
+}
+
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
 test_arm_refuses_an_unusable_launch_confirm_window
@@ -986,3 +1084,5 @@ test_downtime_marker_does_not_follow_symlink
 test_arm_reports_process_exhaustion_distinguishably
 test_arm_reports_a_missing_wake_library_as_a_broken_install
 test_arm_resolves_its_own_directory_from_a_foreign_working_directory
+test_arm_binds_to_its_own_home_when_bootstrap_helpers_cannot_run
+test_arm_reports_an_unparseable_wake_library_as_a_broken_install

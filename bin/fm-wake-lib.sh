@@ -1,8 +1,42 @@
 #!/usr/bin/env bash
 # Shared durable wake queue and portable lock helpers.
 
-FM_WAKE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FM_WAKE_DEFAULT_ROOT="$(cd "$FM_WAKE_LIB_DIR/.." && pwd)"
+# Resolved with builtins only. `dirname` is an external command and `$( ... )` is
+# a subshell, so the old
+#   FM_WAKE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# needed fork() twice before anything sourcing this library had a home. A refused
+# fork leaves the inner substitution empty, `cd ""` keeps the CALLER's working
+# directory, and every value below - FM_ROOT, FM_HOME, STATE - then silently
+# describes whichever directory firstmate happened to be standing in, with no
+# error to notice. Parameter expansion and $PWD cannot fail that way. The `..`
+# and `.` pass canonicalizes exactly as `cd` does in logical mode, so a path
+# spelled with .. still names one home and one lock, and a symlinked directory
+# is left unresolved just as `cd ... && pwd` left it.
+case "${BASH_SOURCE[0]}" in
+  */*) FM_WAKE_LIB_DIR="${BASH_SOURCE[0]%/*}"; [ -n "$FM_WAKE_LIB_DIR" ] || FM_WAKE_LIB_DIR=/ ;;
+  *) FM_WAKE_LIB_DIR="$PWD" ;;
+esac
+case "$FM_WAKE_LIB_DIR" in
+  /*) ;;
+  *) FM_WAKE_LIB_DIR="${PWD%/}/$FM_WAKE_LIB_DIR" ;;
+esac
+_fm_wake_lib_rest="${FM_WAKE_LIB_DIR#/}"
+FM_WAKE_LIB_DIR=
+while [ -n "$_fm_wake_lib_rest" ]; do
+  case "$_fm_wake_lib_rest" in
+    */*) _fm_wake_lib_part="${_fm_wake_lib_rest%%/*}"; _fm_wake_lib_rest="${_fm_wake_lib_rest#*/}" ;;
+    *) _fm_wake_lib_part="$_fm_wake_lib_rest"; _fm_wake_lib_rest= ;;
+  esac
+  case "$_fm_wake_lib_part" in
+    '' | .) ;;
+    ..) FM_WAKE_LIB_DIR="${FM_WAKE_LIB_DIR%/*}" ;;
+    *) FM_WAKE_LIB_DIR="$FM_WAKE_LIB_DIR/$_fm_wake_lib_part" ;;
+  esac
+done
+[ -n "$FM_WAKE_LIB_DIR" ] || FM_WAKE_LIB_DIR=/
+unset _fm_wake_lib_rest _fm_wake_lib_part
+FM_WAKE_DEFAULT_ROOT="${FM_WAKE_LIB_DIR%/*}"
+[ -n "$FM_WAKE_DEFAULT_ROOT" ] || FM_WAKE_DEFAULT_ROOT=/
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_WAKE_DEFAULT_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-${STATE:-$FM_HOME/state}}"
