@@ -2967,7 +2967,6 @@ require_task_endpoint_gone() {  # <kill-status>
       echo "error: the endpoint $T for $ID could not be killed at all; retaining every durable task record - rerun cleanup once the worker can be proved stopped, or retire the record with bin/fm-retire-endpoint.sh if no backend can ever answer for it" >&2
       ;;
   esac
-  mark_pending_close_endpoint_unconfirmed
   return 1
 }
 
@@ -3047,28 +3046,6 @@ task_operator_retirement() {  # [runtime-refusal]
   fi
   [ "$OPERATOR_RETIREMENT_STATE" = present ] || return 1
   [ "${1:-}" != runtime-refusal ] || [ "$OPERATOR_RETIREMENT_OVERRIDE" = 1 ] || return 1
-}
-
-# mark_pending_close_endpoint_unconfirmed: carry this refusal into the pending
-# close record. The record is staged BEFORE the endpoint is touched, so without
-# this stamp it still reads as an ordinary interrupted close, and the next
-# session start would replay it - removing the task record this refusal just
-# kept and closing the row, for a worker nothing proved stopped. Stamping it
-# makes replay refuse for the same reason this did.
-#
-# A failed stamp is itself reported and never silently tolerated, because the
-# unstamped record is exactly the one that would be replayed.
-mark_pending_close_endpoint_unconfirmed() {
-  local marker
-  [ "$BACKLOG_CLOSED" = 1 ] || return 0
-  marker=$(fm_backlog_close_marker_path "$STATE" "$ID") || return 0
-  [ -e "$marker" ] || [ -L "$marker" ] || return 0
-  if ! fm_backlog_close_marker_restage "$STATE" "$marker" "$ID" "$DATA" \
-      "$META_SPAWN_GEN" 0 1 \
-      "${BACKLOG_TRANSITION_FLAGS[@]+"${BACKLOG_TRANSITION_FLAGS[@]}"}" \
-      "${BACKLOG_DONE_ARGS[@]+"${BACKLOG_DONE_ARGS[@]}"}"; then
-    echo "error: the pending backlog close for $ID could not be marked unconfirmed ($FM_BACKLOG_TRANSITION_ERROR); remove $marker by hand before the next session start, or it will close this task's backlog item while its worker may still be running" >&2
-  fi
 }
 
 # mark_pending_close_endpoint_confirmed: the other half of the publish-time
@@ -3601,9 +3578,10 @@ fi
 # A refused, skipped, or failed Herdr close must never erase a live task's
 # durable endpoint identity: unless the exact pane is confirmed gone, retain
 # every record and stop before any removal below so a later rerun can retry
-# the locked close. Each refusal stamps the pending close record the same way
-# require_task_endpoint_gone does, so the next session start replays neither
-# the record removal nor the backlog close this refusal just withheld. Only a structured not-found proves the pane gone; unknown
+# the locked close. The pending close record is published carrying
+# endpoint=unconfirmed and is only cleared below, once an endpoint gate has
+# passed, so the next session start replays neither the record removal nor the
+# backlog close this refusal just withheld. Only a structured not-found proves the pane gone; unknown
 # presence, missing or malformed endpoint identity, and missing confirmation
 # machinery all refuse.
 if [ "$BACKEND" = herdr ]; then
@@ -3614,7 +3592,6 @@ if [ "$BACKEND" = herdr ]; then
       echo "warning: herdr pane $T for $ID is not confirmed gone; retiring its records on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, which overrode the runtime's refusal" >&2
     else
       echo "error: herdr pane $T for $ID is not confirmed gone after its close was refused, skipped, or failed; retaining every durable task record - rerun teardown once the close can run under the session lock, or retire the record with bin/fm-retire-endpoint.sh --override-runtime-refusal if herdr can never answer for it" >&2
-      mark_pending_close_endpoint_unconfirmed
       if task_operator_retirement; then
         exit "$FM_TEARDOWN_RUNTIME_REFUSAL_EXIT"
       fi
