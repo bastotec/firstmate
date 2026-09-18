@@ -187,7 +187,8 @@ set +f
 # own record exactly as cleanup derives it.
 RETIRE_DONE_ARGS=()
 retirement_done_args() {  # <id>
-  local id=$1 meta="$STATE/$id.meta" kind mode pr data_relative
+  local id=$1 kind mode pr data_relative
+  local meta="$STATE/$id.meta"
   RETIRE_DONE_ARGS=()
   kind=$(fm_meta_get "$meta" kind)
   mode=$(fm_meta_get "$meta" mode)
@@ -240,7 +241,8 @@ retirement_done_args() {  # <id>
 # with its deliverable, exactly as cleanup and the session-start replay do, so
 # a retirement never quietly answers the captain's own question.
 retire_records_only() {  # <id>
-  local id=$1 meta="$STATE/$id.meta" marker mode=close probe_rc=0 gate_rc=0 marker_flags=()
+  local id=$1 marker mode=close probe_rc=0 gate_rc=0 marker_flags=()
+  local meta="$STATE/$id.meta"
   fm_backlog_transition_applies "$CONFIG" "$DATA" "$(fm_meta_get "$meta" kind)" || gate_rc=$?
   if [ "$gate_rc" -eq 2 ]; then
     FM_BACKLOG_TRANSITION_ERROR="${FM_BACKLOG_TRANSITION_ERROR:-the backlog data directory is inaccessible}"
@@ -266,7 +268,7 @@ retire_records_only() {  # <id>
     rm -f "$STATE/$id.turn-ended" "$STATE/$id.progress"
     return 0
   fi
-  if [ "${FM_BACKLOG_ROW_STATE%% *}" != done ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" = captain ]; then
+  if [ "${FM_BACKLOG_ROW_STATE%% *}" != "done" ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" = captain ]; then
     mode=retain
     marker_flags=(--retain)
   fi

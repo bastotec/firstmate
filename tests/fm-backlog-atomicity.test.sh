@@ -493,7 +493,7 @@ interrupt_teardown_during_backlog_close() {  # <case-dir>
   real=$(command -v tasks-axi)
   cat > "$case_dir/fakebin/tasks-axi" <<SH
 #!/usr/bin/env bash
-if [ "\${1:-}" = done ] && [ ! -f "$case_dir/teardown-interrupted" ]; then
+if [ "\${1:-}" = "done" ] && [ ! -f "$case_dir/teardown-interrupted" ]; then
   : > "$case_dir/teardown-interrupted"
   pid=\$PPID
   while [ -n "\$pid" ] && [ "\$pid" -gt 1 ] 2>/dev/null; do
@@ -2250,7 +2250,7 @@ test_an_interrupt_after_a_proven_kill_still_replays_its_close() {
     "a close whose kill was proved still carries the refusal, so replay would hold it forever"
 
   out=$(run_bootstrap "$case_dir")
-  [ "$(row_state "$case_dir" "$id")" = done ] \
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
     || fail "session start did not finish a close whose kill was proved: $out"
   assert_absent "$marker" "session start left the close it finished"
   pass "an interrupt after a proven kill still replays its close"
@@ -2427,7 +2427,7 @@ test_retiring_records_who_asserted_it_and_when() {
   assert_absent "$home/state/$id.meta" "a confirmed retirement left the record it retired"
   assert_absent "$home/state/$id.endpoint-retired" \
     "the retirement was left behind to authorize a later automatic cleanup"
-  [ "$(row_state "$case_dir" "$id")" = done ] \
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
     || fail "a confirmed retirement left the backlog row at $(row_state "$case_dir" "$id"): $out"
   pass "a retirement carries who asserted it and when, and is consumed by the cleanup it authorizes"
 }
@@ -2448,7 +2448,7 @@ test_retiring_leaves_work_on_disk_byte_untouched() {
   out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
     || fail "the retirement should complete even when cleanup refuses: $out"
   assert_absent "$home/state/$id.meta" "the record was not retired"
-  [ "$(row_state "$case_dir" "$id")" = done ] \
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
     || fail "the backlog row is still $(row_state "$case_dir" "$id"): $out"
   cmp -s "$case_dir/wt-$id/draft.txt" "$case_dir/draft.expected" \
     || fail "the uncommitted work was modified or removed by the retirement"
@@ -2675,7 +2675,7 @@ test_a_captain_held_row_is_retained_not_closed() {
   out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
     || fail "the retirement should complete for a captain-held row: $out"
   assert_absent "$home/state/$id.meta" "the record was not retired"
-  [ "$(row_state "$case_dir" "$id")" != done ] \
+  [ "$(row_state "$case_dir" "$id")" != "done" ] \
     || fail "the retirement answered the captain's own question as done: $out"
   assert_grep 'held: yes' "$(tasks-axi show "$id" --file "$(backlog_of "$case_dir")" > "$case_dir/row.out"; printf '%s' "$case_dir/row.out")" \
     "the retirement dropped the captain's hold"
@@ -2839,7 +2839,7 @@ test_a_retirement_leaves_a_close_session_start_can_finish() {
   real=$(command -v tasks-axi)
   cat > "$case_dir/fakebin/tasks-axi" <<SH
 #!/usr/bin/env bash
-if [ "\${1:-}" = done ] && [ -e "$case_dir/fail-done" ]; then
+if [ "\${1:-}" = "done" ] && [ -e "$case_dir/fail-done" ]; then
   echo "tasks-axi: the backlog could not be written" >&2
   exit 1
 fi
@@ -2858,7 +2858,7 @@ SH
 
   rm -f "$case_dir/fail-done"
   out=$(run_bootstrap "$case_dir")
-  [ "$(row_state "$case_dir" "$id")" = done ] \
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
     || fail "session start could not finish the retirement's own close: $out"
   assert_absent "$marker" "session start left the close it finished"
   pass "a retirement leaves a close session start can finish"
