@@ -68,7 +68,7 @@ How the feed reaches the Mac that runs the Bridge, over an SSH tunnel or as plai
 
 Run it on the host that runs the hub:
 
-1. Give it its own read-only credential: add a bare token line to `config/stream-hub-tokens` and put the same token alone in a 0600 file for the adapter.
+1. Give it its own read-only credential: add a bare token line to `config/stream-hub-tokens` and put the same token alone in a 0600 file for `bin/fm-stream-bridge.py`.
    A home still on the single `config/stream-token` has no such file, and creating one replaces that token's every-class grant, so write the home's own `publish,subscribe,control:<token>` line into it as well.
    The hub reads its token file only at start, and a hub restart strands every running worker, so make this change while no stream work is running.
 2. Start it against the local hub:
