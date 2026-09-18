@@ -49,17 +49,26 @@ FM_BACKEND_STREAM_AGENT_BIN="$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agen
 # than the worker.
 #
 # The number is derived from both ends, and both matter.
-#   Lower bound - what it has to outlast. An agent discovers the hub forgot it
-#   only by publishing, and an idle worker publishes nothing but its state
-#   heartbeat, which at shipped defaults is every 5s (bin/fm-stream-agent.py's
-#   --state-interval default, capped by the hub's state_max_age_secs/3). Add
-#   the registration round trip it then makes: ~5s before the endpoint is back.
+#   Lower bound - what it has to outlast, which is three terms, not one. An
+#   agent discovers the hub forgot it only by publishing, and an idle worker
+#   publishes nothing but its state heartbeat, so the wait comes first: at
+#   shipped defaults every 5s (bin/fm-stream-agent.py's --state-interval
+#   default, capped by the hub's state_max_age_secs/3). Then the frame BUILD,
+#   which is not free - state_loop shells out through Pty.foreground_processes
+#   and foreground_cwd before it posts anything, so a tenth of a second when
+#   the box is idle and appreciably more when it is not. Then the 404 and the
+#   registration round trip it answers with.
 #   Upper bound - what it has to fit inside. Callers bound this classifier:
 #   fm-fleet-snapshot.sh gives 10s to a whole crew-state read, of which this
 #   probe is one part, so a torn-down endpoint has to reach `missing` well
 #   within that rather than timing the caller out and folding to unknown.
-# 6s clears the first and leaves ~4s of the second for everything else a
-# crew-state read does.
+# 6s therefore clears the lower bound by well under a second at shipped
+# defaults, and a box loaded enough to make the ps/lsof pair or the
+# registration POST take that second over spends the window: the classifier
+# then says `missing` about a worker that is healthy and rejoining, with the
+# consequences spelled out below. Widening is not available - the 10s caller
+# bound leaves no room - so the constant stands at 6 and the thin margin is
+# part of what it costs.
 #
 # So what the window covers is precisely one case: a rejoin that succeeds on
 # the FIRST attempt the agent makes after a restart. It does not cover a rejoin
@@ -302,8 +311,8 @@ fm_backend_stream_machine() {
 # where its process runs. <status-path> and <cwd> are handed to that local agent
 # and never sent to the hub, which is what lets a worker on any machine report
 # into its own home's records.
-fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
-  local label=$1 cwd=$2 status_path=${3:-} tag machine ready endpoint token_file agent_log reason
+fm_backend_stream_create_task() {  # <label> <cwd> [status-path] [state-interval]
+  local label=$1 cwd=$2 status_path=${3:-} state_interval=${4:-} tag machine ready endpoint token_file agent_log reason
   tag=$(fm_backend_stream_hub_tag) || return 1
   machine=$(fm_backend_stream_machine) || return 1
   ready=$(mktemp "${TMPDIR:-/tmp}/fm-stream-ready.XXXXXX") || return 1
@@ -315,6 +324,10 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
   # cannot start - is the only account of why a spawn failed, so it is kept
   # rather than discarded into /dev/null. The credential still reaches the agent
   # through a file, never a command line.
+  local -a heartbeat=()
+  if [ -n "$state_interval" ]; then
+    heartbeat=(--state-interval "$state_interval")
+  fi
   (
     setsid python3 "$FM_BACKEND_STREAM_AGENT_BIN" serve \
       --hub "$(fm_backend_stream_hub_url)" \
@@ -324,6 +337,7 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path]
       --cwd "$cwd" \
       --status-path "$status_path" \
       --ready-file "$ready" \
+      "${heartbeat[@]+"${heartbeat[@]}"}" \
       >"$agent_log" 2>&1 < /dev/null &
   )
   local waited=0

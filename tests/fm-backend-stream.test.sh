@@ -108,10 +108,12 @@ start_slow_stand_in_delay() {  # <delay-secs> <stall-spec>
 
 # create_endpoint -> "<tag>:<endpoint-id>", the exact target shape a task's
 # durable record carries. This starts a real local agent, exactly as a spawn
-# would.
-create_endpoint() {  # <label> [status-path]
-  local label=$1 status=${2:-} pair pid
-  pair=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" "$status") \
+# would. <state-interval> pins that agent's heartbeat for cases whose subject
+# is the recovery the heartbeat drives; left empty, the agent keeps the
+# heartbeat every spawn ships with.
+create_endpoint() {  # <label> [status-path] [state-interval]
+  local label=$1 status=${2:-} interval=${3:-} pair pid
+  pair=$(with_stream_env fm_backend_stream_create_task "$label" "$CASE_DIR/cwd" "$status" "$interval") \
     || fail "creating endpoint $label failed"
   # The adapter starts the agent DETACHED, exactly as a spawn does, so it is not
   # a job of this shell and the trap would not reap it. Record it by pid.
@@ -290,10 +292,15 @@ test_a_restarting_hub_never_reads_as_a_missing_worker() {
   # by dropping a pending steer - on a worker that is alive and coming back.
   start_case_hub restart-not-missing
   local target before after waited=0
-  # The adapter's own spawn, with the state heartbeat every agent ships with:
-  # that heartbeat is what discovers the restart, so a case that shortened it
-  # would be measuring the grace window against a worker nobody runs.
-  target=$(create_endpoint "fm-restart-$$")
+  # The adapter's own spawn, with the heartbeat PINNED to a second. That
+  # heartbeat is what discovers the restart, and the 6s grace window clears the
+  # shipped 5s one by well under a second once the per-heartbeat frame build
+  # and the registration round trip are counted (see the derivation at
+  # bin/backends/stream.sh). Run at shipped defaults this case would therefore
+  # redden on a loaded box while the adapter was behaving correctly. What it
+  # gives up by pinning is the margin itself: it proves the window is waited
+  # out rather than treated as a verdict, not that 5s of it fits in 6s.
+  target=$(create_endpoint "fm-restart-$$" "" 1)
   before=$(with_stream_env fm_backend_agent_state stream "$target")
   [ "$before" != missing ] || fail "the endpoint should be known before the restart"
   [ "$before" != unreadable ] || fail "the endpoint should be readable before the restart"
@@ -349,10 +356,10 @@ test_the_fleet_listing_reports_a_worker_that_came_back() {
   # against it. What is untested is only that the snapshot consults that
   # classifier instead of the cheap probe.
   start_case_hub snapshot-rejoin
-  local id label target home out waited=0 back="" before=""
+  local id label target home out deadline back="" before=""
   id="snapshotrejoin-$$"
   label="fm-$id"
-  target=$(create_endpoint "$label")
+  target=$(create_endpoint "$label" "" 1)
   home="$CASE_DIR/home"
   mkdir -p "$home/state" "$home/data" "$home/projects/$id"
   fm_write_meta "$home/state/$id.meta" \
@@ -376,11 +383,16 @@ test_the_fleet_listing_reports_a_worker_that_came_back() {
   # Wait for the rejoin to have HAPPENED rather than racing it. That is what
   # makes this case deterministic, and it is also exactly what it gives up: the
   # row below is read after the window, never inside it.
-  while [ "$waited" -lt 150 ]; do
+  #
+  # Bounded on the WALL CLOCK, computed once, not on an iteration count: on the
+  # regression this case guards - an agent that never re-registers - every read
+  # below sleeps out the classifier's whole 6s grace window, so a count would
+  # buy minutes of spinning instead of a prompt red.
+  deadline=$(( $(date +%s) + 30 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
     back=$(with_stream_env fm_backend_agent_state stream "$target")
     [ "$back" = "$before" ] && break
     sleep 0.2
-    waited=$((waited + 1))
   done
   assert_equals "$back" "$before" \
     "the worker should read as it did before, under the endpoint id it kept"
