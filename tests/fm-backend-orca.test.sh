@@ -429,6 +429,17 @@ test_kill_confirms_the_close_with_an_absence_read() {
   assert_contains "$out" "may still be running" \
     "an unrecognized error should say the worker may still be running"
 
+  # A not-found that is not THIS TERMINAL's: a quit Orca.app answers about
+  # itself, and a code naming the app, runtime or session says nothing about
+  # whether this terminal, or its worker, is still there.
+  orca_case kill-accepted-app-not-found
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ORCA_TERMINAL_READ='{"ok":false,"error":{"code":"APP_NOT_FOUND","message":"Orca is not running"}}' \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_kill term-123' "$ROOT" 2>&1 )
+  expect_code 2 $? "a not-found about the app must not be read as terminal absence"
+  assert_contains "$out" "may still be running" \
+    "an app-scoped not-found should say the worker may still be running"
+
   # A terminal the user already closed makes Orca REFUSE the close. That is the
   # ordinary already-absent case, so the refusal is not the verdict either: the
   # same absence read decides, and a typed not-found retires the task.

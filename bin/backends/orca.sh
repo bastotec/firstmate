@@ -299,7 +299,11 @@ fm_backend_orca_send_text_submit() {  # <terminal-id> <text> <retries> <enter-sl
 # Output is parsed regardless of exit status, because a typed refusal may
 # arrive with either.
 #
-# Absence is recognized from an explicit not-found code and from nothing else.
+# Absence is recognized from the TERMINAL's own not-found code and from nothing
+# else. The code must name this terminal, matched whole rather than by a
+# contained token: a quit app answers about itself, and an `APP_NOT_FOUND` or
+# `RUNTIME_NOT_FOUND` from a CLI that never reached the terminal says nothing
+# about whether that terminal, or its worker, is still there.
 # No live Orca was available to enumerate its error codes, so every other
 # refusal - an internal read failure, a permission or argument error, a rate
 # limit, a CLI wrapping its own connection failure in an envelope - is
@@ -330,7 +334,8 @@ if (data.ok !== false) {
   process.exit(0);
 }
 const err = data.error || {};
-process.stdout.write(/not[_ -]?found/i.test(String(err.code || "")) ? "dead" : "unknown");
+const code = String(err.code || "").trim();
+process.stdout.write(/^terminal[_ -]?not[_ -]?found$/i.test(code) ? "dead" : "unknown");
 ' 2>/dev/null || printf 'unknown'
 }
 

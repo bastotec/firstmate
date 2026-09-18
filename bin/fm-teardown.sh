@@ -2955,7 +2955,10 @@ require_task_endpoint_gone() {  # <kill-status>
   local verdict
   verdict=$(fm_backend_kill_verdict "$1")
   [ "$verdict" != gone ] || return 0
-  consume_operator_endpoint_retirement && return 0
+  if task_operator_retirement; then
+    echo "warning: the endpoint $T for $ID was never confirmed gone; retiring its records on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT" >&2
+    return 0
+  fi
   case "$verdict" in
     unconfirmed)
       echo "error: the endpoint $T for $ID is not confirmed gone after its kill; retaining every durable task record - rerun cleanup once the worker can be proved stopped, or retire the record with bin/fm-retire-endpoint.sh if no backend can ever answer for it" >&2
@@ -2968,24 +2971,60 @@ require_task_endpoint_gone() {  # <kill-status>
   return 1
 }
 
-# consume_operator_endpoint_retirement: honour one operator retirement for this
-# exact task incarnation. The record is written only by bin/fm-retire-endpoint.sh,
-# which a human runs after naming the task and typing its id back; nothing in
-# firstmate writes one, so no automatic path reaches this. It is consumed here
-# rather than left behind, so it authorizes exactly the one cleanup the operator
-# asked for and never a later automatic run.
-consume_operator_endpoint_retirement() {
-  local note="$STATE/$ID.endpoint-retired" noted_id noted_gen by at
+# The operator retirement: one record, written only by
+# bin/fm-retire-endpoint.sh, which a human runs after naming a task and typing
+# its id back. Nothing in firstmate writes one, so no automatic path reaches
+# any of this. Every endpoint gate below consults it through the same two
+# functions, and it is consumed on first use rather than left behind, so it
+# authorizes exactly the cleanup the operator asked for and never a later
+# automatic run.
+#
+# A retirement asserts what no backend could: that no worker is still running
+# behind this record. Overriding a RUNTIME's own refusal - a herdr server that
+# cannot be reached at all, a child endpoint whose kill nothing answered - is
+# the separate, louder assertion the operator makes with
+# --override-runtime-refusal, so those gates require the override field while
+# the unconfirmed-kill gate does not.
+# A runtime refusal an operator retirement did not override exits with this
+# status, so bin/fm-retire-endpoint.sh can tell that one refusal apart from
+# every other and name the flag that answers it rather than guessing.
+FM_TEARDOWN_RUNTIME_REFUSAL_EXIT=3
+
+consume_operator_retirement() {  # <state-dir> <id> <meta> <require-override: 0|1>
+  local state=$1 id=$2 meta=$3 require_override=$4
+  local note="$state/$id.endpoint-retired" noted_id noted_gen by at override
   [ -f "$note" ] && [ ! -L "$note" ] || return 1
   noted_id=$(fm_meta_get "$note" id)
   noted_gen=$(fm_meta_get "$note" spawn_gen)
   by=$(fm_meta_get "$note" retired_by)
   at=$(fm_meta_get "$note" retired_at)
-  [ "$noted_id" = "$ID" ] || return 1
-  [ "$noted_gen" = "$(fm_meta_get "$META" spawn_gen)" ] || return 1
+  override=$(fm_meta_get "$note" runtime_refusal_override)
+  [ "$noted_id" = "$id" ] || return 1
+  [ "$noted_gen" = "$(fm_meta_get "$meta" spawn_gen)" ] || return 1
   [ -n "$by" ] && [ -n "$at" ] || return 1
+  [ "$require_override" = 0 ] || [ "$override" = 1 ] || return 1
   rm -f "$note" || return 1
-  echo "warning: the endpoint $T for $ID was never confirmed gone; retiring its records on the retirement $by recorded at $at" >&2
+  OPERATOR_RETIREMENT_BY=$by
+  OPERATOR_RETIREMENT_AT=$at
+}
+
+# This task's own retirement, cached: the herdr preflight and the endpoint
+# gates can both reach it, and the note is only there to be consumed once.
+OPERATOR_RETIREMENT_STATE=unread
+OPERATOR_RETIREMENT_BY=
+OPERATOR_RETIREMENT_AT=
+OPERATOR_RETIREMENT_OVERRIDE=0
+task_operator_retirement() {  # [runtime-refusal]
+  if [ "$OPERATOR_RETIREMENT_STATE" = unread ]; then
+    OPERATOR_RETIREMENT_OVERRIDE=$(fm_meta_get "$STATE/$ID.endpoint-retired" runtime_refusal_override)
+    if consume_operator_retirement "$STATE" "$ID" "$META" 0; then
+      OPERATOR_RETIREMENT_STATE=present
+    else
+      OPERATOR_RETIREMENT_STATE=absent
+    fi
+  fi
+  [ "$OPERATOR_RETIREMENT_STATE" = present ] || return 1
+  [ "${1:-}" != runtime-refusal ] || [ "$OPERATOR_RETIREMENT_OVERRIDE" = 1 ] || return 1
 }
 
 # mark_pending_close_endpoint_unconfirmed: carry this refusal into the pending
@@ -3016,9 +3055,15 @@ mark_pending_close_endpoint_unconfirmed() {
 # to erase that child's durable identity records; a kill nothing proved landed
 # stops the sweep with the adapter's own reason, exactly as this sweep's own
 # Herdr branch already does with fm_backend_herdr_endpoint_confirmed_gone.
-require_child_endpoint_gone() {  # <child-id> <child-target> <kill-status>
+require_child_endpoint_gone() {  # <child-id> <child-target> <kill-status> <child-state-dir>
   case "$(fm_backend_kill_verdict "$3")" in
     gone) return 0 ;;
+  esac
+  if consume_operator_retirement "${4:-}" "$1" "${4:-}/$1.meta" 1; then
+    echo "warning: the endpoint $2 for child $1 was never confirmed gone; erasing its records on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, which overrode the runtime's refusal" >&2
+    return 0
+  fi
+  case "$(fm_backend_kill_verdict "$3")" in
     unconfirmed)
       echo "error: the endpoint $2 for child $1 is not confirmed gone after its kill; retaining that child's durable identity records and stopping forced cleanup" >&2
       ;;
@@ -3069,11 +3114,11 @@ cleanup_firstmate_home_children() {
         # cleanup must verify child tabs as that child home, not the parent.
         ( unset FM_ROOT_OVERRIDE; FM_HOME=$home FM_ROOT=$home fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" ) \
           && child_kill_rc=0 || child_kill_rc=$?
-        require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" || return 1
+        require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" "$sub_state" || return 1
       else
         fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" \
           && child_kill_rc=0 || child_kill_rc=$?
-        require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" || return 1
+        require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" "$sub_state" || return 1
       fi
     fi
     if [ "$child_kind" = secondmate ]; then
@@ -3290,7 +3335,16 @@ fi
 TEARDOWN_HERDR_SESSION=
 TEARDOWN_HERDR_PANE=
 if [ "$BACKEND" = herdr ]; then
-  teardown_herdr_preflight_target "$T" "$ID" || exit 1
+  if ! teardown_herdr_preflight_target "$T" "$ID"; then
+    if task_operator_retirement runtime-refusal; then
+      echo "warning: herdr could not answer for $T; continuing on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, which overrode the runtime's refusal" >&2
+    elif task_operator_retirement; then
+      echo "error: herdr could not answer for $T for $ID, and the retirement recorded for $OPERATOR_RETIREMENT_BY did not override a runtime refusal; rerun bin/fm-retire-endpoint.sh --override-runtime-refusal to retire this record" >&2
+      exit "$FM_TEARDOWN_RUNTIME_REFUSAL_EXIT"
+    else
+      exit 1
+    fi
+  fi
   fm_backend_herdr_parse_target "$T" || exit 1
   TEARDOWN_HERDR_SESSION=$FM_BACKEND_HERDR_SESSION
   TEARDOWN_HERDR_PANE=$FM_BACKEND_HERDR_PANE
@@ -3515,15 +3569,18 @@ fi
 # machinery all refuse.
 if [ "$BACKEND" = herdr ]; then
   fm_backend_source herdr || true
-  if ! declare -F fm_backend_herdr_endpoint_confirmed_gone >/dev/null 2>&1; then
-    echo "error: herdr endpoint confirmation is unavailable for $ID; retaining every durable task record" >&2
-    mark_pending_close_endpoint_unconfirmed
-    exit 1
-  fi
-  if ! fm_backend_herdr_endpoint_confirmed_gone "$T"; then
-    echo "error: herdr pane $T for $ID is not confirmed gone after its close was refused, skipped, or failed; retaining every durable task record - rerun teardown once the close can run under the session lock" >&2
-    mark_pending_close_endpoint_unconfirmed
-    exit 1
+  if ! declare -F fm_backend_herdr_endpoint_confirmed_gone >/dev/null 2>&1 \
+    || ! fm_backend_herdr_endpoint_confirmed_gone "$T"; then
+    if task_operator_retirement runtime-refusal; then
+      echo "warning: herdr pane $T for $ID is not confirmed gone; retiring its records on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, which overrode the runtime's refusal" >&2
+    else
+      echo "error: herdr pane $T for $ID is not confirmed gone after its close was refused, skipped, or failed; retaining every durable task record - rerun teardown once the close can run under the session lock, or retire the record with bin/fm-retire-endpoint.sh --override-runtime-refusal if herdr can never answer for it" >&2
+      mark_pending_close_endpoint_unconfirmed
+      if task_operator_retirement; then
+        exit "$FM_TEARDOWN_RUNTIME_REFUSAL_EXIT"
+      fi
+      exit 1
+    fi
   fi
 fi
 if [ "$KIND" != secondmate ]; then

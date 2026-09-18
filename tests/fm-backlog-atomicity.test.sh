@@ -628,14 +628,15 @@ run_retire() {  # <case-dir> <args...>
     "$ROOT/bin/fm-retire-endpoint.sh" "$@" 2>&1
 }
 
-# stage_unanswerable_task: a task whose kill is accepted and closes nothing, so
-# no read can ever prove its worker stopped - the shape a stream hub leaves
-# behind when it no longer has the endpoint. Echoes nothing; the caller owns
-# the ids.
-stage_unanswerable_task() {  # <case-dir> <id>
+# stage_unanswerable_task_with_work: the real shape an operator meets. The
+# endpoint's kill is accepted and closes nothing, so no read can ever prove its
+# worker stopped; and the task's worktree holds uncommitted work, so cleanup
+# refuses before it ever reaches the endpoint. Retiring the record must not
+# depend on, or disturb, either.
+stage_unanswerable_task_with_work() {  # <case-dir> <id>
   local case_dir=$1 id=$2 home
   home=$(home_of "$case_dir")
-  add_item "$case_dir" "$id" scout
+  add_item "$case_dir" "$id"
   start_item "$case_dir" "$id"
   cat > "$case_dir/fakebin/tmux" <<SH
 #!/usr/bin/env bash
@@ -645,13 +646,44 @@ esac
 exit 0
 SH
   chmod +x "$case_dir/fakebin/tmux"
+  git init -q "$case_dir/project-$id"
+  git -C "$case_dir/project-$id" -c user.name=test -c user.email=test@example.invalid \
+    commit --allow-empty -qm base
+  git -C "$case_dir/project-$id" worktree add -q --detach "$case_dir/wt-$id" >/dev/null 2>&1
+  printf 'uncommitted draft\n' > "$case_dir/wt-$id/draft.txt"
   fm_write_meta "$home/state/$id.meta" \
     "window=fmtest:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$case_dir/wt-$id" \
+    "project=$case_dir/project-$id" \
+    "harness=claude" "kind=ship" "mode=" "yolo=off" \
+    "spawn_gen=spawn-unanswerable" "decisions_reviewed=1" "decision_keys="
+}
+
+# stage_unanswerable_herdr_task: a task whose RUNTIME cannot answer at all -
+# the herdr server is gone, so cleanup refuses in the adapter itself, before
+# and beside the kill contract's own gate. Its worktree is already gone, so
+# nothing but the runtime stands between this record and retirement.
+stage_unanswerable_herdr_task() {  # <case-dir> <id>
+  local case_dir=$1 id=$2 home
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id" scout
+  start_item "$case_dir" "$id"
+  cat > "$case_dir/fakebin/herdr" <<'SH'
+#!/usr/bin/env bash
+echo "herdr: cannot reach the server" >&2
+exit 1
+SH
+  chmod +x "$case_dir/fakebin/herdr"
+  fm_write_meta "$home/state/$id.meta" \
+    "window=lab:wG:pQ" \
     "endpoint_task_id=$id" \
     "worktree=$case_dir/absent-worktree" \
     "project=$case_dir/absent-project" \
     "harness=claude" "kind=scout" "mode=" "yolo=off" \
-    "spawn_gen=spawn-unanswerable" "decisions_reviewed=1" "decision_keys="
+    "backend=herdr" "herdr_session=lab" "herdr_workspace_id=wG" \
+    "herdr_tab_id=wG:tQ" "herdr_pane_id=wG:pQ" \
+    "spawn_gen=spawn-unanswerable-herdr" "decisions_reviewed=1" "decision_keys="
   mkdir -p "$home/data/$id"
   printf 'findings\n' > "$home/data/$id/report.md"
 }
@@ -2188,7 +2220,7 @@ test_no_automatic_path_retires_an_unanswerable_record() {
   id=atomic-retire-automatic-b9
   case_dir=$(make_home retire-automatic)
   home=$(home_of "$case_dir")
-  stage_unanswerable_task "$case_dir" "$id"
+  stage_unanswerable_task_with_work "$case_dir" "$id"
 
   # Cleanup, the rerun an operator is told to try, and session-start recovery:
   # every automatic path over this record, and none of them may retire it.
@@ -2211,7 +2243,7 @@ test_retiring_refuses_wildcards_and_unconfirmed_ids() {
   id=atomic-retire-exact-b9
   case_dir=$(make_home retire-exact)
   home=$(home_of "$case_dir")
-  stage_unanswerable_task "$case_dir" "$id"
+  stage_unanswerable_task_with_work "$case_dir" "$id"
 
   for form in '*' 'atomic-retire-*'; do
     rc=0
@@ -2240,7 +2272,7 @@ test_retiring_refuses_wildcards_and_unconfirmed_ids() {
   # Refusing wildcards must not cost a real record its only escape: a task
   # whose id happens to read like an all-records word is an exact identity like
   # any other, and the one command that can retire it has to accept it.
-  stage_unanswerable_task "$case_dir" all
+  stage_unanswerable_task_with_work "$case_dir" all
   out=$(printf 'all\n' | run_retire "$case_dir" all) \
     || fail "a record whose id is literally 'all' should still be retirable: $out"
   assert_absent "$home/state/all.meta" \
@@ -2253,7 +2285,7 @@ test_retiring_records_who_asserted_it_and_when() {
   id=atomic-retire-attested-b9
   case_dir=$(make_home retire-attested)
   home=$(home_of "$case_dir")
-  stage_unanswerable_task "$case_dir" "$id"
+  stage_unanswerable_task_with_work "$case_dir" "$id"
   run_teardown "$case_dir" "$id" >/dev/null 2>&1 || true
 
   out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
@@ -2267,6 +2299,64 @@ test_retiring_records_who_asserted_it_and_when() {
   [ "$(row_state "$case_dir" "$id")" = done ] \
     || fail "a confirmed retirement left the backlog row at $(row_state "$case_dir" "$id"): $out"
   pass "a retirement carries who asserted it and when, and is consumed by the cleanup it authorizes"
+}
+
+# Retiring a record is bookkeeping about the record, and work on disk is not
+# the record. Cleanup refuses here - the worktree holds uncommitted work - and
+# the retirement still lands, with every byte of that work exactly where it
+# was and named in the output so the operator knows it is still theirs to deal
+# with.
+test_retiring_leaves_work_on_disk_byte_untouched() {
+  local case_dir home id out
+  id=atomic-retire-work-b9
+  case_dir=$(make_home retire-work)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_task_with_work "$case_dir" "$id"
+  cp "$case_dir/wt-$id/draft.txt" "$case_dir/draft.expected"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
+    || fail "the retirement should complete even when cleanup refuses: $out"
+  assert_absent "$home/state/$id.meta" "the record was not retired"
+  [ "$(row_state "$case_dir" "$id")" = done ] \
+    || fail "the backlog row is still $(row_state "$case_dir" "$id"): $out"
+  cmp -s "$case_dir/wt-$id/draft.txt" "$case_dir/draft.expected" \
+    || fail "the uncommitted work was modified or removed by the retirement"
+  assert_contains "$out" "nothing on disk was touched" \
+    "the retirement did not say the work was left alone"
+  assert_contains "$out" "$case_dir/wt-$id" \
+    "the retirement did not name the worktree it left behind"
+  pass "a retirement leaves work on disk byte-untouched and names what remains"
+}
+
+# The louder assertion: a RUNTIME that refuses to answer at all is not
+# something the ordinary retirement decides for the operator. The default keeps
+# refusing, and only the flag that says what it does proceeds - recorded, like
+# the retirement itself, with who overrode it and when.
+test_retiring_needs_the_named_flag_to_override_a_runtime_refusal() {
+  local case_dir home id out rc=0
+  id=atomic-retire-runtime-b9
+  case_dir=$(make_home retire-runtime)
+  home=$(home_of "$case_dir")
+  stage_unanswerable_herdr_task "$case_dir" "$id"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "a runtime refusal must not be retired without the flag: $out"
+  assert_contains "$out" "--override-runtime-refusal" \
+    "the refusal should name the flag that answers it"
+  assert_present "$home/state/$id.meta" \
+    "the default path retired a record whose runtime refused"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "the default path moved the backlog row for a runtime that refused"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id" --override-runtime-refusal) \
+    || fail "the explicit override should retire the record: $out"
+  assert_absent "$home/state/$id.meta" "the override did not retire the record"
+  assert_contains "$out" "$(id -un)" "the override was not recorded with who made it"
+  printf '%s' "$out" | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' \
+    || fail "the override was not recorded with when it was made: $out"
+  assert_contains "$out" "runtime refusal" \
+    "the override did not say a runtime refusal was overridden"
+  pass "only the named override flag retires a record whose runtime refused, and it is recorded"
 }
 
 test_retirement_help_states_what_the_operator_is_asserting() {
@@ -3358,6 +3448,8 @@ test_a_herdr_refusal_marks_its_pending_close_too
 test_no_automatic_path_retires_an_unanswerable_record
 test_retiring_refuses_wildcards_and_unconfirmed_ids
 test_retiring_records_who_asserted_it_and_when
+test_retiring_leaves_work_on_disk_byte_untouched
+test_retiring_needs_the_named_flag_to_override_a_runtime_refusal
 test_retirement_help_states_what_the_operator_is_asserting
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped
 test_recovery_replays_the_same_close_without_the_unconfirmed_endpoint_line
