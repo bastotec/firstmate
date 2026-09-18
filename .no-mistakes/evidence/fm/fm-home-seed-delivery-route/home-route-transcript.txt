@@ -1,0 +1,94 @@
+
+=== S0 baseline: seed a standalone home with the OLD script (base 554740650f5edf94a22ced3761354ad73ac68311)
+$ seed_env /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/parent0 /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/base-root/bin/fm-home-seed.sh fdev /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/homes/old --no-projects
+Note: switching to '554740650f5edf94a22ced3761354ad73ac68311'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+scaffolded: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/parent0/data/fdev/brief.md (secondmate charter)
+home=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/homes/old
+[exit 0]
+old home origin: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/base-root
+
+=== S1 new seed from a code root whose origin is the fork
+code root HEAD: 8a43daa5 fix(bin): refuse file:// and local pipeline registrations as a home's delivery route
+$ seed_env /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/parent1 /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/fmroot/bin/fm-home-seed.sh fdev /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/homes/new --no-projects
+scaffolded: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/parent1/data/fdev/brief.md (secondmate charter)
+home=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/homes/new
+[exit 0]
+new home origin: https://github.com/bastotec/firstmate.git
+new home remotes: origin 
+code root origin after seed: https://github.com/bastotec/firstmate.git
+
+=== S2 adversarial: code root whose origin is a local path
+code root origin: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S7T25WDF5G193BTRMD2EKN
+$ seed_env /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/parent2 /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/pathroot/bin/fm-home-seed.sh fdev /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/homes/path --no-projects
+error: this firstmate code root has no delivery route for the firstmate repo: its origin is /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S7T25WDF5G193BTRMD2EKN
+error: a home cloned from /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/pathroot would inherit that and push a validated firstmate change to it instead of opening a pull request
+error: give /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/pathroot an origin that names the firstmate fork, then seed again
+[exit 1]
+home dir not created
+not registered
+
+=== S3 adversarial: code root whose origin is a file:// URL
+$ seed_env /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/parent2 /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/pathroot/bin/fm-home-seed.sh fdev /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/homes/fileurl --no-projects
+error: this firstmate code root has no delivery route for the firstmate repo: its origin is file:///private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/fmroot
+error: a home cloned from /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/pathroot would inherit that and push a validated firstmate change to it instead of opening a pull request
+error: give /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/pathroot an origin that names the firstmate fork, then seed again
+[exit 1]
+home dir not created
+
+=== S4 session start on the already-seeded OLD home (origin is a path)
+HOME_ROUTE: this home ships firstmate's own changes from /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/homes/old, and its origin is /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/base-root rather than a route it can open a pull request through - a validated change is pushed there and never opens a pull request; repoint that checkout's origin at the firstmate fork, then re-run no-mistakes init there so its saved validation registration follows
+
+=== S5 old home: origin repointed at the fork, but its no-mistakes gate still saved the path
+HOME_ROUTE: this home ships firstmate's own changes from /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/homes/old, and its validation pipeline registration at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/gate.git still delivers to /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/base-root rather than a route it can open a pull request through - a validated change is pushed there and never opens a pull request; repoint that checkout's origin at the firstmate fork, then re-run no-mistakes init there so its saved validation registration follows
+gate origin after session start: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/base-root
+
+=== S5b reseeding that home with the new script is refused, not blessed
+$ seed_env /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/parent0 /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/fmroot/bin/fm-home-seed.sh fdev /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/homes/old --no-projects
+error: secondmate home /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/homes/old would deliver firstmate's own changes to the wrong place: its validation pipeline registration at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/gate.git still delivers to /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/base-root rather than a route it can open a pull request through
+error: a validated firstmate change made there is pushed to that target and never opens a pull request
+error: point its origin at the firstmate fork, re-run no-mistakes init there if its validation registration is the target, then seed again
+[exit 1]
+old home origin after refused reseed: https://github.com/bastotec/firstmate.git
+gate origin after refused reseed: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/base-root
+
+=== S5c gate refreshed to the fork -> the line clears
+(no HOME_ROUTE line)
+
+=== S6 session start on the NEW seeded home
+(no HOME_ROUTE line)
+
+=== S7 parent sync imports a code-root commit the fork has never seen, into the new home
+home does not have 62c83d4da915f73acd592561682c8211925e976d yet
+$ env FM_HOME=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/homes/new FM_ROOT_OVERRIDE=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/fmroot /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/fmroot/bin/fm-remote-secondmate-control.sh sync fdev 62c83d4da915f73acd592561682c8211925e976d
+synced: 62c83d4da915f73acd592561682c8211925e976d instr=
+[exit 0]
+home HEAD after sync: 62c83d4da915f73acd592561682c8211925e976d
+home origin after sync: https://github.com/bastotec/firstmate.git
+
+=== S8 remote host provisions a home from its own Firstmate copy (origin = fork)
+$ env FM_HOME=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/rhost/home FM_ROOT_OVERRIDE=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/rhost/copy /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/rhost/copy/bin/fm-remote-home-provision.sh
+provisioned: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/rhost/home projects=0
+[exit 0]
+remote home origin: https://github.com/bastotec/firstmate.git
+
+=== S8b remote host copy whose origin is a path refuses to provision
+$ env FM_HOME=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/rhost/home2 FM_ROOT_OVERRIDE=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/rhost/copy /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/rhost/copy/bin/fm-remote-home-provision.sh
+error: this host's Firstmate copy at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-route-drive.J0ynyn/rhost/copy has no delivery route for the firstmate repo (its origin is /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M2S7T25WDF5G193BTRMD2EKN); a home cloned from it would push a validated firstmate change to that target instead of opening a pull request
+[exit 1]
+remote home not created
