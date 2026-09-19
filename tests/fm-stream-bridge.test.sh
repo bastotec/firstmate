@@ -320,16 +320,19 @@ test_refusals_end_the_command() {
   assert_contains "$out" "subscribe class" "the refusal should name the missing class"
   out=$(python3 "$BRIDGE" serve --hub "$URL" --token-file "$CASE_DIR/view-token" --interval-ms 1500 2>&1)
   assert_equals "$?" 2 "a tick at the Bridge's stale threshold should be refused"
-  # The narrowest real stand-in for a hub speaking another protocol.
+  # The narrowest real stand-in for incompatible hub negotiations.
   fake_dir="$CASE_DIR/fake"
   mkdir -p "$fake_dir"
   ready="$fake_dir/ready"
   python3 - "$ready" > "$fake_dir/log" 2>&1 <<'PY' &
 import http.server, json, sys
 class H(http.server.BaseHTTPRequestHandler):
+    calls = 0
     def log_message(self, *a): pass
     def do_GET(self):
-        body = json.dumps({"ok": True, "protocol": 99}).encode()
+        H.calls += 1
+        protocol = 2 if H.calls == 1 else 99
+        body = json.dumps({"ok": True, "protocol": protocol}).encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -348,9 +351,14 @@ PY
   done
   read -r host port < "$ready"
   out=$(python3 "$BRIDGE" snapshot --hub "http://$host:$port" --token-file "$CASE_DIR/view-token" 2>&1)
+  assert_equals "$?" 2 "an older hub without the required capability should be refused"
+  assert_contains "$out" "current_execution" "the refusal should name the missing capability"
+  assert_contains "$out" "restart or upgrade the hub" \
+    "the refusal should tell the operator how to replace the stale running hub"
+  out=$(python3 "$BRIDGE" snapshot --hub "http://$host:$port" --token-file "$CASE_DIR/view-token" 2>&1)
   assert_equals "$?" 2 "a hub speaking another protocol should be refused"
   assert_contains "$out" "protocol 99" "the refusal should name the protocol it found"
-  pass "bridge: a wrong credential, a wrong protocol, and a too-slow tick are refused"
+  pass "bridge: wrong credentials and incompatible hubs are refused during negotiation"
 }
 
 # start_real_agent <label> -> endpoint id. A real agent owning a real pty, so
