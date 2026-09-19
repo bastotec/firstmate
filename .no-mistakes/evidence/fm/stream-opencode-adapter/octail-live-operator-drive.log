@@ -1,0 +1,49 @@
+# Live drive: an opencode worker made visible on the stream hub (the Bridge feed's data)
+# real hub (bin/fm-stream-hub.py) + real adapter (bin/fm-stream-opencode-tail.py), driven with bin/fm-stream.sh
+# worktree fm/stream-opencode-adapter @ 83929c5, 2026-09-19T15:45:53Z
+
+$ bin/fm-stream.sh hub start --port 0
+hub listening on http://127.0.0.1:34353
+hub url: http://127.0.0.1:34353
+
+$ bin/fm-stream-opencode-tail.py serve --hub $URL --token-file <worker publish token> \
+    --machine opencode-host --label bridge.opencode-fleetwork --session ses_live --db <opencode.db> &
+adapter: fm-stream-opencode-tail 1.0.0 endpoint fe66397f654f61b33b2b4b6d4af86612 on opencode-host tailing session ses_live
+endpoint id: fe66397f654f61b33b2b4b6d4af86612
+
+$ bin/fm-stream.sh tasks      # the whole-fleet listing the Bridge feed renders
+  machine         label                        endpoint_id                        state
+  opencode-host	bridge.opencode-fleetwork	fe66397f654f61b33b2b4b6d4af86612	live
+
+# opencode keeps working: a second usage record lands in its session storage
+$ curl -s $URL/v1/tasks/fe66397f654f61b33b2b4b6d4af86612/cwd -H 'Authorization: Bearer <captain token>'   # state read, must be fresh
+  {
+      "agent_silent_for_secs": 0.107,
+      "alive": true,
+      "closed": false,
+      "closed_by": null,
+      "cwd": "/tmp/octail-live.cPQK/proj",
+      "endpoint_id": "fe66397f654f61b33b2b4b6d4af86612",
+      "exit_code": null,
+      "machine": "opencode-host",
+      "machine_silent_for_secs": 0.107,
+      "ok": true,
+      "stale": false,
+      "state_age_secs": 0.107,
+      "state_max_age_secs": 30.0
+  }
+
+$ curl -s -X DELETE $URL/v1/tasks/fe66397f654f61b33b2b4b6d4af86612 -H 'Authorization: Bearer <captain token>'   # stop the worker through the hub
+  {
+      "closed": "fe66397f654f61b33b2b4b6d4af86612",
+      "delivered": true,
+      "machine": "opencode-host",
+      "ok": true
+  }
+adapter exited on its own after the kill: yes
+
+$ bin/fm-stream.sh tasks
+  opencode-host	bridge.opencode-fleetwork	fe66397f654f61b33b2b4b6d4af86612	closed
+
+$ bin/fm-stream.sh hub stop
+hub stopped
