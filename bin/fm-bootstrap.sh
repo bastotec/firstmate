@@ -6,6 +6,7 @@
 #          exits 0.
 #          Silent = all good.
 #          Lines: "MISSING: <tool> (install: <command>)",
+#                 "VERSION_UNREADABLE: <tool> (installed build; requires semantic version >=<floor>; upgrade: <command>)",
 #                 "PRESENTATION_UNAVAILABLE: lavish-axi (requires >=<floor>; install: <command>) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish",
 #                 "MISSING_MANUAL: <tool> (instructions: <url>)", "NEEDS_GH_AUTH",
 #                 "BACKEND_INVALID: <name> (known: <names>)",
@@ -72,11 +73,14 @@
 #          landed in the primary instead of its own worktree; restore it per the line.
 #          treehouse is also MISSING when its installed version lacks
 #          "treehouse get --lease" support.
-#          no-mistakes is also MISSING when its installed version is older than
-#          1.46.0 (structured pipeline attestation floor; see CONTRIBUTING.md).
+#          no-mistakes is also MISSING when its installed semantic version is
+#          older than 1.46.0 (structured pipeline attestation floor; see
+#          CONTRIBUTING.md). An installed build whose version output has no
+#          semantic triple reports VERSION_UNREADABLE and remains incompatible.
 #          The AXI-family floor policy is owned beside GH_AXI_MIN and
 #          LAVISH_AXI_MIN below; the per-tool owners point there. An installed
-#          essential build below its floor reports MISSING like no-mistakes.
+#          essential build below its floor reports MISSING like no-mistakes,
+#          while an unreadable installed version reports VERSION_UNREADABLE.
 #          Missing or incompatible lavish-axi reports PRESENTATION_UNAVAILABLE:
 #          nonvisual dispatch continues with plain-text decisions and reports,
 #          but Lavish use still requires a compatible build at or above its floor.
@@ -977,14 +981,14 @@ treehouse_supports_lease() {
 # cannot be parsed into exactly one major.minor.patch triple is incompatible,
 # never assumed current, so a development or vendored build cannot pass a floor
 # it was never checked against.
-tool_version_at_least() {  # <tool> <min-version>
+tool_version_at_least() {  # <tool> <min-version>; 0=compatible, 1=absent/below floor, 2=version unreadable
   local tool=$1 min=$2 output parts major minor patch extra
   local min_major min_minor min_patch min_extra
   command -v "$tool" >/dev/null 2>&1 || return 1
-  output=$("$tool" --version 2>/dev/null) || return 1
+  output=$("$tool" --version 2>/dev/null) || return 2
   parts=$(printf '%s\n' "$output" | sed -nE 's/.*[vV]?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' | head -n 1)
   IFS=' ' read -r major minor patch extra <<< "$parts"
-  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
+  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 2
   IFS='.' read -r min_major min_minor min_patch min_extra <<< "$min"
   [ -n "$min_major" ] && [ -n "$min_minor" ] && [ -n "$min_patch" ] && [ -z "$min_extra" ] || return 1
   [ "$major" -gt "$min_major" ] && return 0
@@ -992,6 +996,20 @@ tool_version_at_least() {  # <tool> <min-version>
   [ "$minor" -gt "$min_minor" ] && return 0
   [ "$minor" -eq "$min_minor" ] || return 1
   [ "$patch" -ge "$min_patch" ]
+}
+
+essential_version_diagnostic() {  # <tool> <min-version>
+  local tool=$1 min=$2 status
+  if tool_version_at_least "$tool" "$min"; then
+    return 0
+  else
+    status=$?
+  fi
+  if [ "$status" -eq 2 ]; then
+    echo "VERSION_UNREADABLE: $tool (installed build; requires semantic version >=$min; upgrade: $(install_cmd "$tool"))"
+  else
+    echo "MISSING: $tool (install: $(install_cmd "$tool"))"
+  fi
 }
 
 x_mode_write_if_changed() {
@@ -1510,20 +1528,32 @@ detect_local_tools() {
     && command -v treehouse >/dev/null 2>&1 && ! treehouse_supports_lease; then
     echo "MISSING: treehouse (install: $(install_cmd treehouse))"
   fi
-  if command -v no-mistakes >/dev/null 2>&1 && ! tool_version_at_least no-mistakes "$NO_MISTAKES_MIN"; then
-    echo "MISSING: no-mistakes (install: $(install_cmd no-mistakes))"
+  if command -v no-mistakes >/dev/null 2>&1; then
+    essential_version_diagnostic no-mistakes "$NO_MISTAKES_MIN"
   fi
-  if command -v gh-axi >/dev/null 2>&1 && ! tool_version_at_least gh-axi "$GH_AXI_MIN"; then
-    echo "MISSING: gh-axi (install: $(install_cmd gh-axi))"
+  if command -v gh-axi >/dev/null 2>&1; then
+    essential_version_diagnostic gh-axi "$GH_AXI_MIN"
   fi
   if ! tool_version_at_least lavish-axi "$LAVISH_AXI_MIN"; then
     echo "PRESENTATION_UNAVAILABLE: lavish-axi (requires >=$LAVISH_AXI_MIN; install: $(install_cmd lavish-axi)) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish"
   fi
-  if command -v quota-axi >/dev/null 2>&1 && ! fm_quota_axi_compatible; then
-    echo "MISSING: quota-axi (install: $(install_cmd quota-axi))"
+  if command -v quota-axi >/dev/null 2>&1; then
+    if fm_quota_axi_compatible; then
+      :
+    elif [ "$?" -eq 2 ]; then
+      echo "VERSION_UNREADABLE: quota-axi (installed build; requires semantic version >=$FM_QUOTA_AXI_MIN; upgrade: $(install_cmd quota-axi))"
+    else
+      echo "MISSING: quota-axi (install: $(install_cmd quota-axi))"
+    fi
   fi
-  if command -v tasks-axi >/dev/null 2>&1 && ! fm_tasks_axi_compatible; then
-    echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"
+  if command -v tasks-axi >/dev/null 2>&1; then
+    if fm_tasks_axi_compatible; then
+      :
+    elif [ "$?" -eq 2 ]; then
+      echo "VERSION_UNREADABLE: tasks-axi (installed build; requires semantic version >=$FM_TASKS_AXI_MIN; upgrade: $(install_cmd tasks-axi))"
+    else
+      echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"
+    fi
   fi
 }
 

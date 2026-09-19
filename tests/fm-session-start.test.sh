@@ -24,6 +24,8 @@
 #   - composition: the script invokes the real fm-lock.sh/fm-bootstrap.sh/
 #     fm-wake-drain.sh (their real, distinctive output appears verbatim), it
 #     does not reimplement their logic
+#   - essential-tool version diagnostics across absent, below-floor, at-floor,
+#     above-floor, and installed non-semantic build identifiers
 #   - the deferred startup stage: slow network and inactive current-state reads
 #     do not delay the digest, the work still runs and lands durable findings, a
 #     network result surfaces exactly once (inline or as a wake, never both), a
@@ -99,7 +101,7 @@ SH
   cat > "$fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' 'no-mistakes version v1.46.0 (fake) 2026-06-27T00:02:18Z'
+  printf '%s\n' "${FM_FAKE_NO_MISTAKES_VERSION:-no-mistakes version v1.46.0 (fake) 2026-06-27T00:02:18Z}"
   exit 0
 fi
 exit 0
@@ -1323,6 +1325,48 @@ EOF
   assert_grep 'herdr_pane_id=p-new' "$home/state/$SESSION_START_HERDR_SECOND_MATE_ID.meta" \
     "the real respawn path did not record the replacement Herdr pane"
   pass "session start: a confirmed Herdr husk is closed and relaunched"
+}
+
+test_session_start_classifies_essential_tool_versions() {
+  local label version mode rec root home fakebin path out missing unreadable n
+  missing='MISSING: no-mistakes (install: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)'
+  unreadable='VERSION_UNREADABLE: no-mistakes (installed build; requires semantic version >=1.46.0; upgrade: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)'
+  n=0
+  while IFS='^' read -r label version mode; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    rec=$(new_world "version-classification-$n")
+    IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+    make_fake_toolchain "$fakebin"
+    make_fake_ps_claude "$fakebin"
+    path="$fakebin:$BASE_PATH"
+    if [ "$version" = absent ]; then
+      rm -f "$fakebin/no-mistakes"
+      path="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" no-mistakes)"
+    fi
+    out=$(FM_FAKE_NO_MISTAKES_VERSION="$version" run_session_start "$home" "$root" "$path")
+    case "$mode" in
+      missing)
+        assert_contains "$out" "$missing" "$label: absent or below-floor tool did not retain the minimum-version refusal"
+        assert_not_contains "$out" "$unreadable" "$label: known absence or semantic version was called unreadable" ;;
+      unreadable)
+        assert_contains "$out" "$unreadable" "$label: session start hid the unreadable installed version"
+        assert_not_contains "$out" 'MISSING: no-mistakes' "$label: session start falsely reported the installed tool absent" ;;
+      compatible)
+        assert_not_contains "$out" "$missing" "$label: compatible tool was rejected"
+        assert_not_contains "$out" "$unreadable" "$label: compatible semantic version was called unreadable" ;;
+    esac
+  done <<'ROWS'
+absent tool^absent^missing
+semantic version below floor^no-mistakes version v1.45.9 (fake)^missing
+semantic version at floor^no-mistakes version v1.46.0 (fake)^compatible
+semantic version above floor^no-mistakes version v1.47.0 (fake)^compatible
+non-semantic installed build^no-mistakes development build^unreadable
+ROWS
+
+  pass "session start distinguishes absent, below-floor, compatible, and unreadable essential-tool versions"
 }
 
 # --- endpoint liveness: tmux and herdr, live and dead ------------------------
@@ -2689,6 +2733,7 @@ test_session_start_preserves_ambiguous_pi_process
 test_session_start_preserves_transiently_unreadable_tmux
 test_session_start_preserves_proven_bare_shell_recovery
 test_session_start_relaunches_herdr_husk_secondmate
+test_session_start_classifies_essential_tool_versions
 test_status_tail_bounding
 test_status_tail_line_cap
 test_orphan_status_logs_are_printed

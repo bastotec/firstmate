@@ -24,8 +24,9 @@
 # fm_tasks_axi_backend delegates to that resolver and preserves its status;
 # callers must check it before selecting backend-specific flags or exemptions.
 #
-# This file is the single owner of FM_TASKS_AXI_MIN. bin/fm-bootstrap.sh turns a
-# failing check into the operator-facing MISSING diagnostic.
+# This file is the single owner of FM_TASKS_AXI_MIN and the compatibility
+# reason. bin/fm-bootstrap.sh turns a below-floor or feature-probe failure into
+# MISSING and an unreadable installed version into VERSION_UNREADABLE.
 #
 # COMPATIBILITY VERDICT REUSE. fm_tasks_axi_compatible costs three tasks-axi
 # subprocesses, and one session start needs the same verdict twice: once in
@@ -33,12 +34,12 @@
 # child it runs. Two reuse layers collapse that to a single probe:
 #   - Within a process the first probe's answer is memoised.
 #   - Across ONE process hop, a parent that already holds the verdict passes it
-#     in FM_TASKS_AXI_COMPATIBLE=0|1. Sourcing this file CONSUMES that variable
-#     (it is unset from the environment and kept only as a private shell
-#     variable), so the verdict reaches the child that needs it and never leaks
-#     onward into a spawned agent's environment, where it could outlive a
-#     tasks-axi upgrade. Any value other than exactly 0 or 1 is ignored and the
-#     probe runs normally.
+#     in FM_TASKS_AXI_COMPATIBLE=0|1|2 (incompatible, compatible, or unreadable
+#     version output). Sourcing this file CONSUMES that variable (it is unset
+#     from the environment and kept only as a private shell variable), so the
+#     verdict reaches the child that needs it and never leaks onward into a
+#     spawned agent's environment, where it could outlive a tasks-axi upgrade.
+#     Any other value is ignored and the probe runs normally.
 # Both layers are bounded by process lifetime, so a tasks-axi install or upgrade
 # is picked up by the next process rather than being cached to disk.
 
@@ -47,7 +48,7 @@ FM_TASKS_AXI_MIN=0.2.4
 FM_TASKS_AXI_COMPATIBLE_MEMO=${FM_TASKS_AXI_COMPATIBLE:-}
 unset FM_TASKS_AXI_COMPATIBLE
 case "$FM_TASKS_AXI_COMPATIBLE_MEMO" in
-  0|1) ;;
+  0|1|2) ;;
   *) FM_TASKS_AXI_COMPATIBLE_MEMO= ;;
 esac
 
@@ -61,13 +62,21 @@ fm_tasks_axi_version_parts() {
 }
 
 fm_tasks_axi_compatible() {
+  local status
   case "$FM_TASKS_AXI_COMPATIBLE_MEMO" in
     1) return 0 ;;
     0) return 1 ;;
+    2) return 2 ;;
   esac
   if fm_tasks_axi_compatible_probe; then
     FM_TASKS_AXI_COMPATIBLE_MEMO=1
     return 0
+  else
+    status=$?
+  fi
+  if [ "$status" -eq 2 ]; then
+    FM_TASKS_AXI_COMPATIBLE_MEMO=2
+    return 2
   fi
   FM_TASKS_AXI_COMPATIBLE_MEMO=0
   return 1
@@ -76,12 +85,13 @@ fm_tasks_axi_compatible() {
 fm_tasks_axi_compatible_probe() {
   local parts major minor patch extra
   local min_major min_minor min_patch min_extra
-  parts=$(fm_tasks_axi_version_parts) || return 1
-  [ -n "$parts" ] || return 1
+  command -v tasks-axi >/dev/null 2>&1 || return 1
+  parts=$(fm_tasks_axi_version_parts) || return 2
+  [ -n "$parts" ] || return 2
   IFS=' ' read -r major minor patch extra <<< "$parts"
   # An unparseable version is incompatible, never assumed current, so a
   # development or vendored build cannot pass a floor it was never checked against.
-  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
+  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 2
   IFS='.' read -r min_major min_minor min_patch min_extra <<< "$FM_TASKS_AXI_MIN"
   [ -n "$min_major" ] && [ -n "$min_minor" ] && [ -n "$min_patch" ] && [ -z "$min_extra" ] || return 1
   if [ "$major" -gt "$min_major" ] ||

@@ -6,9 +6,10 @@
 # FM_QUOTA_AXI_MIN follows the axi-family floor policy owned beside the floor
 # constants in bin/fm-bootstrap.sh.
 #
-# This file is the single owner of that version number. bin/fm-bootstrap.sh
-# turns a failing check into the operator-facing MISSING diagnostic, which is
-# what keeps an older build from reaching a dispatch intake at all.
+# This file is the single owner of that version number and the compatibility
+# reason. bin/fm-bootstrap.sh turns a below-floor check into MISSING and an
+# unreadable installed version into VERSION_UNREADABLE, keeping either build
+# from reaching a dispatch intake.
 
 FM_QUOTA_AXI_MIN=0.1.29
 
@@ -49,7 +50,7 @@ fm_quota_axi_probe_capability() {
   done
 }
 
-fm_quota_axi_compatible() {
+fm_quota_axi_compatible() {  # 0=compatible, 1=absent/below floor, 2=version unreadable
   local timeout=${1:-} output parts major minor patch extra
   local min_major min_minor min_patch min_extra
   command -v quota-axi >/dev/null 2>&1 || return 1
@@ -58,9 +59,9 @@ fm_quota_axi_compatible() {
       ''|*[!0-9]*|0) return 1 ;;
     esac
     [ "$(type -t fm_run_timed)" = function ] || return 1
-    output=$(fm_run_timed "$timeout" quota-axi --version 2>/dev/null </dev/null) || return 1
+    output=$(fm_run_timed "$timeout" quota-axi --version 2>/dev/null </dev/null) || return 2
   else
-    output=$(quota-axi --version 2>/dev/null </dev/null) || return 1
+    output=$(quota-axi --version 2>/dev/null </dev/null) || return 2
   fi
   parts=$(printf '%s\n' "$output" |
     sed -n 's/.*\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2 \3/p' |
@@ -68,7 +69,7 @@ fm_quota_axi_compatible() {
   IFS=' ' read -r major minor patch extra <<< "$parts"
   # An unparseable version is incompatible, never assumed current, so a
   # development or vendored build cannot pass a floor it was never checked against.
-  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
+  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 2
   # The floor is compared from FM_QUOTA_AXI_MIN so bumping it needs one edit.
   IFS='.' read -r min_major min_minor min_patch min_extra <<< "$FM_QUOTA_AXI_MIN"
   [ -n "$min_major" ] && [ -n "$min_minor" ] && [ -n "$min_patch" ] && [ -z "$min_extra" ] || return 1
