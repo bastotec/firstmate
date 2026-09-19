@@ -339,8 +339,8 @@ class TailPublisher:
         """
         if self.stood_down.is_set():
             return False
-        state = self.build_state(alive, tail)
         with self._publish_lock:
+            state = self.build_state(alive, tail)
             for attempt in (0, 1):
                 try:
                     self.hub.call("POST", "/v1/agent/frames", {
@@ -375,8 +375,8 @@ class TailPublisher:
         holds, so standing down never swallows it, and it gets its one
         recovery attempt even when the pacing window has not elapsed.
         """
-        state = self.build_state(alive, tail)
         with self._publish_lock:
+            state = self.build_state(alive, tail)
             for attempt in (0, 1):
                 try:
                     self.hub.call("POST", "/v1/agent/frames", {
@@ -416,4 +416,16 @@ def empty_tail(session_id: str) -> dict:
         "usage_records": 0,
         "tokens": {field: 0 for field in TOKEN_FIELDS},
         "cost": 0.0,
+    }
+
+
+def unknown_tail(session_id: str) -> dict:
+    """A tail block for storage that has never answered - no counters at all.
+
+    Zeros would claim a read proved the session holds no usage records; the
+    block carries only the session it stands for, and the counters come back
+    with the first read that answers.
+    """
+    return {
+        "session_id": session_id,
     }

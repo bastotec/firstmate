@@ -66,9 +66,10 @@ serve options:
   --tail-interval SECS   how often to poll the session storage (default 1)
   --poll-secs SECS       how long each command long-poll waits (default 25)
 
-The adapter exits when its session is archived, when it is killed through the
-hub or by signal, or when the session storage stops answering - in each case
-after telling the hub.
+The adapter exits when its session is archived or when it is killed through
+the hub or by signal, in each case after telling the hub.  Storage that
+stops answering never ends the tail: the heartbeat keeps carrying the last
+known totals, and no counters at all while it has never answered.
 """
 
 from __future__ import annotations
@@ -351,7 +352,9 @@ class OpencodeTail:
 
         state_interval = self.options.state_interval
         next_heartbeat = time.monotonic()
-        last_totals = None
+        # The startup measurement, when storage answered it, so a storage that
+        # dies before the first poll still has its known totals flowing.
+        last_totals = self.last_totals
         archived = False
         while not self.stop.is_set():
             totals = self.poll_storage()
@@ -367,11 +370,11 @@ class OpencodeTail:
                 # Explicit heartbeat on a fixed idle cadence: the hub measures
                 # staleness against the last state frame, so a silent adapter
                 # would read its endpoint stale, never idle.  Storage that has
-                # never answered publishes no tail block rather than counters
-                # no record backs.
+                # never answered publishes its session with no counters
+                # rather than counters no record backs.
                 self.publisher.publish(
                     True, last_totals if last_totals is not None
-                    else tail.empty_tail(self.session["id"]))
+                    else tail.unknown_tail(self.session["id"]))
                 next_heartbeat = now + state_interval
             if last_totals is not None and not archived:
                 try:
@@ -393,7 +396,7 @@ class OpencodeTail:
         while self.command_busy.is_set() and time.monotonic() < deadline:
             time.sleep(0.05)
         if last_totals is None:
-            last_totals = tail.empty_tail(self.session["id"])
+            last_totals = tail.unknown_tail(self.session["id"])
         self.publisher.close(False, last_totals, exit_code=0)
         return 0
 
@@ -462,7 +465,7 @@ def main(argv: list) -> int:
     try:
         conn = _open_db(options.db)
         session = resolve_session(conn, options.session, options.directory, options.db)
-    except sqlite3.OperationalError as exc:
+    except sqlite3.Error as exc:
         raise SystemExit("fm-stream-opencode-tail: cannot read opencode session storage "
                          "at %s: %s (the pre-v1.2 JSON storage is not supported; point "
                          "--db at an opencode.db)" % (options.db, exc))
@@ -480,17 +483,19 @@ def main(argv: list) -> int:
         hub, options.machine, options.label, cwd,
         os.urandom(16).hex(), SOURCE_NAME, options.rows, options.cols,
         program="fm-stream-opencode-tail")
-    health = publisher.check_protocol(WIRE_PROTOCOL)
-    options.state_interval = publisher.derive_state_interval(
-        health, options.state_interval, options.state_interval_explicit)
-    publisher.register()
+    try:
+        health = publisher.check_protocol(WIRE_PROTOCOL)
+        options.state_interval = publisher.derive_state_interval(
+            health, options.state_interval, options.state_interval_explicit)
+        publisher.register()
+    except RuntimeError as exc:
+        raise SystemExit("fm-stream-opencode-tail: %s" % exc)
     # The first state frame lands BEFORE readiness is announced, so the first
     # thing a spawn may do - ask how the endpoint is - is answerable.
     adapter = OpencodeTail(options, hub, publisher, session)
     first_totals = adapter.poll_storage()
-    if first_totals is None:
-        first_totals = tail.empty_tail(session["id"])
-    publisher.publish(True, first_totals)
+    publisher.publish(True, first_totals if first_totals is not None
+                      else tail.unknown_tail(session["id"]))
     adapter.last_totals = first_totals
     if options.ready_file:
         with open(options.ready_file, "w", encoding="utf-8") as fh:
