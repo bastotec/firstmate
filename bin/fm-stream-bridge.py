@@ -459,7 +459,8 @@ class Commander:
         identity = identity if isinstance(identity, dict) else {}
         leaf = identity.get("leaf_worker_id")
         if not isinstance(leaf, str) or not leaf:
-            return [self.nack(command_id, NACK_NO_SUCH_WORKER)]
+            raise BridgeError("a command record carries no leaf_worker_id, so "
+                              "command %s stays pending" % command_id)
         # The adapter knows which fleet it serves, so this one is settled here
         # and never asked of the hub.
         fleet = identity.get("fleet_id")
