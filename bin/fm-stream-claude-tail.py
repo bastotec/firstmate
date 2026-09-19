@@ -420,14 +420,20 @@ def home_root() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def fail_usage(message: str) -> None:
+    """Report a usage or configuration problem and exit with status 2."""
+    sys.stderr.write(message + "\n")
+    sys.exit(2)
+
+
 def config_line(name: str) -> str:
-    """The first non-empty line of <home>/config/<name>, or empty."""
+    """The first non-empty, non-comment line of <home>/config/<name>, or empty."""
     path = os.path.join(home_root(), "config", name)
     try:
         with open(path, "r", encoding="utf-8") as handle:
             for line in handle:
                 line = line.strip()
-                if line:
+                if line and not line.startswith("#"):
                     return line
     except OSError:
         pass
@@ -442,9 +448,9 @@ def read_token_file(path: str) -> str:
                 if line:
                     return line
     except OSError as exc:
-        raise SystemExit("fm-stream-claude-tail: cannot read --token-file %s: %s"
-                         % (path, exc))
-    raise SystemExit("fm-stream-claude-tail: the token file %s holds no token" % path)
+        fail_usage("fm-stream-claude-tail: cannot read --token-file %s: %s"
+                   % (path, exc))
+    fail_usage("fm-stream-claude-tail: the token file %s holds no token" % path)
 
 
 def resolve_hub(explicit: str) -> str:
@@ -471,8 +477,8 @@ def resolve_hub(explicit: str) -> str:
     if not url:
         url = DEFAULT_HUB_URL
     if not url.startswith(("http://", "https://")):
-        raise SystemExit("fm-stream-claude-tail: hub URL %r must start with "
-                         "http:// or https://" % url)
+        fail_usage("fm-stream-claude-tail: hub URL %r must start with "
+                   "http:// or https://" % url)
     return url.rstrip("/")
 
 
@@ -491,8 +497,8 @@ def resolve_token(explicit_file: str) -> str:
     configured = config_line("stream-token")
     if configured:
         return configured
-    raise SystemExit("fm-stream-claude-tail: no publish token; pass --token-file, "
-                     "set FM_STREAM_TOKEN, or write config/stream-token under FM_HOME")
+    fail_usage("fm-stream-claude-tail: no publish token; pass --token-file, "
+               "set FM_STREAM_TOKEN, or write config/stream-token under FM_HOME")
 
 
 def resolve_machine(explicit: str) -> str:
@@ -505,8 +511,8 @@ def resolve_machine(explicit: str) -> str:
         name = socket.gethostname() or "unknown"
     name = re.sub(r"[^A-Za-z0-9._-]", "-", name)
     if not MACHINE_RE.match(name):
-        raise SystemExit("fm-stream-claude-tail: --machine must be 1-128 "
-                         "characters of [A-Za-z0-9._-]")
+        fail_usage("fm-stream-claude-tail: --machine must be 1-128 "
+                   "characters of [A-Za-z0-9._-]")
     return name
 
 
@@ -616,6 +622,8 @@ class Publisher:
                                          REREGISTER_BACKOFF_MAX)
             return False
         self._register_backoff = REREGISTER_BACKOFF_MIN
+        self._register_not_before = time.monotonic() + REREGISTER_BACKOFF_MIN * (
+            1.0 + REREGISTER_JITTER * random.random())
         sys.stderr.write("fm-stream-claude-tail: re-registered endpoint %s with the "
                          "hub at %s after the hub lost it\n"
                          % (self.endpoint_id, self.hub.base_url))
@@ -634,16 +642,20 @@ class Publisher:
                           {"machine": self.options.machine, "frames": [frame]})
             return True
         except Forgotten:
-            if not self.re_register():
+            if not self.re_register(final=bool(frame.get("closed"))):
                 return False
             try:
                 self.hub.call("POST", "/v1/agent/frames",
                               {"machine": self.options.machine, "frames": [frame]})
                 return True
+            except Superseded:
+                raise
             except (Forgotten, RuntimeError) as exc:
                 sys.stderr.write("fm-stream-claude-tail: publish failed after "
                                  "re-registering: %s\n" % exc)
                 return False
+        except Superseded:
+            raise
         except RuntimeError as exc:
             sys.stderr.write("fm-stream-claude-tail: publish failed: %s\n" % exc)
             return False
@@ -672,20 +684,20 @@ def write_state_file(path: str, frame: dict) -> None:
 
 def build_source(options: argparse.Namespace, require_existing: bool) -> TranscriptSource:
     if bool(options.transcript) == bool(options.project_dir):
-        raise SystemExit("fm-stream-claude-tail: pass exactly one of --transcript "
-                         "and --project-dir")
+        fail_usage("fm-stream-claude-tail: pass exactly one of --transcript "
+                   "and --project-dir")
     if options.transcript:
         if require_existing and not os.path.isfile(options.transcript):
-            raise SystemExit("fm-stream-claude-tail: --transcript %s is not a file"
-                             % options.transcript)
+            fail_usage("fm-stream-claude-tail: --transcript %s is not a file"
+                       % options.transcript)
         return TranscriptSource(transcript=options.transcript)
     if not os.path.isdir(options.project_dir):
-        raise SystemExit("fm-stream-claude-tail: --project-dir %s is not a directory"
-                         % options.project_dir)
+        fail_usage("fm-stream-claude-tail: --project-dir %s is not a directory"
+                   % options.project_dir)
     source = TranscriptSource(project_dir=options.project_dir)
     if require_existing and not source.followed_path():
-        raise SystemExit("fm-stream-claude-tail: no session transcript (*.jsonl) in %s"
-                         % options.project_dir)
+        fail_usage("fm-stream-claude-tail: no session transcript (*.jsonl) in %s"
+                   % options.project_dir)
     return source
 
 
@@ -701,8 +713,8 @@ def cmd_summarize(options: argparse.Namespace) -> int:
         try:
             names = sorted(os.listdir(options.project_dir))
         except OSError as exc:
-            raise SystemExit("fm-stream-claude-tail: cannot read %s: %s"
-                             % (options.project_dir, exc))
+            fail_usage("fm-stream-claude-tail: cannot read %s: %s"
+                       % (options.project_dir, exc))
         for name in names:
             if name.endswith(".jsonl"):
                 TranscriptFile(os.path.join(options.project_dir, name)).poll(counters)
@@ -717,14 +729,14 @@ def cmd_summarize(options: argparse.Namespace) -> int:
 def cmd_serve(options: argparse.Namespace) -> int:
     source = build_source(options, require_existing=True)
     if not LABEL_RE.match(options.label):
-        raise SystemExit("fm-stream-claude-tail: --label must be 1-128 characters "
-                         "of [A-Za-z0-9._@%+-]")
+        fail_usage("fm-stream-claude-tail: --label must be 1-128 characters "
+                   "of [A-Za-z0-9._@%+-]")
     options.machine = resolve_machine(options.machine)
     if not options.cwd:
         options.cwd = (os.path.dirname(os.path.abspath(options.transcript))
                        if options.transcript else os.path.abspath(options.project_dir))
     if not os.path.isabs(options.cwd):
-        raise SystemExit("fm-stream-claude-tail: --cwd must be an absolute path")
+        fail_usage("fm-stream-claude-tail: --cwd must be an absolute path")
 
     hub = HubClient(resolve_hub(options.hub), resolve_token(options.token_file))
     try:
@@ -821,9 +833,6 @@ def cmd_serve(options: argparse.Namespace) -> int:
     # One attempt, with one unpaced re-register behind it: a hub still down
     # ends the teardown rather than holding it open.
     try:
-        # The closing frame is one attempt, with one unpaced re-register
-        # behind it: a hub still down ends the teardown rather than holding
-        # it open.
         publish_now(publisher.closing_frame())
     except Superseded:
         pass
@@ -879,11 +888,11 @@ def main(argv: list) -> int:
         return 0
     if options.command == "serve":
         if not options.label:
-            raise SystemExit("fm-stream-claude-tail: --label is required for serve")
+            fail_usage("fm-stream-claude-tail: --label is required for serve")
         if options.poll_secs <= 0:
-            raise SystemExit("fm-stream-claude-tail: --poll-secs must be positive")
+            fail_usage("fm-stream-claude-tail: --poll-secs must be positive")
         if options.heartbeat_secs <= 0:
-            raise SystemExit("fm-stream-claude-tail: --heartbeat-secs must be positive")
+            fail_usage("fm-stream-claude-tail: --heartbeat-secs must be positive")
         try:
             return cmd_serve(options)
         except Superseded as exc:
