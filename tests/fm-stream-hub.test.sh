@@ -1728,7 +1728,7 @@ test_an_order_no_agent_took_is_refused_rather_than_left_in_doubt() {
   pass "hub: an order no agent took is refused as undelivered"
 }
 
-test_an_order_taken_without_an_answer_is_unconfirmed_and_settles_when_it_arrives() {
+test_an_order_taken_without_an_answer_is_unconfirmed_and_reconciles_when_resent() {
   # The honest middle. The agent HAS the order and may be typing it this
   # instant, so the hub will not call it delivered and will not call it lost -
   # and the record stays answerable, so the truth can still arrive late.
@@ -1749,17 +1749,18 @@ test_an_order_taken_without_an_answer_is_unconfirmed_and_settles_when_it_arrives
   order_id=$(printf '%s' "$out" | jq -r '.order_id')
   [ -n "$order_id" ] || fail "an unconfirmed order still needs an id to reconcile against"
   kill -CONT "$agent" || fail "could not resume the agent"
-  # The acknowledgement is late rather than absent, and reading the order back
-  # is what turns it into an answer.
+  # The acknowledgement is late rather than absent, and resending the same id
+  # through the command path is what turns it into an answer.
   while [ "$waited" -lt 150 ]; do
-    outcome=$(printf '%s' "$(view GET "/v1/orders/$order_id")" | jq -r '.order.outcome')
+    out=$(order "box-a/frozen-$RUN" "$endpoint" "echo MAYBE-TYPED" "$order_id")
+    outcome=$(printf '%s' "$out" | jq -r '.outcome')
     [ "$outcome" = accepted ] && break
     sleep 0.1
     waited=$((waited + 1))
   done
   assert_equals "$outcome" accepted "a late acknowledgement should settle the order it belongs to"
   wait_for_capture "$endpoint" MAYBE-TYPED || fail "the order should have reached the worker after all"
-  pass "hub: an order taken without an answer is unconfirmed until its acknowledgement lands"
+  pass "hub: an unconfirmed order reconciles through a resend after its acknowledgement lands"
 }
 
 test_an_order_is_delivered_once_however_many_times_its_id_is_sent() {
@@ -2000,7 +2001,7 @@ test_an_order_aimed_at_a_replaced_execution_never_reaches_the_replacement
 test_an_order_to_a_worker_its_agent_reported_gone_is_refused
 test_a_leaf_the_hub_cannot_resolve_is_refused_without_calling_the_worker_gone
 test_an_order_no_agent_took_is_refused_rather_than_left_in_doubt
-test_an_order_taken_without_an_answer_is_unconfirmed_and_settles_when_it_arrives
+test_an_order_taken_without_an_answer_is_unconfirmed_and_reconciles_when_resent
 test_an_order_is_delivered_once_however_many_times_its_id_is_sent
 test_a_resend_that_overtakes_a_placement_in_flight_is_answered_not_retyped
 test_a_leaf_that_is_still_rejoining_is_waited_for_rather_than_called_absent
