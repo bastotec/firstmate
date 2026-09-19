@@ -780,6 +780,9 @@ tests/fm-spawn-worktree-settle.test.sh 5687
 tests/fm-startup-memory-budget.test.sh 6964
 tests/fm-startup-network.test.sh 62274
 tests/fm-stow-cascade.test.sh 3101
+# Locally measured seed for the new Claude tail shim suite (three runs, worst
+# ~8s on the dev host); refresh from CI timing artifacts per the doc below.
+tests/fm-stream-claude-tail.test.sh 9000
 tests/fm-subagent-pretool-check.test.sh 1030
 tests/fm-supervision-events.test.sh 719
 tests/fm-tangle-guard.test.sh 9662

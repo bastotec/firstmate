@@ -84,6 +84,10 @@ Run it on the host that runs the hub:
 `bin/fm-stream-bridge.py compare` sets the feed's rendered state for each of this home's stream-backed tasks against `bin/fm-crew-state.sh`, and flags a worker the feed calls stopped while the pane read says it is working.
 Nothing runs it automatically.
 
+A Claude Code worker not launched through the stream backend has no agent behind it, so the hub would never hear of it; `bin/fm-stream-claude-tail.py` closes that gap as observability only.
+It tails the worker's own session transcript under `~/.claude/projects/`, registers one hub endpoint under a machine and label exactly like an agent, and publishes cumulative token counters taken from unique assistant messages, deduplicated by message id so streamed duplicate lines and a resume's rewritten history never double-count.
+It owns no pseudoterminal and never touches the worker; its header owns the counters, rotation to a new session id, and the rejoin behaviour after a hub restart.
+
 ## Security
 
 The hub binds `127.0.0.1` by default and every data route requires a bearer token; the static viewer page is the one exception.
