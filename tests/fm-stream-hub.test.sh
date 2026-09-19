@@ -1784,6 +1784,42 @@ test_an_order_is_delivered_once_however_many_times_its_id_is_sent() {
   pass "hub: an order id already answered for is reported, never delivered again"
 }
 
+test_a_resend_that_overtakes_a_placement_in_flight_is_answered_not_retyped() {
+  # The resend promise has to hold while the FIRST send is still being placed,
+  # not only after it answered. An adapter whose transport dropped mid-order
+  # reconnects and sends the same command id again, and both sends typing the
+  # text once each is exactly the double delivery the journal exists to stop.
+  start_hub order-raced --membership-grace-secs 5
+  local leaf="box-a/racing-$RUN" first second first_pid endpoint
+  # The first send leaves before the leaf exists, so its placement is still
+  # inside the rejoin window when the resend overtakes it and the worker
+  # arrives to take exactly one of the two.
+  ( view POST /v1/orders "$(jq -nc --arg leaf "$leaf" \
+      '{leaf_worker_id: $leaf, order_id: "sent-while-placing", text: "echo RACED-FIRST", submit: true}')" \
+      > "$CASE_DIR/raced-first.out" 2>/dev/null ) &
+  first_pid=$!
+  fm_test_track_helper_pid "$first_pid"
+  sleep 0.3
+  ( sleep 1; start_agent box-a racing >/dev/null 2>&1 ) &
+  fm_test_track_helper_pid $!
+  second=$(view POST /v1/orders "$(jq -nc --arg leaf "$leaf" \
+      '{leaf_worker_id: $leaf, order_id: "sent-while-placing", text: "echo RACED-SECOND", submit: true}')")
+  wait "$first_pid" 2>/dev/null || true
+  first=$(cat "$CASE_DIR/raced-first.out")
+  assert_equals "$(printf '%s' "$first" | jq -r '.outcome')" accepted \
+    "the first send should be accepted once the leaf rejoined"
+  assert_equals "$(printf '%s' "$second" | jq -r '.outcome')" accepted \
+    "the overtaking resend should be answered from the first order"
+  assert_equals "$(printf '%s' "$second" | jq -r '.requested_at')" \
+    "$(printf '%s' "$first" | jq -r '.requested_at')" \
+    "an overtaking resend must be answered from the same order, not a new one"
+  endpoint=$(printf '%s' "$first" | jq -r '.execution_id')
+  wait_for_capture "$endpoint" RACED-FIRST || fail "the rejoined worker never ran the order"
+  assert_not_contains "$(view GET "/v1/tasks/$endpoint/capture?lines=80")" RACED-SECOND \
+    "a resend that overtook its own placement must never type a second time"
+  pass "hub: a resend overtaking a placement in flight is answered, not retyped"
+}
+
 test_a_leaf_that_is_still_rejoining_is_waited_for_rather_than_called_absent() {
   # The whole reason a membership answer is not a first-reply read. A hub that
   # restarted holds nothing until its agents register again, and an order
@@ -1884,6 +1920,41 @@ test_fm_stream_order_round_trip_through_the_operator_entry_point() {
   assert_not_contains "$(view GET "/v1/tasks/$endpoint/capture?lines=40")" CLI-WRONG \
     "a refused order must not have typed anything"
   pass "fm-stream.sh: order and order-status round-trip against a real worker"
+}
+
+test_fm_stream_order_unconfirmed_points_at_its_own_order_status() {
+  # The unconfirmed answer is the one an operator must not retry blindly, so
+  # the tool has to live long enough to say what to read instead: exit 4 and
+  # the reconciliation id, never a crash that reads like a refusal.
+  start_hub order-cli-unconfirmed --command-ack-secs 2
+  local endpoint agent home out code order_id
+  endpoint=$(start_agent box-a stalled)
+  agent=$(agent_pid_for box-a stalled)
+  [ -n "$agent" ] || fail "the agent should be running"
+  # Frozen mid-poll: the hub hands it the order and marks it taken, and no
+  # acknowledgement can come back until it is let go.
+  kill -STOP "$agent" || fail "could not pause the agent"
+  home="$CASE_DIR/cli-home"
+  mkdir -p "$home/config"
+  printf '%s\n' "$URL" > "$home/config/stream-hub"
+  printf '%s\n' "$VIEW_TOKEN" > "$home/config/stream-token"
+  chmod 600 "$home/config/stream-hub" "$home/config/stream-token"
+  out=$(env -u FM_STREAM_HUB -u FM_STREAM_TOKEN FM_CONFIG_OVERRIDE="$home/config" \
+    "$ROOT/bin/fm-stream.sh" order "box-a/stalled-$RUN" "$endpoint" \
+    "echo CLI-UNCONFIRMED" 2>&1) && code=0 || code=$?
+  assert_equals "$code" 4 "an unconfirmed order should exit 4, not $code: $out"
+  assert_contains "$out" "read it back with:" \
+    "the operator must be told how to reconcile instead of retrying"
+  order_id=$(printf '%s' "$out" | sed -n 's/.*order-status //p' | tr -d '[:space:]')
+  [ -n "$order_id" ] || fail "the reconciliation line should carry the order id: $out"
+  kill -CONT "$agent" || fail "could not resume the agent"
+  wait_for_capture "$endpoint" CLI-UNCONFIRMED || fail "the resumed agent never ran the order"
+  out=$(env -u FM_STREAM_HUB -u FM_STREAM_TOKEN FM_CONFIG_OVERRIDE="$home/config" \
+    "$ROOT/bin/fm-stream.sh" order-status "$order_id" 2>&1) \
+    || fail "order-status should read the late-settled order: $out"
+  assert_contains "$out" "accepted" \
+    "a late acknowledgement should settle the order the tool pointed at"
+  pass "fm-stream.sh: an unconfirmed order exits 4 pointing at its order-status"
 }
 
 test_fm_stream_start_status_stop_round_trip() {
@@ -1994,8 +2065,10 @@ test_a_leaf_the_hub_cannot_resolve_is_refused_without_calling_the_worker_gone
 test_an_order_no_agent_took_is_refused_rather_than_left_in_doubt
 test_an_order_taken_without_an_answer_is_unconfirmed_and_settles_when_it_arrives
 test_an_order_is_delivered_once_however_many_times_its_id_is_sent
+test_a_resend_that_overtakes_a_placement_in_flight_is_answered_not_retyped
 test_a_leaf_that_is_still_rejoining_is_waited_for_rather_than_called_absent
 test_ordering_needs_the_control_class_and_a_well_formed_request
 test_fm_stream_order_round_trip_through_the_operator_entry_point
+test_fm_stream_order_unconfirmed_points_at_its_own_order_status
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home

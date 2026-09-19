@@ -139,6 +139,12 @@ ORDER_JOURNAL_MAX = 512
 # command whose fate a caller most needs to learn, and dropped eventually
 # because an agent that has not answered by then is not going to.
 UNACKNOWLEDGED_COMMAND_RETENTION = 900.0
+# How much longer than a placement's own worst case a resend of that order id
+# waits for the call still placing it to answer. Placing is bounded by the
+# membership grace plus the acknowledgement window, so this only absorbs the
+# work between those waits and the answer; past it, the live record is the
+# honest thing to return.
+ORDER_ANSWER_SLACK_SECS = 5.0
 # How long an endpoint may say nothing before the hub presumes its agent is
 # gone. A presumption is not a close: the endpoint stays listed, stays
 # streamable and stays steerable, because a worker the hub has merely not heard
@@ -837,7 +843,7 @@ class Order:
 
     __slots__ = ("order_id", "leaf_worker_id", "requested_execution_id",
                  "execution_id", "created_at", "endpoint", "command", "refusal",
-                 "status")
+                 "status", "answered")
 
     def __init__(self, order_id: str, leaf: str, requested_execution: str,
                  execution: str, endpoint: "Endpoint") -> None:
@@ -859,6 +865,11 @@ class Order:
         # The status this order was first answered with, so a caller that
         # resends its id is told the same thing rather than a second opinion.
         self.status = HTTPStatus.OK
+        # Set once the placement call that owns this order has answered, in
+        # success or refusal. A resend of this order's id that arrives before
+        # then waits on it rather than reading a record still being written
+        # - or placing the order a second time.
+        self.answered = threading.Event()
 
     def worker_gone(self) -> bool:
         """Whether the hub holds the owning AGENT's own report that the worker ended.
@@ -883,6 +894,10 @@ class Order:
             return (ORDER_REFUSED, code, message, False)
         command = self.command
         if command is None:
+            if self.refusal is None and not self.answered.is_set():
+                return (ORDER_UNCONFIRMED, "routing",
+                        "the order is still being placed, so nothing is known "
+                        "yet of its delivery", None)
             return (ORDER_REFUSED, "not_submitted",
                     "no command was ever made for this order, so nothing was "
                     "delivered", False)
@@ -1437,11 +1452,20 @@ class Hub:
             return open_records[-1]
         return members[-1] if members else None
 
-    def record_order(self, order: "Order") -> None:
+    def record_order(self, order: "Order") -> "Order":
+        """Enter an order in the journal, or hand back the one already holding its id.
+
+        Entering under the journal's lock is what reserves a caller-supplied id
+        from the instant its placement begins. A resend arriving while that
+        call is still working - resolving a rejoining leaf, waiting out an
+        acknowledgement - finds this record and is answered from it, so the
+        order's text is typed once however many times its id is sent.
+        """
         with self.lock:
-            self.orders[order.order_id] = order
+            winner = self.orders.setdefault(order.order_id, order)
             while len(self.orders) > ORDER_JOURNAL_MAX:
                 self.orders.popitem(last=False)
+            return winner
 
     def get_order(self, order_id: str) -> "Order":
         with self.lock:
@@ -1462,81 +1486,92 @@ class Hub:
         never saw what prompted it.  Every exit from here is recorded under the
         caller's own id, so an answer that never reached the caller can still be
         read back - and so a caller that resends an id rather than risk having
-        lost one gets the first order's fate instead of a second delivery.
+        lost one gets the first order's fate instead of a second delivery,
+        waiting out a placement still in flight rather than repeating it.
         """
-        if order_id:
-            with self.lock:
-                existing = self.orders.get(order_id)
-            if existing is not None:
-                # Already placed. Typing it a second time is the one outcome
-                # that cannot be taken back, so a repeat is answered from the
-                # record rather than delivered again.
-                return existing
-        self.reap()
-        members = self.leaf_members(leaf)
-        # A leaf that resolves to nothing is not absent yet. Rejoining agents
-        # take seconds, and only an absence that outlasts that window is a
-        # membership verdict rather than a reading.
-        if not members:
-            deadline = _now() + self.options.membership_grace_secs
-            while _now() < deadline:
-                time.sleep(0.25)
-                members = self.leaf_members(leaf)
-                if members:
-                    break
-        current = self.current_execution(members)
         order = Order(order_id or uuid.uuid4().hex, leaf, requested_execution,
-                      current.endpoint_id if current is not None else "", current)
-        self.record_order(order)
-
-        if current is None:
-            self._refuse_order(order, HTTPStatus.NOT_FOUND, "unknown_leaf",
-                               "this hub held no endpoint for leaf %s for %gs, longer "
-                               "than a rejoin takes, so it is not registered here"
-                               % (leaf, self.options.membership_grace_secs))
-
-        if requested_execution and current.endpoint_id != requested_execution:
-            if any(e.endpoint_id == requested_execution for e in members):
-                self._refuse_order(
-                    order, HTTPStatus.CONFLICT, "execution_superseded",
-                    "leaf %s is now execution %s; the order was aimed at %s and was "
-                    "not delivered" % (leaf, current.endpoint_id, requested_execution))
-            self._refuse_order(
-                order, HTTPStatus.NOT_FOUND, "execution_not_found",
-                "this hub holds no execution %s for leaf %s (its current execution "
-                "is %s)" % (requested_execution, leaf, current.endpoint_id))
-
-        if current.closed_by == "agent":
-            self._refuse_order(
-                order, HTTPStatus.GONE, "worker_gone",
-                "the agent owning execution %s reported its worker ended (exit %s), "
-                "so the order was not delivered"
-                % (current.endpoint_id, current.exit_code))
-        if current.closed_at:
-            # The hub closed a record it could no longer steer. It cannot carry
-            # this order, and it knows nothing about the worker either.
-            self._refuse_order(
-                order, HTTPStatus.CONFLICT, "hub_closed_record",
-                "the hub closed its record of execution %s because it could no longer "
-                "steer it; the order was not delivered, and this is not evidence about "
-                "the worker" % current.endpoint_id)
-
+                      "", None)
         try:
-            self.submit_command(current, "input", {
-                "text": payload.get("text"),
-                "keys": payload.get("keys"),
-                "submit": bool(payload.get("submit")),
-            }, order=order)
-        except HubError as exc:
-            if order.command is None or not order.command.taken_at:
-                # No agent ever took this, so the refusal itself is the whole
-                # record and it keeps the reason that produced it. Only a
-                # command an agent HAS taken is left to the command record,
-                # whose unconfirmed verdict no refusal may overwrite.
-                order.refusal = (exc.code, exc.message)
-            order.status = exc.status
-            raise HubError(exc.status, exc.code, exc.message, order.describe())
-        return order
+            existing = self.record_order(order)
+            if existing is not order:
+                # Already placed, or another call is placing it right now.
+                # Typing it a second time is the one outcome that cannot be
+                # taken back, so a repeat is answered from the record rather
+                # than delivered again - and a placement still in flight is
+                # waited out first, so the answer is that order's own fate
+                # and not a snapshot of its middle.
+                if not existing.answered.is_set():
+                    existing.answered.wait(self.options.membership_grace_secs
+                                           + self.options.command_ack_secs
+                                           + ORDER_ANSWER_SLACK_SECS)
+                return existing
+            self.reap()
+            members = self.leaf_members(leaf)
+            # A leaf that resolves to nothing is not absent yet. Rejoining agents
+            # take seconds, and only an absence that outlasts that window is a
+            # membership verdict rather than a reading.
+            if not members:
+                deadline = _now() + self.options.membership_grace_secs
+                while _now() < deadline:
+                    time.sleep(0.25)
+                    members = self.leaf_members(leaf)
+                    if members:
+                        break
+            current = self.current_execution(members)
+            order.execution_id = (current.endpoint_id
+                                  if current is not None else "")
+            order.endpoint = current
+
+            if current is None:
+                self._refuse_order(order, HTTPStatus.NOT_FOUND, "unknown_leaf",
+                                   "this hub held no endpoint for leaf %s for %gs, longer "
+                                   "than a rejoin takes, so it is not registered here"
+                                   % (leaf, self.options.membership_grace_secs))
+
+            if requested_execution and current.endpoint_id != requested_execution:
+                if any(e.endpoint_id == requested_execution for e in members):
+                    self._refuse_order(
+                        order, HTTPStatus.CONFLICT, "execution_superseded",
+                        "leaf %s is now execution %s; the order was aimed at %s and was "
+                        "not delivered" % (leaf, current.endpoint_id, requested_execution))
+                self._refuse_order(
+                    order, HTTPStatus.NOT_FOUND, "execution_not_found",
+                    "this hub holds no execution %s for leaf %s (its current execution "
+                    "is %s)" % (requested_execution, leaf, current.endpoint_id))
+
+            if current.closed_by == "agent":
+                self._refuse_order(
+                    order, HTTPStatus.GONE, "worker_gone",
+                    "the agent owning execution %s reported its worker ended (exit %s), "
+                    "so the order was not delivered"
+                    % (current.endpoint_id, current.exit_code))
+            if current.closed_at:
+                # The hub closed a record it could no longer steer. It cannot carry
+                # this order, and it knows nothing about the worker either.
+                self._refuse_order(
+                    order, HTTPStatus.CONFLICT, "hub_closed_record",
+                    "the hub closed its record of execution %s because it could no longer "
+                    "steer it; the order was not delivered, and this is not evidence about "
+                    "the worker" % current.endpoint_id)
+
+            try:
+                self.submit_command(current, "input", {
+                    "text": payload.get("text"),
+                    "keys": payload.get("keys"),
+                    "submit": bool(payload.get("submit")),
+                }, order=order)
+            except HubError as exc:
+                if order.command is None or not order.command.taken_at:
+                    # No agent ever took this, so the refusal itself is the whole
+                    # record and it keeps the reason that produced it. Only a
+                    # command an agent HAS taken is left to the command record,
+                    # whose unconfirmed verdict no refusal may overwrite.
+                    order.refusal = (exc.code, exc.message)
+                order.status = exc.status
+                raise HubError(exc.status, exc.code, exc.message, order.describe())
+            return order
+        finally:
+            order.answered.set()
 
     def _refuse_order(self, order: "Order", status, code: str, message: str) -> None:
         order.refusal = (code, message)
