@@ -1049,7 +1049,6 @@ FM_STREAM_HUB=          # stream-only: the fleet hub's base URL, checked before 
 FM_STREAM_TOKEN=        # stream-only: this home's hub client token, checked before config/stream-token; never committed
 FM_STREAM_MACHINE=      # stream-only: the name this home's endpoints are grouped under in the central view, checked before config/stream-machine; defaults to the hostname
 FM_STREAM_HTTP_TIMEOUT=30  # stream-only: seconds bounding each adapter request to the hub
-FM_STREAM_ORDER_HTTP_TIMEOUT=60  # stream-only: seconds bounding one fm-stream.sh order call, which the hub holds for its whole membership-and-acknowledgement window
 FM_SESSION_START_STATUS_TAIL=5   # state/*.status lines printed per task in the session-start digest; each line is capped by bin/fm-line-cap-lib.sh
 FM_SESSION_START_QUEUED_LIMIT=20   # plain queued backlog rows in the session-start digest; in-flight, held, and blocked rows are never bounded and done rows are never listed
 FM_BACKLOG_ROW_TIMEOUT_SECS=10   # seconds bounding each backlog row read (bin/fm-backlog-transition-lib.sh); nonpositive or invalid values fall back to 10; the first bound hit latches the sweep so later reads return immediately, each still naming its own item

@@ -1475,8 +1475,8 @@ class Hub:
                            "this hub holds no order %s" % order_id)
         return order
 
-    def place_order(self, leaf: str, requested_execution: str, payload: dict,
-                    order_id: str = "") -> "Order":
+    def place_order(self, leaf: str, requested_execution: str, text: str,
+                    order_id: str) -> "Order":
         """Deliver one leaf-addressed, execution-scoped order, or refuse it.
 
         Addressing is by leaf so a caller names the worker rather than whichever
@@ -1489,8 +1489,7 @@ class Hub:
         lost one gets the first order's fate instead of a second delivery,
         waiting out a placement still in flight rather than repeating it.
         """
-        order = Order(order_id or uuid.uuid4().hex, leaf, requested_execution,
-                      "", None)
+        order = Order(order_id, leaf, requested_execution, "", None)
         try:
             existing = self.record_order(order)
             if existing is not order:
@@ -1528,7 +1527,7 @@ class Hub:
                                    "than a rejoin takes, so it is not registered here"
                                    % (leaf, self.options.membership_grace_secs))
 
-            if requested_execution and current.endpoint_id != requested_execution:
+            if current.endpoint_id != requested_execution:
                 if any(e.endpoint_id == requested_execution for e in members):
                     self._refuse_order(
                         order, HTTPStatus.CONFLICT, "execution_superseded",
@@ -1556,9 +1555,9 @@ class Hub:
 
             try:
                 self.submit_command(current, "input", {
-                    "text": payload.get("text"),
-                    "keys": payload.get("keys"),
-                    "submit": bool(payload.get("submit")),
+                    "text": text,
+                    "keys": None,
+                    "submit": True,
                 }, order=order)
             except HubError as exc:
                 if order.command is None or not order.command.taken_at:
@@ -1887,27 +1886,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not sep or not MACHINE_RE.match(machine) or not LABEL_RE.match(label):
             raise HubError(HTTPStatus.BAD_REQUEST, "bad_leaf",
                            "leaf_worker_id must be '<machine>/<label>'")
-        # The execution the order was AIMED at. A caller that names one gets it
-        # enforced: if the leaf has moved on, the order is refused rather than
-        # delivered to the worker that replaced the one it was composed for.
-        # A caller that names none is bound to whatever the leaf is on when the
-        # order arrives, and the answer says which execution that was - which
-        # is weaker, and is why it is the caller's choice rather than a default
-        # applied silently to a caller that did name one.
         execution = payload.get("execution_id")
-        if execution is None or execution == "":
-            execution = ""
-        elif not isinstance(execution, str) or not ENDPOINT_ID_RE.match(execution):
+        if not isinstance(execution, str) or not ENDPOINT_ID_RE.match(execution):
             raise HubError(HTTPStatus.BAD_REQUEST, "bad_execution",
                            "an execution_id must be 32 lowercase hex characters")
-        if payload.get("text") is None and payload.get("keys") is None:
+        text = payload.get("text")
+        if not isinstance(text, str):
             raise HubError(HTTPStatus.BAD_REQUEST, "bad_input",
-                           "an order needs 'text' or 'keys'")
-        order_id = payload.get("order_id") or ""
-        if order_id and not ORDER_ID_RE.match(str(order_id)):
+                           "an order needs 'text' as a string")
+        if payload.get("submit") is not True:
+            raise HubError(HTTPStatus.BAD_REQUEST, "bad_submit",
+                           "an order must set 'submit' to true")
+        allowed = {"leaf_worker_id", "execution_id", "order_id", "text", "submit"}
+        unexpected = sorted(set(payload) - allowed)
+        if unexpected:
+            raise HubError(HTTPStatus.BAD_REQUEST, "bad_order_fields",
+                           "unsupported order fields: %s" % ", ".join(unexpected))
+        order_id = payload.get("order_id")
+        if not isinstance(order_id, str) or not ORDER_ID_RE.match(order_id):
             raise HubError(HTTPStatus.BAD_REQUEST, "bad_order_id",
                            "an order_id must be 1-128 characters of [A-Za-z0-9._-]")
-        order = self.server.hub.place_order(leaf, execution, payload, str(order_id))
+        order = self.server.hub.place_order(leaf, execution, text, order_id)
         # Placing a fresh order raises on every refusal, so reaching here means
         # either a delivery or a caller resending an id the hub already
         # answered - and a resent id is told exactly what the first answer was.
