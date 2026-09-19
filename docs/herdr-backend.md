@@ -278,8 +278,11 @@ No Herdr-specific copy of that protocol exists.
 
 ## Restart and liveness behavior
 
-Stopping and restarting a named Herdr server preserves workspace, tab, pane, and label ids, but the underlying harness processes and live agent registrations do not survive.
-A restored same-labeled tab with a missing pane or no registered agent is a husk.
+Stopping and restarting a named Herdr server preserves workspace, tab, pane, and label ids, and the harness processes that ran in those panes do not survive it.
+Herdr 0.9.0 then resumes each previously registered agent into its restored pane itself, because its `[session] resume_agents_on_restore` setting defaults to true: a Claude pane comes back running `claude --resume <session-id>` a few seconds after the server starts ([verification](verification/runtime-backends.md) "Agent resume on server restart").
+That resumed agent is registered and alive, so it reads `alive` like any other, but it carries none of Firstmate's launch flags, including the Claude permission flag; the startup liveness sweep and a remote second mate's launch report such a Claude secondmate as a posture mismatch instead of healthy, and never stop or replace it ([remote second mates](remote-secondmates.md#normal-operation)).
+Firstmate does not change that Herdr setting.
+A restored same-labeled tab with a missing pane or no registered agent is a husk, which is what a restored pane holds when Herdr does not resume its agent.
 Create replaces only a confidently dead or no-agent husk, creates the replacement before closing the old tab, and refuses live or unknown states.
 This prevents closing the workspace's last tab before a replacement exists.
 

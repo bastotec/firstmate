@@ -2177,7 +2177,17 @@ fm_backend_herdr_pane_process_state_sample() {  # <session> <pane_id>
       return 0
     fi
   done <<EOF
-$(printf '%s\n' "$rows" | awk -v shell="$shell_pid" '
+$(fm_backend_herdr_shell_descendants "$rows" "$shell_pid")
+EOF
+  printf 'shell'
+}
+
+# fm_backend_herdr_shell_descendants: every descendant of <shell-pid> in <rows>
+# (`ps -axo pid=,ppid=,comm=` output), one `<pid><TAB><comm>` line each, the
+# shell itself excluded. The one owner of the pane-shell descendant walk that
+# both the idle-pane proof above and fm_backend_herdr_pane_agent_pids read.
+fm_backend_herdr_shell_descendants() {  # <rows> <shell-pid>
+  printf '%s\n' "$1" | awk -v shell="$2" '
   {
     pid[NR] = $1; ppid[NR] = $2
     line = $0
@@ -2196,9 +2206,62 @@ $(printf '%s\n' "$rows" | awk -v shell="$shell_pid" '
     for (n = 1; n <= NR; n++) {
       if ((pid[n] in want) && pid[n] != shell) printf "%s\t%s\n", pid[n], comm[n]
     }
-  }')
+  }'
+}
+
+# fm_backend_herdr_pane_agent_pids: the operating-system pid of each harness
+# process <pane_id> hosts, one per line, reduced to the top of each harness
+# chain (fm_agent_process_topmost). Candidates are the foreground processes
+# Herdr's `pane process-info` names for this exact pane and every descendant of
+# its pane shell in the real process table, classified by the same shared rule
+# the liveness proof above uses; a foreground pid must also still be in that
+# table, so a report about an exited process never names a live agent. Prints
+# nothing for an agent-free pane. Returns 1 when the pane's processes cannot be
+# read, which callers must keep distinct from "no agent".
+fm_backend_herdr_pane_agent_pids() {  # <session> <pane_id>
+  local session=$1 pane_id=$2 info shell_pid ps_bin rows pid name argv0 args found=
+  info=$(fm_backend_herdr_cli "$session" pane process-info --pane "$pane_id" 2>/dev/null) || return 1
+  printf '%s' "$info" | jq -e --arg pane "$pane_id" '
+    .result.type == "pane_process_info"
+    and .result.process_info.pane_id == $pane
+  ' >/dev/null 2>&1 || return 1
+  ps_bin=${FM_HERDR_PS_BIN:-ps}
+  rows=$(LC_ALL=C "$ps_bin" -axo pid=,ppid=,comm= 2>/dev/null) || return 1
+  while IFS=$'\t' read -r pid name argv0 args; do
+    [ -n "$pid" ] || continue
+    printf '%s\n' "$rows" | awk -v p="$pid" '$1 == p { found = 1 } END { exit(found ? 0 : 1) }' || continue
+    [ "$(fm_agent_process_classify "$name" "$argv0" "$args" "$pid")" = agent ] || continue
+    found="$found$pid"$'\n'
+  done <<EOF
+$(printf '%s' "$info" | jq -r '
+  .result.process_info.foreground_processes // [] | .[]
+  | select((.pid | type) == "number")
+  | [(.pid | floor | tostring), (.name // ""), (((.argv // [])[0]) // .argv0 // ""),
+     (.cmdline // ((.argv // []) | join(" ")) // "")]
+  | map(gsub("[\t\n\r]"; " ")) | join("\t")' 2>/dev/null)
 EOF
-  printf 'shell'
+  shell_pid=$(printf '%s' "$info" | jq -er \
+    '.result.process_info.shell_pid | select(type == "number" and . > 1) | floor' 2>/dev/null) || shell_pid=
+  if [ -n "$shell_pid" ]; then
+    while IFS=$'\t' read -r pid name; do
+      [ -n "$pid" ] || continue
+      args=$(LC_ALL=C "$ps_bin" -p "$pid" -o args= 2>/dev/null) || continue
+      args=${args#"${args%%[![:space:]]*}"}
+      argv0=${args%%[[:space:]]*}
+      [ "$(fm_agent_process_classify "$name" "$argv0" "$args" "$pid")" = agent ] || continue
+      found="$found$pid"$'\n'
+    done <<EOF
+$(fm_backend_herdr_shell_descendants "$rows" "$shell_pid")
+EOF
+  fi
+  printf '%s' "$found" | sort -un | fm_agent_process_topmost
+}
+
+# fm_backend_herdr_agent_pids: fm_backend_herdr_pane_agent_pids for a recorded
+# `<session>:<pane>` target (bin/fm-backend.sh's fm_backend_agent_pids).
+fm_backend_herdr_agent_pids() {  # <target>
+  fm_backend_herdr_parse_target "$1" || return 1
+  fm_backend_herdr_pane_agent_pids "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE"
 }
 
 # fm_backend_herdr_pane_agent_state: classify <pane_id> in <session> as one of

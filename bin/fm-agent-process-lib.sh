@@ -109,3 +109,61 @@ fm_agent_process_classify() {  # <name> <argv0> <args> [pid] -> agent|shell|othe
     printf 'other'
   fi
 }
+
+# fm_agent_process_topmost: filter a pid list (stdin, one per line) down to the
+# pids whose parent is not also in it, so a harness that spawned helpers whose
+# names or install paths also read as a harness is reported once, as the
+# process its launch created. A pid whose parent cannot be read is kept.
+fm_agent_process_topmost() {  # pids on stdin -> pids on stdout
+  local pids pid ppid
+  pids=" $(tr '\n' ' ') "
+  for pid in $pids; do
+    ppid=$(LC_ALL=C ps -p "$pid" -o ppid= 2>/dev/null | tr -d '[:space:]')
+    case "$pids" in
+      *" ${ppid:-none} "*) ;;
+      *) printf '%s\n' "$pid" ;;
+    esac
+  done
+}
+
+# fm_agent_process_has_args: whether live <pid>'s command line carries <arg>...
+# as consecutive arguments after argv[0]. Returns 0 when it does, 1 when the
+# line was read and does not, and 2 when the process cannot be read. A
+# Linux-compatible /proc keeps argv boundaries, so one long argument - a launch
+# brief quoting a flag - can never satisfy the match; elsewhere ps's flattened
+# line is split on whitespace, which keeps every flag whole.
+fm_agent_process_has_args() {  # <pid> <arg>...
+  local pid=$1 proc_root flat
+  shift
+  case "$pid" in ''|*[!0-9]*) return 2 ;; esac
+  [ "$#" -gt 0 ] || return 2
+  proc_root=${FM_PROC_ROOT_OVERRIDE:-/proc}
+  if [ -r "$proc_root/$pid/cmdline" ]; then
+    perl -e '
+      my $path = shift;
+      open(my $fh, "<", $path) or exit 2;
+      local $/; my $raw = <$fh>; close $fh;
+      exit 2 unless defined $raw && length $raw;
+      $raw =~ s/\0\z//;
+      my @argv = split /\0/, $raw, -1;
+      for my $i (1 .. $#argv - $#ARGV) {
+        my $hit = 1;
+        for my $j (0 .. $#ARGV) { if ($argv[$i + $j] ne $ARGV[$j]) { $hit = 0; last } }
+        exit 0 if $hit;
+      }
+      exit 1;
+    ' "$proc_root/$pid/cmdline" "$@"
+    return $?
+  fi
+  flat=$(COLUMNS=100000 LC_ALL=C ps -ww -p "$pid" -o args= 2>/dev/null) || return 2
+  [ -n "$flat" ] || return 2
+  perl -e '
+    my @argv = split " ", shift;
+    for my $i (1 .. $#argv - $#ARGV) {
+      my $hit = 1;
+      for my $j (0 .. $#ARGV) { if ($argv[$i + $j] ne $ARGV[$j]) { $hit = 0; last } }
+      exit 0 if $hit;
+    }
+    exit 1;
+  ' "$flat" "$@"
+}

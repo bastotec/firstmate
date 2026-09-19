@@ -377,6 +377,7 @@ The token is the file's whitespace-trimmed content.
 `auto` replaces that flag with `--permission-mode auto`, Claude Code's classifier-reviewed permission mode, for a captain who refuses to run workers in bypass mode; every other part of the Claude launch, including its environment prefix, inline settings, model, and effort flags, is unchanged.
 Any other value, or an unreadable file, refuses every spawn from that home, whichever harness it would launch, before any endpoint, worktree, or task record exists, and names the accepted values; Firstmate never falls back to a permission posture the captain did not choose.
 `bin/fm-spawn.sh` reads the file on every spawn and relaunch, so a change takes effect at the next launch without a restart.
+A live Claude secondmate whose own process arguments lack the selected flag is reported as a posture mismatch rather than healthy, and a remote secondmate relaunch is reported only once its new agent carries the flag ([remote second mates](remote-secondmates.md#normal-operation)).
 The file is a captain-wide safety preference, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract; a secondmate's own Claude crewmates then launch on the same posture.
 The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md) records the verified shape of both launches and which once-per-machine dialog each one can meet.
 
@@ -556,7 +557,7 @@ Local routes use direct guarded filesystem operations, while remote routes deleg
 It emits `SECONDMATE_SYNC:` only when a home was skipped for an actionable sync reason, inheritance failed, or a divergent shared captain-preference copy was quarantined.
 When a running home advances and its loaded instruction surface (`AGENTS.md`, `bin/`, or `.agents/skills/`) changed, bootstrap sends the re-read nudge itself through the stable `fm-<id>` selector and reports the exact completed send as `BOOTSTRAP_INFO:`.
 If that send fails, bootstrap keeps an idempotent retry marker and emits `NUDGE_SECONDMATES:` with the failure reason.
-The same bootstrap run emits `SECONDMATE_LIVENESS:` only when a registered secondmate is skipped or its relaunch fails; already-live and successfully relaunched secondmates are handled silently.
+The same bootstrap run emits `SECONDMATE_LIVENESS:` only when a registered secondmate is skipped or its relaunch fails, plus the report-only posture-mismatch line for an already-live Claude secondmate whose process arguments lack the selected Claude permission flag; every other already-live or successfully relaunched secondmate is handled silently.
 For a mid-session inherited local-material edit where tracked-file sync is not needed, run `bin/fm-config-push.sh`.
 It uses the same live secondmate discovery and propagation helper as bootstrap; its [help](../bin/fm-config-push.sh) owns reporting and exit semantics, and [`fm_config_inherit_items`](../bin/fm-config-inherit-lib.sh) declares the inherited items.
 When an allowlisted config item changes for an already-running local home, it sends the literal-content reread pointer described in [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md); unchanged allowlisted config sends no pointer unless a previous delivery is pending.

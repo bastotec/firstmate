@@ -23,6 +23,7 @@
 #                 "NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>",
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
+#                 "SECONDMATE_LIVENESS: secondmate <id>: posture mismatch: live agent pid <pid> lacks the configured Claude permission flag '<flag>' (<where>); reported only, not relaunched",
 #                 "SECONDMATE_HANDOFF: secondmate <id>: pending delivery: <n> item(s)",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
 #          When a RUNNING secondmate home is fast-forwarded, its target is
@@ -50,8 +51,14 @@
 #          fm_backend_agent_state: skipped distinguishes an existing ambiguous
 #          process, an unreadable target, and an unverified backend; respawn
 #          failed names whether the endpoint was missing or agent-less.
-#          Already-live and successfully relaunched secondmates are silent
-#          unless FM_BOOTSTRAP_VERBOSE_FACTS=1 requests BOOTSTRAP_INFO facts.
+#          The posture-mismatch line above is the one report-only exception: it
+#          names an already-live Claude agent running without the flag
+#          config/claude-permission-mode selects, and never stops or relaunches
+#          that agent, because replacing a running secondmate is the captain's
+#          call (bin/fm-claude-permission-lib.sh owns the posture).
+#          Every other already-live or successfully relaunched secondmate is
+#          silent unless FM_BOOTSTRAP_VERBOSE_FACTS=1 requests BOOTSTRAP_INFO
+#          facts.
 #          A HOME_ROUTE line means this home's firstmate-repo delivery route - its
 #          checkout's origin, or the origin its validation pipeline registration
 #          saved - is a local filesystem path rather than a remote, so a validated
@@ -199,6 +206,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-backend.sh disable=SC1091
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-claude-permission-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-claude-permission-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 # fm-timing-lib.sh is inert unless FM_TIMING_LOG names a file, which only the
@@ -689,6 +698,20 @@ report_relaunch() {  # <id> <cause> <where>
   echo "BOOTSTRAP_INFO: secondmate $1 relaunched after $2 ($3)"
 }
 
+# A live secondmate agent counts as healthy only when it runs on the configured
+# Claude permission posture. A session resumed by some other launcher - Herdr
+# resumes every registered agent after its server restarts - comes back without
+# it, so the sweep names that agent instead of calling it live. Report only:
+# the agent is neither stopped nor relaunched here, because whether and when to
+# replace a running secondmate is the captain's call.
+report_posture_mismatch() {  # <id> <verdict-line> <flag> <where>
+  case "$2" in
+    mismatch\ *)
+      echo "SECONDMATE_LIVENESS: secondmate $1: posture mismatch: live agent pid ${2#mismatch } lacks the configured Claude permission flag '$3' ($4); reported only, not relaunched"
+      ;;
+  esac
+}
+
 secondmate_liveness_sweep() {
   # Idempotent secondmate liveness guarantee - SESSION START ONLY. The detailed
   # state machine and its only recovery-authorizing states are owned by
@@ -739,7 +762,7 @@ secondmate_liveness_one_timed() {  # <meta> <id> <label>
 # secondmate_note_respawned so a concurrent sweep can collect them after wait.
 secondmate_liveness_one() {  # <meta> <id>
   local meta=$1 id=$2
-  local window harness backend target agent_state out cause remote_host remote_rc readiness_reason route_out remote_backend kill_out
+  local window harness backend target agent_state out cause remote_host remote_rc readiness_reason route_out remote_backend kill_out flag
   window=$(fm_meta_get "$meta" window)
   [ -n "$window" ] || return 0
   harness=$(fm_meta_get "$meta" harness)
@@ -793,6 +816,9 @@ secondmate_liveness_one() {  # <meta> <id>
           echo "SECONDMATE_LIVENESS: secondmate $id: skipped: alive remote endpoint is recorded on backend '${remote_backend:-missing}'; migrate or retire it explicitly"
           return 0
         fi
+        report_posture_mismatch "$id" \
+          "$(printf '%s\n' "$route_out" | sed -n 's/^posture=//p' | tail -1)" \
+          "$(printf '%s\n' "$route_out" | sed -n 's/^posture_flag=//p' | tail -1)" "host=$remote_host"
         [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: remote secondmate $id already live (host=$remote_host)"
         ;;
       dead|missing)
@@ -823,6 +849,10 @@ secondmate_liveness_one() {  # <meta> <id>
   esac
   case "$agent_state" in
     alive)
+      if [ "$harness" = claude ] && flag=$(fm_claude_permission_flag "$CONFIG" 2>/dev/null); then
+        report_posture_mismatch "$id" "$(fm_claude_permission_endpoint_verdict "$backend" "$target" "$flag")" \
+          "$flag" "backend=$backend"
+      fi
       if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
         echo "BOOTSTRAP_INFO: secondmate $id already live (backend=$backend)"
       fi
