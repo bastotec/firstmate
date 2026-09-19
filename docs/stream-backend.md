@@ -84,6 +84,10 @@ Run it on the host that runs the hub:
 `bin/fm-stream-bridge.py compare` sets the feed's rendered state for each of this home's stream-backed tasks against `bin/fm-crew-state.sh`, and flags a worker the feed calls stopped while the pane read says it is working.
 Nothing runs it automatically.
 
+A Claude Code worker not launched through the stream backend has no agent behind it, so the hub would never hear of it; `bin/fm-stream-claude-tail.py` closes that gap as observability only.
+It tails the worker's own session transcript under `~/.claude/projects/`, registers one hub endpoint under a machine and label exactly like an agent, and publishes cumulative token counters taken from unique assistant messages, deduplicated by message id so streamed duplicate lines and a resume's rewritten history never double-count.
+It owns no pseudoterminal and never touches the worker; its header owns the counters, rotation to a new session id, and the rejoin behaviour after a hub restart.
+
 ## Security
 
 The hub binds `127.0.0.1` by default and every data route requires a bearer token; the static viewer page is the one exception.
@@ -256,7 +260,7 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
 
 - Experimental, with no dedicated real-backend CI lane.
   [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) is the live guard that proves each installed harness is still classified through the hub, and the command that refreshes the dated per-harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md).
-  The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, and `tests/fm-stream-bridge.test.sh`.
+  The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, and `tests/fm-stream-claude-tail.test.sh`.
 - No secondmate support.
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.
 - An unreachable agent and a dead worker are indistinguishable from the hub, so a stale read carries no liveness verdict at all.
