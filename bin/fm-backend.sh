@@ -1014,6 +1014,22 @@ fm_backend_agent_state() {  # <backend> <target>
   esac
 }
 
+# fm_backend_agent_pids: the operating-system pid of each harness process the
+# recorded endpoint hosts, one per line, reduced to the top of each harness
+# chain, so a caller can hold an agent by process identity (bin/fm-wake-lib.sh's
+# fm_pid_identity) or read the arguments it was launched with. Empty output is
+# an agent-free endpoint. Only tmux and herdr have that process-level view;
+# every other backend, and a herdr pane whose processes cannot be read, returns 1.
+fm_backend_agent_pids() {  # <backend> <target>
+  local backend=$1 target=$2
+  fm_backend_source "$backend" || return 1
+  case "$backend" in
+    tmux) fm_backend_tmux_agent_pids "$target" ;;
+    herdr) fm_backend_herdr_agent_pids "$target" ;;
+    *) return 1 ;;
+  esac
+}
+
 # Backward-compatible three-state view for existing callers. An
 # authoritatively missing endpoint is confidently not a live agent, while every
 # ambiguous, unreadable, or unverified result stays unknown.

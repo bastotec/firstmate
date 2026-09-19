@@ -219,6 +219,10 @@ Backends that already refuse secondmate launch, currently Orca, cmux, and stream
 
 Startup liveness recovery relaunches a dead or missing remote second mate through this same command, so recovery passes the same readiness gate rather than a weaker one.
 A dead remote endpoint is removed before that relaunch, and a removal the backend cannot confirm refuses the launch instead of risking a duplicate mate beside a worker that may still be running.
+A launch that starts an agent reports success only after the host proves, by process identity, that it replaced the previous one: the new endpoint hosts an agent process that did not exist before, a Claude agent carries the flag `config/claude-permission-mode` selects, and every previous agent process is gone.
+A previous agent still running after its endpoint was removed refuses the launch rather than gaining a twin, and a proof that cannot be made within the bound is reported as a failed launch; [`bin/fm-remote-secondmate-control.sh`](../bin/fm-remote-secondmate-control.sh) owns that contract.
+An endpoint that is already alive is reused rather than relaunched, but a Claude agent there without the configured flag is reported as a posture mismatch, both by the launch and by the startup liveness sweep, and is neither stopped nor replaced.
+That is the shape a restarted Herdr server leaves behind, because it resumes each previously registered agent itself without Firstmate's launch flags ([Herdr backend](herdr-backend.md#restart-and-liveness-behavior)).
 
 A persistent remote route's parent metadata intentionally has no local spawn-generation marker and identifies the route by its recorded host instead.
 The Bearings inventory-reconcile hook therefore accepts these markerless routes, revalidates the sampled host at delivery, and refuses a route that changed hosts; [`fm-secondmate-reconcile.sh`](../bin/fm-secondmate-reconcile.sh) owns the exact cooldown, identity, and reporting contract.
@@ -284,6 +288,7 @@ The primary records that remote nudge before delivery and retries it during lock
 Local secondmates retain their generation-specific local pointer contract; remote transfers do not copy those primary-local instruction paths.
 
 A live remote second mate is restarted with `relaunch`, which runs the ordinary [control plane](agent-control.md) on that host: the endpoint record there was written by a host-local launch and carries no remote placement, so the transaction, its checkpoint, and its postconditions are the local ones.
+The host then applies the same replacement proof as a launch before it reports the restart: the old agent process, identified before anything touched it, must be gone and the new one must carry the configured Claude permission flag.
 The primary passes `<harness> <model|default|-> <effort|default|->` explicitly, using `default` when an axis has no parent pin, because `config/secondmate-harness` is not inherited into a second mate's home and the file on that host belongs to a different home; letting the far side re-resolve it would silently move the mate onto another runtime.
 SSH exit 255 leaves completion unknown and the route preserved, exactly as every other verb here.
 
@@ -326,6 +331,7 @@ bin/fm-test-run.sh tests/fm-remote-backlog-handoff.test.sh
 bin/fm-test-run.sh tests/fm-remote-secondmate-lifecycle-e2e.test.sh
 bin/fm-test-run.sh tests/fm-remote-home-migration.test.sh
 bin/fm-test-run.sh tests/fm-remote-secondmate-trace-context.test.sh
+bin/fm-test-run.sh tests/fm-remote-secondmate-replacement.test.sh
 ```
 
 The migration case reuses that same lifecycle fixture and covers the refusal with a live child record, the refusal on an unready host with no `--fix` repair, exact durable-byte and steering-correlation transfer, a rerun that finds a steer queued after the first snapshot and watcher bookkeeping beside it, credential exclusion, the frozen-archive guards, a known launch failure restoring the original route while both copies survive, and an unknown completion converging on rerun without a duplicate endpoint or any effect on an unselected sibling home.
