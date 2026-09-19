@@ -1,0 +1,8 @@
+hub on http://127.0.0.1:32837
+FAIL B1-no-token: expected exit 2, got 1
+FAIL B2-bad-scheme: expected exit 2, got 1
+B2 stderr: fm-stream-claude-tail: hub URL 'ftp://127.0.0.1:32837' must start with http:// or https://
+FAIL C1-comment-config: registered=no listed=none; log:
+fm-stream-claude-tail: hub URL '# the staging hub lives here' must start with http:// or https://
+PASS C2-env-resolution: FM_STREAM_HUB/FM_STREAM_TOKEN registered endpoint 80a49bea4ef1ead1856f7904b70c0f46
+RESULT: 3 failing config checks

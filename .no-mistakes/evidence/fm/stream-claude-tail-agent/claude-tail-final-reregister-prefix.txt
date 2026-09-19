@@ -1,0 +1,12 @@
+hub A on http://127.0.0.1:58455
+shim endpoint e287bf286d35b89ff7e327664dcf375f on hub A; killing hub A at 1789835795.067056605
+hub B up at 1789835799.867314624; waiting for the shim to rejoin
+hub C up and SIGTERM sent at 1789835802.387437208 (rejoin at 1789835802.086764371)
+shim exited with 0
+hub C task record: {"error": "no_such_endpoint", "message": "no endpoint e287bf286d35b89ff7e327664dcf375f", "ok": false}
+--- shim.log (tail) ---
+fm-stream-claude-tail 1.0.0 endpoint e287bf286d35b89ff7e327664dcf375f following /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2X48WXPNFQM7A7M5EDRDSFY/manual-checks/case-final-shim-prefix/proj/session.jsonl -> http://127.0.0.1:58455
+fm-stream-claude-tail: publish failed: cannot reach the hub at http://127.0.0.1:58455: [Errno 111] Connection refused
+fm-stream-claude-tail: publish failed: cannot reach the hub at http://127.0.0.1:58455: [Errno 111] Connection refused
+fm-stream-claude-tail: re-registered endpoint e287bf286d35b89ff7e327664dcf375f with the hub at http://127.0.0.1:58455 after the hub lost it
+RESULT: endpoint NOT closed by its agent on hub C (closed_by='')

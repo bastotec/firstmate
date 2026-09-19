@@ -1,0 +1,10 @@
+hub on http://127.0.0.1:46245
+shim endpoint 8a2bd57a19b063b103a8fe028cea2d5b registered; going silent >10s while hub stays up
+{"endpoint": {"agent_silent_for_secs": 0.0, "closed_at": null, "closed_by": null, "cols": 1, "created_at": 1789835472.063965, "cwd": "/", "endpoint_id": "ffffffffffffffffffffffffffffffff", "exit_code": null, "label": "task-super", "machine": "tailmachine", "rows": 1, "state_age_secs": null, "stream_offset": 0}, "ok": true}
+{"accepted": 1, "ok": true}
+replacement published; waiting for the silent shim's heartbeat to be refused
+shim exited with 3
+--- shim.log (tail) ---
+fm-stream-claude-tail 1.0.0 endpoint 8a2bd57a19b063b103a8fe028cea2d5b following /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2X48WXPNFQM7A7M5EDRDSFY/manual-checks/case-superseded-fm-stream-claude-tail/proj/session.jsonl -> http://127.0.0.1:46245
+fm-stream-claude-tail: hub refused POST /v1/agent/frames: machine tailmachine serves task-super from another endpoint, not from 8a2bd57a19b063b103a8fe028cea2d5b
+RESULT: stood down with exit 3 on endpoint_superseded from the frames route

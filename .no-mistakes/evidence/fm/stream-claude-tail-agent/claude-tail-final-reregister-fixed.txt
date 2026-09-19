@@ -1,0 +1,13 @@
+hub A on http://127.0.0.1:36941
+shim endpoint ecb71d7cda6ea9c1988dbd5f819df9f2 on hub A; killing hub A at 1789835750.438433119
+hub B up at 1789835755.208231437; waiting for the shim to rejoin
+hub C up and SIGTERM sent at 1789835757.769227691 (rejoin at 1789835757.451300627)
+shim exited with 0
+hub C task record: {"ok": true, "task": {"agent_silent_for_secs": 0.034, "closed_at": 1789835757.7696593, "closed_by": "agent", "cols": 1, "created_at": 1789835757.76326, "cwd": "/home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2X48WXPNFQM7A7M5EDRDSFY/manual-checks/case-final-fm-stream-claude-tail/proj", "endpoint_id": "ecb71d7cda6ea9c1988dbd5f819df9f2", "exit_code": 0, "label": "task-final", "machine": "tailmachine", "rows": 1, "state_age_secs": 0.034, "stream_offset": 0}}
+--- shim.log (tail) ---
+fm-stream-claude-tail 1.0.0 endpoint ecb71d7cda6ea9c1988dbd5f819df9f2 following /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2X48WXPNFQM7A7M5EDRDSFY/manual-checks/case-final-fm-stream-claude-tail/proj/session.jsonl -> http://127.0.0.1:36941
+fm-stream-claude-tail: publish failed: cannot reach the hub at http://127.0.0.1:36941: [Errno 111] Connection refused
+fm-stream-claude-tail: publish failed: cannot reach the hub at http://127.0.0.1:36941: [Errno 111] Connection refused
+fm-stream-claude-tail: re-registered endpoint ecb71d7cda6ea9c1988dbd5f819df9f2 with the hub at http://127.0.0.1:36941 after the hub lost it
+fm-stream-claude-tail: re-registered endpoint ecb71d7cda6ea9c1988dbd5f819df9f2 with the hub at http://127.0.0.1:36941 after the hub lost it
+RESULT: the closing frame re-registered through the pace window; hub C closed_by=agent

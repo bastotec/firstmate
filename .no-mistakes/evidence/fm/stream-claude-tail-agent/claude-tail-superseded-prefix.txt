@@ -1,0 +1,11 @@
+hub on http://127.0.0.1:33649
+shim endpoint 67341d5edd21aa8212ed77f68b48dd42 registered; going silent >10s while hub stays up
+{"endpoint": {"agent_silent_for_secs": 0.0, "closed_at": null, "closed_by": null, "cols": 1, "created_at": 1789835499.6848378, "cwd": "/", "endpoint_id": "ffffffffffffffffffffffffffffffff", "exit_code": null, "label": "task-super", "machine": "tailmachine", "rows": 1, "state_age_secs": null, "stream_offset": 0}, "ok": true}
+{"accepted": 1, "ok": true}
+replacement published; waiting for the silent shim's heartbeat to be refused
+shim still running 10s after supersession; killing
+--- shim.log (tail) ---
+fm-stream-claude-tail 1.0.0 endpoint 67341d5edd21aa8212ed77f68b48dd42 following /home/bruno/.no-mistakes/worktrees/0311921e9ccd/01M2X48WXPNFQM7A7M5EDRDSFY/manual-checks/case-superseded-shim-prefix/proj/session.jsonl -> http://127.0.0.1:33649
+fm-stream-claude-tail: publish failed: hub refused POST /v1/agent/frames: machine tailmachine serves task-super from another endpoint, not from 67341d5edd21aa8212ed77f68b48dd42
+fm-stream-claude-tail: publish failed: hub refused POST /v1/agent/frames: machine tailmachine serves task-super from another endpoint, not from 67341d5edd21aa8212ed77f68b48dd42
+fm-stream-claude-tail: publish failed: hub refused POST /v1/agent/frames: machine tailmachine serves task-super from another endpoint, not from 67341d5edd21aa8212ed77f68b48dd42

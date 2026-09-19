@@ -1,0 +1,7 @@
+hub on http://127.0.0.1:42205
+PASS B1-no-token: exit 2
+PASS B2-bad-scheme: exit 2
+B2 stderr: fm-stream-claude-tail: hub URL 'ftp://127.0.0.1:42205' must start with http:// or https://
+PASS C1-comment-config: resolved hub+token past '#' lines, endpoint e50bfaafdd9a9505245fda2735653072 listed on the hub
+PASS C2-env-resolution: FM_STREAM_HUB/FM_STREAM_TOKEN registered endpoint fd327dc8d80a72fd6c218cf292761ee2
+RESULT: 0 failing config checks
