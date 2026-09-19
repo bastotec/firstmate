@@ -1760,6 +1760,10 @@ A `dead` there would authorize tearing down a healthy worker that was merely unr
 `codex`, `opencode`, `pi-signed`, `grok`, `kimi`, `cursor`, and `muse` were not installed on this machine and are unverified by this run.
 Re-run the guard after any harness upgrade before trusting this evidence.
 
+The opencode tail adapter (`bin/fm-stream-opencode-tail.py`) measures a harness-dependent surface of its own: opencode's on-disk SQLite session storage.
+As of 2026-09-19 this host has no live opencode storage to run it against - no opencode binary on `PATH`, no `~/.local/share/opencode/`, and no `opencode.db` anywhere under the home - so the schema proof remains the portable regression's fixture, derived from this host's opencode-history documentation of that storage rather than a recorded live run.
+Dated live end-to-end evidence is deferred until an opencode worker actually runs here: point the adapter at that worker's real `opencode.db` and record the result beside this note.
+
 ## Codex App host tools
 
 A reusable Desktop host-tool smoke ran on 2026-07-06 against Codex Desktop bundle version 26.623.101652, build 4674, bundle id `com.openai.codex`.

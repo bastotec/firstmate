@@ -84,13 +84,31 @@ Run it on the host that runs the hub:
 `bin/fm-stream-bridge.py compare` sets the feed's rendered state for each of this home's stream-backed tasks against `bin/fm-crew-state.sh`, and flags a worker the feed calls stopped while the pane read says it is working.
 Nothing runs it automatically.
 
+## Tail adapters
+
+The agent owns a pseudoterminal, so it can only publish a worker whose harness firstmate runs through the runtime backend.
+A worker a harness runs itself - an opencode session, a Claude Code transcript - owns its own session storage, and to the hub it is invisible: no endpoint, no Bridge feed entry.
+A tail adapter closes that gap from the outside: it tails the harness's on-disk session storage and publishes that session's cumulative token usage to the hub as a real endpoint, in the same wire shape the agent publishes.
+
+`bin/fm-stream-opencode-tail.py` is the opencode one; the flags, the storage layout it reads, and the refusal posture for what it cannot measure live in its header.
+The shared contract behind every tail adapter - registration, heartbeats, rejoin after a hub restart, the state record's `tail` block, the strictly increasing `seq` - is owned by `bin/fm_stream_tail_lib.py`, so two tail adapters never disagree about the wire.
+
+What a tail adapter publishes is bounded by what the harness itself recorded:
+
+- Counters come only from usage records the harness wrote - a message that carries a `tokens` object, for opencode - and nothing is estimated, extrapolated, or synthesized.
+  A session with no usage records publishes zeros and `usage_records` 0, which is a fact about the session.
+- Counters are cumulative, so a restarted adapter rescans the session and converges on the same totals with no cursor of its own.
+- It owns no terminal, so the input command is refused rather than silently dropped; kill and status work as for any endpoint.
+
+A tail adapter is pointed at one session (`--session`, or `--directory` to resolve the newest main session in a directory) and is a publisher, not a supervisor: watch it with `bin/fm-stream.sh tasks`, stop it through the hub, and expect it to exit on its own when the harness archives the session.
+
 ## Security
 
 The hub binds `127.0.0.1` by default and every data route requires a bearer token; the static viewer page is the one exception.
 
 Tokens are class-scoped, and there are three classes:
 
-- `publish` registers endpoints and publishes frames. Agents hold it; nobody else needs it.
+- `publish` registers endpoints and publishes frames. Agents and tail adapters hold it; nobody else needs it.
 - `subscribe` reads only: list, stream, capture, screen, and state.
 - `control` steers: sending input to a worker, appending a status line, and closing an endpoint.
 
@@ -256,7 +274,7 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
 
 - Experimental, with no dedicated real-backend CI lane.
   [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) is the live guard that proves each installed harness is still classified through the hub, and the command that refreshes the dated per-harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md).
-  The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, and `tests/fm-stream-bridge.test.sh`.
+  The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
 - No secondmate support.
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.
 - An unreachable agent and a dead worker are indistinguishable from the hub, so a stale read carries no liveness verdict at all.
