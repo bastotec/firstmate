@@ -1,0 +1,18 @@
+Target commit efd76418a17d0f9d4ffdd37f4a1c04ed16cc4703
+Command: FM_LIVE=0 bin/fm-test-run.sh --per-script-timeout-secs 900 tests/fm-control-relaunch.test.sh
+
+ok - relaunch recovers a dependency-blocked In-flight task without changing its blocker
+ok - relaunch leaves a blocked Queued task and its existing worker untouched
+ok - relaunch leaves a held In-flight task and its existing worker untouched
+FM_TEST_END 2026-09-19T19:54:57Z tests/fm-control-relaunch.test.sh exit=0 duration_ms=400787 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=402848
+
+Baseline production scripts from f672440fdbd6e10975d569743f67aa752fde60ec, exercised with the target regression suite:
+
+not ok - an In-flight task's dependency must not prevent recovery
+error: this home's backlog item rl42 is not dispatchable in state in_flight no yes; refusing before creating its endpoint or local copy
+error: the replacement agent for rl42 could not be launched on claude
+error: rl42's agent was stopped but the replacement did not launch; no agent is running, and its work plus the recorded progress note are preserved at <isolated-test-worktree>: expected exit 0, got 1
+FM_TEST_END 2026-09-19T19:59:12Z tests/fm-control-relaunch.test.sh exit=1 duration_ms=230865 gate_skip=false
+
+The target suite drives the executable fm-control/fm-spawn interfaces against isolated real git worktrees and real processes. It uses the repository's PATH-shimmed terminal/harness binaries, so this is behavioral regression evidence but not an unshimmed live-harness run.
