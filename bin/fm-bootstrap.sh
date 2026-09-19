@@ -23,6 +23,7 @@
 #                 "NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>",
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
+#                 "SECONDMATE_LIVENESS: secondmate <id>: posture mismatch: live agent pid <pid> lacks the configured Claude permission flag '<flag>' (<where>); reported only, not relaunched",
 #                 "SECONDMATE_HANDOFF: secondmate <id>: pending delivery: <n> item(s)",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
 #          When a RUNNING secondmate home is fast-forwarded, its target is
@@ -50,8 +51,14 @@
 #          fm_backend_agent_state: skipped distinguishes an existing ambiguous
 #          process, an unreadable target, and an unverified backend; respawn
 #          failed names whether the endpoint was missing or agent-less.
-#          Already-live and successfully relaunched secondmates are silent
-#          unless FM_BOOTSTRAP_VERBOSE_FACTS=1 requests BOOTSTRAP_INFO facts.
+#          The posture-mismatch line above is the one report-only exception: it
+#          names an already-live Claude agent running without the flag
+#          config/claude-permission-mode selects, and never stops or relaunches
+#          that agent, because replacing a running secondmate is the captain's
+#          call (bin/fm-claude-permission-lib.sh owns the posture).
+#          Every other already-live or successfully relaunched secondmate is
+#          silent unless FM_BOOTSTRAP_VERBOSE_FACTS=1 requests BOOTSTRAP_INFO
+#          facts.
 #          A HOME_ROUTE line means this home's firstmate-repo delivery route - its
 #          checkout's origin, or the origin its validation pipeline registration
 #          saved - is a local filesystem path rather than a remote, so a validated
