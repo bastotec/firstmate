@@ -246,7 +246,18 @@ class Pty:
                 return b""
 
     def write(self, data: bytes) -> int:
-        return os.write(self.master_fd, data)
+        total = 0
+        while total < len(data):
+            try:
+                written = os.write(self.master_fd, data[total:])
+            except OSError as exc:
+                if exc.errno == errno.EINTR:
+                    continue
+                raise
+            if written <= 0:
+                raise OSError(errno.EIO, "pseudoterminal write made no progress")
+            total += written
+        return total
 
     def alive(self) -> bool:
         # poll() REAPS an exited child, which releases its pid for reuse, so it

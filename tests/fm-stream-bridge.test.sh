@@ -109,14 +109,14 @@ recorded_session() {
   local finished=22222222222222222222222222222222
   jq -nc --arg o "$open" --arg h "$hub" --arg d "$finished" '{
     at_ms: 0, received_ms: 0, listing: {ok: true, tasks: [
-      {endpoint_id: $o, machine: "box-a", label: "task-open", closed_by: null, exit_code: null},
-      {endpoint_id: $h, machine: "box-a", label: "task-forced", closed_by: "hub", exit_code: null},
-      {endpoint_id: $d, machine: "box-b", label: "task-open", closed_by: null, exit_code: null}]}}'
+      {endpoint_id: $o, machine: "box-a", label: "task-open", current_execution: true, closed_by: null, exit_code: null},
+      {endpoint_id: $h, machine: "box-a", label: "task-forced", current_execution: true, closed_by: "hub", exit_code: null},
+      {endpoint_id: $d, machine: "box-b", label: "task-open", current_execution: true, closed_by: null, exit_code: null}]}}'
   jq -nc --arg o "$open" --arg h "$hub" --arg d "$finished" '{
     at_ms: 500.5, received_ms: 499, listing: {ok: true, tasks: [
-      {endpoint_id: $o, machine: "box-a", label: "task-open", closed_by: null, exit_code: null},
-      {endpoint_id: $h, machine: "box-a", label: "task-forced", closed_by: "hub", exit_code: null},
-      {endpoint_id: $d, machine: "box-b", label: "task-open", closed_by: "agent", exit_code: 0}]}}'
+      {endpoint_id: $o, machine: "box-a", label: "task-open", current_execution: true, closed_by: null, exit_code: null},
+      {endpoint_id: $h, machine: "box-a", label: "task-forced", current_execution: true, closed_by: "hub", exit_code: null},
+      {endpoint_id: $d, machine: "box-b", label: "task-open", current_execution: true, closed_by: "agent", exit_code: 0}]}}'
 }
 
 test_recorded_traffic_replays_into_the_bridge_record_shape() {
@@ -154,12 +154,12 @@ test_recorded_traffic_replays_into_the_bridge_record_shape() {
 test_only_an_agent_reported_exit_is_a_verdict() {
   local out
   out=$(jq -nc '{at_ms: 1, listing: {tasks: [
-      {endpoint_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", machine: "m", label: "open", closed_by: null, exit_code: null},
-      {endpoint_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", machine: "m", label: "forced", closed_by: "hub", exit_code: null},
-      {endpoint_id: "cccccccccccccccccccccccccccccccc", machine: "m", label: "clean", closed_by: "agent", exit_code: 0},
-      {endpoint_id: "dddddddddddddddddddddddddddddddd", machine: "m", label: "signal", closed_by: "agent", exit_code: -15},
-      {endpoint_id: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", machine: "m", label: "nocode", closed_by: "agent", exit_code: null},
-      {endpoint_id: "ffffffffffffffffffffffffffffffff", machine: "m", label: "failing", closed_by: "agent", exit_code: 3}]}}' \
+      {endpoint_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", machine: "m", label: "open", current_execution: true, closed_by: null, exit_code: null},
+      {endpoint_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", machine: "m", label: "forced", current_execution: true, closed_by: "hub", exit_code: null},
+      {endpoint_id: "cccccccccccccccccccccccccccccccc", machine: "m", label: "clean", current_execution: true, closed_by: "agent", exit_code: 0},
+      {endpoint_id: "dddddddddddddddddddddddddddddddd", machine: "m", label: "signal", current_execution: true, closed_by: "agent", exit_code: -15},
+      {endpoint_id: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", machine: "m", label: "nocode", current_execution: true, closed_by: "agent", exit_code: null},
+      {endpoint_id: "ffffffffffffffffffffffffffffffff", machine: "m", label: "failing", current_execution: true, closed_by: "agent", exit_code: 3}]}}' \
     | python3 "$BRIDGE" translate) || fail "translate refused the listing: $out"
   assert_equals "$(printf '%s\n' "$out" | jq -r '[.identity.leaf_worker_id, .state] | @tsv' | tr '\n' ' ')" \
     "$(printf 'm/open\tUnknown m/forced\tUnknown m/clean\tStopped m/signal\tStopped m/nocode\tStopped m/failing\tFailed ')" \
@@ -171,12 +171,16 @@ test_only_an_agent_reported_exit_is_a_verdict() {
 test_malformed_input_is_refused_or_left_out() {
   local out code
   out=$(jq -nc '{at_ms: 1, listing: {tasks: [
-      {endpoint_id: "not-an-id", machine: "m", label: "bad-id"},
-      {endpoint_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", machine: "bad machine", label: "x"},
-      {endpoint_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", machine: "m", label: "ok"}]}}' \
+      {endpoint_id: "not-an-id", machine: "m", label: "bad-id", current_execution: true},
+      {endpoint_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", machine: "bad machine", label: "x", current_execution: true},
+      {endpoint_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", machine: "m", label: "ok", current_execution: true}]}}' \
     | python3 "$BRIDGE" translate)
   assert_equals "$(printf '%s\n' "$out" | jq -r '.identity.leaf_worker_id')" m/ok \
     "an endpoint the hub would not have registered is not a leaf"
+  out=$(printf '%s\n' '{"at_ms":1,"listing":{"tasks":[{"endpoint_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","machine":"m","label":"unmarked"}]}}' \
+    | python3 "$BRIDGE" translate 2>&1)
+  code=$?
+  assert_equals "$code" 2 "a valid endpoint without the hub current marker should be refused"
   out=$(printf 'not json\n' | python3 "$BRIDGE" translate 2>&1)
   code=$?
   assert_equals "$code" 2 "a malformed recording should be refused"
@@ -190,19 +194,19 @@ test_malformed_input_is_refused_or_left_out() {
   pass "bridge: malformed recordings are refused and malformed endpoints left out"
 }
 
-test_a_relaunched_leaf_is_emitted_once_from_its_newest_endpoint() {
+test_a_relaunched_leaf_is_emitted_once_from_the_hubs_current_execution() {
   local old=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa relaunched=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb out tick
   tick=$(jq -nc --arg o "$old" --arg n "$relaunched" '{listing: {tasks: [
-      {endpoint_id: $o, machine: "m", label: "t1", closed_by: "agent", exit_code: 2},
-      {endpoint_id: $n, machine: "m", label: "t1", closed_by: null, exit_code: null}]}}')
+      {endpoint_id: $o, machine: "m", label: "t1", current_execution: true, closed_by: null, exit_code: null},
+      {endpoint_id: $n, machine: "m", label: "t1", current_execution: false, closed_by: null, exit_code: null}]}}')
   out=$( { printf '%s\n' "$tick" | jq -c '.at_ms = 0'
            jq -nc --arg o "$old" '{at_ms: 500, listing: {tasks: [
-             {endpoint_id: $o, machine: "m", label: "t1", closed_by: "agent", exit_code: 2}]}}'
+             {endpoint_id: $o, machine: "m", label: "t1", current_execution: true, closed_by: "agent", exit_code: 2}]}}'
            printf '%s\n' "$tick" | jq -c '.at_ms = 1000'; } \
     | python3 "$BRIDGE" translate) || fail "translate refused the relaunch recording: $out"
   assert_equals "$(printf '%s\n' "$out" | jq -r '[.sequence, .identity.execution_id, .state] | @tsv' | tr '\n' ' ')" \
-    "$(printf '1\t%s\tUnknown 2\t%s\tFailed 3\t%s\tUnknown ' "$relaunched" "$old" "$relaunched")" \
-    "a leaf should get one record per tick, from its newest endpoint, on one rising sequence"
+    "$(printf '1\t%s\tUnknown 2\t%s\tFailed 3\t%s\tUnknown ' "$old" "$old" "$old")" \
+    "a leaf should get one record per tick from the execution the hub selected"
 
   start_hub relaunch
   old=$(new_id); relaunched=$(new_id)
@@ -212,7 +216,7 @@ test_a_relaunched_leaf_is_emitted_once_from_its_newest_endpoint() {
   out=$(snapshot) || fail "snapshot failed against a healthy hub: $out"
   assert_equals "$(printf '%s\n' "$out" | jq -r --arg l "box-a/t-$RUN" 'select(.identity.leaf_worker_id == $l) | [.identity.execution_id, .state] | @tsv')" \
     "$(printf '%s\tUnknown' "$relaunched")" "the real hub's relaunch should surface only the new execution"
-  pass "bridge: a relaunched leaf is emitted once, from its newest endpoint"
+  pass "bridge: a leaf is emitted once from the hub's current execution"
 }
 
 test_a_snapshot_reads_the_real_hub() {
@@ -497,7 +501,7 @@ test_a_command_without_a_valid_execution_is_refused() {
   pass "bridge: commands require the execution they were composed against"
 }
 
-test_a_command_for_another_fleet_is_nacked_without_asking_the_hub() {
+test_a_command_for_another_or_missing_fleet_is_nacked_without_asking_the_hub() {
   start_hub command-fleet
   local endpoint out
   endpoint=$(start_real_agent guarded)
@@ -506,10 +510,19 @@ test_a_command_for_another_fleet_is_nacked_without_asking_the_hub() {
     "a command for another fleet is a membership answer this adapter owns"
   assert_equals "$(printf '%s' "$out" | jq -r '.reason')" fleet_unknown \
     "and its reason names the fleet"
+  out=$(commander "$(jq -nc --arg leaf "box-a/guarded-$RUN" --arg ex "$endpoint" \
+    '{record: "command", command_id: "c-no-fleet",
+      identity: {leaf_worker_id: $leaf, execution_id: $ex},
+      payload: {kind: "steer", text: "echo NO-FLEET"}}')")
+  assert_equals "$(printf '%s' "$out" | jq -r '.reason')" fleet_unknown \
+    "a command with no fleet identity must also be nacked"
   assert_not_contains "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
     "$URL/v1/tasks/$endpoint/capture?lines=40" 2>/dev/null)" NOPE \
     "a command for another fleet must not reach any worker"
-  pass "bridge: a command for another fleet is nacked"
+  assert_not_contains "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
+    "$URL/v1/tasks/$endpoint/capture?lines=40" 2>/dev/null)" NO-FLEET \
+    "a command missing its fleet must not reach any worker"
+  pass "bridge: commands for another or missing fleet are nacked"
 }
 
 test_an_order_the_hub_cannot_settle_is_left_pending_rather_than_answered() {
@@ -583,9 +596,9 @@ SH
   chmod +x "$stub"
   feed="$TMP_ROOT/compare-feed.ndjson"
   jq -nc '{at_ms: 1, listing: {tasks: [
-      {endpoint_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", machine: "m", label: "t-live", closed_by: null, exit_code: null},
-      {endpoint_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", machine: "m", label: "t-exited", closed_by: "agent", exit_code: 0},
-      {endpoint_id: "cccccccccccccccccccccccccccccccc", machine: "m", label: "t-conflict", closed_by: "agent", exit_code: 1}]}}' \
+      {endpoint_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", machine: "m", label: "t-live", current_execution: true, closed_by: null, exit_code: null},
+      {endpoint_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", machine: "m", label: "t-exited", current_execution: true, closed_by: "agent", exit_code: 0},
+      {endpoint_id: "cccccccccccccccccccccccccccccccc", machine: "m", label: "t-conflict", current_execution: true, closed_by: "agent", exit_code: 1}]}}' \
     | python3 "$BRIDGE" translate > "$feed"
   out=$(python3 "$BRIDGE" compare --home "$home" --feed "$feed" --crew-state "$stub")
   code=$?
@@ -603,7 +616,7 @@ SH
 test_recorded_traffic_replays_into_the_bridge_record_shape
 test_only_an_agent_reported_exit_is_a_verdict
 test_malformed_input_is_refused_or_left_out
-test_a_relaunched_leaf_is_emitted_once_from_its_newest_endpoint
+test_a_relaunched_leaf_is_emitted_once_from_the_hubs_current_execution
 test_a_snapshot_reads_the_real_hub
 test_a_real_agents_worker_exit_reaches_the_bridge
 test_serve_streams_ticks_and_goes_silent_without_the_hub
@@ -612,7 +625,7 @@ test_a_composer_command_reaches_the_worker_and_is_acknowledged
 test_a_command_for_a_worker_its_agent_reported_gone_is_nacked
 test_a_command_aimed_at_a_replaced_execution_is_refused_without_claiming_absence
 test_a_command_without_a_valid_execution_is_refused
-test_a_command_for_another_fleet_is_nacked_without_asking_the_hub
+test_a_command_for_another_or_missing_fleet_is_nacked_without_asking_the_hub
 test_an_order_the_hub_cannot_settle_is_left_pending_rather_than_answered
 test_a_command_that_names_no_worker_is_left_pending_not_nacked
 test_compare_sets_rendered_states_against_crew_state
