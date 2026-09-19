@@ -81,10 +81,6 @@ serve options:
                          "subscribe,control:<token>".
   --state-max-age-secs N how old a published state frame may be before a state
                          answer is reported stale (default 30)
-  --membership-grace-secs N  how long a leaf that resolves to nothing is
-                         re-checked before the hub will call it absent, so a
-                         rejoining agent is never reported as a missing worker
-                         (default 6).
   --command-ack-secs N   how long an input or kill waits for the owning agent's
                          acknowledgement before it is refused (default 20)
   --ready-file PATH      write "<bind> <port>" there once listening
@@ -141,7 +137,7 @@ ORDER_JOURNAL_MAX = 512
 UNACKNOWLEDGED_COMMAND_RETENTION = 900.0
 # How much longer than a placement's own worst case a resend of that order id
 # waits for the call still placing it to answer. Placing is bounded by the
-# membership grace plus the acknowledgement window, so this only absorbs the
+# the fixed membership window plus the acknowledgement window, so this only
 # work between those waits and the answer; past it, the live record is the
 # honest thing to return.
 ORDER_ANSWER_SLACK_SECS = 5.0
@@ -169,7 +165,7 @@ AGENT_SILENCE_PRESUMED_SECS = 10.0
 # is what makes the answer a membership verdict instead of a reading, and it
 # matches the window bin/backends/stream.sh's recovery-grade classifier waits
 # before it will say `missing`.
-DEFAULT_MEMBERSHIP_GRACE = 6.0
+MEMBERSHIP_GRACE_SECS = 6.0
 MAX_BODY = 4 * 1024 * 1024
 MAX_LABEL_LEN = 128
 MAX_MACHINE_LEN = 128
@@ -1296,6 +1292,26 @@ class Hub:
         with self.lock:
             return list(self.endpoints.values())
 
+    def list_task_records(self) -> list:
+        with self.lock:
+            endpoints = sorted(self.endpoints.values(),
+                               key=lambda endpoint: (endpoint.machine,
+                                                     endpoint.created_at))
+            members = {}
+            for endpoint in endpoints:
+                members.setdefault(leaf_of(endpoint), []).append(endpoint)
+            current_ids = set()
+            for group in members.values():
+                current = self.current_execution(group)
+                if current is not None:
+                    current_ids.add(current.endpoint_id)
+        records = []
+        for endpoint in endpoints:
+            record = endpoint.describe()
+            record["current_execution"] = endpoint.endpoint_id in current_ids
+            records.append(record)
+        return records
+
     def reap(self) -> None:
         cutoff = _now() - DEFAULT_ENDPOINT_RETENTION
         with self.lock:
@@ -1433,7 +1449,7 @@ class Hub:
 
     @staticmethod
     def current_execution(members: list) -> "Endpoint":
-        """Which of a leaf's endpoints an order addressed to it would reach.
+        """Which endpoint a leaf's feed displays and its orders reach.
 
         The order of preference is the registration rule read from the other
         side.  An endpoint the hub has never HEARD FROM stands for no worker -
@@ -1491,7 +1507,7 @@ class Hub:
                 # waited out first, so the answer is that order's own fate
                 # and not a snapshot of its middle.
                 if not existing.answered.is_set():
-                    existing.answered.wait(self.options.membership_grace_secs
+                    existing.answered.wait(MEMBERSHIP_GRACE_SECS
                                            + self.options.command_ack_secs
                                            + ORDER_ANSWER_SLACK_SECS)
                 return existing
@@ -1501,7 +1517,7 @@ class Hub:
             # take seconds, and only an absence that outlasts that window is a
             # membership verdict rather than a reading.
             if not members:
-                deadline = _now() + self.options.membership_grace_secs
+                deadline = _now() + MEMBERSHIP_GRACE_SECS
                 while _now() < deadline:
                     time.sleep(0.25)
                     members = self.leaf_members(leaf)
@@ -1516,7 +1532,7 @@ class Hub:
                 self._refuse_order(order, HTTPStatus.NOT_FOUND, "unknown_leaf",
                                    "this hub held no endpoint for leaf %s for %gs, longer "
                                    "than a rejoin takes, so it is not registered here"
-                                   % (leaf, self.options.membership_grace_secs))
+                                   % (leaf, MEMBERSHIP_GRACE_SECS))
 
             if current.endpoint_id != requested_execution:
                 if any(e.endpoint_id == requested_execution for e in members):
@@ -1803,7 +1819,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "endpoints": len(hub.list_endpoints()),
                 "state_max_age_secs": hub.options.state_max_age_secs,
                 "command_ack_secs": hub.options.command_ack_secs,
-                "membership_grace_secs": hub.options.membership_grace_secs,
             })
             return
 
@@ -1824,11 +1839,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/v1/tasks" and method == "GET":
             self._require(CLASS_SUBSCRIBE, query)
             hub.reap()
-            endpoints = sorted(hub.list_endpoints(),
-                               key=lambda e: (e.machine, e.created_at))
             self._json(HTTPStatus.OK, {
                 "ok": True,
-                "tasks": [e.describe() for e in endpoints],
+                "tasks": hub.list_task_records(),
                 "machines": [m.describe(hub.options.state_max_age_secs)
                              for m in hub.list_machines()],
             })
@@ -2446,7 +2459,6 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--token-file", default="")
     serve.add_argument("--state-max-age-secs", type=float, default=DEFAULT_STATE_MAX_AGE)
     serve.add_argument("--command-ack-secs", type=float, default=DEFAULT_COMMAND_ACK)
-    serve.add_argument("--membership-grace-secs", type=float, default=DEFAULT_MEMBERSHIP_GRACE)
     serve.add_argument("--ready-file", default="")
     serve.add_argument("--pid-file", default="")
     return parser
