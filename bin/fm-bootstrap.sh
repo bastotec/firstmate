@@ -1014,6 +1014,10 @@ essential_version_diagnostic() {  # <tool> <min-version>
   fi
 }
 
+tasks_axi_version_unreadable_diagnostic() {
+  echo "VERSION_UNREADABLE: tasks-axi (installed build; requires semantic version >=$FM_TASKS_AXI_MIN; upgrade: $(install_cmd tasks-axi))"
+}
+
 x_mode_write_if_changed() {
   local dest=$1 content=$2 mode=$3 parent tmp parent_device current_mode
   parent=${dest%/*}
@@ -1495,7 +1499,12 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ] && local_phase; then
   else
     BOOTSTRAP_BACKLOG_GATE_STATUS=$?
     if [ "$BOOTSTRAP_BACKLOG_GATE_STATUS" -eq 2 ]; then
-      echo "error: bootstrap cannot access configured backlog data directory $DATA ($FM_BACKLOG_TRANSITION_ERROR)" >&2
+      if [ "${FM_BACKLOG_TRANSITION_TASKS_AXI_STATUS:-}" = 2 ]; then
+        tasks_axi_version_unreadable_diagnostic
+        echo "error: bootstrap refused automatic backlog transitions because the installed tasks-axi version is unreadable" >&2
+      else
+        echo "error: bootstrap cannot access configured backlog data directory $DATA ($FM_BACKLOG_TRANSITION_ERROR)" >&2
+      fi
       exit 1
     fi
   fi
@@ -1552,7 +1561,7 @@ detect_local_tools() {
     if fm_tasks_axi_compatible; then
       :
     elif [ "$?" -eq 2 ]; then
-      echo "VERSION_UNREADABLE: tasks-axi (installed build; requires semantic version >=$FM_TASKS_AXI_MIN; upgrade: $(install_cmd tasks-axi))"
+      tasks_axi_version_unreadable_diagnostic
     else
       echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"
     fi

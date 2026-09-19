@@ -350,7 +350,7 @@ newer no-mistakes major is accepted^no-mistakes version v2.0.0 (fake)^empty
 older no-mistakes patch reports an upgrade^no-mistakes version v1.45.4 (fake)^missing
 unparseable no-mistakes version stays incompatible without reporting absence^no-mistakes development build^unreadable
 dotted date in no-mistakes development identifier is unreadable^no-mistakes development build 2026.09.19^unreadable
-directly associated dotted date is unreadable^no-mistakes 2026.09.19^unreadable
+directly associated dotted date is unreadable^no-mistakes 2026.10.19^unreadable
 four-part no-mistakes identifier is unreadable^no-mistakes 1.46.0.1^unreadable
 ROWS
   pass "bootstrap enforces no-mistakes minimum version"
@@ -523,6 +523,30 @@ dotted date in quota-axi development identifier is unreadable^quota-axi developm
 four-part quota-axi identifier is unreadable^quota-axi 0.1.29.1^unreadable
 ROWS
   pass "bootstrap enforces quota-axi minimum version"
+}
+
+test_tasks_axi_unreadable_transition_gate() {
+  local case_dir fakebin out rc unreadable
+  case_dir="$TMP_ROOT/tasks-axi-transition-gate"
+  mkdir -p "$case_dir/home/config" "$case_dir/home/data" "$case_dir/home/state"
+  printf '%s\n' 'backend = "markdown"' > "$case_dir/home/.tasks.toml"
+  printf '# Backlog\n\n## In flight\n\n## Queued\n' > "$case_dir/home/data/backlog.md"
+  fm_write_meta "$case_dir/home/state/worker.meta" 'kind=ship'
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_tasks_axi "$fakebin" 'tasks-axi development build'
+  unreadable='VERSION_UNREADABLE: tasks-axi (installed build; requires semantic version >=0.2.4; upgrade: npm install -g tasks-axi)'
+
+  set +e
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh" 2>&1)
+  rc=$?
+  set -e
+
+  [ "$rc" -eq 1 ] || fail "unreadable tasks-axi transition gate returned $rc instead of refusing"
+  assert_contains "$out" "$unreadable" "automatic backlog transition gate hid the unreadable tasks-axi version"
+  assert_not_contains "$out" 'MISSING: tasks-axi' "automatic backlog transition gate falsely reported tasks-axi absent"
+  assert_not_contains "$out" 'automatic backlog transitions require tasks-axi' "automatic backlog transition gate collapsed the unreadable version into its generic refusal"
+  pass "bootstrap preserves unreadable tasks-axi through the transition gate"
 }
 
 test_git_is_required_with_supported_install_instruction() {
@@ -1393,6 +1417,7 @@ test_gh_axi_min_version
 test_lavish_axi_min_version
 test_tasks_axi_min_version
 test_quota_axi_min_version
+test_tasks_axi_unreadable_transition_gate
 test_git_is_required_with_supported_install_instruction
 test_orca_backend_gates_orca_tool_only_when_selected
 test_session_provider_backends_do_not_require_tmux

@@ -125,7 +125,7 @@ printf '%s\n' "$out" | grep -qx 'quota: quota' \
   || fail "default aggregate poll did not use the aggregate source"
 ok "poll accepts its documented defaults"
 
-if err=$(QUOTA_AXI_VERSION='quota-axi 2026.09.19' PATH="$FAKEBIN:$PATH" \
+if err=$(QUOTA_AXI_VERSION='quota-axi 2026.10.19' PATH="$FAKEBIN:$PATH" \
   "$BIN/fm-procevent-quota.sh" arm 2>&1); then
   fail "an unreadable quota-axi version unexpectedly armed a watch"
 fi
@@ -141,7 +141,7 @@ fi
   || fail "arm stopped enforcing the semantic version floor: $err"
 ok "arm preserves the semantic minimum-version refusal"
 
-out=$(QUOTA_AXI_VERSION='quota-axi 2026.09.19' QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" \
+out=$(QUOTA_AXI_VERSION='quota-axi 2026.10.19' QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" \
   "$BIN/fm-procevent-quota.sh" poll --interval 1 --timeout 1)
 printf '%s\n' "$out" | grep -qx 'status: error' || fail "unreadable quota-axi version did not stop polling"
 printf '%s\n' "$out" | grep -qx 'detail: quota-axi version is unreadable; installed build must report semantic version >=0.1.29' \

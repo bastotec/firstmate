@@ -23,6 +23,7 @@ fm_tool_semver_parts() {  # <tool-name> <version-output>
       sub(/^[vV]/, "", token)
       if (token !~ /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/) return 0
       split(token, parts, /\./)
+      if (length(parts[1]) == 4 && parts[2] >= 1 && parts[2] <= 12 && parts[3] >= 1 && parts[3] <= 31) return 0
       print parts[1], parts[2], parts[3]
       return 1
     }
