@@ -1,0 +1,12 @@
+FM_TEST_BEGIN 2026-09-19T08:00:25Z tests/fm-remote-secondmate-replacement.test.sh family=unclassified expected_gate_skip=none
+not ok - route did not report the agent's verified posture (missing: 'posture=ok 77553')
+--- output ---
+schema=fm-remote-secondmate-control.v1
+backend=herdr
+target=fm-remote:w1:p3
+herdr_session=fm-remote
+harness=claude
+FM_TEST_END 2026-09-19T08:00:34Z tests/fm-remote-secondmate-replacement.test.sh exit=1 duration_ms=9211 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=10118
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=9211 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-remote-secondmate-replacement.test.sh duration_ms=9211
