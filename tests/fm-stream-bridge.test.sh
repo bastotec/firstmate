@@ -379,13 +379,13 @@ commander() {  # <json-record>
     --token-file "$CASE_DIR/control-token" --fleet-id test-fleet 2>/dev/null
 }
 
-composer_command() {  # <command-id> <leaf> <text> [execution] [fleet]
-  jq -nc --arg id "$1" --arg leaf "$2" --arg text "$3" --arg ex "${4:-}" \
+composer_command() {  # <command-id> <leaf> <text> <execution> [fleet]
+  jq -nc --arg id "$1" --arg leaf "$2" --arg text "$3" --arg ex "$4" \
     --arg fleet "${5:-test-fleet}" \
     '{record: "command", command_id: $id, issued_at_utc: "2026-01-01T00:00:00Z",
       issued_by: "captain",
-      identity: ({fleet_id: $fleet, leaf_worker_id: $leaf, parent_mate_id: "box-a"}
-                 + (if $ex == "" then {} else {execution_id: $ex} end)),
+      identity: {fleet_id: $fleet, leaf_worker_id: $leaf, parent_mate_id: "box-a",
+                 execution_id: $ex},
       payload: {kind: "steer", text: $text}}'
 }
 
@@ -470,6 +470,31 @@ test_a_command_aimed_at_a_replaced_execution_is_refused_without_claiming_absence
     "$URL/v1/tasks/$second/capture?lines=40" 2>/dev/null)" WRONG-WORKER \
     "an order composed for a replaced execution must never land in its replacement"
   pass "bridge: a command aimed at a replaced execution is refused without claiming absence"
+}
+
+test_a_command_without_a_valid_execution_is_refused() {
+  start_hub command-execution
+  local endpoint leaf out
+  endpoint=$(start_real_agent guarded)
+  leaf="box-a/guarded-$RUN"
+  out=$(commander "$(jq -nc --arg leaf "$leaf" \
+    '{record: "command", command_id: "c-no-execution",
+      identity: {fleet_id: "test-fleet", leaf_worker_id: $leaf},
+      payload: {kind: "steer", text: "echo UNBOUND"}}')")
+  assert_equals "$(printf '%s' "$out" | jq -r '.record')" command_ack \
+    "an addressable command missing execution scope should be answered"
+  assert_equals "$(printf '%s' "$out" | jq -r '.state')" refused \
+    "a command missing execution scope must be refused"
+  out=$(commander "$(composer_command c-bad-execution "$leaf" "echo MALFORMED" invalid)")
+  assert_equals "$(printf '%s' "$out" | jq -r '.state')" refused \
+    "a malformed execution scope must be refused"
+  assert_not_contains "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
+    "$URL/v1/tasks/$endpoint/capture?lines=40" 2>/dev/null)" UNBOUND \
+    "a command missing execution scope must not reach the current worker"
+  assert_not_contains "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
+    "$URL/v1/tasks/$endpoint/capture?lines=40" 2>/dev/null)" MALFORMED \
+    "a malformed execution scope must not reach the current worker"
+  pass "bridge: commands require the execution they were composed against"
 }
 
 test_a_command_for_another_fleet_is_nacked_without_asking_the_hub() {
@@ -586,6 +611,7 @@ test_refusals_end_the_command
 test_a_composer_command_reaches_the_worker_and_is_acknowledged
 test_a_command_for_a_worker_its_agent_reported_gone_is_nacked
 test_a_command_aimed_at_a_replaced_execution_is_refused_without_claiming_absence
+test_a_command_without_a_valid_execution_is_refused
 test_a_command_for_another_fleet_is_nacked_without_asking_the_hub
 test_an_order_the_hub_cannot_settle_is_left_pending_rather_than_answered
 test_a_command_that_names_no_worker_is_left_pending_not_nacked

@@ -1607,10 +1607,12 @@ wait_for_close() {  # <endpoint>
   return 1
 }
 
-# order <leaf> <execution> <text> -> the hub's answer, with api_code set.
-order() {  # <leaf> <execution-or-empty> <text>
+# order <leaf> <execution> <text> [order-id] -> the hub's answer, with api_code set.
+order() {  # <leaf> <execution> <text> [order-id]
+  local order_id=${4:-order-$(python3 -c 'import os; print(os.urandom(16).hex())')}
   view POST /v1/orders "$(jq -nc --arg leaf "$1" --arg ex "$2" --arg text "$3" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, text: $text, submit: true}')"
+    --arg id "$order_id" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: $id, text: $text, submit: true}')"
 }
 
 test_an_order_reaches_the_worker_its_leaf_names() {
@@ -1789,32 +1791,31 @@ test_a_resend_that_overtakes_a_placement_in_flight_is_answered_not_retyped() {
   # not only after it answered. An adapter whose transport dropped mid-order
   # reconnects and sends the same command id again, and both sends typing the
   # text once each is exactly the double delivery the journal exists to stop.
-  start_hub order-raced --membership-grace-secs 5
-  local leaf="box-a/racing-$RUN" first second first_pid endpoint
-  # The first send leaves before the leaf exists, so its placement is still
-  # inside the rejoin window when the resend overtakes it and the worker
-  # arrives to take exactly one of the two.
-  ( view POST /v1/orders "$(jq -nc --arg leaf "$leaf" \
-      '{leaf_worker_id: $leaf, order_id: "sent-while-placing", text: "echo RACED-FIRST", submit: true}')" \
+  start_hub order-raced --command-ack-secs 5
+  local leaf="box-a/racing-$RUN" first second first_pid endpoint agent resume_pid
+  endpoint=$(start_agent box-a racing)
+  agent=$(agent_pid_for box-a racing)
+  [ -n "$agent" ] || fail "the agent should be running"
+  kill -STOP "$agent" || fail "could not pause the agent"
+  ( order "$leaf" "$endpoint" "echo RACED-FIRST" sent-while-placing \
       > "$CASE_DIR/raced-first.out" 2>/dev/null ) &
   first_pid=$!
   fm_test_track_helper_pid "$first_pid"
   sleep 0.3
-  ( sleep 1; start_agent box-a racing >/dev/null 2>&1 ) &
-  fm_test_track_helper_pid $!
-  second=$(view POST /v1/orders "$(jq -nc --arg leaf "$leaf" \
-      '{leaf_worker_id: $leaf, order_id: "sent-while-placing", text: "echo RACED-SECOND", submit: true}')")
+  ( sleep 1; kill -CONT "$agent" ) &
+  resume_pid=$!
+  fm_test_track_helper_pid "$resume_pid"
+  second=$(order "$leaf" "$endpoint" "echo RACED-SECOND" sent-while-placing)
   wait "$first_pid" 2>/dev/null || true
   first=$(cat "$CASE_DIR/raced-first.out")
   assert_equals "$(printf '%s' "$first" | jq -r '.outcome')" accepted \
-    "the first send should be accepted once the leaf rejoined"
+    "the first send should be accepted once the agent answers"
   assert_equals "$(printf '%s' "$second" | jq -r '.outcome')" accepted \
     "the overtaking resend should be answered from the first order"
   assert_equals "$(printf '%s' "$second" | jq -r '.requested_at')" \
     "$(printf '%s' "$first" | jq -r '.requested_at')" \
     "an overtaking resend must be answered from the same order, not a new one"
-  endpoint=$(printf '%s' "$first" | jq -r '.execution_id')
-  wait_for_capture "$endpoint" RACED-FIRST || fail "the rejoined worker never ran the order"
+  wait_for_capture "$endpoint" RACED-FIRST || fail "the worker never ran the first order"
   assert_not_contains "$(view GET "/v1/tasks/$endpoint/capture?lines=80")" RACED-SECOND \
     "a resend that overtook its own placement must never type a second time"
   pass "hub: a resend overtaking a placement in flight is answered, not retyped"
@@ -1825,136 +1826,72 @@ test_a_leaf_that_is_still_rejoining_is_waited_for_rather_than_called_absent() {
   # restarted holds nothing until its agents register again, and an order
   # arriving in that window must wait for the worker rather than condemn it.
   start_hub order-rejoin --membership-grace-secs 10
-  local endpoint out answer
-  # The order goes first, for a leaf that does not exist yet; the agent
-  # registers while the hub is still waiting.
-  ( sleep 2; start_agent box-a rejoining >/dev/null 2>&1 ) &
-  fm_test_track_helper_pid $!
-  out=$(order "box-a/rejoining-$RUN" "" "echo WAITED-FOR-ME")
+  local endpoint agent request_pid out answer
+  endpoint=$(start_agent box-a rejoining)
+  agent=$(agent_pid_for box-a rejoining)
+  [ -n "$agent" ] || fail "the agent should be running"
+  kill -STOP "$agent" || fail "could not pause the agent"
+  restart_hub
+  ( order "box-a/rejoining-$RUN" "$endpoint" "echo WAITED-FOR-ME" \
+      > "$CASE_DIR/rejoining.out" 2>/dev/null ) &
+  request_pid=$!
+  fm_test_track_helper_pid "$request_pid"
+  sleep 2
+  kill -CONT "$agent" || fail "could not resume the agent"
+  wait "$request_pid" 2>/dev/null || true
+  out=$(cat "$CASE_DIR/rejoining.out")
   answer=$(printf '%s' "$out" | jq -r '.outcome')
   assert_equals "$answer" accepted \
     "an order for a leaf still rejoining must wait for it, not be refused as absent"
   assert_equals "$(printf '%s' "$out" | jq -r '.not_registered')" false \
     "a leaf that turned up inside the window was never absent"
-  endpoint=$(printf '%s' "$out" | jq -r '.execution_id')
   wait_for_capture "$endpoint" WAITED-FOR-ME || fail "the order never reached the rejoined worker"
   pass "hub: a leaf still rejoining is waited for rather than reported absent"
 }
 
-test_ordering_needs_the_control_class_and_a_well_formed_request() {
+test_ordering_needs_the_control_class_and_the_bridge_request_shape() {
   start_hub order-guards
-  local endpoint leaf out
+  local endpoint leaf
   endpoint=$(start_agent box-a guarded)
   leaf="box-a/guarded-$RUN"
   view_only POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, text: "echo VIEWER-TYPED", submit: true}')" >/dev/null
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "viewer", text: "echo VIEWER-TYPED", submit: true}')" >/dev/null
   assert_equals "$(api_code)" 403 "a viewing token must not be able to order a worker"
-  # An order that names no execution is bound to whatever the leaf is on when
-  # it arrives - weaker than naming one, so the answer has to show which
-  # execution took it and that none was aimed at.
-  out=$(view POST /v1/orders "$(jq -nc --arg leaf "$leaf" \
-    '{leaf_worker_id: $leaf, text: "echo UNAIMED", submit: true}')")
-  assert_equals "$(api_code)" 200 "an order naming no execution should bind to the current one"
-  assert_equals "$(printf '%s' "$out" | jq -r '.execution_id')" "$endpoint" \
-    "the answer must name the execution that actually took it"
-  assert_equals "$(printf '%s' "$out" | jq -r '.requested_execution_id')" "" \
-    "and must not claim an execution was aimed at when none was"
   view POST /v1/orders "$(jq -nc --arg leaf "$leaf" \
-    '{leaf_worker_id: $leaf, execution_id: "not-an-execution", text: "echo UNBOUND", submit: true}')" >/dev/null
+    '{leaf_worker_id: $leaf, order_id: "unbound", text: "echo UNBOUND", submit: true}')" >/dev/null
+  assert_equals "$(api_code)" 400 "an order naming no execution must be refused"
+  view POST /v1/orders "$(jq -nc --arg leaf "$leaf" \
+    '{leaf_worker_id: $leaf, execution_id: "not-an-execution", order_id: "bad-execution", text: "echo UNBOUND", submit: true}')" >/dev/null
   assert_equals "$(api_code)" 400 "a malformed execution id must be refused rather than ignored"
   view POST /v1/orders "$(jq -nc --arg ex "$endpoint" \
-    '{leaf_worker_id: "no-slash-here", execution_id: $ex, text: "echo BADLEAF", submit: true}')" >/dev/null
+    '{leaf_worker_id: "no-slash-here", execution_id: $ex, order_id: "bad-leaf", text: "echo BADLEAF", submit: true}')" >/dev/null
   assert_equals "$(api_code)" 400 "a leaf id that is not '<machine>/<label>' must be refused"
   view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, submit: true}')" >/dev/null
-  assert_equals "$(api_code)" 400 "an order carrying nothing to type must be refused"
-  # None of those refusals may have typed anything.
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "no-text", submit: true}')" >/dev/null
+  assert_equals "$(api_code)" 400 "an order carrying no string text must be refused"
+  view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "bad-text", text: 7, submit: true}')" >/dev/null
+  assert_equals "$(api_code)" 400 "an order carrying non-string text must be refused"
+  view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "keys", text: "echo KEYS", keys: ["Enter"], submit: true}')" >/dev/null
+  assert_equals "$(api_code)" 400 "an order carrying generalized key input must be refused"
+  view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "no-submit", text: "echo NO-SUBMIT"}')" >/dev/null
+  assert_equals "$(api_code)" 400 "an order omitting submit=true must be refused"
+  view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, text: "echo NO-ID", submit: true}')" >/dev/null
+  assert_equals "$(api_code)" 400 "an order without a caller-supplied id must be refused"
   order "$leaf" "$endpoint" "echo GUARDS-DONE" >/dev/null
   wait_for_capture "$endpoint" GUARDS-DONE || fail "the worker should still take a proper order"
   local seen
   seen=$(view GET "/v1/tasks/$endpoint/capture?lines=40")
   assert_not_contains "$seen" VIEWER-TYPED "a refused credential must not have typed anything"
-  assert_not_contains "$seen" UNBOUND "an order refused for its execution id must not have typed anything"
+  assert_not_contains "$seen" UNBOUND "an unbound order must not have typed anything"
   assert_not_contains "$seen" BADLEAF "an order refused for its leaf must not have typed anything"
-  pass "hub: ordering needs the control class and the execution it aims at"
-}
-
-test_fm_stream_order_round_trip_through_the_operator_entry_point() {
-  # The operator path for the command half: the same entry point a human or a
-  # script would drive, not the raw API, and a config that points it at THIS
-  # case's hub. Ambient hub variables are dropped explicitly, so the case
-  # measures the config files it wrote and never a worker's own backend.
-  start_hub order-cli
-  local endpoint home out code order_id bogus
-  endpoint=$(start_agent box-a ordered)
-  home="$CASE_DIR/cli-home"
-  mkdir -p "$home/config"
-  printf '%s\n' "$URL" > "$home/config/stream-hub"
-  printf '%s\n' "$VIEW_TOKEN" > "$home/config/stream-token"
-  chmod 600 "$home/config/stream-hub" "$home/config/stream-token"
-  out=$(env -u FM_STREAM_HUB -u FM_STREAM_TOKEN FM_CONFIG_OVERRIDE="$home/config" \
-    "$ROOT/bin/fm-stream.sh" order "box-a/ordered-$RUN" "$endpoint" \
-    "echo CLI-ORDER" 2>&1) && code=0 || code=$?
-  assert_equals "$code" 0 "an accepted order should exit 0, not $code: $out"
-  assert_contains "$out" "accepted by $endpoint" \
-    "the operator line should name the execution that took the order"
-  order_id=$(printf '%s' "$out" | tr -d ')' | awk '{print $NF}')
-  [ -n "$order_id" ] || fail "the operator line should carry the order id to reconcile with: $out"
-  wait_for_capture "$endpoint" CLI-ORDER || fail "the ordered worker never ran the order"
-  out=$(env -u FM_STREAM_HUB -u FM_STREAM_TOKEN FM_CONFIG_OVERRIDE="$home/config" \
-    "$ROOT/bin/fm-stream.sh" order-status "$order_id" 2>&1) \
-    || fail "order-status should read a settled order back: $out"
-  assert_contains "$out" "accepted" "order-status should report the settled outcome"
-  assert_contains "$out" "leaf box-a/ordered-$RUN" \
-    "order-status should name the leaf the order was addressed to"
-  # The refusal the operator is most likely to meet: the execution the order
-  # was aimed at is not the one the leaf is on. Exit 1, the reason on stderr,
-  # and nothing typed anywhere.
-  bogus=$(python3 -c 'import os; print(os.urandom(16).hex())')
-  out=$(env -u FM_STREAM_HUB -u FM_STREAM_TOKEN FM_CONFIG_OVERRIDE="$home/config" \
-    "$ROOT/bin/fm-stream.sh" order "box-a/ordered-$RUN" "$bogus" \
-    "echo CLI-WRONG" 2>&1) && code=0 || code=$?
-  assert_equals "$code" 1 "a refused order should exit 1, not $code: $out"
-  assert_contains "$out" "refused (execution_" \
-    "the refusal should name its reason rather than a bare failure"
-  assert_not_contains "$(view GET "/v1/tasks/$endpoint/capture?lines=40")" CLI-WRONG \
-    "a refused order must not have typed anything"
-  pass "fm-stream.sh: order and order-status round-trip against a real worker"
-}
-
-test_fm_stream_order_unconfirmed_points_at_its_own_order_status() {
-  # The unconfirmed answer is the one an operator must not retry blindly, so
-  # the tool has to live long enough to say what to read instead: exit 4 and
-  # the reconciliation id, never a crash that reads like a refusal.
-  start_hub order-cli-unconfirmed --command-ack-secs 2
-  local endpoint agent home out code order_id
-  endpoint=$(start_agent box-a stalled)
-  agent=$(agent_pid_for box-a stalled)
-  [ -n "$agent" ] || fail "the agent should be running"
-  # Frozen mid-poll: the hub hands it the order and marks it taken, and no
-  # acknowledgement can come back until it is let go.
-  kill -STOP "$agent" || fail "could not pause the agent"
-  home="$CASE_DIR/cli-home"
-  mkdir -p "$home/config"
-  printf '%s\n' "$URL" > "$home/config/stream-hub"
-  printf '%s\n' "$VIEW_TOKEN" > "$home/config/stream-token"
-  chmod 600 "$home/config/stream-hub" "$home/config/stream-token"
-  out=$(env -u FM_STREAM_HUB -u FM_STREAM_TOKEN FM_CONFIG_OVERRIDE="$home/config" \
-    "$ROOT/bin/fm-stream.sh" order "box-a/stalled-$RUN" "$endpoint" \
-    "echo CLI-UNCONFIRMED" 2>&1) && code=0 || code=$?
-  assert_equals "$code" 4 "an unconfirmed order should exit 4, not $code: $out"
-  assert_contains "$out" "read it back with:" \
-    "the operator must be told how to reconcile instead of retrying"
-  order_id=$(printf '%s' "$out" | sed -n 's/.*order-status //p' | tr -d '[:space:]')
-  [ -n "$order_id" ] || fail "the reconciliation line should carry the order id: $out"
-  kill -CONT "$agent" || fail "could not resume the agent"
-  wait_for_capture "$endpoint" CLI-UNCONFIRMED || fail "the resumed agent never ran the order"
-  out=$(env -u FM_STREAM_HUB -u FM_STREAM_TOKEN FM_CONFIG_OVERRIDE="$home/config" \
-    "$ROOT/bin/fm-stream.sh" order-status "$order_id" 2>&1) \
-    || fail "order-status should read the late-settled order: $out"
-  assert_contains "$out" "accepted" \
-    "a late acknowledgement should settle the order the tool pointed at"
-  pass "fm-stream.sh: an unconfirmed order exits 4 pointing at its order-status"
+  assert_not_contains "$seen" KEYS "an order carrying key input must not have typed anything"
+  assert_not_contains "$seen" NO-SUBMIT "an order without submit=true must not have typed anything"
+  assert_not_contains "$seen" NO-ID "an order without an id must not have typed anything"
+  pass "hub: ordering needs control and the narrow Bridge request shape"
 }
 
 test_fm_stream_start_status_stop_round_trip() {
@@ -2067,8 +2004,6 @@ test_an_order_taken_without_an_answer_is_unconfirmed_and_settles_when_it_arrives
 test_an_order_is_delivered_once_however_many_times_its_id_is_sent
 test_a_resend_that_overtakes_a_placement_in_flight_is_answered_not_retyped
 test_a_leaf_that_is_still_rejoining_is_waited_for_rather_than_called_absent
-test_ordering_needs_the_control_class_and_a_well_formed_request
-test_fm_stream_order_round_trip_through_the_operator_entry_point
-test_fm_stream_order_unconfirmed_points_at_its_own_order_status
+test_ordering_needs_the_control_class_and_the_bridge_request_shape
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home
