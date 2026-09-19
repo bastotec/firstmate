@@ -508,6 +508,26 @@ test_an_order_the_hub_cannot_settle_is_left_pending_rather_than_answered() {
   pass "bridge: an order the hub cannot settle is left pending rather than answered"
 }
 
+test_a_command_that_names_no_worker_is_left_pending_not_nacked() {
+  # The id is addressable but the worker is not: a composer bug that drops
+  # identity.leaf_worker_id is not evidence any worker ended, and a nack is a
+  # membership verdict - so the id stays pending and the loss lands on stderr,
+  # exactly like a record that carries no command_id.
+  start_hub command-nameless
+  local out err
+  out=$(printf '%s\n' "$(jq -nc --arg id c-nameless \
+      '{record: "command", command_id: $id, issued_at_utc: "2026-01-01T00:00:00Z",
+        issued_by: "captain", identity: {fleet_id: "test-fleet"},
+        payload: {kind: "steer", text: "echo NAMELESS"}}')" \
+    | python3 "$BRIDGE" command --hub "$URL" --token-file "$CASE_DIR/control-token" \
+        --fleet-id test-fleet 2> "$CASE_DIR/nameless.err")
+  assert_equals "$out" "" \
+    "a command that names no worker must produce no record, least of all a nack"
+  assert_contains "$(cat "$CASE_DIR/nameless.err")" "c-nameless" \
+    "the stuck command id should be named on stderr so it is not lost silently"
+  pass "bridge: a command that names no worker stays pending rather than nacked"
+}
+
 test_compare_sets_rendered_states_against_crew_state() {
   local home feed stub out code
   home="$TMP_ROOT/compare-home"
@@ -568,4 +588,5 @@ test_a_command_for_a_worker_its_agent_reported_gone_is_nacked
 test_a_command_aimed_at_a_replaced_execution_is_refused_without_claiming_absence
 test_a_command_for_another_fleet_is_nacked_without_asking_the_hub
 test_an_order_the_hub_cannot_settle_is_left_pending_rather_than_answered
+test_a_command_that_names_no_worker_is_left_pending_not_nacked
 test_compare_sets_rendered_states_against_crew_state
