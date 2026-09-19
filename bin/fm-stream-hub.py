@@ -132,6 +132,7 @@ DEFAULT_ENDPOINT_RETENTION = 3600.0
 # rather than guessing or sending the order twice, which is a short-lived need;
 # it is not a history of the fleet and nothing is persisted.
 ORDER_JOURNAL_MAX = 512
+COMMAND_RESULT_JOURNAL_MAX = 512
 # How long a command an agent took but never acknowledged remains eligible for
 # a late acknowledgement. It is kept far past the initial acknowledgement
 # window because that is exactly the command whose fate a caller most needs to
@@ -1076,6 +1077,7 @@ class Machine:
         self.last_seen = _now()
         self.queue: list = []
         self.pending: dict = {}
+        self.completed: "collections.OrderedDict" = collections.OrderedDict()
 
     def describe(self, silent_after: float) -> dict:
         silent_for = max(0.0, _now() - self.last_seen)
@@ -1435,12 +1437,24 @@ class Hub:
         with self.command_wake:
             machine = self.machines.get(machine_name)
             command = machine.pending.pop(command_id, None) if machine else None
-        if command is None:
-            raise HubError(HTTPStatus.NOT_FOUND, "no_such_command",
-                           "machine %s holds no command %s" % (machine_name, command_id))
-        command.ok = ok
-        command.error = error
-        command.done.set()
+            if command is None:
+                completed = machine.completed.get(command_id) if machine else None
+                if completed is None:
+                    raise HubError(HTTPStatus.NOT_FOUND, "no_such_command",
+                                   "machine %s holds no command %s"
+                                   % (machine_name, command_id))
+                if completed != (ok, error):
+                    raise HubError(HTTPStatus.CONFLICT, "result_conflict",
+                                   "command %s already has a different result"
+                                   % command_id)
+                machine.completed.move_to_end(command_id)
+                return
+            command.ok = ok
+            command.error = error
+            command.done.set()
+            machine.completed[command_id] = (ok, error)
+            while len(machine.completed) > COMMAND_RESULT_JOURNAL_MAX:
+                machine.completed.popitem(last=False)
 
     # --- orders -----------------------------------------------------------
 

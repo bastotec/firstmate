@@ -19,6 +19,9 @@ test can measure rather than infer.
   --frames-ok-first N      let the first N frame posts through, forgetting the
                            endpoint on every frame after those
   --accept-registrations N how many registrations to accept (-1 for all)
+  --command-id ID          deliver one successful status command with this id
+  --fail-results-first N   refuse the first N result posts
+  --result-file PATH       write the accepted result payload there
 """
 
 import argparse
@@ -48,10 +51,15 @@ class Stub(http.server.BaseHTTPRequestHandler):
     def _refuse(self, status: int, code: str, message: str) -> None:
         self._json(status, {"ok": False, "error": code, "message": message})
 
-    def _read_body(self) -> None:
+    def _read_body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
-        if length:
-            self.rfile.read(length)
+        if not length:
+            return {}
+        body = self.rfile.read(length).decode("utf-8", "replace")
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            return {}
 
     def _record(self) -> str:
         """Journal this request and answer with the path it was made against."""
@@ -78,6 +86,18 @@ class Stub(http.server.BaseHTTPRequestHandler):
             })
             return
         if path == "/v1/agent/commands":
+            with self.server.state["lock"]:
+                command_id = self.server.state["command_id"]
+                send_command = bool(command_id and not self.server.state["command_sent"])
+                if send_command:
+                    self.server.state["command_sent"] = True
+            if send_command:
+                self._json(200, {"ok": True, "commands": [{
+                    "command_id": command_id,
+                    "kind": "status",
+                    "payload": {"state": "working", "note": "result retry"},
+                }]})
+                return
             # The agent's command poll is a long poll, and answering it at once
             # would spin it - burning this host's cpu and burying the journal
             # this case reads. Held for the wait the agent asked for, which is
@@ -96,7 +116,7 @@ class Stub(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's spelling
         path = self._record()
-        self._read_body()
+        payload = self._read_body()
         state = self.server.state
         if path == "/v1/agent/endpoints":
             with state["lock"]:
@@ -118,6 +138,18 @@ class Stub(http.server.BaseHTTPRequestHandler):
             self._refuse(404, "no_such_endpoint",
                          "the stub has forgotten this endpoint by design")
             return
+        if path == "/v1/agent/results":
+            with state["lock"]:
+                state["result_attempts"] += 1
+                refuse = state["result_attempts"] <= state["fail_results_first"]
+            if refuse:
+                self._refuse(503, "result_unavailable", "the result route is unavailable")
+                return
+            if state["result_file"]:
+                with open(state["result_file"], "w", encoding="utf-8") as fh:
+                    json.dump(payload, fh)
+            self._json(200, {"ok": True})
+            return
         self._refuse(404, "no_such_route", "the stub serves agent routes only")
 
 
@@ -133,6 +165,9 @@ def main() -> int:
     parser.add_argument("--journal", required=True)
     parser.add_argument("--frames-ok-first", type=int, default=1)
     parser.add_argument("--accept-registrations", type=int, default=-1)
+    parser.add_argument("--command-id", default="")
+    parser.add_argument("--fail-results-first", type=int, default=0)
+    parser.add_argument("--result-file", default="")
     options = parser.parse_args()
 
     server = StubServer(("127.0.0.1", options.port), Stub)
@@ -144,6 +179,11 @@ def main() -> int:
         "accept_registrations": options.accept_registrations,
         "registrations": 0,
         "frames": 0,
+        "command_id": options.command_id,
+        "command_sent": False,
+        "fail_results_first": options.fail_results_first,
+        "result_attempts": 0,
+        "result_file": options.result_file,
     }
     open(options.journal, "a", encoding="utf-8").close()
     if options.ready_file:
