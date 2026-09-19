@@ -5,14 +5,18 @@ The stream hub (bin/fm-stream-hub.py) knows every worker in the fleet: which
 endpoints are registered, which machine publishes each one, when its agent was
 last heard from, and whether that agent reported the worker gone.  The Bridge
 UI renders a typed live wire format of per-leaf records.  Nothing joined the
-two, so the Bridge had no real fleet to show.  This adapter is that join, and
-it only reads: hub in, wire records out.  It sends nothing to any worker.
+two, so the Bridge had no real fleet to show.  This adapter is that join, in
+both directions: hub in, wire records out for the feed, and command records in,
+acknowledgements out for the composer.
 
-It runs beside the hub, on the host that runs the hub, and holds a
-subscribe-class credential.  It writes one wire record per line (NDJSON) to
-stdout, so where that stream goes is decided by how the adapter is started,
-never by the adapter.  docs/stream-backend.md "Bridge feed" owns deployment and
-the open exposure decision.
+THE TWO DIRECTIONS ARE SEPARATE CREDENTIALS AND SEPARATE COMMANDS.  `serve`,
+`snapshot`, `translate` and `compare` only read, hold a subscribe-class token,
+and send nothing to any worker.  Only `command` steers, and it needs a
+control-class token; a home that never runs it cannot order anything with the
+credential the feed uses.  Both write one record per line (NDJSON) to stdout,
+so where a stream goes is decided by how the adapter is started, never by the
+adapter.  docs/stream-backend.md "Bridge feed" and "Command path" own
+deployment and the open exposure decision.
 
 WHAT THE HUB CARRIES, AND WHAT IT DOES NOT.  The wire format's six-point
 contract is answered from hub facts only, and every field the hub does not
@@ -61,6 +65,7 @@ carry is emitted in the contract's explicit unknown form rather than invented:
 Commands:
 
   fm-stream-bridge.py serve [options]      poll the hub and stream records
+  fm-stream-bridge.py command [options]    read command records, place orders
   fm-stream-bridge.py snapshot [options]   emit one tick of records and exit
   fm-stream-bridge.py translate [options]  replay recorded hub listings
   fm-stream-bridge.py compare [options]    compare against fm-crew-state.sh
@@ -85,6 +90,51 @@ translate reads recorded hub traffic on stdin, one JSON object per line:
 optionally with "received_ms".  It emits exactly what serve would have
 emitted for those answers, so a recorded session replays deterministically.
 It takes --fleet-id and --epoch (default 0).
+
+command is the composer's half of point 7 of the ingest contract.  It reads
+`command` records on stdin, one JSON object per line, and writes one
+`command_ack` or `command_nack` per line to stdout:
+
+  in   {"record":"command","command_id":ID,
+        "identity":{"fleet_id":F,"leaf_worker_id":W,"parent_mate_id":P},
+        "issued_at_utc":ISO,"issued_by":"captain",
+        "payload":{"kind":"steer","text":TEXT}}
+  out  {"record":"command_ack","command_id":ID,"leaf_worker_id":W,
+        "state":"accepted"|"refused","reason":R,"received_at_utc":ISO}
+  or   {"record":"command_nack","command_id":ID,"reason":R,"at_utc":ISO}
+
+FOUR PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
+
+  Identity.  An order names its worker by leaf_worker_id, the same spelling the
+  feed emits, so it addresses the worker rather than whichever endpoint it
+  happened to be on.
+
+  Execution scope.  An order is bound to one execution.  The composer names it
+  as `execution_id` in the identity block it shares with the feed; when the
+  record omits it, the leaf's current execution is resolved here, so an order
+  is still bound to exactly one execution and the hub refuses it if the leaf
+  has moved on since.  That refusal is the point: an order composed against one
+  worker must never be typed into the worker that replaced it.
+
+  Acknowledgement.  `state: accepted` means the owning AGENT applied the order
+  to its worker's pseudoterminal and said so.  A hub that queued an order has
+  not delivered it and never reports that it did.
+
+  Membership.  A `command_nack` is an authoritative answer and nothing else
+  produces one: `no_such_worker` is the owning agent's own report that its
+  worker ended, `worker_not_registered` is the hub still holding no
+  registration for the leaf after waiting out the window a rejoining agent
+  needs, and `fleet_unknown` is this adapter's own fleet id disagreeing.  A
+  refusal the hub reached no membership verdict on is a `command_ack` with
+  `state: refused`, which says the order did not arrive without claiming the
+  worker is gone.
+
+An order the hub can neither confirm nor rule out gets NO record at all, and
+neither does one the hub could not be asked about.  That is deliberate: the
+command id stays visibly pending, which is the only honest answer, and
+`bin/fm-stream.sh order-status <id>` reads what became of it afterwards.
+Re-sending a command id the hub already holds returns that order's own fate
+rather than delivering it twice.
 
 compare is the Phase 2 comparison harness.  It reads this home's task records
 (<home>/state/*.meta) for stream-backed tasks, takes the adapter's rendered
@@ -134,6 +184,23 @@ DEFAULT_INTERVAL_MS = 500
 BRIDGE_STALE_MS = 1500
 MIN_INTERVAL_MS = 50
 HTTP_TIMEOUT_SECS = 5.0
+# An order waits on the owning agent's acknowledgement and, when a leaf does
+# not resolve, on the hub's rejoin window before it will call that absence a
+# membership verdict.  Both are far longer than a read, so orders get their own
+# bound rather than the feed's.
+ORDER_TIMEOUT_SECS = 60.0
+
+# The three records point 7 of the Bridge UI's ingest contract defines, spelled
+# as the contract spells them.
+RECORD_COMMAND = "command"
+RECORD_ACK = "command_ack"
+RECORD_NACK = "command_nack"
+# A nack reason is an authoritative membership answer, so only a settled fact
+# ever produces one.  Everything else refuses through command_ack, which is a
+# refusal WITHOUT a claim about membership.
+NACK_NO_SUCH_WORKER = "no_such_worker"
+NACK_NOT_REGISTERED = "worker_not_registered"
+NACK_FLEET_UNKNOWN = "fleet_unknown"
 
 ENDPOINT_ID_RE = re.compile(r"\A[0-9a-f]{32}\Z")
 MACHINE_RE = re.compile(r"\A[A-Za-z0-9._-]{1,128}\Z")
@@ -176,23 +243,7 @@ class Bridge:
         tasks = listing.get("tasks") if isinstance(listing, dict) else None
         if not isinstance(tasks, list):
             raise BridgeError("the hub listing carries no tasks array")
-        newest = {}
-        for task in tasks:
-            if not isinstance(task, dict):
-                continue
-            endpoint_id = task.get("endpoint_id")
-            machine = task.get("machine")
-            label = task.get("label")
-            if not (isinstance(endpoint_id, str) and ENDPOINT_ID_RE.match(endpoint_id)
-                    and isinstance(machine, str) and MACHINE_RE.match(machine)
-                    and isinstance(label, str) and LABEL_RE.match(label)):
-                # A record the hub itself would have refused to register is not
-                # a leaf, and guessing its identity would be worse than
-                # leaving it out.
-                continue
-            # The hub lists a machine's endpoints oldest first, so a relaunch
-            # replaces the record it superseded, which may linger listed.
-            newest["%s/%s" % (machine, label)] = task
+        newest = newest_by_leaf(tasks)
         records = []
         for leaf, task in newest.items():
             machine = task["machine"]
@@ -218,8 +269,39 @@ class Bridge:
         return records
 
 
+def newest_by_leaf(tasks: list) -> dict:
+    """leaf_worker_id -> that leaf's newest listed endpoint.
+
+    One owner for what a leaf is currently on, because the feed and the order
+    path must not answer that differently: the execution the Bridge is shown is
+    the execution an order composed against it names.
+    """
+    newest = {}
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        endpoint_id = task.get("endpoint_id")
+        machine = task.get("machine")
+        label = task.get("label")
+        if not (isinstance(endpoint_id, str) and ENDPOINT_ID_RE.match(endpoint_id)
+                and isinstance(machine, str) and MACHINE_RE.match(machine)
+                and isinstance(label, str) and LABEL_RE.match(label)):
+            # A record the hub itself would have refused to register is not a
+            # leaf, and guessing its identity would be worse than leaving it
+            # out.
+            continue
+        # The hub lists a machine's endpoints oldest first, so a relaunch
+        # replaces the record it superseded, which may linger listed.
+        newest["%s/%s" % (machine, label)] = task
+    return newest
+
+
 def encode(record: dict) -> str:
     return json.dumps(record, separators=(",", ":"))
+
+
+def iso_utc() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 # --- hub access -------------------------------------------------------------
@@ -245,6 +327,33 @@ class HubClient:
     def __init__(self, url: str, token: str) -> None:
         self.url = url.rstrip("/")
         self.token = token
+
+    def post(self, path: str, payload: dict) -> tuple:
+        """(status, body) for a write, where a REFUSAL is an answer, not a failure.
+
+        Every refusal the order path makes is a JSON body worth reading, so an
+        HTTP error status is returned rather than raised.  Only being unable to
+        ask at all is an exception, because that is the one case in which
+        nothing can be said about the order.
+        """
+        request = urllib.request.Request(
+            self.url + path, method="POST",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": "Bearer " + self.token,
+                     "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=ORDER_TIMEOUT_SECS) as response:
+                return (response.status, json.loads(response.read().decode("utf-8")))
+        except urllib.error.HTTPError as exc:
+            try:
+                return (exc.code, json.loads(exc.read().decode("utf-8")))
+            except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+                raise HubUnreachable("the hub at %s answered %s with HTTP %d and no "
+                                     "readable body" % (self.url, path, exc.code))
+        except (urllib.error.URLError, OSError, ValueError,
+                http.client.HTTPException) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise HubUnreachable("cannot reach the hub at %s: %s" % (self.url, reason))
 
     def get(self, path: str) -> dict:
         request = urllib.request.Request(
@@ -309,6 +418,133 @@ def tick(client: HubClient, bridge: Bridge, clock: Clock) -> list:
 
 
 # --- commands ---------------------------------------------------------------
+
+
+class Commander:
+    """Composer command records in, acknowledgements out.
+
+    The contract's three records are the whole of this class's vocabulary, and
+    the rule that decides between them is one sentence: an acknowledgement says
+    the WORKER received the order, a nack says membership settled that it never
+    could, and anything the hub cannot determine gets NEITHER - the command id
+    simply stays pending, which is what keeps an unanswered order visible
+    instead of quietly becoming an accepted one.
+    """
+
+    def __init__(self, client: "HubClient", fleet_id: str) -> None:
+        self.client = client
+        self.fleet_id = fleet_id
+
+    @staticmethod
+    def ack(command_id: str, leaf: str, state: str, reason: str = "") -> dict:
+        record = {"record": RECORD_ACK, "command_id": command_id,
+                  "leaf_worker_id": leaf, "state": state,
+                  "received_at_utc": iso_utc()}
+        if reason:
+            record["reason"] = reason
+        return record
+
+    @staticmethod
+    def nack(command_id: str, reason: str) -> dict:
+        return {"record": RECORD_NACK, "command_id": command_id,
+                "reason": reason, "at_utc": iso_utc()}
+
+    def handle(self, record: dict) -> list:
+        """One command record -> the records to emit for it, which may be none."""
+        command_id = record.get("command_id")
+        if not isinstance(command_id, str) or not command_id:
+            raise BridgeError("a command record carries no command_id, so nothing "
+                              "could be acknowledged against it")
+        identity = record.get("identity")
+        identity = identity if isinstance(identity, dict) else {}
+        leaf = identity.get("leaf_worker_id")
+        if not isinstance(leaf, str) or not leaf:
+            return [self.nack(command_id, NACK_NO_SUCH_WORKER)]
+        # The adapter knows which fleet it serves, so this one is settled here
+        # and never asked of the hub.
+        fleet = identity.get("fleet_id")
+        if fleet is not None and fleet != self.fleet_id:
+            return [self.nack(command_id, NACK_FLEET_UNKNOWN)]
+        payload = record.get("payload")
+        payload = payload if isinstance(payload, dict) else {}
+        if payload.get("kind") != "steer":
+            return [self.ack(command_id, leaf, "refused",
+                             "this adapter carries only steer orders, not %r"
+                             % payload.get("kind"))]
+        text = payload.get("text")
+        if not isinstance(text, str):
+            return [self.ack(command_id, leaf, "refused",
+                             "a steer needs its text as a string")]
+        # The execution the order was aimed at, when the composer names one in
+        # the identity block it shares with the feed. It is passed straight
+        # through and never filled in from a listing read here: resolving a
+        # leaf is a membership question, and answering it from one cheap
+        # listing is exactly how a worker rejoining a restarted hub gets
+        # reported as absent. The hub waits that window out, so the question
+        # goes there.
+        execution = identity.get("execution_id")
+        if not isinstance(execution, str):
+            execution = ""
+        status, body = self.client.post("/v1/orders", {
+            "leaf_worker_id": leaf,
+            "execution_id": execution,
+            "order_id": command_id,
+            "text": text,
+            "submit": True,
+        })
+        return self.answer(command_id, leaf, status, body)
+
+    def answer(self, command_id: str, leaf: str, status: int, body: dict) -> list:
+        outcome = body.get("outcome")
+        if outcome == "accepted":
+            return [self.ack(command_id, leaf, "accepted")]
+        if outcome == "unconfirmed":
+            # The hub has it and cannot say whether the worker took it. Saying
+            # either would be a guess, so the id stays pending and nothing is
+            # emitted for it.
+            return []
+        # Only the hub's two settled membership facts become a nack. Every
+        # other refusal is a refusal WITHOUT a membership claim, because the
+        # hub reaching no verdict is not the same as a verdict of absence.
+        if body.get("worker_gone"):
+            return [self.nack(command_id, NACK_NO_SUCH_WORKER)]
+        if body.get("not_registered"):
+            return [self.nack(command_id, NACK_NOT_REGISTERED)]
+        reason = body.get("reason") or body.get("error") or ("HTTP %d" % status)
+        message = body.get("reason_message") or body.get("message") or ""
+        return [self.ack(command_id, leaf, "refused",
+                         "%s: %s" % (reason, message) if message else str(reason))]
+
+
+def cmd_command(options: argparse.Namespace) -> int:
+    """Read command records on stdin, place each order, write its answer."""
+    client = HubClient(options.hub, read_token(options.token_file))
+    client.check_protocol()
+    commander = Commander(client, options.fleet_id)
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            print("fm-stream-bridge: ignoring a malformed command record: %s" % exc,
+                  file=sys.stderr)
+            continue
+        if not isinstance(record, dict) or record.get("record") != RECORD_COMMAND:
+            print("fm-stream-bridge: ignoring a record that is not a %s" % RECORD_COMMAND,
+                  file=sys.stderr)
+            continue
+        try:
+            emit(commander.handle(record))
+        except HubUnreachable as exc:
+            # Nothing is emitted, so the command id stays pending rather than
+            # being answered from an outage.
+            print("fm-stream-bridge: %s; command %s stays pending"
+                  % (exc, record.get("command_id")), file=sys.stderr)
+        except BridgeError as exc:
+            print("fm-stream-bridge: %s" % exc, file=sys.stderr)
+    return 0
 
 
 def cmd_serve(options: argparse.Namespace) -> int:
@@ -519,6 +755,13 @@ def build_parser() -> argparse.ArgumentParser:
     translate = commands.add_parser("translate", help="replay recorded hub listings")
     identity_options(translate)
 
+    command = commands.add_parser(
+        "command", help="read composer command records and place the orders")
+    command.add_argument("--hub", required=True, help="hub base URL")
+    command.add_argument("--token-file", required=True,
+                         help="file whose first line is a CONTROL-class token")
+    command.add_argument("--fleet-id", default=DEFAULT_FLEET_ID)
+
     compare = commands.add_parser("compare", help="compare against fm-crew-state.sh")
     hub_options(compare, False)
     compare.add_argument("--fleet-id", default=DEFAULT_FLEET_ID)
@@ -538,7 +781,8 @@ def main(argv: list) -> int:
         print(BRIDGE_VERSION)
         return 0
     handlers = {"serve": cmd_serve, "snapshot": cmd_snapshot,
-                "translate": cmd_translate, "compare": cmd_compare}
+                "translate": cmd_translate, "compare": cmd_compare,
+                "command": cmd_command}
     handler = handlers.get(options.command)
     if handler is None:
         parser.print_help(sys.stderr)

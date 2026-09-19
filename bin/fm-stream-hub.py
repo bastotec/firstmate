@@ -81,6 +81,10 @@ serve options:
                          "subscribe,control:<token>".
   --state-max-age-secs N how old a published state frame may be before a state
                          answer is reported stale (default 30)
+  --membership-grace-secs N  how long a leaf that resolves to nothing is
+                         re-checked before the hub will call it absent, so a
+                         rejoining agent is never reported as a missing worker
+                         (default 6).
   --command-ack-secs N   how long an input or kill waits for the owning agent's
                          acknowledgement before it is refused (default 20)
   --ready-file PATH      write "<bind> <port>" there once listening
@@ -125,6 +129,16 @@ DEFAULT_SCROLLBACK = 2000
 DEFAULT_STATE_MAX_AGE = 30.0
 DEFAULT_COMMAND_ACK = 20.0
 DEFAULT_ENDPOINT_RETENTION = 3600.0
+# How many recent orders the hub can still answer for. The journal exists so a
+# caller that lost the answer to its own request can ask what became of it
+# rather than guessing or sending the order twice, which is a short-lived need;
+# it is not a history of the fleet and nothing is persisted.
+ORDER_JOURNAL_MAX = 512
+# How long a command an agent took but never acknowledged stays answerable. It
+# is kept far past the acknowledgement window because that is exactly the
+# command whose fate a caller most needs to learn, and dropped eventually
+# because an agent that has not answered by then is not going to.
+UNACKNOWLEDGED_COMMAND_RETENTION = 900.0
 # How long an endpoint may say nothing before the hub presumes its agent is
 # gone. A presumption is not a close: the endpoint stays listed, stays
 # streamable and stays steerable, because a worker the hub has merely not heard
@@ -142,6 +156,14 @@ DEFAULT_ENDPOINT_RETENTION = 3600.0
 # been taken by another live endpoint, and two workers must never answer to one
 # identity.
 AGENT_SILENCE_PRESUMED_SECS = 10.0
+# How long a leaf must keep failing to resolve before the hub will call it
+# absent. The registry is in memory, so a hub that restarted holds nothing
+# until each agent registers again - and a first-reply miss during that window
+# would report every live worker in the fleet as gone at once. Waiting it out
+# is what makes the answer a membership verdict instead of a reading, and it
+# matches the window bin/backends/stream.sh's recovery-grade classifier waits
+# before it will say `missing`.
+DEFAULT_MEMBERSHIP_GRACE = 6.0
 MAX_BODY = 4 * 1024 * 1024
 MAX_LABEL_LEN = 128
 MAX_MACHINE_LEN = 128
@@ -155,6 +177,15 @@ MAX_MACHINE_LEN = 128
 # edit rather than a protocol change.  Watching and steering are split because
 # two classes cannot express what a fleet needs: one URL must watch every
 # worker and type back, while a link handed to someone else must only watch.
+# The three answers an order can get, and the whole of the difference between
+# them. ACCEPTED means the owning agent applied it to the worker and said so.
+# REFUSED means it did not reach the worker and the hub can say why. UNCONFIRMED
+# means the hub does not know - which is not a failure and must never be
+# rendered as either of the others.
+ORDER_ACCEPTED = "accepted"
+ORDER_REFUSED = "refused"
+ORDER_UNCONFIRMED = "unconfirmed"
+
 CLASS_PUBLISH = "publish"
 CLASS_SUBSCRIBE = "subscribe"
 CLASS_CONTROL = "control"
@@ -177,6 +208,10 @@ STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
 MACHINE_RE = re.compile(r"\A[A-Za-z0-9._-]{1,%d}\Z" % MAX_MACHINE_LEN)
 ENDPOINT_ID_RE = re.compile(r"\A[0-9a-f]{32}\Z")
 COMMAND_ID_RE = re.compile(r"\A[0-9a-f]{32}\Z")
+# An order id is the CALLER's, because reconciliation is the caller asking what
+# became of the id it issued. A uuid with or without dashes fits, and so does
+# anything else safe to put in a path.
+ORDER_ID_RE = re.compile(r"\A[A-Za-z0-9._-]{1,128}\Z")
 
 
 def _now() -> float:
@@ -737,11 +772,20 @@ class Ring:
 
 
 class HubError(Exception):
-    def __init__(self, status: int, code: str, message: str) -> None:
+    """A refusal, and the facts a caller needs to act on it.
+
+    `details` carries the order path's typed answer - the outcome, which
+    execution was addressed, and whether the hub holds evidence the worker is
+    gone - so a refusal is as readable as an acceptance instead of collapsing
+    into one message string.
+    """
+
+    def __init__(self, status: int, code: str, message: str, details: dict = None) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
+        self.details = details or {}
 
 
 class Command:
@@ -754,7 +798,7 @@ class Command:
     """
 
     __slots__ = ("command_id", "endpoint_id", "machine", "kind", "payload",
-                 "created_at", "taken_at", "done", "ok", "error")
+                 "created_at", "taken_at", "done", "ok", "error", "withdrawn")
 
     def __init__(self, endpoint_id: str, machine: str, kind: str, payload: dict) -> None:
         self.command_id = uuid.uuid4().hex
@@ -767,6 +811,11 @@ class Command:
         self.done = threading.Event()
         self.ok = False
         self.error = ""
+        # Pulled back out of the queue before any agent took it. That is the
+        # one circumstance in which the hub can say a command was NOT
+        # delivered; a command an agent has already taken is never withdrawn,
+        # because withdrawing it would not unsend it.
+        self.withdrawn = False
 
     def describe(self) -> dict:
         return {
@@ -775,6 +824,104 @@ class Command:
             "kind": self.kind,
             "payload": self.payload,
         }
+
+
+class Order:
+    """One leaf-addressed order, and what is known about its fate.
+
+    The record holds the Command rather than a copy of its verdict, so reading
+    an order back reports what is true NOW.  An order the hub answered as
+    unconfirmed becomes accepted the moment a late acknowledgement arrives,
+    with nothing to keep in step.
+    """
+
+    __slots__ = ("order_id", "leaf_worker_id", "requested_execution_id",
+                 "execution_id", "created_at", "endpoint", "command", "refusal",
+                 "status")
+
+    def __init__(self, order_id: str, leaf: str, requested_execution: str,
+                 execution: str, endpoint: "Endpoint") -> None:
+        self.order_id = order_id
+        self.leaf_worker_id = leaf
+        self.requested_execution_id = requested_execution
+        self.execution_id = execution
+        self.created_at = _now()
+        # The addressed endpoint's own record, or None when the leaf resolved
+        # to nothing. It is held rather than copied because the worker_gone
+        # verdict below has to be read from it at answering time.
+        self.endpoint = endpoint
+        # Set when an order reached the command router; None when it was
+        # refused before that, which is every membership refusal.
+        self.command = None
+        # (code, message) for an order no command was ever made for. The
+        # refusal IS the whole record in that case.
+        self.refusal = None
+        # The status this order was first answered with, so a caller that
+        # resends its id is told the same thing rather than a second opinion.
+        self.status = HTTPStatus.OK
+
+    def worker_gone(self) -> bool:
+        """Whether the hub holds the owning AGENT's own report that the worker ended.
+
+        This is the only authoritative absence the hub has, and it is read from
+        one place for every answer.  A close the hub made by itself is
+        bookkeeping about a record it could no longer steer and says nothing
+        about the worker, so it is never counted here - and neither is silence,
+        an unreachable agent, or a leaf the hub cannot currently resolve.
+        """
+        return bool(self.endpoint is not None and self.endpoint.closed_by == "agent")
+
+    def outcome(self) -> tuple:
+        """(outcome, code, message, delivered), read live.
+
+        `delivered` is None, never False, wherever the hub cannot tell.  That
+        distinction is the point of the whole record: False is a fact the hub
+        is entitled to state, and None is the honest absence of one.
+        """
+        if self.refusal is not None:
+            code, message = self.refusal
+            return (ORDER_REFUSED, code, message, False)
+        command = self.command
+        if command is None:
+            return (ORDER_REFUSED, "not_submitted",
+                    "no command was ever made for this order, so nothing was "
+                    "delivered", False)
+        if command.done.is_set():
+            if command.ok:
+                return (ORDER_ACCEPTED, "", "", True)
+            # The agent looked at its own worker and would not apply the order.
+            return (ORDER_REFUSED, "agent_refused",
+                    command.error or "the owning agent refused the order", False)
+        if command.withdrawn:
+            return (ORDER_REFUSED, "no_agent_ack",
+                    "no agent took the order, so it was not delivered", False)
+        if command.taken_at:
+            return (ORDER_UNCONFIRMED, "no_agent_ack",
+                    "the owning agent took the order and has not acknowledged it, "
+                    "so whether the worker received it is not known", None)
+        return (ORDER_UNCONFIRMED, "queued",
+                "the order is queued for the owning agent and has not been taken", None)
+
+    def describe(self) -> dict:
+        outcome, code, message, delivered = self.outcome()
+        record = {
+            "order_id": self.order_id,
+            "leaf_worker_id": self.leaf_worker_id,
+            "requested_execution_id": self.requested_execution_id,
+            "execution_id": self.execution_id,
+            "outcome": outcome,
+            "delivered": delivered,
+            "worker_gone": self.worker_gone(),
+            # The other authoritative absence: the hub kept holding no
+            # registration for this leaf for longer than a rejoin takes.
+            "not_registered": self.refusal is not None and self.refusal[0] == "unknown_leaf",
+            "requested_at": self.created_at,
+        }
+        if code:
+            record["reason"] = code
+        if message:
+            record["reason_message"] = message
+        return record
 
 
 class Endpoint:
@@ -963,6 +1110,7 @@ class Hub:
         self.machines: dict = {}
         self.lock = threading.RLock()
         self.command_wake = threading.Condition(self.lock)
+        self.orders: "collections.OrderedDict" = collections.OrderedDict()
         self.started_at = _now()
 
     # --- authentication ---------------------------------------------------
@@ -1145,19 +1293,36 @@ class Hub:
                     if (e.closed_at and e.closed_at < cutoff)
                     or e.agent_silent_for() > DEFAULT_ENDPOINT_RETENTION]:
                 self.endpoints.pop(endpoint_id, None)
+            # Commands an agent took and never answered for are kept well past
+            # the acknowledgement window, because that is the command whose
+            # fate a caller most needs to be able to ask about. They are not
+            # kept forever: an agent silent this long is not going to answer,
+            # and the order reads unconfirmed either way.
+            stale = _now() - UNACKNOWLEDGED_COMMAND_RETENTION
+            for machine in self.machines.values():
+                for command_id, command in list(machine.pending.items()):
+                    if not command.done.is_set() and command.taken_at < stale:
+                        machine.pending.pop(command_id, None)
 
     # --- commands ---------------------------------------------------------
 
-    def submit_command(self, endpoint: "Endpoint", kind: str, payload: dict) -> "Command":
+    def submit_command(self, endpoint: "Endpoint", kind: str, payload: dict,
+                       order: "Order" = None) -> "Command":
         """Queue a command for the owning agent and wait for its acknowledgement.
 
         A command that is never taken, or whose agent reports a failure, is an
         error here.  Silence is never success.
+
+        `order` is bound to the command the instant one exists, before anything
+        here can raise, so an order whose command timed out can still be read
+        back as what it is rather than as a record with nothing in it.
         """
         if endpoint.closed_at:
             raise HubError(HTTPStatus.CONFLICT, "endpoint_closed",
                            "endpoint %s has closed" % endpoint.endpoint_id)
         command = Command(endpoint.endpoint_id, endpoint.machine, kind, payload)
+        if order is not None:
+            order.command = command
         with self.command_wake:
             machine = self.machines.get(endpoint.machine)
             if machine is None:
@@ -1167,18 +1332,41 @@ class Hub:
             self.command_wake.notify_all()
         if not command.done.wait(self.options.command_ack_secs):
             with self.command_wake:
-                if command in machine.queue:
-                    machine.queue.remove(command)
-                machine.pending.pop(command.command_id, None)
-            silent = self.machine_silent_for(endpoint.machine)
-            raise HubError(
-                HTTPStatus.GATEWAY_TIMEOUT, "no_agent_ack",
-                "the agent on machine %s did not acknowledge within %gs "
-                "(last heard from %.1fs ago); the %s was NOT delivered"
-                % (endpoint.machine, self.options.command_ack_secs, silent, kind))
+                # The acknowledgement may have landed in the instant between
+                # the wait elapsing and this lock, and a command that WAS
+                # acknowledged must never be reported as one that timed out.
+                if not command.done.is_set():
+                    if command in machine.queue:
+                        # Never taken by any agent, so pulling it back is what
+                        # makes "not delivered" a fact rather than a guess.
+                        machine.queue.remove(command)
+                        command.withdrawn = True
+                    # A command an agent already TOOK stays pending on purpose.
+                    # It may be running at the worker this instant, so the hub
+                    # neither unsends it nor forgets it: leaving the record is
+                    # what lets a late acknowledgement still settle what
+                    # happened, which is the only way an unconfirmed command
+                    # ever becomes a known one.
+            if not command.done.is_set():
+                silent = self.machine_silent_for(endpoint.machine)
+                if command.withdrawn:
+                    raise HubError(
+                        HTTPStatus.GATEWAY_TIMEOUT, "no_agent_ack",
+                        "the agent on machine %s did not acknowledge within %gs "
+                        "(last heard from %.1fs ago); the %s was NOT delivered"
+                        % (endpoint.machine, self.options.command_ack_secs, silent, kind),
+                        {"taken": False})
+                raise HubError(
+                    HTTPStatus.GATEWAY_TIMEOUT, "no_agent_ack",
+                    "the agent on machine %s took the %s but did not acknowledge it "
+                    "within %gs (last heard from %.1fs ago); whether it reached the "
+                    "worker is NOT known"
+                    % (endpoint.machine, kind, self.options.command_ack_secs, silent),
+                    {"taken": True})
         if not command.ok:
             raise HubError(HTTPStatus.BAD_GATEWAY, "agent_refused",
-                           command.error or "the owning agent refused the %s" % kind)
+                           command.error or "the owning agent refused the %s" % kind,
+                           {"taken": True})
         return command
 
     def take_commands(self, machine_name: str, endpoint_id: str, wait: float) -> list:
@@ -1219,8 +1407,154 @@ class Hub:
         command.error = error
         command.done.set()
 
+    # --- orders -----------------------------------------------------------
+
+    def leaf_members(self, leaf: str) -> list:
+        """Every endpoint the hub holds under one leaf_worker_id, oldest first."""
+        with self.lock:
+            members = [e for e in self.endpoints.values() if leaf_of(e) == leaf]
+        members.sort(key=lambda e: e.created_at)
+        return members
+
+    @staticmethod
+    def current_execution(members: list) -> "Endpoint":
+        """Which of a leaf's endpoints an order addressed to it would reach.
+
+        The order of preference is the registration rule read from the other
+        side.  An endpoint the hub has never HEARD FROM stands for no worker -
+        registering is not proof - so it cannot supersede one that does, which
+        is precisely the case of a replacement started while a live worker's
+        agent was out of touch.  Silence is deliberately not a criterion: a
+        presumption is not evidence, so a worker whose agent has merely gone
+        quiet keeps its place here and its order is attempted rather than
+        refused on a guess.
+        """
+        heard = [e for e in members if e.heard_from and not e.closed_at]
+        if heard:
+            return heard[-1]
+        open_records = [e for e in members if not e.closed_at]
+        if open_records:
+            return open_records[-1]
+        return members[-1] if members else None
+
+    def record_order(self, order: "Order") -> None:
+        with self.lock:
+            self.orders[order.order_id] = order
+            while len(self.orders) > ORDER_JOURNAL_MAX:
+                self.orders.popitem(last=False)
+
+    def get_order(self, order_id: str) -> "Order":
+        with self.lock:
+            order = self.orders.get(order_id)
+        if order is None:
+            raise HubError(HTTPStatus.NOT_FOUND, "no_such_order",
+                           "this hub holds no order %s" % order_id)
+        return order
+
+    def place_order(self, leaf: str, requested_execution: str, payload: dict,
+                    order_id: str = "") -> "Order":
+        """Deliver one leaf-addressed, execution-scoped order, or refuse it.
+
+        Addressing is by leaf so a caller names the worker rather than whichever
+        endpoint it happened to be on, and the execution the caller AIMED at is
+        carried with it so that stability can never become the wrong target: an
+        order composed against one execution must not land in a replacement that
+        never saw what prompted it.  Every exit from here is recorded under the
+        caller's own id, so an answer that never reached the caller can still be
+        read back - and so a caller that resends an id rather than risk having
+        lost one gets the first order's fate instead of a second delivery.
+        """
+        if order_id:
+            with self.lock:
+                existing = self.orders.get(order_id)
+            if existing is not None:
+                # Already placed. Typing it a second time is the one outcome
+                # that cannot be taken back, so a repeat is answered from the
+                # record rather than delivered again.
+                return existing
+        self.reap()
+        members = self.leaf_members(leaf)
+        # A leaf that resolves to nothing is not absent yet. Rejoining agents
+        # take seconds, and only an absence that outlasts that window is a
+        # membership verdict rather than a reading.
+        if not members:
+            deadline = _now() + self.options.membership_grace_secs
+            while _now() < deadline:
+                time.sleep(0.25)
+                members = self.leaf_members(leaf)
+                if members:
+                    break
+        current = self.current_execution(members)
+        order = Order(order_id or uuid.uuid4().hex, leaf, requested_execution,
+                      current.endpoint_id if current is not None else "", current)
+        self.record_order(order)
+
+        if current is None:
+            self._refuse_order(order, HTTPStatus.NOT_FOUND, "unknown_leaf",
+                               "this hub held no endpoint for leaf %s for %gs, longer "
+                               "than a rejoin takes, so it is not registered here"
+                               % (leaf, self.options.membership_grace_secs))
+
+        if requested_execution and current.endpoint_id != requested_execution:
+            if any(e.endpoint_id == requested_execution for e in members):
+                self._refuse_order(
+                    order, HTTPStatus.CONFLICT, "execution_superseded",
+                    "leaf %s is now execution %s; the order was aimed at %s and was "
+                    "not delivered" % (leaf, current.endpoint_id, requested_execution))
+            self._refuse_order(
+                order, HTTPStatus.NOT_FOUND, "execution_not_found",
+                "this hub holds no execution %s for leaf %s (its current execution "
+                "is %s)" % (requested_execution, leaf, current.endpoint_id))
+
+        if current.closed_by == "agent":
+            self._refuse_order(
+                order, HTTPStatus.GONE, "worker_gone",
+                "the agent owning execution %s reported its worker ended (exit %s), "
+                "so the order was not delivered"
+                % (current.endpoint_id, current.exit_code))
+        if current.closed_at:
+            # The hub closed a record it could no longer steer. It cannot carry
+            # this order, and it knows nothing about the worker either.
+            self._refuse_order(
+                order, HTTPStatus.CONFLICT, "hub_closed_record",
+                "the hub closed its record of execution %s because it could no longer "
+                "steer it; the order was not delivered, and this is not evidence about "
+                "the worker" % current.endpoint_id)
+
+        try:
+            self.submit_command(current, "input", {
+                "text": payload.get("text"),
+                "keys": payload.get("keys"),
+                "submit": bool(payload.get("submit")),
+            }, order=order)
+        except HubError as exc:
+            if order.command is None or not order.command.taken_at:
+                # No agent ever took this, so the refusal itself is the whole
+                # record and it keeps the reason that produced it. Only a
+                # command an agent HAS taken is left to the command record,
+                # whose unconfirmed verdict no refusal may overwrite.
+                order.refusal = (exc.code, exc.message)
+            order.status = exc.status
+            raise HubError(exc.status, exc.code, exc.message, order.describe())
+        return order
+
+    def _refuse_order(self, order: "Order", status, code: str, message: str) -> None:
+        order.refusal = (code, message)
+        order.status = status
+        raise HubError(status, code, message, order.describe())
+
 
 # --- helpers ----------------------------------------------------------------
+
+
+def leaf_of(endpoint: "Endpoint") -> str:
+    """The stable identity an order addresses: one task on one home.
+
+    The same spelling bin/fm-stream-bridge.py emits as leaf_worker_id, so what
+    the Bridge shows and what an order names are the same thing.  It outlives
+    any one execution, which is why an order carries the execution separately.
+    """
+    return "%s/%s" % (endpoint.machine, endpoint.label)
 
 
 def _constant_time_equals(a: str, b: str) -> bool:
@@ -1310,7 +1644,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._discard_body()
         except HubError as exc:
             self._discard_body()
-            self._json(exc.status, {"ok": False, "error": exc.code, "message": exc.message})
+            refusal = dict(exc.details)
+            refusal.update({"ok": False, "error": exc.code, "message": exc.message})
+            self._json(exc.status, refusal)
         except BrokenPipeError:
             return
         except ConnectionResetError:
@@ -1442,6 +1778,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "endpoints": len(hub.list_endpoints()),
                 "state_max_age_secs": hub.options.state_max_age_secs,
                 "command_ack_secs": hub.options.command_ack_secs,
+                "membership_grace_secs": hub.options.membership_grace_secs,
             })
             return
 
@@ -1472,6 +1809,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/v1/orders" and method == "POST":
+            # Steering a worker is the control class, exactly as typing into
+            # its endpoint is.
+            self._require(CLASS_CONTROL, query)
+            self._order_route(query)
+            return
+
+        if path.startswith("/v1/orders/") and method == "GET":
+            # Reading back what became of an order is a read, so a watcher can
+            # reconcile without holding a credential that can steer anything.
+            self._require(CLASS_SUBSCRIBE, query)
+            order_id = urllib.parse.unquote(path[len("/v1/orders/"):])
+            if not ORDER_ID_RE.match(order_id):
+                raise HubError(HTTPStatus.NOT_FOUND, "no_such_order",
+                               "no order %s" % order_id)
+            self._json(HTTPStatus.OK,
+                       {"ok": True, "order": hub.get_order(order_id).describe()})
+            return
+
         if path.startswith("/v1/tasks/"):
             rest = path[len("/v1/tasks/"):]
             endpoint_id, _, tail = rest.partition("/")
@@ -1479,6 +1835,53 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         raise HubError(HTTPStatus.NOT_FOUND, "no_such_route", "no such route: %s" % path)
+
+    def _order_route(self, query: dict) -> None:
+        """One order, addressed by leaf and bound to the execution it was aimed at.
+
+        Both identifiers are required.  The leaf alone would let an order
+        composed for one worker land in its replacement, and the execution
+        alone would be the endpoint-addressed steer this already has.
+        """
+        payload = self._body()
+        leaf = payload.get("leaf_worker_id")
+        if not isinstance(leaf, str):
+            raise HubError(HTTPStatus.BAD_REQUEST, "bad_leaf",
+                           "an order needs a 'leaf_worker_id'")
+        machine, sep, label = leaf.partition("/")
+        if not sep or not MACHINE_RE.match(machine) or not LABEL_RE.match(label):
+            raise HubError(HTTPStatus.BAD_REQUEST, "bad_leaf",
+                           "leaf_worker_id must be '<machine>/<label>'")
+        # The execution the order was AIMED at. A caller that names one gets it
+        # enforced: if the leaf has moved on, the order is refused rather than
+        # delivered to the worker that replaced the one it was composed for.
+        # A caller that names none is bound to whatever the leaf is on when the
+        # order arrives, and the answer says which execution that was - which
+        # is weaker, and is why it is the caller's choice rather than a default
+        # applied silently to a caller that did name one.
+        execution = payload.get("execution_id")
+        if execution is None or execution == "":
+            execution = ""
+        elif not isinstance(execution, str) or not ENDPOINT_ID_RE.match(execution):
+            raise HubError(HTTPStatus.BAD_REQUEST, "bad_execution",
+                           "an execution_id must be 32 lowercase hex characters")
+        if payload.get("text") is None and payload.get("keys") is None:
+            raise HubError(HTTPStatus.BAD_REQUEST, "bad_input",
+                           "an order needs 'text' or 'keys'")
+        order_id = payload.get("order_id") or ""
+        if order_id and not ORDER_ID_RE.match(str(order_id)):
+            raise HubError(HTTPStatus.BAD_REQUEST, "bad_order_id",
+                           "an order_id must be 1-128 characters of [A-Za-z0-9._-]")
+        order = self.server.hub.place_order(leaf, execution, payload, str(order_id))
+        # Placing a fresh order raises on every refusal, so reaching here means
+        # either a delivery or a caller resending an id the hub already
+        # answered - and a resent id is told exactly what the first answer was.
+        outcome, code, message, _delivered = order.outcome()
+        if outcome != ORDER_ACCEPTED:
+            raise HubError(order.status, code or outcome, message, order.describe())
+        answer = {"ok": True}
+        answer.update(order.describe())
+        self._json(HTTPStatus.OK, answer)
 
     # --- agent routes -----------------------------------------------------
 
@@ -2030,6 +2433,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--token-file", default="")
     serve.add_argument("--state-max-age-secs", type=float, default=DEFAULT_STATE_MAX_AGE)
     serve.add_argument("--command-ack-secs", type=float, default=DEFAULT_COMMAND_ACK)
+    serve.add_argument("--membership-grace-secs", type=float, default=DEFAULT_MEMBERSHIP_GRACE)
     serve.add_argument("--ready-file", default="")
     serve.add_argument("--pid-file", default="")
     return parser
