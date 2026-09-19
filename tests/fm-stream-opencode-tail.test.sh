@@ -55,7 +55,7 @@ trap 'cleanup_helpers; fm_test_cleanup' EXIT INT TERM
 # against. Commands are served from a queue file, one JSON object per line,
 # and delivered once.
 cat > "$STUB" <<'PY'
-import json, sys, time
+import json, os, sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 out_dir = sys.argv[1]
@@ -107,7 +107,15 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(400, {"error": "bad_json", "message": "malformed body"})
             return
         if self.path == "/v1/agent/endpoints":
+            if os.environ.get("STUB_REFUSE_ENDPOINTS"):
+                self._reply(401, {"error": "unauthorized",
+                                  "message": "this token publishes nothing"})
+                return
+            # Recorded BEFORE the optional delay, so a case watching the file
+            # can act while the adapter still waits on this reply: the window
+            # between session resolution and the first storage poll.
             record("registrations", payload)
+            time.sleep(float(os.environ.get("STUB_REGISTER_DELAY") or 0))
             self._reply(201, {"ok": True})
             return
         if self.path == "/v1/agent/frames":
@@ -340,6 +348,22 @@ grep -q "session storage not found" "$CASE_DIR/out" \
   || fail "missing-storage refusal said: $(cat "$CASE_DIR/out")"
 [ -e "$CASE_DIR/nope.db" ] && fail "the adapter created a database it was only asked to read"
 pass "refuses a missing storage file without creating one"
+
+# A non-SQLite file that passes the isfile check - the pre-v1.2 JSON storage
+# this refusal names - must get the refusal voice, not a Python traceback.
+printf '{"sessions":{}}' > "$CASE_DIR/storage.json"
+"$TAIL" serve --hub http://127.0.0.1:1 --label t --session ses_x \
+  --db "$CASE_DIR/storage.json" > "$CASE_DIR/out3" 2>&1
+code=$?
+[ "$code" -ne 0 ] || fail "a non-SQLite storage file must refuse"
+grep -q "cannot read opencode session storage" "$CASE_DIR/out3" \
+  || fail "non-SQLite refusal said: $(cat "$CASE_DIR/out3")"
+grep -q "pre-v1.2 JSON storage is not supported" "$CASE_DIR/out3" \
+  || fail "non-SQLite refusal did not name the unsupported storage: $(cat "$CASE_DIR/out3")"
+if grep -q "Traceback" "$CASE_DIR/out3"; then
+  fail "non-SQLite refusal leaked a traceback: $(cat "$CASE_DIR/out3")"
+fi
+pass "refuses non-SQLite storage in the refusal voice, not a traceback"
 
 fixture init "$CASE_DIR/opencode.db"
 "$TAIL" serve --hub http://127.0.0.1:1 --label t --session ses_missing \
@@ -579,6 +603,143 @@ ADAPTER_PID=""
 task=$(api "$VIEW_TOKEN" GET "/v1/tasks/$EP")
 [ "$(jq -r ".task.closed_by" <<<"$task")" = "agent" ] || fail "archived close attribution: $task"
 pass "closes its endpoint out when opencode archives the session"
+
+# === case 5: the hub refuses the registration ================================
+
+CASE_DIR="$TMP_ROOT/refused"
+mkdir -p "$CASE_DIR/stub-out"
+DB="$CASE_DIR/opencode.db"
+fixture init "$DB"
+PROJ="$CASE_DIR/project"
+mkdir -p "$PROJ"
+fixture session "$DB" ses_reg "$PROJ" - 0
+
+STUB_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+printf 'publish:%s\n' "$PUBLISH_TOKEN" > "$CASE_DIR/publish-token"
+chmod 600 "$CASE_DIR/publish-token"
+STUB_REFUSE_ENDPOINTS=1 python3 "$STUB" "$CASE_DIR/stub-out" "$STUB_PORT" \
+  >> "$CASE_DIR/stub-addr" 2>&1 &
+STUB_PID=$!
+fm_test_track_helper_pid "$STUB_PID"
+waited=0
+until curl -sS -m 2 "http://127.0.0.1:$STUB_PORT/v1/health" 2>/dev/null | grep -q '"protocol"'; do
+  sleep 0.1
+  waited=$((waited + 1))
+  [ "$waited" -lt 100 ] || fail "stub hub never came up"
+done
+
+# A hub that refuses the registration (a publish token that publishes
+# nothing) must end the adapter in its refusal voice, not a traceback.
+env -u FM_STREAM_HUB -u FM_STREAM_TOKEN -u OPENCODE_DB \
+  "$TAIL" serve --hub "http://127.0.0.1:$STUB_PORT" --token-file "$CASE_DIR/publish-token" \
+  --machine tailhost --label refusedwork --session ses_reg --db "$DB" \
+  > "$CASE_DIR/adapter-out" 2>&1
+code=$?
+[ "$code" -ne 0 ] || fail "a refused registration must exit nonzero"
+grep -q "hub refused POST /v1/agent/endpoints" "$CASE_DIR/adapter-out" \
+  || fail "registration refusal said: $(cat "$CASE_DIR/adapter-out")"
+if grep -q "Traceback" "$CASE_DIR/adapter-out"; then
+  fail "registration refusal leaked a traceback: $(cat "$CASE_DIR/adapter-out")"
+fi
+pass "exits in the refusal voice when the hub refuses registration"
+
+# === case 6: storage that has never answered publishes no counters ===========
+#
+# Storage that resolves at startup but is unreadable by the first poll must
+# not publish zeros: usage_records 0 would claim a read proved the session
+# holds no usage records.  The frames carry the session id alone until a
+# read answers, then converge on the real counters.
+
+CASE_DIR="$TMP_ROOT/deafstorage"
+mkdir -p "$CASE_DIR/stub-out"
+DB="$CASE_DIR/opencode.db"
+fixture init "$DB"
+PROJ="$CASE_DIR/project"
+mkdir -p "$PROJ"
+fixture session "$DB" ses_deaf "$PROJ" - 0
+fixture message "$DB" msg_d1 ses_deaf assistant \
+  '{"input":7,"output":3,"reasoning":0,"cache":{"read":0,"write":0}}' 0.01
+
+STUB_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+printf 'publish:%s\n' "$PUBLISH_TOKEN" > "$CASE_DIR/publish-token"
+chmod 600 "$CASE_DIR/publish-token"
+STUB_REGISTER_DELAY=2 python3 "$STUB" "$CASE_DIR/stub-out" "$STUB_PORT" \
+  >> "$CASE_DIR/stub-addr" 2>&1 &
+STUB_PID=$!
+fm_test_track_helper_pid "$STUB_PID"
+waited=0
+until curl -sS -m 2 "http://127.0.0.1:$STUB_PORT/v1/health" 2>/dev/null | grep -q '"protocol"'; do
+  sleep 0.1
+  waited=$((waited + 1))
+  [ "$waited" -lt 100 ] || fail "stub hub never came up"
+done
+
+: > "$CASE_DIR/ready-file"
+env -u FM_STREAM_HUB -u FM_STREAM_TOKEN -u OPENCODE_DB \
+  OPENCODE_DB="$DB" \
+  "$TAIL" serve --hub "http://127.0.0.1:$STUB_PORT" --token-file "$CASE_DIR/publish-token" \
+  --machine tailhost --label deafwork --session ses_deaf \
+  --state-interval 0.5 --tail-interval 0.2 --poll-secs 1 \
+  --ready-file "$CASE_DIR/ready-file" >> "$CASE_DIR/adapter-log" 2>&1 &
+ADAPTER_PID=$!
+fm_test_track_helper_pid "$ADAPTER_PID"
+
+# The registration reply is the window between session resolution and the
+# first storage poll: revoke the read while the adapter waits on it.
+waited=0
+until [ -s "$CASE_DIR/stub-out/registrations" ]; do
+  sleep 0.05
+  waited=$((waited + 1))
+  [ "$waited" -lt 100 ] || fail "adapter never registered: $(cat "$CASE_DIR/adapter-log")"
+done
+chmod 000 "$DB"
+
+waited=0
+while [ "$waited" -lt 100 ]; do
+  [ -s "$CASE_DIR/ready-file" ] && break
+  kill -0 "$ADAPTER_PID" 2>/dev/null \
+    || fail "adapter exited while storage was unreadable: $(cat "$CASE_DIR/adapter-log")"
+  sleep 0.1
+  waited=$((waited + 1))
+done
+[ -s "$CASE_DIR/ready-file" ] || fail "adapter never reported ready: $(cat "$CASE_DIR/adapter-log")"
+
+FRAMES="$CASE_DIR/stub-out/frames"
+first=$(frames_of "$FRAMES" | head -1)
+[ "$(jq -r '.state.tail.session_id' <<<"$first")" = "ses_deaf" ] \
+  || fail "first frame session: $first"
+if jq -e '.state.tail | (has("tokens") or has("usage_records") or has("cost"))' \
+    <<<"$first" >/dev/null 2>&1; then
+  fail "first frame published counters no read backed: $first"
+fi
+pass "publishes the session alone while storage has never answered"
+
+# Heartbeats keep carrying the session, never counters, while it stays deaf.
+sleep 1.2
+if frames_of "$FRAMES" | jq -e 'select(.state.tail | has("tokens"))' >/dev/null 2>&1; then
+  fail "a frame published counters while storage was unreadable: $(frames_of "$FRAMES" | tail -3)"
+fi
+hearts=$(frames_of "$FRAMES" | jq -s 'length')
+[ "${hearts:-0}" -ge 2 ] || fail "no heartbeats arrived while storage was unreadable"
+pass "heartbeats the session alone while storage stays unreadable"
+
+# The moment a read answers, the real counters arrive - converged, not zeros.
+chmod 600 "$DB"
+waited=0
+until frames_of "$FRAMES" | jq -e 'select(.state.tail.usage_records == 1)' >/dev/null 2>&1; do
+  sleep 0.2
+  waited=$((waited + 1))
+  [ "$waited" -lt 50 ] \
+    || fail "counters never converged after storage answered: $(frames_of "$FRAMES" | tail -3)"
+done
+converged=$(frames_of "$FRAMES" | jq -c 'select(.state.tail.usage_records == 1)' | head -1)
+[ "$(jq -r '.state.tail.tokens.input' <<<"$converged")" = "7" ] \
+  || fail "converged counters: $converged"
+pass "converges on the real counters as soon as storage answers"
+
+kill "$ADAPTER_PID" 2>/dev/null
+wait "$ADAPTER_PID" 2>/dev/null
+ADAPTER_PID=""
 
 cleanup_helpers
 echo "all opencode tail adapter tests passed"
