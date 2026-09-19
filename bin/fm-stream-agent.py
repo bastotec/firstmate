@@ -880,6 +880,23 @@ class Agent:
         sys.stderr.write("fm-stream-agent: %s\n" % reason)
         sys.stderr.flush()
 
+    def acknowledge_command(self, command: dict, ok: bool, error: str) -> None:
+        result = {
+            "machine": self.machine,
+            "command_id": command.get("command_id"),
+            "ok": ok,
+            "error": error,
+        }
+        retry_after = POLL_BACKOFF_MIN
+        while True:
+            try:
+                self.hub.call("POST", "/v1/agent/results", result, timeout=15.0)
+                return
+            except RuntimeError as exc:
+                sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
+                time.sleep(retry_after)
+                retry_after = min(retry_after * 2, POLL_BACKOFF_MAX)
+
     def command_loop(self) -> None:
         """Long-poll the hub for this endpoint's commands and acknowledge each.
 
@@ -939,15 +956,7 @@ class Agent:
                         ok, error = self.apply_command(command)
                     except Exception as exc:  # noqa: BLE001 - always answer the hub
                         ok, error = False, str(exc)
-                    try:
-                        self.hub.call("POST", "/v1/agent/results", {
-                            "machine": self.machine,
-                            "command_id": command.get("command_id"),
-                            "ok": ok,
-                            "error": error,
-                        }, timeout=15.0)
-                    except RuntimeError as exc:
-                        sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
+                    self.acknowledge_command(command, ok, error)
                 finally:
                     self.command_busy.clear()
 

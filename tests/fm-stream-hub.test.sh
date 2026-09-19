@@ -1433,6 +1433,38 @@ start_stub() {
   URL="http://$host:$port"
 }
 
+test_an_agent_retries_a_result_without_applying_the_command_twice() {
+  local command_id=0123456789abcdef0123456789abcdef status ready result log pid waited=0 attempts
+  status="$TMP_ROOT/result-retry.status"
+  ready="$TMP_ROOT/result-retry.ready"
+  result="$TMP_ROOT/result-retry.json"
+  log="$TMP_ROOT/result-retry.log"
+  start_stub result-retry --frames-ok-first 1000 --command-id "$command_id" \
+    --fail-results-first 1 --result-file "$result"
+  python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+    --machine box-a --label "result-retry-$RUN" --cwd "$CASE_DIR/cwd" \
+    --status-path "$status" --ready-file "$ready" --state-interval 1 --poll-secs 1 \
+    > "$log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$result" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$result" ] || fail "the agent never retried the refused result: $(cat "$log" 2>/dev/null)"
+  assert_equals "$(jq -r '.command_id' "$result")" "$command_id" \
+    "the retry should acknowledge the command the agent applied"
+  assert_equals "$(jq -r '.ok' "$result")" true \
+    "the retried acknowledgement should preserve the successful result"
+  assert_equals "$(grep -c '^working: result retry$' "$status" 2>/dev/null || true)" 1 \
+    "retrying an acknowledgement must not apply its command again"
+  attempts=$(grep -c 'POST /v1/agent/results' "$STUB_JOURNAL" 2>/dev/null || true)
+  [ "$attempts" -ge 2 ] || fail "the agent posted the result only $attempts time(s)"
+  pass "hub: an agent retains and retries a successful command result"
+}
+
 # registrations - the journal's RE-registration attempts, one timestamp a line.
 # The first registration in the journal is the agent's startup, which nothing
 # here is about: counting it would read the gap between coming up and the first
@@ -1611,6 +1643,42 @@ wait_for_close() {  # <endpoint>
     waited=$((waited + 1))
   done
   return 1
+}
+
+test_the_hub_accepts_a_retried_result_without_changing_its_verdict() {
+  start_hub result-idempotent --command-ack-secs 5
+  local endpoint command_id="" commands result request_pid waited=0 request_code
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
+    '{endpoint_id: $id, machine: "result-box", label: "result-worker", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the result test endpoint should register"
+  curl -sS -m 10 -X POST -H "Authorization: Bearer $VIEW_TOKEN" \
+    -H 'Content-Type: application/json' --data-binary '{"text":"echo RESULT","submit":true}' \
+    -w '\n%{http_code}' "$URL/v1/tasks/$endpoint/input" > "$CASE_DIR/request.out" 2>/dev/null &
+  request_pid=$!
+  fm_test_track_helper_pid "$request_pid"
+  while [ "$waited" -lt 50 ]; do
+    commands=$(publish GET "/v1/agent/commands?machine=result-box&endpoint=$endpoint&wait=1")
+    command_id=$(printf '%s' "$commands" | jq -r '.commands[0].command_id // empty')
+    [ -n "$command_id" ] && break
+    waited=$((waited + 1))
+  done
+  [ -n "$command_id" ] || fail "the endpoint never received the command whose result is under test"
+  result=$(jq -nc --arg id "$command_id" \
+    '{machine: "result-box", command_id: $id, ok: true, error: ""}')
+  publish POST /v1/agent/results "$result" >/dev/null
+  assert_equals "$(api_code)" 200 "the first command result should be accepted"
+  wait "$request_pid" || fail "the acknowledged input request did not finish"
+  request_code=$(tail -n 1 "$CASE_DIR/request.out")
+  assert_equals "$request_code" 200 "the first result should settle the waiting command"
+  publish POST /v1/agent/results "$result" >/dev/null
+  assert_equals "$(api_code)" 200 \
+    "repeating a result after losing its response should preserve the acknowledgement"
+  publish POST /v1/agent/results "$(jq -nc --arg id "$command_id" \
+    '{machine: "result-box", command_id: $id, ok: false, error: "different"}')" >/dev/null
+  assert_equals "$(api_code)" 409 \
+    "a repeated command id must not replace the result already acknowledged"
+  pass "hub: command result acknowledgements are idempotent"
 }
 
 # order <leaf> <execution> <text> [order-id] -> the hub's answer, with api_code set.
@@ -1999,9 +2067,11 @@ test_a_restarted_hub_gets_its_workers_back
 test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
 test_a_closing_frame_outlives_the_pace_its_own_outage_set
 test_a_closing_frame_waits_out_a_recovery_already_in_flight
+test_an_agent_retries_a_result_without_applying_the_command_twice
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
 test_a_steer_lands_as_soon_as_the_worker_is_listed_again
 test_an_accepted_registration_returns_the_pace_to_its_floor
+test_the_hub_accepts_a_retried_result_without_changing_its_verdict
 test_an_order_reaches_the_worker_its_leaf_names
 test_an_order_aimed_at_a_replaced_execution_never_reaches_the_replacement
 test_an_order_to_a_worker_its_agent_reported_gone_is_refused
