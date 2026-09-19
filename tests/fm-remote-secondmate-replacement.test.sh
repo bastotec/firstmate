@@ -5,8 +5,10 @@
 # posture, an already-running agent without that posture is reported as a
 # posture mismatch instead of being returned as healthy, a relaunch whose
 # endpoint is already gone is delegated rather than refused as an
-# unidentifiable running agent, and a running agent whose posture cannot be
-# resolved is refused rather than returned as healthy
+# unidentifiable running agent, a running agent whose posture cannot be
+# resolved is refused rather than returned as healthy, and a recorded agent
+# still running outside its endpoint blocks the relaunch before anything is
+# touched
 # (bin/fm-remote-secondmate-control.sh's header owns the contract).
 #
 # This drives the real host-local control script and the real bin/fm-spawn.sh
@@ -247,3 +249,37 @@ alive "$healthy" || fail "refusing the unresolvable posture stopped the running 
 cmp -s "$TMP_ROOT/meta.before-resolution" "$ROUTE_META" || fail "refusing the unresolvable posture rewrote the endpoint"
 [ "$(jq '.tabs | length' "$HERDR_STATE")" = "$tabs_before" ] || fail "refusing the unresolvable posture launched an agent"
 pass "a running agent is not returned as healthy when its posture cannot be resolved"
+
+# --- 8. A previous agent outside a agent-free endpoint blocks the relaunch ---
+printf 'auto\n' > "$SM_HOME/config/claude-permission-mode"
+pane=$(route_pane)
+survivor=$(pane_agent "$pane")
+alive "$survivor" || fail "survivor setup left no live agent"
+cp -p "$ROUTE_META" "$TMP_ROOT/meta.before-survivor"
+tabs_before=$(jq '.tabs | length' "$HERDR_STATE")
+# The pane reads positively agent-free while the recorded agent keeps running
+# outside its process view - the survivor shape a launch refuses.
+deregister "$pane"
+cat > "$CODE/bin/fm-control.sh" <<SH
+#!/usr/bin/env bash
+: > '$TMP_ROOT/relaunch-delegated'
+herdr pane send-text '$pane' 'claude --permission-mode auto --settings {}' --session fm-remote
+herdr pane send-keys '$pane' enter --session fm-remote
+echo "relaunched \$1 harness=claude from=claude model=default effort=default backend=herdr"
+SH
+chmod +x "$CODE/bin/fm-control.sh"
+if out=$(control relaunch "$SM_ID" claude default default 2>&1); then
+  fail "a relaunch started a replacement beside a previous agent still running outside its endpoint: $out"
+fi
+EXTRA_PIDS+=("$survivor")
+assert_contains "$out" "still running without its endpoint" \
+  "the refusal did not name the surviving previous agent"
+assert_contains "$out" "refusing to start a second agent beside it" \
+  "the relaunch was not refused before its replacement could start"
+[ ! -e "$TMP_ROOT/relaunch-delegated" ] || fail "the relaunch delegated instead of refusing the surviving agent"
+[ "$(pane_agent "$pane")" = "$survivor" ] || fail "the relaunch swapped the surviving agent's registration"
+alive "$survivor" || fail "the refusal stopped the surviving agent itself"
+cmp -s "$TMP_ROOT/meta.before-survivor" "$ROUTE_META" || fail "the refused relaunch rewrote the endpoint"
+[ "$(jq '.tabs | length' "$HERDR_STATE")" = "$tabs_before" ] || fail "the refused relaunch created a new endpoint"
+cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
+pass "a recorded agent still running outside its endpoint blocks the relaunch before anything is touched"

@@ -394,7 +394,7 @@ cmd_launch() {
 # re-resolve it here would silently drift the mate onto another runtime. `default`
 # explicitly clears an absent parent pin; `-` remains its compatibility spelling.
 cmd_relaunch() {
-  local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current out rc
+  local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current recorded outside pid token out rc
   local -a control_args
 
   validate_id "$id"
@@ -427,7 +427,16 @@ cmd_relaunch() {
         || die "the agent of $id in $old_target cannot be identified by process (endpoint reads '$current'), so its replacement could not be proved; refusing before touching it"
       ;;
   esac
-  old="$old"$'\n'"$(recorded_identities "$id")"
+  recorded=$(recorded_identities "$id")
+  outside=
+  while read -r pid token; do
+    [ -n "$pid" ] || continue
+    printf '%s\n' "$old" | grep -Fxq -- "$pid $token" || outside="$outside$pid $token"$'\n'
+  done <<EOF
+$recorded
+EOF
+  require_identities_gone "$id" "$outside"
+  old="$old"$'\n'"$recorded"
   control_args=("$id" relaunch --harness "$harness" --model "$model" --effort "$effort")
   # The same launch-boundary facts cmd_launch establishes: the endpoint lives in
   # the dedicated fm-remote session, and the parent already owns both convergence
