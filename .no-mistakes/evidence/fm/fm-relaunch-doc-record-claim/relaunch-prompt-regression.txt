@@ -1,0 +1,5 @@
+BASE generated prompt (regression reproduced):
+4. If the crewmate is genuinely wedged after redirection, relaunch it with `FM_HOME=<this-firstmate-home> bin/fm-control.sh <task-id> relaunch --note '<progress so far>'`, which stops the agent, carries the brief plus that note into a replacement in the same local copy, and restores the prior record if the replacement cannot start.
+TARGET generated prompt (corrected boundary):
+4. If the crewmate is genuinely wedged after redirection, relaunch it with `FM_HOME=<this-firstmate-home> bin/fm-control.sh <task-id> relaunch --note '<progress so far>'`, which stops the agent, carries the brief plus that note into a replacement in the same local copy, and keeps the prior record if relaunch fails before replacement-record publication.
+RESULT: base fails corrected prompt contract; target passes
