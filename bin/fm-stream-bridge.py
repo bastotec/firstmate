@@ -92,8 +92,8 @@ emitted for those answers, so a recorded session replays deterministically.
 It takes --fleet-id and --epoch (default 0).
 
 command is the composer's half of point 7 of the ingest contract.  It reads
-`command` records on stdin, one JSON object per line, and writes one
-`command_ack` or `command_nack` per line to stdout:
+`command` records on stdin, one JSON object per line, and writes each resulting
+`command_ack` or `command_nack` record to stdout:
 
   in   {"record":"command","command_id":ID,
         "identity":{"fleet_id":F,"leaf_worker_id":W,"parent_mate_id":P,
@@ -101,10 +101,12 @@ command is the composer's half of point 7 of the ingest contract.  It reads
         "issued_at_utc":ISO,"issued_by":"captain",
         "payload":{"kind":"steer","text":TEXT}}
   out  {"record":"command_ack","command_id":ID,"leaf_worker_id":W,
-        "state":"accepted"|"refused","reason":R,"received_at_utc":ISO}
+        "state":"accepted","received_at_utc":ISO}
+  or   {"record":"command_ack","command_id":ID,"leaf_worker_id":W,
+        "state":"refused","reason":R,"received_at_utc":ISO}
   or   {"record":"command_nack","command_id":ID,"reason":R,"at_utc":ISO}
 
-FOUR PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
+FIVE PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
 
   Identity.  An order names its worker by leaf_worker_id, the same spelling the
   feed emits, so it addresses the worker rather than whichever endpoint it
@@ -116,9 +118,9 @@ FOUR PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
   is the point: an order composed against one worker must never be typed into
   the worker that replaced it.
 
-  Acknowledgement.  `state: accepted` means the owning AGENT applied the order
-  to its worker's pseudoterminal and said so.  A hub that queued an order has
-  not delivered it and never reports that it did.
+  Acknowledgement.  Every settled order gets an explicit answer.
+  `state: accepted` means the owning AGENT wrote the complete order, including
+  its submit byte, to the worker's pseudoterminal and said so.
 
   Membership.  A `command_nack` is an authoritative answer and nothing else
   produces one: `no_such_worker` is the owning agent's own report that its
@@ -129,6 +131,10 @@ FOUR PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
   is a `command_ack` with
   `state: refused`, which says the order did not arrive without claiming the
   worker is gone.
+
+  No fabricated acceptance.  A hub that only queued an order, or an agent that
+  took it without answering, has not delivered it and never reports that it
+  did.
 
 An order the hub can neither confirm nor rule out gets NO record at all, and
 neither does one the hub could not be asked about.  That is deliberate: the
@@ -150,6 +156,10 @@ the worker stopped while the pane-sourced crew state says it is working or
 parked, and `consistent` otherwise.  It exits 1 when any row is a conflict or
 missing, 0 otherwise.  Options: --home DIR (default FM_HOME), --crew-state
 CMD (default the fm-crew-state.sh beside this script), --fleet-id.
+
+Live subcommands negotiate both protocol 2 and the hub's `current_execution`
+capability before doing work.  An older running hub is refused with a diagnostic
+to restart or upgrade it; offline `translate` needs no hub negotiation.
 
 Exit status: 0 on success; 2 on a usage error, a refused credential, or an
 incompatible hub.  An unreachable hub is not an exit for serve: it says so on

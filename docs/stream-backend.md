@@ -38,8 +38,8 @@ The hub groups endpoints by the machine that owns them, and this home's name in 
 Select the backend the way any explicit backend is selected: `config/backend`, `FM_BACKEND=stream`, or an explicit per-task request.
 It is never auto-detected, and a spawn refuses `--secondmate` until secondmate launch semantics are designed for it.
 
-`python3`, `curl`, and `jq` must be present, and the hub's protocol and advertised capabilities must match the adapter's requirements.
-A missing dependency, an unreachable hub, a refused token, or an incompatible hub is terminal for the selected backend: it refuses and names what is wrong rather than falling back to another backend.
+`python3`, `curl`, and `jq` must be present, and the hub's protocol must match the adapter's.
+A missing dependency, an unreachable hub, a refused token, or a protocol mismatch is terminal for the selected backend: it refuses and names what is wrong rather than falling back to another backend.
 
 Run `bin/fm-stream.sh --help` for the operator commands; that help and each script's header own their exact flags.
 
@@ -57,8 +57,11 @@ A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoi
 ## Bridge feed
 
 `bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from the execution the hub marks current using the same decision as its order path.
-The feed only reads the hub: `serve`, `snapshot`, `translate`, and `compare` hold a `subscribe` credential, open no listening socket, and send nothing to any worker.
+The feed direction only reads the hub: `serve`, `snapshot`, and `compare` in live mode hold a `subscribe` credential, open no listening socket, and send nothing to any worker.
+`translate` is offline and needs no hub credential.
 Writing is the adapter's other direction, a separate command with its own credential, which [Command path](#command-path) owns.
+Before any live feed or command does work, the adapter negotiates both the hub protocol and the advertised `current_execution` capability.
+It rejects an older running hub before processing records and directs the operator to restart or upgrade it rather than guessing which execution is current.
 Its header owns the record mapping and every field the hub cannot supply; the short version is that the `/v1/tasks` listing this bridge consumes carries no token counters, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
 When the hub cannot be read it emits nothing.
 The Bridge's clock only moves when a record arrives, so during an outage, or after a hub restart that lists no endpoints, the Bridge keeps showing each worker's last state rather than aging it out as stale.
@@ -129,26 +132,16 @@ Watch them with `bin/fm-stream.sh tasks`; the opencode adapter exits when its se
 ## Command path
 
 The reading half of the Bridge chain is the feed above; the writing half is `bin/fm-stream-bridge.py command`.
-It reads one `command` record per line on stdin - the composer's order - places it with the hub, and writes one `command_ack` or `command_nack` per line to stdout, in the same NDJSON framing the feed uses.
-The adapter's header owns the three record shapes and the rule that decides every answer.
+It reads one `command` record per line on stdin - the composer's order - places valid orders with the hub, and writes each resulting `command_ack` or `command_nack` to stdout in the feed's NDJSON framing.
+The adapter's header owns the three record shapes, required identity and payload fields, and the rule that decides whether an input is acknowledged, refused, nacked, or left pending.
 
-An order addresses a worker by `leaf_worker_id` - `<machine>/<label>`, the same identity the feed emits and `fm-stream.sh tasks` prints - and is bound to one execution.
-The composer must name that execution in the identity block it shares with the feed.
-An order aimed at an execution the leaf has moved on from is refused rather than typed into its replacement, because a "yes, go ahead" composed for one run landing in its fresh replacement is exactly the accident the binding exists to prevent.
-
-An acknowledgement means the worker's own agent applied the order to its pseudoterminal and said so.
-A hub that queued an order, or an agent that took it without answering, has not acknowledged it and may not say it did.
-An order whose delivery the hub can neither confirm nor rule out produces no record at all: the command id stays visibly pending, which is the honest answer, and re-sending that command id reconciles it without placing a second order.
-
-A `command_nack` is an authoritative membership answer, and nothing else produces one.
-`no_such_worker` is the owning agent's own report that its worker ended.
-`worker_not_registered` is the hub still holding no registration for the leaf after waiting out the fixed six-second window a rejoining agent needs, which is the same rejoin window the state classifier waits before it will say `missing`.
-`fleet_unknown` means `fleet_id` is missing or disagrees with the adapter's own fleet id.
-A refusal the hub reached no membership verdict on is a `command_ack` with `state: refused`, which says the order did not arrive without claiming anything about the worker.
+At operator level, every order names both a worker by `leaf_worker_id` - `<machine>/<label>`, from the same machine and label the feed emits and `fm-stream.sh tasks` lists - and the exact execution the feed showed.
+That binding prevents an order composed for one run from being typed into its replacement.
+Acceptance means the owning agent wrote the complete order, including its submit byte, to that execution's pseudoterminal and acknowledged it; an authoritative membership refusal produces a nack, while an indeterminate order produces no record and remains pending.
 
 Reconciliation state lives in the hub's memory, not on disk.
-Recent orders are kept in a bounded journal of 512, and one an agent took but never answered stays answerable for 15 minutes, so a caller that resends its own command id gets that order's fate rather than a second delivery.
-A resend arriving while the first send is still being placed - a dropped SSH transport, a reconnecting adapter - is waited out and answered from that same order, so even concurrent sends of one id type the text once.
+The journal retains at most 512 order ids, and while an id remains there a resend is answered from the original order, including when it overtakes the original placement.
+A taken command remains eligible for a late agent acknowledgement until it is reaped after at least 15 minutes; after that, its journaled answer remains unconfirmed.
 A hub restart empties the journal along with the registry, so a resend after restart is a new order and cannot reconcile delivery from before the restart.
 
 The credentials are separate on purpose: `command` needs a `control`-class token, the class that can type into workers, while the feed holds `subscribe` alone, so a host running only the feed cannot order anything with the credential the feed uses.
