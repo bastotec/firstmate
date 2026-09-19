@@ -76,6 +76,28 @@ def make_pty(command):
     return agent.Pty(os.getcwd(), command, 40, 200, dict(os.environ))
 
 
+real_write = os.write
+chunks = []
+
+
+def short_write(fd, data):
+    chunk = bytes(data[:3])
+    chunks.append(chunk)
+    return len(chunk)
+
+
+partial = object.__new__(agent.Pty)
+partial.master_fd = 123
+agent.os.write = short_write
+try:
+    count = partial.write(b"composer-order\r")
+finally:
+    agent.os.write = real_write
+report("partial-write-completes",
+       count == len(b"composer-order\r") and b"".join(chunks) == b"composer-order\r",
+       "count=%r bytes=%r" % (count, b"".join(chunks)))
+
+
 # --- the endpoint really is isolated in its own session ---------------------
 pty = make_pty(["sleep", "300"])
 try:
@@ -183,7 +205,7 @@ out=$(python3 "$CASE_DIR/drive.py" "$ROOT/bin/fm-stream-agent.py" 2>"$CASE_DIR/d
 rc=$?
 [ "$rc" -eq 0 ] || fail "the kill-safety driver did not finish: $(head -5 "$CASE_DIR/drive.err" 2>/dev/null)"
 
-for case_name in endpoint-is-session-leader recorded-pgid-matches-kernel \
+for case_name in partial-write-completes endpoint-is-session-leader recorded-pgid-matches-kernel \
   live-endpoint-is-killed reaped-endpoint-is-not-signalled \
   concurrent-reap-never-escapes refuses-own-process-group refuses-own-session; do
   line=$(printf '%s\n' "$out" | grep -E "^(OK|FAIL) $case_name( |$)") \

@@ -27,8 +27,8 @@ carry is emitted in the contract's explicit unknown form rather than invented:
      leaf_worker_id is "<machine>/<label>", the task as that home spells it,
      so one label on two homes is two leaves.  execution_id is the hub's
      durable endpoint id, so a relaunch is a new execution of the same leaf.
-     The hub keeps a superseded endpoint listed for a while, so only a leaf's
-     newest listed endpoint is emitted.
+     The hub marks the current execution for each leaf with the same decision
+     its order path uses, so only that endpoint is emitted.
      The wire format has no membership or removal record: a leaf is a member
      from its first record, and an endpoint the hub has dropped simply stops
      being emitted, which the Bridge ages out as stale once records for other
@@ -123,9 +123,10 @@ FOUR PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
   Membership.  A `command_nack` is an authoritative answer and nothing else
   produces one: `no_such_worker` is the owning agent's own report that its
   worker ended, `worker_not_registered` is the hub still holding no
-  registration for the leaf after waiting out the window a rejoining agent
-  needs, and `fleet_unknown` is this adapter's own fleet id disagreeing.  A
-  refusal the hub reached no membership verdict on is a `command_ack` with
+  registration for the leaf after waiting out the fixed rejoin window it
+  needs, and `fleet_unknown` means fleet_id is missing or disagrees with this
+  adapter's own fleet id.  A refusal the hub reached no membership verdict on
+  is a `command_ack` with
   `state: refused`, which says the order did not arrive without claiming the
   worker is gone.
 
@@ -238,13 +239,13 @@ class Bridge:
         self.sequences: dict = {}
 
     def translate(self, listing: dict, at_ms: float, received_ms: float) -> list:
-        """One hub /v1/tasks answer -> one heartbeat per leaf, from its newest endpoint."""
+        """One hub /v1/tasks answer -> one heartbeat per leaf selected by the hub."""
         tasks = listing.get("tasks") if isinstance(listing, dict) else None
         if not isinstance(tasks, list):
             raise BridgeError("the hub listing carries no tasks array")
-        newest = newest_by_leaf(tasks)
+        current = current_by_leaf(tasks)
         records = []
-        for leaf, task in newest.items():
+        for leaf, task in current.items():
             machine = task["machine"]
             endpoint_id = task["endpoint_id"]
             sequence = self.sequences.get(leaf, 0) + 1
@@ -268,14 +269,9 @@ class Bridge:
         return records
 
 
-def newest_by_leaf(tasks: list) -> dict:
-    """leaf_worker_id -> that leaf's newest listed endpoint.
-
-    One owner for what a leaf is currently on, because the feed and the order
-    path must not answer that differently: the execution the Bridge is shown is
-    the execution an order composed against it names.
-    """
-    newest = {}
+def current_by_leaf(tasks: list) -> dict:
+    """leaf_worker_id -> the endpoint the hub selected for that leaf."""
+    current = {}
     for task in tasks:
         if not isinstance(task, dict):
             continue
@@ -289,10 +285,17 @@ def newest_by_leaf(tasks: list) -> dict:
             # leaf, and guessing its identity would be worse than leaving it
             # out.
             continue
-        # The hub lists a machine's endpoints oldest first, so a relaunch
-        # replaces the record it superseded, which may linger listed.
-        newest["%s/%s" % (machine, label)] = task
-    return newest
+        marker = task.get("current_execution")
+        if not isinstance(marker, bool):
+            raise BridgeError("the hub listing carries no current-execution verdict")
+        if not marker:
+            continue
+        leaf = "%s/%s" % (machine, label)
+        if leaf in current:
+            raise BridgeError("the hub listing marks more than one current execution "
+                              "for leaf %s" % leaf)
+        current[leaf] = task
+    return current
 
 
 def encode(record: dict) -> str:
@@ -463,7 +466,7 @@ class Commander:
         # The adapter knows which fleet it serves, so this one is settled here
         # and never asked of the hub.
         fleet = identity.get("fleet_id")
-        if fleet is not None and fleet != self.fleet_id:
+        if fleet != self.fleet_id:
             return [self.nack(command_id, NACK_FLEET_UNKNOWN)]
         payload = record.get("payload")
         payload = payload if isinstance(payload, dict) else {}

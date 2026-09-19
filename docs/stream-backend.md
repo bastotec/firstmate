@@ -56,7 +56,7 @@ A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoi
 
 ## Bridge feed
 
-`bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from that worker's newest endpoint.
+`bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from the execution the hub marks current using the same decision as its order path.
 The feed only reads the hub: `serve`, `snapshot`, `translate`, and `compare` hold a `subscribe` credential, open no listening socket, and send nothing to any worker.
 Writing is the adapter's other direction, a separate command with its own credential, which [Command path](#command-path) owns.
 Its header owns the record mapping and every field the hub cannot supply; the short version is that the `/v1/tasks` listing this bridge consumes carries no token counters, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
@@ -142,8 +142,8 @@ An order whose delivery the hub can neither confirm nor rule out produces no rec
 
 A `command_nack` is an authoritative membership answer, and nothing else produces one.
 `no_such_worker` is the owning agent's own report that its worker ended.
-`worker_not_registered` is the hub still holding no registration for the leaf after waiting out the window a rejoining agent needs - 6s by default, `--membership-grace-secs` - which is the same rejoin window the state classifier waits before it will say `missing`.
-`fleet_unknown` is the adapter's own fleet id disagreeing with the order's.
+`worker_not_registered` is the hub still holding no registration for the leaf after waiting out the fixed six-second window a rejoining agent needs, which is the same rejoin window the state classifier waits before it will say `missing`.
+`fleet_unknown` means `fleet_id` is missing or disagrees with the adapter's own fleet id.
 A refusal the hub reached no membership verdict on is a `command_ack` with `state: refused`, which says the order did not arrive without claiming anything about the worker.
 
 Reconciliation state lives in the hub's memory, not on disk.

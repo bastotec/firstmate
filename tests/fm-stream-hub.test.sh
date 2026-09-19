@@ -827,6 +827,12 @@ test_a_publishing_worker_keeps_its_name_against_an_empty_record() {
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$empty" --arg l "holder-$RUN" \
     '{endpoint_id: $id, machine: "box-a", label: $l, cwd: "/tmp"}')" >/dev/null
   assert_equals "$(api_code)" 201 "the retry should claim the freed name"
+  assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+    '.tasks[] | select(.endpoint_id==$id) | .current_execution')" true \
+    "the listing should keep showing the execution the order resolver selects"
+  assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$empty" \
+    '.tasks[] | select(.endpoint_id==$id) | .current_execution')" false \
+    "a newer registration with no agent behind it must not become the displayed execution"
   # The real worker's agent comes back WHILE that record is still fresh - well
   # inside the window before the hub would presume anything about it. Freshness
   # is not reachability: nothing has ever been heard from it, and a record like
@@ -1688,7 +1694,7 @@ test_a_leaf_the_hub_cannot_resolve_is_refused_without_calling_the_worker_gone() 
   # all until each agent registers again. Reading that as death would condemn
   # every live worker in the fleet at once, so a leaf this hub cannot resolve
   # is refused WITHOUT claiming anything about the worker.
-  start_hub order-unknown-leaf --membership-grace-secs 1
+  start_hub order-unknown-leaf
   local endpoint out
   endpoint=$(start_agent box-a present)
   out=$(order "box-a/absent-$RUN" "$(python3 -c 'import os; print(os.urandom(16).hex())')" "echo NEVER")
@@ -1826,7 +1832,7 @@ test_a_leaf_that_is_still_rejoining_is_waited_for_rather_than_called_absent() {
   # The whole reason a membership answer is not a first-reply read. A hub that
   # restarted holds nothing until its agents register again, and an order
   # arriving in that window must wait for the worker rather than condemn it.
-  start_hub order-rejoin --membership-grace-secs 10
+  start_hub order-rejoin
   local endpoint agent request_pid out answer
   endpoint=$(start_agent box-a rejoining)
   agent=$(agent_pid_for box-a rejoining)
