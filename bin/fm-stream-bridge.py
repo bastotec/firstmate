@@ -96,7 +96,8 @@ command is the composer's half of point 7 of the ingest contract.  It reads
 `command_ack` or `command_nack` per line to stdout:
 
   in   {"record":"command","command_id":ID,
-        "identity":{"fleet_id":F,"leaf_worker_id":W,"parent_mate_id":P},
+        "identity":{"fleet_id":F,"leaf_worker_id":W,"parent_mate_id":P,
+                    "execution_id":E},
         "issued_at_utc":ISO,"issued_by":"captain",
         "payload":{"kind":"steer","text":TEXT}}
   out  {"record":"command_ack","command_id":ID,"leaf_worker_id":W,
@@ -110,11 +111,10 @@ FOUR PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
   happened to be on.
 
   Execution scope.  An order is bound to one execution.  The composer names it
-  as `execution_id` in the identity block it shares with the feed; when the
-  record omits it, the leaf's current execution is resolved here, so an order
-  is still bound to exactly one execution and the hub refuses it if the leaf
-  has moved on since.  That refusal is the point: an order composed against one
-  worker must never be typed into the worker that replaced it.
+  as a required `execution_id` in the identity block it shares with the feed,
+  and the hub refuses the order if the leaf has moved on since.  That refusal
+  is the point: an order composed against one worker must never be typed into
+  the worker that replaced it.
 
   Acknowledgement.  `state: accepted` means the owning AGENT applied the order
   to its worker's pseudoterminal and said so.  A hub that queued an order has
@@ -131,10 +131,9 @@ FOUR PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
 
 An order the hub can neither confirm nor rule out gets NO record at all, and
 neither does one the hub could not be asked about.  That is deliberate: the
-command id stays visibly pending, which is the only honest answer, and
-`bin/fm-stream.sh order-status <id>` reads what became of it afterwards.
-Re-sending a command id the hub already holds returns that order's own fate
-rather than delivering it twice.
+command id stays visibly pending, which is the only honest answer.  Re-sending
+a command id the hub already holds returns that order's own fate rather than
+delivering it twice.
 
 compare is the Phase 2 comparison harness.  It reads this home's task records
 (<home>/state/*.meta) for stream-backed tasks, takes the adapter's rendered
@@ -476,16 +475,10 @@ class Commander:
         if not isinstance(text, str):
             return [self.ack(command_id, leaf, "refused",
                              "a steer needs its text as a string")]
-        # The execution the order was aimed at, when the composer names one in
-        # the identity block it shares with the feed. It is passed straight
-        # through and never filled in from a listing read here: resolving a
-        # leaf is a membership question, and answering it from one cheap
-        # listing is exactly how a worker rejoining a restarted hub gets
-        # reported as absent. The hub waits that window out, so the question
-        # goes there.
         execution = identity.get("execution_id")
-        if not isinstance(execution, str):
-            execution = ""
+        if not isinstance(execution, str) or not ENDPOINT_ID_RE.match(execution):
+            return [self.ack(command_id, leaf, "refused",
+                             "a steer needs a valid execution_id")]
         status, body = self.client.post("/v1/orders", {
             "leaf_worker_id": leaf,
             "execution_id": execution,

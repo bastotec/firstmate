@@ -133,28 +133,18 @@ It reads one `command` record per line on stdin - the composer's order - places 
 The adapter's header owns the three record shapes and the rule that decides every answer.
 
 An order addresses a worker by `leaf_worker_id` - `<machine>/<label>`, the same identity the feed emits and `fm-stream.sh tasks` prints - and is bound to one execution.
-The composer names the execution in the identity block it shares with the feed; when it does not, the order binds to the leaf's current execution and the answer names which one that was.
+The composer must name that execution in the identity block it shares with the feed.
 An order aimed at an execution the leaf has moved on from is refused rather than typed into its replacement, because a "yes, go ahead" composed for one run landing in its fresh replacement is exactly the accident the binding exists to prevent.
 
 An acknowledgement means the worker's own agent applied the order to its pseudoterminal and said so.
 A hub that queued an order, or an agent that took it without answering, has not acknowledged it and may not say it did.
-An order whose delivery the hub can neither confirm nor rule out produces no record at all: the command id stays visibly pending, which is the honest answer, and reading it back later is the reconciliation.
+An order whose delivery the hub can neither confirm nor rule out produces no record at all: the command id stays visibly pending, which is the honest answer, and re-sending that command id reconciles it without placing a second order.
 
 A `command_nack` is an authoritative membership answer, and nothing else produces one.
 `no_such_worker` is the owning agent's own report that its worker ended.
 `worker_not_registered` is the hub still holding no registration for the leaf after waiting out the window a rejoining agent needs - 6s by default, `--membership-grace-secs` - which is the same rejoin window the state classifier waits before it will say `missing`.
 `fleet_unknown` is the adapter's own fleet id disagreeing with the order's.
 A refusal the hub reached no membership verdict on is a `command_ack` with `state: refused`, which says the order did not arrive without claiming anything about the worker.
-
-The operator entry point drives the same path directly:
-
-```
-fm-stream.sh order <leaf-worker-id> <execution-id> <text> [--no-submit]
-fm-stream.sh order-status <order-id>
-```
-
-`order` exits 0 when the worker's agent accepted, 1 when the order was refused, and 4 when delivery is unconfirmed.
-Unconfirmed is not a failure to retry blindly: the order may already have reached the worker, and `order-status` is how its fate is read.
 
 Reconciliation state lives in the hub's memory, not on disk.
 Recent orders are kept in a bounded journal of 512, and one an agent took but never answered stays answerable for 15 minutes, so a caller that resends its own command id gets that order's fate rather than a second delivery.

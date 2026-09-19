@@ -16,8 +16,6 @@
 #   fm-stream.sh web
 #   fm-stream.sh machines
 #   fm-stream.sh tasks
-#   fm-stream.sh order <leaf-worker-id> <execution-id> <text> [--no-submit]
-#   fm-stream.sh order-status <order-id>
 #   fm-stream.sh attach <endpoint-id|target> [--replay]
 #   fm-stream.sh -h | --help
 #
@@ -44,17 +42,6 @@
 #   machines  List the machines the hub has heard from, and how long each has
 #             been silent.
 #   tasks     List every endpoint the hub hosts, across every machine.
-#   order     Send one order to a worker addressed by its leaf id
-#             ("<machine>/<label>", as `tasks` and the Bridge feed both spell
-#             it), bound to the execution it is aimed at. Both are required:
-#             the leaf names the worker across relaunches, and the execution
-#             keeps an order composed for one worker out of its replacement.
-#             --no-submit types the text without the newline that runs it.
-#             Exit 0 accepted, 1 refused, 4 delivery unconfirmed - and
-#             unconfirmed is NOT a failure to retry blindly, because the order
-#             may already have reached the worker.
-#   order-status  Read one order back: what became of it, including an
-#             unconfirmed one an agent acknowledged late.
 #   attach    Stream one endpoint's live output to stdout until interrupted.
 #             --replay starts from the oldest byte still in the ring buffer;
 #             the default starts from now.
@@ -259,81 +246,6 @@ cmd_tasks() {
   printf '%s' "$out" | jq -r '.tasks[]? | "\(.machine)\t\(.label)\t\(.endpoint_id)\t\(if .closed_at then "closed" else "live" end)"'
 }
 
-cmd_order() {
-  local leaf=${1:?order needs a leaf id, "<machine>/<label>"}
-  local execution=${2:?order needs the execution id it is aimed at}
-  local text=${3?order needs the text to send}
-  shift 3 || true
-  local submit=true out status=0 outcome reason
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --no-submit) submit=false; shift ;;
-      *) die "unknown option for order: $1" ;;
-    esac
-  done
-  need_token
-  local body
-  body=$(jq -nc --arg leaf "$leaf" --arg execution "$execution" --arg text "$text" \
-    --argjson submit "$submit" \
-    '{leaf_worker_id: $leaf, execution_id: $execution, text: $text, submit: $submit}') \
-    || die "could not build the order"
-  # The hub legitimately holds this one call for its whole membership and
-  # acknowledgement window, which outlasts the 30s every read defaults to, so
-  # the order carries its own bound.
-  out=$(FM_STREAM_HTTP_TIMEOUT="${FM_STREAM_ORDER_HTTP_TIMEOUT:-60}" \
-    fm_backend_stream_api POST /v1/orders "$body") || status=$?
-  outcome=$(printf '%s' "$out" | jq -r '.outcome // empty' 2>/dev/null)
-  case "$outcome" in
-    accepted)
-      printf 'accepted by %s (order %s)\n' \
-        "$(printf '%s' "$out" | jq -r '.execution_id')" \
-        "$(printf '%s' "$out" | jq -r '.order_id')"
-      return 0
-      ;;
-    unconfirmed)
-      # The one answer that is neither success nor failure. Sending it again
-      # could type it twice, so the operator is told what to read rather than
-      # nudged to retry.
-      printf 'UNCONFIRMED: %s\n' "$(fm_backend_stream_api_error "$out")" >&2
-      printf 'read it back with: %s order-status %s\n' \
-        "${0##*/}" "$(printf '%s' "$out" | jq -r '.order_id')" >&2
-      return 4
-      ;;
-    refused)
-      reason=$(printf '%s' "$out" | jq -r '.reason // .error // "refused"')
-      printf 'refused (%s): %s\n' "$reason" "$(fm_backend_stream_api_error "$out")" >&2
-      return 1
-      ;;
-  esac
-  # fm_backend_stream_api reports its fate in the exit status, which - unlike
-  # the HTTP code it also sees - survives the command substitution above.
-  local why detail
-  case "$status" in
-    0) why="the hub answered without an order outcome" ;;
-    1) why="the hub could not be reached, or did not answer in time" ;;
-    2) why="the hub refused this home's credential" ;;
-    3) why="the hub has no order route" ;;
-    *) why="the hub answered with an error" ;;
-  esac
-  detail=$(printf '%s' "$out" | jq -r '.message // .error // empty' 2>/dev/null)
-  [ -n "$detail" ] || detail="the hub sent no readable answer"
-  die "$why: $detail"
-}
-
-cmd_order_status() {
-  local order=${1:?order-status needs an order id}
-  need_token
-  local out
-  out=$(fm_backend_stream_api GET "/v1/orders/$order") || {
-    die "could not read order $order: $(fm_backend_stream_api_error "$out")"
-  }
-  printf '%s' "$out" | jq -r '.order
-    | "\(.outcome)\tleaf \(.leaf_worker_id)\texecution \(.execution_id)"
-      + "\tdelivered \(if .delivered == null then "unknown" else .delivered end)"
-      + "\tworker_gone \(.worker_gone)"
-      + (if .reason then "\t\(.reason)" else "" end)'
-}
-
 cmd_attach() {
   local raw=${1:?attach needs an endpoint} ; shift || true
   local query="" target endpoint url token
@@ -384,8 +296,6 @@ case "$COMMAND" in
   web) cmd_web ;;
   machines) cmd_machines ;;
   tasks) cmd_tasks ;;
-  order) cmd_order "$@" ;;
-  order-status) cmd_order_status "$@" ;;
   attach) cmd_attach "$@" ;;
   -h|--help|help) usage ;;
   *) die "unknown command: $COMMAND" ;;
