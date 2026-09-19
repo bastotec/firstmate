@@ -38,8 +38,8 @@ The hub groups endpoints by the machine that owns them, and this home's name in 
 Select the backend the way any explicit backend is selected: `config/backend`, `FM_BACKEND=stream`, or an explicit per-task request.
 It is never auto-detected, and a spawn refuses `--secondmate` until secondmate launch semantics are designed for it.
 
-`python3`, `curl`, and `jq` must be present, and the hub's protocol must match the adapter's.
-A missing dependency, an unreachable hub, a refused token, or a protocol mismatch is terminal for the selected backend: it refuses and names what is wrong rather than falling back to another backend.
+`python3`, `curl`, and `jq` must be present, and the hub's protocol and advertised capabilities must match the adapter's requirements.
+A missing dependency, an unreachable hub, a refused token, or an incompatible hub is terminal for the selected backend: it refuses and names what is wrong rather than falling back to another backend.
 
 Run `bin/fm-stream.sh --help` for the operator commands; that help and each script's header own their exact flags.
 

@@ -118,6 +118,7 @@ HUB_VERSION = "2.0.0"
 # The wire protocol the agent and the shell adapter implement.  A peer
 # announcing anything else is refused rather than driven on guessed routes.
 HUB_PROTOCOL = 2
+HUB_CAPABILITIES = ("current_execution",)
 
 DEFAULT_PORT = 7717
 DEFAULT_RING_BYTES = 262144
@@ -1815,6 +1816,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "ok": True,
                 "protocol": HUB_PROTOCOL,
                 "version": HUB_VERSION,
+                "capabilities": list(HUB_CAPABILITIES),
                 "started_at": hub.started_at,
                 "endpoints": len(hub.list_endpoints()),
                 "state_max_age_secs": hub.options.state_max_age_secs,
