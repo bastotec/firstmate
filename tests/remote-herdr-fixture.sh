@@ -9,8 +9,9 @@
 # state file mutated with real jq, using the same verified herdr behaviors as
 # tests/fm-backend-herdr.test.sh's stateful fake: workspace create seeds one
 # default tab and returns its tab and root pane in the same response, closing a
-# tab's only pane closes the tab, and agent get reports agent_not_found for a
-# pane no agent has registered on.
+# tab's only pane closes the tab, agent get reports agent_not_found for a
+# pane no agent has registered on, and pane process-info fails for a pane the
+# server no longer has, as the real server does.
 #
 # Beyond that it models the pane IO a real launch performs. A pane reports a
 # registered agent once anything has been typed into it, and submitting starts
@@ -152,6 +153,7 @@ case "${1:-} ${2:-}" in
     [ "${4:-}" != enter ] || start_agent "${3:-}" ;;
   "pane read") printf '\n' ;;
   "pane process-info")
+    [ "$(jq_state -r --arg p "$pane" '[.tabs[]|select(.pane_id==$p)]|length')" != 0 ] || exit 1
     if agent_live "$pane"; then
       pid=$(agent_pid "$pane")
       name=$(ps -p "$pid" -o args= 2>/dev/null | awk '{ print $1 }')

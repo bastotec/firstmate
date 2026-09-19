@@ -2,8 +2,11 @@
 # tests/fm-remote-secondmate-replacement.test.sh - a remote second mate's
 # launch and relaunch report success only after proving, by process identity,
 # that the new agent replaced the old one on the configured Claude permission
-# posture, and an already-running agent without that posture is reported as a
-# posture mismatch instead of being returned as healthy
+# posture, an already-running agent without that posture is reported as a
+# posture mismatch instead of being returned as healthy, a relaunch whose
+# endpoint is already gone is delegated rather than refused as an
+# unidentifiable running agent, and a running agent whose posture cannot be
+# resolved is refused rather than returned as healthy
 # (bin/fm-remote-secondmate-control.sh's header owns the contract).
 #
 # This drives the real host-local control script and the real bin/fm-spawn.sh
@@ -199,3 +202,48 @@ alive "$current" && fail "the old agent is still running after a proved relaunch
 grep -q "^$replacement " "$IDENTITY" || fail "the relaunch did not record the replacement's identity"
 cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
 pass "the relaunch verb reports success only after the old agent is gone and a new one carries the posture"
+
+# --- 6. A relaunch whose endpoint is gone is not refused as unidentifiable ---
+out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "gone-endpoint setup failed: $out"
+pane=$(route_pane)
+current=$(pane_agent "$pane")
+alive "$current" || fail "gone-endpoint setup left no live agent"
+# A Herdr host drops the pane itself when its shell goes, and a gone pane's
+# process read fails on the real server, so the endpoint reads missing with no
+# agent left to identify.
+"$FIXTURE/bin/herdr" pane close "$pane" --session fm-remote
+n=0
+while alive "$current" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+alive "$current" && fail "closing the endpoint left its agent running"
+cat > "$CODE/bin/fm-control.sh" <<'SH'
+#!/usr/bin/env bash
+echo "relaunched $1 harness=claude from=claude model=default effort=default backend=herdr"
+SH
+chmod +x "$CODE/bin/fm-control.sh"
+if out=$(control relaunch "$SM_ID" claude default default 2>&1); then
+  fail "a relaunch into a gone endpoint reported success without a provable agent: $out"
+fi
+assert_not_contains "$out" "cannot be identified by process" \
+  "the relaunch refused an agent-free endpoint as an unidentifiable running agent"
+assert_contains "$out" "cannot be read" "the failure did not name the unreadable endpoint"
+assert_contains "$out" "not reporting it as relaunched" "the failure did not refuse the success report"
+cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
+pass "a relaunch whose endpoint is gone is delegated, not refused as a running agent"
+
+# --- 7. A running agent whose posture cannot be resolved is not healthy ------
+out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "posture-resolution setup failed: $out"
+pane=$(route_pane)
+healthy=$(pane_agent "$pane")
+alive "$healthy" || fail "posture-resolution setup left no live agent"
+cp -p "$ROUTE_META" "$TMP_ROOT/meta.before-resolution"
+tabs_before=$(jq '.tabs | length' "$HERDR_STATE")
+printf 'nonsense\n' > "$SM_HOME/config/claude-permission-mode"
+if out=$(control launch "$SM_ID" claude - - herdr 2>&1); then
+  fail "launch returned a running agent as healthy while its posture could not be resolved: $out"
+fi
+assert_contains "$out" "cannot be resolved" "the refusal did not name the unresolvable posture"
+assert_contains "$out" "claude-permission-mode" "the refusal did not surface the config problem"
+alive "$healthy" || fail "refusing the unresolvable posture stopped the running agent"
+cmp -s "$TMP_ROOT/meta.before-resolution" "$ROUTE_META" || fail "refusing the unresolvable posture rewrote the endpoint"
+[ "$(jq '.tabs | length' "$HERDR_STATE")" = "$tabs_before" ] || fail "refusing the unresolvable posture launched an agent"
+pass "a running agent is not returned as healthy when its posture cannot be resolved"

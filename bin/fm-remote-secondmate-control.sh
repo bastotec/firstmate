@@ -55,9 +55,9 @@
 # bound. The proved identity is kept in the private parent-route state directory
 # for the next relaunch, and retire removes it. An already-alive endpoint is
 # reused without a relaunch, but a claude agent there that lacks the configured
-# flag is reported as a posture mismatch rather than returned as healthy, and
-# route prints the same posture verdict for the parent's liveness sweep; neither
-# stops or replaces that agent.
+# flag, or a flag that cannot be resolved to check the live agent against, is
+# refused rather than returned as healthy, and route prints the same posture
+# verdict for the parent's liveness sweep; neither stops or replaces that agent.
 #
 # The optional launch traceparent is the per-task W3C trace-context carrier the
 # PARENT home resolved for this secondmate; this host only delivers it to the
@@ -327,7 +327,9 @@ cmd_launch() {
     case "$current" in
       alive)
         recorded_harness=$(fm_meta_get "$REMOTE_ENDPOINT_META" harness)
-        if [ "$recorded_harness" = claude ] && flag=$(fm_claude_permission_flag "$TARGET_HOME/config" 2>/dev/null); then
+        if [ "$recorded_harness" = claude ]; then
+          flag=$(fm_claude_permission_flag "$TARGET_HOME/config") \
+            || die "remote secondmate $id is already running, but the configured Claude permission posture cannot be resolved, so its live agent cannot be proven to carry it; refusing to report it as healthy"
           verdict=$(fm_claude_permission_endpoint_verdict "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" "$flag")
           case "$verdict" in
             mismatch\ *)
@@ -392,7 +394,7 @@ cmd_launch() {
 # re-resolve it here would silently drift the mate onto another runtime. `default`
 # explicitly clears an absent parent pin; `-` remains its compatibility spelling.
 cmd_relaunch() {
-  local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target out rc
+  local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current out rc
   local -a control_args
 
   validate_id "$id"
@@ -414,8 +416,17 @@ cmd_relaunch() {
   # is refused while it is still running.
   old_backend=$REMOTE_ENDPOINT_BACKEND
   old_target=$REMOTE_ENDPOINT_TARGET
-  old=$(endpoint_identities "$old_backend" "$old_target") \
-    || die "the running agent of $id cannot be identified by process in $old_target, so its replacement could not be proved; refusing before touching it"
+  # Only a positively agent-free endpoint may relaunch without readable
+  # identities: there, the recorded identity is the only previous agent there
+  # is, and the delegated control plane owns the agent-free recovery itself.
+  current=$(fm_backend_agent_state "$old_backend" "$old_target" 2>/dev/null || printf 'unreadable\n')
+  case "$current" in
+    dead|missing) old= ;;
+    *)
+      old=$(endpoint_identities "$old_backend" "$old_target") \
+        || die "the agent of $id in $old_target cannot be identified by process (endpoint reads '$current'), so its replacement could not be proved; refusing before touching it"
+      ;;
+  esac
   old="$old"$'\n'"$(recorded_identities "$id")"
   control_args=("$id" relaunch --harness "$harness" --model "$model" --effort "$effort")
   # The same launch-boundary facts cmd_launch establishes: the endpoint lives in
