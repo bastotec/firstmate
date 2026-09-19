@@ -158,6 +158,7 @@ Unconfirmed is not a failure to retry blindly: the order may already have reache
 
 Reconciliation state lives in the hub's memory, not on disk.
 Recent orders are kept in a bounded journal of 512, and one an agent took but never answered stays answerable for 15 minutes, so a caller that resends its own command id gets that order's fate rather than a second delivery.
+A resend arriving while the first send is still being placed - a dropped SSH transport, a reconnecting adapter - is waited out and answered from that same order, so even concurrent sends of one id type the text once.
 A hub restart empties the journal along with the registry, so an id asked for afterwards answers `no_such_order` even when the order may have been delivered before the restart.
 
 The credentials are separate on purpose: `command` needs a `control`-class token, the class that can type into workers, while the feed holds `subscribe` alone, so a host running only the feed cannot order anything with the credential the feed uses.

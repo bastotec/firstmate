@@ -264,7 +264,7 @@ cmd_order() {
   local execution=${2:?order needs the execution id it is aimed at}
   local text=${3?order needs the text to send}
   shift 3 || true
-  local submit=true out code outcome reason
+  local submit=true out status=0 outcome reason
   while [ $# -gt 0 ]; do
     case "$1" in
       --no-submit) submit=false; shift ;;
@@ -277,8 +277,11 @@ cmd_order() {
     --argjson submit "$submit" \
     '{leaf_worker_id: $leaf, execution_id: $execution, text: $text, submit: $submit}') \
     || die "could not build the order"
-  out=$(fm_backend_stream_api POST /v1/orders "$body") || true
-  code=${FM_BACKEND_STREAM_HTTP_CODE:-000}
+  # The hub legitimately holds this one call for its whole membership and
+  # acknowledgement window, which outlasts the 30s every read defaults to, so
+  # the order carries its own bound.
+  out=$(FM_STREAM_HTTP_TIMEOUT="${FM_STREAM_ORDER_HTTP_TIMEOUT:-60}" \
+    fm_backend_stream_api POST /v1/orders "$body") || status=$?
   outcome=$(printf '%s' "$out" | jq -r '.outcome // empty' 2>/dev/null)
   case "$outcome" in
     accepted)
@@ -293,7 +296,7 @@ cmd_order() {
       # nudged to retry.
       printf 'UNCONFIRMED: %s\n' "$(fm_backend_stream_api_error "$out")" >&2
       printf 'read it back with: %s order-status %s\n' \
-        "${FM_STREAM_SCRIPT##*/}" "$(printf '%s' "$out" | jq -r '.order_id')" >&2
+        "${0##*/}" "$(printf '%s' "$out" | jq -r '.order_id')" >&2
       return 4
       ;;
     refused)
@@ -302,7 +305,19 @@ cmd_order() {
       return 1
       ;;
   esac
-  die "the hub did not answer with an order outcome (HTTP $code): $(fm_backend_stream_api_error "$out")"
+  # fm_backend_stream_api reports its fate in the exit status, which - unlike
+  # the HTTP code it also sees - survives the command substitution above.
+  local why detail
+  case "$status" in
+    0) why="the hub answered without an order outcome" ;;
+    1) why="the hub could not be reached, or did not answer in time" ;;
+    2) why="the hub refused this home's credential" ;;
+    3) why="the hub has no order route" ;;
+    *) why="the hub answered with an error" ;;
+  esac
+  detail=$(printf '%s' "$out" | jq -r '.message // .error // empty' 2>/dev/null)
+  [ -n "$detail" ] || detail="the hub sent no readable answer"
+  die "$why: $detail"
 }
 
 cmd_order_status() {
