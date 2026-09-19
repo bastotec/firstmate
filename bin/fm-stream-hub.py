@@ -835,8 +835,8 @@ class Command:
 class Order:
     """One leaf-addressed order, and what is known about its fate.
 
-    The record holds the Command rather than a copy of its verdict, so reading
-    an order back reports what is true NOW.  An order the hub answered as
+    The record holds the Command rather than a copy of its verdict, so resending
+    an order reports what is true NOW.  An order the hub answered as
     unconfirmed becomes accepted the moment a late acknowledgement arrives,
     with nothing to keep in step.
     """
@@ -1467,14 +1467,6 @@ class Hub:
                 self.orders.popitem(last=False)
             return winner
 
-    def get_order(self, order_id: str) -> "Order":
-        with self.lock:
-            order = self.orders.get(order_id)
-        if order is None:
-            raise HubError(HTTPStatus.NOT_FOUND, "no_such_order",
-                           "this hub holds no order %s" % order_id)
-        return order
-
     def place_order(self, leaf: str, requested_execution: str, text: str,
                     order_id: str) -> "Order":
         """Deliver one leaf-addressed, execution-scoped order, or refuse it.
@@ -1485,9 +1477,8 @@ class Hub:
         order composed against one execution must not land in a replacement that
         never saw what prompted it.  Every exit from here is recorded under the
         caller's own id, so an answer that never reached the caller can still be
-        read back - and so a caller that resends an id rather than risk having
-        lost one gets the first order's fate instead of a second delivery,
-        waiting out a placement still in flight rather than repeating it.
+        returned on a resend.  A placement still in flight is waited out, so
+        the caller gets the first order's fate instead of a second delivery.
         """
         order = Order(order_id, leaf, requested_execution, "", None)
         try:
@@ -1848,18 +1839,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # its endpoint is.
             self._require(CLASS_CONTROL, query)
             self._order_route(query)
-            return
-
-        if path.startswith("/v1/orders/") and method == "GET":
-            # Reading back what became of an order is a read, so a watcher can
-            # reconcile without holding a credential that can steer anything.
-            self._require(CLASS_SUBSCRIBE, query)
-            order_id = urllib.parse.unquote(path[len("/v1/orders/"):])
-            if not ORDER_ID_RE.match(order_id):
-                raise HubError(HTTPStatus.NOT_FOUND, "no_such_order",
-                               "no order %s" % order_id)
-            self._json(HTTPStatus.OK,
-                       {"ok": True, "order": hub.get_order(order_id).describe()})
             return
 
         if path.startswith("/v1/tasks/"):
