@@ -66,15 +66,19 @@ Only the instructions are ever rolled back from those copies; the record copy is
    A recorded raw-command basename that differs from its resolved adapter cannot reproduce the command actually running, so relaunch refuses before the checkpoint unless the caller passes an explicit `--harness` to choose the replacement runtime deliberately.
    A harness change resets model, effort, and any recorded account slot unless they are named too, because neither a model nor a subscription profile chosen for one adapter transfers to another.
    `--account-slot` applies to ship and scout workers only, and it re-resolves against the home-local registry owned by [configuration.md](configuration.md#account-slots-configaccount-slotsjson) here, before anything is stopped.
-2. **Safe checkpoint.**
+2. **Prove backlog recovery eligibility.**
+   When the automatic backlog transition gate applies, an unheld In-flight row is recoverable whether it is unblocked or waiting on a dependency; relaunch preserves that lifecycle state and dependency blocker instead of rerunning `start`.
+   An unblocked Queued row can still proceed and moves to In flight at the launch commit, while a dependency-blocked Queued row, any held row, a missing or Done row, and an unreadable row refuse before the old agent is stopped.
+   `recover-missing` uses the same predicate before it recreates a terminal.
+3. **Safe checkpoint.**
    The recorded worktree must exist and be a worktree root; its head and dirty state are recorded.
    For a `kind=secondmate` task, the home's identity marker must match and its child records must be readable, so a relaunch can never strand child work behind an unreadable home.
    A secondmate's own crewmates run in their own endpoints and outlive its relaunch; the relaunched secondmate reconciles them from its home's durable records at startup.
-3. **Record the note.**
+4. **Record the note.**
    A ship or scout relaunch requires `--note`, because the replacement inherits the local copy but none of the conversation; the note is appended to the instructions it reads.
    A secondmate relaunch does not require one and never rewrites its standing charter.
-4. **Stop the old agent** through the `exit` verb, with its postcondition.
-5. **Launch the replacement** through its single owner, `bin/fm-spawn.sh --relaunch`, which adopts the recorded endpoint and worktree instead of creating either, clears the previous harness's per-task wiring, and arms a fresh busy generation.
+5. **Stop the old agent** through the `exit` verb, with its postcondition.
+6. **Launch the replacement** through its single owner, `bin/fm-spawn.sh --relaunch`, which adopts the recorded endpoint and worktree instead of creating either, clears the previous harness's per-task wiring, arms a fresh busy generation, rechecks the same backlog recovery eligibility before publication and at the launch commit, and leaves an eligible In-flight row untouched.
 
 Switching harness is therefore one ordinary relaunch rather than a separate mechanism.
 
@@ -92,7 +96,7 @@ It differs from the steps above in exactly three places.
   Uncommitted changes in that copy are not a precondition at all.
   A task worth recovering is mid-work by definition, so unlanded changes are its normal state, and recovery recreates the terminal beside that work without cleaning, resetting, or stashing any of it.
   The checkpoint still records what it found, so the journal says whether the rescued copy was dirty.
-- No stop step. Nothing is running, so step 4 is replaced by recreating the window under the recorded `fm-<id>` name in the recorded session and worktree, then waiting on a bounded budget for the new terminal to hold an agent-free state before step 5 hands it to the same launch owner.
+- No stop step. Nothing is running, so step 5 is replaced by recreating the window under the recorded `fm-<id>` name in the recorded session and worktree, then waiting on a bounded budget for the new terminal to hold an agent-free state before step 6 hands it to the same launch owner.
   A login shell that is still running its rc files reads `ambiguous` while each of them owns the pane, and the launch owner takes one un-retried state read that must be `dead`, so the state has to hold rather than merely be observed once.
 
 #### A signed-out account slot with a missing terminal
@@ -172,6 +176,6 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 ## Verification
 
 - `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
-- `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, rollback after a failed launch, and an already-armed merge poll still authenticating after the record rewrite.
+- `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, backlog recovery that preserves a dependency-blocked In-flight row while refusing blocked Queued and held In-flight rows before stopping the existing worker, rollback after a failed launch, and an already-armed merge poll still authenticating after the record rewrite.
 - `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery: the success path under the recorded handle for both losses (a missing window in a live session, and a whole gone session recreated before it), the live, ambiguous, absent-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, a rescue succeeding on a copy full of uncommitted work and leaving every one of those changes byte-identical, the refusal when the session cannot be recreated, the recorded profile surviving a differing configured secondmate pin, the refused profile flags, the basename-harness and unsupported-backend refusals, a still-starting shell being waited out rather than handed over and the refusal when it never settles, a failed recreation rolling the progress note back while leaving a concurrent write to the durable record in place, and the message after a failed launch handoff.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
