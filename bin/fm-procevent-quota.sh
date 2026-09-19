@@ -93,16 +93,28 @@ valid_percent() {
 }
 
 # quota_json [timeout]
-# Run `quota-axi --json` bounded by the given timeout. A missing or incompatible
-# quota-axi is an error condition, not a signal to fire.
+# Run `quota-axi --json` bounded by the given timeout. Return 2 for a missing or
+# below-floor build, 3 for unreadable version output, and 4 when --json fails.
 quota_json() {
-  local timeout=${1:-} output
+  local timeout=${1:-} output status
   if [ -n "$timeout" ]; then
-    fm_quota_axi_compatible "$timeout" >/dev/null 2>&1 || return 2
-    output=$(fm_run_timed "$timeout" quota-axi --json 2>/dev/null </dev/null) || return 2
+    if fm_quota_axi_compatible "$timeout" >/dev/null 2>&1; then
+      :
+    else
+      status=$?
+      [ "$status" -eq 2 ] && return 3
+      return 2
+    fi
+    output=$(fm_run_timed "$timeout" quota-axi --json 2>/dev/null </dev/null) || return 4
   else
-    fm_quota_axi_compatible >/dev/null 2>&1 || return 2
-    output=$(quota-axi --json 2>/dev/null </dev/null) || return 2
+    if fm_quota_axi_compatible >/dev/null 2>&1; then
+      :
+    else
+      status=$?
+      [ "$status" -eq 2 ] && return 3
+      return 2
+    fi
+    output=$(quota-axi --json 2>/dev/null </dev/null) || return 4
   fi
   printf '%s\n' "$output"
 }
@@ -178,7 +190,7 @@ cmd_source_id() {
 }
 
 cmd_arm() {
-  local interval=$DEFAULT_INTERVAL threshold=$DEFAULT_THRESHOLD
+  local interval=$DEFAULT_INTERVAL threshold=$DEFAULT_THRESHOLD status
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --interval)  positive_number "${2-}" || die "--interval needs a positive number"; interval=$2; shift 2 ;;
@@ -188,7 +200,15 @@ cmd_arm() {
     esac
   done
   resolve_provider "$PROVIDER"
-  fm_quota_axi_compatible 5 >/dev/null 2>&1 || die "quota-axi is missing or below the compatibility floor"
+  if fm_quota_axi_compatible 5 >/dev/null 2>&1; then
+    :
+  else
+    status=$?
+    if [ "$status" -eq 2 ]; then
+      die "quota-axi version is unreadable; installed build must report semantic version >=$FM_QUOTA_AXI_MIN"
+    fi
+    die "quota-axi is missing or below the compatibility floor"
+  fi
   local timeout
   timeout=$(perl -e 'print int($ARGV[0] * 0.8 + 0.5)' "$interval") || timeout=30
   [ "$timeout" -ge 5 ] || timeout=5
@@ -218,13 +238,20 @@ cmd_poll() {
   valid_percent "$threshold" || die "--threshold needs a percent 0-100"
   [ -z "$timeout" ] || positive_int "$timeout" || die "--timeout needs a positive integer"
   resolve_provider "$PROVIDER"
-  local json detail status polls=0
+  local json detail status quota_status polls=0
   while :; do
     polls=$((polls + 1))
-    if ! json=$(quota_json "${timeout:-}"); then
+    if json=$(quota_json "${timeout:-}"); then
+      :
+    else
+      quota_status=$?
       printf 'quota: %s\n' "$CANONICAL_SOURCE_ID"
       printf 'status: error\n'
-      printf 'detail: quota-axi --json failed or quota-axi is missing/incompatible\n'
+      case "$quota_status" in
+        3) printf 'detail: quota-axi version is unreadable; installed build must report semantic version >=%s\n' "$FM_QUOTA_AXI_MIN" ;;
+        2) printf 'detail: quota-axi is missing or below the compatibility floor\n' ;;
+        *) printf 'detail: quota-axi --json failed\n' ;;
+      esac
       printf 'condition_polls: %s\n' "$polls"
       exit 0
     fi

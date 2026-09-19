@@ -31,7 +31,7 @@
 #   path=<the child PATH this command inherited>
 #   entrypoint=yes|no
 #   platform=darwin|linux|<uname -s>|unknown
-#   required <tool>=<path>|MISSING
+#   required <tool>=<path>|MISSING|VERSION_UNREADABLE (requires semantic version >=<floor>)
 #   optional <tool>=<path>|absent
 #   fix <check>=applied: <what changed>       (--fix only)
 #   fix <check>=failed: <why the repair did not land>   (--fix only)
@@ -422,14 +422,25 @@ check_remote_job_worker() {
 }
 
 report_required_tools() {
-  local tool resolved harness
+  local tool resolved harness status
   MISSING=()
+  VERSION_UNREADABLE=()
   for tool in "${REQUIRED_TOOLS[@]}"; do
     resolved=$(command -v "$tool" 2>/dev/null || true)
     if [ -n "$resolved" ] && [ -x "$resolved" ]; then
-      if [ "$tool" = tasks-axi ] && ! fm_tasks_axi_compatible; then
-        printf 'required tasks-axi=MISSING (incompatible)\n'
-        MISSING+=(tasks-axi)
+      if [ "$tool" = tasks-axi ]; then
+        if fm_tasks_axi_compatible; then
+          printf 'required %s=%s\n' "$tool" "$resolved"
+        else
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            printf 'required tasks-axi=VERSION_UNREADABLE (requires semantic version >=%s)\n' "$FM_TASKS_AXI_MIN"
+            VERSION_UNREADABLE+=(tasks-axi)
+          else
+            printf 'required tasks-axi=MISSING (incompatible)\n'
+            MISSING+=(tasks-axi)
+          fi
+        fi
       else
         printf 'required %s=%s\n' "$tool" "$resolved"
       fi
@@ -450,7 +461,7 @@ report_required_tools() {
 }
 
 report_required_tools_from_worker() {
-  local job_id probe_stdout probe_stderr probe_exit line fact name value
+  local job_id probe_stdout probe_stderr probe_exit line fact name value problem_count
   local expected=6 count=0 valid=1 seen=' '
   if ! job_id=$(fm_remote_job_stage "${HOME:-}" "$FM_ROOT" "${FM_HOME:-}" \
     fm-remote-doctor.sh --worker-tool-probe </dev/null); then
@@ -470,6 +481,7 @@ report_required_tools_from_worker() {
   probe_stderr=$FM_REMOTE_JOB_STDERR
   probe_exit=$FM_REMOTE_JOB_EXIT
   MISSING=()
+  VERSION_UNREADABLE=()
   while IFS= read -r line; do
     case "$line" in required\ *=*) ;; *) valid=0; continue ;; esac
     fact=${line#required }
@@ -479,11 +491,16 @@ report_required_tools_from_worker() {
     case "$seen" in *" $name "*) valid=0; continue ;; esac
     seen="$seen$name "
     count=$((count + 1))
-    case "$value" in MISSING*) MISSING+=("$name") ;; '') valid=0 ;; esac
+    case "$value" in
+      MISSING*) MISSING+=("$name") ;;
+      VERSION_UNREADABLE*) VERSION_UNREADABLE+=("$name") ;;
+      '') valid=0 ;;
+    esac
   done < "$probe_stdout"
   [ "$count" -eq "$expected" ] || valid=0
   [ ! -s "$probe_stderr" ] || valid=0
-  case "$probe_exit:${#MISSING[@]}" in 0:0|1:[1-9]*) ;; *) valid=0 ;; esac
+  problem_count=$((${#MISSING[@]} + ${#VERSION_UNREADABLE[@]}))
+  case "$probe_exit:$problem_count" in 0:0|1:[1-9]*) ;; *) valid=0 ;; esac
   if [ "$valid" -eq 1 ]; then
     cat "$probe_stdout"
     set_check remote-job-probe "ok: the remote job worker completed the required-tool probe"
@@ -881,7 +898,7 @@ apply_fixes() { # <resolved-login-shell>
 
 if [ "$MODE" = worker-tool-probe ]; then
   report_required_tools
-  [ "${#MISSING[@]}" -eq 0 ]
+  [ "$((${#MISSING[@]} + ${#VERSION_UNREADABLE[@]}))" -eq 0 ]
   exit
 fi
 
@@ -938,7 +955,11 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   printf 'fix: install each one where it resolves on the path reported above, or put a wrapper script for it in %s/.local/bin, which is always on that PATH.\n' "${HOME:-~}" >&2
   printf 'fix: tools in an unselected nvm version or outside the discovered asdf or mise paths need an absolute wrapper; see docs/remote-secondmates.md for the wrapper recipe.\n' >&2
 fi
-if [ "${#MISSING[@]}" -gt 0 ] || [ "${#GAPS[@]}" -gt 0 ]; then
+if [ "${#VERSION_UNREADABLE[@]}" -gt 0 ]; then
+  printf 'error: required tool versions are unreadable on the remote runtime PATH: %s\n' "${VERSION_UNREADABLE[*]}" >&2
+  printf 'fix: upgrade each unreadable tool to a build that reports a semantic version meeting the floor shown above.\n' >&2
+fi
+if [ "${#MISSING[@]}" -gt 0 ] || [ "${#VERSION_UNREADABLE[@]}" -gt 0 ] || [ "${#GAPS[@]}" -gt 0 ]; then
   NAMES=
   for i in ${GAPS[@]+"${GAPS[@]}"}; do
     NAMES="${NAMES:+$NAMES }${CHECK_NAMES[$i]}"

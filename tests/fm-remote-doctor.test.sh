@@ -393,6 +393,54 @@ assert_no_dangerous_calls() { # <msg>
   assert_absent "$CASE_HOME/kcpassword" "the doctor wrote an auto-login password"
 }
 
+# --- unreadable worker versions remain distinct through the protocol --------
+
+new_case Linux with-herdr no-gui
+CASE_REMOTE_JOB_ACTIVE=
+CASE_PLATFORM_OVERRIDE=Linux
+cat > "$CASE_BIN/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}:${2:-}" in
+  --version:*) printf 'tasks-axi development build\n' ;;
+  update:--help) printf '%s\n' --archive-body ;;
+  mv:--help) printf '%s\n' 'usage: tasks-axi mv <id> [<id>...]' ;;
+esac
+SH
+chmod +x "$CASE_BIN/tasks-axi"
+rm -f "$CASE_BIN/sleep" "$CASE_BIN/uname"
+mkdir -p "$CASE_HOME/.local/bin"
+for tool in herdr tasks-axi treehouse claude; do
+  ln -s "$CASE_BIN/$tool" "$CASE_HOME/.local/bin/$tool"
+done
+HOME="$CASE_HOME" FM_ROOT_OVERRIDE="$ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  "$ROOT/bin/fm-remote-job-worker.sh" > "$CASE_STATE/worker.out" 2> "$CASE_STATE/worker.err" &
+DOCTOR_WORKER_PID=$!
+for _ in $(seq 1 100); do
+  [ -f "$CASE_HOME/.firstmate/remote-job/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$CASE_HOME/.firstmate/remote-job/worker.ready" "the unreadable-version fixture worker did not start"
+doctor
+expect_code 1 "$DOCTOR_RC" "doctor accepted a tasks-axi build with an unreadable version"
+assert_contains "$DOCTOR_OUT" 'required tasks-axi=VERSION_UNREADABLE (requires semantic version >=0.2.4)' \
+  "doctor hid the unreadable installed tasks-axi version"
+assert_not_contains "$DOCTOR_OUT" 'required tasks-axi=MISSING' \
+  "doctor falsely reported the installed tasks-axi build as missing"
+assert_contains "$DOCTOR_OUT" 'check remote-job-probe=ok: the remote job worker completed the required-tool probe' \
+  "doctor rejected the worker protocol's unreadable-version result"
+assert_contains "$DOCTOR_OUT" 'error: required tool versions are unreadable on the remote runtime PATH: tasks-axi' \
+  "doctor did not preserve the unreadable-version caveat in its failure"
+kill -TERM "$DOCTOR_WORKER_PID"
+for _ in $(seq 1 100); do
+  kill -0 "$DOCTOR_WORKER_PID" 2>/dev/null || break
+  sleep 0.05
+done
+if kill -0 "$DOCTOR_WORKER_PID" 2>/dev/null; then
+  kill -KILL "$DOCTOR_WORKER_PID" 2>/dev/null || true
+fi
+DOCTOR_WORKER_PID=
+pass "doctor preserves unreadable versions through the worker protocol"
+
 # --- a host with no herdr is never ready, and --fix cannot install one -------
 
 new_case Darwin no-herdr gui

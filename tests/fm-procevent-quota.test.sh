@@ -16,7 +16,7 @@ mkdir -p "$FAKEBIN"
 cat > "$FAKEBIN/quota-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = "--version" ]; then
-  printf 'quota-axi 0.1.29\n'
+  printf '%s\n' "${QUOTA_AXI_VERSION:-quota-axi 0.1.29}"
   exit 0
 fi
 case "${QUOTA_AXI_MALFORMED:-}" in
@@ -121,6 +121,32 @@ printf '%s\n' "$out" | grep -qx 'status: exhausted' \
 printf '%s\n' "$out" | grep -qx 'quota: quota' \
   || fail "default aggregate poll did not use the aggregate source"
 ok "poll accepts its documented defaults"
+
+if err=$(QUOTA_AXI_VERSION='quota-axi development build' PATH="$FAKEBIN:$PATH" \
+  "$BIN/fm-procevent-quota.sh" arm 2>&1); then
+  fail "an unreadable quota-axi version unexpectedly armed a watch"
+fi
+[ "$err" = 'error: quota-axi version is unreadable; installed build must report semantic version >=0.1.29' ] \
+  || fail "arm hid the unreadable installed version: $err"
+ok "arm distinguishes an unreadable installed version"
+
+if err=$(QUOTA_AXI_VERSION='quota-axi 0.1.28' PATH="$FAKEBIN:$PATH" \
+  "$BIN/fm-procevent-quota.sh" arm 2>&1); then
+  fail "a below-floor quota-axi unexpectedly armed a watch"
+fi
+[ "$err" = 'error: quota-axi is missing or below the compatibility floor' ] \
+  || fail "arm stopped enforcing the semantic version floor: $err"
+ok "arm preserves the semantic minimum-version refusal"
+
+out=$(QUOTA_AXI_VERSION='quota-axi development build' QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" \
+  "$BIN/fm-procevent-quota.sh" poll --interval 1 --timeout 1)
+printf '%s\n' "$out" | grep -qx 'status: error' || fail "unreadable quota-axi version did not stop polling"
+printf '%s\n' "$out" | grep -qx 'detail: quota-axi version is unreadable; installed build must report semantic version >=0.1.29' \
+  || fail "poll hid the unreadable installed version: $out"
+if printf '%s\n' "$out" | grep -Fq 'missing'; then
+  fail "poll falsely reported the unreadable installed version as missing"
+fi
+ok "poll distinguishes an unreadable installed version"
 
 out=$(QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 0.01 --threshold 10 --provider codex --timeout 1)
 printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "provider watch did not report exhaustion"
