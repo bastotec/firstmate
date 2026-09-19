@@ -42,6 +42,23 @@
 # control plane here, because from this host the mate is a plain local
 # secondmate. cmd_relaunch below owns why the parent must hand it the profile.
 #
+# A launch that actually starts an agent, and every relaunch, reports success
+# only after proving by process identity that the new agent replaced the old
+# one: the new endpoint hosts a harness process that did not exist before, a
+# claude agent carries the Claude permission flag this home's
+# config/claude-permission-mode selects (bin/fm-claude-permission-lib.sh), and
+# every previous agent process is gone - the one recorded by the last proved
+# launch, and any the old endpoint still hosts. A launch refuses before starting
+# anything while the recorded previous agent is still running outside its
+# endpoint, and any proof that cannot be made within the bound is a failure,
+# never a success; FM_REMOTE_AGENT_IDENTITY_WAIT (seconds, default 30) sets that
+# bound. The proved identity is kept in the private parent-route state directory
+# for the next relaunch, and retire removes it. An already-alive endpoint is
+# reused without a relaunch, but a claude agent there that lacks the configured
+# flag, or a flag that cannot be resolved to check the live agent against, is
+# refused rather than returned as healthy, and route prints the same posture
+# verdict for the parent's liveness sweep; neither stops or replaces that agent.
+#
 # The optional launch traceparent is the per-task W3C trace-context carrier the
 # PARENT home resolved for this secondmate; this host only delivers it to the
 # pane, and fm-spawn validates it (bin/fm-trace-context-lib.sh). Omitting it is
@@ -65,6 +82,8 @@ REMOTE_HERDR_SESSION=fm-remote
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-task-inbox-lib.sh
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+# shellcheck source=bin/fm-claude-permission-lib.sh
+. "$SCRIPT_DIR/fm-claude-permission-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
@@ -128,7 +147,7 @@ state_value() { # <id>; prints recovery-grade state
 }
 
 print_route() { # <id>
-  local id=$1 harness traceparent
+  local id=$1 harness traceparent flag
   remote_endpoint_require "$id"
   harness=$(fm_meta_get "$REMOTE_ENDPOINT_META" harness)
   traceparent=$(fm_meta_get "$REMOTE_ENDPOINT_META" traceparent)
@@ -138,6 +157,136 @@ print_route() { # <id>
   printf 'herdr_session=%s\n' "$REMOTE_HERDR_SESSION"
   printf 'harness=%s\n' "$harness"
   [ -z "$traceparent" ] || printf 'traceparent=%s\n' "$traceparent"
+  if [ "$harness" = claude ] && flag=$(fm_claude_permission_flag "$TARGET_HOME/config" 2>/dev/null); then
+    printf 'posture=%s\n' "$(fm_claude_permission_endpoint_verdict "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" "$flag")"
+    printf 'posture_flag=%s\n' "$flag"
+  fi
+}
+
+# --- replacement proof --------------------------------------------------------
+# The header owns what a launch or relaunch must prove before it reports
+# success. An agent is held by process identity: its pid plus
+# bin/fm-wake-lib.sh's fm_pid_identity, reduced to one checksum word so a
+# recycled pid never reads as the same process.
+AGENT_IDENTITY_WAIT=${FM_REMOTE_AGENT_IDENTITY_WAIT:-30}
+AGENT_IDENTITY_POLL=${FM_REMOTE_AGENT_IDENTITY_POLL:-0.5}
+
+identity_path() { printf '%s/%s.agent-identity\n' "$CONTROL_STATE" "$1"; }
+
+identity_token() {  # <pid>
+  local identity
+  identity=$(fm_pid_identity "$1") || return 1
+  printf '%s' "$identity" | cksum | awk '{ print $1 "-" $2 }'
+}
+
+identity_alive() {  # <pid> <token>
+  local token
+  token=$(identity_token "$1") || return 1
+  [ "$token" = "$2" ]
+}
+
+# "<pid> <token>" for every agent process the endpoint hosts; 1 when unreadable.
+endpoint_identities() {  # <backend> <target>
+  local pids pid token
+  pids=$(fm_backend_agent_pids "$1" "$2" 2>/dev/null) || return 1
+  for pid in $pids; do
+    token=$(identity_token "$pid") || continue
+    printf '%s %s\n' "$pid" "$token"
+  done
+}
+
+recorded_identities() {  # <id>
+  local file
+  file=$(identity_path "$1")
+  [ -f "$file" ] && [ ! -L "$file" ] || return 0
+  grep -E '^[0-9]+ [0-9]+-[0-9]+$' "$file" || true
+}
+
+# live_identity: the pid of the first <identity-lines> process still running.
+live_identity() {  # <identity-lines>
+  local pid token
+  while read -r pid token; do
+    [ -n "$pid" ] || continue
+    if identity_alive "$pid" "$token"; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+  done <<EOF
+$1
+EOF
+  return 1
+}
+
+# Refuse before a new agent starts while a recorded previous agent still runs,
+# allowing the bound for one whose endpoint was just removed to exit.
+require_identities_gone() {  # <id> <identity-lines>
+  local pid deadline
+  deadline=$(( $(date +%s) + AGENT_IDENTITY_WAIT ))
+  while pid=$(live_identity "$2"); do
+    [ "$(date +%s)" -lt "$deadline" ] \
+      || die "the previous agent process for $1 (pid $pid) is still running without its endpoint; refusing to start a second agent beside it - stop that process, then launch again"
+    sleep "$AGENT_IDENTITY_POLL"
+  done
+}
+
+# Wait, within the bound, for proof that the endpoint now recorded for <id>
+# hosts a new agent on the expected posture and that every <old> identity - and
+# any agent still in a different <old-target> - is gone. Records the proved
+# identity; dies naming the first proof that could not be made.
+verify_replacement() {  # <id> <harness> <old-identity-lines> [<old-backend> <old-target>]
+  local id=$1 harness=$2 old=$3 old_backend=${4:-} old_target=${5:-}
+  local flag='' deadline reason new fresh proved pid token leftover file
+  local -a flag_args=()
+  if [ "$harness" = claude ]; then
+    flag=$(fm_claude_permission_flag "$TARGET_HOME/config") \
+      || die "relaunch of $id not verified: the configured Claude permission posture cannot be resolved"
+    read -r -a flag_args <<< "$flag"
+  fi
+  deadline=$(( $(date +%s) + AGENT_IDENTITY_WAIT ))
+  while :; do
+    reason=
+    remote_endpoint_require "$id"
+    if pid=$(live_identity "$old"); then
+      reason="the previous agent process (pid $pid) is still running"
+    fi
+    if [ -z "$reason" ] && [ -n "$old_target" ] && [ "$old_target" != "$REMOTE_ENDPOINT_TARGET" ] \
+      && leftover=$(fm_backend_agent_pids "$old_backend" "$old_target" 2>/dev/null) && [ -n "$leftover" ]; then
+      reason="the previous endpoint $old_target still hosts agent process pid $(printf '%s\n' "$leftover" | head -n 1)"
+    fi
+    proved=
+    if [ -z "$reason" ]; then
+      if ! new=$(endpoint_identities "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET"); then
+        reason="the processes of endpoint $REMOTE_ENDPOINT_TARGET cannot be read"
+      else
+        fresh=
+        while read -r pid token; do
+          [ -n "$pid" ] || continue
+          ! printf '%s\n' "$old" | grep -Fxq -- "$pid $token" || continue
+          fresh="$fresh$pid $token"$'\n'
+          if [ -z "$flag" ] || fm_agent_process_has_args "$pid" "${flag_args[@]}"; then
+            proved="$proved$pid $token"$'\n'
+          fi
+        done <<EOF
+$new
+EOF
+        if [ -z "$fresh" ]; then
+          reason="no new agent process is running in endpoint $REMOTE_ENDPOINT_TARGET"
+        elif [ -z "$proved" ]; then
+          reason="the new agent process (pid ${fresh%% *}) lacks the configured Claude permission flag '$flag'"
+        fi
+      fi
+    fi
+    if [ -z "$reason" ]; then
+      file=$(identity_path "$id")
+      if ! { printf '%s' "$proved" > "$file.tmp.$$" && mv -f "$file.tmp.$$" "$file"; }; then
+        die "relaunch of $id proved its new agent but could not record that agent's identity"
+      fi
+      return 0
+    fi
+    [ "$(date +%s)" -lt "$deadline" ] \
+      || die "relaunch of $id not verified within ${AGENT_IDENTITY_WAIT}s: $reason; not reporting it as relaunched"
+    sleep "$AGENT_IDENTITY_POLL"
+  done
 }
 
 cmd_route() {
@@ -153,7 +302,7 @@ cmd_route() {
 
 cmd_launch() {
   local id=$1 harness=$2 model=$3 effort=$4 selected_backend=$5 traceparent=${6:-}
-  local current meta out herdr_session kill_out
+  local current meta out herdr_session kill_out old old_backend='' old_target='' verdict flag recorded_harness
 
   validate_id "$id"
   validate_home "$id"
@@ -171,11 +320,23 @@ cmd_launch() {
   case "$selected_backend" in herdr) ;; *) die "a remote secondmate runs only on the herdr backend, not '$selected_backend'" ;; esac
   mkdir -p "$CONTROL_STATE" "$CONTROL_DATA"
   meta=$(meta_path "$id")
+  old=$(recorded_identities "$id")
   if [ -f "$meta" ]; then
     remote_endpoint_require "$id"
     current=$(fm_backend_agent_state "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" 2>/dev/null || printf 'unreadable\n')
     case "$current" in
       alive)
+        recorded_harness=$(fm_meta_get "$REMOTE_ENDPOINT_META" harness)
+        if [ "$recorded_harness" = claude ]; then
+          flag=$(fm_claude_permission_flag "$TARGET_HOME/config") \
+            || die "remote secondmate $id is already running, but the configured Claude permission posture cannot be resolved, so its live agent cannot be proven to carry it; refusing to report it as healthy"
+          verdict=$(fm_claude_permission_endpoint_verdict "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" "$flag")
+          case "$verdict" in
+            mismatch\ *)
+              die "posture mismatch: remote secondmate $id is already running, but its live agent (pid ${verdict#mismatch }) lacks the configured Claude permission flag '$flag'; reported only - it was neither stopped nor relaunched"
+              ;;
+          esac
+        fi
         print_route "$id"
         return 0
         ;;
@@ -191,7 +352,10 @@ cmd_launch() {
       missing) ;;
       *) die "remote endpoint state is $current; refusing duplicate launch" ;;
     esac
+    old_backend=$REMOTE_ENDPOINT_BACKEND
+    old_target=$REMOTE_ENDPOINT_TARGET
   fi
+  require_identities_gone "$id" "$old"
   # The parent owns both convergence legs before it asks for this launch: it
   # already fast-forwarded this home to ITS primary commit and pushed inherited
   # local material, so this spawn must not redo either against this host's own
@@ -212,6 +376,7 @@ cmd_launch() {
   herdr_session=$(fm_meta_get "$meta" herdr_session)
   [ "$herdr_session" = "$REMOTE_HERDR_SESSION" ] \
     || die "remote launch recorded Herdr session '${herdr_session:-missing}', expected '$REMOTE_HERDR_SESSION'"
+  verify_replacement "$id" "$harness" "$old" "$old_backend" "$old_target"
   print_route "$id"
 }
 
@@ -229,7 +394,7 @@ cmd_launch() {
 # re-resolve it here would silently drift the mate onto another runtime. `default`
 # explicitly clears an absent parent pin; `-` remains its compatibility spelling.
 cmd_relaunch() {
-  local id=$1 harness=$2 model=$3 effort=$4
+  local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current recorded outside pid token out rc
   local -a control_args
 
   validate_id "$id"
@@ -246,16 +411,49 @@ cmd_relaunch() {
   remote_endpoint_require "$id"
   [ "$model" != - ] || model=default
   [ "$effort" != - ] || effort=default
+  # Hold the running agent by process identity before anything touches it, so
+  # its replacement can be proved afterwards; an agent that cannot be identified
+  # is refused while it is still running.
+  old_backend=$REMOTE_ENDPOINT_BACKEND
+  old_target=$REMOTE_ENDPOINT_TARGET
+  # Only a positively agent-free endpoint may relaunch without readable
+  # identities: there, the recorded identity is the only previous agent there
+  # is, and the delegated control plane owns the agent-free recovery itself.
+  current=$(fm_backend_agent_state "$old_backend" "$old_target" 2>/dev/null || printf 'unreadable\n')
+  case "$current" in
+    dead|missing) old= ;;
+    *)
+      old=$(endpoint_identities "$old_backend" "$old_target") \
+        || die "the agent of $id in $old_target cannot be identified by process (endpoint reads '$current'), so its replacement could not be proved; refusing before touching it"
+      ;;
+  esac
+  recorded=$(recorded_identities "$id")
+  outside=
+  while read -r pid token; do
+    [ -n "$pid" ] || continue
+    printf '%s\n' "$old" | grep -Fxq -- "$pid $token" || outside="$outside$pid $token"$'\n'
+  done <<EOF
+$recorded
+EOF
+  require_identities_gone "$id" "$outside"
+  old="$old"$'\n'"$recorded"
   control_args=("$id" relaunch --harness "$harness" --model "$model" --effort "$effort")
   # The same launch-boundary facts cmd_launch establishes: the endpoint lives in
   # the dedicated fm-remote session, and the parent already owns both convergence
   # legs, so the host-local spawn must not re-sync or re-inherit against this
   # host's own Firstmate copy.
-  HERDR_SESSION="$REMOTE_HERDR_SESSION" FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
+  rc=0
+  out=$(HERDR_SESSION="$REMOTE_HERDR_SESSION" FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
     FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
     FM_SKIP_SECONDMATE_SYNC=1 \
-    "$SCRIPT_DIR/fm-control.sh" "${control_args[@]}"
+    "$SCRIPT_DIR/fm-control.sh" "${control_args[@]}") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    [ -z "$out" ] || printf '%s\n' "$out"
+    return "$rc"
+  fi
+  verify_replacement "$id" "$harness" "$old" "$old_backend" "$old_target"
+  printf '%s\n' "$out"
 }
 
 cmd_send() {
@@ -422,6 +620,7 @@ cmd_retire() {
       FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_TEARDOWN_GUARD_DONE=1 \
       "$SCRIPT_DIR/fm-teardown.sh" "$id"
   fi
+  rm -f -- "$(identity_path "$id")"
 }
 
 case "${1:-}" in

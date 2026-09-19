@@ -320,6 +320,25 @@ fm_backend_tmux_foreground_pids() {  # <target>
       done
 }
 
+# fm_backend_tmux_agent_pids: the pid of each harness process in <target>'s
+# foreground process group, reduced to the top of each harness chain, one per
+# line (bin/fm-backend.sh's fm_backend_agent_pids owns the contract). Prints
+# nothing for an agent-free or unreadable pane.
+fm_backend_tmux_agent_pids() {  # <target>
+  local pid comm args argv0
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    comm=$(LC_ALL=C ps -p "$pid" -o comm= 2>/dev/null) || continue
+    args=$(LC_ALL=C ps -p "$pid" -o args= 2>/dev/null) || continue
+    args=${args#"${args%%[![:space:]]*}"}
+    argv0=${args%%[[:space:]]*}
+    [ "$(fm_agent_process_classify "$comm" "$argv0" "$args" "$pid")" = agent ] || continue
+    printf '%s\n' "$pid"
+  done <<EOF | fm_agent_process_topmost
+$(fm_backend_tmux_foreground_pids "$1")
+EOF
+}
+
 fm_backend_tmux_foreground_argv0s() {  # <target>
   local target=$1 tty pid pgid tpgid comm args argv0
   tty=$(tmux display-message -p -t "$target" '#{pane_tty}' 2>/dev/null) || return 0

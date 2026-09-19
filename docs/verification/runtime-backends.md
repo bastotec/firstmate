@@ -1515,6 +1515,69 @@ ok - real herdr 0.9.0 + pi 0.85.1: the registration left behind by a quit pi rea
 `tests/fm-crew-state.test.sh` pins the recovery classifier: a stale registration over a shell-only pane reports agent gone rather than alive or unreachable, and a stale `working` record never reports the pane working.
 A stale-registration pane is never a husk: create, reclaim, presentation recovery, and session cleanup keep refusing it, and only recovery reuses it.
 
+### Agent resume on server restart
+
+Observed 2026-09-18 on Linux x86_64 against Herdr 0.9.0, when a host reboot was followed by a start of the named remote-secondmate server.
+The shipped default configuration documents the setting and its default:
+
+```sh
+herdr --default-config | grep -B3 'resume_agents_on_restore'
+```
+
+```text
+[session]
+# Resume supported AI-agent panes into their native conversation sessions after
+# a Herdr server restart. Requires official integrations that report session refs.
+# resume_agents_on_restore = true
+```
+
+The named session's server log, pids and ids elided, shows the restore and the resumed agents about two seconds later:
+
+```text
+INFO herdr::logging: session restore evaluated event="persist.restore" subsystem="persist" outcome="ok" workspaces=10
+INFO herdr::logging: pane child spawned event="pane.spawned" subsystem="pane" outcome="ok" pane_id=2 pid=<shell>
+INFO herdr::pane: agent changed pane=2 previous_agent=None agent=Some(Claude) process=claude pgid=Some(<agent>)
+```
+
+Each resumed Claude agent ran as `claude --resume <session-id>`, a child of `/bin/sh` under the Herdr server, with no permission flag or other Firstmate launch argument.
+The only per-server override the 0.9.0 client documents is the environment: `herdr --help` prints `Env:    HERDR_CONFIG_PATH overrides config file path`, and neither `herdr server --help` nor `herdr config --help` offers a flag for the setting.
+`tests/fm-remote-secondmate-replacement.test.sh` and `tests/fm-secondmate-liveness.test.sh` pin how Firstmate reports such an agent, over real stand-in processes with no Herdr server.
+
+### Claude permission posture in process arguments
+
+The posture check reads the permission flag back from the running Claude agent's own arguments, so it holds only while Claude Code leaves its argv intact.
+Observed 2026-09-18, read-only, against agents Firstmate had already launched.
+
+On Linux x86_64 with Claude Code 2.1.276 in a Herdr 0.9.0 pane, `/proc/<pid>/cmdline` keeps every argument separate, for a Firstmate launch and for a Herdr resume alike:
+
+```sh
+for p in $(pgrep -x claude); do tr '\0' '\n' < /proc/$p/cmdline | sed -n 1,3p | tr '\n' ' '; echo; done
+```
+
+```text
+claude --dangerously-skip-permissions --settings
+claude --resume <session-id>
+```
+
+On macOS 26 arm64 with Claude Code 2.1.277 in a tmux pane, the check itself, run over the pane of a Claude worker launched with the bypass flag, found that agent and read the flag:
+
+```sh
+bash -c '. bin/fm-backend.sh; . bin/fm-claude-permission-lib.sh
+  fm_claude_permission_endpoint_verdict tmux "$TMUX_PANE" --dangerously-skip-permissions
+  fm_claude_permission_endpoint_verdict tmux "$TMUX_PANE" "--permission-mode auto"'
+```
+
+```text
+ok <pid>
+mismatch <pid>
+```
+
+The Claude leg of the liveness drift guard launches Claude with its permission flag and fails naming the version if that read stops finding it; run it after a Claude Code upgrade:
+
+```sh
+FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
+```
+
 ### Away-mode transport
 
 The away daemon is no longer launched on Pi; the away posture there is the record `bin/fm-afk-contract.sh` owns.
@@ -1696,6 +1759,10 @@ A `dead` there would authorize tearing down a healthy worker that was merely unr
 
 `codex`, `opencode`, `pi-signed`, `grok`, `kimi`, `cursor`, and `muse` were not installed on this machine and are unverified by this run.
 Re-run the guard after any harness upgrade before trusting this evidence.
+
+The opencode tail adapter (`bin/fm-stream-opencode-tail.py`) measures a harness-dependent surface of its own: opencode's on-disk SQLite session storage.
+As of 2026-09-19 this host has no live opencode storage to run it against - no opencode binary on `PATH`, no `~/.local/share/opencode/`, and no `opencode.db` anywhere under the home - so the schema proof remains the portable regression's fixture, derived from this host's opencode-history documentation of that storage rather than a recorded live run.
+Dated live end-to-end evidence is deferred until an opencode worker actually runs here: point the adapter at that worker's real `opencode.db` and record the result beside this note.
 
 ## Codex App host tools
 

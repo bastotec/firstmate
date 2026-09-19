@@ -10,8 +10,11 @@
 # mechanical record change owns the paired backlog transition and runs it in the
 # same process, under the per-task meta lock it already holds, before it reports
 # success. Nothing else - not a later agent turn, not a printed reminder - is
-# load-bearing for the pairing.
-#   bin/fm-spawn.sh      meta published => `tasks-axi start`
+# load-bearing for the pairing. Fresh dispatch and existing-task recovery keep
+# separate eligibility: relaunch preserves an unheld In-flight dependency
+# blocker, while fresh dispatch still requires an unblocked row.
+#   bin/fm-spawn.sh      meta published => `tasks-axi start` for fresh work, or
+#                        preserve an eligible existing In-flight row on relaunch
 #   bin/fm-teardown.sh   meta removed => `tasks-axi done`, or `tasks-axi reopen`
 #                        with the deliverable recorded when the row is still an
 #                        open captain call (bin/fm-captain-hold.sh `open`), so
@@ -825,6 +828,18 @@ fm_backlog_row_dispatchable() {
   esac
 }
 
+# Recovery eligibility is intentionally broader than fresh dispatchability.
+# An existing In-flight worker may need replacement while its task records a
+# dependency it is waiting on; refusing that recovery would strand the row with
+# no worker after the old incarnation stops. Captain/time holds still refuse,
+# as does a blocked Queued row that has never become active work.
+fm_backlog_row_relaunchable() {
+  case "$1" in
+    in_flight\ no\ no|in_flight\ no\ yes|queued\ no\ no) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 fm_backlog_dispatch_transition() {
   local meta=$1 data=$2 id=$3 state=$4 row row_status
   fm_backlog_record_present "$meta" "task record" "$state" || return 1
@@ -845,6 +860,30 @@ fm_backlog_dispatch_transition() {
   fi
   case "$row" in
     in_flight\ no\ no) return 0 ;;
+    queued\ no\ no) fm_backlog_start "$data" "$id" ;;
+  esac
+}
+
+fm_backlog_relaunch_transition() {
+  local meta=$1 data=$2 id=$3 state=$4 row row_status
+  fm_backlog_record_present "$meta" "task record" "$state" || return 1
+  fm_backlog_row_probe "$data" "$id"
+  row_status=$?
+  if [ "$row_status" -ne 0 ]; then
+    if [ "$FM_BACKLOG_ROW_RESULT" = not_found ]; then
+      FM_BACKLOG_TRANSITION_ERROR="backlog item $id vanished before relaunch commit"
+    else
+      FM_BACKLOG_TRANSITION_ERROR=$FM_BACKLOG_ROW_ERROR
+    fi
+    return "$row_status"
+  fi
+  row=$FM_BACKLOG_ROW_STATE
+  if ! fm_backlog_row_relaunchable "$row"; then
+    FM_BACKLOG_TRANSITION_ERROR="backlog item $id is not eligible for relaunch in state $row"
+    return 1
+  fi
+  case "$row" in
+    in_flight\ no\ no|in_flight\ no\ yes) return 0 ;;
     queued\ no\ no) fm_backlog_start "$data" "$id" ;;
   esac
 }
@@ -891,6 +930,7 @@ fm_backlog_atomic_transition() {
     publish) fm_backlog_record_publish "$@" ;;
     remove) fm_backlog_record_remove "$@" ;;
     dispatch) fm_backlog_dispatch_transition "$@" ;;
+    relaunch) fm_backlog_relaunch_transition "$@" ;;
     rollback) fm_backlog_dispatch_rollback "$@" ;;
     close) fm_backlog_close_transition "$@" ;;
     retain) fm_backlog_retain_transition "$@" ;;

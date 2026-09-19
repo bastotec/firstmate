@@ -322,7 +322,7 @@ family_for_basename() {
     fm-remote-doctor.test.sh|fm-remote-herdr-guard.test.sh|fm-remote-job.test.sh|fm-remote-job-orphan-reap.test.sh|\
     fm-remote-transport-lanes.test.sh|\
     fm-remote-reply.test.sh|fm-remote-secondmate-lifecycle-e2e.test.sh|\
-    fm-remote-secondmate-trace-context.test.sh|\
+    fm-remote-secondmate-trace-context.test.sh|fm-remote-secondmate-replacement.test.sh|\
     fm-secondmate-harness.test.sh|fm-secondmate-lifecycle-e2e.test.sh|\
     fm-secondmate-liveness.test.sh|fm-secondmate-reconcile.test.sh|\
     fm-secondmate-restart.test.sh|\
@@ -753,6 +753,7 @@ tests/fm-remote-job.test.sh 59603
 tests/fm-remote-reply.test.sh 101690
 tests/fm-remote-secondmate-lifecycle-e2e.test.sh 209631
 tests/fm-remote-secondmate-parent-binding.test.sh 29562
+tests/fm-remote-secondmate-replacement.test.sh 30000
 tests/fm-remote-secondmate-trace-context.test.sh 67096
 tests/fm-remote-transport-lanes.test.sh 63976
 tests/fm-secondmate-harness.test.sh 151589
@@ -783,6 +784,7 @@ tests/fm-stow-cascade.test.sh 3101
 # Locally measured seed for the new Claude tail shim suite (three runs, worst
 # ~8s on the dev host); refresh from CI timing artifacts per the doc below.
 tests/fm-stream-claude-tail.test.sh 9000
+tests/fm-stream-opencode-tail.test.sh 17476
 tests/fm-subagent-pretool-check.test.sh 1030
 tests/fm-supervision-events.test.sh 719
 tests/fm-tangle-guard.test.sh 9662

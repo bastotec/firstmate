@@ -20,9 +20,12 @@
 # causes it.
 #
 # Each harness is launched bare, with no prompt, so this consumes no model
-# tokens. The launch uses whatever credentials the harness already has; an
-# unauthenticated harness still starts its process, which is all the liveness
-# probe reads.
+# tokens. Claude alone carries its permission flag, because the posture check
+# (bin/fm-claude-permission-lib.sh) reads that flag back from the running
+# agent's own process arguments, and a release that rewrote them would report
+# every correctly launched Claude secondmate as a posture mismatch. The launch
+# uses whatever credentials the harness already has; an unauthenticated harness
+# still starts its process, which is all the liveness probe reads.
 #
 # Portable serial CI installs the public Pi package but no credentials, so this
 # guard checks that available token-free surface there and runs against every installed
@@ -66,6 +69,8 @@ export PATH
 . "$ROOT/bin/fm-backend.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-cursor-lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-claude-permission-lib.sh"
 fm_backend_source tmux || fail "fm_backend_source tmux failed"
 
 "$REAL_TMUX" -L "$SOCKET" new-session -d -s "$SESSION" -n control -c "$LAB/wt" \
@@ -127,6 +132,7 @@ for harness in claude codex opencode pi pi-signed grok kimi cursor muse; do
   # same flag fm-spawn passes for the same reason.
   launch_args=""
   [ "$harness" = cursor ] && launch_args="--trust"
+  [ "$harness" = claude ] && launch_args="--dangerously-skip-permissions"
   # shellcheck disable=SC2086  # deliberate: an empty value must add no argument
   "$REAL_TMUX" -L "$SOCKET" new-window -d -t "$SESSION:" -n "$harness" -c "$LAB/wt" -- "$bin_path" $launch_args \
     || fail "$harness ($version): could not launch a window for the liveness probe"
@@ -223,6 +229,15 @@ EOF
 
   note "$harness $version: ancestry verdicts=[$(printf '%s' "$verdicts" | tr '\n' ';')]"
   pass "harness detection: $harness $version is identified by the ancestry walk at comm strength"
+
+  if [ "$harness" = claude ]; then
+    posture=$(fm_claude_permission_endpoint_verdict tmux "$target" --dangerously-skip-permissions)
+    case "$posture" in
+      ok\ *) ;;
+      *) fail "POSTURE DRIFT: $harness $version was launched with --dangerously-skip-permissions, but reading its agent process arguments gives '$posture'. The posture check would report every correctly launched Claude secondmate as a mismatch. $drift_context" ;;
+    esac
+    pass "permission posture: $harness $version keeps its launch flag in its own process arguments"
+  fi
   CHECKED=$((CHECKED + 1))
 done
 

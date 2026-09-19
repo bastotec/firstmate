@@ -34,6 +34,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/remote-herdr-fixture.sh
+. "$(dirname "${BASH_SOURCE[0]}")/remote-herdr-fixture.sh"
 
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 fm_git_identity fmtest fmtest@example.com
@@ -160,13 +162,25 @@ SH
 # --- unit level: fm_backend_herdr_agent_state -------------------------------
 
 test_herdr_agent_state_preserves_husk_classifier() {
-  local pane_state expected out
+  local pane_state server_state expected out
 
-  for row in 'dead missing' 'no-agent dead' 'live alive' 'unknown unreadable'; do
+  # The recovery-grade read resolves an ambiguous pane through the session
+  # server's own running state, so each row stubs that read too: the direct
+  # husk maps never consult it, and only a positively stopped server turns an
+  # ambiguous pane into missing, never a running or unreadable one.
+  for row in \
+    'dead running missing' \
+    'no-agent running dead' \
+    'live running alive' \
+    'unknown running unreadable' \
+    'unknown unknown unreadable' \
+    'unknown stopped missing'; do
     pane_state=${row%% *}
+    row=${row#* }
+    server_state=${row%% *}
     expected=${row#* }
-    out=$(FM_TEST_PANE_STATE="$pane_state" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_pane_agent_state() { printf "%s" "$FM_TEST_PANE_STATE"; }; fm_backend_herdr_agent_state "sess:p1"' "$ROOT")
-    [ "$out" = "$expected" ] || fail "Herdr pane state $pane_state should map to $expected, got '$out'"
+    out=$(FM_TEST_PANE_STATE="$pane_state" FM_TEST_SERVER_STATE="$server_state" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_pane_agent_state() { printf "%s" "$FM_TEST_PANE_STATE"; }; fm_backend_herdr_server_running_state() { printf "%s" "$FM_TEST_SERVER_STATE"; }; fm_backend_herdr_agent_state "sess:p1"' "$ROOT")
+    [ "$out" = "$expected" ] || fail "Herdr pane state $pane_state with a $server_state server should map to $expected, got '$out'"
   done
 
   out=$(bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_agent_state "no-colon-target"' "$ROOT")
@@ -196,6 +210,43 @@ test_agent_state_dispatcher_and_compatibility() {
   [ "$out" = unknown ] || fail "the compatibility dispatcher should map unverified to unknown, got '$out'"
 
   pass "fm_backend_agent_state: routes tmux/Herdr and keeps Zellij unverified"
+}
+
+# --- posture: bin/fm-claude-permission-lib.sh ---------------------------------
+
+# start_stand_in <args...>: a real process named claude whose arguments are
+# <args>, standing in for a live Claude agent; it exits once $TMP_ROOT is gone.
+start_stand_in() {
+  ( exec -a claude sh -c 'trap "exit 0" HUP TERM; while [ -d "$1" ]; do sleep 1 & wait $!; done' \
+      claude "$TMP_ROOT" "$@" ) </dev/null >/dev/null 2>&1 &
+  printf '%s\n' "$!"
+}
+
+posture_verdict() {  # <pids> <flag>
+  FM_TEST_PIDS=$1 bash -c '. "$0/bin/fm-backend.sh"; . "$0/bin/fm-claude-permission-lib.sh"
+    fm_backend_agent_pids() { [ "$FM_TEST_PIDS" != unreadable ] || return 1; printf "%s\n" $FM_TEST_PIDS; }
+    fm_claude_permission_endpoint_verdict tmux sess:win "$1"' "$ROOT" "$2"
+}
+
+test_posture_verdict_reads_the_agent_arguments() {
+  local bypass auto bare out
+  bypass=$(start_stand_in --dangerously-skip-permissions --settings '{}')
+  auto=$(start_stand_in --permission-mode auto --settings '{}')
+  bare=$(start_stand_in --resume 00000000-test)
+  out=$(posture_verdict "$bypass" --dangerously-skip-permissions)
+  [ "$out" = "ok $bypass" ] || fail "an agent carrying the bypass flag did not verify: $out"
+  out=$(posture_verdict "$auto" '--permission-mode auto')
+  [ "$out" = "ok $auto" ] || fail "an agent carrying the two-word auto flag did not verify: $out"
+  out=$(posture_verdict "$auto" --dangerously-skip-permissions)
+  [ "$out" = "mismatch $auto" ] || fail "an agent on the other posture was not a mismatch: $out"
+  out=$(posture_verdict "$bare" --dangerously-skip-permissions)
+  [ "$out" = "mismatch $bare" ] || fail "a resumed agent without the flag was not a mismatch: $out"
+  out=$(posture_verdict "" --dangerously-skip-permissions)
+  case "$out" in unverified\ *) ;; *) fail "an endpoint with no agent process claimed a verdict: $out" ;; esac
+  out=$(posture_verdict unreadable --dangerously-skip-permissions)
+  case "$out" in unverified\ *) ;; *) fail "an unreadable endpoint claimed a verdict: $out" ;; esac
+  kill "$bypass" "$auto" "$bare" 2>/dev/null || true
+  pass "posture verdict: read from the agent's own arguments, with nothing claimed when no agent can be read"
 }
 
 # --- sweep level: bin/fm-bootstrap.sh's secondmate_liveness_sweep -----------
@@ -418,6 +469,47 @@ test_sweep_leaves_alive_secondmate_untouched() {
   pass "sweep: an already-live secondmate is untouched and distinguishable in verbose diagnostics"
 }
 
+# A live Claude secondmate is healthy only on the configured permission posture.
+# A session resumed by another launcher without the flag is reported by name,
+# and never stopped or relaunched by the sweep.
+test_sweep_reports_live_secondmate_posture_mismatch() {
+  local w fb herdrfb log out state pane=w1:p2 bare good
+  w=$(new_world sweep-posture)
+  add_sm_home "$w" sm1 fm:$pane
+  {
+    printf 'backend=herdr\n'
+    printf 'herdr_session=fm\n'
+    printf 'herdr_workspace_id=w1\n'
+    printf 'herdr_tab_id=w1:t2\n'
+    printf 'herdr_pane_id=%s\n' "$pane"
+  } >> "$w/home/state/sm1.meta"
+  fb=$(make_toolchain "$w")
+  mkdir -p "$w/herdr"
+  install_remote_herdr_fixture "$w/herdr" "$w/herdr.state" "$w/herdr.log" "$w/herdr-fail" "$w/herdr.sock"
+  herdrfb="$w/herdr/bin"
+  state="$w/herdr.state"
+  log="$w/calls.log"; : > "$log"
+  bare=$(start_stand_in --resume 00000000-test)
+  jq --arg p "$pane" --argjson pid "$bare" \
+    '.workspaces = [{workspace_id:"w1", label:"fm", cwd:"/"}]
+     | .tabs = [{tab_id:"w1:t2", label:"fm-sm1", workspace_id:"w1", pane_id:$p}]
+     | .typed[$p] = true | .agents[$p] = $pid' "$state" > "$state.tmp" && mv -f "$state.tmp" "$state"
+
+  out=$(run_bootstrap "$herdrfb:$fb" "$w/home" zsh "$log")
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: posture mismatch: live agent pid $bare lacks the configured Claude permission flag '--dangerously-skip-permissions'" \
+    "a live agent without the configured posture was not reported: $out"
+  kill -0 "$bare" 2>/dev/null || fail "the sweep stopped the mismatched agent"
+  assert_not_contains "$(cat "$w/herdr.log")" "pane close" "the sweep closed the mismatched agent's endpoint"
+  assert_not_contains "$(cat "$w/herdr.log")" "tab create" "the sweep relaunched over the mismatched agent"
+
+  good=$(start_stand_in --dangerously-skip-permissions)
+  jq --arg p "$pane" --argjson pid "$good" '.agents[$p] = $pid' "$state" > "$state.tmp" && mv -f "$state.tmp" "$state"
+  out=$(run_bootstrap "$herdrfb:$fb" "$w/home" zsh "$log")
+  assert_not_contains "$out" "posture mismatch" "an agent on the configured posture was reported as a mismatch: $out"
+  kill "$bare" "$good" 2>/dev/null || true
+  pass "sweep: a live secondmate without the configured Claude posture is reported, neither stopped nor relaunched"
+}
+
 test_sweep_respawns_authoritatively_missing_pi_secondmate() {
   local w fb tmuxfb log out
   w=$(new_world sweep-missing-pi)
@@ -570,11 +662,13 @@ test_sweep_noop_with_no_secondmate_meta() {
 
 test_tmux_agent_state_classifies
 test_tmux_agent_state_rejects_malformed_targets_before_probe
+test_posture_verdict_reads_the_agent_arguments
 test_herdr_agent_state_preserves_husk_classifier
 test_agent_state_dispatcher_and_compatibility
 test_sweep_respawns_confirmed_dead_secondmate
 test_sweep_skips_relaunch_when_the_endpoint_kill_is_unconfirmed
 test_sweep_leaves_alive_secondmate_untouched
+test_sweep_reports_live_secondmate_posture_mismatch
 test_sweep_respawns_authoritatively_missing_pi_secondmate
 test_sweep_respawns_authoritatively_missing_pi_signed_secondmate
 test_sweep_never_acts_on_ambiguous_existing_process
