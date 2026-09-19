@@ -81,8 +81,9 @@ serve options:
                          "subscribe,control:<token>".
   --state-max-age-secs N how old a published state frame may be before a state
                          answer is reported stale (default 30)
-  --command-ack-secs N   how long an input or kill waits for the owning agent's
-                         acknowledgement before it is refused (default 20)
+  --command-ack-secs N   how long an input, kill, or Bridge order waits for the
+                         owning agent's acknowledgement (default 20); a taken,
+                         unanswered Bridge order remains unconfirmed
   --ready-file PATH      write "<bind> <port>" there once listening
   --pid-file PATH        write this process's pid there once listening
 
@@ -131,16 +132,17 @@ DEFAULT_ENDPOINT_RETENTION = 3600.0
 # rather than guessing or sending the order twice, which is a short-lived need;
 # it is not a history of the fleet and nothing is persisted.
 ORDER_JOURNAL_MAX = 512
-# How long a command an agent took but never acknowledged stays answerable. It
-# is kept far past the acknowledgement window because that is exactly the
-# command whose fate a caller most needs to learn, and dropped eventually
-# because an agent that has not answered by then is not going to.
+# How long a command an agent took but never acknowledged remains eligible for
+# a late acknowledgement. It is kept far past the initial acknowledgement
+# window because that is exactly the command whose fate a caller most needs to
+# settle, and becomes eligible for reaping eventually because an agent that has
+# not answered it by then is not going to.
 UNACKNOWLEDGED_COMMAND_RETENTION = 900.0
 # How much longer than a placement's own worst case a resend of that order id
 # waits for the call still placing it to answer. Placing is bounded by the
-# the fixed membership window plus the acknowledgement window, so this only
-# work between those waits and the answer; past it, the live record is the
-# honest thing to return.
+# fixed membership window plus the acknowledgement window, so this covers only
+# scheduling between those waits and the answer; past it, the live record is
+# the honest thing to return.
 ORDER_ANSWER_SLACK_SECS = 5.0
 # How long an endpoint may say nothing before the hub presumes its agent is
 # gone. A presumption is not a close: the endpoint stays listed, stays
@@ -1325,11 +1327,12 @@ class Hub:
                     if (e.closed_at and e.closed_at < cutoff)
                     or e.agent_silent_for() > DEFAULT_ENDPOINT_RETENTION]:
                 self.endpoints.pop(endpoint_id, None)
-            # Commands an agent took and never answered for are kept well past
-            # the acknowledgement window, because that is the command whose
-            # fate a caller most needs to be able to ask about. They are not
-            # kept forever: an agent silent this long is not going to answer,
-            # and the order reads unconfirmed either way.
+            # Commands an agent took and never answered remain eligible for a
+            # late acknowledgement well past the initial window, because that
+            # is the command whose fate a caller most needs to settle. They
+            # eventually become eligible for reaping: an agent that has not
+            # answered this command by then is not going to, and the journaled
+            # order reads unconfirmed either way.
             stale = _now() - UNACKNOWLEDGED_COMMAND_RETENTION
             for machine in self.machines.values():
                 for command_id, command in list(machine.pending.items()):
