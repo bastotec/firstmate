@@ -12,8 +12,9 @@
 #   3. The progress note is required where the replacement needs it, lands in
 #      the instructions the replacement reads, and never rewrites a charter.
 #   4. A refusal before the agent is stopped changes nothing.
-#   5. A launch failure after the agent is stopped keeps the prior record,
-#      reports the concrete state, and preserves the work.
+#   5. A launch failure after the agent is stopped but before replacement-record
+#      publication keeps the prior record, reports the concrete state, and
+#      preserves the work.
 #   6. fm-spawn --relaunch refuses on its own: a live agent, a contradicting
 #      flag, an extra positional, or a backend that cannot prove the previous
 #      agent exited.
