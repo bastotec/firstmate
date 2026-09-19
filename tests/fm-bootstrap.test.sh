@@ -344,10 +344,13 @@ test_no_mistakes_min_version() {
   done <<'ROWS'
 absent no-mistakes reports the tool missing^absent^missing
 minimum no-mistakes version is accepted^no-mistakes version v1.46.0 (fake)^empty
+plain tool-associated no-mistakes version is accepted^no-mistakes 1.46.0^empty
 newer no-mistakes minor is accepted^no-mistakes version v1.47.0 (fake)^empty
 newer no-mistakes major is accepted^no-mistakes version v2.0.0 (fake)^empty
 older no-mistakes patch reports an upgrade^no-mistakes version v1.45.4 (fake)^missing
 unparseable no-mistakes version stays incompatible without reporting absence^no-mistakes development build^unreadable
+dotted date in no-mistakes development identifier is unreadable^no-mistakes development build 2026.09.19^unreadable
+four-part no-mistakes identifier is unreadable^no-mistakes 1.46.0.1^unreadable
 ROWS
   pass "bootstrap enforces no-mistakes minimum version"
 }
@@ -377,12 +380,15 @@ test_gh_axi_min_version() {
     esac
   done <<'ROWS'
 minimum gh-axi version is accepted^0.1.29^empty
+tool-associated gh-axi version is accepted^gh-axi 0.1.29^empty
 newer gh-axi patch is accepted^0.1.30^empty
 newer gh-axi minor is accepted^0.2.0^empty
 newer gh-axi major is accepted^1.0.0^empty
 older gh-axi patch reports an upgrade^0.1.19^missing
 much older gh-axi minor reports an upgrade^0.0.9^missing
 unparseable gh-axi version stays incompatible without reporting absence^gh-axi development build^unreadable
+dotted date in gh-axi development identifier is unreadable^gh-axi development build 2026.09.19^unreadable
+four-part gh-axi identifier is unreadable^gh-axi 0.1.29.1^unreadable
 ROWS
   pass "bootstrap enforces gh-axi minimum version"
 }
@@ -462,12 +468,15 @@ test_tasks_axi_min_version() {
     esac
   done <<'ROWS'
 minimum tasks-axi version is accepted^0.2.4^empty
+tool-associated tasks-axi version is accepted^tasks-axi 0.2.4^empty
 newer tasks-axi patch is accepted^0.2.5^empty
 newer tasks-axi minor is accepted^0.3.0^empty
 newer tasks-axi major is accepted^1.0.0^empty
 older tasks-axi with features reports an upgrade^0.1.1^missing
 the patch just below the floor reports an upgrade^0.2.3^missing
 unparseable tasks-axi version stays incompatible without reporting absence^tasks-axi development build^unreadable
+dotted date in tasks-axi development identifier is unreadable^tasks-axi development build 2026.09.19^unreadable
+four-part tasks-axi identifier is unreadable^tasks-axi 0.2.4.1^unreadable
 tasks-axi at floor without archive-body reports an upgrade^0.2.4:noarchive^missing
 tasks-axi at floor without multi-id reports an upgrade^0.2.4:nomulti^missing
 ROWS
@@ -502,12 +511,15 @@ test_quota_axi_min_version() {
     esac
   done <<'ROWS'
 minimum quota-axi version is accepted^0.1.29^empty
+tool-associated quota-axi version is accepted^quota-axi 0.1.29^empty
 newer quota-axi patch is accepted^0.1.30^empty
 newer quota-axi minor is accepted^0.2.0^empty
 newer quota-axi major is accepted^1.0.0^empty
 the patch just below the floor reports an upgrade^0.1.28^missing
 much older quota-axi minor reports an upgrade^0.0.9^missing
 unparseable quota-axi version stays incompatible without reporting absence^quota-axi development build^unreadable
+dotted date in quota-axi development identifier is unreadable^quota-axi development build 2026.09.19^unreadable
+four-part quota-axi identifier is unreadable^quota-axi 0.1.29.1^unreadable
 ROWS
   pass "bootstrap enforces quota-axi minimum version"
 }

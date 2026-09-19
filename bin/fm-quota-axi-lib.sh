@@ -11,6 +11,11 @@
 # unreadable installed version into VERSION_UNREADABLE, keeping either build
 # from reaching a dispatch intake.
 
+_FM_QUOTA_AXI_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/fm-tool-version-lib.sh
+. "$_FM_QUOTA_AXI_LIB_DIR/fm-tool-version-lib.sh"
+unset _FM_QUOTA_AXI_LIB_DIR
+
 FM_QUOTA_AXI_MIN=0.1.29
 
 # Account-slot routing is capability-gated rather than tied to an unpublished
@@ -63,9 +68,7 @@ fm_quota_axi_compatible() {  # 0=compatible, 1=absent/below floor, 2=version unr
   else
     output=$(quota-axi --version 2>/dev/null </dev/null) || return 2
   fi
-  parts=$(printf '%s\n' "$output" |
-    sed -n 's/.*\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2 \3/p' |
-    head -1)
+  parts=$(fm_tool_semver_parts quota-axi "$output")
   IFS=' ' read -r major minor patch extra <<< "$parts"
   # An unparseable version is incompatible, never assumed current, so a
   # development or vendored build cannot pass a floor it was never checked against.

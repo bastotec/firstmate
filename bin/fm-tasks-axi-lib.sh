@@ -43,6 +43,11 @@
 # Both layers are bounded by process lifetime, so a tasks-axi install or upgrade
 # is picked up by the next process rather than being cached to disk.
 
+_FM_TASKS_AXI_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/fm-tool-version-lib.sh
+. "$_FM_TASKS_AXI_LIB_DIR/fm-tool-version-lib.sh"
+unset _FM_TASKS_AXI_LIB_DIR
+
 FM_TASKS_AXI_MIN=0.2.4
 
 FM_TASKS_AXI_COMPATIBLE_MEMO=${FM_TASKS_AXI_COMPATIBLE:-}
@@ -56,9 +61,7 @@ fm_tasks_axi_version_parts() {
   local output
   command -v tasks-axi >/dev/null 2>&1 || return 1
   output=$(tasks-axi --version 2>/dev/null) || return 1
-  printf '%s\n' "$output" |
-    sed -n 's/.*\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2 \3/p' |
-    head -1
+  fm_tool_semver_parts tasks-axi "$output"
 }
 
 fm_tasks_axi_compatible() {
