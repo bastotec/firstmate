@@ -57,7 +57,8 @@ A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoi
 ## Bridge feed
 
 `bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from that worker's newest endpoint.
-It only reads the hub, holds a `subscribe` credential, opens no listening socket, and sends nothing to any worker.
+The feed only reads the hub: `serve`, `snapshot`, `translate`, and `compare` hold a `subscribe` credential, open no listening socket, and send nothing to any worker.
+Writing is the adapter's other direction, a separate command with its own credential, which [Command path](#command-path) owns.
 Its header owns the record mapping and every field the hub cannot supply; the short version is that the hub carries no token counter, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
 When the hub cannot be read it emits nothing.
 The Bridge's clock only moves when a record arrives, so during an outage, or after a hub restart that lists no endpoints, the Bridge keeps showing each worker's last state rather than aging it out as stale.
@@ -102,6 +103,43 @@ What a tail adapter publishes is bounded by what the harness itself recorded:
 
 A tail adapter is pointed at one session (`--session`, or `--directory` to resolve the newest main session in a directory) and is a publisher, not a supervisor: watch it with `bin/fm-stream.sh tasks`, stop it through the hub, and expect it to exit on its own when the harness archives the session.
 
+## Command path
+
+The reading half of the Bridge chain is the feed above; the writing half is `bin/fm-stream-bridge.py command`.
+It reads one `command` record per line on stdin - the composer's order - places it with the hub, and writes one `command_ack` or `command_nack` per line to stdout, in the same NDJSON framing the feed uses.
+The adapter's header owns the three record shapes and the rule that decides every answer.
+
+An order addresses a worker by `leaf_worker_id` - `<machine>/<label>`, the same identity the feed emits and `fm-stream.sh tasks` prints - and is bound to one execution.
+The composer names the execution in the identity block it shares with the feed; when it does not, the order binds to the leaf's current execution and the answer names which one that was.
+An order aimed at an execution the leaf has moved on from is refused rather than typed into its replacement, because a "yes, go ahead" composed for one run landing in its fresh replacement is exactly the accident the binding exists to prevent.
+
+An acknowledgement means the worker's own agent applied the order to its pseudoterminal and said so.
+A hub that queued an order, or an agent that took it without answering, has not acknowledged it and may not say it did.
+An order whose delivery the hub can neither confirm nor rule out produces no record at all: the command id stays visibly pending, which is the honest answer, and reading it back later is the reconciliation.
+
+A `command_nack` is an authoritative membership answer, and nothing else produces one.
+`no_such_worker` is the owning agent's own report that its worker ended.
+`worker_not_registered` is the hub still holding no registration for the leaf after waiting out the window a rejoining agent needs - 6s by default, `--membership-grace-secs` - which is the same rejoin window the state classifier waits before it will say `missing`.
+`fleet_unknown` is the adapter's own fleet id disagreeing with the order's.
+A refusal the hub reached no membership verdict on is a `command_ack` with `state: refused`, which says the order did not arrive without claiming anything about the worker.
+
+The operator entry point drives the same path directly:
+
+```
+fm-stream.sh order <leaf-worker-id> <execution-id> <text> [--no-submit]
+fm-stream.sh order-status <order-id>
+```
+
+`order` exits 0 when the worker's agent accepted, 1 when the order was refused, and 4 when delivery is unconfirmed.
+Unconfirmed is not a failure to retry blindly: the order may already have reached the worker, and `order-status` is how its fate is read.
+
+Reconciliation state lives in the hub's memory, not on disk.
+Recent orders are kept in a bounded journal of 512, and one an agent took but never answered stays answerable for 15 minutes, so a caller that resends its own command id gets that order's fate rather than a second delivery.
+A hub restart empties the journal along with the registry, so an id asked for afterwards answers `no_such_order` even when the order may have been delivered before the restart.
+
+The credentials are separate on purpose: `command` needs a `control`-class token, the class that can type into workers, while the feed holds `subscribe` alone, so a host running only the feed cannot order anything with the credential the feed uses.
+Run `command` on the host that runs the hub, reading its stdin from wherever the composer's records come from over SSH or an equivalent encrypted transport - the same open exposure decision the feed names, with a sharper edge, because this direction carries the credential that steers the fleet.
+
 ## Security
 
 The hub binds `127.0.0.1` by default and every data route requires a bearer token; the static viewer page is the one exception.
@@ -110,7 +148,7 @@ Tokens are class-scoped, and there are three classes:
 
 - `publish` registers endpoints and publishes frames. Agents and tail adapters hold it; nobody else needs it.
 - `subscribe` reads only: list, stream, capture, screen, and state.
-- `control` steers: sending input to a worker, appending a status line, and closing an endpoint.
+- `control` steers: sending input to a worker, appending a status line, closing an endpoint, and placing a leaf-addressed order.
 
 A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, so an operator credential is written `subscribe,control:<token>` and a home's own client credential, which both publishes and steers, is `publish,subscribe,control:<token>`.
 A bare token line grants `subscribe` alone, so the unqualified line is the read-only one.
