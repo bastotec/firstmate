@@ -49,7 +49,9 @@ start_hub() {
     "$PUBLISH_TOKEN" "$CONTROL_TOKEN" "$VIEW_TOKEN" > "$CASE_DIR/tokens"
   printf '%s\n' "$VIEW_TOKEN" > "$CASE_DIR/view-token"
   printf '%s\n' "$PUBLISH_TOKEN" > "$CASE_DIR/publish-token"
-  chmod 600 "$CASE_DIR/tokens" "$CASE_DIR/view-token" "$CASE_DIR/publish-token"
+  printf '%s\n' "$CONTROL_TOKEN" > "$CASE_DIR/control-token"
+  chmod 600 "$CASE_DIR/tokens" "$CASE_DIR/view-token" "$CASE_DIR/publish-token" \
+    "$CASE_DIR/control-token"
   ready="$CASE_DIR/ready"
   python3 "$HUB" serve --bind 127.0.0.1 --port 0 \
     --token-file "$CASE_DIR/tokens" --ready-file "$ready" > "$CASE_DIR/log" 2>&1 &
@@ -347,6 +349,165 @@ PY
   pass "bridge: a wrong credential, a wrong protocol, and a too-slow tick are refused"
 }
 
+# start_real_agent <label> -> endpoint id. A real agent owning a real pty, so
+# the command cases drive the same chain a composer would.
+start_real_agent() {  # <label>
+  local label=$1 ready pid waited=0 endpoint
+  ready="$CASE_DIR/agent-$label.ready"
+  rm -f "$ready"
+  python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+    --machine box-a --label "$label-$RUN" --cwd "$CASE_DIR/cwd" \
+    --ready-file "$ready" --state-interval 1 --poll-secs 3 \
+    > "$CASE_DIR/agent-$label.log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$ready" ] || fail "the agent did not register: $(cat "$CASE_DIR/agent-$label.log" 2>/dev/null)"
+  read -r _ endpoint < "$ready"
+  printf '%s' "$endpoint"
+}
+
+# commander <record> -> the records the adapter emits for it. It gets the
+# CONTROL token, which is the whole difference between the two directions.
+commander() {  # <json-record>
+  printf '%s\n' "$1" | python3 "$BRIDGE" command --hub "$URL" \
+    --token-file "$CASE_DIR/control-token" --fleet-id test-fleet 2>/dev/null
+}
+
+composer_command() {  # <command-id> <leaf> <text> [execution] [fleet]
+  jq -nc --arg id "$1" --arg leaf "$2" --arg text "$3" --arg ex "${4:-}" \
+    --arg fleet "${5:-test-fleet}" \
+    '{record: "command", command_id: $id, issued_at_utc: "2026-01-01T00:00:00Z",
+      issued_by: "captain",
+      identity: ({fleet_id: $fleet, leaf_worker_id: $leaf, parent_mate_id: "box-a"}
+                 + (if $ex == "" then {} else {execution_id: $ex} end)),
+      payload: {kind: "steer", text: $text}}'
+}
+
+worker_ran() {  # <endpoint> <needle>
+  local waited=0
+  while [ "$waited" -lt 150 ]; do
+    case "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
+      "$URL/v1/tasks/$1/capture?lines=40" 2>/dev/null)" in
+      *"$2"*) return 0 ;;
+    esac
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+test_a_composer_command_reaches_the_worker_and_is_acknowledged() {
+  start_hub command-accepted
+  local endpoint out
+  endpoint=$(start_real_agent ordered)
+  out=$(commander "$(composer_command c-accept "box-a/ordered-$RUN" "echo COMPOSER-ORDER" "$endpoint")")
+  assert_equals "$(printf '%s' "$out" | jq -r '.record')" command_ack \
+    "an order the worker took should be acknowledged"
+  assert_equals "$(printf '%s' "$out" | jq -r '.state')" accepted \
+    "the acknowledgement should say accepted"
+  assert_equals "$(printf '%s' "$out" | jq -r '.command_id')" c-accept \
+    "the acknowledgement carries the id the composer issued"
+  assert_equals "$(printf '%s' "$out" | jq -r '.leaf_worker_id')" "box-a/ordered-$RUN" \
+    "and the leaf it was addressed to"
+  worker_ran "$endpoint" COMPOSER-ORDER \
+    || fail "accepted must mean the worker actually received it"
+  pass "bridge: a composer command reaches the worker and is acknowledged"
+}
+
+test_a_command_for_a_worker_its_agent_reported_gone_is_nacked() {
+  start_hub command-gone
+  local endpoint out waited=0
+  endpoint=$(start_real_agent ending)
+  curl -sS -m 30 -X DELETE -H "Authorization: Bearer $CONTROL_TOKEN" \
+    "$URL/v1/tasks/$endpoint" >/dev/null 2>&1
+  while [ "$waited" -lt 150 ]; do
+    [ -n "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
+      "$URL/v1/tasks/$endpoint" 2>/dev/null | jq -r '.task.closed_at // empty')" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  out=$(commander "$(composer_command c-gone "box-a/ending-$RUN" "echo TOO-LATE" "$endpoint")")
+  assert_equals "$(printf '%s' "$out" | jq -r '.record')" command_nack \
+    "a worker its own agent reported gone is a membership answer"
+  assert_equals "$(printf '%s' "$out" | jq -r '.reason')" no_such_worker \
+    "and the reason names the worker being gone"
+  pass "bridge: a command for a worker its agent reported gone is nacked"
+}
+
+test_a_command_aimed_at_a_replaced_execution_is_refused_without_claiming_absence() {
+  # The worker is right there, so this is a refusal, never a membership nack -
+  # and the replacement must not receive an order composed for the execution it
+  # replaced.
+  start_hub command-superseded
+  local first second out waited=0
+  first=$(start_real_agent relaunched)
+  curl -sS -m 30 -X DELETE -H "Authorization: Bearer $CONTROL_TOKEN" \
+    "$URL/v1/tasks/$first" >/dev/null 2>&1
+  while [ "$waited" -lt 150 ]; do
+    [ -n "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
+      "$URL/v1/tasks/$first" 2>/dev/null | jq -r '.task.closed_at // empty')" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  second=$(start_real_agent relaunched)
+  [ "$second" != "$first" ] || fail "the relaunch should be a new execution"
+  out=$(commander "$(composer_command c-old "box-a/relaunched-$RUN" "echo WRONG-WORKER" "$first")")
+  assert_equals "$(printf '%s' "$out" | jq -r '.record')" command_ack \
+    "a present worker must not be reported as a membership absence"
+  assert_equals "$(printf '%s' "$out" | jq -r '.state')" refused \
+    "an order aimed at a replaced execution is refused"
+  out=$(commander "$(composer_command c-new "box-a/relaunched-$RUN" "echo RIGHT-WORKER" "$second")")
+  assert_equals "$(printf '%s' "$out" | jq -r '.state')" accepted \
+    "the leaf's current execution still takes orders"
+  worker_ran "$second" RIGHT-WORKER || fail "the current execution never ran its order"
+  assert_not_contains "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
+    "$URL/v1/tasks/$second/capture?lines=40" 2>/dev/null)" WRONG-WORKER \
+    "an order composed for a replaced execution must never land in its replacement"
+  pass "bridge: a command aimed at a replaced execution is refused without claiming absence"
+}
+
+test_a_command_for_another_fleet_is_nacked_without_asking_the_hub() {
+  start_hub command-fleet
+  local endpoint out
+  endpoint=$(start_real_agent guarded)
+  out=$(commander "$(composer_command c-fleet "box-a/guarded-$RUN" "echo NOPE" "$endpoint" other-fleet)")
+  assert_equals "$(printf '%s' "$out" | jq -r '.record')" command_nack \
+    "a command for another fleet is a membership answer this adapter owns"
+  assert_equals "$(printf '%s' "$out" | jq -r '.reason')" fleet_unknown \
+    "and its reason names the fleet"
+  assert_not_contains "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
+    "$URL/v1/tasks/$endpoint/capture?lines=40" 2>/dev/null)" NOPE \
+    "a command for another fleet must not reach any worker"
+  pass "bridge: a command for another fleet is nacked"
+}
+
+test_an_order_the_hub_cannot_settle_is_left_pending_rather_than_answered() {
+  # The contract's reconciliation rule. An unacknowledged command id stays
+  # visibly pending, so the one thing the adapter must NOT do here is emit a
+  # record - an accepted one would be a fabrication, and a refused one would be
+  # just as false.
+  start_hub command-pending
+  local endpoint agent out
+  endpoint=$(start_real_agent frozen)
+  agent=$(ps -eo pid,args 2>/dev/null \
+    | awk -v l="--label frozen-$RUN" 'index($0, "fm-stream-agent.py") && index($0, l) && !index($0, "awk") {print $1; exit}')
+  [ -n "$agent" ] || fail "the agent should be running"
+  kill -STOP "$agent" || fail "could not pause the agent"
+  out=$(printf '%s\n' "$(composer_command c-pending "box-a/frozen-$RUN" "echo MAYBE" "$endpoint")" \
+    | python3 "$BRIDGE" command --hub "$URL" --token-file "$CASE_DIR/control-token" \
+        --fleet-id test-fleet 2>/dev/null)
+  kill -CONT "$agent" || fail "could not resume the agent"
+  assert_equals "$out" "" \
+    "an order the hub could not settle must produce no record at all"
+  pass "bridge: an order the hub cannot settle is left pending rather than answered"
+}
+
 test_compare_sets_rendered_states_against_crew_state() {
   local home feed stub out code
   home="$TMP_ROOT/compare-home"
@@ -402,4 +563,9 @@ test_a_snapshot_reads_the_real_hub
 test_a_real_agents_worker_exit_reaches_the_bridge
 test_serve_streams_ticks_and_goes_silent_without_the_hub
 test_refusals_end_the_command
+test_a_composer_command_reaches_the_worker_and_is_acknowledged
+test_a_command_for_a_worker_its_agent_reported_gone_is_nacked
+test_a_command_aimed_at_a_replaced_execution_is_refused_without_claiming_absence
+test_a_command_for_another_fleet_is_nacked_without_asking_the_hub
+test_an_order_the_hub_cannot_settle_is_left_pending_rather_than_answered
 test_compare_sets_rendered_states_against_crew_state
