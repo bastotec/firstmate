@@ -19,6 +19,9 @@ if [ "${1:-}" = "--version" ]; then
   printf '%s\n' "${QUOTA_AXI_VERSION:-quota-axi 0.1.29}"
   exit 0
 fi
+if [ "${QUOTA_AXI_FAIL:-0}" = 1 ]; then
+  exit 1
+fi
 case "${QUOTA_AXI_MALFORMED:-}" in
   schema)
     printf '{"schemaVersion":4,"providers":[]}\n'
@@ -147,6 +150,13 @@ if printf '%s\n' "$out" | grep -Fq 'missing'; then
   fail "poll falsely reported the unreadable installed version as missing"
 fi
 ok "poll distinguishes an unreadable installed version"
+
+out=$(QUOTA_AXI_FAIL=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" \
+  "$BIN/fm-procevent-quota.sh" poll --interval 1 --timeout 1)
+printf '%s\n' "$out" | grep -qx 'status: error' || fail "failed quota-axi query did not stop polling"
+printf '%s\n' "$out" | grep -qx 'detail: quota-axi --json failed or quota-axi is missing/incompatible' \
+  || fail "poll changed the generic failure detail: $out"
+ok "poll preserves the generic detail for other failures"
 
 out=$(QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 0.01 --threshold 10 --provider codex --timeout 1)
 printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "provider watch did not report exhaustion"

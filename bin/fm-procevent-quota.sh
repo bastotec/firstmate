@@ -93,8 +93,8 @@ valid_percent() {
 }
 
 # quota_json [timeout]
-# Run `quota-axi --json` bounded by the given timeout. Return 2 for a missing or
-# below-floor build, 3 for unreadable version output, and 4 when --json fails.
+# Run `quota-axi --json` bounded by the given timeout. Return 3 only for
+# unreadable version output and 2 for every other failure.
 quota_json() {
   local timeout=${1:-} output status
   if [ -n "$timeout" ]; then
@@ -105,7 +105,7 @@ quota_json() {
       [ "$status" -eq 2 ] && return 3
       return 2
     fi
-    output=$(fm_run_timed "$timeout" quota-axi --json 2>/dev/null </dev/null) || return 4
+    output=$(fm_run_timed "$timeout" quota-axi --json 2>/dev/null </dev/null) || return 2
   else
     if fm_quota_axi_compatible >/dev/null 2>&1; then
       :
@@ -114,7 +114,7 @@ quota_json() {
       [ "$status" -eq 2 ] && return 3
       return 2
     fi
-    output=$(quota-axi --json 2>/dev/null </dev/null) || return 4
+    output=$(quota-axi --json 2>/dev/null </dev/null) || return 2
   fi
   printf '%s\n' "$output"
 }
@@ -249,8 +249,7 @@ cmd_poll() {
       printf 'status: error\n'
       case "$quota_status" in
         3) printf 'detail: quota-axi version is unreadable; installed build must report semantic version >=%s\n' "$FM_QUOTA_AXI_MIN" ;;
-        2) printf 'detail: quota-axi is missing or below the compatibility floor\n' ;;
-        *) printf 'detail: quota-axi --json failed\n' ;;
+        *) printf 'detail: quota-axi --json failed or quota-axi is missing/incompatible\n' ;;
       esac
       printf 'condition_polls: %s\n' "$polls"
       exit 0
