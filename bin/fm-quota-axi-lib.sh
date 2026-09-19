@@ -56,8 +56,7 @@ fm_quota_axi_probe_capability() {
 }
 
 fm_quota_axi_compatible() {  # 0=compatible, 1=absent/below floor, 2=version unreadable
-  local timeout=${1:-} output parts major minor patch extra
-  local min_major min_minor min_patch min_extra
+  local timeout=${1:-} output parts
   command -v quota-axi >/dev/null 2>&1 || return 1
   if [ -n "$timeout" ]; then
     case "$timeout" in
@@ -69,18 +68,8 @@ fm_quota_axi_compatible() {  # 0=compatible, 1=absent/below floor, 2=version unr
     output=$(quota-axi --version 2>/dev/null </dev/null) || return 2
   fi
   parts=$(fm_tool_semver_parts quota-axi "$output")
-  IFS=' ' read -r major minor patch extra <<< "$parts"
-  # An unparseable version is incompatible, never assumed current, so a
-  # development or vendored build cannot pass a floor it was never checked against.
-  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 2
-  # The floor is compared from FM_QUOTA_AXI_MIN so bumping it needs one edit.
-  IFS='.' read -r min_major min_minor min_patch min_extra <<< "$FM_QUOTA_AXI_MIN"
-  [ -n "$min_major" ] && [ -n "$min_minor" ] && [ -n "$min_patch" ] && [ -z "$min_extra" ] || return 1
-  [ "$major" -gt "$min_major" ] && return 0
-  [ "$major" -eq "$min_major" ] || return 1
-  [ "$minor" -gt "$min_minor" ] && return 0
-  [ "$minor" -eq "$min_minor" ] || return 1
-  [ "$patch" -ge "$min_patch" ]
+  [ -n "$parts" ] || return 2
+  fm_semver_parts_at_least "$parts" "$FM_QUOTA_AXI_MIN" || return 1
 }
 
 fm_quota_json_valid() {

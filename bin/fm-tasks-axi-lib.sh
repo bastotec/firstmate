@@ -86,24 +86,12 @@ fm_tasks_axi_compatible() {
 }
 
 fm_tasks_axi_compatible_probe() {
-  local parts major minor patch extra
-  local min_major min_minor min_patch min_extra
+  local parts
   command -v tasks-axi >/dev/null 2>&1 || return 1
   parts=$(fm_tasks_axi_version_parts) || return 2
   [ -n "$parts" ] || return 2
-  IFS=' ' read -r major minor patch extra <<< "$parts"
-  # An unparseable version is incompatible, never assumed current, so a
-  # development or vendored build cannot pass a floor it was never checked against.
-  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 2
-  IFS='.' read -r min_major min_minor min_patch min_extra <<< "$FM_TASKS_AXI_MIN"
-  [ -n "$min_major" ] && [ -n "$min_minor" ] && [ -n "$min_patch" ] && [ -z "$min_extra" ] || return 1
-  if [ "$major" -gt "$min_major" ] ||
-    { [ "$major" -eq "$min_major" ] && [ "$minor" -gt "$min_minor" ]; } ||
-    { [ "$major" -eq "$min_major" ] && [ "$minor" -eq "$min_minor" ] && [ "$patch" -ge "$min_patch" ]; }; then
-    fm_tasks_axi_update_has_archive_body && fm_tasks_axi_mv_has_multi_id
-    return $?
-  fi
-  return 1
+  fm_semver_parts_at_least "$parts" "$FM_TASKS_AXI_MIN" || return 1
+  fm_tasks_axi_update_has_archive_body && fm_tasks_axi_mv_has_multi_id
 }
 
 fm_tasks_axi_update_has_archive_body() {

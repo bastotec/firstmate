@@ -345,6 +345,9 @@ test_no_mistakes_min_version() {
 absent no-mistakes reports the tool missing^absent^missing
 minimum no-mistakes version is accepted^no-mistakes version v1.46.0 (fake)^empty
 plain tool-associated no-mistakes version is accepted^no-mistakes 1.46.0^empty
+build metadata at the floor is accepted^no-mistakes 1.46.0+vendor.7^empty
+prerelease at the floor remains below it^no-mistakes 1.46.0-rc.1^missing
+prerelease above the floor is accepted^no-mistakes 1.46.1-rc.1^empty
 newer no-mistakes minor is accepted^no-mistakes version v1.47.0 (fake)^empty
 newer no-mistakes major is accepted^no-mistakes version v2.0.0 (fake)^empty
 older no-mistakes patch reports an upgrade^no-mistakes version v1.45.4 (fake)^missing

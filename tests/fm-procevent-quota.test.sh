@@ -125,6 +125,20 @@ printf '%s\n' "$out" | grep -qx 'quota: quota' \
   || fail "default aggregate poll did not use the aggregate source"
 ok "poll accepts its documented defaults"
 
+out=$(QUOTA_AXI_VERSION='quota-axi 0.1.29+vendor.7' QUOTA_AXI_EXHAUSTED_DETAIL=1 \
+  QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll)
+printf '%s\n' "$out" | grep -qx 'status: exhausted' \
+  || fail "valid build metadata was rejected by the quota compatibility floor"
+ok "poll accepts semantic versions with build metadata"
+
+if err=$(QUOTA_AXI_VERSION=$'quota-axi development build\n0.1.29' PATH="$FAKEBIN:$PATH" \
+  "$BIN/fm-procevent-quota.sh" arm 2>&1); then
+  fail "an unrelated bare version line unexpectedly armed a watch"
+fi
+[ "$err" = 'error: quota-axi version is unreadable; installed build must report semantic version >=0.1.29' ] \
+  || fail "arm accepted a bare version embedded in non-semantic output: $err"
+ok "arm rejects unrelated bare versions in non-semantic output"
+
 if err=$(QUOTA_AXI_VERSION='quota-axi 2026.10.19' PATH="$FAKEBIN:$PATH" \
   "$BIN/fm-procevent-quota.sh" arm 2>&1); then
   fail "an unreadable quota-axi version unexpectedly armed a watch"

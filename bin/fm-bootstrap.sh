@@ -984,20 +984,12 @@ treehouse_supports_lease() {
 # never assumed current, so a development or vendored build cannot pass a floor
 # it was never checked against.
 tool_version_at_least() {  # <tool> <min-version>; 0=compatible, 1=absent/below floor, 2=version unreadable
-  local tool=$1 min=$2 output parts major minor patch extra
-  local min_major min_minor min_patch min_extra
+  local tool=$1 min=$2 output parts
   command -v "$tool" >/dev/null 2>&1 || return 1
   output=$("$tool" --version 2>/dev/null) || return 2
   parts=$(fm_tool_semver_parts "$tool" "$output")
-  IFS=' ' read -r major minor patch extra <<< "$parts"
-  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 2
-  IFS='.' read -r min_major min_minor min_patch min_extra <<< "$min"
-  [ -n "$min_major" ] && [ -n "$min_minor" ] && [ -n "$min_patch" ] && [ -z "$min_extra" ] || return 1
-  [ "$major" -gt "$min_major" ] && return 0
-  [ "$major" -eq "$min_major" ] || return 1
-  [ "$minor" -gt "$min_minor" ] && return 0
-  [ "$minor" -eq "$min_minor" ] || return 1
-  [ "$patch" -ge "$min_patch" ]
+  [ -n "$parts" ] || return 2
+  fm_semver_parts_at_least "$parts" "$min" || return 1
 }
 
 essential_version_diagnostic() {  # <tool> <min-version>
