@@ -340,6 +340,17 @@ backlog_state() {  # <case-dir> <id>
     sed -n 's/^  state: *//p' | head -1
 }
 
+backlog_block() {  # <case-dir> <id> <blocker>
+  local dir=$1 id=$2 blocker=$3 file="$1/home/data/backlog.md"
+  tasks-axi add "$blocker" "blocker for $id" --kind ship --file "$file" >/dev/null
+  tasks-axi block "$id" --by "$blocker" --file "$file" >/dev/null
+}
+
+backlog_hold() {  # <case-dir> <id>
+  tasks-axi hold "$2" --reason "captain decision pending" --kind captain \
+    --file "$1/home/data/backlog.md" >/dev/null
+}
+
 # Shadow tasks-axi so every `start` fails and every other verb is real. A
 # relaunch that re-reads the row before acting never calls it; one that assumes
 # it must re-run the transition trips over it.
@@ -1272,7 +1283,7 @@ test_prepublication_failure_keeps_concurrent_durable_metadata() {
     run_control "$dir" rl30 relaunch --harness codex --note "preserve concurrent metadata" \
       > "$dir/control.out" &
   control_pid=$!
-  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 200 ]; do
+  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 1000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
@@ -1763,6 +1774,69 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
   pass "relaunch heals an item that drifted out of In flight while the task stayed live"
 }
 
+test_relaunch_recovers_a_dependency_blocked_in_flight_item() {
+  local dir out rc=0 show
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  dir=$(new_case blocked-in-flight rl42)
+  add_ship_task "$dir" rl42 claude
+  seed_backlog "$dir" rl42 in_flight
+  backlog_block "$dir" rl42 upstream42
+
+  out=$(run_control "$dir" rl42 relaunch --note "recover without dropping the dependency") || rc=$?
+  expect_code 0 "$rc" "an In-flight task's dependency must not prevent recovery"$'\n'"$out"
+  assert_equals claude "$(cat "$dir/fake/command")" \
+    "dependency-blocked recovery left the task without a replacement worker"
+  show=$(tasks-axi show rl42 --file "$dir/home/data/backlog.md")
+  assert_contains "$show" "state: in_flight" "relaunch changed the blocked task's lifecycle state"
+  assert_contains "$show" "blocked_by: upstream42" "relaunch dropped the task's dependency blocker"
+  pass "relaunch recovers a dependency-blocked In-flight task without changing its blocker"
+}
+
+test_relaunch_refuses_a_blocked_queued_item_before_stopping() {
+  local dir out rc=0
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  dir=$(new_case blocked-queued rl43)
+  add_ship_task "$dir" rl43 claude
+  seed_backlog "$dir" rl43 queued
+  backlog_block "$dir" rl43 upstream43
+
+  out=$(run_control "$dir" rl43 relaunch --note "must not bypass fresh dispatch eligibility") || rc=$?
+  expect_code 1 "$rc" "a blocked Queued task must remain ineligible for relaunch"
+  assert_contains "$out" "not eligible for relaunch" "the refusal did not distinguish recovery from fresh dispatch"
+  assert_equals claude "$(cat "$dir/fake/command")" \
+    "blocked Queued refusal stopped the existing worker before backlog preflight"
+  assert_not_contains "$(cat "$dir/fake/literal")" "/exit" \
+    "blocked Queued refusal sent an exit command before backlog preflight"
+  pass "relaunch leaves a blocked Queued task and its existing worker untouched"
+}
+
+test_relaunch_refuses_a_held_in_flight_item_before_stopping() {
+  local dir out rc=0
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  dir=$(new_case held-in-flight rl44)
+  add_ship_task "$dir" rl44 claude
+  seed_backlog "$dir" rl44 in_flight
+  backlog_hold "$dir" rl44
+
+  out=$(run_control "$dir" rl44 relaunch --note "must preserve the hold") || rc=$?
+  expect_code 1 "$rc" "a held In-flight task must remain ineligible for relaunch"
+  assert_contains "$out" "not eligible for relaunch" "the refusal did not identify held recovery ineligibility"
+  assert_equals claude "$(cat "$dir/fake/command")" \
+    "held In-flight refusal stopped the existing worker before backlog preflight"
+  assert_not_contains "$(cat "$dir/fake/literal")" "/exit" \
+    "held In-flight refusal sent an exit command before backlog preflight"
+  pass "relaunch leaves a held In-flight task and its existing worker untouched"
+}
+
 test_same_harness_relaunch_preserves_account_slot() {
   local dir out rc calls
   dir=$(new_case account-preserve rl50)
@@ -1918,6 +1992,9 @@ test_spawn_relaunch_refuses_an_unrecorded_task
 test_spawn_relaunch_refuses_a_pane_outside_the_worktree
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight
+test_relaunch_recovers_a_dependency_blocked_in_flight_item
+test_relaunch_refuses_a_blocked_queued_item_before_stopping
+test_relaunch_refuses_a_held_in_flight_item_before_stopping
 test_same_harness_relaunch_preserves_account_slot
 test_relaunch_can_clear_or_reset_account_slot
 test_relaunch_refuses_invalid_account_binding_before_stop

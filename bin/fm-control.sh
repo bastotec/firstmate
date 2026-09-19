@@ -51,7 +51,10 @@
 #              standing charter is never rewritten.
 #              Records a durable checkpoint and that note, exits the old agent,
 #              then delegates the launch to its single owner,
-#              bin/fm-spawn.sh --relaunch. A failure before publication keeps
+#              bin/fm-spawn.sh --relaunch. Backlog eligibility is proved before
+#              exit: an unheld In-flight dependency blocker is valid recovery,
+#              while blocked Queued work and every hold still refuse with the
+#              old agent untouched. A failure before publication keeps
 #              the prior durable record in place and reports the concrete
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
@@ -174,6 +177,10 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-account-slot-lib.sh
 . "$SCRIPT_DIR/fm-account-slot-lib.sh"
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-backlog-transition-lib.sh
+. "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -376,6 +383,29 @@ agent_state() {
 
 busy_verdict() {
   fm_busy_classify_meta "$META" "$ID" "$STATE"
+}
+
+# A relaunch is existing-task recovery, not fresh dispatch. Prove its backlog
+# row is eligible before the old agent is touched; fm-spawn repeats the same
+# owner-defined predicate before publishing the replacement.
+relaunch_backlog_preflight() {
+  local gate_status
+  if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
+    if fm_backlog_row_probe "$DATA" "$ID"; then
+      fm_backlog_row_relaunchable "$FM_BACKLOG_ROW_STATE" \
+        || die "this home's backlog item $ID is not eligible for relaunch in state $FM_BACKLOG_ROW_STATE; refusing before stopping its existing agent"
+    elif [ "$FM_BACKLOG_ROW_RESULT" = not_found ]; then
+      die "task $ID has no backlog item in this home, so relaunching it would leave a worker no backlog row owns; restore the item before retrying"
+    else
+      die "task $ID's backlog item could not be read before relaunch ($FM_BACKLOG_ROW_ERROR)"
+    fi
+    return 0
+  else
+    gate_status=$?
+  fi
+  if [ "$gate_status" -eq 2 ]; then
+    die "task $ID cannot be relaunched because its backlog data directory is inaccessible: $DATA ($FM_BACKLOG_TRANSITION_ERROR)"
+  fi
 }
 
 # wait_agent_state <wanted...> <timeout>: poll until agent_state prints one of
@@ -995,6 +1025,7 @@ do_relaunch() {
       ;;
   esac
 
+  relaunch_backlog_preflight
   if [ -n "$NOTE" ]; then
     note_line="note_file=$NOTE_FILE"
   else
@@ -1069,6 +1100,7 @@ do_recover_missing() {
       ;;
   esac
 
+  relaunch_backlog_preflight
   state=$(agent_state)
   case "$state" in
     missing) ;;
