@@ -338,6 +338,30 @@ The current classifier matrix and its refresh guard are recorded in [Composer cl
 Kimi pointer delivery and OpenCode 1.18.4 busy-queue behavior remain pinned by `tests/fm-kimi-harness.test.sh`, `tests/fm-tmux-submit-busy.test.sh`, and `tests/fm-composer-lib.test.sh`.
 Herdr's Claude idle-native submit confirmation is pinned by `tests/fm-backend-herdr.test.sh` and refreshed by `FM_HERDR_SUBMIT_CONFIRM_LIVE=1 tests/fm-herdr-submit-confirm-live-e2e.test.sh`.
 
+### Missing-endpoint lifecycle recovery
+
+The Herdr endpoint-rebind transaction was regression-verified on 2026-09-19 through the public `fm-control recover-missing` interface.
+The stateful protocol fixture makes the old opaque pane positively absent, has `tab create` mint a distinct tab/pane pair, and lets the real control and spawn owners perform readiness, metadata publication, and launch handoff.
+It also injects concurrent metadata writes at the create-to-publish boundary and preserves a dirty Git index and worktree byte-for-byte.
+
+```sh
+bin/fm-test-run.sh tests/fm-control-recover-missing.test.sh
+```
+
+Bounded output from the Herdr cases:
+
+```text
+ok - fm-control recover-missing: an ambiguous Herdr endpoint refuses before creating or publishing anything
+ok - fm-control recover-missing: a concurrent identity write refuses stale publication and rolls back the fresh pane
+ok - fm-control recover-missing: Herdr endpoint publication preserves unrelated concurrent metadata
+ok - fm-control recover-missing: a launch failure keeps the published bare-shell Herdr endpoint for ordinary relaunch
+ok - fm-control recover-missing: a missing Herdr pane is rebound to one fresh verified endpoint without touching work in progress
+```
+
+`tests/fm-control-herdr-smoke.test.sh` is the real-binary refresh guard.
+Its missing-pane case removes one exact lab pane, drives the same `fm-control recover-missing` entrypoint, verifies Herdr minted and metadata published a distinct tab/pane pair, and compares the unfinished worktree and file bytes before and after.
+It runs only in the isolated non-default session owned by `tests/herdr-test-safety.sh`, or in a caller-provisioned `FM_HERDR_SMOKE_SESSION=fm-lab-*` session whose lifecycle is owned by `bin/fm-herdr-lab.sh`.
+
 ### Cleanup endpoint identity
 
 The cleanup identity boundary was validated on 2026-07-28 with tmux 3.6a and metadata fixtures for every supported backend.

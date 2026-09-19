@@ -33,7 +33,7 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
 | `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. |
 | `relaunch` | Replace the running agent with a new one in the same endpoint and worktree, on the exact recorded adapter or an explicitly chosen harness, model, effort, and account slot. | The new agent is alive on the recorded endpoint, and the durable record names the harness that is actually running. |
-| `recover-missing` | Recreate the exact recorded terminal for a task whose tmux endpoint is missing - the window alone, or the whole session it lived in - then hand the launch to the existing owner (`fm-spawn.sh --relaunch`) on the recorded harness, model, effort, and account slot. | The backend's recovery-grade classifier proves the agent was missing, an unavailable or otherwise-owned local copy refuses rather than repairing, and the new agent is alive on the exact recreated terminal. |
+| `recover-missing` | Recreate a terminal for a task whose endpoint is missing - under the recorded tmux handle, or as a fresh Herdr pane transactionally rebound to the task - then hand the launch to the existing owner (`fm-spawn.sh --relaunch`) on the recorded harness, model, effort, and account slot. | The backend's recovery-grade classifier proves the agent was missing, an unavailable or otherwise-owned local copy refuses rather than repairing, the replacement endpoint passes ownership/readiness checks, and the new agent is alive on the published endpoint. |
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
 Interrupt never rewrites busy state as proof of its own success.
@@ -57,7 +57,8 @@ It is not deterministic across the verified adapters: codex, grok, and gemini re
 ## Transactional relaunch
 
 `relaunch` and `recover-missing` are the only verbs that change durable records, so each runs as a transaction with a journal at `state/<id>.control-relaunch`, a best-effort copy of the prior record kept beside it for the operator, and a ship or scout's prior instructions preserved when a progress note is appended.
-Only the instructions are ever rolled back from those copies; the record copy is never written back over the live record, because every other writer takes the per-task record lock this plane does not hold.
+Only the instructions are ever rolled back from those copies; the record copy is never written back over the live record.
+Ordinary relaunch leaves publication to `fm-spawn`; Herdr missing-endpoint recovery takes the canonical per-task metadata lock only for its final identity revalidation and endpoint-field replacement.
 
 1. **Resolve the profile.**
    An explicit `--harness`, `--model`, `--effort`, or `--account-slot` wins.
@@ -92,7 +93,10 @@ It differs from the steps above in exactly three places.
   Uncommitted changes in that copy are not a precondition at all.
   A task worth recovering is mid-work by definition, so unlanded changes are its normal state, and recovery recreates the terminal beside that work without cleaning, resetting, or stashing any of it.
   The checkpoint still records what it found, so the journal says whether the rescued copy was dirty.
-- No stop step. Nothing is running, so step 4 is replaced by recreating the window under the recorded `fm-<id>` name in the recorded session and worktree, then waiting on a bounded budget for the new terminal to hold an agent-free state before step 5 hands it to the same launch owner.
+- No stop step. Nothing is running, so step 4 is replaced by recreating a terminal beside the recorded worktree, waiting on a bounded budget for its shell to hold an agent-free state, and then handing it to the same launch owner.
+  A tmux window returns under the exact recorded `fm-<id>` handle.
+  Herdr instead returns opaque response-derived tab and pane ids: recovery recreates the task only in its exact surviving recorded workspace, requires the old pane and old/same-labeled tab to remain absent, proves the new tab/pane relationship, agent-free state, and worktree cwd, and only then atomically republishes those endpoint fields under the task's metadata lock.
+  The publication rewrites the current record rather than a stale snapshot, so unrelated lines added while Herdr creates the pane survive; a concurrent change to task, runtime, profile, worktree, or old endpoint identity refuses and rolls the unpublished pane back.
   A login shell that is still running its rc files reads `ambiguous` while each of them owns the pane, and the launch owner takes one un-retried state read that must be `dead`, so the state has to hold rather than merely be observed once.
 
 #### A signed-out account slot with a missing terminal
@@ -105,10 +109,8 @@ It happens when a worker was launched on an account slot, that slot's store no l
 
 These refusals are intended, not a bug.
 The worker's local copy and its uncommitted work are untouched, and each verb stops rather than guessing which account a rescued worker should spend.
-There are two ways out:
-
-1. Sign in again under that slot's store, so the recorded slot resolves, then run `recover-missing`.
-2. Remove the `account_slot=` line from the task's `state/<id>.meta` record by hand, then run `recover-missing`. The worker comes back on the harness's normal credentials instead of a slot.
+There is one supported way out: sign in again under that slot's store, so the recorded slot resolves, then run `recover-missing`.
+Changing a missing worker's account identity by editing task metadata is not a recovery operation and is deliberately unsupported.
 
 ### Failure and rollback
 
@@ -117,7 +119,8 @@ There are two ways out:
 - If the launch owner already published the new record but no running agent can be confirmed, the new record is kept: the task is recorded on the new harness with no agent confirmed, which is exactly what recovery reconciles.
   Rewriting it back to the old harness would be a second, worse inaccuracy.
 - A `recover-missing` failure while the terminal is being recreated restores the prior instructions byte-exact, because no agent was ever touched in that phase.
-  The durable record is left exactly as it stands rather than restored, because nothing in that phase writes it: restoring it could only revert another writer's change, and the phase is long enough - window creation plus the settle wait - for an armed merge poll's `pr=` line to land inside it.
+  A response-derived Herdr endpoint that has not been published is removed only after its exact tab/pane ownership and agent-free state are re-proved; an unconfirmable rollback is retained and named for inspection rather than destroyed.
+  The durable record is left exactly as it stands rather than restored, because the recreation phase merges only at publication time: restoring a prior snapshot could revert another writer's change.
 - A `recover-missing` failure because the new shell never settles to agent-free never claims an agent was stopped: the terminal was recreated, the handover could not be completed, and the pane was just measured as not agent-free, so no bare shell, `dead` endpoint, or ready-to-`relaunch` state is claimed for it.
 - A `recover-missing` failure at the launch itself never claims an agent was stopped either, and names the state the operator is now in: the recreated terminal holds a bare shell, so the endpoint reads `dead` rather than `missing` and the verb that retries it is `relaunch`.
   That holds because the durable record is published before the launch command is sent, so reaching this failure means nothing was ever typed into the pane.
@@ -142,8 +145,10 @@ There are two ways out:
 - `exit`, `relaunch`, and `recover-missing` require a backend with a recovery-grade agent-state classifier - tmux, herdr, and stream - because without one the "the agent stopped" or "the endpoint is missing" postcondition cannot be proven.
   zellij, orca, and cmux are refused rather than reported as successful blind.
   On stream a silent agent reads `unreadable` rather than `dead`, so a partition refuses here instead of proving a stop that never happened.
-- `recover-missing` additionally requires a backend that can recreate a terminal under the recorded endpoint handle, which today is tmux only: its window keeps the recorded `fm-<id>` name, so recovery rewrites no durable record.
-  Herdr mints a fresh pane id for every new tab, so recreating there would have to republish the task's endpoint; that is refused rather than shipped without regression coverage.
+- `recover-missing` additionally requires a backend with a verified endpoint-recreation transaction.
+  Tmux recreates the task window under its recorded handle and rewrites no endpoint identity.
+  Herdr mints a fresh pane id, so recovery holds the task lifecycle lock, validates the response-derived replacement in the recorded workspace, and atomically rebinds the task under its canonical metadata lock only after the old endpoint is still positively missing and the new one is ready.
+  Every other backend refuses before anything is touched.
 - On tmux, two different losses read as a missing endpoint and both are recovered: the task's window is gone from a session that is still alive, or the whole session - or the whole tmux server - is gone.
   The second is recreated session first, under the exact recorded session name, and then the window inside it; a session that still exists is left exactly as it is.
   A session that cannot be recreated refuses before the window, the record, or the instructions are touched.
@@ -173,5 +178,5 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 
 - `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, rollback after a failed launch, and an already-armed merge poll still authenticating after the record rewrite.
-- `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery: the success path under the recorded handle for both losses (a missing window in a live session, and a whole gone session recreated before it), the live, ambiguous, absent-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, a rescue succeeding on a copy full of uncommitted work and leaving every one of those changes byte-identical, the refusal when the session cannot be recreated, the recorded profile surviving a differing configured secondmate pin, the refused profile flags, the basename-harness and unsupported-backend refusals, a still-starting shell being waited out rather than handed over and the refusal when it never settles, a failed recreation rolling the progress note back while leaving a concurrent write to the durable record in place, and the message after a failed launch handoff.
-- `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
+- `tests/fm-control-recover-missing.test.sh` - missing-terminal recovery on tmux and Herdr: identity and profile preservation, byte-identical uncommitted work, live/ambiguous and ownership refusals, response-derived Herdr endpoint rebinding, metadata-write merge/refusal behavior, unpublished-pane rollback, launch-failure custody, and the tmux window/session loss variants.
+- `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend and its missing-pane rebind against the real Herdr binary, on an isolated throwaway lab session.

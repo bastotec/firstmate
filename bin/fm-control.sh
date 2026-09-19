@@ -56,9 +56,9 @@
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
 #
-#   recover-missing Recreate the exact recorded terminal for a task whose
-#              endpoint is authoritatively missing, then hand the launch to the
-#              existing owner (bin/fm-spawn.sh --relaunch). Proves the missing
+#   recover-missing Recreate a terminal for a task whose recorded endpoint is
+#              authoritatively missing, then hand the launch to the existing
+#              owner (bin/fm-spawn.sh --relaunch). Proves the missing
 #              state and refuses an unavailable or conflicting local-copy
 #              ownership rather than resetting or reallocating anything.
 #              Uncommitted work in that copy is the NORMAL state of a task
@@ -67,10 +67,11 @@
 #              launch owner's own git-excluded harness wiring, and the base
 #              refresh that would reset a worktree is skipped for a relaunch,
 #              which is how every recovery spawns. No new worktree or pool slot
-#              is created. Recreation is tmux-only today, because a tmux window
-#              comes back under the same recorded fm-<id> handle and so rewrites
-#              no durable record; every other backend refuses before anything is
-#              touched.
+#              is created. A tmux window returns under its recorded fm-<id>
+#              handle. A Herdr recovery instead creates one fresh tab/pane in
+#              the exact recorded workspace, proves its ownership and readiness,
+#              then atomically republishes the response-derived endpoint while
+#              preserving concurrent unrelated metadata writes.
 #              Both tmux losses are recovered: the task's window gone from a
 #              session that is still alive, and the whole session (or the whole
 #              server) gone, which is recreated under its exact recorded name
@@ -80,6 +81,9 @@
 #              configuration, including a secondmate's config/secondmate-harness
 #              pin - and only --note/--note-file apply; picking up a changed pin
 #              or choosing a different runtime is what `relaunch` is for.
+#              Herdr recovery refuses unless the old pane remains positively
+#              missing, the recorded workspace still exists unambiguously, and
+#              no recorded or same-labeled task tab survives there.
 #
 # Teardown and discard are NOT verbs here and never will be. `exit` stops an
 # agent and preserves everything else; removing a worktree, killing an
@@ -174,6 +178,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-account-slot-lib.sh
 . "$SCRIPT_DIR/fm-account-slot-lib.sh"
+# shellcheck source=bin/fm-backlog-transition-lib.sh
+. "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -189,14 +195,27 @@ die() {  # <message>
 
 CONTROL_LOCK=
 CONTROL_LOCK_HELD=0
+CONTROL_META_LOCK=
+CONTROL_META_LOCK_HELD=0
 RELAUNCH_ACTIVE=0
 RELAUNCH_PHASE=start
+HERDR_RECOVERY_UNPUBLISHED=0
+HERDR_RECOVERY_SESSION=
+HERDR_RECOVERY_WORKSPACE=
+HERDR_RECOVERY_TAB=
+HERDR_RECOVERY_PANE=
+HERDR_RECOVERY_LABEL=
+HERDR_RECOVERY_FOCUS=
 
 control_cleanup() {
   local status=$?
   if [ "$RELAUNCH_ACTIVE" = 1 ] \
      && declare -F relaunch_rollback >/dev/null 2>&1; then
     relaunch_rollback || true
+  fi
+  if [ "$CONTROL_META_LOCK_HELD" = 1 ]; then
+    CONTROL_META_LOCK_HELD=0
+    fm_lock_release "$CONTROL_META_LOCK" || true
   fi
   if [ "$CONTROL_LOCK_HELD" = 1 ]; then
     CONTROL_LOCK_HELD=0
@@ -371,7 +390,7 @@ fm_backend_validate "$BACKEND" || exit 1
 # --- shared helpers ---------------------------------------------------------
 
 agent_state() {
-  fm_backend_agent_state "$BACKEND" "$T"
+  fm_backend_agent_state "$BACKEND" "${1:-$T}"
 }
 
 busy_verdict() {
@@ -411,10 +430,10 @@ wait_agent_state() {  # <timeout> <wanted>...
 # commands read agent-free too - so the state has to HOLD before the terminal
 # is handed to the launch owner, which takes one un-retried read and requires
 # exactly `dead`.
-wait_endpoint_settled() {  # <timeout>
-  local timeout=$1 state elapsed=0 held=0
+wait_endpoint_settled() {  # <timeout> [target]
+  local timeout=$1 target=${2:-$T} state elapsed=0 held=0
   while :; do
-    state=$(agent_state)
+    state=$(agent_state "$target")
     if [ "$state" = dead ]; then
       held=$((held + 1))
       if [ "$held" -ge "$SETTLE_READS" ]; then
@@ -606,8 +625,11 @@ do_exit() {
 #
 # $BRIEF_PRIOR is a rollback source, because this script appends the progress
 # note to the brief and so has something of its own to put back. $META_PRIOR is
-# not, and nothing reads it: this script never writes $META at all. It stays as
-# the operator-facing copy beside the journal, and fm-teardown.sh removes both.
+# not a rollback source. Relaunch delegates metadata publication to fm-spawn;
+# Herdr recovery alone replaces its endpoint fields here under the canonical
+# metadata lock after readiness checks. In both cases a prior snapshot is never
+# written back over the live record, and the best-effort copy remains only for
+# operator evidence until fm-teardown.sh removes it.
 
 JOURNAL="$STATE/$ID.control-relaunch"
 META_PRIOR="$JOURNAL.meta-prior"
@@ -686,7 +708,17 @@ relaunch_rollback() {
       # touched in any phase: the instructions go back byte-exact, exactly as
       # they do for a relaunch refused before its agent was stopped. Without
       # this every failed attempt would leave another progress note appended.
-      #
+      if [ "$HERDR_RECOVERY_UNPUBLISHED" = 1 ]; then
+        HERDR_RECOVERY_UNPUBLISHED=0
+        if fm_backend_herdr_recovery_rollback_task \
+            "$HERDR_RECOVERY_SESSION" "$HERDR_RECOVERY_WORKSPACE" \
+            "$HERDR_RECOVERY_TAB" "$HERDR_RECOVERY_PANE" \
+            "$HERDR_RECOVERY_LABEL" "$HERDR_RECOVERY_FOCUS"; then
+          echo "notice: removed $ID's unpublished Herdr recovery endpoint after the transaction failed" >&2
+        else
+          echo "error: $ID's unpublished Herdr recovery endpoint $HERDR_RECOVERY_SESSION:$HERDR_RECOVERY_PANE could not be confirmed rolled back; inspect it before retrying" >&2
+        fi
+      fi
       # The durable record is deliberately NOT restored, for the same reason
       # the sibling checkpoint|noted arm has no restore: nothing in this phase
       # writes it, so a restore could only revert another process's locked
@@ -1043,13 +1075,123 @@ do_relaunch() {
   echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_ACCOUNT_SLOT:+ account_slot=$TARGET_ACCOUNT_SLOT} backend=$BACKEND endpoint=$T worktree=$WT"
 }
 
+# recovery_identity_snapshot: the axes a missing-endpoint recovery is not
+# allowed to change while it is creating an unpublished replacement. Other
+# metadata (for example a concurrently armed PR poll) is deliberately excluded
+# and is merged from the current record at publication time.
+recovery_identity_snapshot() {  # <meta>
+  local meta=$1 key
+  for key in endpoint_task_id worktree project harness kind mode yolo model effort account_slot backend window herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id; do
+    printf '%s=%s\n' "$key" "$(fm_meta_get "$meta" "$key")"
+  done
+}
+
+# publish_herdr_recovery_endpoint: under the canonical per-task metadata lock,
+# re-prove that the task still names the exact missing endpoint inspected at
+# intake, that the old pane is still missing, and that the response-derived new
+# pane is still agent-free in the recorded worktree. Only then atomically
+# replace Herdr's endpoint fields in the CURRENT record, preserving unrelated
+# lines written while tab creation and readiness checks were in flight.
+publish_herdr_recovery_endpoint() {  # <old-identity> <session> <workspace> <tab> <pane> <worktree>
+  local old_identity=$1 session=$2 workspace=$3 tab=$4 pane=$5 worktree=$6
+  local current_identity new_target current_path tmp
+  CONTROL_META_LOCK=$(fm_meta_lock_path "$META") \
+    || die "could not resolve task $ID's metadata lock"
+  fm_lock_acquire_wait "$CONTROL_META_LOCK"
+  CONTROL_META_LOCK_HELD=1
+  fm_backend_validate_task_endpoint "$META" "$ID" \
+    || die "task $ID's endpoint record became invalid while Herdr recovery was preparing its replacement"
+  current_identity=$(recovery_identity_snapshot "$META")
+  [ "$current_identity" = "$old_identity" ] \
+    || die "task $ID's endpoint or runtime identity changed while Herdr recovery was preparing its replacement; refusing to overwrite the newer record"
+  [ "$(fm_backend_agent_state herdr "$T")" = missing ] \
+    || die "task $ID's recorded Herdr endpoint is no longer positively missing; refusing to publish a duplicate"
+  new_target="$session:$pane"
+  [ "$(fm_backend_agent_state herdr "$new_target")" = dead ] \
+    || die "task $ID's replacement Herdr endpoint is no longer positively agent-free; refusing to publish it"
+  current_path=$(fm_backend_herdr_current_path "$new_target" 2>/dev/null || true)
+  [ -n "$current_path" ] && [ "$(cd "$current_path" 2>/dev/null && pwd -P)" = "$(cd "$worktree" && pwd -P)" ] \
+    || die "task $ID's replacement Herdr endpoint is not in its recorded worktree $worktree; refusing to publish it"
+  tmp=$(mktemp "$STATE/.$ID.meta.herdr-recovery.XXXXXX") \
+    || die "could not prepare task $ID's replacement endpoint record"
+  if ! awk -F= -v window="$new_target" -v session="$session" -v workspace="$workspace" -v tab="$tab" -v pane="$pane" '
+    $1 == "window" { print "window=" window; next }
+    $1 == "herdr_session" { print "herdr_session=" session; next }
+    $1 == "herdr_workspace_id" { print "herdr_workspace_id=" workspace; next }
+    $1 == "herdr_tab_id" { print "herdr_tab_id=" tab; next }
+    $1 == "herdr_pane_id" { print "herdr_pane_id=" pane; next }
+    { print }
+  ' "$META" > "$tmp"; then
+    rm -f "$tmp"
+    die "could not prepare task $ID's replacement endpoint record"
+  fi
+  if ! fm_backlog_atomic_transition publish "$tmp" "$META" "task record" "$STATE"; then
+    rm -f "$tmp" 2>/dev/null || true
+    die "task $ID's replacement endpoint record could not be published ($FM_BACKLOG_TRANSITION_ERROR)"
+  fi
+  # Publication transfers custody from rollback to the durable task record
+  # before any later fallible step (including lock release).
+  HERDR_RECOVERY_UNPUBLISHED=0
+  RELAUNCH_META_PUBLISHED=1
+  RELAUNCH_PHASE=launching
+  T=$new_target
+  CONTROL_META_LOCK_HELD=0
+  fm_lock_release "$CONTROL_META_LOCK" \
+    || die "task $ID's replacement endpoint was published but its metadata lock could not be released"
+  CONTROL_META_LOCK=
+}
+
+recover_missing_herdr_endpoint() {  # <worktree> <identity-snapshot>
+  local wt=$1 old_identity=$2 state new_tab new_pane new_target current_path
+  local session workspace old_tab old_pane
+  session=$(fm_meta_get "$META" herdr_session)
+  workspace=$(fm_meta_get "$META" herdr_workspace_id)
+  old_tab=$(fm_meta_get "$META" herdr_tab_id)
+  old_pane=$(fm_meta_get "$META" herdr_pane_id)
+  fm_backend_herdr_server_ensure "$session" \
+    || die "task $ID's recorded Herdr session '$session' could not be made ready"
+  # A stopped server can restore its saved pane when it starts. Re-read after
+  # ensure and refuse anything except structural absence before creating a new
+  # identity beside it.
+  state=$(fm_backend_agent_state herdr "$T")
+  [ "$state" = missing ] \
+    || die "task $ID's recorded Herdr endpoint reads '$state' after its session became ready; recover-missing requires it to remain positively missing"
+  fm_backend_herdr_recover_missing_task \
+    "$session" "$workspace" "$old_tab" "$old_pane" "fm-$ID" "$wt" >/dev/null \
+    || die "could not create a verified Herdr recovery endpoint for $ID"
+  new_tab=$FM_BACKEND_HERDR_RECOVERY_TAB_ID
+  new_pane=$FM_BACKEND_HERDR_RECOVERY_PANE_ID
+  [ -n "$new_tab" ] && [ -n "$new_pane" ] \
+    || die "Herdr recovery returned no complete replacement endpoint for $ID"
+  HERDR_RECOVERY_SESSION=$session
+  HERDR_RECOVERY_WORKSPACE=$workspace
+  HERDR_RECOVERY_TAB=$new_tab
+  HERDR_RECOVERY_PANE=$new_pane
+  HERDR_RECOVERY_LABEL="fm-$ID"
+  HERDR_RECOVERY_FOCUS=$FM_BACKEND_HERDR_RECOVERY_FOCUS_BEFORE
+  HERDR_RECOVERY_UNPUBLISHED=1
+  new_target="$session:$new_pane"
+  state=$(wait_endpoint_settled "$EXIT_WAIT" "$new_target") || {
+    die "task $ID's recreated Herdr endpoint did not settle to an agent-free shell within ${EXIT_WAIT}s (endpoint reads '$state')"
+  }
+  current_path=$(fm_backend_herdr_current_path "$new_target" 2>/dev/null || true)
+  [ -n "$current_path" ] && [ "$(cd "$current_path" 2>/dev/null && pwd -P)" = "$(cd "$wt" && pwd -P)" ] \
+    || die "task $ID's recreated Herdr endpoint is in '${current_path:-unknown}', not its recorded worktree '$wt'"
+  publish_herdr_recovery_endpoint \
+    "$old_identity" "$session" "$workspace" "$new_tab" "$new_pane" "$wt"
+  HERDR_TAB_ID=$new_tab
+  HERDR_PANE_ID=$new_pane
+}
+
 do_recover_missing() {
-  local state note_line wt wname proj_abs
+  local state note_line wt wname proj_abs old_identity
   local -a spawn_args
 
   require_state_verified_backend recover-missing "the endpoint is actually missing"
-  [ "$BACKEND" = tmux ] \
-    || die "backend $BACKEND has no supported way to recreate an endpoint with the recorded identity; refusing to recover"
+  case "$BACKEND" in
+    tmux|herdr) ;;
+    *) die "backend $BACKEND has no supported way to recreate a missing endpoint; refusing to recover" ;;
+  esac
   resolve_relaunch_profile
   RELAUNCH_PAST_TENSE=recovered
 
@@ -1075,6 +1217,7 @@ do_recover_missing() {
     dead|alive|ambiguous) die "task $ID's endpoint reads '$state'; recover-missing requires a positively missing endpoint and no agent owning the task" ;;
     *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to recover" ;;
   esac
+  old_identity=$(recovery_identity_snapshot "$META")
 
   wt=$(fm_meta_get "$META" worktree)
   [ -n "$wt" ] && [ -d "$wt" ] || die "task $ID's recorded worktree '${wt:-none}' is absent; refusing to recover without the local copy its work lives in"
@@ -1109,31 +1252,29 @@ do_recover_missing() {
   wname="fm-$ID"
   proj_abs=$(cd "$wt" && pwd -P)
   fm_backend_source "$BACKEND" || die "could not load backend $BACKEND"
-  # Endpoint validation already proved $T is exactly <session>:fm-<id> with a
-  # non-empty session (bin/fm-backend.sh's fm_backend_validate_task_endpoint,
-  # called before any verb runs), which is what refuses a recorded endpoint
-  # string that will not parse. The window comes back under that same name, so
-  # $T keeps addressing the terminal and neither the postconditions below nor
-  # the durable record need rewriting.
-  #
-  # Two shapes read as a missing endpoint and both are recovered here: the
-  # task's window is gone from a session that is still alive, or the whole
-  # session (or the whole tmux server) is gone. The second needs the session
-  # back before a window can be added to it; the first leaves it untouched.
-  # A failure after the session is recreated but before the window exists still
-  # reads missing, so the verb stays retryable rather than stranding the task.
-  fm_backend_tmux_recreate_session "${T%%:*}" "$proj_abs" \
-    || die "task $ID's recorded tmux session '${T%%:*}' is gone and could not be recreated"
-  fm_backend_tmux_create_task "${T%%:*}" "$wname" "$proj_abs" >/dev/null \
-    || die "could not recreate tmux window for $ID"
-
-  # The launch owner requires a positively agent-free endpoint, so wait for the
-  # new terminal's shell to finish starting before handing it over. Still
-  # inside the `recreating` phase: a refusal here rolls the progress note back
-  # and touches nothing else.
-  state=$(wait_endpoint_settled "$EXIT_WAIT") || {
-    die "task $ID's recreated terminal did not settle to an agent-free shell within ${EXIT_WAIT}s (endpoint reads '$state'); the terminal exists now, so once its shell is idle bring the worker up with 'relaunch'"
-  }
+  case "$BACKEND" in
+    tmux)
+      # Endpoint validation already proved $T is exactly <session>:fm-<id> with
+      # a non-empty session. The window comes back under that same name, so no
+      # durable endpoint rewrite is needed.
+      #
+      # Two shapes read as missing: the task window is gone from a live session,
+      # or the whole session/server is gone. The latter is recreated first.
+      fm_backend_tmux_recreate_session "${T%%:*}" "$proj_abs" \
+        || die "task $ID's recorded tmux session '${T%%:*}' is gone and could not be recreated"
+      fm_backend_tmux_create_task "${T%%:*}" "$wname" "$proj_abs" >/dev/null \
+        || die "could not recreate tmux window for $ID"
+      state=$(wait_endpoint_settled "$EXIT_WAIT") || {
+        die "task $ID's recreated terminal did not settle to an agent-free shell within ${EXIT_WAIT}s (endpoint reads '$state'); the terminal exists now, so once its shell is idle bring the worker up with 'relaunch'"
+      }
+      ;;
+    herdr)
+      # Herdr cannot recreate an opaque pane id. Create one response-derived
+      # replacement in the exact recorded workspace, prove it and its cwd, then
+      # publish that fresh identity atomically before the launch owner adopts it.
+      recover_missing_herdr_endpoint "$proj_abs" "$old_identity"
+      ;;
+  esac
 
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
   journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"

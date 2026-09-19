@@ -33,15 +33,34 @@ command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (required by the her
 . "$ROOT/tests/herdr-test-safety.sh"
 herdr_forget_inherited_pane
 
-SESSION="fm-lab-control-smoke-$$"
+SESSION=${FM_HERDR_SMOKE_SESSION:-fm-lab-control-smoke-$$}
 export HERDR_SESSION="$SESSION"
+EXTERNAL_SESSION=0
+[ -z "${FM_HERDR_SMOKE_SESSION:-}" ] || EXTERNAL_SESSION=1
 SCRATCH=
+REPORTER_PID=
 cleanup_all() {
+  if [ -n "$REPORTER_PID" ]; then
+    kill "$REPORTER_PID" 2>/dev/null || true
+    wait "$REPORTER_PID" 2>/dev/null || true
+    REPORTER_PID=
+  fi
   [ -n "$SCRATCH" ] && rm -rf "$SCRATCH"
-  herdr_safe_stop_and_delete "$SESSION"
+  if [ "$EXTERNAL_SESSION" = 0 ]; then
+    herdr_safe_stop_and_delete "$SESSION"
+  fi
 }
 trap cleanup_all EXIT
-fm_herdr_lab_prepare "$SESSION" || fail "could not prepare isolated Herdr lab session"
+if [ "$EXTERNAL_SESSION" = 0 ]; then
+  fm_herdr_lab_prepare "$SESSION" || fail "could not prepare isolated Herdr lab session"
+else
+  case "$SESSION" in
+    fm-lab-*) ;;
+    *) fail "FM_HERDR_SMOKE_SESSION must name a non-default fm-lab-* session" ;;
+  esac
+  [ "$(herdr status --json --session "$SESSION" 2>/dev/null | jq -r '.server.running // false')" = true ] \
+    || fail "FM_HERDR_SMOKE_SESSION does not name a running isolated session"
+fi
 
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fm-control-herdr.XXXXXX")
 SCRATCH=$(cd "$SCRATCH" && pwd)
@@ -324,4 +343,114 @@ case "$OUT" in
 esac
 pass "real herdr: an agent behind an unproven composer fails closed instead of typing an exit command into it"
 
+# --- missing pane: response-derived endpoint rebind -------------------------
+#
+# This is the distinction a stub cannot establish: a real Herdr create mints a
+# fresh opaque pane id, and fm-control must not publish it until the real tab,
+# pane, cwd, and agent-free reads agree. A tiny inert claude stand-in keeps the
+# replacement process alive; a reporter uses Herdr's real registry once that
+# process appears so the control plane's final alive postcondition is real too.
+mkdir -p "$HOME_DIR/data/hrecover"
+cat > "$HOME_DIR/data/hrecover/brief.md" <<'EOF'
+# Task
+## Captain's intent
+Exercise missing Herdr endpoint recovery safely.
+
+## Firstmate spec
+Keep the local copy and unfinished file byte-identical.
+EOF
+WT2="$SCRATCH/wt-recover"
+git -C "$PROJ" worktree add --quiet -b hrecover "$WT2"
+printf 'unfinished rust port\n' > "$WT2/work-in-progress.rs"
+DIRTY_BEFORE=$(git -C "$WT2" status --porcelain)
+FILE_BEFORE=$(cat "$WT2/work-in-progress.rs")
+RECOVER_IDS=$(fm_backend_herdr_create_task "$CONTAINER" "fm-hrecover" "$WT2" "") \
+  || fail "could not create the real endpoint that the recovery smoke will remove"
+read -r OLD_RECOVER_TAB OLD_RECOVER_PANE <<EOF
+$RECOVER_IDS
+EOF
+[ -n "$OLD_RECOVER_TAB" ] && [ -n "$OLD_RECOVER_PANE" ] \
+  || fail "the recovery smoke's old endpoint ids were incomplete"
+{
+  echo "window=$SESSION:$OLD_RECOVER_PANE"
+  echo "endpoint_task_id=hrecover"
+  echo "worktree=$WT2"
+  echo "project=$PROJ"
+  echo "harness=claude"
+  echo "kind=ship"
+  echo "mode=no-mistakes"
+  echo "yolo=off"
+  echo "model=default"
+  echo "effort=default"
+  echo "backend=herdr"
+  echo "herdr_session=$SESSION"
+  echo "herdr_workspace_id=$WORKSPACE_ID"
+  echo "herdr_tab_id=$OLD_RECOVER_TAB"
+  echo "herdr_pane_id=$OLD_RECOVER_PANE"
+} > "$HOME_DIR/state/hrecover.meta"
+fm_backend_herdr_explicit_close_pane_confirmed "$SESSION" "$OLD_RECOVER_PANE" \
+  || fail "could not make the real recovery-smoke endpoint positively missing"
+[ "$(fm_backend_agent_state herdr "$SESSION:$OLD_RECOVER_PANE")" = missing ] \
+  || fail "the removed real endpoint did not classify as missing"
+cat > "$FAKEBIN/claude" <<'SH'
+#!/usr/bin/env bash
+exec sleep 30
+SH
+chmod +x "$FAKEBIN/claude"
+printf -v FAKEBIN_Q '%q' "$FAKEBIN"
+report_recovered_agent() {
+  local tab pane state i=0
+  while [ "$i" -lt 200 ]; do
+    tab=$(herdr tab list --workspace "$WORKSPACE_ID" --session "$SESSION" 2>/dev/null \
+      | jq -r '.result.tabs[]? | select(.label == "fm-hrecover") | .tab_id' | head -1)
+    if [ -n "$tab" ] && [ "$tab" != "$OLD_RECOVER_TAB" ]; then
+      pane=$(herdr pane list --workspace "$WORKSPACE_ID" --session "$SESSION" 2>/dev/null \
+        | jq -r --arg tab "$tab" '.result.panes[]? | select(.tab_id == $tab) | .pane_id' | head -1)
+      if [ -n "$pane" ]; then
+        herdr pane run "$pane" "export PATH=$FAKEBIN_Q:\$PATH" --session "$SESSION" >/dev/null 2>&1 || return 1
+        while [ "$i" -lt 200 ]; do
+          state=$(fm_backend_herdr_pane_process_state "$SESSION" "$pane")
+          case "$state" in
+            agent|other)
+              herdr pane report-agent "$pane" --source fm-control-smoke \
+                --agent fm-control-recovery-smoke --state idle --session "$SESSION" >/dev/null 2>&1
+              return $?
+              ;;
+          esac
+          sleep 0.05
+          i=$((i + 1))
+        done
+      fi
+    fi
+    sleep 0.05
+    i=$((i + 1))
+  done
+  return 1
+}
+report_recovered_agent &
+REPORTER_PID=$!
+if OUT=$(run_control hrecover recover-missing --note "the real Herdr pane disappeared"); then
+  :
+else
+  rc=$?
+  wait "$REPORTER_PID" 2>/dev/null || true
+  fail "real Herdr missing-pane recovery failed (exit $rc): $OUT"
+fi
+wait "$REPORTER_PID" || fail "the recovered real endpoint never hosted a reportable replacement process"
+REPORTER_PID=
+NEW_RECOVER_PANE=$(sed -n 's/^herdr_pane_id=//p' "$HOME_DIR/state/hrecover.meta" | tail -1)
+NEW_RECOVER_TAB=$(sed -n 's/^herdr_tab_id=//p' "$HOME_DIR/state/hrecover.meta" | tail -1)
+[ -n "$NEW_RECOVER_PANE" ] && [ "$NEW_RECOVER_PANE" != "$OLD_RECOVER_PANE" ] \
+  || fail "real Herdr recovery did not publish a fresh pane id"
+[ -n "$NEW_RECOVER_TAB" ] && [ "$NEW_RECOVER_TAB" != "$OLD_RECOVER_TAB" ] \
+  || fail "real Herdr recovery did not publish a fresh tab id"
+[ "$(sed -n 's/^window=//p' "$HOME_DIR/state/hrecover.meta" | tail -1)" = "$SESSION:$NEW_RECOVER_PANE" ] \
+  || fail "the real replacement window and pane binding disagree"
+[ "$(git -C "$WT2" status --porcelain)" = "$DIRTY_BEFORE" ] \
+  || fail "real Herdr recovery changed the unfinished worktree"
+[ "$(cat "$WT2/work-in-progress.rs")" = "$FILE_BEFORE" ] \
+  || fail "real Herdr recovery changed the unfinished file bytes"
+pass "real herdr $HERDR_VERSION: a missing pane is rebound to a fresh verified endpoint without touching unfinished work"
+
+fm_backend_herdr_kill "$SESSION:$NEW_RECOVER_PANE" 2>/dev/null || true
 fm_backend_herdr_kill "$SESSION:$PANE_ID" 2>/dev/null || true

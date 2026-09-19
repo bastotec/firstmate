@@ -195,6 +195,112 @@ SH
   chmod +x "$fb/sleep"
 }
 
+make_herdr_stub() {  # <dir>
+  local fb="$1/fakebin"
+  cat > "$fb/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+D=$FM_FAKE_DIR
+cmd=${1:-}; sub=${2:-}; id=${3:-}
+workspace=
+label=
+args=("$@")
+for ((i=0; i<${#args[@]}; i++)); do
+  case "${args[$i]}" in
+    --workspace) workspace=${args[$((i + 1))]:-} ;;
+    --label) label=${args[$((i + 1))]:-} ;;
+  esac
+done
+mode=$(cat "$D/herdr-mode" 2>/dev/null || printf missing)
+created=0; [ ! -e "$D/herdr-created" ] || created=1
+live=0; [ ! -e "$D/herdr-live" ] || live=1
+case "$cmd $sub" in
+  "status --json")
+    printf '{"client":{"version":"0.7.3","protocol":16},"server":{"running":true,"version":"0.7.3","protocol":16}}\n'
+    ;;
+  "workspace list")
+    printf '{"result":{"workspaces":[{"workspace_id":"focus","label":"focus","focused":true,"active_tab_id":"focus-tab"},{"workspace_id":"ws1","label":"firstmate","focused":false,"active_tab_id":%s}]}}\n' "$(if [ "$created" = 1 ]; then printf '"t-new"'; else printf null; fi)"
+    ;;
+  "tab list")
+    if [ "$workspace" = focus ]; then
+      printf '{"result":{"tabs":[{"tab_id":"focus-tab","label":"focus","workspace_id":"focus","focused":true}]}}\n'
+    elif [ "$created" = 1 ]; then
+      printf '{"result":{"tabs":[{"tab_id":"t-new","label":"fm-%s","workspace_id":"ws1","focused":false}]}}\n' "${FM_FAKE_HERDR_TASK_ID:-rm13}"
+    else
+      printf '{"result":{"tabs":[]}}\n'
+    fi
+    ;;
+  "tab create")
+    [ -z "${FM_FAKE_HERDR_CREATE_FAIL:-}" ] || { echo 'create failed' >&2; exit 1; }
+    : > "$D/herdr-created"
+    printf '%s' "$label" > "$D/herdr-label"
+    if [ -n "${FM_FAKE_META_RACE:-}" ]; then
+      printf '%s\n' "${FM_FAKE_META_RACE_LINE:?}" >> "$FM_FAKE_META_RACE"
+    fi
+    printf '{"result":{"tab":{"tab_id":"t-new"},"root_pane":{"pane_id":"p-new"}}}\n'
+    ;;
+  "tab get")
+    if [ "$id" = t-new ] && [ "$created" = 1 ]; then
+      printf '{"result":{"tab":{"tab_id":"t-new","workspace_id":"ws1"}}}\n'
+    else
+      printf '{"error":{"code":"tab_not_found"}}\n'
+    fi
+    ;;
+  "pane get")
+    if [ "$id" = p-new ] && [ "$created" = 1 ]; then
+      printf '{"result":{"pane":{"pane_id":"p-new","tab_id":"t-new","workspace_id":"ws1","foreground_cwd":"%s"}}}\n' "$(cat "$D/cwd")"
+    elif [ "$id" = p-old ]; then
+      case "$mode" in
+        alive) printf '{"result":{"pane":{"pane_id":"p-old","tab_id":"t-old","workspace_id":"ws1","foreground_cwd":"%s"}}}\n' "$(cat "$D/cwd")" ;;
+        ambiguous) printf '{"result":{"pane":{"pane_id":"wrong"}}}\n' ;;
+        *) printf '{"error":{"code":"pane_not_found"}}\n' ;;
+      esac
+    else
+      printf '{"error":{"code":"pane_not_found"}}\n'
+    fi
+    ;;
+  "pane close")
+    [ "$id" != p-new ] || { rm -f "$D/herdr-created" "$D/herdr-live" "$D/herdr-pending"; : > "$D/herdr-rolled-back"; }
+    ;;
+  "pane process-info")
+    pane=
+    for ((i=0; i<${#args[@]}; i++)); do [ "${args[$i]}" != --pane ] || pane=${args[$((i + 1))]:-}; done
+    if { [ "$pane" = p-new ] && [ "$live" = 1 ]; } || { [ "$pane" = p-old ] && [ "$mode" = alive ]; }; then
+      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":122,"foreground_processes":[{"pid":123,"name":"claude","argv":["claude"]}]}}}\n' "$pane"
+    else
+      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":122,"foreground_processes":[{"pid":122,"name":"sh","argv":["sh"]}]}}}\n' "$pane"
+    fi
+    ;;
+  "agent get")
+    if { [ "$id" = p-new ] && [ "$live" = 1 ]; } || { [ "$id" = p-old ] && [ "$mode" = alive ]; }; then
+      printf '{"result":{"agent":{"agent_status":"idle"}}}\n'
+    else
+      printf '{"error":{"code":"agent_not_found"}}\n'
+    fi
+    ;;
+  "pane send-text")
+    payload=${4:-}
+    if [[ "$payload" == *"encode launch-brief"* ]]; then
+      [ -z "${FM_FAKE_HERDR_LAUNCH_FAIL:-}" ] || exit 1
+      : > "$D/herdr-pending"
+    fi
+    ;;
+  "pane send-keys")
+    if [ "$id" = p-new ] && [ -e "$D/herdr-pending" ]; then
+      : > "$D/herdr-live"
+      rm -f "$D/herdr-pending"
+    fi
+    ;;
+  "pane run") : ;;
+  "pane read") printf '╭────╮\n│    │\n╰────╯\n' ;;
+  "tab focus") : ;;
+  "terminal title") printf '{"result":{"reason":"no_foreground_client"}}\n' ;;
+  *) : ;;
+esac
+SH
+  chmod +x "$fb/herdr"
+}
+
 # new_case <name> [id] -> echoes a case dir whose endpoint currently holds a
 # live claude agent. A test that wants the MISSING precondition calls
 # make_endpoint_missing.
@@ -210,6 +316,8 @@ new_case() {
   printf 'fmses\n' > "$dir/fake/sessions"
   : > "$dir/fake/created-sessions"
   make_tmux_stub "$dir"
+  make_herdr_stub "$dir"
+  printf 'missing\n' > "$dir/fake/herdr-mode"
   printf '%s\n' "$dir"
 }
 
@@ -309,6 +417,9 @@ run_control() {  # <case-dir> <args...>
     FM_FAKE_SHELL_BUSY_READS="${FM_FAKE_SHELL_BUSY_READS:-0}" \
     FM_FAKE_META_RACE="${FM_FAKE_META_RACE:-}" \
     FM_FAKE_META_RACE_LINE="${FM_FAKE_META_RACE_LINE:-}" \
+    FM_FAKE_HERDR_TASK_ID="${FM_FAKE_HERDR_TASK_ID:-}" \
+    FM_FAKE_HERDR_CREATE_FAIL="${FM_FAKE_HERDR_CREATE_FAIL:-}" \
+    FM_FAKE_HERDR_LAUNCH_FAIL="${FM_FAKE_HERDR_LAUNCH_FAIL:-}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -631,30 +742,129 @@ test_launch_failure_never_claims_an_agent_was_stopped() {
   pass "fm-control recover-missing: a failed launch handoff reports the bare shell it left, not a stop that never happened"
 }
 
-test_recover_missing_refuses_a_backend_it_cannot_recreate_on() {
-  local dir out rc meta_before brief_before
-  dir=$(new_case herdr-backend rm13)
-  add_ship_task "$dir" rm13
-  # A herdr record: its classifier is recovery-grade, so the refusal has to come
-  # from the recreation side rather than from the agent-state gate.
+configure_herdr_task() {  # <case-dir> <id>
+  local dir=$1 id=$2 meta="$1/home/state/$2.meta"
+  awk -F= '
+    $1 == "window" { print "window=hses:p-old"; next }
+    { print }
+  ' "$meta" > "$meta.tmp"
+  mv "$meta.tmp" "$meta"
   {
     echo "backend=herdr"
     echo "herdr_session=hses"
     echo "herdr_workspace_id=ws1"
-    echo "herdr_tab_id=t1"
-    echo "herdr_pane_id=p1"
-  } >> "$dir/home/state/rm13.meta"
-  sed -i.bak 's|^window=.*|window=hses:p1|' "$dir/home/state/rm13.meta"
-  rm -f "$dir/home/state/rm13.meta.bak"
-  meta_before=$(cat "$dir/home/state/rm13.meta")
-  brief_before=$(cat "$dir/home/data/rm13/brief.md")
+    echo "herdr_tab_id=t-old"
+    echo "herdr_pane_id=p-old"
+  } >> "$meta"
+  printf 'missing\n' > "$dir/fake/herdr-mode"
+}
 
-  out=$(run_control "$dir" rm13 recover-missing --note "recover"); rc=$?
-  expect_code 1 "$rc" "a backend with no recreation support must refuse"$'\n'"$out"
-  assert_contains "$out" "no supported way to recreate an endpoint with the recorded identity" \
-    "the refusal should name what the backend cannot do"
-  assert_nothing_changed "$dir" rm13 "$meta_before" "$brief_before"
-  pass "fm-control recover-missing: a backend that cannot recreate the recorded endpoint refuses before anything changes"
+test_recover_missing_rebinds_a_fresh_herdr_endpoint() {
+  local dir out rc status_before modified_before untracked_before
+  dir=$(new_case herdr-success rh1)
+  add_ship_task "$dir" rh1
+  configure_herdr_task "$dir" rh1
+  printf '# README\nwork in progress\n' > "$dir/wt/README.md"
+  printf 'new rust module\n' > "$dir/wt/new.rs"
+  status_before=$(git -C "$dir/wt" status --porcelain)
+  modified_before=$(cat "$dir/wt/README.md")
+  untracked_before=$(cat "$dir/wt/new.rs")
+
+  out=$(FM_FAKE_HERDR_TASK_ID=rh1 run_control "$dir" rh1 recover-missing --note "the Herdr pane disappeared"); rc=$?
+  expect_code 0 "$rc" "a positively missing Herdr pane should recover"$'\n'"$out"
+  assert_contains "$out" "backend=herdr endpoint=hses:p-new" \
+    "the outcome should name the fresh response-derived endpoint"
+  assert_equals hses:p-new "$(meta_field "$dir" rh1 window)" "the replacement window was not published"
+  assert_equals t-new "$(meta_field "$dir" rh1 herdr_tab_id)" "the replacement tab id was not published"
+  assert_equals p-new "$(meta_field "$dir" rh1 herdr_pane_id)" "the replacement pane id was not published"
+  assert_equals claude "$(meta_field "$dir" rh1 harness)" "the recorded harness changed"
+  assert_equals default "$(meta_field "$dir" rh1 model)" "the recorded model changed"
+  assert_equals default "$(meta_field "$dir" rh1 effort)" "the recorded effort changed"
+  [ "$(cat "$dir/wt/README.md")" = "$modified_before" ] || fail "Herdr recovery changed a tracked work-in-progress file"
+  [ "$(cat "$dir/wt/new.rs")" = "$untracked_before" ] || fail "Herdr recovery changed an untracked work-in-progress file"
+  [ "$(git -C "$dir/wt" status --porcelain)" = "$status_before" ] || fail "Herdr recovery changed the worktree or index"
+  [ -e "$dir/fake/herdr-live" ] || fail "the replacement agent was not launched"
+  [ "$(journal_field "$dir" rh1 phase)" = complete ] || fail "the Herdr recovery transaction did not complete"
+  pass "fm-control recover-missing: a missing Herdr pane is rebound to one fresh verified endpoint without touching work in progress"
+}
+
+test_recover_missing_herdr_refuses_an_ambiguous_old_endpoint() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case herdr-ambiguous rh2)
+  add_ship_task "$dir" rh2
+  configure_herdr_task "$dir" rh2
+  printf 'ambiguous\n' > "$dir/fake/herdr-mode"
+  meta_before=$(cat "$dir/home/state/rh2.meta")
+  brief_before=$(cat "$dir/home/data/rh2/brief.md")
+
+  out=$(FM_FAKE_HERDR_TASK_ID=rh2 run_control "$dir" rh2 recover-missing --note recover); rc=$?
+  expect_code 1 "$rc" "an ambiguous Herdr endpoint must refuse"$'\n'"$out"
+  assert_contains "$out" "rather than a positively classified state" "the refusal should name the inconclusive state"
+  [ ! -e "$dir/fake/herdr-created" ] || fail "an ambiguous old pane must not create a replacement"
+  [ "$(cat "$dir/home/state/rh2.meta")" = "$meta_before" ] || fail "an ambiguous refusal changed metadata"
+  [ "$(cat "$dir/home/data/rh2/brief.md")" = "$brief_before" ] || fail "an ambiguous refusal changed the instructions"
+  pass "fm-control recover-missing: an ambiguous Herdr endpoint refuses before creating or publishing anything"
+}
+
+test_recover_missing_herdr_rolls_back_before_publication() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case herdr-race rh3)
+  add_ship_task "$dir" rh3
+  configure_herdr_task "$dir" rh3
+  meta_before=$(cat "$dir/home/state/rh3.meta")
+  brief_before=$(cat "$dir/home/data/rh3/brief.md")
+
+  # Change one endpoint-identity line after create but before publication. The
+  # metadata lock's revalidation must reject the stale operation and remove the
+  # exact still-agent-free replacement, never overwrite the newer record.
+  out=$(FM_FAKE_HERDR_TASK_ID=rh3 \
+    FM_FAKE_META_RACE="$dir/home/state/rh3.meta" \
+    FM_FAKE_META_RACE_LINE='model=newer-model' \
+    run_control "$dir" rh3 recover-missing --note recover); rc=$?
+  expect_code 1 "$rc" "a concurrent runtime-identity write must refuse publication"$'\n'"$out"
+  assert_contains "$out" "runtime identity changed" "the refusal should name the concurrent identity change"
+  [ -e "$dir/fake/herdr-rolled-back" ] || fail "the unpublished replacement endpoint was not rolled back"
+  [ ! -e "$dir/fake/herdr-created" ] || fail "the unpublished replacement endpoint survived rollback"
+  grep -qxF 'model=newer-model' "$dir/home/state/rh3.meta" || fail "the concurrent metadata write was overwritten"
+  grep -qxF 'window=hses:p-old' "$dir/home/state/rh3.meta" || fail "the original endpoint binding was not retained"
+  [ "$(cat "$dir/home/data/rh3/brief.md")" = "$brief_before" ] || fail "the failed pre-publication recovery kept its progress note"
+  assert_not_contains "$(cat "$dir/home/state/rh3.meta")" 'window=hses:p-new' "the replacement endpoint leaked into metadata"
+  assert_contains "$(cat "$dir/home/state/rh3.meta")" "$meta_before" "the original metadata body was not preserved"
+  pass "fm-control recover-missing: a concurrent identity write refuses stale publication and rolls back the fresh pane"
+}
+
+test_recover_missing_herdr_preserves_unrelated_concurrent_metadata() {
+  local dir out rc
+  dir=$(new_case herdr-meta-merge rh4)
+  add_ship_task "$dir" rh4
+  configure_herdr_task "$dir" rh4
+
+  out=$(FM_FAKE_HERDR_TASK_ID=rh4 \
+    FM_FAKE_META_RACE="$dir/home/state/rh4.meta" \
+    FM_FAKE_META_RACE_LINE='pr=https://github.com/o/r/pull/7' \
+    run_control "$dir" rh4 recover-missing --note recover); rc=$?
+  expect_code 0 "$rc" "an unrelated concurrent metadata write should merge into recovery publication"$'\n'"$out"
+  grep -qxF 'pr=https://github.com/o/r/pull/7' "$dir/home/state/rh4.meta" \
+    || fail "the endpoint publication dropped an unrelated concurrent metadata write"
+  assert_equals hses:p-new "$(meta_field "$dir" rh4 window)" "the replacement endpoint was not published"
+  pass "fm-control recover-missing: Herdr endpoint publication preserves unrelated concurrent metadata"
+}
+
+test_recover_missing_herdr_launch_failure_keeps_the_new_binding() {
+  local dir out rc
+  dir=$(new_case herdr-launch-fail rh5)
+  add_ship_task "$dir" rh5
+  configure_herdr_task "$dir" rh5
+
+  out=$(FM_FAKE_HERDR_TASK_ID=rh5 FM_FAKE_HERDR_LAUNCH_FAIL=1 \
+    run_control "$dir" rh5 recover-missing --note recover); rc=$?
+  expect_code 1 "$rc" "a Herdr launch failure should fail after endpoint publication"$'\n'"$out"
+  assert_contains "$out" "no running agent could be confirmed" "the failure should name the unconfirmed replacement"
+  assert_equals hses:p-new "$(meta_field "$dir" rh5 window)" "a post-publication launch failure reverted the endpoint binding"
+  [ -e "$dir/fake/herdr-created" ] || fail "a published agent-free endpoint was incorrectly rolled back"
+  [ ! -e "$dir/fake/herdr-live" ] || fail "the failed launch unexpectedly produced a live agent"
+  [ "$(journal_field "$dir" rh5 phase)" = failed:launching ] || fail "the launch failure journal phase is wrong"
+  pass "fm-control recover-missing: a launch failure keeps the published bare-shell Herdr endpoint for ordinary relaunch"
 }
 
 test_recover_missing_refusal_names_the_postcondition_it_cannot_prove() {
@@ -983,7 +1193,11 @@ test_failed_recreation_rolls_the_progress_note_back
 test_failed_recreation_keeps_a_concurrent_record_write
 test_unreadable_endpoint_after_a_failed_recreation_claims_nothing
 test_launch_failure_never_claims_an_agent_was_stopped
-test_recover_missing_refuses_a_backend_it_cannot_recreate_on
+test_recover_missing_herdr_refuses_an_ambiguous_old_endpoint
+test_recover_missing_herdr_rolls_back_before_publication
+test_recover_missing_herdr_preserves_unrelated_concurrent_metadata
+test_recover_missing_herdr_launch_failure_keeps_the_new_binding
+test_recover_missing_rebinds_a_fresh_herdr_endpoint
 test_recover_missing_refusal_names_the_postcondition_it_cannot_prove
 test_recover_missing_refuses_a_basename_harness_without_naming_a_rejected_flag
 test_recover_missing_rejects_runtime_switch_flags

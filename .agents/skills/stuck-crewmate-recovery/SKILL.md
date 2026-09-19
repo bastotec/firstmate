@@ -37,7 +37,8 @@ Do not sweep another home's endpoints or infer ownership from a matching window 
 
 Before relaunch, prove that no live agent still owns the recorded task and that the existing worktree remains available.
 Preserve its uncommitted changes and commits, keep the same task identity, and resume or relaunch the recorded harness in that existing worktree with the same brief plus a concise progress note.
-A terminal that is GONE rather than dead is not a relaunch case: `relaunch` refuses a missing endpoint, and the supported operation is `bin/fm-control.sh <task-id> recover-missing --note '<progress so far>'`, which recreates that exact terminal on the recorded local copy, allocation, and runtime and then relaunches into it ([`docs/agent-control.md`](../../../docs/agent-control.md)).
+A terminal that is GONE rather than dead is not a relaunch case: `relaunch` refuses a missing endpoint, and the supported operation is `bin/fm-control.sh <task-id> recover-missing --note '<progress so far>'`, which recreates that task on the recorded local copy, allocation, and runtime and then relaunches into it.
+Tmux retains its recorded window handle; Herdr publishes a fresh response-derived pane binding only after the old pane remains positively absent and the replacement passes ownership and readiness checks ([`docs/agent-control.md`](../../../docs/agent-control.md)).
 Do not use a fresh generic spawn while the recorded worktree is unaccounted for, because allocating another worktree can split one task across two copies.
 If the worktree or ownership cannot be reconciled safely, leave all state intact and report the task failed or blocked with the conflicting evidence.
 

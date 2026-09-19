@@ -2526,6 +2526,116 @@ EOF
   printf '%s %s' "$tab_id" "$pane_id"
 }
 
+# fm_backend_herdr_recovery_rollback_task: remove one exact, newly created
+# recovery endpoint before it has been published into task metadata.
+# The caller supplies the exact pre-create focus snapshot returned by
+# fm_backend_herdr_recover_missing_task.  Ownership is re-proved from the live
+# tab/pane relationship and the agent-free state immediately before the close;
+# an ambiguous or live endpoint is retained and reported rather than destroyed.
+fm_backend_herdr_recovery_rollback_task() {  # <session> <workspace> <tab> <pane> <label> <focus-snapshot>
+  local session=$1 workspace=$2 tab=$3 pane=$4 label=$5 focus_before=$6 info tabs
+  info=$(fm_backend_herdr_cli "$session" pane get "$pane" 2>/dev/null) || return 1
+  printf '%s' "$info" | jq -e --arg pane "$pane" --arg tab "$tab" --arg workspace "$workspace" '
+    .result.pane.pane_id == $pane
+    and .result.pane.tab_id == $tab
+    and .result.pane.workspace_id == $workspace
+  ' >/dev/null 2>&1 || return 1
+  tabs=$(fm_backend_herdr_cli "$session" tab list --workspace "$workspace" 2>/dev/null) || return 1
+  printf '%s' "$tabs" | jq -e --arg tab "$tab" --arg label "$label" '
+    (.result.tabs | type) == "array"
+    and ([.result.tabs[] | select(.tab_id == $tab and .label == $label)] | length) == 1
+  ' >/dev/null 2>&1 || return 1
+  [ "$(fm_backend_herdr_pane_agent_state "$session" "$pane")" = no-agent ] || return 1
+  fm_backend_herdr_explicit_close_pane_confirmed "$session" "$pane" || return 1
+  fm_backend_herdr_projection_focus_restore "$session" "$focus_before" "missing-endpoint recovery rollback"
+}
+
+# fm_backend_herdr_recover_missing_task: create a fresh tab/pane for one task
+# whose exact recorded pane is positively gone.
+# The recorded workspace must still exist exactly once, the recorded tab and
+# every same-labeled tab must be absent, and the old pane is checked both before
+# and after creation so an endpoint that reappears never licenses a duplicate.
+# The response-derived replacement is then verified as one exact agent-free
+# tab/pane in that workspace before its IDs are returned.
+#
+# On success, prints "<tab-id> <pane-id>" and sets
+# FM_BACKEND_HERDR_RECOVERY_TAB_ID, FM_BACKEND_HERDR_RECOVERY_PANE_ID, and
+# FM_BACKEND_HERDR_RECOVERY_FOCUS_BEFORE to the response-derived endpoint and
+# exact pre-create focus snapshot needed if the caller must roll this still-
+# unpublished endpoint back.
+fm_backend_herdr_recover_missing_task() {  # <session> <workspace> <old-tab> <old-pane> <label> <cwd>
+  local session=$1 workspace=$2 old_tab=$3 old_pane=$4 label=$5 cwd=$6
+  local state workspace_state tabs out tab pane info matches rollback_status
+  FM_BACKEND_HERDR_RECOVERY_TAB_ID=""
+  FM_BACKEND_HERDR_RECOVERY_PANE_ID=""
+  FM_BACKEND_HERDR_RECOVERY_FOCUS_BEFORE=""
+  state=$(fm_backend_herdr_pane_agent_state "$session" "$old_pane")
+  [ "$state" = dead ] || {
+    echo "error: recorded herdr pane $old_pane is '$state', not positively missing; refusing replacement" >&2
+    return 1
+  }
+  workspace_state=$(fm_backend_herdr_workspace_presence_state "$session" "$workspace")
+  [ "$workspace_state" = present ] || {
+    echo "error: recorded herdr workspace $workspace is '$workspace_state'; refusing to place recovery in an unattributed workspace" >&2
+    return 1
+  }
+  tabs=$(fm_backend_herdr_cli "$session" tab list --workspace "$workspace" 2>/dev/null) || return 1
+  matches=$(printf '%s' "$tabs" | jq -r --arg old "$old_tab" --arg label "$label" '
+    select((.result.tabs | type) == "array")
+    | [(.result.tabs[] | select(.tab_id == $old or .label == $label))] | length
+  ' 2>/dev/null) || matches=
+  [ "$matches" = 0 ] || {
+    echo "error: recorded herdr task tab or label still exists in workspace $workspace; refusing duplicate recovery" >&2
+    return 1
+  }
+  FM_BACKEND_HERDR_RECOVERY_FOCUS_BEFORE=$(fm_backend_herdr_projection_focus_snapshot "$session") || {
+    echo "error: herdr recovery could not capture exact active focus before creating a replacement" >&2
+    return 1
+  }
+  out=$(fm_backend_herdr_cli "$session" tab create --workspace "$workspace" --cwd "$cwd" --label "$label" --no-focus 2>/dev/null) || {
+    echo "error: herdr could not create a replacement tab for $label" >&2
+    return 1
+  }
+  tab=$(printf '%s' "$out" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)
+  pane=$(printf '%s' "$out" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)
+  if [ -z "$tab" ] || [ -z "$pane" ]; then
+    echo "error: herdr returned incomplete replacement endpoint ids for $label; no cleanup authority was established" >&2
+    return 1
+  fi
+  rollback_status=0
+  info=$(fm_backend_herdr_cli "$session" tab get "$tab" 2>/dev/null) || info=
+  printf '%s' "$info" | jq -e --arg tab "$tab" --arg workspace "$workspace" '
+    .result.tab.tab_id == $tab and .result.tab.workspace_id == $workspace
+  ' >/dev/null 2>&1 || rollback_status=1
+  info=$(fm_backend_herdr_cli "$session" pane get "$pane" 2>/dev/null) || info=
+  printf '%s' "$info" | jq -e --arg pane "$pane" --arg tab "$tab" --arg workspace "$workspace" '
+    .result.pane.pane_id == $pane
+    and .result.pane.tab_id == $tab
+    and .result.pane.workspace_id == $workspace
+  ' >/dev/null 2>&1 || rollback_status=1
+  tabs=$(fm_backend_herdr_cli "$session" tab list --workspace "$workspace" 2>/dev/null) || tabs=
+  matches=$(printf '%s' "$tabs" | jq -r --arg tab "$tab" --arg label "$label" '
+    select((.result.tabs | type) == "array")
+    | [(.result.tabs[] | select(.tab_id == $tab and .label == $label))] | length
+  ' 2>/dev/null) || matches=
+  [ "$matches" = 1 ] || rollback_status=1
+  [ "$(fm_backend_herdr_pane_agent_state "$session" "$old_pane")" = dead ] || rollback_status=1
+  [ "$(fm_backend_herdr_pane_agent_state "$session" "$pane")" = no-agent ] || rollback_status=1
+  if [ "$rollback_status" -ne 0 ]; then
+    if fm_backend_herdr_recovery_rollback_task \
+        "$session" "$workspace" "$tab" "$pane" "$label" \
+        "$FM_BACKEND_HERDR_RECOVERY_FOCUS_BEFORE"; then
+      echo "error: herdr replacement ownership or readiness could not be verified; the unpublished endpoint was rolled back" >&2
+    else
+      echo "error: herdr replacement ownership or readiness could not be verified, and its exact rollback could not be confirmed" >&2
+    fi
+    return 1
+  fi
+  FM_BACKEND_HERDR_RECOVERY_TAB_ID=$tab
+  FM_BACKEND_HERDR_RECOVERY_PANE_ID=$pane
+  printf '%s %s' "$tab" "$pane"
+}
+
 # fm_backend_herdr_projection_create_task: create one disposable presentation
 # workspace and its normal fm-<id> task tab without looking up, adopting, or
 # reusing any existing workspace.
