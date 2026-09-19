@@ -151,9 +151,9 @@ parked, and `consistent` otherwise.  It exits 1 when any row is a conflict or
 missing, 0 otherwise.  Options: --home DIR (default FM_HOME), --crew-state
 CMD (default the fm-crew-state.sh beside this script), --fleet-id.
 
-Exit status: 0 on success; 2 on a usage error, a refused credential, or a hub
-speaking another protocol.  An unreachable hub is not an exit for serve: it
-says so on stderr once, emits nothing, and retries every tick.
+Exit status: 0 on success; 2 on a usage error, a refused credential, or an
+incompatible hub.  An unreachable hub is not an exit for serve: it says so on
+stderr once, emits nothing, and retries every tick.
 """
 
 from __future__ import annotations
@@ -175,6 +175,7 @@ BRIDGE_VERSION = "1.0.0"
 # The hub wire protocol this adapter reads.  Anything else is refused rather
 # than read on guessed routes.
 HUB_PROTOCOL = 2
+CURRENT_EXECUTION_CAPABILITY = "current_execution"
 
 DEFAULT_FLEET_ID = "firstmate"
 DEFAULT_INTERVAL_MS = 500
@@ -385,12 +386,19 @@ class HubClient:
                                  % (self.url, path))
         return payload
 
-    def check_protocol(self) -> None:
+    def check_compatibility(self) -> None:
         health = self.get("/v1/health")
         protocol = health.get("protocol")
         if protocol != HUB_PROTOCOL:
             raise BridgeError("the hub at %s speaks protocol %r; this bridge reads protocol %d"
                               % (self.url, protocol, HUB_PROTOCOL))
+        capabilities = health.get("capabilities")
+        if (not isinstance(capabilities, list)
+                or CURRENT_EXECUTION_CAPABILITY not in capabilities):
+            raise BridgeError(
+                "the hub at %s does not advertise the %s capability; restart or "
+                "upgrade the hub before starting this bridge"
+                % (self.url, CURRENT_EXECUTION_CAPABILITY))
 
 
 class Clock:
@@ -516,7 +524,7 @@ class Commander:
 def cmd_command(options: argparse.Namespace) -> int:
     """Read command records on stdin, place each order, write its answer."""
     client = HubClient(options.hub, read_token(options.token_file))
-    client.check_protocol()
+    client.check_compatibility()
     commander = Commander(client, options.fleet_id)
     for line in sys.stdin:
         line = line.strip()
@@ -552,7 +560,7 @@ def cmd_serve(options: argparse.Namespace) -> int:
     client = HubClient(options.hub, read_token(options.token_file))
     bridge = Bridge(options.fleet_id, default_epoch() if options.epoch is None else options.epoch)
     clock = Clock()
-    # The protocol is checked before the first record and again whenever the
+    # Compatibility is checked before the first record and again whenever the
     # hub comes back, because a hub that went away may return upgraded.
     verified = False
     last_problem = ""
@@ -560,7 +568,7 @@ def cmd_serve(options: argparse.Namespace) -> int:
         started = time.monotonic()
         try:
             if not verified:
-                client.check_protocol()
+                client.check_compatibility()
                 verified = True
             records = tick(client, bridge, clock)
         except HubUnreachable as exc:
@@ -584,7 +592,7 @@ def cmd_snapshot(options: argparse.Namespace) -> int:
     client = HubClient(options.hub, read_token(options.token_file))
     bridge = Bridge(options.fleet_id, default_epoch() if options.epoch is None else options.epoch)
     try:
-        client.check_protocol()
+        client.check_compatibility()
         emit(tick(client, bridge, Clock()))
     except HubUnreachable as exc:
         print("fm-stream-bridge: %s" % exc, file=sys.stderr)
@@ -705,7 +713,7 @@ def cmd_compare(options: argparse.Namespace) -> int:
     elif options.hub and options.token_file:
         client = HubClient(options.hub, read_token(options.token_file))
         try:
-            client.check_protocol()
+            client.check_compatibility()
             records = tick(client, Bridge(options.fleet_id, 0), Clock())
         except HubUnreachable as exc:
             raise BridgeError(str(exc))
