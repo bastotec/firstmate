@@ -21,7 +21,7 @@ fm_tool_semver_parts() {  # <tool-name> <version-output>
         return 0
       }
       sub(/^[vV]/, "", token)
-      if (token !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) return 0
+      if (token !~ /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/) return 0
       split(token, parts, /\./)
       print parts[1], parts[2], parts[3]
       return 1

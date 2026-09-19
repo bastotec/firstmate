@@ -350,6 +350,7 @@ newer no-mistakes major is accepted^no-mistakes version v2.0.0 (fake)^empty
 older no-mistakes patch reports an upgrade^no-mistakes version v1.45.4 (fake)^missing
 unparseable no-mistakes version stays incompatible without reporting absence^no-mistakes development build^unreadable
 dotted date in no-mistakes development identifier is unreadable^no-mistakes development build 2026.09.19^unreadable
+directly associated dotted date is unreadable^no-mistakes 2026.09.19^unreadable
 four-part no-mistakes identifier is unreadable^no-mistakes 1.46.0.1^unreadable
 ROWS
   pass "bootstrap enforces no-mistakes minimum version"
