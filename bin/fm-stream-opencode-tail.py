@@ -36,11 +36,11 @@ has nothing to type into.  The kill command stops the tail and closes the
 endpoint out; the status command appends to --status-path exactly as the
 agent's does, on the machine that owns the record.
 
-The reusable wire and command contract - registration, heartbeats, rejoin
-after a hub restart, the command poll, the state record shape, and the
-strictly increasing seq - is owned by bin/fm_stream_tail_lib.py.
-The Claude transcript adapter remains observability only and independently
-publishes its transcript-specific counter shape through the same hub routes.
+The shared wire contract - registration, heartbeats, rejoin after a hub
+restart, the state envelope, and the strictly increasing seq - is owned by
+bin/fm_stream_tail_lib.py and used by both transcript adapters.
+This adapter owns its command poll and command-capable `tail` payload; the
+Claude adapter supplies a counter-only payload and remains observability only.
 
 Commands:
 

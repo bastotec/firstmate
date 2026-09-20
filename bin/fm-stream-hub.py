@@ -1718,6 +1718,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # authorizes recovery.
             return answer
         answer["alive"] = bool(state.get("alive"))
+        for key in ("seq", "tokens", "messages", "tail"):
+            if key in state:
+                answer[key] = state[key]
         if field == "foreground":
             answer["foreground"] = state.get("foreground") or []
         else:

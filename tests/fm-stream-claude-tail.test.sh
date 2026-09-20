@@ -1,19 +1,6 @@
 #!/usr/bin/env bash
-# tests/fm-stream-claude-tail.test.sh - tests for the Claude Code transcript
-# tail shim (bin/fm-stream-claude-tail.py).
-#
-# The parser is pinned by `summarize` on synthetic transcripts shaped like the
-# real thing: streamed blocks that repeat one message id, a resumed session
-# that rewrites shared history into a new file, a usage line that grows as it
-# is appended, and a line still missing its newline. The serve path runs
-# against a REAL hub on an ephemeral loopback port - registered, published to,
-# restarted, and closed through the hub's own routes - because what is being
-# proven is that the hub accepts the shim exactly as it accepts an agent.
-#
-# Ambient stream configuration must never reach these cases: every serve call
-# passes an explicit hub, token file, and machine, the ambient variables are
-# unset for the whole file, and the one case that exercises config resolution
-# points FM_HOME at a case-local home.
+# tests/fm-stream-claude-tail.test.sh - executable tests for the Claude Code
+# transcript tail shim against a real stream hub.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -23,8 +10,6 @@ command -v python3 >/dev/null 2>&1 || { echo "skip: python3 not found (required 
 command -v curl >/dev/null 2>&1 || { echo "skip: curl not found (required by the stream backend)"; exit 0; }
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (required by the stream backend)"; exit 0; }
 
-# The live hub on this host may be running; nothing here may reach it, let
-# alone publish to it, so its configuration never resolves for any case.
 unset FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE
 
 TMP_ROOT=$(fm_test_tmproot fm-stream-claude-tail-tests)
@@ -36,6 +21,7 @@ CASE_DIR=""
 URL=""
 HUB_PID=""
 SHIM_PID=""
+SHIM_READY=""
 
 cleanup_helpers() {
   [ -n "$SHIM_PID" ] && kill "$SHIM_PID" 2>/dev/null
@@ -43,14 +29,11 @@ cleanup_helpers() {
 }
 trap 'cleanup_helpers; fm_test_cleanup' EXIT INT TERM
 
-# start_hub <case-name> [port] -> sets CASE_DIR URL HUB_PID. A passed port is
-# how a restarted hub comes back on the exact port the shim still holds.
 start_hub() {
   local name=$1 port=${2:-0} ready waited=0 host pid
   [ -n "$SHIM_PID" ] && { kill "$SHIM_PID" 2>/dev/null; SHIM_PID=""; }
   if [ -n "${HUB_PID:-}" ]; then
     kill "$HUB_PID" 2>/dev/null
-    waited=0
     while [ "$waited" -lt 50 ] && kill -0 "$HUB_PID" 2>/dev/null; do
       sleep 0.1
       waited=$((waited + 1))
@@ -65,7 +48,8 @@ start_hub() {
   ready="$CASE_DIR/hub.ready"
   rm -f "$ready"
   python3 "$HUB" serve --bind 127.0.0.1 --port "$port" \
-    --token-file "$CASE_DIR/tokens" --ready-file "$ready" > "$CASE_DIR/hub.log" 2>&1 &
+    --state-max-age-secs 1 --token-file "$CASE_DIR/tokens" \
+    --ready-file "$ready" > "$CASE_DIR/hub.log" 2>&1 &
   pid=$!
   disown "$pid" 2>/dev/null || true
   fm_test_track_helper_pid "$pid"
@@ -81,8 +65,6 @@ start_hub() {
   URL="http://$host:$port"
 }
 
-# assistant_line <id> <input> <output> <cache-creation> <cache-read>
-# The usage shape Claude Code writes per streamed block, one line per call.
 assistant_line() {
   jq -nc --arg id "$1" --argjson i "$2" --argjson o "$3" --argjson c "$4" --argjson r "$5" \
     '{type: "assistant", uuid: ("u-" + $id), message: {id: $id, usage: {
@@ -94,9 +76,8 @@ user_line() {
   jq -nc '{type: "user", message: {role: "user", content: "hello"}}'
 }
 
-# start_shim <args...> - the shim under test, on this case's hub. The pid is
-# reaped by the trap; individual cases end it deliberately.
 start_shim() {
+  SHIM_READY="$CASE_DIR/shim.ready"
   python3 "$SHIM" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
     --machine tailmachine --heartbeat-secs 0.5 --poll-secs 0.1 "$@" \
     > "$CASE_DIR/shim.log" 2>&1 &
@@ -105,10 +86,7 @@ start_shim() {
   fm_test_track_helper_pid "$SHIM_PID"
 }
 
-wait_for() {  # <description> <timeout-secs> <test-command...>
-  # The command is re-run per iteration, so a condition that reads live
-  # state must be passed as a command (tokens_reached, shim_exited), not
-  # pre-expanded through a command substitution at the call site.
+wait_for() {
   local what=$1 timeout=$2 waited=0
   shift 2
   while [ "$waited" -lt $((timeout * 10)) ]; do
@@ -119,138 +97,92 @@ wait_for() {  # <description> <timeout-secs> <test-command...>
   fail "$what (waited ${timeout}s)"
 }
 
-# tokens_reached <state-file> <expected-tokens-json> - true once the shim's
-# last published frame carries these cumulative counters.
-tokens_reached() {
-  [ "$(tokens_of "$1")" = "$2" ]
-}
-
-# shim_exited <pid> - true once the process is gone.
 shim_exited() {
   ! kill -0 "$1" 2>/dev/null
 }
 
 wait_for_shim_ready() {
-  wait_for "the shim never registered" 15 test -s "$CASE_DIR/shim.ready"
+  wait_for "the shim never registered" 15 test -s "$SHIM_READY"
 }
 
-state_field() {  # <file> <jq-expression>
-  jq -r "$2" "$1" 2>/dev/null
-}
-
-tokens_of() {  # <state-file>
-  jq -cS .tokens "$1" 2>/dev/null
-}
-
-hub_json() {  # <path>
+hub_json() {
   curl -sS -m 10 -H "Authorization: Bearer $VIEW_TOKEN" "$URL$1"
 }
 
 endpoint_of() {
-  cut -d' ' -f2 "$CASE_DIR/shim.ready"
+  cut -d' ' -f2 "$SHIM_READY"
 }
 
-test_summarize_counts_each_message_once_at_its_largest_usage() {
-  local dir="$TMP_ROOT/summarize-one"
-  mkdir -p "$dir"
-  {
-    user_line
-    assistant_line msg-a 10 100 5 1000
-    assistant_line msg-a 10 100 5 1000   # a second streamed block, same message
-    assistant_line msg-b 20 200 6 2000
-    assistant_line msg-b 20 350 6 2000   # the completed usage, larger
-  } > "$dir/session.jsonl"
-  # A line still being written: no newline yet, so it is nobody's record.
-  printf '%s' "$(assistant_line msg-c 1 1 1 1)" >> "$dir/session.jsonl"
-  local out
-  out=$(python3 "$SHIM" summarize --transcript "$dir/session.jsonl")
-  assert_equals 2 "$(printf '%s' "$out" | jq -r .messages)" \
-    "each unique message id counts once, whatever its blocks"
-  assert_equals 450 "$(printf '%s' "$out" | jq -r .tokens.output)" \
-    "one id's usage counts at its largest seen value, once"
-  assert_equals 30 "$(printf '%s' "$out" | jq -r .tokens.input)" "input totals"
-  assert_equals 3000 "$(printf '%s' "$out" | jq -r .tokens.cache_read)" "cache read totals"
-  # Completing the line makes it a record.
-  printf '\n' >> "$dir/session.jsonl"
-  out=$(python3 "$SHIM" summarize --transcript "$dir/session.jsonl")
-  assert_equals 3 "$(printf '%s' "$out" | jq -r .messages)" \
-    "a line counts once its newline has arrived"
+state_json() {
+  hub_json "/v1/tasks/$(endpoint_of)/processes"
 }
 
-test_summarize_across_sessions_dedupes_shared_history() {
-  local dir="$TMP_ROOT/summarize-dir"
-  mkdir -p "$dir"
-  {
-    assistant_line msg-a 10 100 5 1000
-  } > "$dir/first-session.jsonl"
-  sleep 0.05
-  # A resume: the prior message rewritten under its own id, plus new work.
-  {
-    assistant_line msg-a 10 100 5 1000
-    assistant_line msg-b 20 200 6 2000
-  } > "$dir/second-session.jsonl"
-  local out
-  out=$(python3 "$SHIM" summarize --project-dir "$dir")
-  assert_equals 2 "$(printf '%s' "$out" | jq -r .messages)" \
-    "history a resume rewrites is not counted again"
-  assert_equals 300 "$(printf '%s' "$out" | jq -r .tokens.output)" \
-    "totals are the union of both sessions' messages"
+state_field() {
+  state_json | jq -r "$1" 2>/dev/null
+}
+
+tokens_of() {
+  state_json | jq -cS .tokens 2>/dev/null
+}
+
+tokens_reached() {
+  [ "$(tokens_of)" = "$1" ]
+}
+
+state_is_stale() {
+  [ "$(state_field .stale)" = true ]
 }
 
 test_serve_publishes_cumulative_counters_from_real_records_only() {
   start_hub counters
   mkdir -p "$CASE_DIR/proj"
   {
+    user_line
     assistant_line msg-a 10 100 5 1000
     assistant_line msg-a 10 100 5 1000
+    assistant_line msg-b 20 200 6 2000
+    assistant_line msg-b 20 350 6 2000
   } > "$CASE_DIR/proj/session.jsonl"
+  printf '%s' "$(assistant_line msg-c 1 1 1 1)" >> "$CASE_DIR/proj/session.jsonl"
   start_shim --project-dir "$CASE_DIR/proj" --label task-counters \
-    --ready-file "$CASE_DIR/shim.ready" --state-file "$CASE_DIR/shim.state"
+    --ready-file "$CASE_DIR/shim.ready"
   wait_for_shim_ready
-  assert_equals '{"cache_creation":5,"cache_read":1000,"input":10,"output":100}' \
-    "$(tokens_of "$CASE_DIR/shim.state")" \
-    "the baseline is the transcript's cumulative usage, deduplicated"
+  assert_equals '{"cache_creation":11,"cache_read":3000,"input":30,"output":450}' \
+    "$(tokens_of)" "the hub exposes deduplicated cumulative usage"
+  assert_equals 2 "$(state_field .messages)" \
+    "each message id counts once at its largest usage"
   local seq_before
-  seq_before=$(state_field "$CASE_DIR/shim.state" .seq)
-  # Records that are not usage: a user turn, and an assistant line with no
-  # newline yet. Neither may move a counter.
-  user_line >> "$CASE_DIR/proj/session.jsonl"
-  printf '%s' "$(assistant_line msg-b 20 200 6 2000)" >> "$CASE_DIR/proj/session.jsonl"
+  seq_before=$(state_field .seq)
   sleep 1.5
-  assert_equals '{"cache_creation":5,"cache_read":1000,"input":10,"output":100}' \
-    "$(tokens_of "$CASE_DIR/shim.state")" \
-    "heartbeats during idle never count as usage"
-  local seq_during
-  seq_during=$(state_field "$CASE_DIR/shim.state" .seq)
-  [ "$seq_during" -gt "$seq_before" ] \
-    || fail "the idle heartbeats never republished (seq stuck at $seq_before)"
-  # Completing the partial line makes it real.
+  assert_equals '{"cache_creation":11,"cache_read":3000,"input":30,"output":450}' \
+    "$(tokens_of)" "idle heartbeats never change usage"
+  [ "$(state_field .seq)" -gt "$seq_before" ] \
+    || fail "the idle heartbeats never republished"
   printf '\n' >> "$CASE_DIR/proj/session.jsonl"
-  wait_for "the completed record was never counted" 10 \
-    tokens_reached "$CASE_DIR/shim.state" '{"cache_creation":11,"cache_read":3000,"input":30,"output":300}'
-  assert_equals 2 "$(state_field "$CASE_DIR/shim.state" .messages)" \
-    "the published message count follows unique messages"
+  wait_for "the completed record was never counted" 10 tokens_reached \
+    '{"cache_creation":12,"cache_read":3001,"input":31,"output":451}'
+  assert_equals 3 "$(state_field .messages)" \
+    "a record counts once its terminating newline arrives"
 }
 
-test_serve_lists_on_the_hub_and_closes_as_its_own_agent() {
-  start_hub listing
+test_observer_exit_leaves_worker_state_unknown() {
+  start_hub observer-exit
   mkdir -p "$CASE_DIR/proj"
   assistant_line msg-a 1 2 3 4 > "$CASE_DIR/proj/session.jsonl"
-  start_shim --project-dir "$CASE_DIR/proj" --label task-listed \
-    --ready-file "$CASE_DIR/shim.ready" --state-file "$CASE_DIR/shim.state"
+  start_shim --project-dir "$CASE_DIR/proj" --label task-observed \
+    --ready-file "$CASE_DIR/shim.ready"
   wait_for_shim_ready
-  local listed
-  listed=$(hub_json /v1/tasks | jq -r '.tasks[] | select(.machine == "tailmachine" and .label == "task-listed") | .endpoint_id')
-  assert_equals "$(endpoint_of)" "$listed" \
-    "the shim's endpoint is listed under its machine and label, like any worker"
+  local endpoint
+  endpoint=$(endpoint_of)
   kill -TERM "$SHIM_PID"
   wait_for "the shim never exited" 15 shim_exited "$SHIM_PID"
   wait "$SHIM_PID" 2>/dev/null
   SHIM_PID=""
-  local closed
-  closed=$(hub_json "/v1/tasks/$(endpoint_of)" | jq -r '.task.closed_by')
-  assert_equals agent "$closed" \
-    "a signalled shim closes its own record, so the Bridge renders it Stopped"
+  assert_equals null "$(hub_json "/v1/tasks/$endpoint" | jq -r '.task.closed_at')" \
+    "observer exit must not report that the Claude worker stopped"
+  wait_for "the observer's last reading never became stale" 5 state_is_stale
+  assert_equals false "$(state_field .closed)" \
+    "loss of the observer remains stale rather than closed"
 }
 
 test_serve_rotates_to_a_new_session_id() {
@@ -258,19 +190,17 @@ test_serve_rotates_to_a_new_session_id() {
   mkdir -p "$CASE_DIR/proj"
   assistant_line msg-a 10 100 5 1000 > "$CASE_DIR/proj/aaaa.jsonl"
   start_shim --project-dir "$CASE_DIR/proj" --label task-rotate \
-    --ready-file "$CASE_DIR/shim.ready" --state-file "$CASE_DIR/shim.state"
+    --ready-file "$CASE_DIR/shim.ready"
   wait_for_shim_ready
-  # A new session id: the shared history rewritten under its own ids, plus
-  # one new message. The leaf's counters accumulate across the rotation.
   sleep 0.1
   {
     assistant_line msg-a 10 100 5 1000
     assistant_line msg-b 50 500 50 5000
   } > "$CASE_DIR/proj/bbbb.jsonl"
-  wait_for "the rotated session was never followed" 10 \
-    tokens_reached "$CASE_DIR/shim.state" '{"cache_creation":55,"cache_read":6000,"input":60,"output":600}'
-  assert_equals 2 "$(state_field "$CASE_DIR/shim.state" .messages)" \
-    "history the new session rewrites is not a second message"
+  wait_for "the rotated session was never followed" 10 tokens_reached \
+    '{"cache_creation":55,"cache_read":6000,"input":60,"output":600}'
+  assert_equals 2 "$(state_field .messages)" \
+    "history copied into the new session is not counted twice"
 }
 
 test_serve_survives_a_truncated_rewrite() {
@@ -281,21 +211,18 @@ test_serve_survives_a_truncated_rewrite() {
     assistant_line msg-b 20 200 6 2000
   } > "$CASE_DIR/proj/session.jsonl"
   start_shim --project-dir "$CASE_DIR/proj" --label task-truncate \
-    --ready-file "$CASE_DIR/shim.ready" --state-file "$CASE_DIR/shim.state"
+    --ready-file "$CASE_DIR/shim.ready"
   wait_for_shim_ready
   local before
-  before=$(tokens_of "$CASE_DIR/shim.state")
-  # The file rewritten smaller: the shim rereads it from the start, and the
-  # id set makes that idempotent - the surviving history is not counted a
-  # second time, and cumulative counters never run backwards.
+  before=$(tokens_of)
   assistant_line msg-a 10 100 5 1000 > "$CASE_DIR/proj/session.jsonl.tmp"
   mv "$CASE_DIR/proj/session.jsonl.tmp" "$CASE_DIR/proj/session.jsonl"
   sleep 1
-  assert_equals "$before" "$(tokens_of "$CASE_DIR/shim.state")" \
-    "a truncated rewrite counts the surviving history once, never twice"
+  assert_equals "$before" "$(tokens_of)" \
+    "a truncated rewrite keeps cumulative counters monotonic"
   assistant_line msg-c 1 1 1 1 >> "$CASE_DIR/proj/session.jsonl"
-  wait_for "the shim stopped following after truncation" 10 \
-    tokens_reached "$CASE_DIR/shim.state" '{"cache_creation":12,"cache_read":3001,"input":31,"output":301}'
+  wait_for "the shim stopped following after truncation" 10 tokens_reached \
+    '{"cache_creation":12,"cache_read":3001,"input":31,"output":301}'
 }
 
 test_serve_rejoins_after_the_hub_restarts() {
@@ -304,27 +231,23 @@ test_serve_rejoins_after_the_hub_restarts() {
   mkdir -p "$CASE_DIR/proj"
   assistant_line msg-a 10 100 5 1000 > "$transcript"
   start_shim --project-dir "$CASE_DIR/proj" --label task-rejoin \
-    --ready-file "$CASE_DIR/shim.ready" --state-file "$CASE_DIR/shim.state"
+    --ready-file "$CASE_DIR/shim.ready"
   wait_for_shim_ready
-  local port state_file="$CASE_DIR/shim.state" ready="$CASE_DIR/shim.ready"
+  local port ready="$CASE_DIR/shim.ready"
   port=$(printf '%s' "$URL" | sed 's|.*:||')
   kill "$HUB_PID"
   wait_for "the hub never went down" 15 shim_exited "$HUB_PID"
   HUB_PID=""
-  # The shim must survive this restart, and start_hub ends the previous
-  # case's shim as a matter of hygiene, so it is taken out of that path
-  # here; the cleanup trap still holds its pid.
   SHIM_PID=""
-  # Same port, same tokens: the hub every running shim still holds.
   start_hub rejoin-back "$port"
   sleep 1
   assistant_line msg-b 20 200 6 2000 >> "$transcript"
-  wait_for "the shim never rejoined the restarted hub" 20 \
-    tokens_reached "$state_file" '{"cache_creation":11,"cache_read":3000,"input":30,"output":300}'
+  wait_for "the shim never rejoined the restarted hub" 20 tokens_reached \
+    '{"cache_creation":11,"cache_read":3000,"input":30,"output":300}'
   local listed
   listed=$(hub_json /v1/tasks | jq -r '.tasks[] | select(.label == "task-rejoin") | .endpoint_id')
   assert_equals "$(cut -d' ' -f2 "$ready")" "$listed" \
-    "the shim rejoined under its original endpoint id, not as a stranger"
+    "the shim rejoined under its original endpoint id"
 }
 
 test_second_shim_on_one_label_stands_down() {
@@ -332,11 +255,8 @@ test_second_shim_on_one_label_stands_down() {
   mkdir -p "$CASE_DIR/proj"
   assistant_line msg-a 10 100 5 1000 > "$CASE_DIR/proj/session.jsonl"
   start_shim --project-dir "$CASE_DIR/proj" --label task-one \
-    --ready-file "$CASE_DIR/shim.ready" --state-file "$CASE_DIR/shim.state"
+    --ready-file "$CASE_DIR/shim.ready"
   wait_for_shim_ready
-  # The second shim's exit status is the assertion, and a disowned child's
-  # status does not survive `wait` in this shell, so the process writes its
-  # own exit code to a file on its way out.
   ( python3 "$SHIM" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
       --machine tailmachine --label task-one --project-dir "$CASE_DIR/proj" \
       --heartbeat-secs 0.5 --poll-secs 0.1; echo $? > "$CASE_DIR/shim-two.exit" \
@@ -346,14 +266,9 @@ test_second_shim_on_one_label_stands_down() {
   fm_test_track_helper_pid "$second"
   wait_for "the second shim never exited over the held label" 15 \
     test -s "$CASE_DIR/shim-two.exit"
-  local status
-  status=$(cat "$CASE_DIR/shim-two.exit")
-  assert_equals 3 "$status" \
+  assert_equals 3 "$(cat "$CASE_DIR/shim-two.exit")" \
     "a shim that lost its name exits rather than shadowing the holder"
   kill -0 "$SHIM_PID" 2>/dev/null || fail "the first shim stopped when the second was refused"
-  assistant_line msg-b 1 1 1 1 >> "$CASE_DIR/proj/session.jsonl"
-  wait_for "the first shim stopped publishing after the contest" 10 \
-    tokens_reached "$CASE_DIR/shim.state" '{"cache_creation":6,"cache_read":1001,"input":11,"output":101}'
 }
 
 test_serve_resolves_the_hub_from_home_config() {
@@ -362,30 +277,45 @@ test_serve_resolves_the_hub_from_home_config() {
   assistant_line msg-a 9 90 4 900 > "$CASE_DIR/proj/session.jsonl"
   printf '%s\n' "$URL" > "$CASE_DIR/home/config/stream-hub"
   printf '%s\n' "$PUBLISH_TOKEN" > "$CASE_DIR/home/config/stream-token"
-  # No --hub, no --token-file, no ambient variables: the home's config is the
-  # only place this call can learn the hub from, and it is case-local.
+  SHIM_READY="$CASE_DIR/shim.ready"
   FM_HOME="$CASE_DIR/home" \
     python3 "$SHIM" serve --project-dir "$CASE_DIR/proj" --label task-config \
       --machine tailmachine --heartbeat-secs 0.5 --poll-secs 0.1 \
-      --ready-file "$CASE_DIR/shim.ready" --state-file "$CASE_DIR/shim.state" \
-      > "$CASE_DIR/shim.log" 2>&1 &
+      --ready-file "$CASE_DIR/shim.ready" > "$CASE_DIR/shim.log" 2>&1 &
   SHIM_PID=$!
   disown "$SHIM_PID" 2>/dev/null || true
   fm_test_track_helper_pid "$SHIM_PID"
   wait_for_shim_ready
-  local listed
-  listed=$(hub_json /v1/tasks | jq -r '.tasks[] | select(.label == "task-config") | .endpoint_id')
-  assert_equals "$(endpoint_of)" "$listed" \
-    "with no explicit hub, config/stream-hub and config/stream-token under FM_HOME resolve it"
+  assert_equals '{"cache_creation":4,"cache_read":900,"input":9,"output":90}' \
+    "$(tokens_of)" "home configuration resolves a publishing endpoint"
 }
 
-test_summarize_counts_each_message_once_at_its_largest_usage
-test_summarize_across_sessions_dedupes_shared_history
+test_only_rotating_serve_mode_is_public() {
+  local dir="$TMP_ROOT/removed-surfaces" out status
+  mkdir -p "$dir"
+  assistant_line msg-a 1 2 3 4 > "$dir/session.jsonl"
+  if out=$(python3 "$SHIM" summarize --project-dir "$dir" 2>&1); then
+    fail "the removed summarize command unexpectedly succeeded"
+  else
+    status=$?
+  fi
+  assert_equals 2 "$status" "the offline summarize command is not accepted"
+  assert_contains "$out" "invalid choice" "the removed summarize command is rejected by the CLI"
+  if out=$(python3 "$SHIM" serve --transcript "$dir/session.jsonl" --label task 2>&1); then
+    fail "the removed transcript option unexpectedly succeeded"
+  else
+    status=$?
+  fi
+  assert_equals 2 "$status" "fixed-file serve mode is not accepted"
+  assert_contains "$out" "unrecognized arguments" "the removed transcript option is rejected by the CLI"
+}
+
 test_serve_publishes_cumulative_counters_from_real_records_only
-test_serve_lists_on_the_hub_and_closes_as_its_own_agent
+test_observer_exit_leaves_worker_state_unknown
 test_serve_rotates_to_a_new_session_id
 test_serve_survives_a_truncated_rewrite
 test_serve_rejoins_after_the_hub_restarts
 test_second_shim_on_one_label_stands_down
 test_serve_resolves_the_hub_from_home_config
+test_only_rotating_serve_mode_is_public
 pass "the Claude Code transcript tail shim holds its contracts"

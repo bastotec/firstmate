@@ -74,7 +74,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-stream-bridge.py`    | Translate the hub into the Bridge UI's live wire format, read-only                   |
 | `fm-stream-claude-tail.py` | Tail a Claude Code session transcript onto the hub as an observability-only endpoint |
 | `fm-stream-opencode-tail.py` | Tail one opencode session's own storage onto the hub as a real endpoint               |
-| `fm_stream_tail_lib.py`  | The reusable wire and command contract used by command-capable tail adapters         |
+| `fm_stream_tail_lib.py`  | The shared registration, state-publish, and hub-rejoin contract behind tail adapters |
 | `fm-config-push.sh`      | Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed |
 | `fm-project-mode.sh`     | Resolve a project's registered delivery posture from `data/projects.md` for fleet sync and home seeding |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval            |

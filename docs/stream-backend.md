@@ -90,13 +90,14 @@ The agent owns a pseudoterminal, so it can only publish a worker whose harness f
 A worker a harness runs itself - an opencode session or a Claude Code transcript - owns its own session storage, and to the hub it is invisible: no endpoint and no Bridge feed entry.
 A tail adapter closes that gap from the outside by reading the harness's on-disk session storage and publishing cumulative token usage to the hub as a real endpoint.
 
-`bin/fm-stream-claude-tail.py` follows either one Claude Code transcript or the newest transcript in one `~/.claude/projects/` directory.
+`bin/fm-stream-claude-tail.py` follows the newest transcript in one `~/.claude/projects/` directory.
 It deduplicates streamed and resumed history by assistant message id, survives truncation and session rotation, and re-registers the same endpoint after a hub restart.
 Its flags, counter shape, and credential resolution live in its header.
+It uses the shared tail publisher but emits its transcript-specific counters instead of opencode's `tail` block.
 
 `bin/fm-stream-opencode-tail.py` follows one opencode session selected with `--session`, or the newest main session in a `--directory`.
-Its flags, SQLite storage contract, and refusal posture for what it cannot measure live in its header.
-Its reusable registration, heartbeat, rejoin, command, state-record, and sequence contracts are owned by `bin/fm_stream_tail_lib.py`.
+Its command handling, SQLite storage contract, and refusal posture for what it cannot measure live in its header.
+Registration, heartbeat, hub rejoin, state-envelope, and sequence contracts shared by both adapters are owned by `bin/fm_stream_tail_lib.py`.
 
 What a tail adapter publishes is bounded by what the harness itself recorded:
 
