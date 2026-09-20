@@ -63,14 +63,32 @@ case "${1:-}" in
     fi
     exit 0 ;;
   display-message)
-    for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
+    for a in "$@"; do
+      case "$a" in
+        *cursor_y*) printf '1\n'; exit 0 ;;
+        *pane_tty*) printf '\n'; exit 0 ;;
+        *pane_current_command*)
+          case "${FM_FAKE_TMUX_COMPOSER:-}" in pi-*) printf 'pi\n' ;; *) printf 'fakepane\n' ;; esac
+          exit 0
+          ;;
+      esac
+    done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
-    if [ "${FM_FAKE_TMUX_COMPOSER:-}" = pending ]; then
-      printf '╭──────────────╮\n│ leftover txt │\n╰──────────────╯\n'
-    else
-      printf '╭────╮\n│    │\n╰────╯\n'
-    fi
+    case "${FM_FAKE_TMUX_COMPOSER:-}" in
+      pending)
+        printf '╭──────────────╮\n│ leftover txt │\n╰──────────────╯\n'
+        ;;
+      pi-idle)
+        printf '────────────────────────\n\033[39m ❯ \033]4;38;rgb:0000/afaf/d7d7\007\033]4;39;rgb:1111/bbbb/eeee\033\\\033[7m \033[0m\n────────────────────────\n'
+        ;;
+      pi-draft)
+        printf '────────────────────────\n\033[39m ❯ 4;38;rgb:0000/afaf/d7d7 is a real draft\033[7m \033[0m\n────────────────────────\n'
+        ;;
+      *)
+        printf '╭────╮\n│    │\n╰────╯\n'
+        ;;
+    esac
     exit 0 ;;
   list-windows) printf 'fm-t1\n'; exit 0 ;;
 esac
@@ -174,6 +192,23 @@ test_pending_composer_skips_ring_advisorily() {
   assert_contains "$(cat "$err")" "watcher will re-ring" \
     "the skip notice should point at the re-ring"
   pass "fm-send inbox: a visibly pending composer skips the ring, and the steer stays durably sent"
+}
+
+test_pi_terminal_furniture_rings_but_rgb_draft_defers() {
+  local dir err rc
+  dir=$(setup_case pi-furniture pi); err="$dir/send.err"
+  run_send "$dir" "$err" FM_FAKE_TMUX_COMPOSER=pi-idle -- t1 "steer after replacement debris"; rc=$?
+  expect_code 0 "$rc" "an idle Pi 0.85 composer with complete recurring OSC replies should accept a doorbell"
+  assert_contains "$(cat "$dir/send.log")" "Firstmate instruction waiting" \
+    "terminal furniture must not strand an idle Pi steering doorbell"
+
+  dir=$(setup_case pi-rgb-draft pi); err="$dir/send.err"
+  run_send "$dir" "$err" FM_FAKE_TMUX_COMPOSER=pi-draft -- t1 "preserve the draft"; rc=$?
+  expect_code 0 "$rc" "a steer deferred for a real Pi draft is still durably sent"
+  [ ! -s "$dir/send.log" ] || fail "a literal RGB-like Pi draft must prevent the doorbell"
+  assert_contains "$(cat "$err")" "watcher will re-ring" \
+    "the real draft should take the ordinary pending-composer path"
+  pass "fm-send inbox: Pi cursor and complete terminal replies allow idle steering while an RGB-like draft stays protected"
 }
 
 test_failed_ring_is_still_sent() {
@@ -342,6 +377,7 @@ test_text_steer_rides_inbox
 test_multiline_steer_is_legal
 test_resend_enqueues_new_sequence
 test_pending_composer_skips_ring_advisorily
+test_pi_terminal_furniture_rings_but_rgb_draft_defers
 test_failed_ring_is_still_sent
 test_harness_invocations_stay_typed
 test_explicit_target_stays_typed

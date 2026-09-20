@@ -621,6 +621,41 @@ Cursor is deliberately outside this cursor-anchored empty-composer matrix becaus
 
 `zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which is the capability the zellij composer classifier reads.
 
+### 2026-09-20 Pi 0.85.1 separated prompt, cursor cell, and OSC replies
+
+Verified on 2026-09-20 on macOS arm64 with tmux 3.6a and Pi 0.85.1 through the real `fm_tmux_composer_state` entry point.
+Pi 0.85.1 changed the idle separated composer from a blank row to a normal `❯` prompt followed by a reverse-video blank software-cursor cell:
+
+```text
+ESC[39m ❯ ESC[7m SPACE ESC[0m
+```
+
+The unchanged classifier read that prompt glyph as pending Pi input, both before and after C-u had cleared a genuine draft, so fresh idle sessions refused steering and guarded relaunch.
+The corrected classifier requires the identity-proven Pi separator pair, an idle or done Pi state, styled capture bytes, exact prompt-only content, and the complete reverse-video blank cell before treating this row as idle furniture.
+A plain `❯` in the older separated shape remains pending, as does `❯ 4;38;rgb:0000/afaf/d7d7 is a real draft`, so neither the glyph nor an RGB-looking payload is discarded by spelling.
+
+The concurrently reported `4;38;rgb:0000/afaf/d7d7` fragments are a separate terminal-input case, not the cursor-cell cause.
+Pi 0.85.1's terminal sequence buffer flushes an incomplete OSC sequence after 50 ms; when a palette response arrives in slower chunks, its `ESC ] 4 ; <index>` prefix is handled separately and the trailing `;rgb:...` bytes become ordinary editor text.
+The Firstmate Pi task extension now holds only a structurally prefixed OSC 4 palette response for a bounded 500 ms and consumes it only after a complete BEL or ST terminator and valid palette-response grammar arrive.
+A literal RGB-looking draft bypasses that filter, while an incomplete or malformed control is replayed byte-for-byte after the bound rather than discarded.
+As a second defensive layer, a byte-complete OSC control retained by a styled screen capture is removed by the shared composer control-sequence parser before structural and ghost-content classification.
+The portable matrix carries two consecutive complete replies to model recurrence after a session replacement, both OSC terminators, the reverse-cell counterfactual, malformed fragments, a literal RGB-like draft, and the bounded input-filter replay behavior.
+
+The token-free live guard now starts a local replacement session with `/new`, proves that replacement idle is empty without first clearing it, types the RGB-like draft and proves it pending, then sends C-u and proves the resulting idle composer empty again:
+
+```sh
+FM_COMPOSER_MATRIX_LIVE=1 bin/fm-test-run.sh tests/fm-composer-matrix-live-e2e.test.sh
+```
+
+The Pi arm's exact output was:
+
+```text
+ok - pi (0.85.1): replacement idle is empty, RGB-like draft is pending, C-u clears, and a fragmented OSC reply is consumed
+```
+
+The full matrix command also detected an unrelated OpenCode 1.18.31 idle-composer drift (`pending`), so that full invocation exited nonzero after the Pi arm passed rather than being recorded as an all-harness pass.
+The executable control-path coverage is `tests/fm-composer-lib.test.sh`, `tests/fm-send-inbox.test.sh`, and `tests/fm-control-relaunch.test.sh`; those drive the shared classifier, a steering doorbell, and guarded Pi relaunch respectively.
+
 ### 2026-09-15 codex-cli 0.154.0 idle starfield and status footer through Herdr
 
 Verified on 2026-09-15 on macOS arm64 (Darwin 25.5.0) against codex-cli 0.154.0 (model gpt-6-astra, fast mode) running as a Codex second mate inside a Herdr pane, read through Herdr's ANSI capture with its exact capability descriptor (`styled=1`, `cursor=0`, `identity=1`, `rows=20`).

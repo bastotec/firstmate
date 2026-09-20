@@ -3745,8 +3745,12 @@ EOF
 // that raced another extension's fresh run keeps state busy via isIdle().
 // "turn_end" fires at every inner turn boundary (one LLM response plus its
 // tool calls) and stays a wake NOTIFICATION touch for the watcher, never
-// current-state truth.
+// current-state truth. The same task extension installs the tracked Pi input
+// filter before the editor so a fragmented OSC palette reply cannot become a
+// pending draft; .pi/extensions/lib/fm-terminal-response-input.ts owns that
+// parser and its bounded replay rule.
 import { execFile } from "node:child_process";
+import { installPiTerminalResponseInputGuard } from "$FM_ROOT/.pi/extensions/lib/fm-terminal-response-input.ts";
 const busyEvent = (state: string, event: string) =>
   new Promise<void>((resolve) => {
     execFile("$FM_ROOT/bin/fm-busy-event.sh", [
@@ -3755,6 +3759,12 @@ const busyEvent = (state: string, event: string) =>
     ], () => resolve());
   });
 export default function (pi: any) {
+  let disposeTerminalResponseInputGuard = () => {};
+  pi.on("session_start", async (_event: any, ctx: any) => {
+    disposeTerminalResponseInputGuard();
+    disposeTerminalResponseInputGuard = await installPiTerminalResponseInputGuard(ctx);
+  });
+  pi.on("session_shutdown", () => disposeTerminalResponseInputGuard());
   pi.on("agent_start", () => busyEvent("busy", "agent-start"));
   pi.on("agent_settled", (_event: any, ctx: any) => {
     if (ctx && typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
