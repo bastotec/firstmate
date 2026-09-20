@@ -1,0 +1,12 @@
+summarize status=2
+usage: fm-stream-claude-tail.py [-h] [--version] [--protocol] {serve} ...
+fm-stream-claude-tail.py: error: argument command: invalid choice: 'summarize' (choose from serve)
+
+fixed-file status=2
+usage: fm-stream-claude-tail.py [-h] [--version] [--protocol] {serve} ...
+fm-stream-claude-tail.py: error: unrecognized arguments: --transcript .test-claude-cli-13246/session.jsonl
+
+state-mirror status=2
+usage: fm-stream-claude-tail.py [-h] [--version] [--protocol] {serve} ...
+fm-stream-claude-tail.py: error: unrecognized arguments: --state-file .test-claude-cli-13246/state.json
+

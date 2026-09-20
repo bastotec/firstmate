@@ -1,0 +1,31 @@
+FM_TEST_BEGIN 2026-09-20T07:16:26Z tests/fm-stream-opencode-tail.test.sh family=unclassified expected_gate_skip=none
+ok - refuses to guess the tailed session
+ok - refuses a missing storage file without creating one
+ok - refuses non-SQLite storage in the refusal voice, not a traceback
+ok - refuses an unknown session id
+ok - registers the fleet/leaf identity in the agent's shape
+ok - publishes zero counters as a fact, never a fabricated estimate
+ok - publishes cumulative counters from real usage records
+ok - accumulates cumulatively with a strictly increasing sequence
+ok - heartbeats on a fixed idle cadence with unchanged counters
+ok - refuses input because a tail adapter owns no terminal
+ok - resumes with full cumulative totals after a restart
+tests/lib.sh: line 162: 88773 Killed: 9               python3 "$STUB" "$CASE_DIR/stub-out" "$STUB_PORT" >> "$CASE_DIR/stub-addr" 2>&1
+ok - lists on the fleet as an ordinary endpoint
+ok - answers state reads fresh, through the agent's own route
+ok - rejoins a restarted hub under the same endpoint id
+ok - appends status lines through the hub, on the machine that owns the record
+ok - acknowledges a kill and closes its own record
+ok - resolves a directory to its newest MAIN session, never a subagent
+ok - closes its endpoint out when opencode archives the session
+ok - exits in the refusal voice when the hub refuses registration
+ok - publishes the session alone while storage has never answered
+ok - heartbeats the session alone while storage stays unreadable
+ok - converges on the real counters as soon as storage answers
+tests/lib.sh: line 162: 56106 Killed: 9               STUB_REFUSE_ENDPOINTS=1 python3 "$STUB" "$CASE_DIR/stub-out" "$STUB_PORT" >> "$CASE_DIR/stub-addr" 2>&1
+tests/lib.sh: line 162: 66994 Killed: 9               STUB_REGISTER_DELAY=2 python3 "$STUB" "$CASE_DIR/stub-out" "$STUB_PORT" >> "$CASE_DIR/stub-addr" 2>&1
+all opencode tail adapter tests passed
+FM_TEST_END 2026-09-20T07:17:41Z tests/fm-stream-opencode-tail.test.sh exit=0 duration_ms=75028 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=76207
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=75028 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-opencode-tail.test.sh duration_ms=75028
