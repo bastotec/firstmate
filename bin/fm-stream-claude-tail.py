@@ -71,6 +71,7 @@ SHIM_VERSION = "1.0.0"
 HUB_PROTOCOL = 2
 LABEL_RE = re.compile(r"\A[A-Za-z0-9._@%+-]{1,128}\Z")
 DEFAULT_HUB_URL = "http://127.0.0.1:7717"
+ROTATION_SCAN_SECS = 5.0
 
 TOKEN_FIELDS = (
     ("input", "input_tokens"),
@@ -176,6 +177,7 @@ class TranscriptSource:
         newest = self._newest_session()
         if newest is not None:
             self._current = TranscriptFile(newest[1])
+        self._next_rotation_scan = time.monotonic() + ROTATION_SCAN_SECS
 
     def _newest_session(self):
         try:
@@ -199,14 +201,17 @@ class TranscriptSource:
         return self._current.path if self._current is not None else ""
 
     def poll(self, counters: Counters) -> bool:
-        newest = self._newest_session()
-        if newest is not None and newest[1] != self.followed_path():
-            try:
-                current_mtime = os.stat(self.followed_path()).st_mtime
-            except OSError:
-                current_mtime = 0.0
-            if newest[0] > current_mtime:
-                self._current = TranscriptFile(newest[1])
+        now = time.monotonic()
+        if now >= self._next_rotation_scan:
+            self._next_rotation_scan = now + ROTATION_SCAN_SECS
+            newest = self._newest_session()
+            if newest is not None and newest[1] != self.followed_path():
+                try:
+                    current_mtime = os.stat(self.followed_path()).st_mtime
+                except OSError:
+                    current_mtime = 0.0
+                if newest[0] > current_mtime:
+                    self._current = TranscriptFile(newest[1])
         if self._current is None:
             return False
         return self._current.poll(counters)

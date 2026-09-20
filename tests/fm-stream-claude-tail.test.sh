@@ -210,6 +210,9 @@ test_serve_rotates_to_a_new_session_id() {
     assistant_line msg-a 10 100 5 1000
     assistant_line msg-b 50 500 50 5000
   } > "$CASE_DIR/proj/bbbb.jsonl"
+  sleep 1
+  assert_equals '{"cache_creation":5,"cache_read":1000,"input":10,"output":100}' \
+    "$(tokens_of)" "session discovery runs independently of active-file polling"
   wait_for "the rotated session was never followed" 10 tokens_reached \
     '{"cache_creation":55,"cache_read":6000,"input":60,"output":600}'
   assert_equals 2 "$(state_field .messages)" \
