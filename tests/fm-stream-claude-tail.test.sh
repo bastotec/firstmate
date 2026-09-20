@@ -109,6 +109,11 @@ hub_json() {
   curl -sS -m 10 -H "Authorization: Bearer $VIEW_TOKEN" "$URL$1"
 }
 
+publish_json() {
+  curl -sS -m 10 -X "$1" -H "Authorization: Bearer $PUBLISH_TOKEN" \
+    -H 'Content-Type: application/json' --data-binary "$3" "$URL$2"
+}
+
 endpoint_of() {
   cut -d' ' -f2 "$SHIM_READY"
 }
@@ -151,6 +156,14 @@ test_serve_publishes_cumulative_counters_from_real_records_only() {
     "$(tokens_of)" "the hub exposes deduplicated cumulative usage"
   assert_equals 2 "$(state_field .messages)" \
     "each message id counts once at its largest usage"
+  local cwd_state
+  cwd_state=$(hub_json "/v1/tasks/$(endpoint_of)/cwd")
+  assert_equals "$CASE_DIR/proj" "$(printf '%s' "$cwd_state" | jq -r .cwd)" \
+    "the cwd route still returns the endpoint directory"
+  if printf '%s' "$cwd_state" | jq -e \
+      'has("seq") or has("tokens") or has("messages") or has("tail")' >/dev/null; then
+    fail "the cwd route exposed usage state: $cwd_state"
+  fi
   local seq_before
   seq_before=$(state_field .seq)
   sleep 1.5
@@ -290,6 +303,34 @@ test_serve_resolves_the_hub_from_home_config() {
     "$(tokens_of)" "home configuration resolves a publishing endpoint"
 }
 
+test_state_routes_preserve_the_opencode_response_shape() {
+  start_hub state-shape
+  local endpoint registration frame processes cwd_state
+  endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  registration=$(jq -nc --arg id "$endpoint" \
+    '{endpoint_id: $id, machine: "tailmachine", label: "opencode-shape", cwd: "/tmp/opencode"}')
+  publish_json POST /v1/agent/endpoints "$registration" >/dev/null
+  frame=$(jq -nc --arg id "$endpoint" \
+    '{machine: "tailmachine", frames: [{endpoint_id: $id, state: {
+      alive: true, foreground: [], cwd: "/tmp/opencode", seq: 7,
+      tail: {source: "opencode", session_id: "ses-test", cost: 1.25}}}]}')
+  publish_json POST /v1/agent/frames "$frame" >/dev/null
+  processes=$(hub_json "/v1/tasks/$endpoint/processes")
+  assert_equals true "$(printf '%s' "$processes" | jq -r .alive)" \
+    "the opencode-shaped endpoint is readable through processes"
+  if printf '%s' "$processes" | jq -e \
+      'has("seq") or has("tokens") or has("messages") or has("tail")' >/dev/null; then
+    fail "the processes route exposed opencode tail state: $processes"
+  fi
+  cwd_state=$(hub_json "/v1/tasks/$endpoint/cwd")
+  assert_equals /tmp/opencode "$(printf '%s' "$cwd_state" | jq -r .cwd)" \
+    "the opencode-shaped endpoint keeps its cwd response"
+  if printf '%s' "$cwd_state" | jq -e \
+      'has("seq") or has("tokens") or has("messages") or has("tail")' >/dev/null; then
+    fail "the cwd route exposed opencode tail state: $cwd_state"
+  fi
+}
+
 test_only_rotating_serve_mode_is_public() {
   local dir="$TMP_ROOT/removed-surfaces" out status
   mkdir -p "$dir"
@@ -317,5 +358,6 @@ test_serve_survives_a_truncated_rewrite
 test_serve_rejoins_after_the_hub_restarts
 test_second_shim_on_one_label_stands_down
 test_serve_resolves_the_hub_from_home_config
+test_state_routes_preserve_the_opencode_response_shape
 test_only_rotating_serve_mode_is_public
 pass "the Claude Code transcript tail shim holds its contracts"
