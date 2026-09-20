@@ -76,7 +76,8 @@
 #          no-mistakes is also MISSING when its installed semantic version is
 #          older than 1.46.0 (structured pipeline attestation floor; see
 #          CONTRIBUTING.md). An installed build whose version output has no
-#          semantic triple reports VERSION_UNREADABLE and remains incompatible.
+#          recognized tool-associated semantic version reports
+#          VERSION_UNREADABLE and remains incompatible.
 #          The AXI-family floor policy is owned beside GH_AXI_MIN and
 #          LAVISH_AXI_MIN below; the per-tool owners point there. An installed
 #          essential build below its floor reports MISSING like no-mistakes,
@@ -979,10 +980,10 @@ treehouse_supports_lease() {
   treehouse get --help 2>&1 | grep -Eq '(^|[^[:alnum:]_-])--lease([^[:alnum:]_-]|$)'
 }
 
-# Shared semantic-version floor for the tool gates below. A version string that
-# cannot be parsed into exactly one major.minor.patch triple is incompatible,
-# never assumed current, so a development or vendored build cannot pass a floor
-# it was never checked against.
+# Shared semantic-version floor for the tool gates below. The sourced
+# fm-tool-version-lib.sh owns which tool-associated outputs are recognized and
+# their precedence. Anything else is incompatible, never assumed current, so a
+# development or vendored build cannot pass a floor it was never checked against.
 tool_version_at_least() {  # <tool> <min-version>; 0=compatible, 1=absent/below floor, 2=version unreadable
   local tool=$1 min=$2 output parts
   command -v "$tool" >/dev/null 2>&1 || return 1

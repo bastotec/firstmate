@@ -539,11 +539,12 @@ test_tasks_axi_unreadable_transition_gate() {
   add_tasks_axi "$fakebin" 'tasks-axi development build'
   unreadable='VERSION_UNREADABLE: tasks-axi (installed build; requires semantic version >=0.2.4; upgrade: npm install -g tasks-axi)'
 
-  set +e
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh" 2>&1)
-  rc=$?
-  set -e
+  if out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh" 2>&1); then
+    rc=0
+  else
+    rc=$?
+  fi
 
   [ "$rc" -eq 1 ] || fail "unreadable tasks-axi transition gate returned $rc instead of refusing"
   assert_contains "$out" "$unreadable" "automatic backlog transition gate hid the unreadable tasks-axi version"

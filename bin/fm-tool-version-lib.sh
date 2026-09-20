@@ -1,5 +1,8 @@
 # shellcheck shell=bash
 # Shared parser and floor comparison for tool-owned semantic version output.
+# Recognized output is canonical SemVer associated with the named tool, or a
+# bare SemVer that is the only nonblank output. Prerelease identifiers affect
+# precedence, build metadata does not, and calendar-shaped cores are refused.
 # Usage: . bin/fm-tool-version-lib.sh
 
 fm_tool_semver_parts() {  # <tool-name> <version-output>
