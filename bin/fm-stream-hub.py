@@ -1719,6 +1719,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return answer
         answer["alive"] = bool(state.get("alive"))
         if field == "foreground":
+            if "tokens" in state or "messages" in state:
+                for key in ("seq", "tokens", "messages"):
+                    if key in state:
+                        answer[key] = state[key]
             answer["foreground"] = state.get("foreground") or []
         else:
             answer["cwd"] = state.get("cwd") or ""

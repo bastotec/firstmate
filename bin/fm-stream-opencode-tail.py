@@ -37,8 +37,10 @@ endpoint out; the status command appends to --status-path exactly as the
 agent's does, on the machine that owns the record.
 
 The shared wire contract - registration, heartbeats, rejoin after a hub
-restart, the state record shape, and the strictly increasing seq - is owned
-by bin/fm_stream_tail_lib.py, which the Claude Code tail adapter shares.
+restart, the state envelope, and the strictly increasing seq - is owned by
+bin/fm_stream_tail_lib.py and used by both transcript adapters.
+This adapter owns its command poll and command-capable `tail` payload; the
+Claude adapter supplies a counter-only payload and remains observability only.
 
 Commands:
 

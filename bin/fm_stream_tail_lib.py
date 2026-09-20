@@ -1,14 +1,14 @@
 """fm_stream_tail_lib.py - the shared publisher behind the transcript-tail adapters.
 
-A tail adapter tails a harness's own on-disk session storage (opencode's
-SQLite, Claude Code's JSONL) and publishes what it measures to the fleet hub
-(bin/fm-stream-hub.py) as if it were bin/fm-stream-agent.py: one endpoint per
-tailed session, state frames on a heartbeat, counters only from real usage
-records the harness itself wrote.  The Bridge feed then sees that worker
-through the same fleet listing every other worker appears in.
+A tail adapter tails a harness's own on-disk session storage and publishes
+what it measures to the fleet hub (bin/fm-stream-hub.py) as if it were
+bin/fm-stream-agent.py: one endpoint per selected source, state frames on a
+heartbeat, and counters only from real usage records the harness itself wrote.
+The Bridge feed then sees that worker through the same fleet listing every
+other worker appears in.
 
-This module is the ONE owner of the parts every tail adapter shares, so the
-opencode shim and the Claude shim cannot drift apart:
+This module owns the reusable hub publisher used by the opencode and Claude
+transcript adapters:
 
   * The hub wire contract: registration payload, state frames, the closing
     frame, and the protocol handshake against /v1/health.
@@ -18,18 +18,17 @@ opencode shim and the Claude shim cannot drift apart:
     endpoint id back, paced so a fleet of stranded tailers does not return
     against a just-restarted hub in one burst.  docs/stream-backend.md "When
     the hub restarts" owns the contract; this module is its tail-adapter half.
-  * The state record shape: alive, cwd, published_at, and a strictly
-    increasing per-process seq, plus the "tail" block every source fills the
-    same way - source, session_id, usage_records, cumulative tokens, and cost.
+  * The state envelope: alive, cwd, published_at, and a strictly increasing
+    per-process seq. Each adapter supplies the counter payload its source can
+    prove; the default opencode payload remains the shared "tail" block.
 
 Each adapter owns only its source: where the harness keeps sessions, how to
-resolve one, and how to read cumulative usage out of it.  It hands the lib
-plain numbers; it never formats a record itself.
+resolve one, and how to read cumulative usage out of it. It hands the shared
+publisher plain numbers and its source-specific state payload.
 
-Counters are cumulative, never deltas and never estimates: a tail adapter
-republishes the same monotonically growing totals, recomputed from the
-records the harness wrote, so a restarted adapter converges on the same
-numbers without persisting any cursor of its own.
+Adapters supply cumulative payloads, never deltas or estimates.
+This publisher persists no counter cursor or state mirror; each adapter owns
+how it rebuilds counters after its process restarts.
 """
 
 from __future__ import annotations
@@ -183,7 +182,7 @@ class HubClient:
 
 
 class TailPublisher:
-    """One tailed session's endpoint on the hub, and its record shape.
+    """One tailed source's endpoint on the hub, and its record shape.
 
     The adapter builds plain counters; this class turns them into the state
     record every tail source shares, keeps its sequence strictly increasing,
@@ -192,7 +191,7 @@ class TailPublisher:
 
     def __init__(self, hub: HubClient, machine: str, label: str, cwd: str,
                  endpoint_id: str, source: str, rows: int = 40, cols: int = 200,
-                 program: str = "fm-stream-tail") -> None:
+                 program: str = "fm-stream-tail", state_adapter=None) -> None:
         self.hub = hub
         self.machine = machine
         self.label = label
@@ -202,6 +201,7 @@ class TailPublisher:
         self.rows = rows
         self.cols = cols
         self.program = program
+        self.state_adapter = state_adapter
         self.stood_down = threading.Event()
         # One publisher at a time: the tail loop and the command thread can
         # both reach the hub, and interleaved frames from one endpoint would
@@ -313,8 +313,8 @@ class TailPublisher:
         sys.stderr.write("%s: %s\n" % (self.program, reason))
         sys.stderr.flush()
 
-    def build_state(self, alive: bool, tail: dict) -> dict:
-        """The one record shape every tail source publishes.
+    def build_state(self, alive: bool, payload: dict) -> dict:
+        """Build a source-specific state on the shared publisher envelope.
 
         seq is per-process and strictly increasing, so a consumer can drop
         out-of-order records and a restarted adapter is a new sequence
@@ -322,13 +322,17 @@ class TailPublisher:
         Bridge feed uses for its own epochs.
         """
         self._seq += 1
-        return {
+        state = {
             "alive": bool(alive),
             "cwd": self.cwd,
             "published_at": time.time(),
             "seq": self._seq,
-            "tail": dict(tail, source=self.source),
         }
+        if self.state_adapter is None:
+            state["tail"] = dict(payload, source=self.source)
+        else:
+            state.update(self.state_adapter(payload))
+        return state
 
     def publish(self, alive: bool, tail: dict, timeout: float = 30.0) -> bool:
         """Publish one state frame; False when it was dropped or stood down.
