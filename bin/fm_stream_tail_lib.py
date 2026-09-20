@@ -2,7 +2,7 @@
 
 A tail adapter tails a harness's own on-disk session storage and publishes
 what it measures to the fleet hub (bin/fm-stream-hub.py) as if it were
-bin/fm-stream-agent.py: one endpoint per tailed session, state frames on a
+bin/fm-stream-agent.py: one endpoint per selected source, state frames on a
 heartbeat, and counters only from real usage records the harness itself wrote.
 The Bridge feed then sees that worker through the same fleet listing every
 other worker appears in.
@@ -26,10 +26,9 @@ Each adapter owns only its source: where the harness keeps sessions, how to
 resolve one, and how to read cumulative usage out of it. It hands the shared
 publisher plain numbers and its source-specific state payload.
 
-Counters are cumulative, never deltas and never estimates: a tail adapter
-republishes the same monotonically growing totals, recomputed from the
-records the harness wrote, so a restarted adapter converges on the same
-numbers without persisting any cursor of its own.
+Adapters supply cumulative payloads, never deltas or estimates.
+This publisher persists no counter cursor or state mirror; each adapter owns
+how it rebuilds counters after its process restarts.
 """
 
 from __future__ import annotations
@@ -183,7 +182,7 @@ class HubClient:
 
 
 class TailPublisher:
-    """One tailed session's endpoint on the hub, and its record shape.
+    """One tailed source's endpoint on the hub, and its record shape.
 
     The adapter builds plain counters; this class turns them into the state
     record every tail source shares, keeps its sequence strictly increasing,

@@ -58,7 +58,7 @@ A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoi
 
 `bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from that worker's newest endpoint.
 It only reads the hub, holds a `subscribe` credential, opens no listening socket, and sends nothing to any worker.
-Its header owns the record mapping and every field the hub cannot supply; the short version is that the hub carries no token counter, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
+Its header owns the record mapping and every field the hub cannot supply; the short version is that the `/v1/tasks` listing this bridge consumes carries no token counters, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
 When the hub cannot be read it emits nothing.
 The Bridge's clock only moves when a record arrives, so during an outage, or after a hub restart that lists no endpoints, the Bridge keeps showing each worker's last state rather than aging it out as stale.
 
@@ -92,8 +92,9 @@ A tail adapter closes that gap from the outside by reading the harness's on-disk
 
 `bin/fm-stream-claude-tail.py` follows the newest transcript in one `~/.claude/projects/` directory.
 It deduplicates streamed and resumed history by assistant message id, survives truncation and session rotation, and re-registers the same endpoint after a hub restart.
-Its flags, counter shape, and credential resolution live in its header.
+Its flags and credential resolution live in its header.
 It uses the shared tail publisher but emits its transcript-specific counters instead of opencode's `tail` block.
+A fresh `GET /v1/tasks/<endpoint-id>/processes` response exposes its `seq`, cumulative `messages`, and `tokens` fields named `input`, `output`, `cache_creation`, and `cache_read`; `seq` increases for the observer process's lifetime, and stale responses omit those fields rather than present an old reading as current.
 
 `bin/fm-stream-opencode-tail.py` follows one opencode session selected with `--session`, or the newest main session in a `--directory`.
 Its command handling, SQLite storage contract, and refusal posture for what it cannot measure live in its header.
@@ -103,7 +104,8 @@ What a tail adapter publishes is bounded by what the harness itself recorded:
 
 - Counters come only from usage records the harness wrote, and nothing is estimated, extrapolated, or synthesized.
   An opencode session with no usage records publishes zeros and `usage_records` 0, which is a fact about the session.
-- Counters are cumulative, so a restarted adapter rescans the session and converges on the same totals with no cursor of its own.
+- The opencode adapter's counters are cumulative over its selected session, so a restart rescans that session and converges on the same totals with no cursor of its own.
+- The Claude adapter keeps cumulative totals in memory across transcript rotation; restarting it rebuilds totals from the newest transcript only.
 - Neither adapter owns a worker terminal.
   The opencode adapter polls the hub's command queue, refuses input rather than silently dropping it, and accepts kill and status commands.
   The Claude adapter is observability only and does not poll for commands, so the hub cannot claim that it delivered one.

@@ -33,10 +33,12 @@ carry is emitted in the contract's explicit unknown form rather than invented:
      strictly increases for the life of one adapter process.  stream_epoch is
      the adapter's generation, so a restarted adapter starts a new epoch and
      its sequences may begin again at 1.
-  3. Token definition.  The hub carries NO token counter of any kind, only raw
-     terminal bytes, so no leaf_counter record is ever emitted.  Terminal
-     bytes are not tokens, and a declared token kind the hub cannot measure
-     would be a synthesized value.
+  3. Token definition.  The /v1/tasks listing consumed here carries no token
+     counters.  Claude transcript endpoints expose counters only through
+     their /processes state route, which this adapter deliberately does not
+     query, so no leaf_counter record is ever emitted.  Terminal bytes are
+     not tokens, and a declared token kind the hub cannot measure would be a
+     synthesized value.
   4. Clocks.  producer_monotonic_ms is the adapter's own monotonic clock, in
      milliseconds since the adapter started, taken when the record is built.
      hub_arrival_ms is the same clock, taken when the hub answer the record is

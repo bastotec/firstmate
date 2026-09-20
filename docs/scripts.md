@@ -72,7 +72,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-stream-hub.py`       | The central hub every stream endpoint publishes to and every subscriber reads from   |
 | `fm-stream-agent.py`     | The per-task agent that owns one endpoint's pseudoterminal on the machine running it |
 | `fm-stream-bridge.py`    | Translate the hub into the Bridge UI's live wire format, read-only                   |
-| `fm-stream-claude-tail.py` | Tail a Claude Code session transcript onto the hub as an observability-only endpoint |
+| `fm-stream-claude-tail.py` | Tail a Claude Code project's rotating transcripts onto the hub as an observability-only endpoint |
 | `fm-stream-opencode-tail.py` | Tail one opencode session's own storage onto the hub as a real endpoint               |
 | `fm_stream_tail_lib.py`  | The shared registration, state-publish, and hub-rejoin contract behind tail adapters |
 | `fm-config-push.sh`      | Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed |
