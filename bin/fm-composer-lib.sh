@@ -67,12 +67,15 @@
 #   left-bar   - opencode: rows prefixed by a heavy left bar `┃` with no
 #                closing border, holding the idle hint, blank rows, and a
 #                mode/model footer line.
-#   separated  - pi: content rows between two solid horizontal `─` rules, no
-#                glyph and no side border. Provable only with a live agent
-#                identity reporting an idle/done pi (herdr `agent
-#                get`; the tmux foreground-process probe), because a blank
-#                region between two transcript rules is otherwise exactly the
-#                strict rule's unidentifiable blank row.
+#   separated  - pi: content rows between two solid horizontal `─` rules, with
+#                no side border. Pi <=0.84 left the idle region blank; Pi 0.85
+#                draws a `❯` plus a reverse-video blank software-cursor cell.
+#                The latter is furniture only when all of those styled bytes
+#                are present. The shape is provable only with a live agent
+#                identity reporting an idle/done pi (herdr `agent get`; the
+#                tmux foreground-process probe), because a blank region between
+#                two transcript rules is otherwise exactly the strict rule's
+#                unidentifiable blank row.
 #
 # THE SAFETY RULE for glyphs: a bare shell prompt glyph (`>` `$` `%` `#`) -
 # what a pane shows once its agent has exited to a plain login shell - is a
@@ -121,16 +124,45 @@
 # Re-sourcing is a cheap idempotent redefinition, so this file needs no
 # include guard (matching bin/fm-tmux-lib.sh).
 
-# fm_composer_strip_ansi: drop every CSI escape sequence, leaving plain text.
-# Used for STRUCTURAL row/shape detection, where ghost text must be KEPT so the
-# composer box border or bare prompt glyph is still visible; content extraction
-# uses fm_composer_strip_ghost instead. Reads the styled text on stdin and prints
-# plain text (stdin-only, matching fm_composer_strip_ghost). The character class
-# includes ':' so an ITU colon-form SGR (38:2::r:g:b) is stripped whole, not left
-# with a dangling tail.
+# fm_composer_strip_complete_osc: discard only byte-complete OSC terminal
+# controls (ESC ] ... BEL or ESC ] ... ESC \), preserving every incomplete or
+# malformed fragment verbatim. Terminal colour replies are input protocol, not
+# composer text, but styled screen captures can retain a complete reply beside
+# the rendered Pi cursor after a fresh session replaces another one. The
+# terminator is the structural proof that permits removal: literal user text
+# such as `4;38;rgb:0000/afaf/d7d7` and an unterminated lookalike survive.
+# Reads stdin and prints the filtered bytes.
+fm_composer_strip_complete_osc() {
+  LC_ALL=C awk '
+    {
+      line = $0; out = ""; n = length(line); i = 1
+      while (i <= n) {
+        if (substr(line, i, 2) == "\033]") {
+          end = 0; j = i + 2
+          while (j <= n) {
+            if (substr(line, j, 1) == "\007") { end = j; break }
+            if (j < n && substr(line, j, 2) == "\033\\") { end = j + 1; break }
+            j++
+          }
+          if (end > 0) { i = end + 1; continue }
+        }
+        out = out substr(line, i, 1); i++
+      }
+      print out
+    }
+  '
+}
+
+# fm_composer_strip_ansi: drop every complete OSC control and CSI escape
+# sequence, leaving plain text. Used for STRUCTURAL row/shape detection, where
+# ghost text must be KEPT so the composer box border or bare prompt glyph is
+# still visible; content extraction uses fm_composer_strip_ghost instead. Reads
+# the styled text on stdin and prints plain text (stdin-only, matching
+# fm_composer_strip_ghost). The character class includes ':' so an ITU
+# colon-form SGR (38:2::r:g:b) is stripped whole, not left with a dangling tail.
 fm_composer_strip_ansi() {
   local esc; esc=$(printf '\033')
-  LC_ALL=C sed "s/${esc}\\[[0-9;:?]*[[:alpha:]]//g"
+  fm_composer_strip_complete_osc | LC_ALL=C sed "s/${esc}\\[[0-9;:?]*[[:alpha:]]//g"
 }
 
 # Every code point Unicode gives the property White_Space=Yes that lies OUTSIDE
@@ -215,7 +247,7 @@ fm_composer_normalize_trim_var() {  # <varname>
 # LC_ALL=C makes awk walk bytes, so multibyte glyphs (e.g. ❯) and de-emphasised
 # runs alike pass through or drop intact without locale-dependent classes.
 fm_composer_strip_ghost() {
-  LC_ALL=C awk -v lumamax="${FM_COMPOSER_GHOST_LUMA_MAX:-128}" '
+  fm_composer_strip_complete_osc | LC_ALL=C awk -v lumamax="${FM_COMPOSER_GHOST_LUMA_MAX:-128}" '
     function sgr_code(v, b) {
       b = v
       sub(/:.*/, "", b)
@@ -1518,6 +1550,25 @@ fm_composer_queued_enter_verdict() {  # <composer-state> <busy|idle|unknown>
   fi
 }
 
+# _fm_composer_pi_idle_prompt_row: Pi 0.85's idle editor furniture is a normal
+# `❯` prompt followed by one reverse-video blank software-cursor cell. The
+# prompt alone is not enough proof: older Pi versions had no prompt furniture,
+# so a literal `❯` there was a genuine draft and stays pending. Require all
+# three independent facts - styled bytes, the exact prompt-only content, and a
+# complete reverse-video blank cell - before discarding the row as furniture.
+# This also handles a complete OSC reply on the row because the shared terminal
+# parser removes that protocol control before the exact-content check.
+_fm_composer_pi_idle_prompt_row() {  # <raw-row> <classified-content> <styled>
+  local raw=$1 content=$2 styled=$3 esc
+  [ "$styled" = 1 ] || return 1
+  [ "$content" = '❯' ] || return 1
+  esc=$(printf '\033')
+  case "$raw" in
+    *"${esc}[7m ${esc}[0m"*|*"${esc}[0;7m ${esc}[0m"*) return 0 ;;
+  esac
+  return 1
+}
+
 _fm_composer_classify_pi_rows() {  # <screen> <styled>
   local screen=$1 styled=$2 row raw content
   row=$((FM_COMPOSER_SCAN_PI_OPEN + 1))
@@ -1525,6 +1576,10 @@ _fm_composer_classify_pi_rows() {  # <screen> <styled>
     raw=$(_fm_composer_screen_row "$row" "$screen")
     content=$(_fm_composer_row_content "$raw" "$styled")
     fm_composer_normalize_trim_var content
+    if _fm_composer_pi_idle_prompt_row "$raw" "$content" "$styled"; then
+      row=$((row + 1))
+      continue
+    fi
     if [ -n "$content" ]; then
       printf 'pending'
       return 0
@@ -1560,11 +1615,13 @@ _fm_composer_classify_bare_pi_overlap() {  # <screen> <styled> <has-identity> <i
 # rule, now fleet-wide). A missing identity capability keeps the shape
 # unknown; an unfetched identity on an identity-capable backend asks the
 # adapter to probe (lazily) and re-call. Proven input remains pending for every
-# live pi state, while only an idle/done pi proves an empty composer. A blocked
-# pi is parked on an interactive prompt waiting for a human keystroke: its menu
-# is drawn above the separator pair, so the composer region looks free while the
-# keys would answer the prompt instead of composing (issue #2797). Structure
-# cannot disprove that, so a blocked pi defers rather than claiming empty.
+# live pi state, while only an idle/done pi proves an empty composer. Pi 0.85's
+# prompt and reverse-video blank cursor count as empty only through the exact
+# styled furniture check above. A blocked pi is parked on an interactive prompt
+# waiting for a human keystroke: its menu is drawn above the separator pair, so
+# the composer region looks free while the keys would answer the prompt instead
+# of composing (issue #2797). Structure cannot disprove that, so a blocked pi
+# defers rather than claiming empty.
 _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   local screen=$1 styled=$2 has_identity=$3 identity=$4 agent agent_status state
   if [ "$has_identity" != 1 ]; then
