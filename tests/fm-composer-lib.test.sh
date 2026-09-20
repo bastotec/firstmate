@@ -447,11 +447,12 @@ test_matrix_codex_idle_starfield_furniture() {
 }
 
 test_matrix_pi_separated_needs_identity() {
-  # Real idle pi: a blank row between two solid rules. The blank row alone is
-  # exactly what the strict rule refuses; only structure PLUS a live
-  # idle/done pi identity proves the composer (herdr's rule, now
-  # fleet-wide; tmux supplies identity from its foreground-process probe).
-  local screen typed pi_idle pi_working pi_blocked none
+  # Real Pi <=0.84 idle: a blank row between two solid rules. Pi 0.85.1
+  # added a normal `❯` prompt plus one reverse-video blank software-cursor
+  # cell. The blank row alone is exactly what the strict rule refuses; only
+  # structure PLUS a live idle/done Pi identity proves either idle shape.
+  local screen typed pi_idle pi_working pi_blocked none pi085 osc_bel osc_st malformed literal
+  local caps_plain_id=$'styled=0\ncursor=0\nidentity=1\nrows=20'
   screen=$'transcript\n────────────────────────\n\n────────────────────────\n footer'
   pi_idle=$(printf 'pi\tidle'); pi_working=$(printf 'pi\tworking'); none=$(printf 'zsh\t')
   pi_blocked=$(printf 'pi\tblocked')
@@ -482,7 +483,31 @@ test_matrix_pi_separated_needs_identity() {
   assert_screen "lone glyph without identity capability" empty "$CAPS_STYLED_NOID" "$typed"
   assert_screen "lone glyph on plain backend" empty "$CAPS_PLAIN" "$typed"
   assert_screen "lone glyph with non-pi identity" empty "$CAPS_STYLED" "$typed" '' "$none"
-  pass "matrix: pi's separated composer needs identity + structure; the blank row alone never proves it"
+
+  # Pi 0.85.1's byte-exact idle row. The counterfactual above proves the glyph
+  # alone remains a draft; the complete reverse-video blank cell is the new
+  # structural furniture signal that changes this one row to empty.
+  pi085=$'transcript\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter'
+  assert_screen "pi 0.85.1 idle reverse-video cursor on tmux" empty "$CAPS_TMUX" "$pi085" 2 "$pi_idle"
+  assert_screen "pi 0.85.1 idle reverse-video cursor on herdr" empty "$CAPS_STYLED" "$pi085" '' "$pi_idle"
+  assert_screen "pi 0.85.1 prompt without styled cursor proof" pending "$caps_plain_id" \
+    $'transcript\n────────────────────────\n ❯  \n────────────────────────' '' "$pi_idle"
+
+  # A complete OSC palette response is terminal protocol furniture. Both
+  # terminators are covered, including recurrence after session replacement.
+  # A literal RGB-looking draft and incomplete/malformed controls remain
+  # pending, so the parser never guesses from payload spelling.
+  osc_bel=$'\033]4;38;rgb:0000/afaf/d7d7\007'
+  osc_st=$'\033]4;39;rgb:1111/bbbb/eeee\033\\'
+  screen=$'────────────────────────\n\033[39m ❯ '"$osc_bel$osc_st"$'\033[7m \033[0m\n────────────────────────'
+  assert_screen "pi recurring complete OSC replies are furniture" empty "$CAPS_TMUX" "$screen" 1 "$pi_idle"
+  literal=$'────────────────────────\n\033[39m ❯ 4;38;rgb:0000/afaf/d7d7 is a real draft\033[7m \033[0m\n────────────────────────'
+  assert_screen "pi literal RGB-like draft stays pending" pending "$CAPS_TMUX" "$literal" 1 "$pi_idle"
+  malformed=$'────────────────────────\n\033[39m ❯ \033]4;38;rgb:0000/afaf/d7d7\033[7m \033[0m\n────────────────────────'
+  assert_screen "pi unterminated OSC-like fragment stays pending" pending "$CAPS_TMUX" "$malformed" 1 "$pi_idle"
+  malformed=$'────────────────────────\n\033[39m ❯ ]4;38;rgb:0000/afaf/d7d7\033[7m \033[0m\n────────────────────────'
+  assert_screen "pi plain response lookalike stays pending" pending "$CAPS_TMUX" "$malformed" 1 "$pi_idle"
+  pass "matrix: Pi separated composers require identity; Pi 0.85 cursor and complete OSC furniture stay distinct from drafts"
 }
 
 test_matrix_opencode_leftbar_signals() {
@@ -773,6 +798,96 @@ test_selected_content_is_composer_scoped_and_wrap_normalized() {
   pass "fm_composer_extract_selected_content: scopes user content and excludes furniture"
 }
 
+test_pi_terminal_response_input_filter() {
+  local tmp pi_package
+  command -v npm >/dev/null 2>&1 \
+    || { pass "skipped: npm absent, so the Pi terminal-response input filter cannot run"; return 0; }
+  pi_package=${FM_PI_PACKAGE_DIR:-"$(npm root -g)/@earendil-works/pi-coding-agent"}
+  [ -f "$pi_package/package.json" ] \
+    || { pass "skipped: installed Pi package absent, so its terminal-response input filter cannot run"; return 0; }
+  tmp=$(fm_test_tmproot fm-pi-terminal-response-input)
+  mkdir -p "$tmp/node_modules/@earendil-works"
+  ln -s "$pi_package" "$tmp/node_modules/@earendil-works/pi-coding-agent"
+  ln -s "$pi_package/node_modules/@earendil-works/pi-tui" "$tmp/node_modules/@earendil-works/pi-tui"
+  cp "$ROOT/.pi/extensions/lib/fm-terminal-response-input.ts" "$tmp/filter.ts"
+  printf '{"type":"module"}\n' > "$tmp/package.json"
+  FILTER="$tmp/filter.ts" node --experimental-strip-types --input-type=module <<'JS' \
+    || fail "Pi terminal-response input filter regression failed"
+import assert from "node:assert/strict";
+const { PiTerminalResponseInputFilter, installPiTerminalResponseInputGuard } = await import(process.env.FILTER);
+const ESC = "\x1b";
+const BEL = "\x07";
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const makeFilter = (timeout = 30) => {
+  const forwarded = [];
+  let deferredRenders = 0;
+  const filter = new PiTerminalResponseInputFilter(
+    (data) => forwarded.push(data),
+    () => deferredRenders += 1,
+    timeout,
+  );
+  return { filter, forwarded, deferredRenders: () => deferredRenders };
+};
+{
+  const { filter, forwarded } = makeFilter();
+  filter.handleInput(`${ESC}]4;38;rgb:0000/afaf/d7d7${BEL}`);
+  filter.handleInput(`${ESC}]4;39;rgb:1111/bbbb/eeee${ESC}\\`);
+  assert.deepEqual(forwarded, []);
+  filter.dispose();
+}
+{
+  const { filter, forwarded } = makeFilter();
+  filter.handleInput(`${ESC}]4;38`);
+  for (const char of `;rgb:0000/afaf/d7d7${BEL}`) filter.handleInput(char);
+  assert.deepEqual(forwarded, []);
+  filter.dispose();
+}
+{
+  const { filter, forwarded } = makeFilter();
+  const literal = "4;38;rgb:0000/afaf/d7d7 is a real draft";
+  filter.handleInput(literal);
+  assert.deepEqual(forwarded, [literal]);
+  filter.dispose();
+}
+{
+  const { filter, forwarded, deferredRenders } = makeFilter();
+  const malformed = `${ESC}]4;38;not-a-color${BEL}`;
+  filter.handleInput(malformed);
+  assert.deepEqual(forwarded, [malformed]);
+  assert.equal(deferredRenders(), 0);
+  filter.dispose();
+}
+{
+  const { filter, forwarded, deferredRenders } = makeFilter(10);
+  const incomplete = `${ESC}]4;38;rgb:0000/afaf`;
+  filter.handleInput(incomplete);
+  await sleep(30);
+  assert.deepEqual(forwarded, [incomplete]);
+  assert.equal(deferredRenders(), 1);
+  filter.dispose();
+}
+{
+  let factory;
+  const priorFactory = () => ({ handleInput() {} });
+  factory = priorFactory;
+  const ctx = {
+    mode: "tui",
+    ui: {
+      getEditorComponent: () => factory,
+      setEditorComponent: (next) => { factory = next; },
+    },
+  };
+  const dispose = await installPiTerminalResponseInputGuard(ctx);
+  assert.notEqual(factory, priorFactory);
+  const guarded = factory({}, {}, {});
+  assert.equal(typeof guarded.handleInput, "function");
+  dispose();
+  assert.equal(factory, priorFactory);
+}
+JS
+  pass "Pi input filter consumes only complete OSC palette replies and replays literal or malformed fragments exactly"
+}
+
 test_bare_shell_glyphs_are_unknown
 test_stripped_unbordered_content_uses_plain_content
 test_bare_shell_prompt_with_command_is_not_empty
@@ -790,6 +905,7 @@ test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_omp_status_row_bounds_bare_composer
 test_matrix_codex_idle_starfield_furniture
 test_matrix_pi_separated_needs_identity
+test_pi_terminal_response_input_filter
 test_matrix_opencode_leftbar_signals
 test_matrix_grok_titled_bottom_border
 test_matrix_kimi_bordered_shell_glyph_box
