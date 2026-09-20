@@ -63,6 +63,20 @@ exec "$REAL_TMUX" -L "$SOCKET" "\$@"
 SH
 chmod +x "$SHIM_DIR/tmux"
 PATH="$SHIM_DIR:$PATH"
+PI_GUARD_HELPER_URL=$(node -e 'console.log(require("node:url").pathToFileURL(process.argv[1]).href)' \
+  "$ROOT/.pi/extensions/lib/fm-terminal-response-input.ts")
+PI_GUARD_EXTENSION="$SHIM_DIR/pi-terminal-response-guard.ts"
+cat > "$PI_GUARD_EXTENSION" <<EOF
+import { installPiTerminalResponseInputGuard } from "$PI_GUARD_HELPER_URL";
+export default function (pi: any) {
+  let dispose = () => {};
+  pi.on("session_start", async (_event: any, ctx: any) => {
+    dispose();
+    dispose = await installPiTerminalResponseInputGuard(ctx);
+  });
+  pi.on("session_shutdown", () => dispose());
+}
+EOF
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-tmux-lib.sh"
 
@@ -74,6 +88,7 @@ harness_version() {  # <binary>
 
 check_harness_idle_empty() {  # <name> <launch-cmd...>
   local name=$1 win="hx-$1" verdict='' i=0 budget=${FM_COMPOSER_MATRIX_LIVE_POLLS:-45} version dismissed=0 startup_screen
+  local pi_replacement='' pi_draft='' pi_cleared='' pi_fragmented=''
   shift
   version=$(harness_version "$1")
   tmux -L "$SOCKET" new-window -d -t "$SESSION:" -n "$win" -c "$ROOT" -- "$@" \
@@ -108,8 +123,51 @@ check_harness_idle_empty() {  # <name> <launch-cmd...>
     printf 'not ok - %s (%s): idle composer never classified empty (last verdict: %s)\n' \
       "$name" "$version" "${verdict:-unreadable}" >&2
   else
-    CHECKED=$((CHECKED + 1))
-    pass "$name ($version): real idle composer classifies empty"
+    if [ "$name" = pi ]; then
+      # Pi 0.85 added a normal `❯` plus a reverse-video blank software-cursor
+      # cell to the separated composer. Exercise the live public reader after
+      # a local session replacement, then prove that C-u recovery returns to
+      # empty without being the reason idle is classified correctly and that a
+      # genuine RGB-looking draft is still protected.
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l '/new'
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" Enter
+      i=0
+      while [ "$i" -lt 40 ]; do
+        pi_replacement=$(fm_tmux_composer_state "$SESSION:$win")
+        [ "$pi_replacement" = empty ] && break
+        i=$((i + 1))
+        sleep 0.25
+      done
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l '4;38;rgb:0000/afaf/d7d7 is a real draft'
+      sleep 0.25
+      pi_draft=$(fm_tmux_composer_state "$SESSION:$win")
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" C-u
+      sleep 0.25
+      pi_cleared=$(fm_tmux_composer_state "$SESSION:$win")
+      # Reproduce the terminal-source defect itself: Pi's own 50 ms sequence
+      # timeout receives an OSC palette response in two chunks, which inserts
+      # the trailing RGB payload into an unguarded editor. The production input
+      # guard holds the structurally prefixed response through that gap.
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l $'\033]4;38'
+      sleep 0.12
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l ';rgb:0000/afaf/d7d7'
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l $'\007'
+      sleep 0.25
+      pi_fragmented=$(fm_tmux_composer_state "$SESSION:$win")
+      if [ "$pi_replacement" != empty ] || [ "$pi_draft" != pending ] \
+         || [ "$pi_cleared" != empty ] || [ "$pi_fragmented" != empty ]; then
+        FAILED=1
+        printf 'not ok - %s (%s): Pi replacement/draft/C-u/fragmented-OSC matrix was replacement=%s draft=%s cleared=%s fragmented=%s\n' \
+          "$name" "$version" "${pi_replacement:-unreadable}" "${pi_draft:-unreadable}" \
+          "${pi_cleared:-unreadable}" "${pi_fragmented:-unreadable}" >&2
+      else
+        CHECKED=$((CHECKED + 1))
+        pass "$name ($version): replacement idle is empty, RGB-like draft is pending, C-u clears, and a fragmented OSC reply is consumed"
+      fi
+    else
+      CHECKED=$((CHECKED + 1))
+      pass "$name ($version): real idle composer classifies empty"
+    fi
   fi
   tmux -L "$SOCKET" kill-window -t "$SESSION:$win" 2>/dev/null || true
 }
@@ -117,7 +175,11 @@ check_harness_idle_empty() {  # <name> <launch-cmd...>
 # --- 1. Every installed verified harness must reach a proven-empty composer --
 for h in claude codex opencode pi grok kimi muse; do
   if command -v "$h" >/dev/null 2>&1; then
-    check_harness_idle_empty "$h" "$h"
+    if [ "$h" = pi ]; then
+      check_harness_idle_empty "$h" "$h" -e "$PI_GUARD_EXTENSION"
+    else
+      check_harness_idle_empty "$h" "$h"
+    fi
   else
     note "harness absent, not verified here: $h"
   fi

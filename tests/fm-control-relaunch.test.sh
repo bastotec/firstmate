@@ -121,7 +121,13 @@ case "${1:-}" in
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
     [ -z "${FM_FAKE_COMPOSER_READ_FAIL:-}" ] || exit 1
-    if [ -s "$D/composer" ]; then
+    if [ "$(cat "$D/command")" = pi ]; then
+      if [ -s "$D/composer" ]; then
+        printf '────────────────────────\n\033[39m ❯ %s\033[7m \033[0m\n────────────────────────\n' "$(cat "$D/composer")"
+      else
+        printf '────────────────────────\n\033[39m ❯ \033]4;38;rgb:0000/afaf/d7d7\007\033]4;39;rgb:1111/bbbb/eeee\033\\\033[7m \033[0m\n────────────────────────\n'
+      fi
+    elif [ -s "$D/composer" ]; then
       printf '╭────╮\n│ %s  │\n╰────╯\n' "$(cat "$D/composer")"
     else
       printf '╭────╮\n│    │\n╰────╯\n'
@@ -394,6 +400,23 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
   assert_grep "/exit" "$dir/fake/literal" "the previous agent should have been exited"
   assert_grep "encode launch-brief" "$dir/fake/literal" "the replacement should have been launched"
   pass "fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree"
+}
+
+test_relaunch_accepts_idle_pi_cursor_and_terminal_furniture() {
+  local dir out rc
+  dir=$(new_case pi-idle-exit rl45)
+  printf 'pi' > "$dir/fake/command"
+  printf 'pi' > "$dir/fake/becomes"
+  add_ship_task "$dir" rl45 pi
+
+  out=$(run_control "$dir" rl45 relaunch --note "replace the idle Pi agent"); rc=$?
+
+  expect_code 0 "$rc" "an idle Pi 0.85 composer with recurring complete OSC replies should permit guarded relaunch"$'\n'"$out"
+  assert_contains "$out" "relaunched rl45 harness=pi from=pi" \
+    "the guarded relaunch should complete after the idle composer is proven empty"
+  assert_grep "/quit" "$dir/fake/literal" \
+    "the old idle Pi agent should receive its exit command"
+  pass "fm-control relaunch: Pi cursor and complete terminal replies no longer strand an idle replacement"
 }
 
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text() {
@@ -1937,6 +1960,7 @@ test_direct_spawn_relaunch_refuses_secondmate_account_slot_after_metadata_load()
 }
 
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
+test_relaunch_accepts_idle_pi_cursor_and_terminal_furniture
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
 test_relaunch_from_linked_home_preserves_recorded_worktree
