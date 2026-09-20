@@ -347,11 +347,17 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 # One tasks-axi compatibility verdict per session start. The probe costs three
 # tasks-axi subprocesses and this digest needs the same answer twice - here for
 # the backlog listing and again inside the fm-bootstrap.sh child, which reports
-# an incompatible build as MISSING. Computing it once and handing it to that
+# an incompatible build with the precise missing, below-floor, feature, or
+# unreadable-version classification. Computing it once and handing it to that
 # child collapses six subprocesses to three. fm-tasks-axi-lib.sh owns both reuse
 # layers and the one-hop consumption rule that keeps the verdict out of any
 # agent's environment.
-if fm_tasks_axi_compatible; then TASKS_AXI_COMPATIBLE=1; else TASKS_AXI_COMPATIBLE=0; fi
+if fm_tasks_axi_compatible; then
+  TASKS_AXI_COMPATIBLE=1
+else
+  TASKS_AXI_COMPATIBLE=$?
+  [ "$TASKS_AXI_COMPATIBLE" -eq 2 ] || TASKS_AXI_COMPATIBLE=0
+fi
 
 STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-5}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac

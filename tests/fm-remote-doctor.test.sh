@@ -5,7 +5,7 @@
 # a private HOME, a fake launchctl backed by state files, a fake herdr CLI, a
 # fake lsof that names a real holder process as the fm-remote socket owner, and
 # a fake uname that selects the platform under test. The holders are real
-# non-platform processes (jq blocked on a fifo) whose environment carries the
+# non-platform Node processes blocked on a fifo whose environment carries the
 # birth markers bin/fm-remote-herdr-owner-lib.sh reads, so the Aqua-versus-SSH
 # verdict is exercised for real. Nothing here touches the runner's own launch
 # agents, login session, or herdr server.
@@ -14,6 +14,7 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (the herdr adapter parses its JSON)"; exit 0; }
+command -v node >/dev/null 2>&1 || { echo "skip: node not found (a non-platform holder exposes birth markers to ps)"; exit 0; }
 command -v python3 >/dev/null 2>&1 || { echo "skip: python3 not found (plistlib parses the owned launch-agent contract)"; exit 0; }
 
 TMP_ROOT=$(fm_test_tmproot fm-remote-doctor)
@@ -37,14 +38,14 @@ ln -sf "$(command -v git)" "$TOOLS/git"
 ln -sf "$(command -v jq)" "$TOOLS/jq"
 BASE_PATH="$TOOLS:/usr/bin:/bin:/usr/sbin:/sbin"
 
-# Real socket-owner holders for the Darwin birth check: jq blocked on a fifo
-# this test keeps open, with exactly the marker environment each birth needs.
-JQ=$(command -v jq)
+# Real socket-owner holders for the Darwin birth check: a non-platform Node
+# process blocked on a fifo, with exactly the marker environment each birth needs.
+NODE=$(command -v node)
 HOLDER_FD=5
 hold() { # <marker-env...> -> HOLDER_PID
   local fifo="$TMP_ROOT/holder-$HOLDER_FD.fifo"
   mkfifo "$fifo"
-  env -i "$@" "$JQ" . "$fifo" &
+  env -i "$@" "$NODE" -e 'require("fs").createReadStream(process.argv[1]).resume()' "$fifo" &
   HOLDER_PID=$!
   HOLDER_PIDS+=("$HOLDER_PID")
   eval "exec ${HOLDER_FD}>\"\$fifo\""
@@ -392,6 +393,54 @@ assert_no_dangerous_calls() { # <msg>
     "the doctor wrote a loginwindow preference"
   assert_absent "$CASE_HOME/kcpassword" "the doctor wrote an auto-login password"
 }
+
+# --- unreadable worker versions remain distinct through the protocol --------
+
+new_case Linux with-herdr no-gui
+CASE_REMOTE_JOB_ACTIVE=
+CASE_PLATFORM_OVERRIDE=Linux
+cat > "$CASE_BIN/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}:${2:-}" in
+  --version:*) printf 'tasks-axi development build\n' ;;
+  update:--help) printf '%s\n' --archive-body ;;
+  mv:--help) printf '%s\n' 'usage: tasks-axi mv <id> [<id>...]' ;;
+esac
+SH
+chmod +x "$CASE_BIN/tasks-axi"
+rm -f "$CASE_BIN/sleep" "$CASE_BIN/uname"
+mkdir -p "$CASE_HOME/.local/bin"
+for tool in herdr tasks-axi treehouse claude; do
+  ln -s "$CASE_BIN/$tool" "$CASE_HOME/.local/bin/$tool"
+done
+HOME="$CASE_HOME" FM_ROOT_OVERRIDE="$ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  "$ROOT/bin/fm-remote-job-worker.sh" > "$CASE_STATE/worker.out" 2> "$CASE_STATE/worker.err" &
+DOCTOR_WORKER_PID=$!
+for _ in $(seq 1 100); do
+  [ -f "$CASE_HOME/.firstmate/remote-job/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$CASE_HOME/.firstmate/remote-job/worker.ready" "the unreadable-version fixture worker did not start"
+doctor
+expect_code 1 "$DOCTOR_RC" "doctor accepted a tasks-axi build with an unreadable version"
+assert_contains "$DOCTOR_OUT" 'required tasks-axi=VERSION_UNREADABLE (requires semantic version >=0.2.4)' \
+  "doctor hid the unreadable installed tasks-axi version"
+assert_not_contains "$DOCTOR_OUT" 'required tasks-axi=MISSING' \
+  "doctor falsely reported the installed tasks-axi build as missing"
+assert_contains "$DOCTOR_OUT" 'check remote-job-probe=ok: the remote job worker completed the required-tool probe' \
+  "doctor rejected the worker protocol's unreadable-version result"
+assert_contains "$DOCTOR_OUT" 'error: required tool versions are unreadable on the remote runtime PATH: tasks-axi' \
+  "doctor did not preserve the unreadable-version caveat in its failure"
+kill -TERM "$DOCTOR_WORKER_PID"
+for _ in $(seq 1 100); do
+  kill -0 "$DOCTOR_WORKER_PID" 2>/dev/null || break
+  sleep 0.05
+done
+if kill -0 "$DOCTOR_WORKER_PID" 2>/dev/null; then
+  kill -KILL "$DOCTOR_WORKER_PID" 2>/dev/null || true
+fi
+DOCTOR_WORKER_PID=
+pass "doctor preserves unreadable versions through the worker protocol"
 
 # --- a host with no herdr is never ready, and --fix cannot install one -------
 

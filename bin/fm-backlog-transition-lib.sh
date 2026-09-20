@@ -64,6 +64,7 @@
 FM_BACKLOG_TRANSITION_SKIP=
 # Set by the mutating helpers when they return non-zero.
 FM_BACKLOG_TRANSITION_ERROR=
+FM_BACKLOG_TRANSITION_TASKS_AXI_STATUS=
 FM_BACKLOG_ROW_RESULT=
 FM_BACKLOG_ROW_STATE=
 FM_BACKLOG_ROW_ERROR=
@@ -281,8 +282,9 @@ fm_backlog_tasks_axi_addressing() {  # <data-dir>
 }
 
 fm_backlog_transition_applies() {  # <config-dir> <data-dir> <kind>
-  local config=$1 data authorized_data=$2 kind=$3 file root backend authorized_root
+  local config=$1 data authorized_data=$2 kind=$3 file root backend authorized_root tasks_axi_status
   FM_BACKLOG_TRANSITION_SKIP=
+  FM_BACKLOG_TRANSITION_TASKS_AXI_STATUS=
   if [ "$kind" = secondmate ]; then
     FM_BACKLOG_TRANSITION_SKIP="secondmates are not backlog items"
     return 1
@@ -312,11 +314,14 @@ fm_backlog_transition_applies() {  # <config-dir> <data-dir> <kind>
   if ! fm_backlog_source_present "$data" "$authorized_data" "$root" "$authorized_root"; then
     return 2
   fi
-  if ! fm_tasks_axi_compatible; then
-    FM_BACKLOG_TRANSITION_ERROR="automatic backlog transitions require tasks-axi ${FM_TASKS_AXI_MIN:-(unknown minimum)} or newer with the required update and mv features"
-    return 2
+  if fm_tasks_axi_compatible; then
+    return 0
+  else
+    tasks_axi_status=$?
   fi
-  return 0
+  FM_BACKLOG_TRANSITION_TASKS_AXI_STATUS=$tasks_axi_status
+  FM_BACKLOG_TRANSITION_ERROR="automatic backlog transitions require tasks-axi ${FM_TASKS_AXI_MIN:-(unknown minimum)} or newer with the required update and mv features"
+  return 2
 }
 
 # Run `tasks-axi` with an optional FM_TASKS_AXI_TIMEOUT bound. A caller that

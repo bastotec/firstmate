@@ -33,6 +33,7 @@ install_runner() {  # <case-dir>
   cp "$ROOT/bin/fm-afk-contract.sh" "$dir/bin/"
   cp "$ROOT/bin/fm-branch-outcome.sh" "$dir/bin/"
   cp "$ROOT/bin/fm-tasks-axi-lib.sh" "$dir/bin/"
+  cp "$ROOT/bin/fm-tool-version-lib.sh" "$dir/bin/"
   cp "$ROOT/bin/fm-backlog-transition-lib.sh" "$dir/bin/"
   cp "$ROOT/.tasks.toml" "$dir/home/.tasks.toml"
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$dir/home/data/backlog.md"

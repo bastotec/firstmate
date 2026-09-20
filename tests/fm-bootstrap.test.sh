@@ -5,8 +5,9 @@
 # BOOTSTRAP_INFO fact, or completed bootstrap no-action fact and is silent when
 # all is well. firstmate consumes the exact 'MISSING: treehouse (install: ...)',
 # 'MISSING: tasks-axi (install: ...)', 'MISSING: quota-axi (install: ...)',
-# 'MISSING: gh-axi (install: ...)', 'PRESENTATION_UNAVAILABLE: lavish-axi ...', and
-# 'BOOTSTRAP_INFO: ...' lines, so those contracts are pinned verbatim. The cases
+# 'MISSING: gh-axi (install: ...)', 'VERSION_UNREADABLE: ...',
+# 'PRESENTATION_UNAVAILABLE: lavish-axi ...', and 'BOOTSTRAP_INFO: ...' lines, so
+# those contracts are pinned verbatim. The cases
 # are table-driven over the inputs that vary: whether `treehouse get --help`
 # advertises --lease, which (if any) tasks-axi version is on PATH, whether
 # tasks-axi update advertises --archive-body, whether its mv help advertises
@@ -312,8 +313,9 @@ ROWS
 }
 
 test_no_mistakes_min_version() {
-  local label version mode case_dir fakebin out missing n
+  local label version mode case_dir fakebin path out missing unreadable n
   missing='MISSING: no-mistakes (install: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)'
+  unreadable='VERSION_UNREADABLE: no-mistakes (installed build; requires semantic version >=1.46.0; upgrade: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)'
   n=0
   while IFS='^' read -r label version mode; do
     [ -n "$label" ] || continue
@@ -323,27 +325,44 @@ test_no_mistakes_min_version() {
     mkdir -p "$case_dir/home/config"
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     fakebin=$(make_fake_toolchain "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    path="$fakebin:$BASE_PATH"
+    if [ "$version" = absent ]; then
+      rm -f "$fakebin/no-mistakes"
+      path="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" no-mistakes)"
+    fi
+    out=$(PATH="$path" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NO_MISTAKES_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
     case "$mode" in
       empty)
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+      unreadable)
+        [ "$out" = "$unreadable" ] || fail "$label: expected '$unreadable', got: $out"
+        assert_not_contains "$out" 'MISSING: no-mistakes' "$label: installed build was falsely reported absent" ;;
     esac
   done <<'ROWS'
+absent no-mistakes reports the tool missing^absent^missing
 minimum no-mistakes version is accepted^no-mistakes version v1.46.0 (fake)^empty
+plain tool-associated no-mistakes version is accepted^no-mistakes 1.46.0^empty
+build metadata at the floor is accepted^no-mistakes 1.46.0+vendor.7^empty
+prerelease at the floor remains below it^no-mistakes 1.46.0-rc.1^missing
+prerelease above the floor is accepted^no-mistakes 1.46.1-rc.1^empty
 newer no-mistakes minor is accepted^no-mistakes version v1.47.0 (fake)^empty
 newer no-mistakes major is accepted^no-mistakes version v2.0.0 (fake)^empty
 older no-mistakes patch reports an upgrade^no-mistakes version v1.45.4 (fake)^missing
-unparseable no-mistakes version reports an upgrade^no-mistakes development build^missing
+unparseable no-mistakes version stays incompatible without reporting absence^no-mistakes development build^unreadable
+dotted date in no-mistakes development identifier is unreadable^no-mistakes development build 2026.09.19^unreadable
+directly associated dotted date is unreadable^no-mistakes 2026.10.19^unreadable
+four-part no-mistakes identifier is unreadable^no-mistakes 1.46.0.1^unreadable
 ROWS
   pass "bootstrap enforces no-mistakes minimum version"
 }
 
 test_gh_axi_min_version() {
-  local label version mode case_dir fakebin out missing n
+  local label version mode case_dir fakebin out missing unreadable n
   missing='MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)'
+  unreadable='VERSION_UNREADABLE: gh-axi (installed build; requires semantic version >=0.1.29; upgrade: npm install -g gh-axi && gh-axi setup hooks)'
   n=0
   while IFS='^' read -r label version mode; do
     [ -n "$label" ] || continue
@@ -359,15 +378,21 @@ test_gh_axi_min_version() {
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+      unreadable)
+        [ "$out" = "$unreadable" ] || fail "$label: expected '$unreadable', got: $out"
+        assert_not_contains "$out" 'MISSING: gh-axi' "$label: installed build was falsely reported absent" ;;
     esac
   done <<'ROWS'
 minimum gh-axi version is accepted^0.1.29^empty
+tool-associated gh-axi version is accepted^gh-axi 0.1.29^empty
 newer gh-axi patch is accepted^0.1.30^empty
 newer gh-axi minor is accepted^0.2.0^empty
 newer gh-axi major is accepted^1.0.0^empty
 older gh-axi patch reports an upgrade^0.1.19^missing
 much older gh-axi minor reports an upgrade^0.0.9^missing
-unparseable gh-axi version reports an upgrade^gh-axi development build^missing
+unparseable gh-axi version stays incompatible without reporting absence^gh-axi development build^unreadable
+dotted date in gh-axi development identifier is unreadable^gh-axi development build 2026.09.19^unreadable
+four-part gh-axi identifier is unreadable^gh-axi 0.1.29.1^unreadable
 ROWS
   pass "bootstrap enforces gh-axi minimum version"
 }
@@ -408,8 +433,9 @@ ROWS
 }
 
 test_tasks_axi_min_version() {
-  local label version mode case_dir fakebin out missing n archive_body multi_id
+  local label version mode case_dir fakebin out missing unreadable n archive_body multi_id
   missing='MISSING: tasks-axi (install: npm install -g tasks-axi)'
+  unreadable='VERSION_UNREADABLE: tasks-axi (installed build; requires semantic version >=0.2.4; upgrade: npm install -g tasks-axi)'
   n=0
   while IFS='^' read -r label version mode; do
     [ -n "$label" ] || continue
@@ -440,15 +466,21 @@ test_tasks_axi_min_version() {
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+      unreadable)
+        [ "$out" = "$unreadable" ] || fail "$label: expected '$unreadable', got: $out"
+        assert_not_contains "$out" 'MISSING: tasks-axi' "$label: installed build was falsely reported absent" ;;
     esac
   done <<'ROWS'
 minimum tasks-axi version is accepted^0.2.4^empty
+tool-associated tasks-axi version is accepted^tasks-axi 0.2.4^empty
 newer tasks-axi patch is accepted^0.2.5^empty
 newer tasks-axi minor is accepted^0.3.0^empty
 newer tasks-axi major is accepted^1.0.0^empty
 older tasks-axi with features reports an upgrade^0.1.1^missing
 the patch just below the floor reports an upgrade^0.2.3^missing
-unparseable tasks-axi version reports an upgrade^tasks-axi development build^missing
+unparseable tasks-axi version stays incompatible without reporting absence^tasks-axi development build^unreadable
+dotted date in tasks-axi development identifier is unreadable^tasks-axi development build 2026.09.19^unreadable
+four-part tasks-axi identifier is unreadable^tasks-axi 0.2.4.1^unreadable
 tasks-axi at floor without archive-body reports an upgrade^0.2.4:noarchive^missing
 tasks-axi at floor without multi-id reports an upgrade^0.2.4:nomulti^missing
 ROWS
@@ -456,10 +488,12 @@ ROWS
 }
 
 # These rows exercise the real bootstrap check with a fake quota-axi answering
-# --version: below the floor produces MISSING, while at or above is silent.
+# --version: below the floor produces MISSING, an unreadable version produces
+# VERSION_UNREADABLE, and at or above is silent.
 test_quota_axi_min_version() {
-  local label version mode case_dir fakebin out missing n
+  local label version mode case_dir fakebin out missing unreadable n
   missing='MISSING: quota-axi (install: npm install -g quota-axi)'
+  unreadable='VERSION_UNREADABLE: quota-axi (installed build; requires semantic version >=0.1.29; upgrade: npm install -g quota-axi)'
   n=0
   while IFS='^' read -r label version mode; do
     [ -n "$label" ] || continue
@@ -475,17 +509,48 @@ test_quota_axi_min_version() {
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+      unreadable)
+        [ "$out" = "$unreadable" ] || fail "$label: expected '$unreadable', got: $out"
+        assert_not_contains "$out" 'MISSING: quota-axi' "$label: installed build was falsely reported absent" ;;
     esac
   done <<'ROWS'
 minimum quota-axi version is accepted^0.1.29^empty
+tool-associated quota-axi version is accepted^quota-axi 0.1.29^empty
 newer quota-axi patch is accepted^0.1.30^empty
 newer quota-axi minor is accepted^0.2.0^empty
 newer quota-axi major is accepted^1.0.0^empty
 the patch just below the floor reports an upgrade^0.1.28^missing
 much older quota-axi minor reports an upgrade^0.0.9^missing
-unparseable quota-axi version reports an upgrade^quota-axi development build^missing
+unparseable quota-axi version stays incompatible without reporting absence^quota-axi development build^unreadable
+dotted date in quota-axi development identifier is unreadable^quota-axi development build 2026.09.19^unreadable
+four-part quota-axi identifier is unreadable^quota-axi 0.1.29.1^unreadable
 ROWS
   pass "bootstrap enforces quota-axi minimum version"
+}
+
+test_tasks_axi_unreadable_transition_gate() {
+  local case_dir fakebin out rc unreadable
+  case_dir="$TMP_ROOT/tasks-axi-transition-gate"
+  mkdir -p "$case_dir/home/config" "$case_dir/home/data" "$case_dir/home/state"
+  printf '%s\n' 'backend = "markdown"' > "$case_dir/home/.tasks.toml"
+  printf '# Backlog\n\n## In flight\n\n## Queued\n' > "$case_dir/home/data/backlog.md"
+  fm_write_meta "$case_dir/home/state/worker.meta" 'kind=ship'
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_tasks_axi "$fakebin" 'tasks-axi development build'
+  unreadable='VERSION_UNREADABLE: tasks-axi (installed build; requires semantic version >=0.2.4; upgrade: npm install -g tasks-axi)'
+
+  if out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh" 2>&1); then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  [ "$rc" -eq 1 ] || fail "unreadable tasks-axi transition gate returned $rc instead of refusing"
+  assert_contains "$out" "$unreadable" "automatic backlog transition gate hid the unreadable tasks-axi version"
+  assert_not_contains "$out" 'MISSING: tasks-axi' "automatic backlog transition gate falsely reported tasks-axi absent"
+  assert_not_contains "$out" 'automatic backlog transitions require tasks-axi' "automatic backlog transition gate collapsed the unreadable version into its generic refusal"
+  pass "bootstrap preserves unreadable tasks-axi through the transition gate"
 }
 
 test_git_is_required_with_supported_install_instruction() {
@@ -1356,6 +1421,7 @@ test_gh_axi_min_version
 test_lavish_axi_min_version
 test_tasks_axi_min_version
 test_quota_axi_min_version
+test_tasks_axi_unreadable_transition_gate
 test_git_is_required_with_supported_install_instruction
 test_orca_backend_gates_orca_tool_only_when_selected
 test_session_provider_backends_do_not_require_tmux
