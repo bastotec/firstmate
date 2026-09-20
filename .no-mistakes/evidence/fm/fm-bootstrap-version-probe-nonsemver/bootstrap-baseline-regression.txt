@@ -1,0 +1,5 @@
+$ no-mistakes --version
+no-mistakes version fork-7e84d0d (7e84d0d) 2026-09-16T17:05:56Z
+
+$ baseline(f672440f) FM_BOOTSTRAP_DETECT_ONLY=1 FM_BOOTSTRAP_NETWORK=skip FM_BACKEND=tmux ... fm-bootstrap.sh
+MISSING: no-mistakes (install: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)

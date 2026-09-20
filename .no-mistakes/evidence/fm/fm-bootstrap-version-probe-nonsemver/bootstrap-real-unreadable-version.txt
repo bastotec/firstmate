@@ -1,0 +1,13 @@
+$ no-mistakes --version
+no-mistakes version fork-7e84d0d (7e84d0d) 2026-09-16T17:05:56Z
+$ gh-axi --version
+0.1.35
+$ tasks-axi --version
+0.2.5
+$ quota-axi --version
+0.1.42
+$ lavish-axi --version
+0.1.67
+
+$ FM_BOOTSTRAP_DETECT_ONLY=1 FM_BOOTSTRAP_NETWORK=skip FM_BACKEND=tmux FM_HOME="$PWD" FM_ROOT_OVERRIDE="$PWD" bin/fm-bootstrap.sh
+VERSION_UNREADABLE: no-mistakes (installed build; requires semantic version >=1.46.0; upgrade: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)
