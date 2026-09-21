@@ -2282,14 +2282,14 @@ import { writeFileSync } from "node:fs";
 let now = 2_000_000;
 Date.now = () => now;
 registryModels.push({ provider: "anthropic", id: "main-model" });
-writeFileSync(`${home}/config/supervision-branch-model`, "ghost/a\nmalformed subscription\nghost/b\n");
+writeFileSync(`${home}/config/supervision-branch-model`, "ghost/a\nanthropic /claude-model\nghost/b\n");
 await fire("session_start", {}, makeCtx());
 const malformed = dispatch("signal: malformed mixed chain");
 if (!malformed.accepted) throw new Error("the malformed chain wake was not initially accepted for fail-open settlement");
 const malformedFailure = await malformed.settlement.then(() => null, (error) => error);
 if (!(malformedFailure instanceof Error) ||
     !malformedFailure.message.includes("invalid supervision model line 2") ||
-    !malformedFailure.message.includes("malformed subscription")) {
+    !malformedFailure.message.includes("anthropic /claude-model")) {
   throw new Error(`the mixed malformed chain did not refuse with the malformed line: ${String(malformedFailure)}`);
 }
 

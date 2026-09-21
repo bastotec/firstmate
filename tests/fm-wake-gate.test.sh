@@ -16,9 +16,10 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 
 GATE="$ROOT/bin/fm-wake-gate.sh"
+DRAIN="$ROOT/bin/fm-wake-drain.sh"
 TMP_ROOT=$(fm_test_tmproot fm-wake-gate-tests)
 
-# classify <state> <kind> <key> <payload> -> verdict line
+# classify <state> <kind> <key> <payload> <wake-epoch> -> verdict line
 classify() {
   local state=$1; shift
   FM_STATE_DIR="$state" "$GATE" classify "$@" 2>/dev/null
@@ -44,28 +45,48 @@ status_at() {
 
 # --- the default is escalate: a live (unmarked) task's stale wake passes ---
 s=$(new_state live)
-[ "$(classify "$s" stale 'firstmate:fm-some-task' 'stale: idle pane')" = escalate ] \
+[ "$(classify "$s" stale 'firstmate:fm-some-task' 'stale: idle pane' 1)" = escalate ] \
   || fail "an unmarked task's stale wake must escalate"
 pass "unmarked task escalates (gate is inert without a stand-down)"
 
 # --- stood-down + status NOT advanced -> absorb (stale, stall check, signal) ---
 s=$(new_state down-quiet)
 status_at "$s" docana-delivery 202001010000
-stand_down "$s" docana-delivery "$(date +%s)"
-[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle pane')" = absorb:stood-down-rering ] \
-  || fail "a stood-down task's stale re-ring with no new status must absorb"
-[ "$(classify "$s" check 'secondmate-wake-loop-docana-delivery-1789940215-1792' 'check: secondmate wake-loop stalled: mate=docana-delivery')" = absorb:stood-down-rering ] \
+stand_down "$s" docana-delivery 100
+[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle pane' 99)" = escalate ] \
+  || fail "SAFETY: a wake older than the stand-down must escalate"
+[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle pane' 100)" = escalate ] \
+  || fail "SAFETY: a same-second wake must escalate"
+[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle pane' 101)" = absorb:stood-down-rering ] \
+  || fail "a post-stand-down stale re-ring with no new status must absorb"
+[ "$(classify "$s" check 'secondmate-wake-loop-docana-delivery-1789940215-1792' 'check: secondmate wake-loop stalled: mate=docana-delivery' 101)" = absorb:stood-down-rering ] \
   || fail "a stood-down wake-loop stall re-ring must absorb"
 pass "stood-down mechanical re-rings absorb (stale + wake-loop stall)"
+
+dir=$(make_case drain-pre-stand-down)
+state="$dir/state"
+printf 'done: completed before stand-down\n' > "$state/docana-delivery.status"
+append_wake "$state" signal docana-delivery.status 'signal: docana-delivery.status' \
+  || fail "queueing the pre-stand-down wake failed"
+wake_epoch=$(awk -F '\t' 'NF >= 5 { print $1; exit }' "$state/.wake-queue")
+status_size=$(wc -c < "$state/docana-delivery.status" | tr -d '[:space:]')
+printf '%s\tstood down later\t%s\n' "$(( wake_epoch + 1 ))" "$status_size" \
+  > "$state/docana-delivery.stooddown"
+FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2> "$dir/drain.err" \
+  || fail "draining the pre-stand-down wake failed"
+grep "$(printf '\tsignal\tdocana-delivery.status\t')" "$dir/drain.out" >/dev/null \
+  || fail "SAFETY: the drain hid a wake queued before stand-down"
+pass "the drain presents wakes queued before stand-down"
 
 s=$(new_state stand-down-writer)
 printf 'working: before stand-down\n' > "$s/writer.status"
 FM_STATE_DIR="$s" "$GATE" stand-down writer --reason test >/dev/null \
   || fail "stand-down command failed"
-[ "$(classify "$s" stale 'firstmate:fm-writer' 'stale: idle pane')" = absorb:stood-down-rering ] \
+marker_epoch=$(cut -f1 "$s/writer.stooddown")
+[ "$(classify "$s" stale 'firstmate:fm-writer' 'stale: idle pane' "$(( marker_epoch + 1 ))")" = absorb:stood-down-rering ] \
   || fail "the marker written by stand-down did not record the current status size"
 printf 'done: appended in the same second\n' >> "$s/writer.status"
-[ "$(classify "$s" stale 'firstmate:fm-writer' 'stale: idle pane')" = escalate ] \
+[ "$(classify "$s" stale 'firstmate:fm-writer' 'stale: idle pane' "$(( marker_epoch + 1 ))")" = escalate ] \
   || fail "SAFETY: same-second growth after the stand-down command must escalate"
 pass "stand-down records status size and detects same-second growth"
 
@@ -88,37 +109,37 @@ pass "decisions, blockers, merge checks, heartbeats, watcher failures never abso
 # --- stood-down but status ADVANCED -> escalate (the task did something new) ---
 s=$(new_state down-but-active)
 printf 'working: old line\n' > "$s/docana-delivery.status"
-stand_down "$s" docana-delivery "$(date +%s)"
+stand_down "$s" docana-delivery 100
 printf 'done [key=z]: new work landed\n' >> "$s/docana-delivery.status"
 touch -t 202001010000 "$s/docana-delivery.status"
-[ "$(classify "$s" signal 'docana-delivery.status' 'signal: docana-delivery.status')" = escalate ] \
+[ "$(classify "$s" signal 'docana-delivery.status' 'signal: docana-delivery.status' 101)" = escalate ] \
   || fail "SAFETY: a same-second status append after stand-down must escalate"
 pass "status byte growth escalates even when mtime cannot show the append"
 
 s=$(new_state legacy-marker)
 printf 'working: old line\n' > "$s/docana-delivery.status"
-printf '%s\tlegacy marker\n' "$(date +%s)" > "$s/docana-delivery.stooddown"
-[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle')" = escalate ] \
+printf '%s\tlegacy marker\n' 100 > "$s/docana-delivery.stooddown"
+[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle' 101)" = escalate ] \
   || fail "SAFETY: a marker without a recorded status size must escalate"
 pass "legacy stood-down markers fail open"
 
 # --- fail-open on malformed input ---
 s=$(new_state malformed)
 [ "$(classify "$s" '' '' '')" = escalate ] || fail "an empty kind must escalate"
-[ "$(classify "$s" stale '../../etc/passwd' 'x')" = escalate ] \
+[ "$(classify "$s" stale '../../etc/passwd' 'x' 1)" = escalate ] \
   || fail "an unresolvable task id must escalate, not absorb"
 pass "malformed and unresolvable rows escalate (fail-open)"
 
 # --- resume clears the marker -> escalates again ---
 s=$(new_state resume)
 status_at "$s" docana-delivery 202001010000
-stand_down "$s" docana-delivery "$(date +%s)"
-[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle')" = absorb:stood-down-rering ] \
+stand_down "$s" docana-delivery 100
+[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle' 101)" = absorb:stood-down-rering ] \
   || fail "precondition: stood-down re-ring should absorb before resume"
 FM_STATE_DIR="$s" "$GATE" resume docana-delivery >/dev/null 2>&1 \
   || fail "resume failed to clear a writable stand-down marker"
 [ ! -e "$s/docana-delivery.stooddown" ] || fail "resume reported success but left the marker"
-[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle')" = escalate ] \
+[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle' 101)" = escalate ] \
   || fail "after resume the same wake must escalate"
 pass "resume clears the stand-down and the wake escalates again"
 
@@ -137,6 +158,7 @@ STUB="$TMP_ROOT/wg-stub"
 cat > "$STUB" <<'SH'
 #!/usr/bin/env bash
 cat >/dev/null
+[ "${FM_TEST_ANSWERS:-}" = preflight ] && { printf 'error\tno-key\n'; exit 3; }
 [ "${FM_TEST_ANSWERS:-}" = error ] && { printf 'error\tcall-failed\n'; exit 5; }
 printf 'usage\t1\t1200\t0\t400\n'
 # shellcheck disable=SC2086 # the four answers are deliberately word-split
@@ -178,6 +200,13 @@ FM_TEST_TIMEOUT_LOG="$TIMEOUT_LOG" PATH="$TIMEOUT_BIN:$PATH" FM_STATE_DIR="$s" \
 [ "$(head -1 "$TIMEOUT_LOG")" = 8 ] \
   || fail "a zero evidence timeout did not fall back to the positive default"
 pass "zero cannot disable the evidence timeout"
+
+s=$(new_state sv-preflight-cost)
+[ "$(verdict "$s" enforce preflight)" = escalate ] \
+  || fail "SAFETY: a helper preflight failure must escalate"
+[ "$(FM_STATE_DIR="$s" "$GATE" cost)" = 'calls=0 input_tokens=0 output_tokens=0' ] \
+  || fail "a preflight failure was counted as a Jev request"
+pass "preflight failures record zero Jev calls"
 
 s=$(new_state sv-inert)
 [ "$(FM_STATE_DIR="$s" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" FM_TEST_ANSWERS="$WORKING" \

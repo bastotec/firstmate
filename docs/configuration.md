@@ -62,6 +62,7 @@ Firstmate keeps no model catalog of its own; the list is the intersection of wha
 A provider that exists only because an extension registered it inside the captain's session, such as pi-devin-auth's `devin`, is offered and can be pinned or followed like any other; [pi-supervision-branch.md](pi-supervision-branch.md#cost-model-and-the-byte-stable-prefix) owns how that registration reaches the isolated branch runtime.
 Stored OAuth and API-key credentials retain their native credential type because Firstmate never copies, converts, installs, or overwrites credentials for the branch runtime.
 The file holds one `<provider>/<model-id>` line followed by one newline, split at the first `/` so a provider-qualified model id such as `openrouter/anthropic/claude-sonnet-4-5` survives intact.
+A model reference contains no whitespace or control characters.
 Several such lines make a fallback chain in preference order, for a captain whose subscriptions run out at different times; blank lines and `#` comments are skipped, and a repeated model keeps its first position.
 If the file contains at least one valid model line, any malformed non-comment line refuses the branch build and names that line instead of silently selecting a later subscription; a file with no valid model line means no pin.
 The chain is edited by hand, and the picker still writes a single line, so picking a model replaces a chain with that one pin.

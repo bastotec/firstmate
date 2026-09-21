@@ -42,7 +42,7 @@ export function parseBranchModelChain(stored: string): BranchModelRef[] {
     const line = raw.trim();
     if (line === "" || line.startsWith("#")) continue;
     const separator = line.indexOf("/");
-    if (separator <= 0 || separator >= line.length - 1) {
+    if (separator <= 0 || separator >= line.length - 1 || /[\s\u0000-\u001F\u007F]/u.test(line)) {
       malformed.push({ number: index + 1, line });
       continue;
     }

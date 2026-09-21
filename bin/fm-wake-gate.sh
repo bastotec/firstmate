@@ -16,11 +16,12 @@
 #   escalation is the only unacceptable failure.
 #
 # USAGE
-#   fm-wake-gate.sh classify <kind> <key> <payload>
+#   fm-wake-gate.sh classify <kind> <key> <payload> <wake-epoch>
 #       Drain-side, deterministic, no model call. Print `escalate` or
 #       `absorb:stood-down-rering`. Absorbs only a stale, signal, or
 #       secondmate-wake-loop row of a task carrying a stood-down marker whose
-#       status log has not advanced since the marker. Never absorbs a heartbeat,
+#       status log has not advanced since the marker and whose wake epoch is
+#       strictly newer than the marker. Never absorbs a heartbeat,
 #       any other check, or a row mentioning needs-decision, blocked, or a
 #       watcher failure.
 #   fm-wake-gate.sh stale-verdict <task-id> <window> <reason>
@@ -112,7 +113,7 @@ task_from_row() {  # <kind> <key> <payload>
 }
 
 cmd_classify() {
-  local kind=${1-} key=${2-} payload=${3-}
+  local kind=${1-} key=${2-} payload=${3-} wake_epoch=${4-}
   # Fail-open on a malformed call.
   [ -n "$kind" ] || { printf 'escalate\n'; return 0; }
 
@@ -138,6 +139,7 @@ cmd_classify() {
 
   # --- LAYER 1: deterministic stood-down absorber (free, no model) ---
   local task marker_file marker_epoch marker_reason marker_size status_file status_size
+  case "$wake_epoch" in ''|*[!0-9]*) printf 'escalate\n'; return 0 ;; esac
   task=$(task_from_row "$kind" "$key" "$payload")
   if [ -n "$task" ]; then
     marker_file="$STATE/$task.stooddown"
@@ -151,7 +153,8 @@ cmd_classify() {
         case "$status_size" in ''|*[!0-9]*) status_size='' ;; esac
         # Absorb only when the status log has NOT advanced since the stand-down.
         # An advanced log means the task did something new -> escalate (fail-open).
-        if [ -n "$status_size" ] && [ "$status_size" -eq "$marker_size" ]; then
+        if [ -n "$status_size" ] && [ "$status_size" -eq "$marker_size" ] \
+          && awk -v w="$wake_epoch" -v m="$marker_epoch" 'BEGIN { exit !(w + 0 > m + 0) }'; then
           case "$kind:$key" in
             stale:*|signal:*|check:secondmate-wake-loop-*)
               printf 'absorb:stood-down-rering\n'; return 0 ;;
@@ -218,7 +221,7 @@ gather_evidence() {
 
 cmd_stale_verdict() {
   local task=${1-} reason=${3-}  # $2 is the window, already named inside the reason
-  local keyvar mode evidence hout answers aw wt fl fn why='' decision cls conf look_file look_record='' look_invalid=0 last_epoch='' last_flags='' terminal_flags='' flag now tmo
+  local keyvar mode evidence hout answers aw wt fl fn why='' decision cls conf look_file look_record='' look_invalid=0 last_epoch='' last_flags='' terminal_flags='' flag now tmo helper_status=0 helper_error='' failure_calls=1
   case "$task" in ''|*/*|*" "*) printf 'escalate\n'; return 0 ;; esac
   keyvar=$(gate_key_var)
   [ -n "$keyvar" ] || { printf 'escalate\n'; return 0; }
@@ -244,7 +247,16 @@ cmd_stale_verdict() {
     | FM_WAKE_GATE_KEY_VAR="$keyvar" \
       FM_WAKE_GATE_SECRETS="${FM_WAKE_GATE_SECRETS:-$HOME/.secrets}" \
       FM_WAKE_GATE_TIMEOUT_MS=$(( tmo * 1000 )) \
-      bounded $(( tmo + 2 )) "${run[@]}" 2>/dev/null) || hout=''
+      bounded $(( tmo + 2 )) "${run[@]}" 2>/dev/null)
+  helper_status=$?
+  helper_error=$(printf '%s\n' "$hout" | awk -F'\t' '$1=="error"{print $2; exit}')
+  if [ "$helper_status" -ne 0 ]; then
+    case "$helper_error" in no-key|no-runtime|bad-input|no-evidence) failure_calls=0 ;; esac
+    log_usage "$failure_calls" 0 0 0 "error-${helper_error:-unknown}"
+    log_shadow "$task" "$mode" call jev-error - - - -
+    printf 'escalate\n'
+    return 0
+  fi
   answers=$(printf '%s\n' "$hout" | awk -F'\t' '$1=="answers"{print; exit}')
   IFS=$'\t' read -r _ aw wt fl fn <<EOF_ANSWERS
 $answers
@@ -384,7 +396,7 @@ case "$verb" in
   *) cat >&2 <<EOF
 fm-wake-gate.sh - fail-open worthiness gate for supervision wakes
 Usage:
-  fm-wake-gate.sh classify <kind> <key> <payload>
+  fm-wake-gate.sh classify <kind> <key> <payload> <wake-epoch>
   fm-wake-gate.sh stale-verdict <task-id> <window> <reason>
   fm-wake-gate.sh report
   fm-wake-gate.sh stand-down <task-id> [--reason <text>]

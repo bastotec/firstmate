@@ -878,7 +878,7 @@ if [ "$ACTOR" = main ] && [ -n "$RAW_ROWS" ] && [ -x "$SCRIPT_DIR/fm-wake-gate.s
     if [ "$GATE_OK" -eq 1 ]; then
       while IFS=$(printf '\t') read -r g_epoch g_seq g_kind g_key g_payload; do
         [ -n "${g_seq:-}" ] || continue
-        g_verdict=$(FM_STATE_DIR="$STATE" "$SCRIPT_DIR/fm-wake-gate.sh" classify "$g_kind" "$g_key" "$g_payload" 2>/dev/null) || g_verdict=escalate
+        g_verdict=$(FM_STATE_DIR="$STATE" "$SCRIPT_DIR/fm-wake-gate.sh" classify "$g_kind" "$g_key" "$g_payload" "$g_epoch" 2>/dev/null) || g_verdict=escalate
         case "$g_verdict" in
           absorb:*) GATE_ABSORBED=$((GATE_ABSORBED + 1)) ;;
           *)
