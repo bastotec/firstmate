@@ -186,6 +186,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/harness-adapters/references/harness/deck.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/harness-adapters/references/harness/claude.md",
       "audience": "agent-runtime"
     },
@@ -451,6 +455,10 @@
     },
     {
       "path": "docs/verification/agy.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/deck.md",
       "audience": "maintainer-verification"
     },
     {
