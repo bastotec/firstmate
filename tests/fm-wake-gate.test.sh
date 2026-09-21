@@ -4,7 +4,8 @@
 # noise (a stale/stall/signal re-ring of a task the captain explicitly stood
 # down, with no new durable status) so it is acknowledged without spending a
 # model turn. Every case exercises the classify CLI over a synthetic state dir;
-# nothing reaches the network and no model is called (the Jev layer ships inert).
+# nothing reaches the network and no model is called (stale-verdict runs against
+# a stub helper and stub evidence).
 # The load-bearing guarantees: the default verdict is escalate; a decision,
 # blocker, check, heartbeat, or watcher-failure row NEVER absorbs regardless of
 # any marker; a stood-down row absorbs only while its status log has not
@@ -99,29 +100,81 @@ rm -f "$s/docana-delivery.stooddown"
   || fail "after resume the same wake must escalate"
 pass "resume clears the stand-down and the wake escalates again"
 
-# --- LAYER 2: Jev worthiness (stub helper; opt-in, advisory-by-default, fail-open) ---
-s=$(new_state jev)
+# --- stale-verdict: the evidence rule (stub helper and stub evidence; no network) ---
+# The stub helper prints the four probabilities from FM_TEST_ANSWERS
+# (working waiting failure finished), or an error row when it is "error".
 STUB="$TMP_ROOT/wg-stub"
 cat > "$STUB" <<'SH'
 #!/usr/bin/env bash
-printf 'usage\t1\t10\t1\t5\n'
-printf '%s\n' "${FM_TEST_PROB:-0.5}"
+cat >/dev/null
+[ "${FM_TEST_ANSWERS:-}" = error ] && { printf 'error\tcall-failed\n'; exit 5; }
+printf 'usage\t1\t1200\t0\t400\n'
+# shellcheck disable=SC2086 # the four answers are deliberately word-split
+printf 'answers\t%s\t%s\t%s\t%s\n' $FM_TEST_ANSWERS
 SH
-chmod +x "$STUB"
-jclassify() {  # <prob> <enforce> <kind> <key> <payload>
-  FM_STATE_DIR="$s" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_KEY_VAR=DUMMY_KEY \
-    FM_TEST_PROB="$1" FM_WAKE_GATE_ENFORCE="$2" "$GATE" classify "$3" "$4" "$5" 2>/dev/null
+EVID="$TMP_ROOT/wg-evidence"
+cat > "$EVID" <<'SH'
+#!/usr/bin/env bash
+printf 'state: working (run-step: test running) for %s\n' "$1"
+SH
+chmod +x "$STUB" "$EVID"
+WEDGE='stale: w:fm-t1 (idle 300s, possible wedge)'
+verdict() {  # <state> <mode> <answers> [reason] -> verdict line
+  FM_STATE_DIR="$1" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" \
+    FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE="$2" FM_TEST_ANSWERS="$3" \
+    "$GATE" stale-verdict t1 w:fm-t1 "${4:-$WEDGE}" 2>/dev/null
 }
-[ "$(jclassify 0.05 0 signal some-task.status 'signal: routine progress')" = escalate ] \
-  || fail "advisory mode must escalate even a low-worthiness row"
-[ "$(jclassify 0.05 1 signal some-task.status 'signal: routine progress')" = absorb:jev-noise ] \
-  || fail "enforce mode must absorb a low-worthiness row"
-[ "$(jclassify 0.80 1 signal some-task.status 'signal: something happened')" = escalate ] \
-  || fail "a high-worthiness row must escalate even when enforcing"
-[ "$(jclassify '-' 1 signal some-task.status 'signal: x')" = escalate ] \
-  || fail "SAFETY: a Jev failure ('-') must escalate (fail-open)"
-[ "$(jclassify 0.01 1 signal some-task.status 'needs-decision [key=x]: choose')" = escalate ] \
-  || fail "SAFETY: a hard-excluded needs-decision row must escalate before Jev, even at 0.01 enforcing"
-pass "Jev layer: advisory-by-default, enforce absorbs only low-worthiness, fail-open, exclusions win"
+last_decision() { tail -1 "$1/wake-gate/shadow.log" | cut -f4,5; }
+WORKING='0.92 0.05 0.06 0.04'
+
+s=$(new_state sv-inert)
+[ "$(FM_STATE_DIR="$s" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" FM_TEST_ANSWERS="$WORKING" \
+  "$GATE" stale-verdict t1 w:fm-t1 "$WEDGE" 2>/dev/null)" = escalate ] || fail "without a key variable the gate must escalate"
+[ ! -e "$s/wake-gate/shadow.log" ] || fail "an inert gate must not log a decision"
+pass "stale-verdict is inert without the opt-in key variable"
+
+s=$(new_state sv-first-look)
+[ "$(verdict "$s" enforce "$WORKING")" = escalate ] || fail "SAFETY: a worker never looked at must get a model look first"
+[ "$(last_decision "$s")" = "$(printf 'call\tsilence-backstop')" ] || fail "the first look must be recorded as the silence backstop"
+[ "$(verdict "$s" enforce "$WORKING")" = absorb:jev-working ] || fail "a visibly working worker already looked at must absorb in enforce mode"
+pass "first alarm gets a model look; later working alarms absorb in enforce mode"
+
+s=$(new_state sv-shadow)
+verdict "$s" shadow "$WORKING" >/dev/null
+[ "$(verdict "$s" shadow "$WORKING")" = escalate ] || fail "shadow mode must never absorb"
+[ "$(last_decision "$s")" = "$(printf 'skip\tsame-working')" ] || fail "shadow mode must still log the would-skip decision"
+pass "shadow mode logs the would-skip decision and changes nothing"
+
+s=$(new_state sv-waiting)
+verdict "$s" enforce "$WORKING" >/dev/null
+[ "$(verdict "$s" enforce '0.10 0.86 0.05 0.04')" = escalate ] || fail "SAFETY: a worker waiting on someone must reach the model"
+[ "$(verdict "$s" enforce '0.30 0.20 0.25 0.20')" = escalate ] || fail "SAFETY: evidence nothing explains must reach the model"
+[ "$(last_decision "$s")" = "$(printf 'call\tunexplained')" ] || fail "an unexplained alarm must be logged as such"
+pass "waiting and unexplained evidence always reach the model"
+
+s=$(new_state sv-terminal)
+verdict "$s" enforce "$WORKING" >/dev/null
+[ "$(verdict "$s" enforce '0.05 0.05 0.95 0.10')" = escalate ] || fail "SAFETY: a new failure must reach the model"
+[ "$(verdict "$s" enforce '0.05 0.05 0.95 0.10')" = absorb:jev-failure ] || fail "the same failure already looked at must absorb"
+[ "$(verdict "$s" enforce '0.05 0.05 0.10 0.93')" = escalate ] || fail "SAFETY: a newly finished worker must reach the model once"
+pass "a new failed or finished state gets exactly one model look"
+
+s=$(new_state sv-backstop)
+verdict "$s" enforce "$WORKING" >/dev/null
+printf '%s\tworking\n' "$(( $(date +%s) - 4000 ))" > "$s/wake-gate/t1.look"
+[ "$(verdict "$s" enforce "$WORKING")" = escalate ] || fail "SAFETY: a look older than the silence bound must reach the model"
+pass "no worker goes unexamined past the silence bound"
+
+s=$(new_state sv-failopen)
+verdict "$s" enforce "$WORKING" >/dev/null
+[ "$(verdict "$s" enforce error)" = escalate ] || fail "SAFETY: a Jev failure must escalate"
+[ "$(verdict "$s" enforce "$WORKING" 'stale: w:fm-t1 (unread firstmate instruction: x.msg still unhandled)')" = escalate ] \
+  || fail "SAFETY: an unread-instruction alarm is never gate-able"
+[ "$(FM_STATE_DIR="$s" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD=/nonexistent FM_WAKE_GATE_KEY_VAR=DUMMY_KEY \
+  FM_WAKE_GATE_MODE=enforce FM_TEST_ANSWERS="$WORKING" "$GATE" stale-verdict t1 w:fm-t1 "$WEDGE" 2>/dev/null)" = escalate ] \
+  || fail "SAFETY: missing evidence must escalate"
+[ "$(FM_STATE_DIR="$s" FM_WAKE_GATE_KEY_VAR=DUMMY_KEY "$GATE" stale-verdict '../x' w "$WEDGE" 2>/dev/null)" = escalate ] \
+  || fail "SAFETY: an invalid task id must escalate"
+pass "helper errors, non-wedge alarms, missing evidence, and bad ids escalate (fail-open)"
 
 echo "fm-wake-gate: all cases passed"

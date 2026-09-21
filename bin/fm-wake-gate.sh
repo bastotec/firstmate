@@ -1,92 +1,93 @@
 #!/usr/bin/env bash
-# fm-wake-gate.sh - fail-open worthiness gate for supervision wakes.
+# fm-wake-gate.sh - fail-open gate deciding whether a supervision wake needs a model turn.
 #
 # PURPOSE
-#   Decide whether a queued wake row is worth waking an expensive supervisor
-#   model (the Pi supervision branch, or main) for, so cheap mechanical noise -
-#   a re-delivery with no durable queue row, or a stale/stall re-ring for a task
-#   the captain explicitly stood down - can be absorbed without spending a model
-#   turn, while every genuine decision, blocker, check, or captain-facing row is
-#   escalated. This is the token-economy gate the captain asked for: a cheap
-#   filter in front of the costly model.
+#   Most stuck-worker alarms end with the supervisor looking at the worker and
+#   doing nothing. This gate makes that look cheaply, so the expensive model is
+#   called only when the look finds something: a worker waiting on someone, a new
+#   failure, a newly finished worker, or evidence nothing explains. Code owns the
+#   decision; Jev (typesafe-ai/jev) only answers four narrow questions about the
+#   evidence, asked together in one request.
 #
 # FAIL-OPEN IS THE CONTRACT, NOT A DEFAULT
 #   The verdict is `escalate` unless a narrow, positive rule returns `absorb`.
-#   Any error, uncertainty, unparseable row, missing marker, unreadable state,
-#   Jev timeout, or under-confidence result escalates. A gate that cannot prove a
-#   row is noise must pass it through; swallowing a real escalation is the only
-#   unacceptable failure, so the gate is biased entirely toward escalating.
-#
-# NEVER ABSORB (hard exclusions, checked before any layer)
-#   - kind `check` (merge-confirmation polls, Relay mentions, credential/auth
-#     failures, startup-network, process-event results, captain inbox notes)
-#   - a row whose payload marks `needs-decision:` or `blocked:`
-#   - a watcher-failure alarm
-#   - a heartbeat
-#   These always escalate regardless of any marker or score.
+#   Any error, timeout, missing key, missing runtime, unreadable evidence,
+#   unparseable row, or answer no question explains escalates. Swallowing a real
+#   escalation is the only unacceptable failure.
 #
 # USAGE
 #   fm-wake-gate.sh classify <kind> <key> <payload>
-#       Print one line: `escalate` or `absorb:<reason>`. Never fails the caller;
-#       any internal error prints `escalate` and exits 0.
+#       Drain-side, deterministic, no model call. Print `escalate` or
+#       `absorb:stood-down-rering`. Absorbs only a stale, signal, or
+#       secondmate-wake-loop row of a task carrying a stood-down marker whose
+#       status log has not advanced since the marker. Never absorbs a heartbeat,
+#       any other check, or a row mentioning needs-decision, blocked, or a
+#       watcher failure.
+#   fm-wake-gate.sh stale-verdict <task-id> <window> <reason>
+#       Watcher-side, called before a possible-wedge alarm is queued. Print
+#       `escalate` or `absorb:jev-<class>`. Inert (escalate, nothing logged)
+#       unless the key variable is named. Gate-able alarms are only the
+#       possible-wedge ones; every other stale reason escalates without a call.
+#       Gathers the worker's current state and pane tail, asks Jev, and applies
+#       the rule below. In shadow mode it logs the decision and always prints
+#       `escalate`; only enforce mode may print `absorb`.
+#   fm-wake-gate.sh report
+#       Summarize shadow decisions, and when state/branch-outcomes.jsonl exists
+#       list every would-skip alarm whose supervision outcome went to the captain.
 #   fm-wake-gate.sh stand-down <task-id> [--reason <text>]
-#       Record state/<task-id>.stooddown (epoch<TAB>reason). Marks a task the
-#       captain intentionally stopped, so its idle re-rings are provably noise.
 #   fm-wake-gate.sh resume <task-id>
-#       Remove the stood-down marker (the task is live again; escalate its wakes).
+#       Write or remove state/<task-id>.stooddown.
 #   fm-wake-gate.sh cost
-#       Print measured Jev usage and cost so far (from state/wake-gate/usage.log).
+#       Print measured Jev usage so far.
 #
-# LAYERS (evaluated in order; first absorb wins, else escalate)
-#   1. Deterministic stood-down absorber (always on, free, no model call):
-#      absorb a `stale` or `signal` row whose task carries a stood-down marker
-#      AND whose status log has not advanced since the marker was written. The
-#      stand-down is an explicit captain act, so an idle re-ring with no new
-#      durable status is provably mechanical noise. If the status log advanced,
-#      the task did something new -> escalate.
-#   2. Jev worthiness layer (INERT BY DEFAULT; opt-in and advisory):
-#      for an ambiguous actionable row, ask Jev whether the row needs a supervisor
-#      reply. Reuses the ask-triage Jev runtime. Inert unless the key var is set
-#      (config/wake-gate-key-var or FM_WAKE_GATE_KEY_VAR), and even when opted in
-#      it is ADVISORY (logs a recommendation, returns escalate) unless
-#      FM_WAKE_GATE_ENFORCE=1. Any doubt, error, or timeout escalates. The Jev
-#      worthiness question is owned by bin/wake-gate/jev-worthiness.mjs.
+# THE STALE RULE (call the model iff any line holds; otherwise skip)
+#   - waiting_on_someone >= FM_WAKE_GATE_WAIT_THRESHOLD (default 0.40)
+#   - no answer reaches FM_WAKE_GATE_EXPLAIN_THRESHOLD (default 0.50): unexplained
+#   - the strongest answer is shows_failure or finished_idle and differs from the
+#     class recorded at this task's last model look: a new terminal state gets
+#     exactly one look
+#   - the last model look is older than FM_WAKE_GATE_MAX_SILENCE_SECS (default
+#     3600): no worker is left unexamined longer than that
+#   A `call` decision records the look; a skip does not.
 #
 # STATE (all under state/, private runtime state)
 #   <task-id>.stooddown      "<epoch>\t<reason>" - the explicit stand-down marker
+#   wake-gate/<task-id>.look "<epoch>\t<class>" - the last model look the rule granted
+#   wake-gate/shadow.log     "<epoch>\t<task>\t<mode>\t<call|skip>\t<why>\t<working>\t<waiting>\t<failure>\t<finished>"
 #   wake-gate/usage.log      "<epoch>\t<calls>\t<in-tok>\t<out-tok>\t<ms>\t<outcome>"
-#   wake-gate/advisory.log   "<epoch>\t<kind>\t<key>\t<verdict>\t<reason>" - advisory
-#                            recommendations while the Jev layer is not enforcing
 #
 # ENVIRONMENT
-#   FM_WAKE_GATE_KEY_VAR     secrets var naming the Jev gateway key (opt-in)
+#   FM_WAKE_GATE_KEY_VAR     secrets var naming the gateway key (opt-in); else the
+#                            first line of config/wake-gate-key-var
+#   FM_WAKE_GATE_MODE        shadow (default) or enforce; else the first line of
+#                            config/wake-gate-mode
 #   FM_WAKE_GATE_SECRETS     secrets file (default ~/.secrets)
-#   FM_WAKE_GATE_ENFORCE     1 = the Jev layer may absorb; unset/0 = advisory only
-#   FM_WAKE_GATE_THRESHOLD   Jev noise-confidence at/above which to absorb (def 0.90)
 #   FM_WAKE_GATE_TIMEOUT     seconds bound on the Jev call (default 6)
+#   FM_WAKE_GATE_EVIDENCE_TIMEOUT  seconds bound on each evidence command (default 8)
 #   FM_WAKE_GATE_HELPER      replace the Jev helper command (tests); it receives
-#                            the input file arg and prints the same rows
-#   FM_STATE_DIR             state dir (default: resolve from this script's home)
+#                            the evidence JSON on stdin and prints the same rows
+#   FM_WAKE_GATE_EVIDENCE_CMD  replace evidence gathering (tests); receives the
+#                            task id and prints the evidence text
+#   FM_STATE_DIR             state dir (else FM_STATE_OVERRIDE, else <home>/state)
+#   FM_CONFIG_OVERRIDE       config dir (default: config/ beside the state dir)
 #
 # This script only checks that the key VARIABLE is named; the helper reads the
 # value at call time and nothing here prints, logs, or passes the key.
 set -u
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-HOME_ROOT=$(dirname "$SCRIPT_DIR")
-STATE=${FM_STATE_DIR:-$HOME_ROOT/state}
+FM_ROOT=$(dirname "$SCRIPT_DIR")
+HOME_ROOT=${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}
+STATE=${FM_STATE_DIR:-${FM_STATE_OVERRIDE:-$HOME_ROOT/state}}
+# Config sits beside the state dir, so a synthetic state dir (tests) never reads
+# the real home's opt-in.
+CONFIG=${FM_CONFIG_OVERRIDE:-$STATE/../config}
 
 log_usage() {  # <calls> <in> <out> <ms> <outcome>
   mkdir -p "$STATE/wake-gate" 2>/dev/null || return 0
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$1" "$2" "$3" "$4" "$5" \
     >> "$STATE/wake-gate/usage.log" 2>/dev/null || true
 }
-log_advisory() {  # <kind> <key> <verdict> <reason>
-  mkdir -p "$STATE/wake-gate" 2>/dev/null || return 0
-  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$1" "$2" "$3" "$4" \
-    >> "$STATE/wake-gate/advisory.log" 2>/dev/null || true
-}
-
 # task_from_row: best-effort task id from a wake key/payload. Returns empty when
 # it cannot resolve one (which makes the deterministic layer escalate, fail-open).
 task_from_row() {  # <kind> <key> <payload>
@@ -162,54 +163,137 @@ cmd_classify() {
     fi
   fi
 
-  # --- LAYER 2: Jev worthiness (opt-in via key var; advisory unless enforced) ---
-  # Inert unless a key var is named (FM_WAKE_GATE_KEY_VAR, else the first line of
-  # config/wake-gate-key-var). Scores the row with Jev and absorbs only when the
-  # probability it NEEDS attention is below a conservative threshold AND
-  # FM_WAKE_GATE_ENFORCE=1; otherwise it logs an advisory and escalates. Any
-  # error, timeout, missing helper, or non-numeric/'-' result escalates
-  # (fail-open). The deterministic hard-exclusions above already removed every
-  # decision, blocker, check, and heartbeat, so Jev only ever judges rows that
-  # are not provably actionable.
-  local keyvar threshold enforce helper hout prob tmo
-  keyvar=${FM_WAKE_GATE_KEY_VAR:-}
-  if [ -z "$keyvar" ] && [ -f "$HOME_ROOT/config/wake-gate-key-var" ]; then
-    keyvar=$(head -1 "$HOME_ROOT/config/wake-gate-key-var" 2>/dev/null | tr -d '[:space:]')
+  printf 'escalate\n'
+  return 0
+}
+
+# bounded <secs> <cmd...>: run a command under a wall-clock bound, best effort.
+bounded() {
+  local secs=$1; shift
+  if command -v timeout >/dev/null 2>&1; then timeout -k 1 "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 1 "$secs" "$@"
+  else perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
   fi
+}
+
+gate_key_var() {
+  local v=${FM_WAKE_GATE_KEY_VAR:-}
+  if [ -z "$v" ] && [ -f "$CONFIG/wake-gate-key-var" ]; then
+    v=$(head -1 "$CONFIG/wake-gate-key-var" 2>/dev/null | tr -d '[:space:]')
+  fi
+  printf '%s' "$v"
+}
+
+gate_mode() {
+  local m=${FM_WAKE_GATE_MODE:-}
+  if [ -z "$m" ] && [ -f "$CONFIG/wake-gate-mode" ]; then
+    m=$(head -1 "$CONFIG/wake-gate-mode" 2>/dev/null | tr -d '[:space:]')
+  fi
+  case "$m" in enforce) printf 'enforce' ;; *) printf 'shadow' ;; esac
+}
+
+log_shadow() {  # <task> <mode> <decision> <why> <working> <waiting> <failure> <finished>
+  mkdir -p "$STATE/wake-gate" 2>/dev/null || return 0
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$@" \
+    >> "$STATE/wake-gate/shadow.log" 2>/dev/null || true
+}
+
+# gather_evidence <task>: print a JSON array of {command, output}; empty on failure.
+gather_evidence() {
+  local task=$1 tmo=${FM_WAKE_GATE_EVIDENCE_TIMEOUT:-8} state_out pane_out
+  case "$tmo" in ''|*[!0-9]*) tmo=8 ;; esac
+  if [ -n "${FM_WAKE_GATE_EVIDENCE_CMD:-}" ]; then
+    state_out=$(bounded "$tmo" "$FM_WAKE_GATE_EVIDENCE_CMD" "$task" 2>/dev/null </dev/null) || state_out=''
+    pane_out=''
+  else
+    state_out=$(FM_HOME="$HOME_ROOT" bounded "$tmo" "$SCRIPT_DIR/fm-crew-state.sh" "$task" 2>&1 </dev/null) || true
+    pane_out=$(FM_HOME="$HOME_ROOT" bounded "$tmo" "$SCRIPT_DIR/fm-peek.sh" "$task" 40 2>/dev/null </dev/null) || pane_out=''
+  fi
+  jq -cn --arg s "$state_out" --arg p "$pane_out" \
+    '[{command:"current state",output:$s},{command:"pane tail",output:$p}] | map(select(.output|test("\\S")))' 2>/dev/null
+}
+
+cmd_stale_verdict() {
+  local task=${1-} reason=${3-}  # $2 is the window, already named inside the reason
+  local keyvar mode evidence hout answers aw wt fl fn why='' decision cls conf look_file last_epoch='' last_cls='' now tmo
+  case "$task" in ''|*/*|*" "*) printf 'escalate\n'; return 0 ;; esac
+  keyvar=$(gate_key_var)
   [ -n "$keyvar" ] || { printf 'escalate\n'; return 0; }
-  threshold=${FM_WAKE_GATE_THRESHOLD:-0.10}
-  enforce=${FM_WAKE_GATE_ENFORCE:-}
-  if [ -z "$enforce" ]; then
-    if [ -f "$HOME_ROOT/config/wake-gate-enforce" ]; then enforce=1; else enforce=0; fi
-  fi
+  # Only the possible-wedge alarm is gate-able; an unread instruction, unwritable
+  # bookkeeping, or any other stale reason always reaches the model.
+  case "$reason" in *'possible wedge'*) : ;; *) printf 'escalate\n'; return 0 ;; esac
+  command -v jq >/dev/null 2>&1 || { printf 'escalate\n'; return 0; }
+  mode=$(gate_mode)
   tmo=${FM_WAKE_GATE_TIMEOUT:-6}
   case "$tmo" in ''|*[!0-9]*) tmo=6 ;; esac
+
+  evidence=$(gather_evidence "$task")
+  case "$evidence" in ''|'[]') log_shadow "$task" "$mode" call no-evidence - - - -; printf 'escalate\n'; return 0 ;; esac
+
   local -a run
   if [ -n "${FM_WAKE_GATE_HELPER:-}" ]; then
     run=( "$FM_WAKE_GATE_HELPER" )
   else
-    helper=$SCRIPT_DIR/wake-gate/jev-worthiness.mjs
-    [ -f "$helper" ] || { printf 'escalate\n'; return 0; }
-    run=( node "$helper" )
+    [ -f "$SCRIPT_DIR/wake-gate/jev-stale.mjs" ] || { printf 'escalate\n'; return 0; }
+    run=( node "$SCRIPT_DIR/wake-gate/jev-stale.mjs" )
   fi
-  hout=$(printf '%s | %s | %s\n' "$kind" "$key" "$payload" \
+  hout=$(jq -cn --arg a "$reason" --argjson e "$evidence" '{alarm:$a,evidence:$e}' \
     | FM_WAKE_GATE_KEY_VAR="$keyvar" \
       FM_WAKE_GATE_SECRETS="${FM_WAKE_GATE_SECRETS:-$HOME/.secrets}" \
       FM_WAKE_GATE_TIMEOUT_MS=$(( tmo * 1000 )) \
-      "${run[@]}" 2>/dev/null) || hout=''
-  prob=$(printf '%s\n' "$hout" | sed -n '2p')
-  case "$prob" in
-    ''|'-'|*[!0-9.]*) printf 'escalate\n'; return 0 ;;
-  esac
-  if awk -v p="$prob" -v t="$threshold" 'BEGIN{exit !(p+0 < t+0)}'; then
-    if [ "$enforce" = 1 ]; then
-      log_usage 1 0 0 0 enforce-absorb
-      printf 'absorb:jev-noise\n'; return 0
-    fi
-    log_advisory "$kind" "$key" would-absorb "jev=$prob<$threshold"
+      bounded $(( tmo + 2 )) "${run[@]}" 2>/dev/null) || hout=''
+  answers=$(printf '%s\n' "$hout" | awk -F'\t' '$1=="answers"{print; exit}')
+  IFS=$'\t' read -r _ aw wt fl fn <<EOF_ANSWERS
+$answers
+EOF_ANSWERS
+  local p
+  for p in "${aw:-}" "${wt:-}" "${fl:-}" "${fn:-}"; do
+    case "$p" in ''|*[!0-9.]*) log_usage 1 0 0 0 error; log_shadow "$task" "$mode" call jev-error - - - -; printf 'escalate\n'; return 0 ;; esac
+  done
+  printf '%s\n' "$hout" | awk -F'\t' '$1=="usage"{print $2"\t"$3"\t"$4"\t"$5}' | {
+    IFS=$'\t' read -r u_calls u_in u_out u_ms || true
+    log_usage "${u_calls:-1}" "${u_in:-0}" "${u_out:-0}" "${u_ms:-0}" ok
+  }
+
+  look_file="$STATE/wake-gate/$task.look"
+  if [ -f "$look_file" ]; then
+    IFS=$'\t' read -r last_epoch last_cls < "$look_file" || true
+    case "$last_epoch" in ''|*[!0-9]*) last_epoch='' ;; esac
   fi
-  printf 'escalate\n'
+  now=$(date +%s)
+  read -r cls conf <<EOF_CLS
+$(awk -v a="$aw" -v w="$wt" -v f="$fl" -v n="$fn" 'BEGIN{c="working";m=a+0; if(w+0>m){c="waiting";m=w+0} if(f+0>m){c="failure";m=f+0} if(n+0>m){c="finished";m=n+0} print c, m}')
+EOF_CLS
+  if awk -v w="$wt" -v t="${FM_WAKE_GATE_WAIT_THRESHOLD:-0.40}" 'BEGIN{exit !(w+0 >= t+0)}'; then why=waiting
+  elif awk -v m="$conf" -v t="${FM_WAKE_GATE_EXPLAIN_THRESHOLD:-0.50}" 'BEGIN{exit !(m+0 < t+0)}'; then why=unexplained
+  elif { [ "$cls" = failure ] || [ "$cls" = finished ]; } && [ "$cls" != "$last_cls" ]; then why="new-$cls"
+  elif [ -z "$last_epoch" ] || [ $(( now - last_epoch )) -ge "${FM_WAKE_GATE_MAX_SILENCE_SECS:-3600}" ]; then why=silence-backstop
+  fi
+  if [ -n "$why" ]; then
+    decision=call
+    mkdir -p "$STATE/wake-gate" 2>/dev/null && printf '%s\t%s\n' "$now" "$cls" > "$look_file" 2>/dev/null
+  else
+    decision=skip; why="same-$cls"
+  fi
+  log_shadow "$task" "$mode" "$decision" "$why" "$aw" "$wt" "$fl" "$fn"
+  if [ "$decision" = skip ] && [ "$mode" = enforce ]; then
+    printf 'absorb:jev-%s\n' "$cls"
+  else
+    printf 'escalate\n'
+  fi
   return 0
+}
+
+cmd_report() {
+  local f="$STATE/wake-gate/shadow.log" o="$STATE/branch-outcomes.jsonl"
+  [ -f "$f" ] || { echo "no gate decisions recorded"; return 0; }
+  awk -F'\t' '{n++; d[$4]++; w[$4" "$5]++} END {printf "alarms=%d call=%d skip=%d\n", n, d["call"], d["skip"]; for (k in w) printf "  %s: %d\n", k, w[k]}' "$f" | sort
+  [ -f "$o" ] && command -v jq >/dev/null 2>&1 || return 0
+  echo "would-skip alarms whose supervision outcome went to the captain (within 20 min):"
+  awk -F'\t' '$4=="skip"{print $1"\t"$2}' "$f" | while IFS=$'\t' read -r epoch task; do
+    jq -r --arg t "$task" --argjson e "$epoch" \
+      'select(.task==$t and (.wake|startswith("stale")) and .verdict=="captain" and .epoch>=$e and .epoch<=($e+1200)) | "  \($e)\t\($t)\t\(.summary[0:160])"' "$o" 2>/dev/null | head -1
+  done
 }
 
 cmd_stand_down() {
@@ -243,6 +327,8 @@ cmd_cost() {
 verb=${1-}; shift || true
 case "$verb" in
   classify)   cmd_classify "$@" ;;
+  stale-verdict) cmd_stale_verdict "$@" ;;
+  report)     cmd_report "$@" ;;
   stand-down) cmd_stand_down "$@" ;;
   resume)     cmd_resume "$@" ;;
   cost)       cmd_cost "$@" ;;
@@ -250,10 +336,12 @@ case "$verb" in
 fm-wake-gate.sh - fail-open worthiness gate for supervision wakes
 Usage:
   fm-wake-gate.sh classify <kind> <key> <payload>
+  fm-wake-gate.sh stale-verdict <task-id> <window> <reason>
+  fm-wake-gate.sh report
   fm-wake-gate.sh stand-down <task-id> [--reason <text>]
   fm-wake-gate.sh resume <task-id>
   fm-wake-gate.sh cost
-Verdict is 'escalate' unless a narrow deterministic rule proves noise; fail-open.
+Verdict is 'escalate' unless a narrow rule proves the wake needs no model turn; fail-open.
 EOF
-    return 2 ;;
+    exit 2 ;;
 esac

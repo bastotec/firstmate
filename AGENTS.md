@@ -87,7 +87,7 @@ config/stream-hub config/stream-token config/stream-hub-tokens config/stream-mac
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
 config/watched-tools.json  optional list of the tools this home depends on, read by the update check armed with bin/fm-tool-update-check.sh; LOCAL, gitignored, firstmate-maintained but human-editable, and NOT inherited by secondmate homes; see docs/configuration.md "Watched tool updates"
 config/ask-triage-key-var  optional name of the ~/.secrets variable holding the gateway key that opts this home into the possible-ask pass; LOCAL, gitignored, and not inherited; see docs/configuration.md "Possible-ask ranking"
-config/wake-gate-key-var  optional name of the ~/.secrets variable holding the Jev gateway key that opts this home into the wake-gate Jev worthiness layer (advisory unless FM_WAKE_GATE_ENFORCE=1); LOCAL, gitignored, and not inherited; bin/fm-wake-gate.sh owns the gate
+config/wake-gate-key-var config/wake-gate-mode  optional name of the ~/.secrets variable holding the gateway key that opts this home into the wake gate's evidence read of possible-wedge alarms, and its one-token mode: absent or "shadow" logs the decision and changes nothing, "enforce" lets it absorb; LOCAL, gitignored, and not inherited; bin/fm-wake-gate.sh owns the gate
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
@@ -126,7 +126,7 @@ state/               runtime records and signals; gitignored
   .branch-eligible-rows .branch-eligible-owner .main-eligible-rows  per-actor wake-row claims and branch-owner evidence; docs/watcher-continuity.md owns the acknowledgement contract
   .lease-<task>        per-task supervision lease naming which actor (main or branch) may change that task; bin/fm-lease-lib.sh owns the contract the guarded scripts enforce
   ask-triage/        optional possible-ask cursors, flags, and token usage; written only by bin/fm-ask-triage.sh
-  wake-gate/         optional wake-gate Jev usage and advisory logs; written only by bin/fm-wake-gate.sh
+  wake-gate/         optional wake-gate decision log, per-task last-model-look records, and token usage; written only by bin/fm-wake-gate.sh
   x-watch.check.sh   generated Relay poll shim; present only when opted in (section 14)
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
   mail.check.sh      generated received-mail poll shim and its .check-trust binding; present only after bin/fm-mail-check.sh arm; report record .mail-check (mail schema: docs/configuration.md "Mail plane")
@@ -432,7 +432,7 @@ For every actionable wake, follow the ordinary-wake continuation in the emitted 
 No turn ends blind while work is under way, including turns described as holding or waiting.
 
 At the start of every wake-handling turn, drain the durable wake queue before peeking, reading beyond the reason line, steering, or starting work.
-A fail-open wake gate (bin/fm-wake-gate.sh) absorbs the mechanical re-rings of tasks the captain explicitly stood down, so they are acknowledged without a model turn; it never absorbs a decision, blocker, check, or heartbeat, and escalates on any doubt.
+A fail-open wake gate (bin/fm-wake-gate.sh) absorbs the mechanical re-rings of tasks the captain explicitly stood down and, when opted in and enforcing, possible-wedge alarms whose evidence shows nothing new, so they cost no model turn; it never absorbs a decision, blocker, check, or heartbeat, and escalates on any doubt.
 Session start is the only exception because its one-shot digest already presented the queue while locked or deliberately left it untouched in lock-refused read-only mode.
 Treat any `OPEN DECISIONS` section from the drain as actionable reconciliation input even when no wake record was queued.
 Treat any `UNREAD STATUS` section as newly surfaced status that must be read this turn; those lines are not re-printed after this presentation.
