@@ -38,9 +38,9 @@ export function parseBranchModelChain(stored: string): BranchModelRef[] {
   const chain: BranchModelRef[] = [];
   const malformed: Array<{ number: number; line: string }> = [];
   const seen = new Set<string>();
-  for (const [index, raw] of stored.split("\n").entries()) {
-    const line = raw.trim();
-    if (line === "" || line.startsWith("#")) continue;
+  for (const [index, line] of stored.split("\n").entries()) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
     const separator = line.indexOf("/");
     if (separator <= 0 || separator >= line.length - 1 || /[\s\u0000-\u001F\u007F]/u.test(line)) {
       malformed.push({ number: index + 1, line });

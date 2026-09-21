@@ -44,7 +44,7 @@ status_at() {
 
 # --- the default is escalate: a live (unmarked) task's stale wake passes ---
 s=$(new_state live)
-[ "$(classify "$s" stale 'firstmate:fm-some-task' 'stale: idle pane' 1)" = escalate ] \
+[ "$(classify "$s" stale 'firstmate:fm-some-task' 'stale: idle pane' 1 some-task)" = escalate ] \
   || fail "an unmarked task's stale wake must escalate"
 pass "unmarked task escalates (gate is inert without a stand-down)"
 
@@ -52,13 +52,13 @@ pass "unmarked task escalates (gate is inert without a stand-down)"
 s=$(new_state down-quiet)
 status_at "$s" docana-delivery 202001010000
 stand_down "$s" docana-delivery 100
-[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle pane' 99)" = escalate ] \
+[ "$(classify "$s" stale 'default:w1:p2' 'stale: idle pane' 99 docana-delivery)" = escalate ] \
   || fail "SAFETY: a wake older than the stand-down must escalate"
-[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle pane' 100)" = escalate ] \
+[ "$(classify "$s" stale 'default:w1:p2' 'stale: idle pane' 100 docana-delivery)" = escalate ] \
   || fail "SAFETY: a same-second wake must escalate"
-[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle pane' 101)" = absorb:stood-down-rering ] \
+[ "$(classify "$s" stale 'default:w1:p2' 'stale: idle pane' 101 docana-delivery)" = absorb:stood-down-rering ] \
   || fail "a post-stand-down stale re-ring with no new status must absorb"
-[ "$(classify "$s" check 'secondmate-wake-loop-docana-delivery-1789940215-1792' 'check: secondmate wake-loop stalled: mate=docana-delivery' 101)" = absorb:stood-down-rering ] \
+[ "$(classify "$s" check 'secondmate-wake-loop-docana-delivery-1789940215-1792' 'check: secondmate wake-loop stalled: mate=docana-delivery' 101 docana-delivery)" = absorb:stood-down-rering ] \
   || fail "a stood-down wake-loop stall re-ring must absorb"
 pass "stood-down mechanical re-rings absorb (stale + wake-loop stall)"
 
@@ -67,10 +67,10 @@ printf 'working: before stand-down\n' > "$s/writer.status"
 FM_STATE_DIR="$s" "$GATE" stand-down writer --reason test >/dev/null \
   || fail "stand-down command failed"
 marker_epoch=$(cut -f1 "$s/writer.stooddown")
-[ "$(classify "$s" stale 'firstmate:fm-writer' 'stale: idle pane' "$(( marker_epoch + 1 ))")" = absorb:stood-down-rering ] \
+[ "$(classify "$s" stale 'firstmate:fm-writer' 'stale: idle pane' "$(( marker_epoch + 1 ))" writer)" = absorb:stood-down-rering ] \
   || fail "the marker written by stand-down did not record the current status size"
 printf 'done: appended in the same second\n' >> "$s/writer.status"
-[ "$(classify "$s" stale 'firstmate:fm-writer' 'stale: idle pane' "$(( marker_epoch + 1 ))")" = escalate ] \
+[ "$(classify "$s" stale 'firstmate:fm-writer' 'stale: idle pane' "$(( marker_epoch + 1 ))" writer)" = escalate ] \
   || fail "SAFETY: same-second growth after the stand-down command must escalate"
 pass "stand-down records status size and detects same-second growth"
 
@@ -114,10 +114,10 @@ marker_epoch=$(cut -f1 "$s/new-task.stooddown")
 [ "$(cut -f3 "$s/new-task.stooddown")" = 0 ] \
   || fail "stand-down without a status log did not record zero bytes"
 [ ! -e "$s/new-task.status" ] || fail "stand-down unexpectedly created a status log"
-[ "$(classify "$s" stale 'firstmate:fm-new-task' 'stale: idle pane' "$(( marker_epoch + 1 ))")" = absorb:stood-down-rering ] \
+[ "$(classify "$s" stale 'firstmate:fm-new-task' 'stale: idle pane' "$(( marker_epoch + 1 ))" new-task)" = absorb:stood-down-rering ] \
   || fail "a missing status log did not classify as unchanged zero-byte status"
 printf 'working: task started after stand-down\n' > "$s/new-task.status"
-[ "$(classify "$s" stale 'firstmate:fm-new-task' 'stale: idle pane' "$(( marker_epoch + 1 ))")" = escalate ] \
+[ "$(classify "$s" stale 'firstmate:fm-new-task' 'stale: idle pane' "$(( marker_epoch + 1 ))" new-task)" = escalate ] \
   || fail "SAFETY: a status log created after stand-down did not escalate"
 pass "stand-down treats a missing status log as unchanged zero bytes"
 
@@ -125,17 +125,21 @@ pass "stand-down treats a missing status log as unchanged zero bytes"
 s=$(new_state down-but-decision)
 status_at "$s" firstmate-runtime 202001010000
 stand_down "$s" firstmate-runtime "$(date +%s)"
-[ "$(classify "$s" signal 'firstmate-runtime.status' 'needs-decision [key=x]: captain hold')" = escalate ] \
+[ "$(classify "$s" signal 'firstmate-runtime.status' 'needs-decision [key=x]: captain hold' 101 firstmate-runtime)" = escalate ] \
   || fail "SAFETY: a needs-decision row must escalate even when stood down"
-[ "$(classify "$s" signal 'firstmate-runtime.status' 'blocked [key=y]: pending-reply-missed')" = escalate ] \
+[ "$(classify "$s" signal 'firstmate-runtime.status' 'blocked [key=y]: pending-reply-missed' 101 firstmate-runtime)" = escalate ] \
   || fail "SAFETY: a blocked row must escalate even when stood down"
-[ "$(classify "$s" check 'merged-firstmate-runtime-https://x/pull/26' 'check: merge landed')" = escalate ] \
+[ "$(classify "$s" check 'merged-firstmate-runtime-https://x/pull/26' 'check: merge landed' 101 firstmate-runtime)" = escalate ] \
   || fail "SAFETY: a merge-confirmation check must escalate even when stood down"
-[ "$(classify "$s" heartbeat 'fleet' 'heartbeat: review fleet')" = escalate ] \
+[ "$(classify "$s" heartbeat 'fleet' 'heartbeat: review fleet' 101 firstmate-runtime)" = escalate ] \
   || fail "SAFETY: a heartbeat must escalate"
-[ "$(classify "$s" stale 'firstmate:fm-firstmate-runtime' 'stale: watcher failure alarm')" = escalate ] \
+[ "$(classify "$s" stale 'firstmate:fm-firstmate-runtime' 'stale: watcher failure alarm' 101 firstmate-runtime)" = escalate ] \
   || fail "SAFETY: a watcher-failure row must escalate even when stood down"
-pass "decisions, blockers, merge checks, heartbeats, watcher failures never absorb"
+[ "$(classify "$s" stale 'default:w1:p2' 'stale: default:w1:p2 (unread firstmate instruction: 001.msg)' 101 firstmate-runtime)" = escalate ] \
+  || fail "SAFETY: a new unread instruction must escalate even when stood down"
+[ "$(classify "$s" stale 'default:w1:p2' 'stale: default:w1:p2 (steering-inbox ladder bookkeeping unwritable)' 101 firstmate-runtime)" = escalate ] \
+  || fail "SAFETY: steering bookkeeping failure must escalate even when stood down"
+pass "decisions, blockers, inbox alarms, heartbeats, and watcher failures never absorb"
 
 # --- stood-down but status ADVANCED -> escalate (the task did something new) ---
 s=$(new_state down-but-active)
@@ -143,34 +147,34 @@ printf 'working: old line\n' > "$s/docana-delivery.status"
 stand_down "$s" docana-delivery 100
 printf 'done [key=z]: new work landed\n' >> "$s/docana-delivery.status"
 touch -t 202001010000 "$s/docana-delivery.status"
-[ "$(classify "$s" signal 'docana-delivery.status' 'signal: docana-delivery.status' 101)" = escalate ] \
+[ "$(classify "$s" signal 'docana-delivery.status' 'signal: docana-delivery.status' 101 docana-delivery)" = escalate ] \
   || fail "SAFETY: a same-second status append after stand-down must escalate"
 pass "status byte growth escalates even when mtime cannot show the append"
 
 s=$(new_state legacy-marker)
 printf 'working: old line\n' > "$s/docana-delivery.status"
 printf '%s\tlegacy marker\n' 100 > "$s/docana-delivery.stooddown"
-[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle' 101)" = escalate ] \
+[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle' 101 docana-delivery)" = escalate ] \
   || fail "SAFETY: a marker without a recorded status size must escalate"
 pass "legacy stood-down markers fail open"
 
 # --- fail-open on malformed input ---
 s=$(new_state malformed)
 [ "$(classify "$s" '' '' '')" = escalate ] || fail "an empty kind must escalate"
-[ "$(classify "$s" stale '../../etc/passwd' 'x' 1)" = escalate ] \
-  || fail "an unresolvable task id must escalate, not absorb"
+[ "$(classify "$s" stale 'default:w1:p2' 'x' 1 '../../etc/passwd')" = escalate ] \
+  || fail "an invalid explicit task id must escalate, not absorb"
 pass "malformed and unresolvable rows escalate (fail-open)"
 
 # --- resume clears the marker -> escalates again ---
 s=$(new_state resume)
 status_at "$s" docana-delivery 202001010000
 stand_down "$s" docana-delivery 100
-[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle' 101)" = absorb:stood-down-rering ] \
+[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle' 101 docana-delivery)" = absorb:stood-down-rering ] \
   || fail "precondition: stood-down re-ring should absorb before resume"
 FM_STATE_DIR="$s" "$GATE" resume docana-delivery >/dev/null 2>&1 \
   || fail "resume failed to clear a writable stand-down marker"
 [ ! -e "$s/docana-delivery.stooddown" ] || fail "resume reported success but left the marker"
-[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle' 101)" = escalate ] \
+[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle' 101 docana-delivery)" = escalate ] \
   || fail "after resume the same wake must escalate"
 pass "resume clears the stand-down and the wake escalates again"
 

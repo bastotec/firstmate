@@ -1903,7 +1903,7 @@ test_stale_terminal_status_overridden_by_active_run() {
 test_wedge_alarm_honors_the_wake_gate_verdict() {
   local dir state fakebin out capture_file window key pid stub evid before helper_log size
   dir=$(make_case wedge-wake-gate); state="$dir/state"; fakebin="$dir/fakebin"
-  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-gated"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="default:w1:p2"
   stub="$dir/gate-stub"; evid="$dir/gate-evidence"
   cat > "$stub" <<'SH'
 #!/usr/bin/env bash

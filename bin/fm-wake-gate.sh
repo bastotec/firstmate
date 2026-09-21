@@ -16,7 +16,7 @@
 #   escalation is the only unacceptable failure.
 #
 # USAGE
-#   fm-wake-gate.sh classify <kind> <key> <payload> <wake-epoch>
+#   fm-wake-gate.sh classify <kind> <key> <payload> <wake-epoch> <task-id>
 #       Watcher-side, deterministic, no model call. Print `escalate` or
 #       `absorb:stood-down-rering`. Absorbs only a stale, signal, or
 #       secondmate-wake-loop row of a task carrying a stood-down marker whose
@@ -94,32 +94,8 @@ log_usage() {  # <calls> <in> <out> <ms> <outcome>
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$1" "$2" "$3" "$4" "$5" \
     >> "$STATE/wake-gate/usage.log" 2>/dev/null || true
 }
-# task_from_row: best-effort task id from a wake key/payload. Returns empty when
-# it cannot resolve one (which makes the deterministic layer escalate, fail-open).
-task_from_row() {  # <kind> <key> <payload>
-  local kind=$1 key=$2 payload=$3 t=''
-  case "$kind" in
-    stale)
-      # stale keys name an endpoint window: <session>:fm-<task> or fm-<task>
-      t=${key##*:}; t=${t#fm-} ;;
-    signal)
-      # signal keys name a status file path: .../state/<task>.status
-      t=${key##*/}; t=${t%.status} ;;
-    *)
-      # secondmate-wake-loop-<task>-<epoch>-<row> and similar
-      case "$key" in
-        secondmate-wake-loop-*) t=$(printf '%s' "$key" | sed -E 's/^secondmate-wake-loop-(.*)-[0-9]+-[0-9]+$/\1/') ;;
-      esac ;;
-  esac
-  # only accept a plausible task id (no slashes, no spaces, non-empty)
-  case "$t" in
-    ''|*/*|*" "*) printf '' ;;
-    *) printf '%s' "$t" ;;
-  esac
-}
-
 cmd_classify() {
-  local kind=${1-} key=${2-} payload=${3-} wake_epoch=${4-}
+  local kind=${1-} key=${2-} payload=${3-} wake_epoch=${4-} task=${5-}
   # Fail-open on a malformed call.
   [ -n "$kind" ] || { printf 'escalate\n'; return 0; }
 
@@ -137,16 +113,16 @@ cmd_classify() {
       esac ;;
   esac
   case "$payload" in
-    *needs-decision*|*blocked*|*watcher*fail*|*WATCHER*FAIL*) printf 'escalate\n'; return 0 ;;
+    *needs-decision*|*blocked*|*watcher*fail*|*WATCHER*FAIL*|*unread\ firstmate\ instruction*|*steering-inbox*) printf 'escalate\n'; return 0 ;;
   esac
   case "$key" in
     *watcher*fail*|*watcher-down*) printf 'escalate\n'; return 0 ;;
   esac
 
   # --- LAYER 1: deterministic stood-down absorber (free, no model) ---
-  local task marker_file marker_epoch marker_reason marker_size status_file status_size
+  local marker_file marker_epoch marker_reason marker_size status_file status_size
   case "$wake_epoch" in ''|*[!0-9]*) printf 'escalate\n'; return 0 ;; esac
-  task=$(task_from_row "$kind" "$key" "$payload")
+  case "$task" in ''|*/*|*" "*) printf 'escalate\n'; return 0 ;; esac
   if [ -n "$task" ]; then
     marker_file="$STATE/$task.stooddown"
     if [ -f "$marker_file" ]; then
@@ -454,7 +430,7 @@ case "$verb" in
   *) cat >&2 <<EOF
 fm-wake-gate.sh - fail-open worthiness gate for supervision wakes
 Usage:
-  fm-wake-gate.sh classify <kind> <key> <payload> <wake-epoch>
+  fm-wake-gate.sh classify <kind> <key> <payload> <wake-epoch> <task-id>
   fm-wake-gate.sh stale-verdict <task-id> <window> <reason> [--with-look]
   fm-wake-gate.sh commit-look <task-id> <none|failure|finished|failure,finished>
   fm-wake-gate.sh report
