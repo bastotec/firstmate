@@ -90,16 +90,18 @@ run_worker() {
 test_turns_share_one_session_and_carry_the_hooks() {
   local dir="$TMP_ROOT/session"
   make_fake_deck "$dir"
-  run_worker "$dir" $'first\nsecond\n/quit\n' || fail "the driver did not exit cleanly on /quit"
-  [ "$(wc -l < "$dir/argv.log" | tr -d ' ')" = 3 ] || fail "expected three deck runs (brief + two prompts): $(cat "$dir/argv.log")"
+  run_worker "$dir" $'first\nsecond\n/exit\n/quit\n' || fail "the driver did not exit cleanly on /quit"
+  [ "$(wc -l < "$dir/argv.log" | tr -d ' ')" = 4 ] || fail "expected four deck runs (brief + three prompts): $(cat "$dir/argv.log")"
   head -1 "$dir/argv.log" | grep -q -- '--session' && fail "the first turn must start a new Deck session"
   local sid
   sid=$(sed -n 2p "$dir/argv.log" | sed -E 's/.*--session ([^ ]+).*/\1/')
   case "$sid" in s-fake-*) ;; *) fail "the second turn did not resume the first turn's session: $(sed -n 2p "$dir/argv.log")" ;; esac
   sed -n 3p "$dir/argv.log" | grep -q -- "--session $sid" || fail "the third turn changed session"
-  grep -c -- '--hook pre_complete=' "$dir/argv.log" | grep -qx 3 || fail "every run must carry the evidence gate"
-  grep -c -- '--hook post_tool_use=' "$dir/argv.log" | grep -qx 3 || fail "every run must carry the progress hook"
-  grep -c -- '--model codex/gpt-5.6-luna' "$dir/argv.log" | grep -qx 3 || fail "every run must carry the model"
+  sed -n 4p "$dir/argv.log" | grep -q -- "--session $sid" || fail "the fourth turn changed session"
+  grep -c -- '--hook pre_complete=' "$dir/argv.log" | grep -qx 4 || fail "every run must carry the evidence gate"
+  grep -c -- '--hook post_tool_use=' "$dir/argv.log" | grep -qx 4 || fail "every run must carry the progress hook"
+  grep -c -- '--model codex/gpt-5.6-luna' "$dir/argv.log" | grep -qx 4 || fail "every run must carry the model"
+  assert_grep 'echo: /exit' "$dir/pane.out" "/exit must be delivered as an ordinary Deck prompt"
   assert_grep 'echo: second' "$dir/pane.out" "the pane did not render the turn's text"
   pass "fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model"
 }

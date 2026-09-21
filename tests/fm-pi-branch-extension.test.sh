@@ -2163,11 +2163,11 @@ registryModels.push(
   { provider: "zai", id: "cheap-2" },
   { provider: "qwen", id: "cheap-3" },
 );
-// Preference order, with a comment, a blank line, a duplicate, a line that is
-// not a model reference, and a model the runtime does not know.
+// Preference order, with a comment, a blank line, a duplicate, and a model the
+// runtime does not know.
 writeFileSync(
   `${home}/config/supervision-branch-model`,
-  "# supervision chain\nghost/not-installed\nopenai/cheap-1\n\nnot-a-model\nzai/cheap-2\nopenai/cheap-1\nqwen/cheap-3\n",
+  "# supervision chain\nghost/not-installed\nopenai/cheap-1\n\nzai/cheap-2\nopenai/cheap-1\nqwen/cheap-3\n",
 );
 const mainEntries = [];
 await fire("session_start", {}, makeCtx({
@@ -2208,16 +2208,21 @@ if (builtOn().at(-1) !== "openai/cheap-1") throw new Error(`the chain did not st
 failing.add("openai/cheap-1");
 await wake("preferred model out of quota", true);
 if (mainUserMessages.length !== 0) throw new Error("the failed wake bypassed watcher-owned fallback delivery");
-const moved = sentToMain.filter((sent) => sent.message.content.includes("Supervision model openai/cheap-1 failed"));
-if (moved.length !== 1 || !moved[0].message.content.includes("zai/cheap-2")) {
-  throw new Error(`the fallback note must name the failed and the next model once: ${JSON.stringify(moved)}`);
+const prematureMove = sentToMain.filter((sent) => sent.message.content.includes("Supervision model openai/cheap-1 failed"));
+if (prematureMove.length !== 0) {
+  throw new Error(`the fallback note named a destination before resolving it: ${JSON.stringify(prematureMove)}`);
 }
 if (handled("Supervision branch paused")) throw new Error("a chain with a ready model must not latch the branch off");
 
-// 3. The very next wake is served by the next model, not by main.
+// 3. The very next wake is served by the next model, not by main. Only after
+// resolution does one note name the model that actually took over.
 await wake("served by the second model", false);
 if (builtOn().at(-1) !== "zai/cheap-2" || !handled("handled on zai/cheap-2")) {
   throw new Error(`the next wake did not run on the second model: ${builtOn()}`);
+}
+const moved = sentToMain.filter((sent) => sent.message.content.includes("Supervision model openai/cheap-1 failed"));
+if (moved.length !== 1 || !moved[0].message.content.includes("zai/cheap-2")) {
+  throw new Error(`the fallback note must name the failed and resolved next model once: ${JSON.stringify(moved)}`);
 }
 
 // 4. Inside the first model's cooldown the branch stays where it is.
@@ -2234,25 +2239,87 @@ if (builtOn().at(-1) !== "openai/cheap-1" || !handled("handled on openai/cheap-1
   throw new Error(`supervision did not return to the preferred model after its cooldown: ${builtOn()}`);
 }
 
-// 6. Every model failing in turn walks the whole chain, and only then does
-// the existing latch hand wakes to main.
+// 6. Every model failing in turn walks the whole chain. As soon as the last
+// ready model fails, the live failed branch is released and ordinary wakes are
+// declined until the earliest chain cooldown permits one probe.
 failing.add("openai/cheap-1"); failing.add("zai/cheap-2"); failing.add("qwen/cheap-3");
 await wake("chain exhausted 1", true);
 await wake("chain exhausted 2", true);
 await wake("chain exhausted 3", true);
 if (builtOn().at(-1) !== "qwen/cheap-3") throw new Error(`the chain did not reach its last model: ${builtOn()}`);
-if (handled("Supervision branch paused")) throw new Error("the first failure of the last model must not latch yet");
-await wake("chain exhausted 4", true);
-if (!handled("Supervision branch paused after repeated provider errors")) {
-  throw new Error("an exhausted chain must fall back to the existing latch");
+if (!handled("Supervision branch paused because every configured model is cooling down")) {
+  throw new Error("an exhausted chain did not enter cooldown recovery immediately");
 }
-if (dispatch("signal: latched").accepted) throw new Error("the latched branch accepted a wake inside its cooldown");
+if (dispatch("signal: cooling chain").accepted) throw new Error("the exhausted chain retried a failed model during cooldown");
+now += 5 * 60 * 1000;
+const probe = dispatch("signal: earliest chain cooldown probe");
+if (!probe.accepted) throw new Error("the exhausted chain did not admit a probe at its earliest cooldown");
+const probeFailure = await probe.settlement.then(() => null, (error) => error);
+if (!(probeFailure instanceof Error) || !probeFailure.message.includes("provider failed after construction")) {
+  throw new Error(`the chain probe did not reach a ready model: ${String(probeFailure)}`);
+}
 process.exit(0);
 EOF
   status=$?
   out=$(cat "$TMP_ROOT/node-output")
   expect_code 0 "$status" "a supervision model chain must fall back on provider errors, return to the preferred model, and latch only when exhausted: $out"
   pass "a supervision model chain falls back on provider errors, returns to the preferred model, and latches only when exhausted"
+}
+
+test_model_chain_rejects_mixed_malformed_lines_and_reprobes_unresolvable_entries() {
+  local repo home out status
+  repo="$TMP_ROOT/model-chain-invalid-root"
+  home="$TMP_ROOT/model-chain-invalid-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { dispatch, fire, makeCtx, registryModels, home, sentToMain }; })()`);
+const { dispatch, fire, makeCtx, registryModels, home, sentToMain } = globalThis.__t;
+import { writeFileSync } from "node:fs";
+
+let now = 2_000_000;
+Date.now = () => now;
+registryModels.push({ provider: "anthropic", id: "main-model" });
+writeFileSync(`${home}/config/supervision-branch-model`, "ghost/a\nmalformed subscription\nghost/b\n");
+await fire("session_start", {}, makeCtx());
+const malformed = dispatch("signal: malformed mixed chain");
+if (!malformed.accepted) throw new Error("the malformed chain wake was not initially accepted for fail-open settlement");
+const malformedFailure = await malformed.settlement.then(() => null, (error) => error);
+if (!(malformedFailure instanceof Error) ||
+    !malformedFailure.message.includes("invalid supervision model line 2") ||
+    !malformedFailure.message.includes("malformed subscription")) {
+  throw new Error(`the mixed malformed chain did not refuse with the malformed line: ${String(malformedFailure)}`);
+}
+
+await fire("session_shutdown", {});
+writeFileSync(`${home}/config/supervision-branch-model`, "ghost/a\nghost/b\n");
+await fire("session_start", {}, makeCtx());
+const exhausted = dispatch("signal: every configured model is unavailable");
+if (!exhausted.accepted) throw new Error("the unavailable chain wake was not initially accepted");
+const exhaustedFailure = await exhausted.settlement.then(() => null, (error) => error);
+if (!(exhaustedFailure instanceof Error) || !exhaustedFailure.message.includes("no model in the supervision chain is usable")) {
+  throw new Error(`the unavailable chain did not expose its build failure: ${String(exhaustedFailure)}`);
+}
+if (dispatch("signal: unavailable chain cooling").accepted) {
+  throw new Error("an unavailable chain accepted another wake during cooldown");
+}
+now += 5 * 60 * 1000;
+const probe = dispatch("signal: unavailable chain recovery probe");
+if (!probe.accepted) throw new Error("an unavailable chain never re-probed after its cooldown");
+const probeFailure = await probe.settlement.then(() => null, (error) => error);
+if (!(probeFailure instanceof Error) || !probeFailure.message.includes("no model in the supervision chain is usable")) {
+  throw new Error(`the unavailable-chain probe did not retry resolution: ${String(probeFailure)}`);
+}
+const pauses = sentToMain.filter((sent) => sent.message.content.includes("every configured model is cooling down"));
+if (pauses.length !== 1) throw new Error(`chain recovery should announce one pause: ${JSON.stringify(pauses)}`);
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "model-chain syntax and resolution exhaustion must fail visibly and recoverably: $out"
+  pass "mixed malformed chains refuse visibly and unavailable chains re-probe after cooldown"
 }
 
 test_selection_change_does_not_corrupt_inflight_provider_state() {
@@ -3556,8 +3623,8 @@ if (
 if (mainUserMessages.length !== 0) throw new Error("branch bypassed watcher-owned fallback delivery");
 if ((globalThis.__fmSessions ?? []).length !== 0) throw new Error("an unusable pin must not build a branch session");
 
-// An unparseable file is simply no pin, so supervision keeps working and the
-// branch follows main's own model.
+// A file with no valid model line is no pin, so supervision keeps working and
+// the branch follows main's own model.
 writeFileSync(`${home}/config/supervision-branch-model`, "not-a-model-reference\n");
 await fire("session_shutdown", {});
 await fire("session_start", {}, makeCtx());
@@ -5067,6 +5134,7 @@ test_branch_predrain_needs_decision_keeps_routine_row_branch_eligible
 test_settled_branch_prompt_releases_unacknowledged_grant
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown
 test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model
+test_model_chain_rejects_mixed_malformed_lines_and_reprobes_unresolvable_entries
 test_selection_change_does_not_corrupt_inflight_provider_state
 test_main_owned_grant_result_falls_back_to_main
 test_branch_predrain_recheck_noops_already_drained_wake

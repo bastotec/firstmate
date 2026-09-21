@@ -144,7 +144,7 @@ while :; do
   fi
   case "$line" in
     '') continue ;;
-    /quit|/exit)
+    /quit)
       busy_event idle session-end
       exit 0
       ;;

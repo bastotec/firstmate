@@ -112,6 +112,7 @@ import {
   type BranchPickerItem,
 } from "./lib/fm-branch-model-picker.ts";
 import {
+  BRANCH_MODEL_COOLDOWN_BASE_MS,
   type BranchModelCooldown,
   type BranchModelRef,
   branchModelLabel,
@@ -202,7 +203,18 @@ type ProviderRecovery = {
   cooldownMs: number;
   retryNotBefore: number;
   probeInFlight: boolean;
+  source: "provider" | "chain";
 };
+
+class BranchModelChainExhaustedError extends Error {
+  readonly retryNotBefore: number;
+
+  constructor(message: string, retryNotBefore: number) {
+    super(message);
+    this.name = "BranchModelChainExhaustedError";
+    this.retryNotBefore = retryNotBefore;
+  }
+}
 
 const scriptEnv = {
   ...process.env,
@@ -273,17 +285,25 @@ void piOwnsTheEffortVocabulary;
 // several lines are a fallback chain (lib/fm-branch-model-chain.ts owns the
 // parsing and ordering rules).
 function readModelChain(): BranchModelRef[] {
+  let stored: string;
   try {
-    return parseBranchModelChain(readFileSync(modelPinFile, "utf8"));
+    stored = readFileSync(modelPinFile, "utf8");
   } catch {
     return [];
   }
+  return parseBranchModelChain(stored);
 }
 
 // The preferred model: the chain's first entry, which is also what the
-// /supervision-model picker shows as the current pin.
+// /supervision-model picker shows as the current pin. A malformed mixed chain
+// is still replaceable through the picker; branch construction is where its
+// parse error refuses service instead of silently following main.
 function readModelPin(): BranchModelRef | null {
-  return readModelChain()[0] ?? null;
+  try {
+    return readModelChain()[0] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // The supervision-branch effort pin, owned operator-side by the same
@@ -581,6 +601,7 @@ export default function (pi: ExtensionAPI) {
   // built on, and is empty for a single pin or a branch that follows main.
   const chainCooldowns = new Map<string, BranchModelCooldown>();
   let activeChainModel = "";
+  let pendingChainFallbackFrom = "";
   // A revision advances only after fm_branch_report has appended successfully,
   // so a prompt can prove that it created a durable outcome after claiming its
   // wake rows without relying on provider text or incidental session shape.
@@ -697,27 +718,53 @@ export default function (pi: ExtensionAPI) {
   // A provider failure on one model of a fallback chain sits that model out and
   // hands the NEXT wake to the next ready model, instead of counting toward the
   // latch that gives every wake to main. The failed wake itself still returns
-  // to the watcher-owned fallback exactly as before. When no other model is
-  // ready the chain has nothing to offer and the existing latch owns recovery.
-  function advanceModelChain(): boolean {
+  // to the watcher-owned fallback exactly as before. When no model is ready,
+  // the failed branch is released and the chain pauses until its earliest
+  // cooldown expires.
+  function earliestChainRetry(chain: readonly BranchModelRef[], now: number): number {
+    const retries = chain
+      .map((ref) => chainCooldowns.get(branchModelLabel(ref))?.retryNotBefore)
+      .filter((retry): retry is number => retry !== undefined && retry > now);
+    return retries.length > 0 ? Math.min(...retries) : now + BRANCH_MODEL_COOLDOWN_BASE_MS;
+  }
+
+  function pauseForModelChain(detail: string, retryNotBefore: number, probeInFlight: boolean): void {
+    const firstPause = providerRecovery?.source !== "chain";
+    const cooldownMs = Math.max(1, retryNotBefore - Date.now());
+    branchBroken = detail;
+    providerRecovery = { cooldownMs, retryNotBefore, probeInFlight, source: "chain" };
+    if (firstPause) {
+      deliverBranchHealthNote("Supervision branch paused because every configured model is cooling down; main will handle wakes until the next probe.");
+    }
+  }
+
+  function advanceModelChain(): "not-chain" | "ready" | "exhausted" {
     const failed = activeChainModel;
-    if (!failed) return false;
-    const chain = readModelChain();
-    if (chain.length < 2) return false;
+    if (!failed) return "not-chain";
+    let chain: BranchModelRef[];
+    try {
+      chain = readModelChain();
+    } catch {
+      return "not-chain";
+    }
+    if (chain.length < 2) return "not-chain";
     const now = Date.now();
     chainCooldowns.set(failed, nextBranchModelCooldown(chainCooldowns.get(failed), now));
-    if (!chainHasReadyAlternative(chain, chainCooldowns, failed, now)) return false;
-    const next = orderBranchModelChain(chain, chainCooldowns, now)[0];
+    const hasReadyAlternative = chainHasReadyAlternative(chain, chainCooldowns, failed, now);
     branchSelectionRevision += 1;
     releaseBranchForSelectionChange();
-    deliverBranchHealthNote(
-      `Supervision model ${failed} failed; the next wake uses ${branchModelLabel(next)} and ${failed} is retried after its cooldown.`,
-    );
-    return true;
+    pendingChainFallbackFrom = failed;
+    if (hasReadyAlternative) return "ready";
+    pauseForModelChain("every model in the supervision chain is cooling down", earliestChainRetry(chain, now), false);
+    return "exhausted";
   }
 
   function recordSettledProviderError(detail: string): void {
-    if (advanceModelChain()) return;
+    const chainAdvance = advanceModelChain();
+    if (chainAdvance !== "not-chain") {
+      if (chainAdvance === "exhausted") branchBroken = detail;
+      return;
+    }
     consecutiveProviderErrors += 1;
     if (consecutiveProviderErrors < PROVIDER_ERROR_LATCH_THRESHOLD && !providerRecovery) return;
     const previousCooldownMs = providerRecovery?.cooldownMs;
@@ -730,6 +777,7 @@ export default function (pi: ExtensionAPI) {
       cooldownMs,
       retryNotBefore: Date.now() + cooldownMs,
       probeInFlight: false,
+      source: "provider",
     };
     if (firstLatch) {
       deliverBranchHealthNote("Supervision branch paused after repeated provider errors; main will handle wakes while it cools down.");
@@ -749,6 +797,7 @@ export default function (pi: ExtensionAPI) {
   function finishProviderProbe(probeGeneration: number, probeSelectionRevision: number): void {
     if (probeGeneration !== generation || probeSelectionRevision !== branchSelectionRevision || !providerRecovery) return;
     providerRecovery.probeInFlight = false;
+    if (providerRecovery.source === "chain") return;
     if (branchBroken && providerRecovery.retryNotBefore <= Date.now()) {
       providerRecovery.retryNotBefore = Date.now() + providerRecovery.cooldownMs;
     }
@@ -862,15 +911,15 @@ export default function (pi: ExtensionAPI) {
   // says the isolated runtime cannot run an ordinary provider, does the build
   // fall back to passing no override at all, which is the pre-feature
   // behavior.
-  // A fallback chain tries its models in lib/fm-branch-model-chain.ts order:
-  // ready models by preference, then cooling ones soonest-ready first, so a
-  // recovery probe always has something to try. A model the isolated runtime
-  // cannot resolve sits out on the same backoff as one that failed, which keeps
-  // an unusable preferred entry from forcing a rebuild on every wake. Only when
-  // no entry resolves at all does the build refuse, as a single bad pin does.
+  // A fallback chain tries only models whose cooldowns have elapsed, in
+  // preference order. A model the isolated runtime cannot resolve sits out on
+  // the same backoff as one that failed, which keeps an unusable preferred
+  // entry from forcing a rebuild on every wake. When none resolves, the build
+  // reports the earliest retry so the dispatch latch can pause and probe.
   async function chainBranchModelSelection(chain: readonly BranchModelRef[]): Promise<PinnedBranchModel> {
     const reasons: string[] = [];
-    for (const ref of orderBranchModelChain(chain, chainCooldowns, Date.now())) {
+    const now = Date.now();
+    for (const ref of orderBranchModelChain(chain, chainCooldowns, now)) {
       let resolved: BranchModelResolution;
       try {
         resolved = await resolveBranchModel(ref.provider, ref.modelId);
@@ -879,13 +928,20 @@ export default function (pi: ExtensionAPI) {
       }
       if (resolved.ok) {
         activeChainModel = branchModelLabel(ref);
+        if (pendingChainFallbackFrom) {
+          deliverBranchHealthNote(
+            `Supervision model ${pendingChainFallbackFrom} failed; the next wake uses ${activeChainModel} and ${pendingChainFallbackFrom} is retried after its cooldown.`,
+          );
+          pendingChainFallbackFrom = "";
+        }
         return resolved.selection;
       }
       const label = branchModelLabel(ref);
       chainCooldowns.set(label, nextBranchModelCooldown(chainCooldowns.get(label), Date.now()));
       reasons.push(resolved.reason);
     }
-    throw new Error(`no model in the supervision chain is usable: ${reasons.join("; ")} (config/supervision-branch-model)`);
+    const detail = `no model in the supervision chain is usable: ${reasons.join("; ") || "every model is cooling down"} (config/supervision-branch-model)`;
+    throw new BranchModelChainExhaustedError(detail, earliestChainRetry(chain, Date.now()));
   }
 
   async function branchModelSelection(): Promise<PinnedBranchModel | undefined> {
@@ -1443,7 +1499,12 @@ ${context.command}
       } catch (error) {
         if (buildRevision !== branchSelectionRevision) continue;
         if (expectedGeneration === generation && !shuttingDown) {
-          branchBroken = error instanceof Error ? error.message : String(error);
+          const detail = error instanceof Error ? error.message : String(error);
+          if (error instanceof BranchModelChainExhaustedError) {
+            pauseForModelChain(detail, error.retryNotBefore, recoveryProbe && providerRecovery?.probeInFlight === true);
+          } else {
+            branchBroken = detail;
+          }
         }
         throw error;
       }
@@ -1570,6 +1631,7 @@ ${context.command}
     branchBroken = "";
     consecutiveProviderErrors = 0;
     providerRecovery = null;
+    pendingChainFallbackFrom = "";
     const stale = branch;
     branch = null;
     if (!stale) return;

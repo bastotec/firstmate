@@ -29,47 +29,49 @@ export function branchModelLabel(ref: BranchModelRef): string {
 /**
  * Parses config/supervision-branch-model: one "<provider>/<model-id>" per
  * line in preference order, split at the FIRST "/" so a provider-qualified
- * model id survives. Blank lines and "#" comments are skipped, a repeated
- * model keeps its first position, and a line that is not a model reference is
- * ignored rather than poisoning the models around it.
+ * model id survives. Blank lines and "#" comments are skipped, and a repeated
+ * model keeps its first position. If at least one model is valid, any malformed
+ * line rejects the chain instead of silently selecting a later subscription.
+ * A file with no valid model line means no pin.
  */
 export function parseBranchModelChain(stored: string): BranchModelRef[] {
   const chain: BranchModelRef[] = [];
+  const malformed: Array<{ number: number; line: string }> = [];
   const seen = new Set<string>();
-  for (const raw of stored.split("\n")) {
+  for (const [index, raw] of stored.split("\n").entries()) {
     const line = raw.trim();
     if (line === "" || line.startsWith("#")) continue;
     const separator = line.indexOf("/");
-    if (separator <= 0 || separator >= line.length - 1) continue;
+    if (separator <= 0 || separator >= line.length - 1) {
+      malformed.push({ number: index + 1, line });
+      continue;
+    }
     if (seen.has(line)) continue;
     seen.add(line);
     chain.push({ provider: line.slice(0, separator), modelId: line.slice(separator + 1) });
+  }
+  if (chain.length > 0 && malformed.length > 0) {
+    const first = malformed[0];
+    throw new Error(`invalid supervision model line ${first.number}: ${JSON.stringify(first.line)}`);
   }
   return chain;
 }
 
 /**
- * The order in which a build should try the chain: every model that is not
- * cooling down, in preference order, then the cooling ones soonest-ready
- * first. The cooling tail is what lets a recovery probe try something when
- * every model has failed, instead of refusing to build.
+ * The order in which an ordinary build should try the chain: every model that
+ * is not cooling down, in preference order. Recovery probes are offered only
+ * after the earliest cooldown expires, so ordinary builds never retry a model
+ * during its sit-out.
  */
 export function orderBranchModelChain(
   chain: readonly BranchModelRef[],
   cooldowns: ReadonlyMap<string, BranchModelCooldown>,
   now: number,
 ): BranchModelRef[] {
-  const ready: BranchModelRef[] = [];
-  const cooling: BranchModelRef[] = [];
-  for (const ref of chain) {
+  return chain.filter((ref) => {
     const cooldown = cooldowns.get(branchModelLabel(ref));
-    if (cooldown && cooldown.retryNotBefore > now) cooling.push(ref);
-    else ready.push(ref);
-  }
-  cooling.sort(
-    (a, b) => cooldowns.get(branchModelLabel(a))!.retryNotBefore - cooldowns.get(branchModelLabel(b))!.retryNotBefore,
-  );
-  return [...ready, ...cooling];
+    return !cooldown || cooldown.retryNotBefore <= now;
+  });
 }
 
 /** True when some model other than `failed` is ready to take the next wake. */

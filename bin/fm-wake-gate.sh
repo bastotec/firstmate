@@ -41,18 +41,17 @@
 #       Print measured Jev usage so far.
 #
 # THE STALE RULE (call the model iff any line holds; otherwise skip)
-#   - waiting_on_someone >= FM_WAKE_GATE_WAIT_THRESHOLD (default 0.40)
-#   - no answer reaches FM_WAKE_GATE_EXPLAIN_THRESHOLD (default 0.50): unexplained
-#   - the strongest answer is shows_failure or finished_idle and differs from the
-#     class recorded at this task's last model look: a new terminal state gets
-#     exactly one look
-#   - the last model look is older than FM_WAKE_GATE_MAX_SILENCE_SECS (default
-#     3600): no worker is left unexamined longer than that
+#   - waiting_on_someone >= 0.40
+#   - no answer reaches 0.50: unexplained
+#   - shows_failure or finished_idle reaches 0.50 and that terminal flag was not
+#     present at this task's last model look: each new terminal state gets one look
+#   - the last model look is older than 3600 seconds: no worker is left
+#     unexamined longer than one hour
 #   A `call` decision records the look; a skip does not.
 #
 # STATE (all under state/, private runtime state)
-#   <task-id>.stooddown      "<epoch>\t<reason>" - the explicit stand-down marker
-#   wake-gate/<task-id>.look "<epoch>\t<class>" - the last model look the rule granted
+#   <task-id>.stooddown      "<epoch>\t<reason>\t<status-size>" - the explicit stand-down marker
+#   wake-gate/<task-id>.look "<epoch>\t<failure,finished flags>" - the last model look the rule granted
 #   wake-gate/shadow.log     "<epoch>\t<task>\t<mode>\t<call|skip>\t<why>\t<working>\t<waiting>\t<failure>\t<finished>"
 #   wake-gate/usage.log      "<epoch>\t<calls>\t<in-tok>\t<out-tok>\t<ms>\t<outcome>"
 #
@@ -138,20 +137,21 @@ cmd_classify() {
   esac
 
   # --- LAYER 1: deterministic stood-down absorber (free, no model) ---
-  local task marker_file marker_epoch status_file status_mtime
+  local task marker_file marker_epoch marker_reason marker_size status_file status_size
   task=$(task_from_row "$kind" "$key" "$payload")
   if [ -n "$task" ]; then
     marker_file="$STATE/$task.stooddown"
     if [ -f "$marker_file" ]; then
-      marker_epoch=$(cut -f1 "$marker_file" 2>/dev/null | head -1)
+      IFS=$'\t' read -r marker_epoch marker_reason marker_size < "$marker_file" || true
       case "$marker_epoch" in ''|*[!0-9]*) marker_epoch='' ;; esac
+      case "$marker_size" in ''|*[!0-9]*) marker_size='' ;; esac
       status_file="$STATE/$task.status"
-      if [ -n "$marker_epoch" ] && [ -f "$status_file" ]; then
-        status_mtime=$(stat -f %m "$status_file" 2>/dev/null || stat -c %Y "$status_file" 2>/dev/null)
-        case "$status_mtime" in ''|*[!0-9]*) status_mtime='' ;; esac
+      if [ -n "$marker_epoch" ] && [ -n "$marker_size" ] && [ -f "$status_file" ]; then
+        status_size=$(wc -c < "$status_file" 2>/dev/null | tr -d '[:space:]')
+        case "$status_size" in ''|*[!0-9]*) status_size='' ;; esac
         # Absorb only when the status log has NOT advanced since the stand-down.
         # An advanced log means the task did something new -> escalate (fail-open).
-        if [ -n "$status_mtime" ] && [ "$status_mtime" -le "$marker_epoch" ]; then
+        if [ -n "$status_size" ] && [ "$status_size" -eq "$marker_size" ]; then
           case "$kind:$key" in
             stale:*|signal:*|check:secondmate-wake-loop-*)
               printf 'absorb:stood-down-rering\n'; return 0 ;;
@@ -203,11 +203,11 @@ gather_evidence() {
   local task=$1 tmo=${FM_WAKE_GATE_EVIDENCE_TIMEOUT:-8} state_out pane_out
   case "$tmo" in ''|*[!0-9]*) tmo=8 ;; esac
   if [ -n "${FM_WAKE_GATE_EVIDENCE_CMD:-}" ]; then
-    state_out=$(bounded "$tmo" "$FM_WAKE_GATE_EVIDENCE_CMD" "$task" 2>/dev/null </dev/null) || state_out=''
+    state_out=$(bounded "$tmo" "$FM_WAKE_GATE_EVIDENCE_CMD" "$task" 2>/dev/null </dev/null) || return 1
     pane_out=''
   else
-    state_out=$(FM_HOME="$HOME_ROOT" bounded "$tmo" "$SCRIPT_DIR/fm-crew-state.sh" "$task" 2>&1 </dev/null) || true
-    pane_out=$(FM_HOME="$HOME_ROOT" bounded "$tmo" "$SCRIPT_DIR/fm-peek.sh" "$task" 40 2>/dev/null </dev/null) || pane_out=''
+    state_out=$(FM_HOME="$HOME_ROOT" bounded "$tmo" "$SCRIPT_DIR/fm-crew-state.sh" "$task" 2>&1 </dev/null) || return 1
+    pane_out=$(FM_HOME="$HOME_ROOT" bounded "$tmo" "$SCRIPT_DIR/fm-peek.sh" "$task" 40 2>/dev/null </dev/null) || return 1
   fi
   jq -cn --arg s "$state_out" --arg p "$pane_out" \
     '[{command:"current state",output:$s},{command:"pane tail",output:$p}] | map(select(.output|test("\\S")))' 2>/dev/null
@@ -215,7 +215,7 @@ gather_evidence() {
 
 cmd_stale_verdict() {
   local task=${1-} reason=${3-}  # $2 is the window, already named inside the reason
-  local keyvar mode evidence hout answers aw wt fl fn why='' decision cls conf look_file last_epoch='' last_cls='' now tmo
+  local keyvar mode evidence hout answers aw wt fl fn why='' decision cls conf look_file last_epoch='' last_flags='' terminal_flags='' flag now tmo
   case "$task" in ''|*/*|*" "*) printf 'escalate\n'; return 0 ;; esac
   keyvar=$(gate_key_var)
   [ -n "$keyvar" ] || { printf 'escalate\n'; return 0; }
@@ -227,7 +227,7 @@ cmd_stale_verdict() {
   tmo=${FM_WAKE_GATE_TIMEOUT:-6}
   case "$tmo" in ''|*[!0-9]*) tmo=6 ;; esac
 
-  evidence=$(gather_evidence "$task")
+  evidence=$(gather_evidence "$task") || evidence=''
   case "$evidence" in ''|'[]') log_shadow "$task" "$mode" call no-evidence - - - -; printf 'escalate\n'; return 0 ;; esac
 
   local -a run
@@ -257,21 +257,31 @@ EOF_ANSWERS
 
   look_file="$STATE/wake-gate/$task.look"
   if [ -f "$look_file" ]; then
-    IFS=$'\t' read -r last_epoch last_cls < "$look_file" || true
+    IFS=$'\t' read -r last_epoch last_flags < "$look_file" || true
     case "$last_epoch" in ''|*[!0-9]*) last_epoch='' ;; esac
+    case "$last_flags" in failure|finished|failure,finished) ;; *) last_flags='' ;; esac
   fi
   now=$(date +%s)
   read -r cls conf <<EOF_CLS
 $(awk -v a="$aw" -v w="$wt" -v f="$fl" -v n="$fn" 'BEGIN{c="working";m=a+0; if(w+0>m){c="waiting";m=w+0} if(f+0>m){c="failure";m=f+0} if(n+0>m){c="finished";m=n+0} print c, m}')
 EOF_CLS
-  if awk -v w="$wt" -v t="${FM_WAKE_GATE_WAIT_THRESHOLD:-0.40}" 'BEGIN{exit !(w+0 >= t+0)}'; then why=waiting
-  elif awk -v m="$conf" -v t="${FM_WAKE_GATE_EXPLAIN_THRESHOLD:-0.50}" 'BEGIN{exit !(m+0 < t+0)}'; then why=unexplained
-  elif { [ "$cls" = failure ] || [ "$cls" = finished ]; } && [ "$cls" != "$last_cls" ]; then why="new-$cls"
-  elif [ -z "$last_epoch" ] || [ $(( now - last_epoch )) -ge "${FM_WAKE_GATE_MAX_SILENCE_SECS:-3600}" ]; then why=silence-backstop
+  if awk -v f="$fl" 'BEGIN{exit !(f+0 >= 0.50)}'; then terminal_flags=failure; fi
+  if awk -v n="$fn" 'BEGIN{exit !(n+0 >= 0.50)}'; then
+    if [ -n "$terminal_flags" ]; then terminal_flags="$terminal_flags,finished"; else terminal_flags=finished; fi
   fi
+  if awk -v w="$wt" 'BEGIN{exit !(w+0 >= 0.40)}'; then why=waiting
+  elif awk -v m="$conf" 'BEGIN{exit !(m+0 < 0.50)}'; then why=unexplained
+  elif [ -n "$terminal_flags" ]; then
+    for flag in failure finished; do
+      case ",$terminal_flags," in
+        *,$flag,*) case ",$last_flags," in *,$flag,*) ;; *) why="new-$flag"; break ;; esac ;;
+      esac
+    done
+  fi
+  if [ -z "$why" ] && { [ -z "$last_epoch" ] || [ $(( now - last_epoch )) -ge 3600 ]; }; then why=silence-backstop; fi
   if [ -n "$why" ]; then
     decision=call
-    mkdir -p "$STATE/wake-gate" 2>/dev/null && printf '%s\t%s\n' "$now" "$cls" > "$look_file" 2>/dev/null
+    mkdir -p "$STATE/wake-gate" 2>/dev/null && printf '%s\t%s\n' "$now" "$terminal_flags" > "$look_file" 2>/dev/null
   else
     decision=skip; why="same-$cls"
   fi
@@ -298,7 +308,7 @@ cmd_report() {
 
 cmd_stand_down() {
   local task=${1-}; shift || true
-  local reason='stood down'
+  local reason='stood down' status_size
   while [ $# -gt 0 ]; do
     case "$1" in
       --reason) reason=${2-}; shift 2 ;;
@@ -306,8 +316,20 @@ cmd_stand_down() {
     esac
   done
   case "$task" in ''|*/*|*" "*) echo "error: invalid task id" >&2; return 1 ;; esac
-  mkdir -p "$STATE" 2>/dev/null
-  printf '%s\t%s\n' "$(date +%s)" "$reason" > "$STATE/$task.stooddown"
+  mkdir -p "$STATE" 2>/dev/null || { echo "error: could not create state directory" >&2; return 1; }
+  if [ -f "$STATE/$task.status" ]; then
+    status_size=$(wc -c < "$STATE/$task.status" 2>/dev/null | tr -d '[:space:]') || {
+      echo "error: could not read status size" >&2
+      return 1
+    }
+    case "$status_size" in ''|*[!0-9]*) echo "error: could not read status size" >&2; return 1 ;; esac
+  else
+    status_size=''
+  fi
+  printf '%s\t%s\t%s\n' "$(date +%s)" "$reason" "$status_size" > "$STATE/$task.stooddown" || {
+    echo "error: could not write stand-down marker" >&2
+    return 1
+  }
   echo "stood-down: $task (state/$task.stooddown)"
 }
 

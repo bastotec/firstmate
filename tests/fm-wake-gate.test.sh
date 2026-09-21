@@ -29,9 +29,11 @@ new_state() {
   local d="$TMP_ROOT/$1"; mkdir -p "$d"; printf '%s' "$d"
 }
 
-# stand_down <state> <task> <epoch> -> write a marker with an explicit epoch
+# stand_down <state> <task> <epoch> -> write a marker with current status size
 stand_down() {
-  printf '%s\t%s\n' "$3" "test stand-down" > "$1/$2.stooddown"
+  local size=0
+  [ ! -f "$1/$2.status" ] || size=$(wc -c < "$1/$2.status" | tr -d '[:space:]')
+  printf '%s\t%s\t%s\n' "$3" "test stand-down" "$size" > "$1/$2.stooddown"
 }
 
 # status_at <state> <task> <YYYYMMDDhhMM> -> a status file with a fixed old mtime
@@ -48,18 +50,29 @@ pass "unmarked task escalates (gate is inert without a stand-down)"
 
 # --- stood-down + status NOT advanced -> absorb (stale, stall check, signal) ---
 s=$(new_state down-quiet)
-stand_down "$s" docana-delivery "$(date +%s)"
 status_at "$s" docana-delivery 202001010000
+stand_down "$s" docana-delivery "$(date +%s)"
 [ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle pane')" = absorb:stood-down-rering ] \
   || fail "a stood-down task's stale re-ring with no new status must absorb"
 [ "$(classify "$s" check 'secondmate-wake-loop-docana-delivery-1789940215-1792' 'check: secondmate wake-loop stalled: mate=docana-delivery')" = absorb:stood-down-rering ] \
   || fail "a stood-down wake-loop stall re-ring must absorb"
 pass "stood-down mechanical re-rings absorb (stale + wake-loop stall)"
 
+s=$(new_state stand-down-writer)
+printf 'working: before stand-down\n' > "$s/writer.status"
+FM_STATE_DIR="$s" "$GATE" stand-down writer --reason test >/dev/null \
+  || fail "stand-down command failed"
+[ "$(classify "$s" stale 'firstmate:fm-writer' 'stale: idle pane')" = absorb:stood-down-rering ] \
+  || fail "the marker written by stand-down did not record the current status size"
+printf 'done: appended in the same second\n' >> "$s/writer.status"
+[ "$(classify "$s" stale 'firstmate:fm-writer' 'stale: idle pane')" = escalate ] \
+  || fail "SAFETY: same-second growth after the stand-down command must escalate"
+pass "stand-down records status size and detects same-second growth"
+
 # --- HARD EXCLUSIONS: never absorb, even when stood down and quiet ---
 s=$(new_state down-but-decision)
-stand_down "$s" firstmate-runtime "$(date +%s)"
 status_at "$s" firstmate-runtime 202001010000
+stand_down "$s" firstmate-runtime "$(date +%s)"
 [ "$(classify "$s" signal 'firstmate-runtime.status' 'needs-decision [key=x]: captain hold')" = escalate ] \
   || fail "SAFETY: a needs-decision row must escalate even when stood down"
 [ "$(classify "$s" signal 'firstmate-runtime.status' 'blocked [key=y]: pending-reply-missed')" = escalate ] \
@@ -74,11 +87,20 @@ pass "decisions, blockers, merge checks, heartbeats, watcher failures never abso
 
 # --- stood-down but status ADVANCED -> escalate (the task did something new) ---
 s=$(new_state down-but-active)
-stand_down "$s" docana-delivery 1000000000   # marker far in the past
-printf 'done [key=z]: new work landed\n' > "$s/docana-delivery.status"  # mtime = now
+printf 'working: old line\n' > "$s/docana-delivery.status"
+stand_down "$s" docana-delivery "$(date +%s)"
+printf 'done [key=z]: new work landed\n' >> "$s/docana-delivery.status"
+touch -t 202001010000 "$s/docana-delivery.status"
 [ "$(classify "$s" signal 'docana-delivery.status' 'signal: docana-delivery.status')" = escalate ] \
-  || fail "SAFETY: a stood-down task whose status advanced must escalate"
-pass "an advanced status log escalates despite the stand-down"
+  || fail "SAFETY: a same-second status append after stand-down must escalate"
+pass "status byte growth escalates even when mtime cannot show the append"
+
+s=$(new_state legacy-marker)
+printf 'working: old line\n' > "$s/docana-delivery.status"
+printf '%s\tlegacy marker\n' "$(date +%s)" > "$s/docana-delivery.stooddown"
+[ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle')" = escalate ] \
+  || fail "SAFETY: a marker without a recorded status size must escalate"
+pass "legacy stood-down markers fail open"
 
 # --- fail-open on malformed input ---
 s=$(new_state malformed)
@@ -89,8 +111,8 @@ pass "malformed and unresolvable rows escalate (fail-open)"
 
 # --- resume clears the marker -> escalates again ---
 s=$(new_state resume)
-stand_down "$s" docana-delivery "$(date +%s)"
 status_at "$s" docana-delivery 202001010000
+stand_down "$s" docana-delivery "$(date +%s)"
 [ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle')" = absorb:stood-down-rering ] \
   || fail "precondition: stood-down re-ring should absorb before resume"
 "$GATE" resume docana-delivery >/dev/null 2>&1 || true
@@ -154,6 +176,14 @@ pass "waiting and unexplained evidence always reach the model"
 
 s=$(new_state sv-terminal)
 verdict "$s" enforce "$WORKING" >/dev/null
+[ "$(verdict "$s" enforce '0.90 0.05 0.80 0.10')" = escalate ] || fail "SAFETY: failure evidence must not be hidden by a stronger working answer"
+[ "$(verdict "$s" enforce '0.90 0.05 0.80 0.75')" = escalate ] || fail "SAFETY: a newly present finished flag must reach the model independently"
+[ "$(verdict "$s" enforce '0.90 0.05 0.80 0.75')" = absorb:jev-working ] || fail "terminal flags already looked at must not repeatedly escalate"
+[ "$(tail -1 "$s/wake-gate/t1.look" | cut -f2)" = 'failure,finished' ] || fail "the look record did not retain both terminal flags"
+pass "independent new failure and finished flags each get a model look"
+
+s=$(new_state sv-terminal-switch)
+verdict "$s" enforce "$WORKING" >/dev/null
 [ "$(verdict "$s" enforce '0.05 0.05 0.95 0.10')" = escalate ] || fail "SAFETY: a new failure must reach the model"
 [ "$(verdict "$s" enforce '0.05 0.05 0.95 0.10')" = absorb:jev-failure ] || fail "the same failure already looked at must absorb"
 [ "$(verdict "$s" enforce '0.05 0.05 0.10 0.93')" = escalate ] || fail "SAFETY: a newly finished worker must reach the model once"
@@ -161,9 +191,11 @@ pass "a new failed or finished state gets exactly one model look"
 
 s=$(new_state sv-backstop)
 verdict "$s" enforce "$WORKING" >/dev/null
-printf '%s\tworking\n' "$(( $(date +%s) - 4000 ))" > "$s/wake-gate/t1.look"
-[ "$(verdict "$s" enforce "$WORKING")" = escalate ] || fail "SAFETY: a look older than the silence bound must reach the model"
-pass "no worker goes unexamined past the silence bound"
+printf '%s\t\n' "$(( $(date +%s) - 4000 ))" > "$s/wake-gate/t1.look"
+[ "$(FM_WAKE_GATE_MAX_SILENCE_SECS=999999 verdict "$s" enforce "$WORKING")" = escalate ] || fail "SAFETY: a look older than the fixed silence bound must reach the model"
+[ "$(FM_WAKE_GATE_WAIT_THRESHOLD=1 verdict "$s" enforce '0.10 0.86 0.05 0.04')" = escalate ] || fail "SAFETY: environment must not weaken the fixed waiting threshold"
+[ "$(FM_WAKE_GATE_EXPLAIN_THRESHOLD=0 verdict "$s" enforce '0.30 0.20 0.25 0.20')" = escalate ] || fail "SAFETY: environment must not weaken the fixed unexplained threshold"
+pass "calibrated thresholds and silence bound cannot be overridden"
 
 s=$(new_state sv-failopen)
 verdict "$s" enforce "$WORKING" >/dev/null
@@ -173,6 +205,24 @@ verdict "$s" enforce "$WORKING" >/dev/null
 [ "$(FM_STATE_DIR="$s" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD=/nonexistent FM_WAKE_GATE_KEY_VAR=DUMMY_KEY \
   FM_WAKE_GATE_MODE=enforce FM_TEST_ANSWERS="$WORKING" "$GATE" stale-verdict t1 w:fm-t1 "$WEDGE" 2>/dev/null)" = escalate ] \
   || fail "SAFETY: missing evidence must escalate"
+
+partial="$TMP_ROOT/partial-evidence"
+mkdir -p "$partial/bin" "$partial/state/wake-gate"
+cp "$GATE" "$partial/bin/fm-wake-gate.sh"
+cat > "$partial/bin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'state: stale cached state\n'
+exit 7
+SH
+cat > "$partial/bin/fm-peek.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'pane: visibly working\n'
+SH
+chmod +x "$partial/bin/"*.sh
+printf '%s\t\n' "$(date +%s)" > "$partial/state/wake-gate/t1.look"
+[ "$(FM_STATE_DIR="$partial/state" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_KEY_VAR=DUMMY_KEY \
+  FM_WAKE_GATE_MODE=enforce FM_TEST_ANSWERS="$WORKING" "$partial/bin/fm-wake-gate.sh" stale-verdict t1 w:fm-t1 "$WEDGE" 2>/dev/null)" = escalate ] \
+  || fail "SAFETY: one failed evidence read must invalidate the other read"
 [ "$(FM_STATE_DIR="$s" FM_WAKE_GATE_KEY_VAR=DUMMY_KEY "$GATE" stale-verdict '../x' w "$WEDGE" 2>/dev/null)" = escalate ] \
   || fail "SAFETY: an invalid task id must escalate"
 pass "helper errors, non-wedge alarms, missing evidence, and bad ids escalate (fail-open)"
