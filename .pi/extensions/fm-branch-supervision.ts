@@ -112,6 +112,16 @@ import {
   type BranchPickerItem,
 } from "./lib/fm-branch-model-picker.ts";
 import {
+  type BranchModelCooldown,
+  type BranchModelRef,
+  branchModelLabel,
+  chainHasReadyAlternative,
+  chainPrefersEarlierModel,
+  nextBranchModelCooldown,
+  orderBranchModelChain,
+  parseBranchModelChain,
+} from "./lib/fm-branch-model-chain.ts";
+import {
   classifyFirstmateOperationalText,
   encodeFirstmateOperationalInputWith,
 } from "./lib/fm-operational-input.ts";
@@ -256,23 +266,24 @@ const piOwnsTheEffortVocabulary: [DeclaredBranchEffort] extends [BranchEffort]
   : never = true;
 void piOwnsTheEffortVocabulary;
 
-// The supervision-branch model pin, owned operator-side by
-// docs/configuration.md: one "<provider>/<model-id>" line under this home's
-// config/. An absent, unreadable, or unparseable file means no pin, and the
-// branch then follows main's own model. Only the FIRST "/" separates the two
-// halves, so a provider-qualified model id such as
-// openrouter/anthropic/claude survives.
-function readModelPin(): { provider: string; modelId: string } | null {
-  let stored: string;
+// The supervision-branch model chain, owned operator-side by
+// docs/configuration.md: "<provider>/<model-id>" lines under this home's
+// config/, in preference order. An absent, unreadable, or empty file means no
+// pin, and the branch then follows main's own model. One line is a plain pin;
+// several lines are a fallback chain (lib/fm-branch-model-chain.ts owns the
+// parsing and ordering rules).
+function readModelChain(): BranchModelRef[] {
   try {
-    stored = readFileSync(modelPinFile, "utf8");
+    return parseBranchModelChain(readFileSync(modelPinFile, "utf8"));
   } catch {
-    return null;
+    return [];
   }
-  const line = (stored.split("\n")[0] ?? "").trim();
-  const separator = line.indexOf("/");
-  if (separator <= 0 || separator >= line.length - 1) return null;
-  return { provider: line.slice(0, separator), modelId: line.slice(separator + 1) };
+}
+
+// The preferred model: the chain's first entry, which is also what the
+// /supervision-model picker shows as the current pin.
+function readModelPin(): BranchModelRef | null {
+  return readModelChain()[0] ?? null;
 }
 
 // The supervision-branch effort pin, owned operator-side by the same
@@ -565,6 +576,11 @@ export default function (pi: ExtensionAPI) {
   let branchBroken = "";
   let consecutiveProviderErrors = 0;
   let providerRecovery: ProviderRecovery | null = null;
+  // Fallback-chain state, in memory only: a restart simply tries the preferred
+  // model again. activeChainModel names the chain entry the live branch was
+  // built on, and is empty for a single pin or a branch that follows main.
+  const chainCooldowns = new Map<string, BranchModelCooldown>();
+  let activeChainModel = "";
   // A revision advances only after fm_branch_report has appended successfully,
   // so a prompt can prove that it created a durable outcome after claiming its
   // wake rows without relying on provider text or incidental session shape.
@@ -678,7 +694,30 @@ export default function (pi: ExtensionAPI) {
     else pi.sendMessage(message, {});
   }
 
+  // A provider failure on one model of a fallback chain sits that model out and
+  // hands the NEXT wake to the next ready model, instead of counting toward the
+  // latch that gives every wake to main. The failed wake itself still returns
+  // to the watcher-owned fallback exactly as before. When no other model is
+  // ready the chain has nothing to offer and the existing latch owns recovery.
+  function advanceModelChain(): boolean {
+    const failed = activeChainModel;
+    if (!failed) return false;
+    const chain = readModelChain();
+    if (chain.length < 2) return false;
+    const now = Date.now();
+    chainCooldowns.set(failed, nextBranchModelCooldown(chainCooldowns.get(failed), now));
+    if (!chainHasReadyAlternative(chain, chainCooldowns, failed, now)) return false;
+    const next = orderBranchModelChain(chain, chainCooldowns, now)[0];
+    branchSelectionRevision += 1;
+    releaseBranchForSelectionChange();
+    deliverBranchHealthNote(
+      `Supervision model ${failed} failed; the next wake uses ${branchModelLabel(next)} and ${failed} is retried after its cooldown.`,
+    );
+    return true;
+  }
+
   function recordSettledProviderError(detail: string): void {
+    if (advanceModelChain()) return;
     consecutiveProviderErrors += 1;
     if (consecutiveProviderErrors < PROVIDER_ERROR_LATCH_THRESHOLD && !providerRecovery) return;
     const previousCooldownMs = providerRecovery?.cooldownMs;
@@ -700,6 +739,7 @@ export default function (pi: ExtensionAPI) {
   function recordDurableBranchReport(reportGeneration: number, reportSelectionRevision: number): void {
     if (reportGeneration !== generation || reportSelectionRevision !== branchSelectionRevision) return;
     consecutiveProviderErrors = 0;
+    if (activeChainModel) chainCooldowns.delete(activeChainModel);
     if (!providerRecovery) return;
     branchBroken = "";
     providerRecovery = null;
@@ -822,8 +862,37 @@ export default function (pi: ExtensionAPI) {
   // says the isolated runtime cannot run an ordinary provider, does the build
   // fall back to passing no override at all, which is the pre-feature
   // behavior.
+  // A fallback chain tries its models in lib/fm-branch-model-chain.ts order:
+  // ready models by preference, then cooling ones soonest-ready first, so a
+  // recovery probe always has something to try. A model the isolated runtime
+  // cannot resolve sits out on the same backoff as one that failed, which keeps
+  // an unusable preferred entry from forcing a rebuild on every wake. Only when
+  // no entry resolves at all does the build refuse, as a single bad pin does.
+  async function chainBranchModelSelection(chain: readonly BranchModelRef[]): Promise<PinnedBranchModel> {
+    const reasons: string[] = [];
+    for (const ref of orderBranchModelChain(chain, chainCooldowns, Date.now())) {
+      let resolved: BranchModelResolution;
+      try {
+        resolved = await resolveBranchModel(ref.provider, ref.modelId);
+      } catch (error) {
+        resolved = { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      }
+      if (resolved.ok) {
+        activeChainModel = branchModelLabel(ref);
+        return resolved.selection;
+      }
+      const label = branchModelLabel(ref);
+      chainCooldowns.set(label, nextBranchModelCooldown(chainCooldowns.get(label), Date.now()));
+      reasons.push(resolved.reason);
+    }
+    throw new Error(`no model in the supervision chain is usable: ${reasons.join("; ")} (config/supervision-branch-model)`);
+  }
+
   async function branchModelSelection(): Promise<PinnedBranchModel | undefined> {
-    const pin = readModelPin();
+    activeChainModel = "";
+    const chain = readModelChain();
+    if (chain.length > 1) return chainBranchModelSelection(chain);
+    const pin = chain[0];
     if (pin) return preparePinnedBranchModel(pin);
     if (!mainModel) return undefined;
     const following = await followMainModel(mainModel);
@@ -1338,6 +1407,16 @@ ${context.command}
   async function ensureBranch(expectedGeneration: number, recoveryProbe = false): Promise<BranchSession> {
     if (!(await actingAsOwner(expectedGeneration))) throw new Error("supervision session was replaced or lost lock ownership");
     if (branchBroken && !(recoveryProbe && providerRecovery?.probeInFlight)) throw new Error(branchBroken);
+    // The way back up a fallback chain: once a model earlier than the one the
+    // live branch runs on is ready again, rebuild so this wake tries it.
+    if (
+      branch &&
+      activeChainModel &&
+      chainPrefersEarlierModel(readModelChain(), chainCooldowns, activeChainModel, Date.now())
+    ) {
+      branchSelectionRevision += 1;
+      releaseBranchForSelectionChange();
+    }
     if (branch) return branch;
     while (true) {
       const buildRevision = branchSelectionRevision;
