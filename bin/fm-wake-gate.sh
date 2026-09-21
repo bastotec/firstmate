@@ -376,7 +376,7 @@ cmd_report() {
 
 cmd_stand_down() {
   local task=${1-}; shift || true
-  local reason='stood down' status_size
+  local reason='stood down' status_size marker tmp
   while [ $# -gt 0 ]; do
     case "$1" in
       --reason) reason=${2-}; shift 2 ;;
@@ -384,7 +384,25 @@ cmd_stand_down() {
     esac
   done
   case "$task" in ''|*/*|*" "*) echo "error: invalid task id" >&2; return 1 ;; esac
-  mkdir -p "$STATE" 2>/dev/null || { echo "error: could not create state directory" >&2; return 1; }
+  if [ -e "$STATE" ] || [ -L "$STATE" ]; then
+    [ -d "$STATE" ] && [ ! -L "$STATE" ] || {
+      echo "error: unsafe state directory" >&2
+      return 1
+    }
+  else
+    mkdir -p "$STATE" 2>/dev/null || { echo "error: could not create state directory" >&2; return 1; }
+    [ -d "$STATE" ] && [ ! -L "$STATE" ] || {
+      echo "error: unsafe state directory" >&2
+      return 1
+    }
+  fi
+  marker="$STATE/$task.stooddown"
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    [ -f "$marker" ] && [ ! -L "$marker" ] || {
+      echo "error: unsafe stand-down marker for $task" >&2
+      return 1
+    }
+  fi
   if [ -f "$STATE/$task.status" ]; then
     status_size=$(wc -c < "$STATE/$task.status" 2>/dev/null | tr -d '[:space:]') || {
       echo "error: could not read status size" >&2
@@ -394,10 +412,17 @@ cmd_stand_down() {
   else
     status_size=0
   fi
-  printf '%s\t%s\t%s\n' "$(date +%s)" "$reason" "$status_size" > "$STATE/$task.stooddown" || {
-    echo "error: could not write stand-down marker" >&2
+  tmp=$(umask 077; mktemp "$STATE/.$task.stooddown.XXXXXX" 2>/dev/null) || {
+    echo "error: could not stage stand-down marker" >&2
     return 1
   }
+  if ! printf '%s\t%s\t%s\n' "$(date +%s)" "$reason" "$status_size" > "$tmp" \
+    || ! chmod 0600 "$tmp" 2>/dev/null \
+    || ! perl -e 'rename $ARGV[0], $ARGV[1] or exit 1' "$tmp" "$marker"; then
+    rm -f -- "$tmp"
+    echo "error: could not write stand-down marker" >&2
+    return 1
+  fi
   echo "stood-down: $task (state/$task.stooddown)"
 }
 

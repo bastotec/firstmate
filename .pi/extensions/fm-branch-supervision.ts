@@ -256,6 +256,7 @@ function settledPromptProviderError(sessionManager: SessionManager, entryOffset:
 type BranchModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 type BranchEffort = ReturnType<NonNullable<ExtensionAPI["getThinkingLevel"]>>;
 type PinnedBranchModel = { model: BranchModel; modelRuntime: ModelRuntime };
+type BranchModelSelection = { pinned?: PinnedBranchModel; chainModel: string };
 type BranchModelResolution = { ok: true; selection: PinnedBranchModel } | { ok: false; reason: string };
 type FollowMainResolution =
   | { ok: true; selection: PinnedBranchModel }
@@ -916,7 +917,7 @@ export default function (pi: ExtensionAPI) {
   // the same backoff as one that failed, which keeps an unusable preferred
   // entry from forcing a rebuild on every wake. When none resolves, the build
   // reports the earliest retry so the dispatch latch can pause and probe.
-  async function chainBranchModelSelection(chain: readonly BranchModelRef[]): Promise<PinnedBranchModel> {
+  async function chainBranchModelSelection(chain: readonly BranchModelRef[]): Promise<BranchModelSelection> {
     const reasons: string[] = [];
     const now = Date.now();
     for (const ref of orderBranchModelChain(chain, chainCooldowns, now)) {
@@ -927,14 +928,7 @@ export default function (pi: ExtensionAPI) {
         resolved = { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }
       if (resolved.ok) {
-        activeChainModel = branchModelLabel(ref);
-        if (pendingChainFallbackFrom) {
-          deliverBranchHealthNote(
-            `Supervision model ${pendingChainFallbackFrom} failed; the next wake uses ${activeChainModel} and ${pendingChainFallbackFrom} is retried after its cooldown.`,
-          );
-          pendingChainFallbackFrom = "";
-        }
-        return resolved.selection;
+        return { pinned: resolved.selection, chainModel: branchModelLabel(ref) };
       }
       const label = branchModelLabel(ref);
       chainCooldowns.set(label, nextBranchModelCooldown(chainCooldowns.get(label), Date.now()));
@@ -944,17 +938,16 @@ export default function (pi: ExtensionAPI) {
     throw new BranchModelChainExhaustedError(detail, earliestChainRetry(chain, Date.now()));
   }
 
-  async function branchModelSelection(): Promise<PinnedBranchModel | undefined> {
-    activeChainModel = "";
+  async function branchModelSelection(): Promise<BranchModelSelection> {
     const chain = readModelChain();
     if (chain.length > 1) return chainBranchModelSelection(chain);
     const pin = chain[0];
-    if (pin) return preparePinnedBranchModel(pin);
-    if (!mainModel) return undefined;
+    if (pin) return { pinned: await preparePinnedBranchModel(pin), chainModel: "" };
+    if (!mainModel) return { chainModel: "" };
     const following = await followMainModel(mainModel);
-    if (following.ok) return following.selection;
+    if (following.ok) return { pinned: following.selection, chainModel: "" };
     if (following.refusesBuild) throw new Error(following.reason);
-    return undefined;
+    return { chainModel: "" };
   }
 
   async function effectiveBranchModel(selected: BranchModel | undefined): Promise<BranchModel | undefined> {
@@ -1332,14 +1325,15 @@ export default function (pi: ExtensionAPI) {
   async function createBranch(
     branchGeneration: number,
     selectionRevision: number,
-  ): Promise<{ session: AgentSession; sessionManager: SessionManager }> {
+  ): Promise<{ session: AgentSession; sessionManager: SessionManager; chainModel: string }> {
     // Resolved first, before any session file or prompt work: a model pin Pi
     // cannot honor must fail before this build leaves anything behind. Every
     // branch build goes through here - the new conversation each main session
     // start opens, and the reopen after a model or effort change inside one
     // session - so resolving the model and the effort here is what makes the
     // captain's current choices authoritative on all of them.
-    const pinned = await branchModelSelection();
+    const selection = await branchModelSelection();
+    const pinned = selection.pinned;
     const effort = branchEffortSelection(pinned?.model);
     const prompt = await runCommandAsync("bash", [promptScript], {
       cwd: fmRoot,
@@ -1457,7 +1451,7 @@ ${context.command}
       // reopening reads the in-memory record above, so a failed write costs
       // neither the live session nor its replacement.
     }
-    return { session: created.session, sessionManager };
+    return { session: created.session, sessionManager, chainModel: selection.chainModel };
   }
 
   async function ensureBranch(expectedGeneration: number, recoveryProbe = false): Promise<BranchSession> {
@@ -1491,10 +1485,20 @@ ${context.command}
           throw new Error("supervision session was replaced or lost lock ownership");
         }
         branch = {
-          ...created,
+          session: created.session,
+          sessionManager: created.sessionManager,
           generation: expectedGeneration,
           selectionRevision: buildRevision,
         };
+        activeChainModel = created.chainModel;
+        if (pendingChainFallbackFrom) {
+          if (activeChainModel) {
+            deliverBranchHealthNote(
+              `Supervision model ${pendingChainFallbackFrom} failed; the next wake uses ${activeChainModel} and ${pendingChainFallbackFrom} is retried after its cooldown.`,
+            );
+          }
+          pendingChainFallbackFrom = "";
+        }
         return branch;
       } catch (error) {
         if (buildRevision !== branchSelectionRevision) continue;

@@ -74,6 +74,39 @@ printf 'done: appended in the same second\n' >> "$s/writer.status"
   || fail "SAFETY: same-second growth after the stand-down command must escalate"
 pass "stand-down records status size and detects same-second growth"
 
+marker_mode=$(stat -c %a "$s/writer.stooddown" 2>/dev/null || stat -f %Lp "$s/writer.stooddown")
+[ "$marker_mode" = 600 ] || fail "stand-down marker was not published with mode 0600"
+for leftover in "$s"/.writer.stooddown.*; do
+  [ ! -e "$leftover" ] || fail "stand-down left its private publication temp file behind"
+done
+pass "stand-down atomically publishes a private marker"
+
+s=$(new_state stand-down-unsafe-target)
+printf 'external bytes\n' > "$s/external"
+ln -s "$s/external" "$s/symlinked.stooddown"
+if FM_STATE_DIR="$s" "$GATE" stand-down symlinked --reason test >/dev/null 2>&1; then
+  fail "SAFETY: stand-down accepted a symlink marker target"
+fi
+[ "$(cat "$s/external")" = "external bytes" ] || fail "stand-down followed and changed a symlink target"
+[ -L "$s/symlinked.stooddown" ] || fail "stand-down replaced an unsafe symlink target"
+mkdir "$s/nonregular.stooddown"
+if FM_STATE_DIR="$s" "$GATE" stand-down nonregular --reason test >/dev/null 2>&1; then
+  fail "SAFETY: stand-down accepted a non-regular marker target"
+fi
+[ -d "$s/nonregular.stooddown" ] || fail "stand-down changed a non-regular marker target"
+pass "stand-down refuses symlink and non-regular marker targets"
+
+unsafe_parent="$TMP_ROOT/stand-down-parent-link"
+unsafe_destination="$TMP_ROOT/stand-down-parent-target"
+mkdir "$unsafe_destination"
+ln -s "$unsafe_destination" "$unsafe_parent"
+if FM_STATE_DIR="$unsafe_parent" "$GATE" stand-down escaped --reason test >/dev/null 2>&1; then
+  fail "SAFETY: stand-down accepted a symlink state directory"
+fi
+[ ! -e "$unsafe_destination/escaped.stooddown" ] \
+  || fail "stand-down published through a symlink state directory"
+pass "stand-down refuses an unsafe marker parent"
+
 s=$(new_state stand-down-before-status)
 FM_STATE_DIR="$s" "$GATE" stand-down new-task --reason test >/dev/null \
   || fail "stand-down without an existing status log failed"

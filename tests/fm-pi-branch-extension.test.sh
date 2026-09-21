@@ -2214,15 +2214,30 @@ if (prematureMove.length !== 0) {
 }
 if (handled("Supervision branch paused")) throw new Error("a chain with a ready model must not latch the branch off");
 
-// 3. The very next wake is served by the next model, not by main. Only after
-// resolution does one note name the model that actually took over.
+// 3. Resolving the next model is not enough to announce it: if replacement
+// construction fails, the pending fallback note remains pending and names no
+// destination. A later successful construction emits and clears it exactly once.
+globalThis.__fmCreateSessionError = "replacement construction failed";
+const failedReplacement = dispatch("replacement construction fails");
+if (!failedReplacement.accepted) throw new Error("the replacement build wake was not accepted");
+const replacementFailure = await failedReplacement.settlement.then(() => null, (error) => error);
+if (!(replacementFailure instanceof Error) || !replacementFailure.message.includes("replacement construction failed")) {
+  throw new Error(`the replacement build did not expose its construction failure: ${String(replacementFailure)}`);
+}
+if (sentToMain.some((sent) => sent.message.content.includes("Supervision model openai/cheap-1 failed"))) {
+  throw new Error("the fallback note was emitted before the replacement branch was constructed");
+}
+delete globalThis.__fmCreateSessionError;
+await fire("session_start", {}, makeCtx({
+  sessionManager: { getSessionFile: () => `${home}/main.jsonl`, getEntries: () => mainEntries },
+}));
 await wake("served by the second model", false);
 if (builtOn().at(-1) !== "zai/cheap-2" || !handled("handled on zai/cheap-2")) {
   throw new Error(`the next wake did not run on the second model: ${builtOn()}`);
 }
 const moved = sentToMain.filter((sent) => sent.message.content.includes("Supervision model openai/cheap-1 failed"));
 if (moved.length !== 1 || !moved[0].message.content.includes("zai/cheap-2")) {
-  throw new Error(`the fallback note must name the failed and resolved next model once: ${JSON.stringify(moved)}`);
+  throw new Error(`the fallback note must name the failed and constructed next model once: ${JSON.stringify(moved)}`);
 }
 
 // 4. Inside the first model's cooldown the branch stays where it is.
