@@ -924,6 +924,14 @@ clear_write_tracking() {  # <window-key>
 # The worktree write probe runs ONLY here, inside the at-threshold branch that is
 # about to escalate: at most one bounded walk per window per STALE_ESCALATE_SECS,
 # never per poll.
+# wedge_gate_verdict: ask the wake gate about a possible-wedge alarm. Prints the
+# gate's verdict line, or `escalate` when the gate is absent or fails.
+wedge_gate_verdict() {  # <task> <window> <idle-age>
+  [ -x "$SCRIPT_DIR/fm-wake-gate.sh" ] || { printf 'escalate\n'; return 0; }
+  FM_STATE_DIR="$STATE" "$SCRIPT_DIR/fm-wake-gate.sh" stale-verdict "$1" "$2" \
+    "stale: $2 (idle ${3}s, possible wedge)" 2>/dev/null </dev/null || printf 'escalate\n'
+}
+
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
   local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason
   since=$(cat "$since_file" 2>/dev/null || true)
@@ -942,6 +950,16 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           wedge_defer_writing "$win" "$since_file" "$label" "$age"
           return 0
         fi
+        # Fail-open wake gate (bin/fm-wake-gate.sh stale-verdict owns the rule):
+        # it reads the worker's evidence before the alarm spends a model turn.
+        # Anything but an explicit absorb, including a gate error, alarms as before.
+        case "$(wedge_gate_verdict "$task" "$win" "$age")" in
+          absorb:*)
+            date +%s > "$since_file"
+            triage_log "absorbed $label (wake gate read the evidence, idle ${age}s): $win"
+            return 0
+            ;;
+        esac
         n=$(( $(cat "$escalation_file" 2>/dev/null || echo 0) + 1 ))
         echo "$n" > "$escalation_file"
         reason="stale: $win (idle ${age}s, possible wedge, escalation $n)"

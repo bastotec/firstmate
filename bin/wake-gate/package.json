@@ -2,7 +2,7 @@
   "name": "fm-wake-gate",
   "private": true,
   "type": "module",
-  "description": "Pinned runtime for bin/wake-gate/jev-worthiness.mjs; install with npm ci --prefix bin/wake-gate --omit=dev",
+  "description": "Pinned runtime for bin/wake-gate/jev-stale.mjs; install with npm ci --prefix bin/wake-gate --omit=dev",
   "dependencies": {
     "@ai-sdk/gateway": "4.0.86",
     "ai": "7.0.106",

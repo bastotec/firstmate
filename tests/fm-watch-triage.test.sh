@@ -1875,6 +1875,62 @@ test_stale_terminal_status_overridden_by_active_run() {
   pass "a stale terminal-looking status is overridden and absorbed while a run is actively working, then wedge-escalated"
 }
 
+# --- possible-wedge alarm, wake gate enforcing: evidence decides the model turn ---
+# bin/fm-wake-gate.sh stale-verdict owns the rule and its own tests; this pins the
+# watcher side: an absorb verdict queues nothing and restarts the idle window,
+# and any other verdict alarms exactly as before. Stub helper and evidence only.
+test_wedge_alarm_honors_the_wake_gate_verdict() {
+  local dir state fakebin out capture_file window key pid stub evid before
+  dir=$(make_case wedge-wake-gate); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-gated"
+  stub="$dir/gate-stub"; evid="$dir/gate-evidence"
+  cat > "$stub" <<'SH'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'usage\t1\t10\t0\t5\nanswers\t%s\n' "$FM_TEST_ANSWERS"
+SH
+  printf '#!/usr/bin/env bash\necho "state: working (run-step: ci running)"\n' > "$evid"
+  chmod +x "$stub" "$evid"
+  printf 'idle building output' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/gated.meta"
+  printf 'working: still compiling\n' > "$state/gated.status"
+  printf '%s' "$(seen_sig "$state/gated.status")" > "$state/.seen-gated_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text "idle building output")" > "$state/.hash-$key"
+  printf '%s' "$(hash_text "idle building output")" > "$state/.stale-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
+  mkdir -p "$state/wake-gate"
+  printf '%s\tworking\n' "$(date +%s)" > "$state/wake-gate/gated.look"
+
+  # Working evidence, already looked at: the alarm is absorbed, nothing is queued.
+  before=$(( $(date +%s) - 500 )); echo "$before" > "$state/.stale-since-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE=enforce \
+    FM_WAKE_GATE_HELPER="$stub" FM_WAKE_GATE_EVIDENCE_CMD="$evid" FM_TEST_ANSWERS="$(printf '0.92\t0.05\t0.06\t0.04')" "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher alarmed although the wake gate absorbed the wedge: $(cat "$out")"
+  fi
+  [ ! -s "$state/.wake-queue" ] || fail "an absorbed wedge alarm enqueued a wake"
+  [ "$(cat "$state/.stale-since-$key")" -gt "$before" ] || fail "an absorbed wedge alarm did not restart the idle window"
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the intentional watcher stop"
+
+  # Waiting evidence: the gate escalates and the alarm fires exactly as before.
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"; : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE=enforce \
+    FM_WAKE_GATE_HELPER="$stub" FM_WAKE_GATE_EVIDENCE_CMD="$evid" FM_TEST_ANSWERS="$(printf '0.10\t0.86\t0.05\t0.04')" "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "watcher did not alarm when the wake gate escalated"
+  grep -F "possible wedge" "$out" >/dev/null || fail "the escalated alarm lost its possible-wedge reason"
+  unset FM_FAKE_CREW_STATE
+  pass "a possible-wedge alarm is absorbed only on the wake gate's absorb verdict and fires otherwise"
+}
+
 # --- non-terminal stale, crew provably working: absorbed, then wedge-escalated ---
 # A provably-working crew (an actively-running pipeline) legitimately sits on a
 # static pane (e.g. waiting on CI), so a non-terminal stale is absorbed and only
@@ -4846,6 +4902,7 @@ test_permission_recovery_surfaces_preserved_status
 test_terminal_stale_surfaced
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
+test_wedge_alarm_honors_the_wake_gate_verdict
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
 test_busy_pane_below_turn_age_bound_is_absorbed
