@@ -1538,7 +1538,7 @@ test_stood_down_signal_absorbed_before_delivery() {
   fi
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "a stood-down status signal entered the durable queue"; }
   [ ! -s "$out" ] || { reap "$pid"; fail "a stood-down status signal emitted a wake: $(cat "$out")"; }
-  [ -s "$state/.seen-task_status" ] || { reap "$pid"; fail "an absorbed stood-down signal did not advance its watcher suppressor"; }
+  [ ! -e "$state/.seen-task_status" ] || { reap "$pid"; fail "an absorbed stood-down signal advanced its watcher suppressor"; }
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the stood-down status-signal watcher stop"
 
@@ -1574,12 +1574,13 @@ test_stood_down_turn_ended_signal_absorbed_until_status_advances() {
   fi
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "a stood-down turn-ended signal entered the durable queue"; }
   [ ! -s "$out" ] || { reap "$pid"; fail "a stood-down turn-ended signal emitted a wake: $(cat "$out")"; }
+  [ ! -e "$state/.seen-task_turn-ended" ] \
+    || { reap "$pid"; fail "an absorbed turn-ended signal advanced its watcher suppressor"; }
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the stood-down turn-ended watcher stop"
 
   printf 'working: activity resumed after stand-down\n' >> "$status_file"
   prime_status_seen "$state" "$status_file" || fail "could not suppress the status signal while testing turn-ended"
-  printf 'next turn\n' >> "$turn_file"
   : > "$out"
   watch_bg "$state" "$fakebin" "$out"
   pid=$!
@@ -1989,42 +1990,29 @@ SH
   fi
   [ ! -s "$helper_log" ] || { reap "$pid"; fail "a stood-down wedge still invoked the Jev helper"; }
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "a stood-down wedge enqueued a wake"; }
-  [ "$(cat "$state/.stale-since-$key")" -gt "$before" ] || { reap "$pid"; fail "a stood-down wedge did not restart the idle window"; }
+  [ "$(cat "$state/.stale-since-$key")" = "$before" ] \
+    || { reap "$pid"; fail "a stood-down wedge closed its pending idle interval"; }
+  [ ! -e "$state/.wedge-escalations-$key" ] \
+    || { reap "$pid"; fail "a stood-down wedge advanced its escalation count"; }
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the stood-down watcher stop"
   printf 'working: activity resumed after stand-down\n' >> "$state/gated.status"
   prime_status_seen "$state" "$state/gated.status" \
     || fail "could not suppress advanced status while testing the wedge path"
 
-  # Status advancement reopens the normal wake-gate path. Working evidence,
-  # already looked at, is still absorbed by Jev rather than by stand-down.
-  before=$(( $(date +%s) - 500 )); echo "$before" > "$state/.stale-since-$key"
-  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
-    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
-    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE=enforce \
-    FM_WAKE_GATE_HELPER="$stub" FM_WAKE_GATE_EVIDENCE_CMD="$evid" FM_TEST_ANSWERS="$(printf '0.92\t0.05\t0.06\t0.04')" "$WATCH" > "$out" &
-  pid=$!
-  if ! wait_poll_cycle "$state" "$pid"; then
-    reap "$pid"; fail "watcher alarmed although the wake gate absorbed the wedge: $(cat "$out")"
-  fi
-  [ ! -s "$state/.wake-queue" ] || fail "an absorbed wedge alarm enqueued a wake"
-  [ "$(cat "$state/.stale-since-$key")" -gt "$before" ] || fail "an absorbed wedge alarm did not restart the idle window"
-  reap "$pid"
-  ack_stopped_cycle "$state" || fail "could not acknowledge the intentional watcher stop"
-
-  # Waiting evidence: the gate escalates and the alarm fires exactly as before.
-  rm -f "$state/wake-gate/gated.look"
-  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"; : > "$out"
+  : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE=enforce \
     FM_WAKE_GATE_HELPER="$stub" FM_WAKE_GATE_EVIDENCE_CMD="$evid" FM_TEST_ANSWERS="$(printf '0.10\t0.86\t0.05\t0.04')" "$WATCH" > "$out" &
   pid=$!
-  wait_for_exit "$pid" 100 || fail "watcher did not alarm when the wake gate escalated"
-  grep -F "possible wedge" "$out" >/dev/null || fail "the escalated alarm lost its possible-wedge reason"
+  wait_for_exit "$pid" 100 || fail "status advancement did not restore the same wedge alarm"
+  grep -F "possible wedge" "$out" >/dev/null || fail "the restored alarm lost its possible-wedge reason"
   [ -s "$state/wake-gate/gated.look" ] || fail "a durably queued wedge alarm did not commit its model look"
+  [ "$(cat "$state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] \
+    || fail "the restored wedge alarm did not record its first escalation"
   unset FM_FAKE_CREW_STATE
-  pass "stood-down wedges absorb until status advances, then follow the evidence verdict"
+  pass "stood-down wedges leave the same alarm pending until status advances"
 }
 
 # --- non-terminal stale, crew provably working: absorbed, then wedge-escalated ---
@@ -2122,12 +2110,9 @@ test_nonterminal_stale_not_working_surfaced() {
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the stood-down immediate-stale watcher stop"
 
-  # Status growth invalidates stand-down. Force a distinct stale sighting while
-  # suppressing the status signal itself, so the wake can only come from stale.
+  # Status growth invalidates stand-down while the same stale pane remains.
   printf 'working: resumed after stand-down\n' >> "$state/stopped.status"
   prime_status_seen "$state" "$state/stopped.status" || fail "could not suppress advanced status while testing stale"
-  printf 'idle prompt, finished again' > "$capture_file"
-  pane_hash=$(hash_text "idle prompt, finished again")
   : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
@@ -2209,6 +2194,8 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   fi
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "stood-down declared-pause recheck entered the durable queue"; }
   [ ! -s "$out" ] || { reap "$pid"; fail "stood-down declared-pause recheck emitted a wake: $(cat "$out")"; }
+  [ ! -e "$state/.paused-resurfaced-$key" ] \
+    || { reap "$pid"; fail "an absorbed declared-pause recheck advanced its throttle"; }
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the stood-down pause-recheck watcher stop"
 
@@ -2219,8 +2206,6 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
   else touch -m -d "@$back" "$statusf"; fi
   prime_status_seen "$state" "$statusf" || fail "could not suppress advanced status while testing pause recheck"
-  rm -f "$state/.paused-resurfaced-$key"
-  printf 'idle, holding for upstream (token 3)' > "$capture_file"
   : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
@@ -3959,17 +3944,16 @@ test_write_deferral_resurfaces_on_the_bounded_cadence() {
   fi
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "stood-down write-deferral recheck entered the durable queue"; }
   [ ! -s "$out" ] || { reap "$pid"; fail "stood-down write-deferral recheck emitted a wake: $(cat "$out")"; }
+  [ "$(cat "$state/.stale-since-$key" 2>/dev/null || true)" = "$back" ] \
+    || { reap "$pid"; fail "an absorbed write-deferral recheck closed its idle interval"; }
+  [ ! -e "$state/.writing-resurfaced-$key" ] \
+    || { reap "$pid"; fail "an absorbed write-deferral recheck advanced its throttle"; }
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the stood-down write-recheck watcher stop"
 
   printf 'working: more output after stand-down\n' >> "$state/churn.status"
   prime_status_seen "$state" "$state/churn.status" \
     || fail "could not suppress advanced status while testing write recheck"
-  back=$(( $(date +%s) - 500 ))
-  echo "$back" > "$state/.stale-since-$key"
-  set_mtime "$back" "$state/.stale-since-$key"
-  set_mtime "$back" "$state/.writing-since-$key"
-  rm -f "$state/.writing-resurfaced-$key"
   printf 'churn after status advancement\n' >> "$wt/src/main.c"
   : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \

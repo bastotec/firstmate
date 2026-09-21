@@ -368,16 +368,11 @@ SH
     || fail "a stood-down secondmate wake-loop re-ring entered the durable queue"
   ! grep -F 'secondmate wake-loop stalled' "$dir/watch-absorbed.out" >/dev/null \
     || fail "a stood-down secondmate wake-loop re-ring emitted a wake: $(cat "$dir/watch-absorbed.out")"
+  [ ! -e "$state/.secondmate-wake-stall-mate" ] \
+    || fail "an absorbed wake-loop re-ring closed the stalled episode"
+  [ ! -e "$state/.secondmate-wake-stall-receipts/mate/100-8" ] \
+    || fail "an absorbed wake-loop re-ring wrote a durable receipt"
 
-  # Move to a fresh queue position, then let that position stall after appending
-  # status. The marker remains present, so only byte growth can reopen delivery.
-  printf '100\t9\tcheck\tnext\tcheck: next row\n' > "$sub/state/.wake-queue"
-  printf '1005\n' > "$dir/now"
-  PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
-    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
-    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
-    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$dir/watch-progress.out" 2> "$dir/watch-progress.err" || true
   printf 'working: progress after stand-down\n' >> "$state/mate.status"
   prime_status_seen "$state" "$state/mate.status" \
     || fail "could not suppress the status signal while testing the wake-loop re-ring"
@@ -387,10 +382,10 @@ SH
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$dir/watch-restored.out" 2> "$dir/watch-restored.err" || true
-  grep -F 'check: secondmate wake-loop stalled: mate=mate row=9 idle=2s' "$dir/watch-restored.out" >/dev/null \
-    || fail "status advancement did not restore the secondmate wake-loop wake: $(cat "$dir/watch-restored.out")"
-  grep -F 'secondmate-wake-loop-mate-100-9' "$state/.wake-queue" >/dev/null \
-    || fail "restored secondmate wake-loop wake was not queued"
+  grep -F 'check: secondmate wake-loop stalled: mate=mate row=8 idle=7s' "$dir/watch-restored.out" >/dev/null \
+    || fail "status advancement did not restore the same secondmate wake-loop row: $(cat "$dir/watch-restored.out")"
+  grep -F 'secondmate-wake-loop-mate-100-8' "$state/.wake-queue" >/dev/null \
+    || fail "restored secondmate wake-loop wake was not queued for the same row"
   pass "stood-down secondmate wake-loop re-rings absorb until status advances"
 }
 
