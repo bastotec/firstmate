@@ -227,6 +227,16 @@ The bound is required rather than cosmetic because churn and pane staleness read
 The flag is a home-local supervision-noise preference and is not inherited by secondmate homes, which run their own crew mix.
 [`architecture.md`](architecture.md) owns the triage contract and `bin/fm-watch.sh`'s `signal_turnend_panes_churned` owns the exact evidence and fail-closed boundaries.
 
+## Wake gate (config/wake-gate-key-var / config/wake-gate-mode)
+
+The optional wake gate uses Jev (`typesafe-ai/jev`) to decide whether a possible-wedge alarm needs an expensive supervision-model turn; it never replaces that model and does not gate worker-update wakes.
+From the tracked Firstmate root, install its pinned runtime with `npm ci --prefix bin/wake-gate --omit=dev`; the resulting `bin/wake-gate/node_modules/` is local and gitignored.
+Put the gateway key in `~/.secrets`, then put that variable's name alone on the first line of the local, gitignored `config/wake-gate-key-var`; for example, a secret named `AI_GATEWAY_API_KEY` requires `AI_GATEWAY_API_KEY` in that config file.
+With the key-variable file absent the gate is inert, while a missing key, runtime, evidence read, model response, or decision-log write escalates the alarm instead of absorbing it.
+An absent `config/wake-gate-mode`, or one whose first line is `shadow`, logs each decision but changes no wake; put `enforce` alone on its first line only after reviewing the shadow results to let proven skips be absorbed.
+Both config files are home-local, gitignored, and not inherited by secondmate homes.
+`bin/fm-wake-gate.sh`'s header owns the exact evidence, thresholds, state files, reporting commands, and fail-open mechanics.
+
 ## Possible-ask ranking (config/ask-triage-key-var)
 
 An optional pass ranks `working:` status lines that politely ask firstmate for something, such as a hedged "if you would rather keep it, say so", which the status vocabulary cannot declare and a keyword rule misses.

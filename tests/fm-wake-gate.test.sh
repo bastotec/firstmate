@@ -167,6 +167,14 @@ verdict "$s" shadow "$WORKING" >/dev/null
 [ "$(last_decision "$s")" = "$(printf 'skip\tsame-working')" ] || fail "shadow mode must still log the would-skip decision"
 pass "shadow mode logs the would-skip decision and changes nothing"
 
+s=$(new_state sv-log-failure)
+verdict "$s" enforce "$WORKING" >/dev/null
+rm -f "$s/wake-gate/shadow.log"
+mkdir "$s/wake-gate/shadow.log"
+[ "$(verdict "$s" enforce "$WORKING")" = escalate ] \
+  || fail "SAFETY: an unrecordable skip decision must escalate"
+pass "enforce mode fails open when its decision log cannot be written"
+
 s=$(new_state sv-waiting)
 verdict "$s" enforce "$WORKING" >/dev/null
 [ "$(verdict "$s" enforce '0.10 0.86 0.05 0.04')" = escalate ] || fail "SAFETY: a worker waiting on someone must reach the model"

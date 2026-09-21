@@ -193,9 +193,9 @@ gate_mode() {
 }
 
 log_shadow() {  # <task> <mode> <decision> <why> <working> <waiting> <failure> <finished>
-  mkdir -p "$STATE/wake-gate" 2>/dev/null || return 0
+  mkdir -p "$STATE/wake-gate" 2>/dev/null || return 1
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$@" \
-    >> "$STATE/wake-gate/shadow.log" 2>/dev/null || true
+    >> "$STATE/wake-gate/shadow.log" 2>/dev/null
 }
 
 # gather_evidence <task>: print a JSON array of {command, output}; empty on failure.
@@ -285,7 +285,10 @@ EOF_CLS
   else
     decision=skip; why="same-$cls"
   fi
-  log_shadow "$task" "$mode" "$decision" "$why" "$aw" "$wt" "$fl" "$fn"
+  if ! log_shadow "$task" "$mode" "$decision" "$why" "$aw" "$wt" "$fl" "$fn"; then
+    printf 'escalate\n'
+    return 0
+  fi
   if [ "$decision" = skip ] && [ "$mode" = enforce ]; then
     printf 'absorb:jev-%s\n' "$cls"
   else

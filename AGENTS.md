@@ -87,7 +87,7 @@ config/stream-hub config/stream-token config/stream-hub-tokens config/stream-mac
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
 config/watched-tools.json  optional list of the tools this home depends on, read by the update check armed with bin/fm-tool-update-check.sh; LOCAL, gitignored, firstmate-maintained but human-editable, and NOT inherited by secondmate homes; see docs/configuration.md "Watched tool updates"
 config/ask-triage-key-var  optional name of the ~/.secrets variable holding the gateway key that opts this home into the possible-ask pass; LOCAL, gitignored, and not inherited; see docs/configuration.md "Possible-ask ranking"
-config/wake-gate-key-var config/wake-gate-mode  optional name of the ~/.secrets variable holding the gateway key that opts this home into the wake gate's evidence read of possible-wedge alarms, and its one-token mode: absent or "shadow" logs the decision and changes nothing, "enforce" lets it absorb; LOCAL, gitignored, and not inherited; bin/fm-wake-gate.sh owns the gate
+config/wake-gate-key-var config/wake-gate-mode  local opt-in and mode for the possible-wedge wake gate; LOCAL, gitignored, and not inherited; see docs/configuration.md "Wake gate"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
