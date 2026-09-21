@@ -417,15 +417,21 @@ watcher_rering_append() {  # <kind> <key> <payload> <task>
   watcher_wake_append "$kind" "$key" "$payload"
 }
 
-watcher_signal_append() {  # <file> <payload>
-  local file=$1 payload=$2 key task
+watcher_signal_append() {  # <file> <payload> <task>
+  local file=$1 payload=$2 task=$3 key
   key=${file##*/}
   case "$key" in
-    *.status)
-      task=${key%.status}
-      watcher_rering_append signal "$key" "$payload" "$task"
-      ;;
+    *.status|*.turn-ended) watcher_rering_append signal "$key" "$payload" "$task" ;;
     *) watcher_wake_append signal "$key" "$payload" ;;
+  esac
+}
+
+signal_file_task() {  # <file>
+  local key=${1##*/}
+  case "$key" in
+    *.status) printf '%s' "${key%.status}" ;;
+    *.turn-ended) printf '%s' "${key%.turn-ended}" ;;
+    *) return 1 ;;
   esac
 }
 
@@ -913,14 +919,14 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # <min-age> replaces the cadence as the absorb-age gate for one call (0 lets a
 # declared `until` time that has just passed re-surface at once), while the
 # throttle keeps the cadence between repeats.
-resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min-age]
-  local win=$1 throttle=$2 age=$3 reason=$4 scope=${5-} min_age=${6:-$PAUSE_RESURFACE_SECS}
+resurface_absorbed() {  # <window> <task> <throttle-marker> <age> <reason> [scope] [min-age]
+  local win=$1 task=$2 throttle=$3 age=$4 reason=$5 scope=${6-} min_age=${7:-$PAUSE_RESURFACE_SECS}
   if [ -z "$scope" ] || [ ! -e "$throttle" ] \
     || [ "$(cat "$throttle" 2>/dev/null || true)" = "$scope" ]; then
     [ "$age" -ge "$min_age" ] || return 0
     [ "$(age_of "$throttle")" -ge "$PAUSE_RESURFACE_SECS" ] || return 0   # 999999 when no prior re-surface
   fi
-  watcher_wake_append stale "$win" "$reason" || exit 1
+  watcher_rering_append stale "$win" "$reason" "$task" || exit 1
   if [ -n "$scope" ]; then printf '%s' "$scope" > "$throttle"; else date +%s > "$throttle"; fi
   [ "$FM_WATCH_WAKE_APPENDED" -eq 0 ] || wake "$reason"
 }
@@ -939,14 +945,14 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min
 # counter is left alone: it is neither advanced (this is not an escalation) nor
 # reset (a later genuine escalation must still carry the demand-deep-inspection
 # history it had already earned).
-wedge_defer_writing() {  # <window> <since-file> <triage-label> <idle-age>
-  local win=$1 since_file=$2 label=$3 age=$4 key wsf wage
+wedge_defer_writing() {  # <window> <task> <since-file> <triage-label> <idle-age>
+  local win=$1 task=$2 since_file=$3 label=$4 age=$5 key wsf wage
   key=$(window_key "$win")
   wsf="$STATE/.writing-since-$key"
   [ -e "$wsf" ] || date +%s > "$wsf"
   wage=$(age_of "$wsf")
   date +%s > "$since_file"
-  resurface_absorbed "$win" "$STATE/.writing-resurfaced-$key" "$wage" \
+  resurface_absorbed "$win" "$task" "$STATE/.writing-resurfaced-$key" "$wage" \
     "stale: $win (idle ${age}s, writing its worktree for ${wage}s, rechecked on a long cadence not a wedge; confirm the writes are real progress)"
   triage_log "absorbed $label (worktree written since the idle window opened, idle ${age}s): $win"
 }
@@ -998,7 +1004,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
-          wedge_defer_writing "$win" "$since_file" "$label" "$age"
+          wedge_defer_writing "$win" "$task" "$since_file" "$label" "$age"
           return 0
         fi
         gate_reason="stale: $win (idle ${age}s, possible wedge)"
@@ -1111,7 +1117,7 @@ handle_paused_stale() {  # <window> <task> <hash>
     detail="paused, awaiting external"
     reason="paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds"
   fi
-  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age"
+  resurface_absorbed "$win" "$task" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age"
   triage_log "absorbed stale ($detail, age ${age}s): $win"
 }
 
@@ -2264,7 +2270,8 @@ EOF
         [ -n "$sf" ] || continue
         file_reason="$reason"
         case " $FM_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$files" ;; esac
-        watcher_signal_append "$f" "$file_reason" || exit 1
+        task=$(signal_file_task "$f") || task=
+        watcher_signal_append "$f" "$file_reason" "$task" || exit 1
         [ "$FM_WATCH_WAKE_APPENDED" -eq 0 ] || signal_rows_queued=1
       done <<EOF
 $pending
@@ -2313,7 +2320,8 @@ EOF
         signal_rows_queued=0
         while IFS=$(printf '\t') read -r sf sig f; do
           [ -n "$sf" ] || continue
-          watcher_signal_append "$f" "$reason" || exit 1
+          task=$(signal_file_task "$f") || task=
+          watcher_signal_append "$f" "$reason" "$task" || exit 1
           [ "$FM_WATCH_WAKE_APPENDED" -eq 0 ] || signal_rows_queued=1
         done <<EOF
 $pending
