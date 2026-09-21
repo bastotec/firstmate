@@ -115,12 +115,20 @@ status_at "$s" docana-delivery 202001010000
 stand_down "$s" docana-delivery "$(date +%s)"
 [ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle')" = absorb:stood-down-rering ] \
   || fail "precondition: stood-down re-ring should absorb before resume"
-"$GATE" resume docana-delivery >/dev/null 2>&1 || true
-# resume acts on the script's own state dir, so clear the synthetic marker too
-rm -f "$s/docana-delivery.stooddown"
+FM_STATE_DIR="$s" "$GATE" resume docana-delivery >/dev/null 2>&1 \
+  || fail "resume failed to clear a writable stand-down marker"
+[ ! -e "$s/docana-delivery.stooddown" ] || fail "resume reported success but left the marker"
 [ "$(classify "$s" stale 'firstmate:fm-docana-delivery' 'stale: idle')" = escalate ] \
   || fail "after resume the same wake must escalate"
 pass "resume clears the stand-down and the wake escalates again"
+
+s=$(new_state resume-failure)
+mkdir "$s/docana-delivery.stooddown"
+if FM_STATE_DIR="$s" "$GATE" resume docana-delivery >/dev/null 2>&1; then
+  fail "SAFETY: resume reported success when marker removal failed"
+fi
+[ -d "$s/docana-delivery.stooddown" ] || fail "failed resume did not preserve the uncleared marker path"
+pass "resume reports marker-removal failure"
 
 # --- stale-verdict: the evidence rule (stub helper and stub evidence; no network) ---
 # The stub helper prints the four probabilities from FM_TEST_ANSWERS
@@ -140,6 +148,17 @@ cat > "$EVID" <<'SH'
 printf 'state: working (run-step: test running) for %s\n' "$1"
 SH
 chmod +x "$STUB" "$EVID"
+TIMEOUT_BIN="$TMP_ROOT/timeout-bin"
+TIMEOUT_LOG="$TMP_ROOT/timeout.log"
+mkdir -p "$TIMEOUT_BIN"
+cat > "$TIMEOUT_BIN/timeout" <<'SH'
+#!/usr/bin/env bash
+if [ "${1-}" = -k ]; then shift 2; fi
+printf '%s\n' "${1-}" >> "$FM_TEST_TIMEOUT_LOG"
+shift
+exec "$@"
+SH
+chmod +x "$TIMEOUT_BIN/timeout"
 WEDGE='stale: w:fm-t1 (idle 300s, possible wedge)'
 verdict() {  # <state> <mode> <answers> [reason] -> verdict line
   FM_STATE_DIR="$1" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" \
@@ -148,6 +167,17 @@ verdict() {  # <state> <mode> <answers> [reason] -> verdict line
 }
 last_decision() { tail -1 "$1/wake-gate/shadow.log" | cut -f4,5; }
 WORKING='0.92 0.05 0.06 0.04'
+
+s=$(new_state sv-zero-evidence-timeout)
+: > "$TIMEOUT_LOG"
+FM_TEST_TIMEOUT_LOG="$TIMEOUT_LOG" PATH="$TIMEOUT_BIN:$PATH" FM_STATE_DIR="$s" \
+  FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" \
+  FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE=shadow FM_TEST_ANSWERS="$WORKING" \
+  FM_WAKE_GATE_EVIDENCE_TIMEOUT=0 \
+  "$GATE" stale-verdict t1 w:fm-t1 "$WEDGE" >/dev/null 2>&1
+[ "$(head -1 "$TIMEOUT_LOG")" = 8 ] \
+  || fail "a zero evidence timeout did not fall back to the positive default"
+pass "zero cannot disable the evidence timeout"
 
 s=$(new_state sv-inert)
 [ "$(FM_STATE_DIR="$s" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" FM_TEST_ANSWERS="$WORKING" \
@@ -160,6 +190,20 @@ s=$(new_state sv-first-look)
 [ "$(last_decision "$s")" = "$(printf 'call\tsilence-backstop')" ] || fail "the first look must be recorded as the silence backstop"
 [ "$(verdict "$s" enforce "$WORKING")" = absorb:jev-working ] || fail "a visibly working worker already looked at must absorb in enforce mode"
 pass "first alarm gets a model look; later working alarms absorb in enforce mode"
+
+s=$(new_state sv-invalid-look)
+mkdir -p "$s/wake-gate"
+printf '%s\t\n' "$(( $(date +%s) + 3600 ))" > "$s/wake-gate/t1.look"
+[ "$(verdict "$s" enforce "$WORKING")" = escalate ] \
+  || fail "SAFETY: a future last-look epoch must force a model look"
+[ "$(last_decision "$s")" = "$(printf 'call\tsilence-backstop')" ] \
+  || fail "a future last-look epoch was not treated as invalid"
+printf '%s\tgarbage\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+[ "$(verdict "$s" enforce "$WORKING")" = escalate ] \
+  || fail "SAFETY: malformed last-look flags must force a model look"
+[ "$(last_decision "$s")" = "$(printf 'call\tsilence-backstop')" ] \
+  || fail "malformed last-look flags were not treated as invalid"
+pass "future and malformed look records fail open"
 
 s=$(new_state sv-shadow)
 verdict "$s" shadow "$WORKING" >/dev/null

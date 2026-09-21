@@ -110,7 +110,7 @@ state/               runtime records and signals; gitignored
   <id>.cursor-session  cursor busy-source binding (projects root, task worktree, prior conversations) written by fm-spawn; removed by teardown
   <id>.reconcile-nudged  epoch second of the last inventory-reconcile nudge sent to this secondmate; bin/fm-secondmate-reconcile.sh owns its per-home cooldown window
   <id>.backlog-close  the exact backlog transition its publisher recorded before removing the task's record, so an interrupted cleanup can still be finished at the next session start; it carries its publisher's endpoint proof, and one recorded for a worker nothing proved stopped is held for a rerun rather than replayed; bin/fm-backlog-transition-lib.sh owns its format, its endpoint stamp, and replay, and a landed transition removes it
-  <id>.stooddown      marks a task the captain intentionally stopped (epoch, reason, then status-log byte size) so its idle stale and stall re-rings are provably noise; written by bin/fm-wake-gate.sh stand-down, cleared by resume, and read by the fail-open wake gate
+  <id>.stooddown      marks a task the captain intentionally stopped (epoch, reason, then status-log byte size) so its idle stale and stall re-rings are provably noise; written by bin/fm-wake-gate.sh stand-down, cleared by resume or task teardown, and read by the fail-open wake gate
   <id>.inbox/          durable steering inbox: sequenced firstmate instruction records the worker acknowledges by moving them into its handled/ subdirectory; written by fm-send, with ordinary records re-rung and escalated by the watcher while explicit fire-and-forget records are excluded from that ladder, and removed by teardown (bin/fm-task-inbox-lib.sh)
   <id>.meta          task metadata; each producer script's header owns its exact fields and mutation contract, with docs/configuration.md routing operator-facing backend and trace-context details
   <id>.herdr-presentation  quarantinable attempt and restart-binding journal for Herdr's optional visual projection; never task or endpoint authority; see docs/herdr-backend.md "Presentation spaces"
@@ -127,7 +127,7 @@ state/               runtime records and signals; gitignored
   .branch-eligible-rows .branch-eligible-owner .main-eligible-rows  per-actor wake-row claims and branch-owner evidence; docs/watcher-continuity.md owns the acknowledgement contract
   .lease-<task>        per-task supervision lease naming which actor (main or branch) may change that task; bin/fm-lease-lib.sh owns the contract the guarded scripts enforce
   ask-triage/        optional possible-ask cursors, flags, and token usage; written only by bin/fm-ask-triage.sh
-  wake-gate/         optional wake-gate decision log, per-task last-model-look records, and token usage; written only by bin/fm-wake-gate.sh
+  wake-gate/         optional wake-gate decision log, per-task last-model-look records retired with their tasks, and token usage; written only by bin/fm-wake-gate.sh
   x-watch.check.sh   generated Relay poll shim; present only when opted in (section 14)
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
   mail.check.sh      generated received-mail poll shim and its .check-trust binding; present only after bin/fm-mail-check.sh arm; report record .mail-check (mail schema: docs/configuration.md "Mail plane")

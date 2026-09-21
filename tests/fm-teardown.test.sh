@@ -673,6 +673,9 @@ test_local_only_fork_remote_allows() {
   # The supervision branch's bounded per-task outcome cache is a footprint of
   # the retired task, not a record anything reads after it is gone.
   printf 'fm-branch-outcome-index-v1\t5\t0\t-\n' > "$case_dir/state/.task-x1.branch-outcome-index"
+  mkdir -p "$case_dir/state/wake-gate"
+  printf '%s\tstood down\t0\n' "$(date +%s)" > "$case_dir/state/task-x1.stooddown"
+  printf '%s\tfailure\n' "$(date +%s)" > "$case_dir/state/wake-gate/task-x1.look"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -683,6 +686,10 @@ test_local_only_fork_remote_allows() {
   ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"
   [ ! -e "$case_dir/state/.task-x1.branch-outcome-index" ] \
     || fail "fork-allow: teardown left the task's branch outcome index behind"
+  assert_absent "$case_dir/state/task-x1.stooddown" \
+    "fork-allow: teardown left the task's stood-down marker for a replacement"
+  assert_absent "$case_dir/state/wake-gate/task-x1.look" \
+    "fork-allow: teardown left the task's model-look state for a replacement"
   # The supervision branch reports the teardown it just performed AFTER the
   # task's records are gone (bin/fm-branch-prompt.sh); that report must be
   # stored, must publish its ready sequence, and must not recreate the index.

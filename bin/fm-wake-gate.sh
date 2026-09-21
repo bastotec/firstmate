@@ -50,8 +50,8 @@
 #   A `call` decision records the look; a skip does not.
 #
 # STATE (all under state/, private runtime state)
-#   <task-id>.stooddown      "<epoch>\t<reason>\t<status-size>" - the explicit stand-down marker
-#   wake-gate/<task-id>.look "<epoch>\t<failure,finished flags>" - the last model look the rule granted
+#   <task-id>.stooddown      "<epoch>\t<reason>\t<status-size>" - the explicit stand-down marker, removed by resume or teardown
+#   wake-gate/<task-id>.look "<epoch>\t<failure,finished flags>" - the last model look the rule granted, removed by teardown
 #   wake-gate/shadow.log     "<epoch>\t<task>\t<mode>\t<call|skip>\t<why>\t<working>\t<waiting>\t<failure>\t<finished>"
 #   wake-gate/usage.log      "<epoch>\t<calls>\t<in-tok>\t<out-tok>\t<ms>\t<outcome>"
 #
@@ -201,7 +201,10 @@ log_shadow() {  # <task> <mode> <decision> <why> <working> <waiting> <failure> <
 # gather_evidence <task>: print a JSON array of {command, output}; empty on failure.
 gather_evidence() {
   local task=$1 tmo=${FM_WAKE_GATE_EVIDENCE_TIMEOUT:-8} state_out pane_out
-  case "$tmo" in ''|*[!0-9]*) tmo=8 ;; esac
+  case "$tmo" in
+    ''|*[!0-9]*) tmo=8 ;;
+    *) [ "$tmo" -gt 0 ] 2>/dev/null || tmo=8 ;;
+  esac
   if [ -n "${FM_WAKE_GATE_EVIDENCE_CMD:-}" ]; then
     state_out=$(bounded "$tmo" "$FM_WAKE_GATE_EVIDENCE_CMD" "$task" 2>/dev/null </dev/null) || return 1
     pane_out=''
@@ -215,7 +218,7 @@ gather_evidence() {
 
 cmd_stale_verdict() {
   local task=${1-} reason=${3-}  # $2 is the window, already named inside the reason
-  local keyvar mode evidence hout answers aw wt fl fn why='' decision cls conf look_file last_epoch='' last_flags='' terminal_flags='' flag now tmo
+  local keyvar mode evidence hout answers aw wt fl fn why='' decision cls conf look_file look_record='' look_invalid=0 last_epoch='' last_flags='' terminal_flags='' flag now tmo
   case "$task" in ''|*/*|*" "*) printf 'escalate\n'; return 0 ;; esac
   keyvar=$(gate_key_var)
   [ -n "$keyvar" ] || { printf 'escalate\n'; return 0; }
@@ -256,12 +259,30 @@ EOF_ANSWERS
   }
 
   look_file="$STATE/wake-gate/$task.look"
-  if [ -f "$look_file" ]; then
-    IFS=$'\t' read -r last_epoch last_flags < "$look_file" || true
-    case "$last_epoch" in ''|*[!0-9]*) last_epoch='' ;; esac
-    case "$last_flags" in failure|finished|failure,finished) ;; *) last_flags='' ;; esac
-  fi
   now=$(date +%s)
+  if [ -f "$look_file" ]; then
+    if IFS= read -r look_record < "$look_file"; then
+      case "$look_record" in
+        *$'\t'*)
+          last_epoch=${look_record%%$'\t'*}
+          last_flags=${look_record#*$'\t'}
+          case "$last_flags" in ''|failure|finished|failure,finished) ;; *) look_invalid=1 ;; esac
+          ;;
+        *) look_invalid=1 ;;
+      esac
+      case "$last_epoch" in ''|*[!0-9]*) look_invalid=1 ;; esac
+      if [ "$look_invalid" -eq 0 ] \
+        && ! awk -v e="$last_epoch" -v n="$now" 'BEGIN { exit !(e + 0 <= n + 0) }'; then
+        look_invalid=1
+      fi
+    else
+      look_invalid=1
+    fi
+    if [ "$look_invalid" -ne 0 ]; then
+      last_epoch=''
+      last_flags=''
+    fi
+  fi
   read -r cls conf <<EOF_CLS
 $(awk -v a="$aw" -v w="$wt" -v f="$fl" -v n="$fn" 'BEGIN{c="working";m=a+0; if(w+0>m){c="waiting";m=w+0} if(f+0>m){c="failure";m=f+0} if(n+0>m){c="finished";m=n+0} print c, m}')
 EOF_CLS
@@ -339,7 +360,10 @@ cmd_stand_down() {
 cmd_resume() {
   local task=${1-}
   case "$task" in ''|*/*|*" "*) echo "error: invalid task id" >&2; return 1 ;; esac
-  rm -f "$STATE/$task.stooddown" 2>/dev/null
+  if ! rm -f "$STATE/$task.stooddown" 2>/dev/null; then
+    echo "error: could not clear stand-down marker for $task" >&2
+    return 1
+  fi
   echo "resumed: $task (stood-down marker cleared)"
 }
 
