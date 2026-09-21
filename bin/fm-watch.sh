@@ -386,16 +386,24 @@ window_label() {
 }
 
 FM_WATCH_WAKE_APPENDED=0
+watcher_wake_gate_verdict() {  # <kind> <key> <payload> <epoch>
+  local verdict
+  [ -x "$SCRIPT_DIR/fm-wake-gate.sh" ] || { printf 'escalate\n'; return 0; }
+  if verdict=$(FM_STATE_DIR="$STATE" "$SCRIPT_DIR/fm-wake-gate.sh" classify \
+    "$1" "$2" "$3" "$4" 2>/dev/null </dev/null); then
+    printf '%s\n' "$verdict"
+  else
+    printf 'escalate\n'
+  fi
+}
+
 watcher_wake_append() {  # <kind> <key> <payload>
   local kind=$1 key=$2 payload=$3 verdict=escalate epoch
   FM_WATCH_WAKE_APPENDED=0
   case "$kind:$key" in
     stale:*|signal:*|check:secondmate-wake-loop-*)
       epoch=$(date +%s 2>/dev/null || true)
-      if [ -x "$SCRIPT_DIR/fm-wake-gate.sh" ]; then
-        verdict=$(FM_STATE_DIR="$STATE" "$SCRIPT_DIR/fm-wake-gate.sh" classify \
-          "$kind" "$key" "$payload" "$epoch" 2>/dev/null) || verdict=escalate
-      fi
+      verdict=$(watcher_wake_gate_verdict "$kind" "$key" "$payload" "$epoch")
       case "$verdict" in
         absorb:*)
           triage_log "absorbed stood-down mechanical re-ring: $kind $key"
@@ -952,13 +960,18 @@ clear_write_tracking() {  # <window-key>
 # wedge_gate_verdict: ask the wake gate about a possible-wedge alarm. Prints the
 # gate's verdict line, or `escalate` when the gate is absent or fails.
 wedge_gate_verdict() {  # <task> <window> <idle-age>
+  local verdict
   [ -x "$SCRIPT_DIR/fm-wake-gate.sh" ] || { printf 'escalate\n'; return 0; }
-  FM_STATE_DIR="$STATE" "$SCRIPT_DIR/fm-wake-gate.sh" stale-verdict "$1" "$2" \
-    "stale: $2 (idle ${3}s, possible wedge)" --with-look 2>/dev/null </dev/null || printf 'escalate\n'
+  if verdict=$(FM_STATE_DIR="$STATE" "$SCRIPT_DIR/fm-wake-gate.sh" stale-verdict "$1" "$2" \
+    "stale: $2 (idle ${3}s, possible wedge)" --with-look 2>/dev/null </dev/null); then
+    printf '%s\n' "$verdict"
+  else
+    printf 'escalate\n'
+  fi
 }
 
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason gate_result look_flags=''
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason gate_result gate_reason look_flags=''
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -975,6 +988,14 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           wedge_defer_writing "$win" "$since_file" "$label" "$age"
           return 0
         fi
+        gate_reason="stale: $win (idle ${age}s, possible wedge)"
+        case "$(watcher_wake_gate_verdict stale "$win" "$gate_reason" "$(date +%s 2>/dev/null || true)")" in
+          absorb:*)
+            date +%s > "$since_file"
+            triage_log "absorbed $label (stood-down, idle ${age}s): $win"
+            return 0
+            ;;
+        esac
         # Fail-open wake gate (bin/fm-wake-gate.sh stale-verdict owns the rule):
         # it reads the worker's evidence before the alarm spends a model turn.
         # Anything but an explicit absorb, including a gate error, alarms as before.

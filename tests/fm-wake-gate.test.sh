@@ -74,6 +74,20 @@ printf 'done: appended in the same second\n' >> "$s/writer.status"
   || fail "SAFETY: same-second growth after the stand-down command must escalate"
 pass "stand-down records status size and detects same-second growth"
 
+s=$(new_state stand-down-before-status)
+FM_STATE_DIR="$s" "$GATE" stand-down new-task --reason test >/dev/null \
+  || fail "stand-down without an existing status log failed"
+marker_epoch=$(cut -f1 "$s/new-task.stooddown")
+[ "$(cut -f3 "$s/new-task.stooddown")" = 0 ] \
+  || fail "stand-down without a status log did not record zero bytes"
+[ ! -e "$s/new-task.status" ] || fail "stand-down unexpectedly created a status log"
+[ "$(classify "$s" stale 'firstmate:fm-new-task' 'stale: idle pane' "$(( marker_epoch + 1 ))")" = absorb:stood-down-rering ] \
+  || fail "a missing status log did not classify as unchanged zero-byte status"
+printf 'working: task started after stand-down\n' > "$s/new-task.status"
+[ "$(classify "$s" stale 'firstmate:fm-new-task' 'stale: idle pane' "$(( marker_epoch + 1 ))")" = escalate ] \
+  || fail "SAFETY: a status log created after stand-down did not escalate"
+pass "stand-down treats a missing status log as unchanged zero bytes"
+
 # --- HARD EXCLUSIONS: never absorb, even when stood down and quiet ---
 s=$(new_state down-but-decision)
 status_at "$s" firstmate-runtime 202001010000

@@ -154,9 +154,15 @@ cmd_classify() {
       case "$marker_epoch" in ''|*[!0-9]*) marker_epoch='' ;; esac
       case "$marker_size" in ''|*[!0-9]*) marker_size='' ;; esac
       status_file="$STATE/$task.status"
-      if [ -n "$marker_epoch" ] && [ -n "$marker_size" ] && [ -f "$status_file" ]; then
-        status_size=$(wc -c < "$status_file" 2>/dev/null | tr -d '[:space:]')
-        case "$status_size" in ''|*[!0-9]*) status_size='' ;; esac
+      if [ -n "$marker_epoch" ] && [ -n "$marker_size" ]; then
+        if [ -f "$status_file" ]; then
+          status_size=$(wc -c < "$status_file" 2>/dev/null | tr -d '[:space:]')
+          case "$status_size" in ''|*[!0-9]*) status_size='' ;; esac
+        elif [ ! -e "$status_file" ] && [ ! -L "$status_file" ]; then
+          status_size=0
+        else
+          status_size=''
+        fi
         # Absorb only when the status log has NOT advanced since the stand-down.
         # An advanced log means the task did something new -> escalate (fail-open).
         if [ -n "$status_size" ] && [ "$status_size" -eq "$marker_size" ] \
@@ -386,7 +392,7 @@ cmd_stand_down() {
     }
     case "$status_size" in ''|*[!0-9]*) echo "error: could not read status size" >&2; return 1 ;; esac
   else
-    status_size=''
+    status_size=0
   fi
   printf '%s\t%s\t%s\n' "$(date +%s)" "$reason" "$status_size" > "$STATE/$task.stooddown" || {
     echo "error: could not write stand-down marker" >&2

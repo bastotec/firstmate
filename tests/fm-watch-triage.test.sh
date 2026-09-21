@@ -1901,13 +1901,14 @@ test_stale_terminal_status_overridden_by_active_run() {
 # watcher side: an absorb verdict queues nothing and restarts the idle window,
 # and any other verdict alarms exactly as before. Stub helper and evidence only.
 test_wedge_alarm_honors_the_wake_gate_verdict() {
-  local dir state fakebin out capture_file window key pid stub evid before
+  local dir state fakebin out capture_file window key pid stub evid before helper_log size
   dir=$(make_case wedge-wake-gate); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-gated"
   stub="$dir/gate-stub"; evid="$dir/gate-evidence"
   cat > "$stub" <<'SH'
 #!/usr/bin/env bash
 cat >/dev/null
+[ -z "${FM_TEST_HELPER_LOG:-}" ] || printf 'called\n' >> "$FM_TEST_HELPER_LOG"
 printf 'usage\t1\t10\t0\t5\nanswers\t%s\n' "$FM_TEST_ANSWERS"
 SH
   printf '#!/usr/bin/env bash\necho "state: working (run-step: ci running)"\n' > "$evid"
@@ -1923,6 +1924,26 @@ SH
   export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
   mkdir -p "$state/wake-gate"
   printf '%s\t\n' "$(date +%s)" > "$state/wake-gate/gated.look"
+
+  helper_log="$dir/helper.log"
+  size=$(wc -c < "$state/gated.status" | tr -d '[:space:]')
+  printf '%s\ttest stand-down\t%s\n' "$(( $(date +%s) - 1 ))" "$size" > "$state/gated.stooddown"
+  before=$(( $(date +%s) - 500 )); echo "$before" > "$state/.stale-since-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE=enforce \
+    FM_WAKE_GATE_HELPER="$stub" FM_WAKE_GATE_EVIDENCE_CMD="$evid" FM_TEST_HELPER_LOG="$helper_log" \
+    FM_TEST_ANSWERS="$(printf '0.92\t0.05\t0.06\t0.04')" "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher alarmed for a stood-down wedge: $(cat "$out")"
+  fi
+  [ ! -s "$helper_log" ] || { reap "$pid"; fail "a stood-down wedge still invoked the Jev helper"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "a stood-down wedge enqueued a wake"; }
+  [ "$(cat "$state/.stale-since-$key")" -gt "$before" ] || { reap "$pid"; fail "a stood-down wedge did not restart the idle window"; }
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the stood-down watcher stop"
+  rm -f "$state/gated.stooddown"
 
   # Working evidence, already looked at: the alarm is absorbed, nothing is queued.
   before=$(( $(date +%s) - 500 )); echo "$before" > "$state/.stale-since-$key"
@@ -1951,7 +1972,7 @@ SH
   grep -F "possible wedge" "$out" >/dev/null || fail "the escalated alarm lost its possible-wedge reason"
   [ -s "$state/wake-gate/gated.look" ] || fail "a durably queued wedge alarm did not commit its model look"
   unset FM_FAKE_CREW_STATE
-  pass "a possible-wedge alarm is absorbed only on the wake gate's absorb verdict and fires otherwise"
+  pass "stood-down wedges skip Jev; other wedges follow the evidence verdict"
 }
 
 # --- non-terminal stale, crew provably working: absorbed, then wedge-escalated ---
