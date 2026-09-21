@@ -16,7 +16,6 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 
 GATE="$ROOT/bin/fm-wake-gate.sh"
-DRAIN="$ROOT/bin/fm-wake-drain.sh"
 TMP_ROOT=$(fm_test_tmproot fm-wake-gate-tests)
 
 # classify <state> <kind> <key> <payload> <wake-epoch> -> verdict line
@@ -62,21 +61,6 @@ stand_down "$s" docana-delivery 100
 [ "$(classify "$s" check 'secondmate-wake-loop-docana-delivery-1789940215-1792' 'check: secondmate wake-loop stalled: mate=docana-delivery' 101)" = absorb:stood-down-rering ] \
   || fail "a stood-down wake-loop stall re-ring must absorb"
 pass "stood-down mechanical re-rings absorb (stale + wake-loop stall)"
-
-dir=$(make_case drain-pre-stand-down)
-state="$dir/state"
-printf 'done: completed before stand-down\n' > "$state/docana-delivery.status"
-append_wake "$state" signal docana-delivery.status 'signal: docana-delivery.status' \
-  || fail "queueing the pre-stand-down wake failed"
-wake_epoch=$(awk -F '\t' 'NF >= 5 { print $1; exit }' "$state/.wake-queue")
-status_size=$(wc -c < "$state/docana-delivery.status" | tr -d '[:space:]')
-printf '%s\tstood down later\t%s\n' "$(( wake_epoch + 1 ))" "$status_size" \
-  > "$state/docana-delivery.stooddown"
-FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2> "$dir/drain.err" \
-  || fail "draining the pre-stand-down wake failed"
-grep "$(printf '\tsignal\tdocana-delivery.status\t')" "$dir/drain.out" >/dev/null \
-  || fail "SAFETY: the drain hid a wake queued before stand-down"
-pass "the drain presents wakes queued before stand-down"
 
 s=$(new_state stand-down-writer)
 printf 'working: before stand-down\n' > "$s/writer.status"
@@ -182,10 +166,23 @@ exec "$@"
 SH
 chmod +x "$TIMEOUT_BIN/timeout"
 WEDGE='stale: w:fm-t1 (idle 300s, possible wedge)'
-verdict() {  # <state> <mode> <answers> [reason] -> verdict line
+raw_verdict() {  # <state> <mode> <answers> [reason] -> verdict and optional look flags
   FM_STATE_DIR="$1" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" \
     FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE="$2" FM_TEST_ANSWERS="$3" \
-    "$GATE" stale-verdict t1 w:fm-t1 "${4:-$WEDGE}" 2>/dev/null
+    "$GATE" stale-verdict t1 w:fm-t1 "${4:-$WEDGE}" --with-look 2>/dev/null
+}
+verdict() {  # <state> <mode> <answers> [reason] -> verdict line after simulated durable queueing
+  local state=$1 result flags
+  result=$(raw_verdict "$@")
+  case "$result" in
+    escalate$'\t'*)
+      flags=${result#*$'\t'}
+      FM_STATE_DIR="$state" "$GATE" commit-look t1 "$flags" 2>/dev/null \
+        || fail "committing a granted model look failed"
+      printf 'escalate\n'
+      ;;
+    *) printf '%s\n' "$result" ;;
+  esac
 }
 last_decision() { tail -1 "$1/wake-gate/shadow.log" | cut -f4,5; }
 WORKING='0.92 0.05 0.06 0.04'
@@ -215,10 +212,15 @@ s=$(new_state sv-inert)
 pass "stale-verdict is inert without the opt-in key variable"
 
 s=$(new_state sv-first-look)
-[ "$(verdict "$s" enforce "$WORKING")" = escalate ] || fail "SAFETY: a worker never looked at must get a model look first"
+first_result=$(raw_verdict "$s" enforce "$WORKING")
+[ "$first_result" = "$(printf 'escalate\tnone')" ] || fail "SAFETY: a worker never looked at must request a committed model look first"
+[ ! -e "$s/wake-gate/t1.look" ] || fail "SAFETY: stale-verdict persisted a look before the wake was durably queued"
+[ "$(raw_verdict "$s" enforce "$WORKING")" = "$(printf 'escalate\tnone')" ] \
+  || fail "SAFETY: an uncommitted look suppressed a retry"
+FM_STATE_DIR="$s" "$GATE" commit-look t1 none || fail "committing the queued look failed"
 [ "$(last_decision "$s")" = "$(printf 'call\tsilence-backstop')" ] || fail "the first look must be recorded as the silence backstop"
 [ "$(verdict "$s" enforce "$WORKING")" = absorb:jev-working ] || fail "a visibly working worker already looked at must absorb in enforce mode"
-pass "first alarm gets a model look; later working alarms absorb in enforce mode"
+pass "looks count only after queue commit; later working alarms absorb"
 
 s=$(new_state sv-invalid-look)
 mkdir -p "$s/wake-gate"

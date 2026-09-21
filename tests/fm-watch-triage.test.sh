@@ -1522,6 +1522,27 @@ test_actionable_signal_surfaced() {
   pass "captain-relevant signal is surfaced (queue + exit) and marked surfaced"
 }
 
+test_stood_down_signal_absorbed_before_delivery() {
+  local dir state fakebin out status_file pid size
+  dir=$(make_case stood-down-signal); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  status_file="$state/task.status"
+  printf 'done: captain intentionally stopped this task\n' > "$status_file"
+  size=$(wc -c < "$status_file" | tr -d '[:space:]')
+  printf '%s\ttest stand-down\t%s\n' "$(( $(date +%s) - 1 ))" "$size" > "$state/task.stooddown"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"
+    fail "a stood-down status signal reached wake delivery: $(cat "$out")"
+  fi
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "a stood-down status signal entered the durable queue"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "a stood-down status signal emitted a wake: $(cat "$out")"; }
+  [ -s "$state/.seen-task_status" ] || { reap "$pid"; fail "an absorbed stood-down signal did not advance its watcher suppressor"; }
+  reap "$pid"
+  pass "stood-down status signals are absorbed before queueing or delivery"
+}
+
 # A needs-decision status append surfaced through this actionable signal path
 # must skip the Pi supervision branch and reach main directly
 # (docs/pi-supervision-branch.md "Autonomy"). The row still
@@ -1901,7 +1922,7 @@ SH
   printf '1\n' > "$state/.count-$key"
   export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
   mkdir -p "$state/wake-gate"
-  printf '%s\tworking\n' "$(date +%s)" > "$state/wake-gate/gated.look"
+  printf '%s\t\n' "$(date +%s)" > "$state/wake-gate/gated.look"
 
   # Working evidence, already looked at: the alarm is absorbed, nothing is queued.
   before=$(( $(date +%s) - 500 )); echo "$before" > "$state/.stale-since-$key"
@@ -1919,6 +1940,7 @@ SH
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional watcher stop"
 
   # Waiting evidence: the gate escalates and the alarm fires exactly as before.
+  rm -f "$state/wake-gate/gated.look"
   echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"; : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
@@ -1927,6 +1949,7 @@ SH
   pid=$!
   wait_for_exit "$pid" 100 || fail "watcher did not alarm when the wake gate escalated"
   grep -F "possible wedge" "$out" >/dev/null || fail "the escalated alarm lost its possible-wedge reason"
+  [ -s "$state/wake-gate/gated.look" ] || fail "a durably queued wedge alarm did not commit its model look"
   unset FM_FAKE_CREW_STATE
   pass "a possible-wedge alarm is absorbed only on the wake gate's absorb verdict and fires otherwise"
 }
@@ -4888,6 +4911,7 @@ test_working_note_not_working_surfaced
 test_secondmate_status_note_surfaced_despite_busy_agent
 test_self_announced_close_does_not_rewake_but_next_note_does
 test_actionable_signal_surfaced
+test_stood_down_signal_absorbed_before_delivery
 test_needs_decision_signal_payload_marked_for_branch_exclusion
 test_needs_decision_reconciliation_required_still_marked
 test_captain_held_signal_payload_marked_for_branch_exclusion

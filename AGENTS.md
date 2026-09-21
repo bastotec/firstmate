@@ -433,7 +433,7 @@ For every actionable wake, follow the ordinary-wake continuation in the emitted 
 No turn ends blind while work is under way, including turns described as holding or waiting.
 
 At the start of every wake-handling turn, drain the durable wake queue before peeking, reading beyond the reason line, steering, or starting work.
-A fail-open wake gate (bin/fm-wake-gate.sh) absorbs the mechanical re-rings of tasks the captain explicitly stood down and, when opted in and enforcing, possible-wedge alarms whose evidence shows nothing new, so they cost no model turn; it never absorbs a decision, blocker, check, or heartbeat, and escalates on any doubt.
+Before queueing or emitting a stale, signal, or secondmate wake-loop alarm, the watcher uses the fail-open wake gate (bin/fm-wake-gate.sh) to absorb mechanical re-rings of tasks the captain explicitly stood down and, when opted in and enforcing, possible-wedge alarms whose evidence shows nothing new, so they cost no model turn; it never absorbs a decision, blocker, unrelated check, or heartbeat, and escalates on any doubt.
 Session start is the only exception because its one-shot digest already presented the queue while locked or deliberately left it untouched in lock-refused read-only mode.
 Treat any `OPEN DECISIONS` section from the drain as actionable reconciliation input even when no wake record was queued.
 Treat any `UNREAD STATUS` section as newly surfaced status that must be read this turn; those lines are not re-printed after this presentation.

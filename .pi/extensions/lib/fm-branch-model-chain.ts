@@ -30,9 +30,9 @@ export function branchModelLabel(ref: BranchModelRef): string {
  * Parses config/supervision-branch-model: one "<provider>/<model-id>" per
  * line in preference order, split at the FIRST "/" so a provider-qualified
  * model id survives. Blank lines and "#" comments are skipped, and a repeated
- * model keeps its first position. If at least one model is valid, any malformed
- * line rejects the chain instead of silently selecting a later subscription.
- * A file with no valid model line means no pin.
+ * model keeps its first position. Any malformed non-comment line rejects the
+ * chain instead of silently selecting around it. Only an empty or comment-only
+ * file means no pin.
  */
 export function parseBranchModelChain(stored: string): BranchModelRef[] {
   const chain: BranchModelRef[] = [];
@@ -50,7 +50,7 @@ export function parseBranchModelChain(stored: string): BranchModelRef[] {
     seen.add(line);
     chain.push({ provider: line.slice(0, separator), modelId: line.slice(separator + 1) });
   }
-  if (chain.length > 0 && malformed.length > 0) {
+  if (malformed.length > 0) {
     const first = malformed[0];
     throw new Error(`invalid supervision model line ${first.number}: ${JSON.stringify(first.line)}`);
   }

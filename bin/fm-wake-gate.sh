@@ -17,21 +17,26 @@
 #
 # USAGE
 #   fm-wake-gate.sh classify <kind> <key> <payload> <wake-epoch>
-#       Drain-side, deterministic, no model call. Print `escalate` or
+#       Watcher-side, deterministic, no model call. Print `escalate` or
 #       `absorb:stood-down-rering`. Absorbs only a stale, signal, or
 #       secondmate-wake-loop row of a task carrying a stood-down marker whose
 #       status log has not advanced since the marker and whose wake epoch is
 #       strictly newer than the marker. Never absorbs a heartbeat,
 #       any other check, or a row mentioning needs-decision, blocked, or a
 #       watcher failure.
-#   fm-wake-gate.sh stale-verdict <task-id> <window> <reason>
+#   fm-wake-gate.sh stale-verdict <task-id> <window> <reason> [--with-look]
 #       Watcher-side, called before a possible-wedge alarm is queued. Print
-#       `escalate` or `absorb:jev-<class>`. Inert (escalate, nothing logged)
+#       `escalate` or `absorb:jev-<class>`. With `--with-look`, an escalate
+#       decision that should count as a model look also carries its terminal
+#       flags after a tab for the watcher to commit after queueing. Inert
+#       (escalate, nothing logged)
 #       unless the key variable is named. Gate-able alarms are only the
 #       possible-wedge ones; every other stale reason escalates without a call.
 #       Gathers the worker's current state and pane tail, asks Jev, and applies
 #       the rule below. In shadow mode it logs the decision and always prints
 #       `escalate`; only enforce mode may print `absorb`.
+#   fm-wake-gate.sh commit-look <task-id> <none|failure|finished|failure,finished>
+#       Record a granted model look after its wake has been durably queued.
 #   fm-wake-gate.sh report
 #       Summarize shadow decisions, and when state/branch-outcomes.jsonl exists
 #       list every would-skip alarm whose supervision outcome went to the captain.
@@ -48,7 +53,8 @@
 #     present at this task's last model look: each new terminal state gets one look
 #   - the last model look is older than 3600 seconds: no worker is left
 #     unexamined longer than one hour
-#   A `call` decision records the look; a skip does not.
+#   The watcher records a `call` decision only after its wake is durably queued;
+#   a skip does not update the look.
 #
 # STATE (all under state/, private runtime state)
 #   <task-id>.stooddown      "<epoch>\t<reason>\t<status-size>" - the explicit stand-down marker, removed by resume or teardown
@@ -220,7 +226,7 @@ gather_evidence() {
 }
 
 cmd_stale_verdict() {
-  local task=${1-} reason=${3-}  # $2 is the window, already named inside the reason
+  local task=${1-} reason=${3-} with_look=${4-}  # $2 is the window, already named inside the reason
   local keyvar mode evidence hout answers aw wt fl fn why='' decision cls conf look_file look_record='' look_invalid=0 last_epoch='' last_flags='' terminal_flags='' flag now tmo helper_status=0 helper_error='' failure_calls=1
   case "$task" in ''|*/*|*" "*) printf 'escalate\n'; return 0 ;; esac
   keyvar=$(gate_key_var)
@@ -314,7 +320,6 @@ EOF_CLS
   if [ -z "$why" ] && { [ -z "$last_epoch" ] || [ $(( now - last_epoch )) -ge 3600 ]; }; then why=silence-backstop; fi
   if [ -n "$why" ]; then
     decision=call
-    mkdir -p "$STATE/wake-gate" 2>/dev/null && printf '%s\t%s\n' "$now" "$terminal_flags" > "$look_file" 2>/dev/null
   else
     decision=skip; why="same-$cls"
   fi
@@ -324,10 +329,31 @@ EOF_CLS
   fi
   if [ "$decision" = skip ] && [ "$mode" = enforce ]; then
     printf 'absorb:jev-%s\n' "$cls"
+  elif [ "$decision" = call ] && [ "$with_look" = --with-look ]; then
+    printf 'escalate\t%s\n' "${terminal_flags:-none}"
   else
     printf 'escalate\n'
   fi
   return 0
+}
+
+cmd_commit_look() {
+  local task=${1-} flags=${2-} now tmp look_file
+  case "$task" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "$flags" in
+    none) flags='' ;;
+    failure|finished|failure,finished) ;;
+    *) return 1 ;;
+  esac
+  now=$(date +%s) || return 1
+  mkdir -p "$STATE/wake-gate" 2>/dev/null || return 1
+  tmp=$(mktemp "$STATE/wake-gate/.look.XXXXXX") || return 1
+  look_file="$STATE/wake-gate/$task.look"
+  if ! (umask 077; printf '%s\t%s\n' "$now" "$flags" > "$tmp") \
+    || ! mv -f -- "$tmp" "$look_file"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
 }
 
 cmd_report() {
@@ -389,6 +415,7 @@ verb=${1-}; shift || true
 case "$verb" in
   classify)   cmd_classify "$@" ;;
   stale-verdict) cmd_stale_verdict "$@" ;;
+  commit-look) cmd_commit_look "$@" ;;
   report)     cmd_report "$@" ;;
   stand-down) cmd_stand_down "$@" ;;
   resume)     cmd_resume "$@" ;;
@@ -397,7 +424,8 @@ case "$verb" in
 fm-wake-gate.sh - fail-open worthiness gate for supervision wakes
 Usage:
   fm-wake-gate.sh classify <kind> <key> <payload> <wake-epoch>
-  fm-wake-gate.sh stale-verdict <task-id> <window> <reason>
+  fm-wake-gate.sh stale-verdict <task-id> <window> <reason> [--with-look]
+  fm-wake-gate.sh commit-look <task-id> <none|failure|finished|failure,finished>
   fm-wake-gate.sh report
   fm-wake-gate.sh stand-down <task-id> [--reason <text>]
   fm-wake-gate.sh resume <task-id>

@@ -64,14 +64,14 @@ Stored OAuth and API-key credentials retain their native credential type because
 The file holds one `<provider>/<model-id>` line followed by one newline, split at the first `/` so a provider-qualified model id such as `openrouter/anthropic/claude-sonnet-4-5` survives intact.
 A model reference contains no whitespace or control characters.
 Several such lines make a fallback chain in preference order, for a captain whose subscriptions run out at different times; blank lines and `#` comments are skipped, and a repeated model keeps its first position.
-If the file contains at least one valid model line, any malformed non-comment line refuses the branch build and names that line instead of silently selecting a later subscription; a file with no valid model line means no pin.
+Any malformed non-comment line refuses the branch build and names that line instead of silently selecting around it; only an empty or comment-only file means no pin.
 The chain is edited by hand, and the picker still writes a single line, so picking a model replaces a chain with that one pin.
 When a branch turn ends in a provider error, the model it ran on sits out for five minutes, doubling to an hour on repeated failures, and the next wake is served by the next ready model in the chain; the failed wake itself returns to main exactly as it does for a single pin, and one note in the captain's conversation names the model that failed and the one that takes over.
 A model the isolated branch runtime cannot resolve sits out on the same backoff instead of refusing the build.
 Once an earlier model's cooldown has passed, the next wake rebuilds the branch on it, which is the way back to the preferred model; a durable branch report on a model clears that model's backoff.
 The cooldowns live in memory only, so a new Pi session simply tries the preferred model first.
 Only when every model in the chain is sitting out does the single-pin behavior below take over: the branch pauses, main handles wakes, and one recovery probe runs after each cooldown on the model that becomes ready soonest.
-An absent or unreadable file, or a file with no valid model line, means no pin, and the branch then follows main's own current model, applied explicitly and live whenever main changes models mid-session.
+An absent or unreadable file, or an empty or comment-only file, means no pin, and the branch then follows main's own current model, applied explicitly and live whenever main changes models mid-session.
 When main uses `codex-native`, following main explicitly selects the same model through ordinary Pi's `openai-codex` provider, so the background branch owns an independent Pi conversation.
 If that ordinary Pi model is unavailable, the branch refuses to build and returns the notification to main; it never inherits the main native thread or silently selects a different model.
 Picking "Follow main" under a `codex-native` main reports that same `openai-codex` model, or that same refusal, because the command and the branch build share one follow rule.

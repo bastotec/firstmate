@@ -2266,7 +2266,7 @@ EOF
   pass "a supervision model chain falls back on provider errors, returns to the preferred model, and latches only when exhausted"
 }
 
-test_model_chain_rejects_mixed_malformed_lines_and_reprobes_unresolvable_entries() {
+test_model_chain_rejects_malformed_lines_and_reprobes_unresolvable_entries() {
   local repo home out status
   repo="$TMP_ROOT/model-chain-invalid-root"
   home="$TMP_ROOT/model-chain-invalid-home"
@@ -2319,7 +2319,7 @@ EOF
   status=$?
   out=$(cat "$TMP_ROOT/node-output")
   expect_code 0 "$status" "model-chain syntax and resolution exhaustion must fail visibly and recoverably: $out"
-  pass "mixed malformed chains refuse visibly and unavailable chains re-probe after cooldown"
+  pass "malformed chains refuse visibly and unavailable chains re-probe after cooldown"
 }
 
 test_selection_change_does_not_corrupt_inflight_provider_state() {
@@ -3585,7 +3585,7 @@ EOF
   pass "supervision-model runs an effort picker after the model picker and persists both independently"
 }
 
-test_unusable_model_pin_falls_back_to_main() {
+test_invalid_model_pins_refuse_branch_builds() {
   local repo home out status
   repo="$TMP_ROOT/modelbad-root"
   home="$TMP_ROOT/modelbad-home"
@@ -3594,8 +3594,8 @@ test_unusable_model_pin_falls_back_to_main() {
   PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
 const prelude = process.env.DRIVER_PRELUDE;
-await eval(`(async () => { ${prelude}; globalThis.__t = { fire, dispatch, settle, makeCtx, registryModels, mainUserMessages, home }; })()`);
-const { fire, dispatch, settle, makeCtx, registryModels, mainUserMessages, home } = globalThis.__t;
+await eval(`(async () => { ${prelude}; globalThis.__t = { fire, dispatch, makeCtx, registryModels, mainUserMessages, home }; })()`);
+const { fire, dispatch, makeCtx, registryModels, mainUserMessages, home } = globalThis.__t;
 import { writeFileSync } from "node:fs";
 
 registryModels.push(
@@ -3623,17 +3623,20 @@ if (
 if (mainUserMessages.length !== 0) throw new Error("branch bypassed watcher-owned fallback delivery");
 if ((globalThis.__fmSessions ?? []).length !== 0) throw new Error("an unusable pin must not build a branch session");
 
-// A file with no valid model line is no pin, so supervision keeps working and
-// the branch follows main's own model.
+// Any malformed non-comment line refuses the build, even when the file has no
+// valid model reference that could otherwise make the parser notice it.
 writeFileSync(`${home}/config/supervision-branch-model`, "not-a-model-reference\n");
 await fire("session_shutdown", {});
 await fire("session_start", {}, makeCtx());
-dispatch("signal: unparseable pin probe");
-await settle(() => (globalThis.__fmSessions ?? []).length === 1, "unparseable-pin branch build");
-const unparseable = globalThis.__fmSessions[0].options.model;
-if (unparseable?.provider !== "anthropic" || unparseable?.id !== "main-model") {
-  throw new Error(`an unparseable pin must be treated as no pin and follow main: ${JSON.stringify(unparseable)}`);
+const malformedOffer = dispatch("signal: malformed-only pin probe");
+if (!malformedOffer.accepted) throw new Error("malformed-only wake was not initially accepted");
+const malformedFailure = await malformedOffer.settlement.then(() => null, (error) => error);
+if (!(malformedFailure instanceof Error) ||
+    !malformedFailure.message.includes("invalid supervision model line 1") ||
+    !malformedFailure.message.includes("not-a-model-reference")) {
+  throw new Error(`the malformed-only pin did not refuse with its line: ${String(malformedFailure)}`);
 }
+if ((globalThis.__fmSessions ?? []).length !== 0) throw new Error("a malformed-only pin must not build a branch session");
 // Even a registered native provider cannot be selected by the independent
 // supervision session: its persistent native thread belongs to main.
 registryModels.push({ provider: "codex-native", id: "gpt-6-astra" });
@@ -3645,13 +3648,13 @@ const nativeFailure = await nativeOffer.settlement.then(() => null, (error) => e
 if (!(nativeFailure instanceof Error) || !nativeFailure.message.includes("ordinary Pi provider")) {
   throw new Error(`native branch pin was not explicitly refused: ${String(nativeFailure)}`);
 }
-if (globalThis.__fmSessions.length !== 1) throw new Error("native pin built a shared native branch");
+if ((globalThis.__fmSessions ?? []).length !== 0) throw new Error("native pin built a shared native branch");
 process.exit(0);
 EOF
   status=$?
   out=$(cat "$TMP_ROOT/node-output")
-  expect_code 0 "$status" "an unusable model pin must reject to watcher delivery and an unparseable one must be no pin: $out"
-  pass "an unusable model pin rejects to watcher fallback and an unparseable one is treated as no pin"
+  expect_code 0 "$status" "unusable, malformed, and native model pins must refuse branch builds: $out"
+  pass "unusable, malformed, and native model pins refuse branch builds"
 }
 
 test_replacement_activation_cleans_leases_and_retries_failure() {
@@ -5134,7 +5137,7 @@ test_branch_predrain_needs_decision_keeps_routine_row_branch_eligible
 test_settled_branch_prompt_releases_unacknowledged_grant
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown
 test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model
-test_model_chain_rejects_mixed_malformed_lines_and_reprobes_unresolvable_entries
+test_model_chain_rejects_malformed_lines_and_reprobes_unresolvable_entries
 test_selection_change_does_not_corrupt_inflight_provider_state
 test_main_owned_grant_result_falls_back_to_main
 test_branch_predrain_recheck_noops_already_drained_wake
@@ -5150,7 +5153,7 @@ test_branch_effort_pin_applies_and_absent_pin_follows_main
 test_unpinned_branch_follows_main_effort_changes_live
 test_extension_registered_provider_resolves_in_the_branch
 test_supervision_model_command_picks_effort_after_the_model
-test_unusable_model_pin_falls_back_to_main
+test_invalid_model_pins_refuse_branch_builds
 test_replacement_activation_cleans_leases_and_retries_failure
 test_cold_start_activates_after_lock_acquisition
 test_queued_actions_recheck_lock_ownership

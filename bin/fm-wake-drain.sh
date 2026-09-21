@@ -853,52 +853,7 @@ RAW_ROWS=$(fm_wake_print_deduped "$DRAIN_VIEW_TMP") || exit "$?"
 rm -f -- "$DRAIN_VIEW_TMP" || exit 1
 DRAIN_VIEW_TMP=
 ACK_THROUGH=$(printf '%s\n' "$RAW_ROWS" | awk -F '\t' '$2 ~ /^[0-9]+$/ && $2 > max { max=$2 } END { print max + 0 }') || exit 1
-# Fail-open wake gate (bin/fm-wake-gate.sh, main actor only): absorb mechanical
-# re-rings of tasks the captain explicitly stood down, so they are acknowledged
-# without spending a model turn. ACK_THROUGH above is computed from the full
-# claimed set, so absorbing a row suppresses only its presentation, never its
-# acknowledgement. Every other row, and any gate error, escalates (is presented);
-# the gate never absorbs a decision, blocker, check, or heartbeat. Inert when no
-# task is stood down or the helper is absent.
 PRESENTED_ROWS=$RAW_ROWS
-ABSORBED_ROWS=0
-if [ "$ACTOR" = main ] && [ -n "$RAW_ROWS" ] && [ -x "$SCRIPT_DIR/fm-wake-gate.sh" ]; then
-  GATE_IN=''
-  GATE_OUT=''
-  if GATE_IN=$(mktemp "$STATE/.wake-gate-in.XXXXXX"); then
-    if ! GATE_OUT=$(mktemp "$STATE/.wake-gate-out.XXXXXX"); then
-      rm -f -- "$GATE_IN" || true
-      GATE_IN=''
-    fi
-  fi
-  if [ -n "$GATE_IN" ] && [ -n "$GATE_OUT" ]; then
-    GATE_OK=1
-    GATE_ABSORBED=0
-    if ! printf '%s\n' "$RAW_ROWS" > "$GATE_IN"; then GATE_OK=0; fi
-    if [ "$GATE_OK" -eq 1 ]; then
-      while IFS=$(printf '\t') read -r g_epoch g_seq g_kind g_key g_payload; do
-        [ -n "${g_seq:-}" ] || continue
-        g_verdict=$(FM_STATE_DIR="$STATE" "$SCRIPT_DIR/fm-wake-gate.sh" classify "$g_kind" "$g_key" "$g_payload" "$g_epoch" 2>/dev/null) || g_verdict=escalate
-        case "$g_verdict" in
-          absorb:*) GATE_ABSORBED=$((GATE_ABSORBED + 1)) ;;
-          *)
-            if ! printf '%s\t%s\t%s\t%s\t%s\n' "$g_epoch" "$g_seq" "$g_kind" "$g_key" "$g_payload" >>"$GATE_OUT"; then
-              GATE_OK=0
-              break
-            fi
-            ;;
-        esac
-      done < "$GATE_IN"
-      GATE_READ_STATUS=$?
-      if [ "$GATE_READ_STATUS" -ne 0 ]; then GATE_OK=0; fi
-    fi
-    if [ "$GATE_OK" -eq 1 ] && GATED_ROWS=$(cat "$GATE_OUT"); then
-      PRESENTED_ROWS=$GATED_ROWS
-      ABSORBED_ROWS=$GATE_ABSORBED
-    fi
-    rm -f -- "$GATE_IN" "$GATE_OUT" || true
-  fi
-fi
 case "${FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT:-0}" in
   0) ;;
   ''|*[!0-9]*) ;;
@@ -906,9 +861,6 @@ case "${FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT:-0}" in
 esac
 if [ -n "$PRESENTED_ROWS" ]; then
   printf '%s\n' "$PRESENTED_ROWS" || exit "$?"
-fi
-if [ "$ABSORBED_ROWS" -gt 0 ]; then
-  printf 'wake drain: absorbed %s stood-down mechanical re-ring(s) via fm-wake-gate (fail-open); covered by the acknowledgement below\n' "$ABSORBED_ROWS" >&2
 fi
 fm_recovery_marker_snapshot "$RECOVERY_MARKER" || exit 1
 RECOVERY_MARKER_TOKEN=$FM_RECOVERY_MARKER_TOKEN
