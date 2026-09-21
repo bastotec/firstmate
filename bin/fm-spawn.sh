@@ -137,7 +137,7 @@
 #   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
-#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy)
+#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|deck)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
 #   new adapters. For pi and pi-signed, fm-spawn resolves the selected executable
@@ -289,6 +289,8 @@
 #     __GEMINISETTINGS__ firstmate-owned per-task gemini settings file (busy-state hooks)
 #     __ROVOBIN__   resolved, rovo-verified executable for a rovo launch
 #     __AGYBIN__    resolved, agy-verified executable for an agy launch
+#     __DECKWORKER__ bin/fm-deck-worker.sh; __DECKBIN__ the resolved deck executable;
+#     __DECKID__ / __DECKSTATE__ / __DECKGEN__ the task id, state dir, and busy gen it reports under
 # Verified per-harness turn-end hooks are installed automatically where enabled; some live outside the worktree.
 # Kimi uses one surgically installed Firstmate region in $HOME/.kimi-code/config.toml,
 # a firstmate-owned global hook and registry, and a gitignored per-task pointer.
@@ -296,7 +298,9 @@
 # plus a gitignored .fm-grok-turnend worktree pointer and a state token.
 # muse installs no hook at all - its plugin engine is off in the default build - so
 # it writes state/<id>.muse-session to bind the pane to muse's own session event
-# log; muse, gemini, and agy are crewmate/scout only and are refused for --secondmate.
+# log; muse, gemini, agy, and deck are crewmate/scout only and are refused for --secondmate.
+# deck installs no hook file: bin/fm-deck-worker.sh passes Deck its per-run hooks
+# (--hook) and writes the busy and turn-end events itself.
 # rovo installs no hook either - its eventHooks fire at tool granularity only,
 # never turn-end - so it carries no busy-source wiring at all and no turn-end
 # hook. A positional brief is dead-on-arrival (rovo loads, never works, and drops
@@ -1444,7 +1448,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   }
 elif [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-    ''|claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy)
+    ''|claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|deck)
       ARG3=${POS[1]:-}
       ;;
     *' '*)
@@ -1662,6 +1666,15 @@ launch_template() {
     # agy exposes no hook surface, so busy state is a rendered-tail fallback
     # (bin/fm-busy-lib.sh) and nothing is armed below.
     agy) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS __AGYBIN__ --prompt-interactive "$(__OPINPUT__ encode launch-brief < __BRIEF__)" __MODELFLAG____EFFORTFLAG__--dangerously-skip-permissions' ;;
+    # deck (bastotec/deck) is a headless agent: one `deck run` per turn, NDJSON on
+    # stdout. bin/fm-deck-worker.sh is the pane's foreground process and drives
+    # it: the brief is the first turn, each line typed at its prompt is the next
+    # turn of the same Deck session, and it is the task's busy/turn-end source
+    # and evidence gate (its header owns all of that). It runs under bash with
+    # argv[0] `fm-deck-worker`, so pane liveness reads it as an agent rather
+    # than an idle shell (bin/fm-agent-process-lib.sh). Deck has no effort
+    # control, so effort is recorded and omitted.
+    deck) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS bash -c '\''exec -a fm-deck-worker bash "$@"'\'' fm-deck-worker __DECKWORKER__ --id __DECKID__ --state __DECKSTATE__ --gen __DECKGEN__ --turnend __TURNEND__ --deck __DECKBIN__ __MODELFLAG__-- "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     # grok (Grok Build TUI): a positional prompt starts the supervised interactive
     # session. --always-approve auto-approves every tool execution (verified: the
     # crewmate runs fully autonomously, no permission gate), which an unattended
@@ -1857,7 +1870,8 @@ fi
 # secondmate whose supervision cycle could never be armed.
 # agy has none either: it exposes no hook surface for primary supervision and
 # docs/supervision-protocols/ carries no agy wake protocol (agy 1.2.0).
-if [ "$KIND" = secondmate ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = agy ]; }; then
+# deck has none either: its worker driver supervises one task, not a home.
+if [ "$KIND" = secondmate ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = agy ] || [ "$HARNESS" = deck ]; }; then
   echo "error: $HARNESS is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
   exit 1
 fi
@@ -1914,6 +1928,16 @@ case "$HARNESS" in
   agy)
     AGY_BIN=$(resolve_pi_executable agy) || {
       echo "error: agy executable not found on PATH; install Antigravity CLI or select a different verified harness" >&2
+      exit 1
+    }
+    ;;
+  deck)
+    DECK_BIN=$(resolve_pi_executable deck) || {
+      echo "error: deck executable not found on PATH; build bastotec/deck (cargo build --release --locked) and put target/release/deck on PATH, or select a different verified harness" >&2
+      exit 1
+    }
+    command -v jq >/dev/null 2>&1 || {
+      echo "error: jq is required to run a deck worker (bin/fm-deck-worker.sh renders Deck's event stream with it)" >&2
       exit 1
     }
     ;;
@@ -2067,7 +2091,7 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy)
+    claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|deck)
       printf -- '--model %s ' "$(shell_quote "$model")"
       ;;
   esac
@@ -3603,7 +3627,7 @@ if [ "$KIND" != secondmate ]; then
       ;;
   esac
   case "$HARNESS" in
-    claude*|opencode*|pi|pi-signed|omp)
+    claude*|opencode*|pi|pi-signed|omp|deck)
       BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID") || {
         echo "error: failed to arm the busy-state contract for $ID" >&2
         exit 1
@@ -4214,10 +4238,17 @@ case "$HARNESS" in
   gemini) LAUNCH=${LAUNCH//__GEMINISETTINGS__/"$(shell_quote "$STATE_REAL/$ID.gemini-settings.json")"} ;;
   omp) LAUNCH=${LAUNCH//__OMPBIN__/"$(shell_quote "$OMP_BIN")"} ;;
   agy) LAUNCH=${LAUNCH//__AGYBIN__/"$(shell_quote "$AGY_BIN")"} ;;
+  deck)
+    LAUNCH=${LAUNCH//__DECKWORKER__/"$(shell_quote "$FM_ROOT/bin/fm-deck-worker.sh")"}
+    LAUNCH=${LAUNCH//__DECKBIN__/"$(shell_quote "$DECK_BIN")"}
+    LAUNCH=${LAUNCH//__DECKID__/"$(shell_quote "$ID")"}
+    LAUNCH=${LAUNCH//__DECKSTATE__/"$(shell_quote "$STATE_REAL")"}
+    LAUNCH=${LAUNCH//__DECKGEN__/"$(shell_quote "$BUSY_GEN")"}
+    ;;
 esac
 LAUNCH=${LAUNCH//__WORKTREE__/$sq_worktree}
 case "$HARNESS" in
-  claude|codex|opencode|pi|pi-signed|grok|kimi|gemini|muse|rovo|agy)
+  claude|codex|opencode|pi|pi-signed|grok|kimi|gemini|muse|rovo|agy|deck)
     LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
     ;;
 esac
