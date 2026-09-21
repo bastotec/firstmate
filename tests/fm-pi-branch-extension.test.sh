@@ -57,6 +57,7 @@ install_pi_branch_extension_fixture() {
   cp "$ROOT/.pi/extensions/lib/fm-native-contract.ts" "$repo/.pi/extensions/lib/fm-native-contract.ts"
   cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$repo/.pi/extensions/lib/fm-async-exec.ts"
   cp "$ROOT/.pi/extensions/lib/fm-branch-model-picker.ts" "$repo/.pi/extensions/lib/fm-branch-model-picker.ts"
+  cp "$ROOT/.pi/extensions/lib/fm-branch-model-chain.ts" "$repo/.pi/extensions/lib/fm-branch-model-chain.ts"
   cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$repo/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
   mkdir -p "$repo/bin"
@@ -2130,6 +2131,119 @@ EOF
   out=$(cat "$TMP_ROOT/node-output")
   expect_code 0 "$status" "provider errors must latch, cool down, re-probe once, back off, and recover through a durable report: $out"
   pass "provider-error latches cool down, re-probe once with backoff, and recover through a durable report"
+}
+
+test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model() {
+  local repo home out status
+  repo="$TMP_ROOT/model-chain-root"
+  home="$TMP_ROOT/model-chain-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeCtx, registryModels, dispatch, fire, settle, home, mainUserMessages, sentToMain }; })()`);
+const { makeCtx, registryModels, dispatch, fire, settle, home, mainUserMessages, sentToMain } = globalThis.__t;
+import { writeFileSync } from "node:fs";
+
+let now = 1_000_000;
+Date.now = () => now;
+registryModels.push(
+  { provider: "anthropic", id: "main-model" },
+  { provider: "openai", id: "cheap-1" },
+  { provider: "zai", id: "cheap-2" },
+  { provider: "qwen", id: "cheap-3" },
+);
+// Preference order, with a comment, a blank line, a duplicate, a line that is
+// not a model reference, and a model the runtime does not know.
+writeFileSync(
+  `${home}/config/supervision-branch-model`,
+  "# supervision chain\nghost/not-installed\nopenai/cheap-1\n\nnot-a-model\nzai/cheap-2\nopenai/cheap-1\nqwen/cheap-3\n",
+);
+const mainEntries = [];
+await fire("session_start", {}, makeCtx({
+  sessionManager: { getSessionFile: () => `${home}/main.jsonl`, getEntries: () => mainEntries },
+}));
+
+const failing = new Set();
+let prompts = 0;
+globalThis.__fmOnBranchPrompt = async ({ session }) => {
+  prompts += 1;
+  const model = `${session.options.model.provider}/${session.options.model.id}`;
+  if (failing.has(model)) {
+    session.messages.push({ role: "assistant", content: [], stopReason: "error", errorMessage: "429: usage limit reached" });
+    return;
+  }
+  const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+  const recorded = await report.execute(`ok-${prompts}`, { task: "branch-driver", verdict: "routine", summary: `handled on ${model}` }, undefined, undefined, {});
+  if (recorded.isError) throw new Error(`report failed: ${JSON.stringify(recorded)}`);
+  session.messages.push({ role: "assistant", content: [], stopReason: "stop" });
+};
+const builtOn = () => (globalThis.__fmSessions ?? []).map((s) => `${s.options.model?.provider}/${s.options.model?.id}`);
+const handled = (text) => sentToMain.some((sent) => sent.message.content.includes(text));
+async function wake(label, expectFailure) {
+  const before = prompts;
+  const offer = dispatch(`signal: ${label}`);
+  if (!offer.accepted) throw new Error(`${label}: the chain let the branch refuse a wake it could have served`);
+  const failure = await offer.settlement.then(() => null, (error) => error);
+  if (Boolean(failure) !== expectFailure) throw new Error(`${label}: unexpected settlement ${String(failure)}`);
+  if (prompts !== before + 1) throw new Error(`${label}: expected exactly one branch prompt`);
+}
+
+// 1. The unknown first entry is skipped; the first usable model serves.
+await wake("first wake", false);
+if (builtOn().at(-1) !== "openai/cheap-1") throw new Error(`the chain did not start on its first usable model: ${builtOn()}`);
+
+// 2. That model runs out: the failed wake returns to the watcher-owned
+// fallback, ONE note says where supervision went, and nothing latches.
+failing.add("openai/cheap-1");
+await wake("preferred model out of quota", true);
+if (mainUserMessages.length !== 0) throw new Error("the failed wake bypassed watcher-owned fallback delivery");
+const moved = sentToMain.filter((sent) => sent.message.content.includes("Supervision model openai/cheap-1 failed"));
+if (moved.length !== 1 || !moved[0].message.content.includes("zai/cheap-2")) {
+  throw new Error(`the fallback note must name the failed and the next model once: ${JSON.stringify(moved)}`);
+}
+if (handled("Supervision branch paused")) throw new Error("a chain with a ready model must not latch the branch off");
+
+// 3. The very next wake is served by the next model, not by main.
+await wake("served by the second model", false);
+if (builtOn().at(-1) !== "zai/cheap-2" || !handled("handled on zai/cheap-2")) {
+  throw new Error(`the next wake did not run on the second model: ${builtOn()}`);
+}
+
+// 4. Inside the first model's cooldown the branch stays where it is.
+now += 4 * 60 * 1000;
+const sessionsBefore = builtOn().length;
+await wake("still cooling", false);
+if (builtOn().length !== sessionsBefore) throw new Error("the branch was rebuilt while the preferred model was still cooling down");
+
+// 5. After the cooldown the preferred model is tried again and keeps the job.
+failing.delete("openai/cheap-1");
+now += 2 * 60 * 1000;
+await wake("back to the preferred model", false);
+if (builtOn().at(-1) !== "openai/cheap-1" || !handled("handled on openai/cheap-1")) {
+  throw new Error(`supervision did not return to the preferred model after its cooldown: ${builtOn()}`);
+}
+
+// 6. Every model failing in turn walks the whole chain, and only then does
+// the existing latch hand wakes to main.
+failing.add("openai/cheap-1"); failing.add("zai/cheap-2"); failing.add("qwen/cheap-3");
+await wake("chain exhausted 1", true);
+await wake("chain exhausted 2", true);
+await wake("chain exhausted 3", true);
+if (builtOn().at(-1) !== "qwen/cheap-3") throw new Error(`the chain did not reach its last model: ${builtOn()}`);
+if (handled("Supervision branch paused")) throw new Error("the first failure of the last model must not latch yet");
+await wake("chain exhausted 4", true);
+if (!handled("Supervision branch paused after repeated provider errors")) {
+  throw new Error("an exhausted chain must fall back to the existing latch");
+}
+if (dispatch("signal: latched").accepted) throw new Error("the latched branch accepted a wake inside its cooldown");
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "a supervision model chain must fall back on provider errors, return to the preferred model, and latch only when exhausted: $out"
+  pass "a supervision model chain falls back on provider errors, returns to the preferred model, and latches only when exhausted"
 }
 
 test_selection_change_does_not_corrupt_inflight_provider_state() {
@@ -4238,6 +4352,7 @@ test_outcomes_tool_uses_stock_execution_and_export_consumers() {
   cp "$ROOT/.pi/extensions/lib/fm-native-contract.ts" "$fixture/.pi/extensions/lib/fm-native-contract.ts"
   cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$fixture/.pi/extensions/lib/fm-async-exec.ts"
   cp "$ROOT/.pi/extensions/lib/fm-branch-model-picker.ts" "$fixture/.pi/extensions/lib/fm-branch-model-picker.ts"
+  cp "$ROOT/.pi/extensions/lib/fm-branch-model-chain.ts" "$fixture/.pi/extensions/lib/fm-branch-model-chain.ts"
   cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$fixture/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/fm-operational-input.ts"
   ln -s "$package_dir" "$fixture/node_modules/@earendil-works/pi-coding-agent"
@@ -4942,6 +5057,7 @@ test_branch_predrain_recheck_excludes_new_main_owned_row_without_deferring_eligi
 test_branch_predrain_needs_decision_keeps_routine_row_branch_eligible
 test_settled_branch_prompt_releases_unacknowledged_grant
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown
+test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model
 test_selection_change_does_not_corrupt_inflight_provider_state
 test_main_owned_grant_result_falls_back_to_main
 test_branch_predrain_recheck_noops_already_drained_wake
