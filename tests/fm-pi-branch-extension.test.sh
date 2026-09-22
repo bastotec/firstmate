@@ -1700,8 +1700,8 @@ test_branch_report_refuses_a_task_the_wake_did_not_name() {
   PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
 const prelude = process.env.DRIVER_PRELUDE;
-await eval(`(async () => { ${prelude}; globalThis.__t = { dispatch, fire, home, settle, approvedProject, defaultSessionCtx }; })()`);
-const { dispatch, fire, home, settle, approvedProject, defaultSessionCtx } = globalThis.__t;
+await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatch, fire, home, settle, approvedProject, defaultSessionCtx }; })()`);
+const { pi, makeOffer, dispatch, fire, home, settle, approvedProject, defaultSessionCtx } = globalThis.__t;
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1735,7 +1735,8 @@ await settle(() => !existsSync(`${home}/state/.branch-eligible-rows`), "task-loc
 // A heartbeat review is not scoped by task: it may report any task id, a
 // task whose records are already gone, and fleet.
 globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finish = resolve; });
-if (!dispatch("heartbeat", [], true, true).accepted) throw new Error("branch refused the heartbeat");
+const heartbeatOffer = dispatch("heartbeat", [], true, true);
+if (!heartbeatOffer.accepted) throw new Error("branch refused the heartbeat");
 await settle(() => (globalThis.__fmPrompts ?? []).length === 2, "heartbeat branch prompt");
 const heartbeatSession = globalThis.__fmSessions[globalThis.__fmSessions.length - 1];
 const heartbeatReport = heartbeatSession.options.customTools.find((tool) => tool.name === "fm_branch_report");
@@ -1746,10 +1747,48 @@ if (goneInReview.isError) throw new Error(`a heartbeat report for a task with no
 const fleetInReview = await heartbeatReport.execute("fleet-in-review", { task: "fleet", verdict: "routine", summary: "fleet-wide note" }, undefined, undefined, {});
 if (fleetInReview.isError) throw new Error(`a fleet-wide report was refused during a heartbeat review: ${JSON.stringify(fleetInReview)}`);
 finish();
+await heartbeatOffer.settlement;
 
 const stored = readFileSync(`${home}/state/branch-outcomes.jsonl`, "utf8").trim().split("\n").map((line) => JSON.parse(line).task);
 if (JSON.stringify(stored) !== JSON.stringify(["branch-driver", "other-task", "retired-task", "fleet"])) {
   throw new Error(`refused reports reached the durable store: ${JSON.stringify(stored)}`);
+}
+
+writeFileSync(`${home}/state/.wake-queue`, [
+  "1\t1\tsignal\tbranch-driver.status\tsignal: branch-driver done",
+  "2\t2\tsignal\tother-task.status\tsignal: other-task done",
+].join("\n") + "\n");
+globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finish = resolve; });
+const boundHeartbeat = makeOffer("heartbeat: task-bound queued rows", [approvedProject], true, true);
+pi.events.emit("fm-branch-supervision:dispatch", boundHeartbeat);
+if (!boundHeartbeat.accepted) throw new Error("branch refused the task-binding heartbeat");
+await settle(() => (globalThis.__fmPrompts ?? []).length === 3, "task-binding heartbeat prompt");
+const boundReport = globalThis.__fmSessions.at(-1).options.customTools.find((tool) => tool.name === "fm_branch_report");
+const firstBound = await boundReport.execute(
+  "bound-first",
+  { task: "branch-driver", wakeSeq: "1", verdict: "routine", summary: "branch-driver handled" },
+  undefined,
+  undefined,
+  {},
+);
+if (firstBound.isError) throw new Error(`the first heartbeat row was refused: ${JSON.stringify(firstBound)}`);
+const wrongTask = await boundReport.execute(
+  "bound-wrong-task",
+  { task: "branch-driver", wakeSeq: "2", verdict: "routine", summary: "wrongly attributed second row" },
+  undefined,
+  undefined,
+  {},
+);
+if (!wrongTask.isError || !wrongTask.content[0].text.includes("names other-task, not branch-driver")) {
+  throw new Error(`a heartbeat report covered another task's row: ${JSON.stringify(wrongTask)}`);
+}
+finish();
+const boundFailure = await boundHeartbeat.settlement.then(() => null, (error) => error);
+if (!(boundFailure instanceof Error) || !boundFailure.message.includes("no durable outcome for every claimed wake row")) {
+  throw new Error(`one task's reports falsely settled a two-task heartbeat grant: ${String(boundFailure)}`);
+}
+if (existsSync(`${home}/state/.branch-eligible-rows`)) {
+  throw new Error("the incomplete heartbeat grant remained claimed after watcher replay resumed");
 }
 
 // The classification owner names the tasks behind each eligible row: a

@@ -323,7 +323,7 @@ export function scopeForUnreadWake(state: string, heartbeat: boolean): UnreadWak
     projects.add(project);
     eligibleTasks.add(task);
     eligibleSeqs.push(seq);
-    eligibleTaskBySeq[seq] = heartbeat ? null : task;
+    eligibleTaskBySeq[seq] = task;
   }
   const eligible = eligibleSeqs.length > 0;
   // Reached only after every row passed classification without a veto. A scan

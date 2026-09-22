@@ -1248,7 +1248,7 @@ export default function (pi: ExtensionAPI) {
     if (!requestedSeq && scope.unscoped) {
       const uncovered = candidates.filter(([seq]) => !scope.reported.has(seq));
       if (uncovered.length === 1) return { scope, seq: uncovered[0][0], refusal: "" };
-      if (uncovered.length === 0) return { scope, seq: "", refusal: "" };
+      if ([...scope.rows.keys()].every((seq) => scope.reported.has(seq))) return { scope, seq: "", refusal: "" };
     }
     if (requestedSeq) {
       if (!/^[0-9]+$/.test(requestedSeq) || !scope.rows.has(requestedSeq)) {

@@ -54,8 +54,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 PROMPT=${1-}
-if [ -z "$ID" ] || [ -z "$STATE" ] || [ -z "$DECK" ] || [ -z "$PROMPT" ]; then
-  echo "fm-deck-worker: --id, --state, --deck, and a first prompt are required" >&2
+if [ -z "$ID" ] || [ -z "$STATE" ] || [ -z "$GEN" ] || [ -z "$DECK" ] || [ -z "$PROMPT" ]; then
+  echo "fm-deck-worker: --id, --state, --gen, --deck, and a first prompt are required" >&2
   exit 2
 fi
 command -v jq >/dev/null 2>&1 || { echo "fm-deck-worker: jq is required to render Deck's event stream" >&2; exit 2; }
@@ -90,8 +90,18 @@ INTERRUPTED=0
 trap 'INTERRUPTED=1' INT
 
 busy_event() {  # <busy|idle> <event>
-  [ -n "$GEN" ] || return 0
-  "$BUSY_EVENT" apply "$STATE" "$ID" "$1" --gen "$GEN" --source deck-wrapper --event "$2" >/dev/null 2>&1 || true
+  "$BUSY_EVENT" apply "$STATE" "$ID" "$1" --gen "$GEN" --source deck-wrapper --event "$2" >/dev/null 2>&1
+}
+
+record_busy_event() {  # <busy|idle> <event>
+  local state=$1 event=$2
+  busy_event "$state" "$event" && return 0
+  if ! printf 'failed: deck wrapper could not record busy-state event (%s)\n' "$event" | status_append; then
+    printf 'fm-deck-worker: busy-state event %s failed and its status could not be published to %s\n' "$event" "$STATUS_FILE" >&2
+    return 1
+  fi
+  printf 'fm-deck-worker: could not record busy-state event %s\n' "$event" >&2
+  return 1
 }
 
 status_size() {
@@ -119,8 +129,7 @@ q() { printf '%q' "$1"; }
 # line after the byte offset recorded at turn start. Deck feeds this stderr back
 # to the model and fails the run after its own bounded number of refusals.
 EVIDENCE_HOOK="python3 $(q "$STATE_IO") root-worker-status-after $(q "$STATE") $(q "$ID.status") \"\$(cat $(q "$TURN_MARK") 2>/dev/null || echo 0)\" 2>/dev/null || { echo $(q "Before you finish, append one line to $STATUS_FILE as your instructions' status protocol describes (done:, needs-decision:, blocked:, failed:, or working:), stating what you did and the evidence. Then finish.") >&2; exit 2; }"
-PROGRESS_HOOK=''
-[ -z "$GEN" ] || PROGRESS_HOOK="$(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID") --gen $(q "$GEN") >/dev/null 2>&1 || true"
+PROGRESS_HOOK="$(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID") --gen $(q "$GEN") >/dev/null 2>&1 || { echo $(q "fm-deck-worker: could not refresh Deck progress state") >&2; exit 1; }"
 
 # Readable pane rendering of Deck's event stream. Reasoning and usage events
 # are bookkeeping and stay out of the pane.
@@ -146,7 +155,7 @@ run_turn() {  # <prompt>
     printf 'fm-deck-worker: status path is not a safe regular file: %s\n' "$STATUS_FILE" >&2
     return 1
   fi
-  busy_event busy turn-start
+  record_busy_event busy turn-start || return 1
   # The rendered working row is transient: save its screen position so a
   # completed turn can replace it with the final event rendering. A later steer
   # therefore starts from a genuinely idle pane.
@@ -176,12 +185,12 @@ run_turn() {  # <prompt>
   if ! status_has_worker_evidence "$status_before"; then
     if ! printf 'failed: deck turn ended without a status line (%s)\n' "$event" | status_append; then
       printf 'fm-deck-worker: could not safely append required turn evidence to %s\n' "$STATUS_FILE" >&2
-      busy_event idle turn-failed
+      record_busy_event idle turn-failed || return 1
       publish_turnend || true
       return 1
     fi
   fi
-  busy_event idle "$event"
+  record_busy_event idle "$event" || return 1
   publish_turnend || return 1
 }
 
@@ -192,13 +201,13 @@ while :; do
   INTERRUPTED=0
   if ! IFS= read -r line; then
     [ "$INTERRUPTED" = 1 ] && continue
-    busy_event idle session-end
+    record_busy_event idle session-end || exit 1
     exit 0
   fi
   case "$line" in
     '') continue ;;
     /quit)
-      busy_event idle session-end
+      record_busy_event idle session-end || exit 1
       exit 0
       ;;
   esac

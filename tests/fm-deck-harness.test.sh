@@ -74,6 +74,10 @@ case "$prompt" in
     rm -f -- "$FM_TEST_STATUS"
     ln -s "$FM_TEST_EXTERNAL" "$FM_TEST_STATUS"
     ;;
+  *write-status*replace-busy-gen*)
+    printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS"
+    "$FM_TEST_BUSY_EVENT" arm "$(dirname "$FM_TEST_STATUS")" t1 >/dev/null
+    ;;
   *write-status*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
   *resolve-only*) printf 'resolved [key=choice]: answered: yes\n' >> "$FM_TEST_STATUS" ;;
   *sleep*)
@@ -110,6 +114,7 @@ run_worker() {
   gen=$("$BUSY_EVENT" arm "$dir/state" t1)
   printf '%s' "$gen" > "$dir/gen"
   printf '%s' "$input" | FM_TEST_STATUS="$dir/state/t1.status" FM_TEST_EXTERNAL="${FM_TEST_EXTERNAL:-}" \
+    FM_TEST_BUSY_EVENT="$BUSY_EVENT" \
     "$WORKER" --id t1 --state "$dir/state" --gen "$gen" \
       --deck "$dir/deck" --model codex/gpt-5.6-luna -- "$prompt" > "$dir/pane.out" 2>&1
 }
@@ -147,6 +152,35 @@ test_turns_drive_the_busy_record_and_turn_end() {
   [ "$(fm_busy_classify tmux fake agy t1 "$dir/state")" = "unknown source-mismatch" ] \
     || fail "the deck driver's record must not classify another adapter"
   pass "fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end"
+}
+
+test_busy_state_failures_stop_turns_and_publish_status() {
+  local start="$TMP_ROOT/busy-start-failure" close="$TMP_ROOT/busy-close-failure" old_gen rc
+  make_fake_deck "$start"
+  mkdir -p "$start/state"
+  old_gen=$("$BUSY_EVENT" arm "$start/state" t1)
+  "$BUSY_EVENT" arm "$start/state" t1 >/dev/null
+  rc=0
+  printf '/quit\n' | FM_TEST_STATUS="$start/state/t1.status" FM_TEST_EXTERNAL='' \
+    FM_TEST_BUSY_EVENT="$BUSY_EVENT" \
+    "$WORKER" --id t1 --state "$start/state" --gen "$old_gen" \
+      --deck "$start/deck" -- the-brief > "$start/pane.out" 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a turn started after its busy-state event was refused"
+  [ ! -e "$start/argv.log" ] || fail "Deck ran before the wrapper recorded turn-start"
+  assert_grep 'failed: deck wrapper could not record busy-state event (turn-start)' "$start/state/t1.status" \
+    "a refused turn-start did not publish a failure status"
+
+  make_fake_deck "$close"
+  rc=0
+  run_worker "$close" $'/quit\n' 'write-status replace-busy-gen' || rc=$?
+  [ "$rc" -ne 0 ] || fail "a stale turn-end busy event was ignored"
+  assert_grep 'done: wrote evidence' "$close/state/t1.status" \
+    "the close-event fixture did not publish its normal turn evidence"
+  assert_grep 'failed: deck wrapper could not record busy-state event (turn-end)' "$close/state/t1.status" \
+    "a refused turn-end did not publish a failure status"
+  assert_grep 'could not record busy-state event turn-end' "$close/pane.out" \
+    "a refused turn-end was not surfaced in the worker pane"
+  pass "fm-deck-worker: busy-state failures stop turns and publish status evidence"
 }
 
 test_turnend_signal_refuses_unsafe_paths() {
@@ -483,6 +517,7 @@ test_spawn_refuses_a_deck_secondmate() {
 
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_drive_the_busy_record_and_turn_end
+test_busy_state_failures_stop_turns_and_publish_status
 test_turnend_signal_refuses_unsafe_paths
 test_evidence_gate_refuses_a_turn_without_a_status_line
 test_stderr_before_completion_blocked_does_not_break_rendering
