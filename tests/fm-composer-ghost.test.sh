@@ -377,36 +377,54 @@ test_pi_identity_requires_readable_busy_state() (
 )
 
 test_pi_identity_prompt_shape_matrix() (
-  local dir fb capture out kind expected
+  local dir fb capture out state kind expected state_expected cy
   dir="$TMP_ROOT/pi-prompt-shapes"; mkdir -p "$dir"
   fb=$(make_fake_tmux "$dir")
   capture="$dir/styled.txt"
   fm_pane_busy_state() { printf 'idle'; }
-  for kind in tool-approval ask-user model-picker idle; do
+  for kind in tool-approval ask-user model-picker transcript-idle idle; do
     case "$kind" in
       tool-approval)
         printf '────────────────────────\nTool approval\nRun this command?\n→ Allow once\n  Deny\n↑↓ navigate  enter select  esc cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
         expected=$'pi\tblocked'
+        state_expected=pending
+        cy=8
         ;;
       ask-user)
         printf '────────────────────────\nWhich approach should we use?\n❯ 1. Keep current behavior\n  2. Change it\nEnter to select · ↑/↓ to navigate · n to add notes · Esc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
         expected=$'pi\tblocked'
+        state_expected=pending
+        cy=7
         ;;
       model-picker)
-        printf '────────────────────────\nOnly showing models from configured providers. Use /login to add providers.\nsearch models\n  openai/gpt-5\n  enter to select · ctrl+s to set as default · esc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
+        printf '────────────────────────\nOnly showing models from configured providers. Use /login to add providers.\nsearch models\n→ openai/gpt-5\n  enter to select · ctrl+s to set as default · esc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
         expected=$'pi\tblocked'
+        state_expected=pending
+        cy=7
+        ;;
+      transcript-idle)
+        printf 'ordinary assistant response\nThe keys are ↑↓ navigate, enter select, and esc cancel.\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
+        expected=$'pi\tidle'
+        state_expected=empty
+        cy=3
         ;;
       idle)
         printf 'completed turn\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
         expected=$'pi\tidle'
+        state_expected=empty
+        cy=2
         ;;
     esac
     out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_COMMAND=pi \
       fm_tmux_composer_identity fakepane)
     [ "$out" = "$expected" ] \
       || fail "Pi $kind capture identity should be '$expected', got '$out'"
+    state=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_COMMAND=pi FM_FAKE_CY="$cy" \
+      fm_tmux_composer_state fakepane)
+    [ "$state" = "$state_expected" ] \
+      || fail "Pi $kind capture composer should be '$state_expected', got '$state'"
   done
-  pass "fm_tmux_composer_identity: installed Pi prompt shapes report blocked while idle furniture remains idle"
+  pass "fm_tmux_composer_identity: bounded Pi prompts protect input while transcript wording and idle furniture remain empty"
 )
 
 test_bordered_busy_signatures_are_pending() {
