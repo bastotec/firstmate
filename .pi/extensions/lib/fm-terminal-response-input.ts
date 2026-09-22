@@ -8,11 +8,15 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 const ESC = "\x1b";
 const OSC_PALETTE_PREFIX = `${ESC}]4;`;
 const OSC_PALETTE_FRAGMENT_TIMEOUT_MS = 500;
-const OSC_PALETTE_VALUE = String.raw`(?:rgb:[0-9a-f]+\/[0-9a-f]+\/[0-9a-f]+|#[0-9a-f]{6}|#[0-9a-f]{12})`;
 const OSC_PALETTE_RESPONSE = new RegExp(
-  String.raw`^\x1b\]4;\d+;${OSC_PALETTE_VALUE}(?:;\d+;${OSC_PALETTE_VALUE})*(?:\x07|\x1b\\)$`,
+  String.raw`^\x1b\]4;\d+;rgb:[0-9a-f]{1,4}\/[0-9a-f]{1,4}\/[0-9a-f]{1,4}(?:\x07|\x1b\\)$`,
   "i",
 );
+
+const isDecimalDigit = (value: string | undefined): boolean =>
+  value !== undefined && value >= "0" && value <= "9";
+const isHexDigit = (value: string | undefined): boolean =>
+  value !== undefined && /^[0-9a-f]$/i.test(value);
 
 type InputForwarder = (data: string) => void;
 
@@ -37,19 +41,26 @@ export class PiTerminalResponseInputFilter {
       return;
     }
     if (this.pending) {
-      const candidate = this.pending + data;
-      if (OSC_PALETTE_RESPONSE.test(candidate)) {
+      let candidate = this.pending;
+      for (let offset = 0; offset < data.length; offset += 1) {
+        const next = candidate + data[offset];
+        if (OSC_PALETTE_RESPONSE.test(next)) {
+          this.clearTimer();
+          this.pending = "";
+          const remainder = data.slice(offset + 1);
+          if (remainder) this.forward(remainder);
+          return;
+        }
+        if (this.isPaletteResponsePrefix(next)) {
+          candidate = next;
+          continue;
+        }
         this.clearTimer();
         this.pending = "";
+        this.forward(data.slice(offset));
         return;
       }
-      if (this.isPaletteResponsePrefix(candidate)) {
-        this.pending = candidate;
-        return;
-      }
-      this.clearTimer();
-      this.pending = "";
-      this.forward(data);
+      this.pending = candidate;
       return;
     }
     if (this.isPaletteResponsePrefix(data)) {
@@ -67,11 +78,43 @@ export class PiTerminalResponseInputFilter {
   }
 
   private isPaletteResponsePrefix(data: string): boolean {
-    if (data.length >= 2 && OSC_PALETTE_PREFIX.startsWith(data)) return true;
+    if (data.length < OSC_PALETTE_PREFIX.length) {
+      return data.length >= 2 && OSC_PALETTE_PREFIX.startsWith(data);
+    }
     if (!data.startsWith(OSC_PALETTE_PREFIX)) return false;
-    let body = data.slice(OSC_PALETTE_PREFIX.length);
-    if (body.endsWith(ESC)) body = body.slice(0, -1);
-    return /^[0-9a-fgr;:/#]*$/i.test(body);
+
+    let offset = OSC_PALETTE_PREFIX.length;
+    const indexStart = offset;
+    while (isDecimalDigit(data[offset])) offset += 1;
+    if (offset === data.length) return true;
+    if (offset === indexStart || data[offset] !== ";") return false;
+    offset += 1;
+
+    for (const expected of "rgb:") {
+      if (offset === data.length) return true;
+      if (data[offset]?.toLowerCase() !== expected) return false;
+      offset += 1;
+    }
+
+    for (let component = 0; component < 3; component += 1) {
+      const componentStart = offset;
+      while (offset - componentStart < 4 && isHexDigit(data[offset])) {
+        offset += 1;
+      }
+      if (offset === data.length) return true;
+      if (offset === componentStart) return false;
+      if (component < 2) {
+        if (data[offset] !== "/") return false;
+        offset += 1;
+        continue;
+      }
+      if (data[offset] === "\x07") return offset + 1 === data.length;
+      if (data[offset] !== ESC) return false;
+      offset += 1;
+      if (offset === data.length) return true;
+      return data[offset] === "\\" && offset + 1 === data.length;
+    }
+    return false;
   }
 
   private scheduleFlush(): void {
@@ -94,21 +137,19 @@ export class PiTerminalResponseInputFilter {
 export function installPiTerminalResponseInputGuard(ctx: ExtensionContext): () => void {
   if (ctx.mode !== "tui") return () => {};
   let handlingInput = false;
-  let forwardCurrent = false;
-  let currentInput = "";
+  let forwardedInput: string | undefined;
   const filter = new PiTerminalResponseInputFilter((data) => {
-    if (handlingInput && data === currentInput) forwardCurrent = true;
+    if (handlingInput) forwardedInput = data;
   });
   const unsubscribe = ctx.ui.onTerminalInput((data) => {
-    currentInput = data;
-    forwardCurrent = false;
+    forwardedInput = undefined;
     handlingInput = true;
     try {
       filter.handleInput(data);
     } finally {
       handlingInput = false;
     }
-    return forwardCurrent ? undefined : { consume: true };
+    return forwardedInput === undefined ? { consume: true } : { data: forwardedInput };
   });
   return () => {
     filter.dispose();
