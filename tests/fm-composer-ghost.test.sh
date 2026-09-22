@@ -382,7 +382,7 @@ test_pi_identity_prompt_shape_matrix() (
   fb=$(make_fake_tmux "$dir")
   capture="$dir/styled.txt"
   fm_pane_busy_state() { printf 'idle'; }
-  for kind in tool-approval title-approval ask-user tall-selector model-picker transcript-idle idle; do
+  for kind in tool-approval title-approval project-trust ask-user tall-selector model-picker transcript-idle idle; do
     case "$kind" in
       tool-approval)
         printf '────────────────────────\nTool approval\nRun this command?\n→ Allow once\n  Deny\n↑↓ navigate  enter select  esc cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
@@ -395,6 +395,12 @@ test_pi_identity_prompt_shape_matrix() (
         expected=$'pi\tblocked'
         state_expected=pending
         cy=7
+        ;;
+      project-trust)
+        printf '────────────────────────\n\nProject trust\n/tmp/firstmate-project\n\nSaved decision: none\nCurrent session: untrusted\n\n→ Trust\n  Trust parent folder (/tmp)\n  Do not trust\n\n↑↓ navigate  enter save  esc cancel\n\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
+        expected=$'pi\tblocked'
+        state_expected=pending
+        cy=16
         ;;
       ask-user)
         printf '────────────────────────\nWhich approach should we use?\n❯ 1. Keep current behavior\n  2. Change it\nEnter to select · ↑/↓ to\nnavigate · n to add notes ·\nEsc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"

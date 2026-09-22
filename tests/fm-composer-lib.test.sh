@@ -452,7 +452,9 @@ test_matrix_pi_separated_needs_identity() {
   # cell. The blank row alone is exactly what the strict rule refuses; only
   # structure PLUS a live idle/done Pi identity proves either idle shape.
   local screen typed pi_idle pi_working pi_blocked none pi085 home_whitespace_capture osc_bel osc_st malformed literal protected
+  local trust_dialog
   local caps_plain_id=$'styled=0\ncursor=0\nidentity=1\nrows=20'
+  local caps_stream=$'styled=1\ncursor=1\nidentity=0\nrows=0'
   screen=$'transcript\n────────────────────────\n\n────────────────────────\n footer'
   pi_idle=$(printf 'pi\tidle'); pi_working=$(printf 'pi\tworking'); none=$(printf 'zsh\t')
   pi_blocked=$(printf 'pi\tblocked')
@@ -495,6 +497,9 @@ test_matrix_pi_separated_needs_identity() {
   assert_screen "accepted Pi Home-position whitespace ambiguity stays reachable" empty "$CAPS_TMUX" "$home_whitespace_capture" 2 "$pi_idle"
   assert_screen "pi 0.85.1 idle reverse-video cursor on herdr" empty "$CAPS_STYLED" "$pi085" '' "$pi_idle"
   assert_screen "pi 0.85.1 idle reverse-video cursor on zellij" empty "$CAPS_STYLED_NOID" "$pi085"
+  trust_dialog=$'────────────────────────\n\nProject trust\n/tmp/firstmate-project\n\nSaved decision: none\nCurrent session: untrusted\n\n→ Trust\n  Trust parent folder (/tmp)\n  Do not trust\n\n↑↓ navigate  enter save  esc cancel\n\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter'
+  assert_screen "known limitation: blocked Pi Project trust remains empty on stream" empty "$caps_stream" "$trust_dialog" 16
+  assert_screen "known limitation: blocked Pi Project trust remains empty on zellij" empty "$CAPS_STYLED_NOID" "$trust_dialog"
   typed=$'transcript\n────────────────────────\n\033[39m ❯  \033[7m \033[0m\n────────────────────────\nfooter'
   assert_screen "pi 0.85.1 one-space draft before cursor on tmux" pending "$CAPS_TMUX" "$typed" 2 "$pi_idle"
   assert_screen "pi 0.85.1 one-space draft before cursor on zellij" pending "$CAPS_STYLED_NOID" "$typed"

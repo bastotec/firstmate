@@ -103,7 +103,7 @@ fm_tmux_composer_caps() {
 # Prints "pi<TAB>idle", "pi<TAB>working", or "pi<TAB>blocked"; exits 1 when the pane is not a
 # live pi.
 fm_tmux_pi_prompt_is_blocked() {  # <target>
-  local target=$1 pane dialog_close dialog_open=-1 selected=-1 row line footer=''
+  local target=$1 pane dialog_close dialog_open=-1 dialog_kind='' selected=-1 row line footer=''
   pane=$(tmux capture-pane -p -t "$target" -S 0 -E - 2>/dev/null) || return 1
   _fm_composer_scan_screen "$pane" ''
   [ "$FM_COMPOSER_SCAN_PI_PAIR_FOUND" = 1 ] || return 1
@@ -121,8 +121,19 @@ fm_tmux_pi_prompt_is_blocked() {  # <target>
       break
     fi
     case "$line" in
-      'Tool approval'|'Project trust'|'Select model')
+      'Tool approval')
         dialog_open=$row
+        dialog_kind=tool-approval
+        break
+        ;;
+      'Project trust')
+        dialog_open=$row
+        dialog_kind=project-trust
+        break
+        ;;
+      'Select model')
+        dialog_open=$row
+        dialog_kind=model-picker
         break
         ;;
     esac
@@ -146,6 +157,11 @@ fm_tmux_pi_prompt_is_blocked() {  # <target>
     footer="${footer}${footer:+ }$line"
     row=$((row + 1))
   done
+  if [ "$dialog_kind" = project-trust ]; then
+    case "$footer" in
+      *'↑↓ navigate'*'save'*'cancel'*) return 0 ;;
+    esac
+  fi
   case "$footer" in
     *'↑↓ navigate'*'select'*'cancel'*|\
     *'Enter to select'*'↑/↓ to navigate'*'Esc to cancel'*|\
