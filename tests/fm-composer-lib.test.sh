@@ -897,10 +897,10 @@ const makeFilter = (timeout = 30) => {
 }
 {
   const { filter, forwarded } = makeFilter(10);
-  const incomplete = `${ESC}]4;38;rgb:0000/afaf`;
+  const incomplete = `${ESC}]4;38;rgb:`;
   filter.handleInput(incomplete);
   filter.handleInput("a");
-  filter.handleInput("deadbeef");
+  filter.handleInput("bee");
   assert.deepEqual(forwarded, []);
   await sleep(30);
   filter.handleInput("z");
@@ -995,9 +995,27 @@ const makeFilter = (timeout = 30) => {
   editor.events = [];
   editor.text = "";
   renders = 0;
+  const commandStdin = new StdinBuffer({ timeout: 10, escapeTimeout: 2 });
+  commandStdin.on("data", dispatch);
+  commandStdin.process(`${ESC}]4;38;`);
+  await sleep(30);
+  for (const character of "/quit") commandStdin.process(character);
+  await sleep(10);
+  assert.equal(editor.events.join(""), "/quit");
+  assert.equal(editor.text, "/quit");
+  assert.equal(renders, 5);
+  assert.equal(pasteCalls, 0);
+  commandStdin.destroy();
+  await sleep(650);
+
+  editor.events = [];
+  editor.text = "";
+  renders = 0;
   dispatch(`${ESC}]4;38;`);
+  dispatch("r");
+  dispatch("gb:");
   dispatch("a");
-  dispatch("deadbeef");
+  dispatch("bee");
   assert.deepEqual(editor.events, []);
   assert.equal(editor.text, "");
   assert.equal(renders, 0);
