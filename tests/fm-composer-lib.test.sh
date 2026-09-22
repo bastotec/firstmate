@@ -891,7 +891,9 @@ const makeFilter = (timeout = 30) => {
 }
 {
   let factory;
-  let deferredRenders = 0;
+  let terminalInput;
+  let subscribed = false;
+  let activeEditor;
   const handlers = new Map();
   const editor = {
     events: [],
@@ -901,37 +903,58 @@ const makeFilter = (timeout = 30) => {
       if (!data.startsWith(ESC)) this.text += data;
     },
   };
-  const priorFactory = () => editor;
+  const priorFactory = () => ({ handleInput() {} });
+  const laterFactory = () => editor;
   factory = priorFactory;
   const ctx = {
     mode: "tui",
     ui: {
+      onTerminalInput(handler) {
+        terminalInput = handler;
+        subscribed = true;
+        return () => { subscribed = false; };
+      },
+      pasteToEditor(data) { activeEditor.handleInput(data); },
       getEditorComponent: () => factory,
       setEditorComponent: (next) => { factory = next; },
     },
   };
+  const dispatch = (data) => {
+    if (!subscribed) {
+      activeEditor.handleInput(data);
+      return;
+    }
+    const result = terminalInput(data);
+    if (!result?.consume) activeEditor.handleInput(result?.data ?? data);
+  };
   registerGuard({ on(event, handler) { handlers.set(event, handler); } });
   handlers.get("session_start")({}, ctx);
-  assert.notEqual(factory, priorFactory);
-  const guarded = factory({ requestRender: () => deferredRenders += 1 }, {}, {});
+  ctx.ui.setEditorComponent(laterFactory);
+  activeEditor = factory({}, {}, {});
 
-  guarded.handleInput(`${ESC}]4;38`);
-  guarded.handleInput("x");
+  dispatch(`${ESC}]`);
+  await sleep(60);
+  dispatch("4");
+  await sleep(60);
+  dispatch(`;38;rgb:0000/afaf/d7d7${BEL}`);
+  assert.deepEqual(editor.events, []);
+
+  dispatch(`${ESC}]4;38`);
+  dispatch("x");
   assert.deepEqual(editor.events, [`${ESC}]4;38`, "x"]);
   assert.equal(editor.text, "x");
-  assert.equal(deferredRenders, 1);
 
   editor.events = [];
   editor.text = "";
-  guarded.handleInput(`${ESC}]4;38;`);
-  guarded.handleInput("a");
+  dispatch(`${ESC}]4;38;`);
+  dispatch("a");
   await sleep(650);
   assert.deepEqual(editor.events, [`${ESC}]4;38;`, "a"]);
   assert.equal(editor.text, "a");
-  assert.equal(deferredRenders, 2);
 
   handlers.get("session_shutdown")();
-  assert.equal(factory, priorFactory);
+  assert.equal(subscribed, false);
+  assert.equal(factory, laterFactory);
 }
 JS
   pass "Pi input filter consumes only complete OSC palette replies and replays literal or malformed fragments exactly"

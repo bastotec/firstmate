@@ -3,8 +3,7 @@
 // It consumes only a complete OSC 4 response with a structural prefix, valid
 // palette grammar, and BEL or ST terminator; every malformed or timed-out
 // candidate is replayed byte-for-byte to the editor.
-import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { EditorComponent, TUI } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const ESC = "\x1b";
 const BEL = "\x07";
@@ -108,36 +107,36 @@ export class PiTerminalResponseInputFilter {
   }
 }
 
-type GuardedEditor = EditorComponent & { disposeTerminalResponseFilter: () => void };
-
-function guardEditor(editor: EditorComponent, tui: TUI): GuardedEditor {
-  const filter = new PiTerminalResponseInputFilter(
-    (data) => editor.handleInput(data),
-    () => tui.requestRender(),
-  );
-  return new Proxy(editor as GuardedEditor, {
-    get(target, property, receiver) {
-      if (property === "handleInput") return (data: string) => filter.handleInput(data);
-      if (property === "disposeTerminalResponseFilter") return () => filter.dispose();
-      return Reflect.get(target, property, receiver);
-    },
-  });
-}
-
 export function installPiTerminalResponseInputGuard(ctx: ExtensionContext): () => void {
   if (ctx.mode !== "tui") return () => {};
-  const previous = ctx.ui.getEditorComponent();
-  let current: GuardedEditor | undefined;
-  ctx.ui.setEditorComponent((tui, theme, keybindings) => {
-    current?.disposeTerminalResponseFilter();
-    const editor = previous?.(tui, theme, keybindings) ?? new CustomEditor(tui, theme, keybindings);
-    current = guardEditor(editor, tui);
-    return current;
+  let handlingInput = false;
+  let forwarded: string[] = [];
+  const replay = (data: string): void => ctx.ui.pasteToEditor(data);
+  const filter = new PiTerminalResponseInputFilter(
+    (data) => {
+      if (handlingInput) forwarded.push(data);
+      else replay(data);
+    },
+    () => {},
+  );
+  const unsubscribe = ctx.ui.onTerminalInput((data) => {
+    forwarded = [];
+    handlingInput = true;
+    try {
+      filter.handleInput(data);
+    } finally {
+      handlingInput = false;
+    }
+    if (forwarded.length === 0) return { consume: true };
+    const current = forwarded.pop();
+    for (const chunk of forwarded) replay(chunk);
+    if (current === data) return undefined;
+    if (current !== undefined) replay(current);
+    return { consume: true };
   });
   return () => {
-    current?.disposeTerminalResponseFilter();
-    current = undefined;
-    ctx.ui.setEditorComponent(previous);
+    filter.dispose();
+    unsubscribe();
   };
 }
 
