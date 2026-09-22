@@ -59,6 +59,10 @@ if [ -z "$ID" ] || [ -z "$STATE" ] || [ -z "$DECK" ] || [ -z "$PROMPT" ]; then
   echo "fm-deck-worker: --id, --state, --deck, and a first prompt are required" >&2
   exit 2
 fi
+if [ -n "$TURNEND" ] && [ "$TURNEND" != "$STATE/$ID.turn-ended" ]; then
+  echo "fm-deck-worker: --turnend must name the task's signal in its state directory" >&2
+  exit 2
+fi
 command -v jq >/dev/null 2>&1 || { echo "fm-deck-worker: jq is required to render Deck's event stream" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "fm-deck-worker: python3 is required for safe status I/O" >&2; exit 2; }
 [ -f "$STATE_IO" ] && [ ! -L "$STATE_IO" ] || { echo "fm-deck-worker: safe status I/O helper is unavailable" >&2; exit 2; }
@@ -104,6 +108,14 @@ status_append() {
 
 status_has_worker_evidence() {
   python3 "$STATE_IO" root-worker-status-after "$STATE" "$ID.status" "$1"
+}
+
+publish_turnend() {
+  [ -z "$TURNEND" ] && return 0
+  python3 "$STATE_IO" root-touch "$STATE" "$ID.turn-ended" || {
+    printf 'fm-deck-worker: could not safely publish turn-end signal %s\n' "$TURNEND" >&2
+    return 1
+  }
 }
 
 q() { printf '%q' "$1"; }
@@ -170,12 +182,12 @@ run_turn() {  # <prompt>
     if ! printf 'failed: deck turn ended without a status line (%s)\n' "$event" | status_append; then
       printf 'fm-deck-worker: could not safely append required turn evidence to %s\n' "$STATUS_FILE" >&2
       busy_event idle turn-failed
-      [ -z "$TURNEND" ] || touch "$TURNEND" 2>/dev/null || true
+      publish_turnend || true
       return 1
     fi
   fi
   busy_event idle "$event"
-  [ -z "$TURNEND" ] || touch "$TURNEND" 2>/dev/null || true
+  publish_turnend || return 1
 }
 
 run_turn "$PROMPT" || exit 1

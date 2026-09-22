@@ -156,6 +156,18 @@ def has_worker_status_after(dir_fd: int, name: str, offset: int) -> bool:
         os.close(fd)
 
 
+def touch_record(dir_fd: int, name: str) -> None:
+    flags = os.O_RDONLY | os.O_CREAT | os.O_NONBLOCK | require_nofollow()
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(name, flags, 0o600, dir_fd=dir_fd)
+    try:
+        require_regular_single_link(fd)
+        os.utime(fd, None)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def remove_record(dir_fd: int, name: str) -> None:
     try:
         os.unlink(name, dir_fd=dir_fd)
@@ -214,6 +226,7 @@ def main() -> int:
         "remove",
         "root-append",
         "root-size",
+        "root-touch",
         "root-worker-status-after",
     )
     if len(sys.argv) not in (4, 5) or sys.argv[1] not in operations:
@@ -239,6 +252,8 @@ def main() -> int:
             except ValueError:
                 return 2
             return 0 if has_worker_status_after(dir_fd, name, offset) else 1
+        elif operation == "root-touch":
+            touch_record(dir_fd, name)
         elif operation == "remove":
             remove_record(dir_fd, name)
         else:

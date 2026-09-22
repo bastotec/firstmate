@@ -133,6 +133,28 @@ test_turns_drive_the_busy_record_and_turn_end() {
   pass "fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end"
 }
 
+test_turnend_signal_refuses_unsafe_paths() {
+  local linked="$TMP_ROOT/turnend-symlink" irregular="$TMP_ROOT/turnend-directory" rc
+  make_fake_deck "$linked"
+  mkdir -p "$linked/state"
+  ln -s "$linked/external-signal" "$linked/state/t1.turn-ended"
+  rc=0
+  run_worker "$linked" $'/quit\n' write-status || rc=$?
+  [ "$rc" -ne 0 ] || fail "a symlinked turn-end signal was accepted"
+  [ ! -e "$linked/external-signal" ] || fail "the turn-end publisher followed a symlink target"
+  [ -L "$linked/state/t1.turn-ended" ] || fail "the unsafe turn-end symlink was replaced"
+  assert_grep 'could not safely publish turn-end signal' "$linked/pane.out" \
+    "the turn-end symlink refusal was not reported"
+
+  make_fake_deck "$irregular"
+  mkdir -p "$irregular/state/t1.turn-ended"
+  rc=0
+  run_worker "$irregular" $'/quit\n' write-status || rc=$?
+  [ "$rc" -ne 0 ] || fail "a non-regular turn-end signal was accepted"
+  [ -d "$irregular/state/t1.turn-ended" ] || fail "the non-regular turn-end target was replaced"
+  pass "fm-deck-worker: turn-end publication refuses unsafe targets"
+}
+
 test_evidence_gate_refuses_a_turn_without_a_status_line() {
   local dir="$TMP_ROOT/gate"
   make_fake_deck "$dir"
@@ -174,10 +196,14 @@ test_status_checks_and_fallbacks_refuse_unsafe_paths() {
   make_fake_deck "$replaced"
   mkdir -p "$replaced/state"
   printf 'protected\n' > "$replaced/external"
+  ln -s "$replaced/external-signal" "$replaced/state/t1.turn-ended"
   rc=0
   FM_TEST_EXTERNAL="$replaced/external" run_worker "$replaced" $'/quit\n' replace-status || rc=$?
   [ "$rc" -ne 0 ] || fail "a status path replaced by a symlink during the turn was accepted"
   [ "$(cat "$replaced/external")" = protected ] || fail "the evidence fallback followed a replacement symlink"
+  [ ! -e "$replaced/external-signal" ] || fail "the failed-evidence path followed a turn-end symlink"
+  assert_grep 'could not safely publish turn-end signal' "$replaced/pane.out" \
+    "the failed-evidence path did not report its turn-end refusal"
 
   make_fake_deck "$irregular"
   mkdir -p "$irregular/state/t1.status"
@@ -409,6 +435,7 @@ test_spawn_refuses_a_deck_secondmate() {
 
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_drive_the_busy_record_and_turn_end
+test_turnend_signal_refuses_unsafe_paths
 test_evidence_gate_refuses_a_turn_without_a_status_line
 test_bookkeeping_lines_do_not_satisfy_turn_evidence
 test_status_checks_and_fallbacks_refuse_unsafe_paths
