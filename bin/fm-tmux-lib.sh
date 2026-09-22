@@ -97,10 +97,31 @@ fm_tmux_composer_caps() {
 #     agent died to a shell has no pi foreground process and gets NO identity,
 #     which is exactly what keeps the strict blank-row rule honest: a blank
 #     row between two stale rules stays unknown.
-#   - status: pi's verified busy footer via fm_pane_is_busy, mapped onto the
+#   - status: Pi's installed interactive-selector footers above the active
+#     composer report blocked; otherwise the verified busy footer maps onto the
 #     idle/working vocabulary herdr's probe reports natively.
-# Prints "pi<TAB>idle" or "pi<TAB>working"; exits 1 when the pane is not a
+# Prints "pi<TAB>idle", "pi<TAB>working", or "pi<TAB>blocked"; exits 1 when the pane is not a
 # live pi.
+fm_tmux_pi_prompt_is_blocked() {  # <target>
+  local target=$1 pane start row band=''
+  pane=$(tmux capture-pane -p -t "$target" -S 0 -E - 2>/dev/null) || return 1
+  _fm_composer_scan_screen "$pane" ''
+  [ "$FM_COMPOSER_SCAN_PI_PAIR_FOUND" = 1 ] || return 1
+  start=$((FM_COMPOSER_SCAN_PI_OPEN - 8))
+  [ "$start" -ge 0 ] || start=0
+  row=$start
+  while [ "$row" -lt "$FM_COMPOSER_SCAN_PI_OPEN" ]; do
+    band="${band}${band:+$'\n'}$(_fm_composer_screen_row "$row" "$pane")"
+    row=$((row + 1))
+  done
+  case "$band" in
+    *'↑↓ navigate'*'select'*'cancel'*|\
+    *'Enter to select'*'↑/↓ to navigate'*'Esc to cancel'*|\
+    *'to select'*'to set as default'*'to cancel'*) return 0 ;;
+  esac
+  return 1
+}
+
 fm_tmux_composer_identity() {  # <target>
   local target=$1 tty pgid tpgid comm found=0 status
   tty=$(tmux display-message -p -t "$target" '#{pane_tty}' 2>/dev/null) || tty=
@@ -124,6 +145,10 @@ EOF
     esac
   fi
   [ "$found" -eq 1 ] || return 1
+  if fm_tmux_pi_prompt_is_blocked "$target"; then
+    printf 'pi\tblocked'
+    return 0
+  fi
   status=$(fm_pane_busy_state "$target" pi)
   case "$status" in
     busy) printf 'pi\tworking' ;;
