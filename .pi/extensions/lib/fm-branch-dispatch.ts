@@ -33,6 +33,7 @@ export interface UnreadWakeScope {
    * `eligible` is false.
    */
   eligibleSeqs: string[];
+  eligibleTaskBySeq: Record<string, string | null>;
   /**
    * The exact task ids the eligible signal/stale rows name (a signal row by
    * its status-log key, a stale row through the task metadata recording that
@@ -71,6 +72,7 @@ const EMPTY_SCOPE: UnreadWakeScope = {
   eligible: false,
   projects: [],
   eligibleSeqs: [],
+  eligibleTaskBySeq: {},
   eligibleTasks: [],
   corrupted: false,
   needsDecisionKeys: [],
@@ -81,6 +83,7 @@ const UNSAFE_SCOPE: UnreadWakeScope = {
   eligible: false,
   projects: [],
   eligibleSeqs: [],
+  eligibleTaskBySeq: {},
   eligibleTasks: [],
   corrupted: true,
   needsDecisionKeys: [],
@@ -226,6 +229,7 @@ export function scopeForUnreadWake(state: string, heartbeat: boolean): UnreadWak
   }
 
   const eligibleSeqs: string[] = [];
+  const eligibleTaskBySeq: Record<string, string | null> = {};
   const eligibleTasks = new Set<string>();
   const needsDecisionKeys: string[] = [];
   const staleDecisionOwnership = new Map<string, boolean>();
@@ -242,7 +246,10 @@ export function scopeForUnreadWake(state: string, heartbeat: boolean): UnreadWak
     const kind = fields[2];
     const key = fields[3];
     if (kind === "heartbeat") {
-      if (heartbeat) eligibleSeqs.push(seq);
+      if (heartbeat) {
+        eligibleSeqs.push(seq);
+        eligibleTaskBySeq[seq] = null;
+      }
       continue;
     }
     if (kind === "check") {
@@ -316,6 +323,7 @@ export function scopeForUnreadWake(state: string, heartbeat: boolean): UnreadWak
     projects.add(project);
     eligibleTasks.add(task);
     eligibleSeqs.push(seq);
+    eligibleTaskBySeq[seq] = heartbeat ? null : task;
   }
   const eligible = eligibleSeqs.length > 0;
   // Reached only after every row passed classification without a veto. A scan
@@ -330,6 +338,7 @@ export function scopeForUnreadWake(state: string, heartbeat: boolean): UnreadWak
     eligible,
     projects: [...projects],
     eligibleSeqs,
+    eligibleTaskBySeq,
     eligibleTasks: [...eligibleTasks],
     corrupted: false,
     needsDecisionKeys,

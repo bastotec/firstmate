@@ -779,7 +779,7 @@ remote_recovery_paths_validate() {
   fi
 }
 
-retire_wake_gate_task_state() {
+preflight_wake_gate_task_state() {
   local state_dir=$1 task_id=$2 helper="$SCRIPT_DIR/fm-state-io.py"
   local wake_dir="$state_dir/wake-gate" look
   look="$wake_dir/$task_id.look"
@@ -798,6 +798,21 @@ retire_wake_gate_task_state() {
     echo "REFUSED: safe wake-gate state I/O helper is unavailable." >&2
     return 1
   }
+  python3 "$helper" read "$state_dir" "$task_id.look" >/dev/null
+}
+
+retire_wake_gate_task_state() {
+  local state_dir=$1 task_id=$2 helper="$SCRIPT_DIR/fm-state-io.py"
+  local wake_dir="$state_dir/wake-gate" look
+  preflight_wake_gate_task_state "$state_dir" "$task_id" || return 1
+  look="$wake_dir/$task_id.look"
+  if [ ! -e "$wake_dir" ] && [ ! -L "$wake_dir" ]; then
+    return 0
+  fi
+  if [ -d "$wake_dir" ] && [ ! -L "$wake_dir" ] \
+    && [ ! -e "$look" ] && [ ! -L "$look" ]; then
+    return 0
+  fi
   python3 "$helper" remove "$state_dir" "$task_id.look"
 }
 
@@ -843,6 +858,7 @@ remote_secondmate_teardown() {
     || { echo "REFUSED: remote secondmate metadata does not match its registry route" >&2; return 1; }
   handoff_wake_retire_validate || return 1
   remote_recovery_paths_validate initial || return 1
+  preflight_wake_gate_task_state "$STATE" "$ID" || return 1
   if [ "$FORCE" != --force ] && [ "$REMOTE_OUTBOX_PRESENT" -eq 1 ]; then
     echo "REFUSED: remote secondmate $ID still has a pending backlog outbox; deliver it or explicitly discard with --force" >&2
     return 1
@@ -2936,6 +2952,25 @@ $session	$lock_path"
   return 1
 }
 
+preflight_firstmate_home_wake_gate_state() {
+  local home=$1 sub_state child_meta child_id child_kind child_home child_wt
+  sub_state="$home/state"
+  [ -d "$sub_state" ] || return 0
+  for child_meta in "$sub_state"/*.meta; do
+    [ -e "$child_meta" ] || continue
+    child_id=$(basename "$child_meta" .meta)
+    preflight_wake_gate_task_state "$sub_state" "$child_id" || return 1
+    child_kind=$(meta_value "$child_meta" kind)
+    [ -n "$child_kind" ] || child_kind=ship
+    if [ "$child_kind" = secondmate ]; then
+      child_wt=$(meta_value "$child_meta" worktree)
+      child_home=$(meta_value "$child_meta" home)
+      [ -n "$child_home" ] || child_home=$child_wt
+      preflight_firstmate_home_wake_gate_state "$child_home" || return 1
+    fi
+  done
+}
+
 preflight_firstmate_home_herdr_children() {  # <home>
   local home=$1 sub_state child_meta child_id child_backend child_target child_kind child_home child_wt
   sub_state="$home/state"
@@ -3253,6 +3288,7 @@ remove_secondmate_registry_entry() {
   return "$rc"
 }
 
+preflight_wake_gate_task_state "$STATE" "$ID" || exit 1
 require_exclusive_task_worktree_slot || exit 1
 require_owned_task_worktree_slot || exit 1
 
@@ -3272,6 +3308,7 @@ if [ "$KIND" = secondmate ]; then
     preflight_descendant_task_locks "$HOME_PATH" || exit 1
     validate_firstmate_home_children_removal "$HOME_PATH" || exit 1
     preflight_descendant_treehouse_slots || exit 1
+    preflight_firstmate_home_wake_gate_state "$HOME_PATH" || exit 1
     if [ "$BACKEND" = herdr ]; then
       teardown_herdr_preflight_target "$T" "$ID" || exit 1
     fi

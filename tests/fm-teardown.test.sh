@@ -664,6 +664,16 @@ make_path_without_lsof() {  # <case-dir>
   printf '%s\n' "$path_dir"
 }
 
+add_logging_treehouse() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+exit 0
+EOF
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
 test_local_only_fork_remote_allows() {
   local case_dir rc
   case_dir=$(make_case fork-allow)
@@ -714,6 +724,7 @@ test_wake_gate_retirement_refuses_a_symlinked_parent() {
   write_meta "$case_dir" local-only ship
   wt_commit "$case_dir" "fix the thing"
   add_fork_with_pushed_branch "$case_dir"
+  add_logging_treehouse "$case_dir"
   mkdir -p "$case_dir/redirected-wake-gate"
   printf 'protected\n' > "$case_dir/redirected-wake-gate/task-x1.look"
   ln -s "$case_dir/redirected-wake-gate" "$case_dir/state/wake-gate"
@@ -726,7 +737,11 @@ test_wake_gate_retirement_refuses_a_symlinked_parent() {
     || fail "wake-gate-parent-symlink: teardown followed the parent symlink and removed its target"
   assert_grep 'fm-state-io refused' "$case_dir/stderr" \
     "wake-gate-parent-symlink: teardown did not report the no-follow refusal"
-  pass "teardown does not follow a symlinked wake-gate state directory"
+  assert_absent "$case_dir/treehouse.log" \
+    "wake-gate-parent-symlink: teardown returned the worktree before refusing unsafe state"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "wake-gate-parent-symlink: teardown removed task identity after refusing unsafe state"
+  pass "teardown refuses unsafe wake-gate state before destructive cleanup"
 }
 
 test_wake_gate_retirement_requires_python_only_for_existing_state() {
@@ -744,6 +759,7 @@ test_wake_gate_retirement_requires_python_only_for_existing_state() {
   write_meta "$present" local-only ship
   wt_commit "$present" "fix the thing"
   add_fork_with_pushed_branch "$present"
+  add_logging_treehouse "$present"
   mkdir -p "$present/state/wake-gate"
   printf 'look\n' > "$present/state/wake-gate/task-x1.look"
   path=$(make_path_without_lsof "$present")
@@ -754,7 +770,11 @@ test_wake_gate_retirement_requires_python_only_for_existing_state() {
     "wake-gate-no-python-present: teardown removed the look state without Python"
   assert_grep 'python3 is required to retire wake-gate state safely' "$present/stderr" \
     "wake-gate-no-python-present: teardown did not explain the required runtime"
-  pass "teardown requires Python only when wake-gate state needs retirement"
+  assert_absent "$present/treehouse.log" \
+    "wake-gate-no-python-present: teardown returned the worktree before refusing the missing runtime"
+  assert_present "$present/state/task-x1.meta" \
+    "wake-gate-no-python-present: teardown removed task identity after refusing the missing runtime"
+  pass "teardown preflights the optional wake-gate runtime before destructive cleanup"
 }
 
 test_teardown_closes_the_backlog_item_itself() {

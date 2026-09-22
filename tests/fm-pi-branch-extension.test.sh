@@ -2023,16 +2023,22 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
   }
   if (attempt === 9 || attempt === 10) {
     const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
-    const reportCount = attempt === 9 ? 1 : 2;
-    for (let index = 0; index < reportCount; index += 1) {
+    for (let index = 0; index < 2; index += 1) {
+      const wakeSeq = attempt === 9 ? "1" : String(index + 1);
       const recorded = await report.execute(
         `grant-${attempt}-${index}`,
-        { task: "branch-driver", verdict: "routine", summary: `covered row ${index + 1} of grant ${attempt}` },
+        { task: "branch-driver", wakeSeq, verdict: "routine", summary: `covered wake row ${wakeSeq} of grant ${attempt}` },
         undefined,
         undefined,
         {},
       );
-      if (recorded.isError) throw new Error(`grant report failed: ${JSON.stringify(recorded)}`);
+      if (attempt === 9 && index === 1) {
+        if (!recorded.isError || !recorded.content[0].text.includes("already has a durable outcome")) {
+          throw new Error(`a duplicate report for one wake row was accepted: ${JSON.stringify(recorded)}`);
+        }
+      } else if (recorded.isError) {
+        throw new Error(`grant report failed: ${JSON.stringify(recorded)}`);
+      }
     }
   }
   session.messages.push({
@@ -2164,18 +2170,18 @@ function dispatchTwoRowGrant(label) {
   return offer;
 }
 
-const partialGrant = dispatchTwoRowGrant("partial grant");
-if (!partialGrant.accepted) throw new Error("the branch refused the partial-coverage grant");
-const partialFailure = await partialGrant.settlement.then(() => null, (error) => error);
-if (!(partialFailure instanceof Error) || !partialFailure.message.includes("provider failed after construction")) {
-  throw new Error(`a partially reported grant did not return to watcher fallback: ${String(partialFailure)}`);
+const duplicateGrant = dispatchTwoRowGrant("duplicate grant");
+if (!duplicateGrant.accepted) throw new Error("the branch refused the duplicate-report grant");
+const duplicateFailure = await duplicateGrant.settlement.then(() => null, (error) => error);
+if (!(duplicateFailure instanceof Error) || !duplicateFailure.message.includes("provider failed after construction")) {
+  throw new Error(`two reports for one row falsely settled a two-row grant: ${String(duplicateFailure)}`);
 }
 if (existsSync(`${home}/state/.branch-eligible-rows`)) {
-  throw new Error("partial grant fallback left its row grant active");
+  throw new Error("duplicate-report fallback left its row grant active");
 }
 
 const fullGrant = dispatchTwoRowGrant("full grant");
-if (!fullGrant.accepted) throw new Error("one partial-coverage provider error latched the branch prematurely");
+if (!fullGrant.accepted) throw new Error("one duplicate-report provider error latched the branch prematurely");
 const fullFailure = await fullGrant.settlement.then(() => null, (error) => error);
 if (fullFailure !== null) {
   throw new Error(`a fully reported grant returned to watcher fallback: ${String(fullFailure)}`);
@@ -2187,8 +2193,8 @@ process.exit(0);
 EOF
   status=$?
   out=$(cat "$TMP_ROOT/node-output")
-  expect_code 0 "$status" "provider errors must preserve fully covered grants, replay partial grants, and retain health cooldowns: $out"
-  pass "provider errors settle only fully reported grants while health cooldowns remain intact"
+  expect_code 0 "$status" "provider errors must preserve distinctly covered grants, replay duplicate coverage, and retain health cooldowns: $out"
+  pass "provider errors settle only grants with one durable report per wake row"
 }
 
 test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model() {
@@ -4724,9 +4730,9 @@ const { fire, dispatch, settle, outcomeScript, sentToMain, mainEntries, defaultS
 await fire("session_start", {}, defaultSessionCtx);
 let finishWakePrompt;
 globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finishWakePrompt = resolve; });
-const offer = dispatch("signal: branch-driver working");
-if (!offer.accepted) throw new Error("branch did not accept the wake offer");
-await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "branch wake prompt");
+const offer = dispatch("heartbeat", [], true, true);
+if (!offer.accepted) throw new Error("branch did not accept the heartbeat offer");
+await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "heartbeat branch prompt");
 const report = globalThis.__fmSessions[0].options.customTools.find((tool) => tool.name === "fm_branch_report");
 
 // A repeating timer is the event loop's own liveness: it cannot tick while
@@ -5107,9 +5113,9 @@ const captainCopies = (seq) => mainEntries.filter(
 await fire("session_start", {}, defaultSessionCtx);
 let finishWakePrompt;
 globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finishWakePrompt = resolve; });
-const offer = dispatch("signal: branch-driver working");
-if (!offer.accepted) throw new Error("branch did not accept the wake offer");
-await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "branch wake prompt");
+const offer = dispatch("heartbeat", [], true, true);
+if (!offer.accepted) throw new Error("branch did not accept the heartbeat offer");
+await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "heartbeat branch prompt");
 const report = globalThis.__fmSessions[0].options.customTools.find((tool) => tool.name === "fm_branch_report");
 
 // A routine note is delivered, then its cursor write fails.
