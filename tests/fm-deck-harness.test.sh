@@ -444,6 +444,22 @@ test_control_busy_and_delivery_tables_name_deck() {
   pass "control and busy-source tables carry Deck mechanics without rendered delivery evidence"
 }
 
+test_deck_supervision_model_is_scoped_to_secondmate_launches() {
+  local bin="$TMP_ROOT/named-model" out
+  mkdir -p "$bin"
+  ln -sf /bin/bash "$bin/deck"
+  # shellcheck disable=SC2016 # the quoted body expands inside the named shell
+  out=$(env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u FM_OMP_HARNESS \
+    -u FM_SUPERVISION_MODEL "$bin/deck" -c '. "$1"; fm_supervision_model; :' \
+    _ "$ROOT/bin/fm-wake-lib.sh")
+  [ "$out" = persistent ] || fail "a Deck-named main process received the secondmate supervision model: $out"
+  out=$(FM_SUPERVISION_MODEL=autoarm bash -c '. "$1"; fm_supervision_model' \
+    _ "$ROOT/bin/fm-wake-lib.sh")
+  [ "$out" = autoarm ] || fail "the scoped Deck secondmate supervision override was ignored: $out"
+  pass "Deck supervision autoarm remains scoped to secondmate launches"
+}
+
 # --- spawn ------------------------------------------------------------------
 make_deck_spawn_case() {  # <name> <id> -> "<case>|<home>|<proj>|<wt>|<fakebin>"
   local name=$1 id=$2 case_dir home proj wt fakebin
@@ -677,6 +693,7 @@ test_completed_turn_removes_busy_ack_before_the_next_steer
 test_liveness_reads_the_driver_as_an_agent
 test_tmux_liveness_uses_the_deck_driver_argv0
 test_control_busy_and_delivery_tables_name_deck
+test_deck_supervision_model_is_scoped_to_secondmate_launches
 test_spawn_launches_the_driver_with_binary_gen_and_model
 test_spawn_refuses_deck_effort
 echo "fm-deck-harness: all cases passed"
