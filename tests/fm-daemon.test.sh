@@ -1277,7 +1277,9 @@ test_housekeeping_capture_failure_escalates_without_losing_retry() {
   gate_log="$dir/gate-called"
 
   (
+    # shellcheck disable=SC2329 # Runtime overrides invoked indirectly by housekeeping.
     fm_backend_capture() { return 1; }
+    # shellcheck disable=SC2329 # Runtime override invoked indirectly by housekeeping.
     wedge_gate_verdict() { : > "$gate_log"; printf 'absorb:jev-working\n'; }
     escalate_add() { return 1; }
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
@@ -1287,7 +1289,9 @@ test_housekeeping_capture_failure_escalates_without_losing_retry() {
   [ ! -e "$gate_log" ] || fail "an unreadable away-mode wedge consulted the absorption gate"
 
   (
+    # shellcheck disable=SC2329 # Runtime overrides invoked indirectly by housekeeping.
     fm_backend_capture() { return 1; }
+    # shellcheck disable=SC2329 # Runtime override invoked indirectly by housekeeping.
     wedge_gate_verdict() { : > "$gate_log"; printf 'absorb:jev-working\n'; }
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
   )

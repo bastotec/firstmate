@@ -1875,7 +1875,7 @@ fi
 # docs/supervision-protocols/ carries no agy wake protocol (agy 1.2.0).
 # deck has none either: its worker driver supervises one task, not a home.
 if [ "$KIND" = secondmate ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = agy ] || [ "$HARNESS" = deck ]; }; then
-  echo "error: $HARNESS is a crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
+  echo "error: $HARNESS is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
   exit 1
 fi
 if [ "$HARNESS" = deck ] && [ -n "$EFFORT" ]; then

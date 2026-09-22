@@ -406,11 +406,17 @@ test_liveness_reads_the_driver_as_an_agent() {
 test_tmux_liveness_uses_the_deck_driver_argv0() {
   local state
   state=$(
+    # shellcheck disable=SC2329 # Runtime override invoked indirectly by the tmux liveness classifier.
     fm_backend_tmux_window_presence() { printf 'present'; }
+    # shellcheck disable=SC2329 # Runtime override invoked indirectly by the tmux liveness classifier.
     fm_backend_tmux_foreground_comms() { printf 'bash\n'; }
+    # shellcheck disable=SC2329 # Runtime override invoked indirectly by the tmux liveness classifier.
     fm_backend_tmux_foreground_argv0s() { printf 'fm-deck-worker\n'; }
+    # shellcheck disable=SC2329 # Runtime override invoked indirectly by the tmux liveness classifier.
     fm_backend_tmux_foreground_pids() { :; }
+    # shellcheck disable=SC2329 # Runtime override invoked indirectly by the tmux liveness classifier.
     fm_backend_tmux_foreground_args() { :; }
+    # shellcheck disable=SC2329 # Runtime override invoked indirectly by the tmux liveness classifier.
     fm_backend_tmux_current_command() { printf 'bash\n'; }
     fm_backend_tmux_agent_state session:deck
   )
