@@ -635,6 +635,11 @@ The unchanged classifier read that prompt glyph as pending Pi input, both before
 The corrected classifier requires the identity-proven Pi separator pair, an idle or done Pi state, styled capture bytes, exact prompt-only content, and the complete reverse-video blank cell before treating this row as idle furniture.
 cmux and Orca erase that styling, so their `styled=0 identity=0` view of the same plain idle row deliberately remains `unknown`; steering still rings on that verdict.
 Guarded `exit`, `relaunch`, and `recover-missing` are outside those backends' contract because [agent control](../agent-control.md#fail-closed-boundaries) requires a recovery-grade backend and refuses cmux and Orca rather than operating blind.
+Tmux's structurally bounded selector probe recognizes Pi 0.85.1's `Project trust` dialog and its `↑↓ navigate enter save esc cancel` footer only when the Project-trust title, a selected option, and the closing rule all bound the dialog immediately above the composer.
+That structural blocked-dialog probe is tmux-only in this change.
+The same blocked selector plus idle cursor furniture remains `empty` on stream and zellij, so stream guarded exit can submit `/quit` and steering can submit its doorbell plus Enter, activating the highlighted option.
+It remains `unknown` on cmux and Orca, but steering deliberately rings on `unknown` and can activate the highlighted option there as well.
+This is an accepted known limitation because no further Pi lifecycle handling is being added for those backends during the move to Deck.
 An accepted residual limitation remains for a whitespace-only draft after the user moves its cursor to the first space with Home or left navigation.
 Pi renders that first typed space as the same reverse-video blank cell and leaves the remaining spaces after `ESC[0m`; tmux omits those trailing spaces, so the captured row is byte-identical to idle furniture.
 Because the post-render capture cannot distinguish those states, the classifier deliberately keeps that exact capture `empty` to preserve ordinary idle-Pi reachability, and `tests/fm-composer-lib.test.sh` pins the accepted ambiguity.
