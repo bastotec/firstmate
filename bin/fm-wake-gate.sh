@@ -199,7 +199,13 @@ $answers
 EOF_ANSWERS
   local p
   for p in "${aw:-}" "${wt:-}" "${fl:-}" "${fn:-}"; do
-    case "$p" in ''|*[!0-9.]*) log_usage 1 0 0 0 error; log_shadow "$task" "$mode" call jev-error - - - -; printf 'escalate\n'; return 0 ;; esac
+    if [[ ! $p =~ ^[0-9]+([.][0-9]*)?$ ]] \
+      || ! awk -v p="$p" 'BEGIN { exit !(p >= 0 && p <= 1) }'; then
+      log_usage 1 0 0 0 error
+      log_shadow "$task" "$mode" call jev-error - - - -
+      printf 'escalate\n'
+      return 0
+    fi
   done
   usage_fields=$(printf '%s\n' "$hout" | awk -F'\t' '$1=="usage"{print $2"\t"$3"\t"$4"\t"$5; exit}')
   IFS=$'\t' read -r u_calls u_in u_out u_ms <<EOF_USAGE

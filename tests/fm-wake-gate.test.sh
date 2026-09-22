@@ -307,6 +307,24 @@ printf '%s\t\n' "$(( $(date +%s) - 4000 ))" > "$s/wake-gate/t1.look"
 [ "$(FM_WAKE_GATE_EXPLAIN_THRESHOLD=0 verdict "$s" enforce '0.30 0.20 0.25 0.20')" = escalate ] || fail "SAFETY: environment must not weaken the fixed unexplained threshold"
 pass "calibrated thresholds and silence bound cannot be overridden"
 
+s=$(new_state sv-invalid-probabilities)
+invalid_answers=(
+  '2 0 0 0'
+  '-0.1 0 0 0'
+  '0 1.5 0 0'
+  '0 0 0..5 0'
+  '0.9 0 0'
+)
+for answers in "${invalid_answers[@]}"; do
+  mkdir -p "$s/wake-gate"
+  printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+  [ "$(raw_verdict "$s" enforce "$answers")" = escalate ] \
+    || fail "SAFETY: invalid Jev probability '$answers' did not escalate"
+  [ "$(last_decision "$s")" = "$(printf 'call\tjev-error')" ] \
+    || fail "invalid Jev probability '$answers' was not recorded as a helper error"
+done
+pass "malformed and out-of-range probabilities fail open"
+
 s=$(new_state sv-failopen)
 verdict "$s" enforce "$WORKING" >/dev/null
 [ "$(verdict "$s" enforce error)" = escalate ] || fail "SAFETY: a Jev failure must escalate"
