@@ -47,7 +47,13 @@ make_fake_tmux() {  # <dir>
 set -u
 case "${1:-}" in
   display-message)
-    for a in "$@"; do case "$a" in *cursor_y*) printf '%s\n' "${FM_FAKE_CY:-0}"; exit 0 ;; esac; done
+    for a in "$@"; do
+      case "$a" in
+        *cursor_y*) printf '%s\n' "${FM_FAKE_CY:-0}"; exit 0 ;;
+        *pane_tty*) printf '%s\n' "${FM_FAKE_TTY:-fakepane}"; exit 0 ;;
+        *pane_current_command*) printf '%s\n' "${FM_FAKE_COMMAND:-fakepane}"; exit 0 ;;
+      esac
+    done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
     has_e=0
@@ -368,6 +374,39 @@ test_pi_identity_requires_readable_busy_state() (
     fail "a live Pi process with unreadable busy state must not produce identity, got '$out'"
   fi
   pass "fm_tmux_composer_identity: unknown busy state cannot become idle identity"
+)
+
+test_pi_identity_prompt_shape_matrix() (
+  local dir fb capture out kind expected
+  dir="$TMP_ROOT/pi-prompt-shapes"; mkdir -p "$dir"
+  fb=$(make_fake_tmux "$dir")
+  capture="$dir/styled.txt"
+  fm_pane_busy_state() { printf 'idle'; }
+  for kind in tool-approval ask-user model-picker idle; do
+    case "$kind" in
+      tool-approval)
+        printf '────────────────────────\nTool approval\nRun this command?\n→ Allow once\n  Deny\n↑↓ navigate  enter select  esc cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
+        expected=$'pi\tblocked'
+        ;;
+      ask-user)
+        printf '────────────────────────\nWhich approach should we use?\n❯ 1. Keep current behavior\n  2. Change it\nEnter to select · ↑/↓ to navigate · n to add notes · Esc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
+        expected=$'pi\tblocked'
+        ;;
+      model-picker)
+        printf '────────────────────────\nOnly showing models from configured providers. Use /login to add providers.\nsearch models\n  openai/gpt-5\n  enter to select · ctrl+s to set as default · esc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
+        expected=$'pi\tblocked'
+        ;;
+      idle)
+        printf 'completed turn\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
+        expected=$'pi\tidle'
+        ;;
+    esac
+    out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_COMMAND=pi \
+      fm_tmux_composer_identity fakepane)
+    [ "$out" = "$expected" ] \
+      || fail "Pi $kind capture identity should be '$expected', got '$out'"
+  done
+  pass "fm_tmux_composer_identity: installed Pi prompt shapes report blocked while idle furniture remains idle"
 )
 
 test_bordered_busy_signatures_are_pending() {
@@ -697,6 +736,7 @@ test_two_row_composer_reads_text_above_empty_cursor_row
 test_wrapped_composer_reads_all_content_rows
 test_proven_box_bottom_border_cursor_classifies_content
 test_pi_identity_requires_readable_busy_state
+test_pi_identity_prompt_shape_matrix
 test_bordered_busy_signatures_are_pending
 test_non_bordered_busy_footer_is_unknown_strict
 test_clipped_bordered_box_is_unknown
