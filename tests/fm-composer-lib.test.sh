@@ -822,13 +822,11 @@ const BEL = "\x07";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const makeFilter = (timeout = 30) => {
   const forwarded = [];
-  let deferredRenders = 0;
   const filter = new PiTerminalResponseInputFilter(
     (data) => forwarded.push(data),
-    () => deferredRenders += 1,
     timeout,
   );
-  return { filter, forwarded, deferredRenders: () => deferredRenders };
+  return { filter, forwarded };
 };
 {
   const { filter, forwarded } = makeFilter();
@@ -838,13 +836,11 @@ const makeFilter = (timeout = 30) => {
   filter.dispose();
 }
 {
-  const { filter, forwarded, deferredRenders } = makeFilter();
+  const { filter, forwarded } = makeFilter();
   filter.handleInput(ESC);
   assert.deepEqual(forwarded, [ESC]);
-  assert.equal(deferredRenders(), 0);
   filter.handleInput(ESC);
   assert.deepEqual(forwarded, [ESC, ESC]);
-  assert.equal(deferredRenders(), 0);
   filter.dispose();
 }
 {
@@ -872,21 +868,28 @@ const makeFilter = (timeout = 30) => {
   filter.dispose();
 }
 {
-  const { filter, forwarded, deferredRenders } = makeFilter();
+  const { filter, forwarded } = makeFilter();
   const malformed = `${ESC}]4;38;not-a-color${BEL}`;
   filter.handleInput(malformed);
-  assert.deepEqual(forwarded, [malformed]);
-  assert.equal(deferredRenders(), 0);
+  assert.deepEqual(forwarded, []);
   filter.dispose();
 }
 {
-  const { filter, forwarded, deferredRenders } = makeFilter(10);
+  const { filter, forwarded } = makeFilter(10);
   const incomplete = `${ESC}]4;38;rgb:0000/afaf`;
   filter.handleInput(incomplete);
   filter.handleInput("a");
   await sleep(30);
-  assert.deepEqual(forwarded, [incomplete, "a"]);
-  assert.equal(deferredRenders(), 1);
+  assert.deepEqual(forwarded, []);
+  filter.handleInput("z");
+  assert.deepEqual(forwarded, ["z"]);
+  filter.dispose();
+}
+{
+  const { filter, forwarded } = makeFilter();
+  filter.handleInput(`${ESC}]4;38`);
+  filter.handleInput("x");
+  assert.deepEqual(forwarded, ["x"]);
   filter.dispose();
 }
 {
@@ -894,13 +897,21 @@ const makeFilter = (timeout = 30) => {
   let terminalInput;
   let subscribed = false;
   let activeEditor;
+  let pasteCalls = 0;
+  let renders = 0;
   const handlers = new Map();
   const editor = {
     events: [],
     text: "",
     handleInput(data) {
       this.events.push(data);
-      if (!data.startsWith(ESC)) this.text += data;
+      if (data.startsWith(`${ESC}[200~`) && data.endsWith(`${ESC}[201~`)) {
+        const pasted = data.slice(6, -6).replace(/[\x00-\x1f\x7f]/g, "");
+        this.text += pasted;
+      } else if (!data.startsWith(ESC)) {
+        this.text += data;
+      }
+      renders += 1;
     },
   };
   const priorFactory = () => ({ handleInput() {} });
@@ -914,7 +925,10 @@ const makeFilter = (timeout = 30) => {
         subscribed = true;
         return () => { subscribed = false; };
       },
-      pasteToEditor(data) { activeEditor.handleInput(data); },
+      pasteToEditor(data) {
+        pasteCalls += 1;
+        activeEditor.handleInput(`${ESC}[200~${data}${ESC}[201~`);
+      },
       getEditorComponent: () => factory,
       setEditorComponent: (next) => { factory = next; },
     },
@@ -938,26 +952,44 @@ const makeFilter = (timeout = 30) => {
   await sleep(60);
   dispatch(`;38;rgb:0000/afaf/d7d7${BEL}`);
   assert.deepEqual(editor.events, []);
+  assert.equal(editor.text, "");
+  assert.equal(pasteCalls, 0);
 
   dispatch(`${ESC}]4;38`);
   dispatch("x");
-  assert.deepEqual(editor.events, [`${ESC}]4;38`, "x"]);
+  assert.deepEqual(editor.events, ["x"]);
   assert.equal(editor.text, "x");
+  assert.equal(renders, 1);
+  assert.equal(pasteCalls, 0);
 
   editor.events = [];
   editor.text = "";
+  renders = 0;
   dispatch(`${ESC}]4;38;`);
   dispatch("a");
   await sleep(650);
-  assert.deepEqual(editor.events, [`${ESC}]4;38;`, "a"]);
-  assert.equal(editor.text, "a");
+  assert.deepEqual(editor.events, []);
+  assert.equal(editor.text, "");
+  assert.equal(renders, 0);
+  assert.equal(pasteCalls, 0);
+  dispatch("z");
+  assert.deepEqual(editor.events, ["z"]);
+  assert.equal(editor.text, "z");
+  assert.equal(renders, 1);
 
   handlers.get("session_shutdown")();
   assert.equal(subscribed, false);
   assert.equal(factory, laterFactory);
+  editor.events = [];
+  editor.text = "";
+  renders = 0;
+  dispatch("q");
+  assert.deepEqual(editor.events, ["q"]);
+  assert.equal(editor.text, "q");
+  assert.equal(renders, 1);
 }
 JS
-  pass "Pi input filter consumes only complete OSC palette replies and replays literal or malformed fragments exactly"
+  pass "Pi input filter discards terminal palette debris while preserving later draft input"
 }
 
 test_bare_shell_glyphs_are_unknown
