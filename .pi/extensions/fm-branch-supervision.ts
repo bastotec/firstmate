@@ -1806,6 +1806,9 @@ ${context.command}
     branchBroken = "";
     consecutiveProviderErrors = 0;
     providerRecovery = null;
+    chainCooldowns.clear();
+    activeChainModel = "";
+    pendingChainFallbackFrom = "";
     generation += 1;
     mirrorCollection.collectAnchor = null;
     mirrorCollection.pendingCursor = null;

@@ -2244,9 +2244,14 @@ if (sentToMain.some((sent) => sent.message.content.includes("Supervision model o
   throw new Error("the fallback note was emitted before the replacement branch was constructed");
 }
 delete globalThis.__fmCreateSessionError;
+await fire("session_shutdown", {});
 await fire("session_start", {}, makeCtx({
   sessionManager: { getSessionFile: () => `${home}/main.jsonl`, getEntries: () => mainEntries },
 }));
+await wake("new main session retries the preferred model", true);
+if (builtOn().at(-1) !== "openai/cheap-1") {
+  throw new Error(`a new main session retained the preferred model's old cooldown: ${builtOn()}`);
+}
 await wake("served by the second model", false);
 if (builtOn().at(-1) !== "zai/cheap-2" || !handled("handled on zai/cheap-2")) {
   throw new Error(`the next wake did not run on the second model: ${builtOn()}`);

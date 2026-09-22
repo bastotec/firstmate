@@ -41,7 +41,13 @@ case "${FM_TEST_USAGE:-valid}" in
   *) printf 'usage\t1\t1200\t0\t400\n' ;;
 esac
 # shellcheck disable=SC2086 # the four answers are deliberately word-split
-printf 'answers\t%s\t%s\t%s\t%s\n' $FM_TEST_ANSWERS
+case "${FM_TEST_ANSWER_ROWS:-valid}" in
+  duplicate)
+    printf 'answers\t%s\t%s\t%s\t%s\n' $FM_TEST_ANSWERS
+    printf 'answers\t%s\t%s\t%s\t%s\n' $FM_TEST_ANSWERS
+    ;;
+  *) printf 'answers\t%s\t%s\t%s\t%s\n' $FM_TEST_ANSWERS ;;
+esac
 SH
 EVID="$TMP_ROOT/wg-evidence"
 cat > "$EVID" <<'SH'
@@ -184,6 +190,15 @@ for usage_case in missing malformed duplicate; do
     || fail "a $usage_case helper usage row was not recorded as a protocol error"
 done
 pass "missing, malformed, and duplicate usage rows fail open"
+
+s=$(new_state sv-duplicate-answers)
+mkdir -p "$s/wake-gate"
+printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+[ "$(FM_TEST_ANSWER_ROWS=duplicate raw_verdict "$s" enforce "$WORKING")" = escalate ] \
+  || fail "SAFETY: duplicate helper answer rows allowed an absorb decision"
+[ "$(tail -1 "$s/wake-gate/usage.log" | cut -f6)" = error ] \
+  || fail "duplicate helper answer rows were not recorded as a protocol error"
+pass "duplicate answer rows fail open"
 
 s=$(new_state sv-oversized-look)
 mkdir -p "$s/wake-gate"

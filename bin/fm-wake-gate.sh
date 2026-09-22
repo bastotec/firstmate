@@ -137,6 +137,18 @@ log_shadow() {  # <task> <mode> <decision> <why> <working> <waiting> <failure> <
   wake_gate_log_append shadow.log "$record"
 }
 
+helper_row_fields() {
+  local wanted=$1
+  awk -F'\t' -v wanted="$wanted" '
+    $1 == wanted {
+      count++
+      if (NF != 5) invalid=1
+      if (count == 1 && NF == 5) row=$2 "\t" $3 "\t" $4 "\t" $5
+    }
+    END { if (count != 1 || invalid) exit 1; print row }
+  '
+}
+
 # gather_evidence <task>: print a JSON array of {command, output}; empty on failure.
 gather_evidence() {
   local task=$1 tmo=${FM_WAKE_GATE_EVIDENCE_TIMEOUT:-8} state_out pane_out
@@ -194,12 +206,17 @@ cmd_stale_verdict() {
     printf 'escalate\n'
     return 0
   fi
-  answers=$(printf '%s\n' "$hout" | awk -F'\t' '$1=="answers"{print; exit}')
-  IFS=$'\t' read -r _ aw wt fl fn <<EOF_ANSWERS
+  if ! answers=$(printf '%s\n' "$hout" | helper_row_fields answers); then
+    log_usage 1 0 0 0 error
+    log_shadow "$task" "$mode" call jev-error - - - -
+    printf 'escalate\n'
+    return 0
+  fi
+  IFS=$'\t' read -r aw wt fl fn <<EOF_ANSWERS
 $answers
 EOF_ANSWERS
   local p
-  for p in "${aw:-}" "${wt:-}" "${fl:-}" "${fn:-}"; do
+  for p in "$aw" "$wt" "$fl" "$fn"; do
     if [[ ! $p =~ ^[0-9]+([.][0-9]*)?$ ]] \
       || ! awk -v p="$p" 'BEGIN { exit !(p >= 0 && p <= 1) }'; then
       log_usage 1 0 0 0 error
@@ -208,15 +225,7 @@ EOF_ANSWERS
       return 0
     fi
   done
-  if ! usage_fields=$(printf '%s\n' "$hout" | awk -F'\t' '
-    $1 == "usage" {
-      count++
-      if (NF != 5) invalid=1
-      for (i=2; i<=5; i++) if ($i !~ /^[0-9]+$/) invalid=1
-      if (count == 1) row=$2 "\t" $3 "\t" $4 "\t" $5
-    }
-    END { if (count != 1 || invalid) exit 1; print row }
-  '); then
+  if ! usage_fields=$(printf '%s\n' "$hout" | helper_row_fields usage); then
     log_usage 1 0 0 0 error
     log_shadow "$task" "$mode" call jev-error - - - -
     printf 'escalate\n'
@@ -225,6 +234,14 @@ EOF_ANSWERS
   IFS=$'\t' read -r u_calls u_in u_out u_ms <<EOF_USAGE
 $usage_fields
 EOF_USAGE
+  for p in "$u_calls" "$u_in" "$u_out" "$u_ms"; do
+    if [[ ! $p =~ ^[0-9]+$ ]]; then
+      log_usage 1 0 0 0 error
+      log_shadow "$task" "$mode" call jev-error - - - -
+      printf 'escalate\n'
+      return 0
+    fi
+  done
   if ! log_usage "$u_calls" "$u_in" "$u_out" "$u_ms" ok; then
     printf 'escalate\n'
     return 0
