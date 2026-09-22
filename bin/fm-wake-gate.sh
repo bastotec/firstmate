@@ -137,15 +137,24 @@ log_shadow() {  # <task> <mode> <decision> <why> <working> <waiting> <failure> <
   wake_gate_log_append shadow.log "$record"
 }
 
-helper_row_fields() {
-  local wanted=$1
-  awk -F'\t' -v wanted="$wanted" '
-    $1 == wanted {
-      count++
+helper_output_fields() {
+  awk -F'\t' '
+    {
       if (NF != 5) invalid=1
-      if (count == 1 && NF == 5) row=$2 "\t" $3 "\t" $4 "\t" $5
+      if ($1 == "answers") {
+        answers_count++
+        answers=$2 "\t" $3 "\t" $4 "\t" $5
+      } else if ($1 == "usage") {
+        usage_count++
+        usage=$2 "\t" $3 "\t" $4 "\t" $5
+      } else {
+        invalid=1
+      }
     }
-    END { if (count != 1 || invalid) exit 1; print row }
+    END {
+      if (NR != 2 || answers_count != 1 || usage_count != 1 || invalid) exit 1
+      print answers "\t" usage
+    }
   '
 }
 
@@ -169,7 +178,7 @@ gather_evidence() {
 
 cmd_stale_verdict() {
   local task=${1-} reason=${3-} with_look=${4-}  # $2 is the window, already named inside the reason
-  local keyvar mode evidence hout answers usage_fields aw wt fl fn u_calls u_in u_out u_ms why='' decision cls conf look_record='' look_contents='' look_invalid=0 last_epoch='' last_flags='' terminal_flags='' flag now tmo helper_status=0 helper_error='' failure_calls=1
+  local keyvar mode evidence hout captured helper_fields aw wt fl fn u_calls u_in u_out u_ms why='' decision cls conf look_record='' look_contents='' look_invalid=0 last_epoch='' last_flags='' terminal_flags='' flag now tmo helper_status=0 helper_error='' failure_calls=1
   case "$task" in ''|*/*|*" "*) printf 'escalate\n'; return 0 ;; esac
   keyvar=$(gate_key_var)
   [ -n "$keyvar" ] || { printf 'escalate\n'; return 0; }
@@ -192,13 +201,17 @@ cmd_stale_verdict() {
     [ -f "$SCRIPT_DIR/wake-gate/jev-stale.mjs" ] || { printf 'escalate\n'; return 0; }
     run=( node "$SCRIPT_DIR/wake-gate/jev-stale.mjs" )
   fi
-  hout=$(jq -cn --arg a "$reason" --argjson e "$evidence" '{alarm:$a,evidence:$e}' \
+  # The record separator preserves trailing blank rows that command substitution
+  # would otherwise strip, so successful helper output can be validated exactly.
+  captured=$(jq -cn --arg a "$reason" --argjson e "$evidence" '{alarm:$a,evidence:$e}' \
     | FM_WAKE_GATE_KEY_VAR="$keyvar" \
       FM_WAKE_GATE_SECRETS="${FM_WAKE_GATE_SECRETS:-$HOME/.secrets}" \
       FM_WAKE_GATE_TIMEOUT_MS=$(( tmo * 1000 )) \
-      bounded $(( tmo + 2 )) "${run[@]}" 2>/dev/null)
-  helper_status=$?
-  helper_error=$(printf '%s\n' "$hout" | awk -F'\t' '$1=="error"{print $2; exit}')
+      bounded $(( tmo + 2 )) "${run[@]}" 2>/dev/null; \
+    printf '\036%s' "$?")
+  helper_status=${captured##*$'\036'}
+  hout=${captured%$'\036'*}
+  helper_error=$(printf '%s' "$hout" | awk -F'\t' '$1=="error"{print $2; exit}')
   if [ "$helper_status" -ne 0 ]; then
     case "$helper_error" in no-key|no-runtime|bad-input|no-evidence) failure_calls=0 ;; esac
     log_usage "$failure_calls" 0 0 0 "error-${helper_error:-unknown}"
@@ -206,15 +219,15 @@ cmd_stale_verdict() {
     printf 'escalate\n'
     return 0
   fi
-  if ! answers=$(printf '%s\n' "$hout" | helper_row_fields answers); then
+  if ! helper_fields=$(printf '%s' "$hout" | helper_output_fields); then
     log_usage 1 0 0 0 error
     log_shadow "$task" "$mode" call jev-error - - - -
     printf 'escalate\n'
     return 0
   fi
-  IFS=$'\t' read -r aw wt fl fn <<EOF_ANSWERS
-$answers
-EOF_ANSWERS
+  IFS=$'\t' read -r aw wt fl fn u_calls u_in u_out u_ms <<EOF_FIELDS
+$helper_fields
+EOF_FIELDS
   local p
   for p in "$aw" "$wt" "$fl" "$fn"; do
     if [[ ! $p =~ ^[0-9]+([.][0-9]*)?$ ]] \
@@ -225,15 +238,6 @@ EOF_ANSWERS
       return 0
     fi
   done
-  if ! usage_fields=$(printf '%s\n' "$hout" | helper_row_fields usage); then
-    log_usage 1 0 0 0 error
-    log_shadow "$task" "$mode" call jev-error - - - -
-    printf 'escalate\n'
-    return 0
-  fi
-  IFS=$'\t' read -r u_calls u_in u_out u_ms <<EOF_USAGE
-$usage_fields
-EOF_USAGE
   for p in "$u_calls" "$u_in" "$u_out" "$u_ms"; do
     if [[ ! $p =~ ^[0-9]+$ ]]; then
       log_usage 1 0 0 0 error

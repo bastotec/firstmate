@@ -30,26 +30,32 @@ export function branchModelLabel(ref: BranchModelRef): string {
  * Parses config/supervision-branch-model: one "<provider>/<model-id>" per
  * line in preference order, split at the FIRST "/" so a provider-qualified
  * model id survives. Blank lines and "#" comments are skipped. Any malformed
- * non-comment line rejects the
- * chain instead of silently selecting around it. Only an empty or comment-only
- * file means no pin.
+ * or duplicate non-comment line rejects the chain instead of silently selecting
+ * around it. Only an empty or comment-only file means no pin.
  */
 export function parseBranchModelChain(stored: string): BranchModelRef[] {
   const chain: BranchModelRef[] = [];
-  const malformed: Array<{ number: number; line: string }> = [];
+  const seen = new Set<string>();
+  const malformed: Array<{ number: number; line: string; duplicate: boolean }> = [];
   for (const [index, line] of stored.split("\n").entries()) {
     const trimmed = line.trim();
     if (trimmed === "" || trimmed.startsWith("#")) continue;
     const separator = line.indexOf("/");
     if (separator <= 0 || separator >= line.length - 1 || /[\s\u0000-\u001F\u007F-\u009F]/u.test(line)) {
-      malformed.push({ number: index + 1, line });
+      malformed.push({ number: index + 1, line, duplicate: false });
       continue;
     }
+    if (seen.has(line)) {
+      malformed.push({ number: index + 1, line, duplicate: true });
+      continue;
+    }
+    seen.add(line);
     chain.push({ provider: line.slice(0, separator), modelId: line.slice(separator + 1) });
   }
   if (malformed.length > 0) {
     const first = malformed[0];
-    throw new Error(`invalid supervision model line ${first.number}: ${JSON.stringify(first.line)}`);
+    const reason = first.duplicate ? "duplicate" : "invalid";
+    throw new Error(`${reason} supervision model line ${first.number}: ${JSON.stringify(first.line)}`);
   }
   return chain;
 }

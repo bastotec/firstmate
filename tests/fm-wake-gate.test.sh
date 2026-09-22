@@ -48,6 +48,11 @@ case "${FM_TEST_ANSWER_ROWS:-valid}" in
     ;;
   *) printf 'answers\t%s\t%s\t%s\t%s\n' $FM_TEST_ANSWERS ;;
 esac
+case "${FM_TEST_EXTRA_ROW:-none}" in
+  blank) printf '\n' ;;
+  error) printf 'error\tunexpected\n' ;;
+  extra) printf 'debug\t1\t2\t3\t4\n' ;;
+esac
 SH
 EVID="$TMP_ROOT/wg-evidence"
 cat > "$EVID" <<'SH'
@@ -199,6 +204,17 @@ printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
 [ "$(tail -1 "$s/wake-gate/usage.log" | cut -f6)" = error ] \
   || fail "duplicate helper answer rows were not recorded as a protocol error"
 pass "duplicate answer rows fail open"
+
+for extra_case in blank error extra; do
+  s=$(new_state "sv-$extra_case-helper-row")
+  mkdir -p "$s/wake-gate"
+  printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+  [ "$(FM_TEST_EXTRA_ROW="$extra_case" raw_verdict "$s" enforce "$WORKING")" = escalate ] \
+    || fail "SAFETY: a helper $extra_case row allowed an absorb decision"
+  [ "$(tail -1 "$s/wake-gate/usage.log" | cut -f6)" = error ] \
+    || fail "a helper $extra_case row was not recorded as a protocol error"
+done
+pass "blank, error, and unknown helper rows fail open"
 
 s=$(new_state sv-oversized-look)
 mkdir -p "$s/wake-gate"

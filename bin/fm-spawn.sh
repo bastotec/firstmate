@@ -1860,9 +1860,9 @@ if [ -n "$ACCOUNT_SLOT_EFFECTIVE" ]; then
   }
 fi
 
-# muse, gemini, and agy are verified as CREWMATE/SCOUT adapters only. Deck's
-# verification-only path is also limited to those task kinds. A secondmate is
-# a firstmate instance, so it needs a primary supervision protocol.
+# muse, gemini, agy, and deck are verified as CREWMATE/SCOUT adapters only.
+# A secondmate is a firstmate instance, so it needs a primary supervision
+# protocol.
 # gemini has none: docs/supervision-protocols/ carries no gemini wake protocol
 # and this task verified only crewmate-side launch, busy state, interrupt, and
 # exit, so a gemini secondmate is refused rather than stood up on an unverified

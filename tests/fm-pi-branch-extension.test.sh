@@ -2158,9 +2158,14 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const chainModule = await import(pathToFileURL(join(dirname(process.env.PLUGIN), "lib/fm-branch-model-chain.ts")).href);
-const duplicateChain = chainModule.parseBranchModelChain("ghost/not-installed\nghost/not-installed\nopenai/cheap-1\n");
-if (duplicateChain.map(chainModule.branchModelLabel).join(",") !== "ghost/not-installed,ghost/not-installed,openai/cheap-1") {
-  throw new Error(`configured duplicate lines were not preserved in order: ${JSON.stringify(duplicateChain)}`);
+let duplicateError;
+try {
+  chainModule.parseBranchModelChain("ghost/not-installed\nghost/not-installed\nopenai/cheap-1\n");
+} catch (error) {
+  duplicateError = error;
+}
+if (!(duplicateError instanceof Error) || !duplicateError.message.includes("duplicate supervision model line 2")) {
+  throw new Error(`a duplicate model label did not invalidate the chain: ${String(duplicateError)}`);
 }
 
 let now = 1_000_000;
@@ -2171,11 +2176,11 @@ registryModels.push(
   { provider: "zai", id: "cheap-2" },
   { provider: "qwen", id: "cheap-3" },
 );
-// Preference order, with a comment, a blank line, duplicates, and a model the
-// runtime does not know.
+// Preference order, with a comment, a blank line, and a model the runtime does
+// not know.
 writeFileSync(
   `${home}/config/supervision-branch-model`,
-  "# supervision chain\nghost/not-installed\nghost/not-installed\nopenai/cheap-1\n\nzai/cheap-2\nopenai/cheap-1\nqwen/cheap-3\n",
+  "# supervision chain\nghost/not-installed\nopenai/cheap-1\n\nzai/cheap-2\nqwen/cheap-3\n",
 );
 const mainEntries = [];
 await fire("session_start", {}, makeCtx({
@@ -2207,17 +2212,9 @@ async function wake(label, expectFailure) {
   if (prompts !== before + 1) throw new Error(`${label}: expected exactly one branch prompt`);
 }
 
-// 1. The unknown first entry is skipped; its duplicate respects the cooldown
-// started by that attempt, and the first usable model serves. Five minutes
-// later the unknown model is eligible for one probe rather than a doubled wait.
+// 1. The unknown first entry is skipped and the first usable model serves.
 await wake("first wake", false);
 if (builtOn().at(-1) !== "openai/cheap-1") throw new Error(`the chain did not start on its first usable model: ${builtOn()}`);
-const sessionsBeforeDuplicateProbe = builtOn().length;
-now += 5 * 60 * 1000;
-await wake("duplicate entry cooldown probe", false);
-if (builtOn().length !== sessionsBeforeDuplicateProbe + 1 || builtOn().at(-1) !== "openai/cheap-1") {
-  throw new Error(`a duplicate chain entry doubled one failed attempt's cooldown: ${builtOn()}`);
-}
 
 // 2. That model runs out: the failed wake returns to the watcher-owned
 // fallback, ONE note says where supervision went, and nothing latches.
