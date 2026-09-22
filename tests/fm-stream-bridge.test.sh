@@ -432,6 +432,28 @@ test_a_composer_command_reaches_the_worker_and_is_acknowledged() {
   pass "bridge: a composer command reaches the worker and is acknowledged"
 }
 
+test_a_duplicate_command_id_keeps_the_leaf_that_received_it() {
+  start_hub command-id-leaf
+  local first second out command_id=c-reused
+  first=$(start_real_agent first)
+  second=$(start_real_agent second)
+  out=$(commander "$(composer_command "$command_id" "box-a/first-$RUN" \
+    "echo FIRST-RECEIVED" "$first")")
+  assert_equals "$(printf '%s' "$out" | jq -r '.state')" accepted \
+    "the first use of the command id should be accepted"
+  worker_ran "$first" FIRST-RECEIVED || fail "the first worker never received its order"
+  out=$(commander "$(composer_command "$command_id" "box-a/second-$RUN" \
+    "echo SECOND-MUST-NOT-RUN" "$second")")
+  assert_equals "$(printf '%s' "$out" | jq -r '.state')" accepted \
+    "reusing an accepted command id should report its recorded result"
+  assert_equals "$(printf '%s' "$out" | jq -r '.leaf_worker_id')" "box-a/first-$RUN" \
+    "the recorded acceptance must name the leaf that actually received it"
+  assert_not_contains "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
+    "$URL/v1/tasks/$second/capture?lines=40" 2>/dev/null)" SECOND-MUST-NOT-RUN \
+    "a reused command id must not fabricate acceptance for another leaf"
+  pass "bridge: a reused command id keeps its recorded leaf"
+}
+
 test_a_command_for_a_worker_its_agent_reported_gone_is_nacked() {
   start_hub command-gone
   local endpoint out waited=0
@@ -630,6 +652,7 @@ test_a_real_agents_worker_exit_reaches_the_bridge
 test_serve_streams_ticks_and_goes_silent_without_the_hub
 test_refusals_end_the_command
 test_a_composer_command_reaches_the_worker_and_is_acknowledged
+test_a_duplicate_command_id_keeps_the_leaf_that_received_it
 test_a_command_for_a_worker_its_agent_reported_gone_is_nacked
 test_a_command_aimed_at_a_replaced_execution_is_refused_without_claiming_absence
 test_a_command_without_a_valid_execution_is_refused

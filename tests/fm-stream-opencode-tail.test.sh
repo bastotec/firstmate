@@ -79,7 +79,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/v1/health":
-            self._reply(200, {"ok": True, "protocol": 2, "state_max_age_secs": 30})
+            self._reply(200, {"ok": True, "protocol": 2,
+                              "capabilities": ["idempotent_command_results"],
+                              "state_max_age_secs": 30})
             return
         if self.path.startswith("/v1/agent/commands"):
             # Hold the poll briefly so a caller with nothing queued does not

@@ -74,6 +74,7 @@ import urllib.request
 
 AGENT_VERSION = "2.1.0"
 AGENT_PROTOCOL = 2
+IDEMPOTENT_RESULT_CAPABILITY = "idempotent_command_results"
 
 STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
                  "failed", "resolved")
@@ -1120,6 +1121,13 @@ def main(argv: list) -> int:
         raise SystemExit("fm-stream-agent: the hub at %s speaks protocol %r but this agent "
                          "implements %d; update both ends"
                          % (options.hub, protocol, AGENT_PROTOCOL))
+    capabilities = health.get("capabilities")
+    if (not isinstance(capabilities, list)
+            or IDEMPOTENT_RESULT_CAPABILITY not in capabilities):
+        raise SystemExit(
+            "fm-stream-agent: the hub at %s does not advertise the %s capability; "
+            "restart or upgrade the hub before starting this agent"
+            % (options.hub, IDEMPOTENT_RESULT_CAPABILITY))
 
     # The heartbeat is what keeps this endpoint readable, so it is derived from
     # the hub's own staleness window rather than configured separately. Two

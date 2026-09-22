@@ -22,6 +22,7 @@ test can measure rather than infer.
   --command-id ID          deliver one successful status command with this id
   --fail-results-first N   refuse the first N result posts
   --result-file PATH       write the accepted result payload there
+  --omit-result-capability omit result retry support from health
 """
 
 import argparse
@@ -77,10 +78,13 @@ class Stub(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's spelling
         path = self._record()
         if path == "/v1/health":
+            capabilities = [] if self.server.state["omit_result_capability"] else [
+                "idempotent_command_results"]
             self._json(200, {
                 "ok": True,
                 "protocol": 2,
                 "version": "stub",
+                "capabilities": capabilities,
                 "state_max_age_secs": 10,
                 "command_ack_secs": 10,
             })
@@ -168,6 +172,7 @@ def main() -> int:
     parser.add_argument("--command-id", default="")
     parser.add_argument("--fail-results-first", type=int, default=0)
     parser.add_argument("--result-file", default="")
+    parser.add_argument("--omit-result-capability", action="store_true")
     options = parser.parse_args()
 
     server = StubServer(("127.0.0.1", options.port), Stub)
@@ -184,6 +189,7 @@ def main() -> int:
         "fail_results_first": options.fail_results_first,
         "result_attempts": 0,
         "result_file": options.result_file,
+        "omit_result_capability": options.omit_result_capability,
     }
     open(options.journal, "a", encoding="utf-8").close()
     if options.ready_file:
