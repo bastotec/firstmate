@@ -417,6 +417,25 @@ assert_nothing_changed() {
     || fail "a refused recovery must not launch an agent"
 }
 
+test_recover_missing_verified_deck_recreates_the_endpoint() {
+  local dir out rc
+  dir=$(new_case deck-recovery rm22)
+  add_ship_task "$dir" rm22
+  sed -i.bak 's/^harness=.*/harness=deck/' "$dir/home/state/rm22.meta"
+  rm -f "$dir/home/state/rm22.meta.bak"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/deck"
+  chmod +x "$dir/fakebin/deck"
+  printf deck > "$dir/fake/becomes"
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" rm22 recover-missing --note "recover Deck"); rc=$?
+  expect_code 0 "$rc" "verified Deck recovery should succeed: $out"
+  [ "$(meta_field "$dir" rm22 harness)" = deck ] || fail "Deck recovery changed the recorded harness"
+  [ "$(cat "$dir/fake/command")" = deck ] || fail "Deck recovery did not launch the replacement agent"
+  assert_grep "fm-rm22" "$dir/fake/created-windows" "Deck recovery did not recreate the endpoint"
+  pass "fm-control recover-missing: verified Deck recreates and relaunches its endpoint"
+}
+
 test_recover_missing_refuses_a_live_endpoint() {
   local dir out rc meta_before brief_before
   dir=$(new_case alive rm2)
@@ -971,6 +990,7 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate
 test_recover_missing_preserves_uncommitted_work
 test_recover_missing_records_the_dirty_state_it_found
 test_recover_missing_recreates_the_terminal_and_launches_the_replacement
+test_recover_missing_verified_deck_recreates_the_endpoint
 test_recover_missing_waits_for_the_recreated_shell_to_settle
 test_recover_missing_refuses_a_terminal_that_never_settles
 test_recover_missing_refuses_a_live_endpoint

@@ -45,6 +45,8 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-composer-lib.sh"
 # shellcheck source=bin/fm-cursor-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-cursor-lib.sh"
+# shellcheck source=bin/fm-busy-lib.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/fm-busy-lib.sh"
 
 
 # fm_tmux_strip_ghost: thin adapter over the shared, fleet-wide ghost extractor
@@ -278,10 +280,13 @@ fm_pane_is_busy() {  # <target> [harness]
 }
 
 # fm_tmux_submit_core: type <text> into <target> ONCE, then submit with Enter,
-# verifying the composer cleared. Retries Enter ONLY — never retypes, because a
-# swallowed Enter leaves our text in the composer and retyping would duplicate
-# it. Echoes the final proof-carrying verdict on stdout so callers can require
-# exact `empty` before treating submission as confirmed.
+# verifying harness-specific delivery evidence. Retries Enter ONLY — never
+# retypes, because an unconfirmed Enter may still have delivered and retyping
+# would duplicate the request. Echoes the final proof-carrying verdict on stdout
+# so callers can require exact `empty` before treating submission as confirmed.
+# Deck confirmation bypasses composer and rendered-footer evidence: only the
+# next exact deck-wrapper busy turn-start sequence after an idle wrapper baseline
+# confirms the Enter, while an absent or inexact transition remains pending.
 # Busy-queued Enter (opencode 1.18.4): the harness accepts Enter while mid-turn
 # and queues it for after the current turn, but keeps the typed text visible in
 # the composer. Once the Enter-retry budget is spent and a structurally proven
@@ -302,11 +307,24 @@ fm_pane_is_busy() {  # <target> [harness]
 # fm_tmux_submit_enter_core caller, or a pane already busy before typing) an
 # `unknown` verdict is preserved untouched: busy conversion without the
 # transition evidence could mark an undelivered message delivered.
-fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle]
-  local target=$1 retries=$2 sleep_s=$3 baseline_idle=${4:-} i=0 j state busy_state
+fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle] [harness] [state-dir] [task-id] [busy-seq]
+  local target=$1 retries=$2 sleep_s=$3 baseline_idle=${4:-} harness=${5:-} state_dir=${6:-} task_id=${7:-} deck_seq=${8:-} i=0 j state busy_state
   while :; do
     tmux send-keys -t "$target" Enter 2>/dev/null || true
     sleep "$sleep_s"
+    if [ "$harness" = deck ]; then
+      if [ -n "$deck_seq" ] \
+        && fm_busy_deck_delivery_started "$state_dir" "$task_id" "$deck_seq"; then
+        printf 'empty'
+        return 0
+      fi
+      i=$((i + 1))
+      if [ "$i" -ge "$retries" ]; then
+        printf 'pending'
+        return 0
+      fi
+      continue
+    fi
     state=$(fm_tmux_composer_state "$target")
     case "$state" in
       pending|pending-unproven) ;;
@@ -314,7 +332,7 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle
         if [ "$baseline_idle" = 1 ]; then
           j=0
           while [ "$j" -lt "$retries" ]; do
-            if fm_pane_is_busy "$target"; then
+            if fm_pane_is_busy "$target" "$harness"; then
               printf 'empty'
               return 0
             fi
@@ -337,17 +355,19 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle
   # Retries exhausted, composer still shows proven pending.
   # Busy conversion is owned by fm_composer_queued_enter_verdict.
   busy_state=idle
-  fm_pane_is_busy "$target" && busy_state=busy
+  if fm_pane_is_busy "$target" "$harness"; then busy_state=busy; fi
   fm_composer_queued_enter_verdict "$state" "$busy_state"
 }
 
-fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
-  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 baseline_idle='' baseline_state
-  # The turn-started baseline must predate our own typing: a pane already
-  # busy before the text lands can turn "busy" for reasons unrelated to our
-  # Enter, so only a clean idle-to-busy transition may confirm a submit.
-  baseline_state=$(fm_pane_busy_state "$target")
-  [ "$baseline_state" = idle ] && baseline_idle=1
+fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle> [harness] [state-dir] [task-id]
+  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${6:-} state_dir=${7:-} task_id=${8:-}
+  local baseline_idle='' baseline_state deck_seq=''
+  if [ "$harness" = deck ]; then
+    baseline_state=idle
+  else
+    baseline_state=$(fm_pane_busy_state "$target" "$harness")
+    [ "$baseline_state" = idle ] && baseline_idle=1
+  fi
   # Readiness gate, ahead of the single literal send: a pane that is not reading
   # input yet buffers the line in the kernel and silently discards it past
   # MAX_CANON, so typing into one loses long text outright. `send-failed` is the
@@ -360,5 +380,8 @@ fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
   fi
   tmux send-keys -t "$target" -l "$text" 2>/dev/null || { printf 'send-failed'; return 0; }
   sleep "$settle"
-  fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$baseline_idle"
+  if [ "$harness" = deck ] && [ -n "$state_dir" ] && [ -n "$task_id" ]; then
+    deck_seq=$(fm_busy_deck_delivery_baseline "$state_dir" "$task_id") || deck_seq=
+  fi
+  fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$baseline_idle" "$harness" "$state_dir" "$task_id" "$deck_seq"
 }

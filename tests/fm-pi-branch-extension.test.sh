@@ -57,6 +57,7 @@ install_pi_branch_extension_fixture() {
   cp "$ROOT/.pi/extensions/lib/fm-native-contract.ts" "$repo/.pi/extensions/lib/fm-native-contract.ts"
   cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$repo/.pi/extensions/lib/fm-async-exec.ts"
   cp "$ROOT/.pi/extensions/lib/fm-branch-model-picker.ts" "$repo/.pi/extensions/lib/fm-branch-model-picker.ts"
+  cp "$ROOT/.pi/extensions/lib/fm-branch-model-chain.ts" "$repo/.pi/extensions/lib/fm-branch-model-chain.ts"
   cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$repo/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
   mkdir -p "$repo/bin"
@@ -66,6 +67,7 @@ install_pi_branch_extension_fixture() {
 {"name":"@earendil-works/pi-coding-agent","type":"module","exports":"./index.js"}
 JSON
   cat > "$repo/node_modules/@earendil-works/pi-coding-agent/index.js" <<'JS'
+import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
 export function getAgentDir() {
@@ -189,10 +191,19 @@ export function createBashToolDefinition(cwd, options) {
     __cwd: cwd,
     __options: options,
     execute: async (_toolCallId, params) => {
-      if (!globalThis.__fmExecuteBranchBash) return { content: [], details: undefined };
       const initial = { command: String(params.command ?? ""), cwd, env: { ...process.env } };
       const context = options.spawnHook ? options.spawnHook(initial) : initial;
-      return globalThis.__fmExecuteBranchBash(context);
+      if (globalThis.__fmExecuteBranchBash) return globalThis.__fmExecuteBranchBash(context);
+      const result = spawnSync("bash", ["-c", context.command], {
+        encoding: "utf8",
+        cwd: context.cwd,
+        env: context.env,
+      });
+      return {
+        content: [{ type: "text", text: `${result.stdout}${result.stderr}` }],
+        details: { stdout: result.stdout, stderr: result.stderr, exitCode: result.status },
+        isError: result.status !== 0,
+      };
     },
   };
 }
@@ -643,6 +654,13 @@ function outcomeScript(args) {
   if (result.status !== 0) throw new Error(`fm-branch-outcome.sh ${args.join(" ")} failed: ${result.stderr}`);
   return (result.stdout || "").trim();
 }
+globalThis.__fmObserveWakeAck = async (session) => {
+  const bash = session.options.customTools.find((tool) => tool.name === "bash");
+  const result = await bash.execute("observe-wake-ack", { command: "bin/fm-wake-drain.sh" }, undefined, undefined, {});
+  if (result.isError || !result.content.some((item) => item.text?.includes("WAKE_ACK_REQUIRED:"))) {
+    throw new Error(`branch drain did not expose an acknowledgement: ${JSON.stringify(result)}`);
+  }
+};
 const mod = await import(pathToFileURL(process.env.PLUGIN).href);
 mod.default(pi);
 JS
@@ -719,6 +737,7 @@ console.log(`CACHE_KEY=${rewriteA.prompt_cache_key}`);
 // captain-relevant persists a visible entry with no model turn. Store rows are
 // written before delivery and marked read only after it.
 const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(session);
 const r1 = await report.execute("call-1", { task: "branch-driver", verdict: "routine", summary: "worker healthy, no action needed", wake: "signal: working" }, undefined, undefined, {});
 if (r1.isError) throw new Error(`routine report failed: ${JSON.stringify(r1)}`);
 finishWakePrompt();
@@ -1274,6 +1293,7 @@ if (!routineOffer.accepted) throw new Error("branch refused the routine wake");
 await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "routine branch prompt");
 const session = globalThis.__fmSessions[0];
 const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(session);
 await report.execute("routine", { task: "branch-driver", verdict: "routine", summary: "worker healthy" }, undefined, undefined, {});
 finishRoutinePrompt();
 // The reports below are made outside any wake prompt: wait for the wake to
@@ -1381,7 +1401,9 @@ if (!replacementOffer.accepted) throw new Error("branch refused a wake after the
 // A real branch model can only reach the report tool from inside its own
 // prompt, which is the ordering this wait restores.
 await settle(() => (globalThis.__fmPrompts ?? []).length === 2, "replacement branch wake prompt");
-const report2 = globalThis.__fmSessions[1].options.customTools.find((tool) => tool.name === "fm_branch_report");
+const replacementSession = globalThis.__fmSessions[1];
+const report2 = replacementSession.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(replacementSession);
 const beforePair = requests().length;
 const second = await report2.execute("captain-2", { task: "branch-driver", verdict: "captain", summary: "PR https://example.com/pr/e is ready for review" }, undefined, undefined, {});
 if (second.isError) throw new Error(`second captain report failed: ${JSON.stringify(second)}`);
@@ -1699,8 +1721,8 @@ test_branch_report_refuses_a_task_the_wake_did_not_name() {
   PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
 const prelude = process.env.DRIVER_PRELUDE;
-await eval(`(async () => { ${prelude}; globalThis.__t = { dispatch, fire, home, settle, approvedProject, defaultSessionCtx }; })()`);
-const { dispatch, fire, home, settle, approvedProject, defaultSessionCtx } = globalThis.__t;
+await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatch, fire, home, settle, approvedProject, defaultSessionCtx }; })()`);
+const { pi, makeOffer, dispatch, fire, home, settle, approvedProject, defaultSessionCtx } = globalThis.__t;
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1716,6 +1738,7 @@ if (!dispatch("signal: task-local wake").accepted) throw new Error("branch refus
 await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "task-local branch prompt");
 const session = globalThis.__fmSessions[globalThis.__fmSessions.length - 1];
 const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(session);
 const ghost = await report.execute("ghost", { task: "other-task", verdict: "captain", summary: "PR ready to merge" }, undefined, undefined, {});
 if (!ghost.isError || !ghost.content[0].text.includes("names branch-driver, not other-task")) {
   throw new Error(`a report for a live task the wake never named was not refused: ${JSON.stringify(ghost)}`);
@@ -1734,10 +1757,12 @@ await settle(() => !existsSync(`${home}/state/.branch-eligible-rows`), "task-loc
 // A heartbeat review is not scoped by task: it may report any task id, a
 // task whose records are already gone, and fleet.
 globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finish = resolve; });
-if (!dispatch("heartbeat", [], true, true).accepted) throw new Error("branch refused the heartbeat");
+const heartbeatOffer = dispatch("heartbeat", [], true, true);
+if (!heartbeatOffer.accepted) throw new Error("branch refused the heartbeat");
 await settle(() => (globalThis.__fmPrompts ?? []).length === 2, "heartbeat branch prompt");
 const heartbeatSession = globalThis.__fmSessions[globalThis.__fmSessions.length - 1];
 const heartbeatReport = heartbeatSession.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(heartbeatSession);
 const live = await heartbeatReport.execute("live", { task: "other-task", verdict: "routine", summary: "worker healthy" }, undefined, undefined, {});
 if (live.isError) throw new Error(`a heartbeat report for a live task was refused: ${JSON.stringify(live)}`);
 const goneInReview = await heartbeatReport.execute("gone-in-review", { task: "retired-task", verdict: "captain", summary: "PR merged and cleaned up" }, undefined, undefined, {});
@@ -1745,10 +1770,50 @@ if (goneInReview.isError) throw new Error(`a heartbeat report for a task with no
 const fleetInReview = await heartbeatReport.execute("fleet-in-review", { task: "fleet", verdict: "routine", summary: "fleet-wide note" }, undefined, undefined, {});
 if (fleetInReview.isError) throw new Error(`a fleet-wide report was refused during a heartbeat review: ${JSON.stringify(fleetInReview)}`);
 finish();
+await heartbeatOffer.settlement;
 
 const stored = readFileSync(`${home}/state/branch-outcomes.jsonl`, "utf8").trim().split("\n").map((line) => JSON.parse(line).task);
 if (JSON.stringify(stored) !== JSON.stringify(["branch-driver", "other-task", "retired-task", "fleet"])) {
   throw new Error(`refused reports reached the durable store: ${JSON.stringify(stored)}`);
+}
+
+writeFileSync(`${home}/state/.wake-queue`, [
+  "1\t1\tsignal\tbranch-driver.status\tsignal: branch-driver done",
+  "2\t2\tsignal\tother-task.status\tsignal: other-task done",
+].join("\n") + "\n");
+globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finish = resolve; });
+const boundHeartbeat = makeOffer("heartbeat: task-bound queued rows", [approvedProject], true, true);
+pi.events.emit("fm-branch-supervision:dispatch", boundHeartbeat);
+if (!boundHeartbeat.accepted) throw new Error("branch refused the task-binding heartbeat");
+await settle(() => (globalThis.__fmPrompts ?? []).length === 3, "task-binding heartbeat prompt");
+const boundSession = globalThis.__fmSessions.at(-1);
+const boundReport = boundSession.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(boundSession);
+const firstBound = await boundReport.execute(
+  "bound-first",
+  { task: "branch-driver", wakeSeq: "1", verdict: "routine", summary: "branch-driver handled" },
+  undefined,
+  undefined,
+  {},
+);
+if (firstBound.isError) throw new Error(`the first heartbeat row was refused: ${JSON.stringify(firstBound)}`);
+const wrongTask = await boundReport.execute(
+  "bound-wrong-task",
+  { task: "branch-driver", wakeSeq: "2", verdict: "routine", summary: "wrongly attributed second row" },
+  undefined,
+  undefined,
+  {},
+);
+if (!wrongTask.isError || !wrongTask.content[0].text.includes("names other-task, not branch-driver")) {
+  throw new Error(`a heartbeat report covered another task's row: ${JSON.stringify(wrongTask)}`);
+}
+finish();
+const boundFailure = await boundHeartbeat.settlement.then(() => null, (error) => error);
+if (!(boundFailure instanceof Error) || !boundFailure.message.includes("no durable outcome for every claimed wake row")) {
+  throw new Error(`one task's reports falsely settled a two-task heartbeat grant: ${String(boundFailure)}`);
+}
+if (existsSync(`${home}/state/.branch-eligible-rows`)) {
+  throw new Error("the incomplete heartbeat grant remained claimed after watcher replay resumed");
 }
 
 // The classification owner names the tasks behind each eligible row: a
@@ -1953,6 +2018,271 @@ EOF
   pass "a settled branch turn without a durable outcome falls back and releases its grant for main replay"
 }
 
+test_branch_ack_waits_for_complete_presented_coverage() {
+  local repo home out status
+  repo="$TMP_ROOT/deduped-grant-root"
+  home="$TMP_ROOT/deduped-grant-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, fire, home, realRoot, sentToMain, defaultSessionCtx }; })()`);
+const { pi, makeOffer, fire, home, realRoot, sentToMain, defaultSessionCtx } = globalThis.__t;
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+
+globalThis.__fmExecuteBranchBash = async (context) => {
+  const result = spawnSync("bash", ["-c", context.command], {
+    encoding: "utf8",
+    cwd: context.cwd,
+    env: context.env,
+  });
+  return {
+    content: [{ type: "text", text: `${result.stdout}${result.stderr}` }],
+    details: { stdout: result.stdout, stderr: result.stderr, exitCode: result.status },
+    isError: result.status !== 0,
+  };
+};
+
+async function runFleetCommand(session, args) {
+  const bash = session.options.customTools.find((tool) => tool.name === "bash");
+  const result = await bash.execute(
+    `deduped-grant-${args.length}`,
+    { command: ["bin/fm-wake-drain.sh", ...args].join(" ") },
+    undefined,
+    undefined,
+    {},
+  );
+  if (result.isError) throw new Error(`fleet command failed: ${JSON.stringify(result)}`);
+  return result.details;
+}
+
+await fire("session_start", {}, defaultSessionCtx);
+let promptNumber = 0;
+globalThis.__fmOnBranchPrompt = async ({ session }) => {
+  promptNumber += 1;
+  const drained = await runFleetCommand(session, []);
+  const ack = drained.stderr.match(/--ack-through ([0-9]+) --recovery-generation ([A-Za-z0-9._-]+)/);
+  if (!ack || ack[1] !== "2") throw new Error(`branch drain returned the wrong acknowledgement: ${drained.stderr}`);
+  const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+  if (promptNumber === 1) {
+    const presented = drained.stdout.split("\n").filter((line) => line.includes("\tsignal\tbranch-driver."));
+    if (presented.length !== 2) throw new Error(`branch drain did not present both distinct rows: ${drained.stdout}`);
+    const first = await report.execute(
+      "partial-first",
+      { task: "branch-driver", wakeSeq: "1", verdict: "routine", summary: "handled the first distinct row" },
+      undefined,
+      undefined,
+      {},
+    );
+    if (first.isError) throw new Error(`first distinct report failed: ${JSON.stringify(first)}`);
+    const bash = session.options.customTools.find((tool) => tool.name === "bash");
+    let partialAckError;
+    try {
+      await bash.execute(
+        "partial-ack",
+        { command: `bin/fm-wake-drain.sh --ack-through ${ack[1]} --recovery-generation ${ack[2]}` },
+        undefined,
+        undefined,
+        {},
+      );
+    } catch (error) {
+      partialAckError = error;
+    }
+    if (!(partialAckError instanceof Error) || !partialAckError.message.includes("every presented wake row")) {
+      throw new Error(`partial acknowledgement was not refused by coverage: ${String(partialAckError)}`);
+    }
+    const queued = readFileSync(`${home}/state/.wake-queue`, "utf8");
+    if (!queued.includes("\t1\tsignal\tbranch-driver.status\t") ||
+        !queued.includes("\t2\tsignal\tbranch-driver.turn-ended\t")) {
+      throw new Error(`partial acknowledgement consumed an unreported row: ${queued}`);
+    }
+    const second = await report.execute(
+      "partial-second",
+      { task: "branch-driver", wakeSeq: "2", verdict: "routine", summary: "handled the second distinct row" },
+      undefined,
+      undefined,
+      {},
+    );
+    if (second.isError) throw new Error(`second distinct report failed: ${JSON.stringify(second)}`);
+    await runFleetCommand(session, ["--ack-through", ack[1], "--recovery-generation", ack[2]]);
+    return;
+  }
+  const presented = drained.stdout.split("\n").filter((line) => line.includes("\tsignal\tbranch-driver.status\t"));
+  if (presented.length !== 1 || !presented[0].includes("\t2\tsignal\tbranch-driver.status\tsignal: newest status")) {
+    throw new Error(`branch drain did not present only the latest repeated status row: ${drained.stdout}`);
+  }
+  const recorded = await report.execute(
+    "deduped-status",
+    { task: "branch-driver", wakeSeq: "2", verdict: "routine", summary: "handled the newest repeated status" },
+    undefined,
+    undefined,
+    {},
+  );
+  if (recorded.isError) throw new Error(`deduped row report failed: ${JSON.stringify(recorded)}`);
+  await runFleetCommand(session, ["--ack-through", ack[1], "--recovery-generation", ack[2]]);
+};
+
+writeFileSync(
+  `${home}/state/.wake-queue`,
+  "1\t1\tsignal\tbranch-driver.status\tsignal: distinct status\n" +
+    "2\t2\tsignal\tbranch-driver.turn-ended\tsignal: distinct turn end\n",
+);
+const partialOffer = makeOffer("signal: two distinct branch-driver rows");
+pi.events.emit("fm-branch-supervision:dispatch", partialOffer);
+if (!partialOffer.accepted) throw new Error("branch refused two distinct rows");
+const partialFailure = await partialOffer.settlement.then(() => null, (error) => error);
+if (partialFailure !== null) throw new Error(`fully reported distinct grant did not settle: ${String(partialFailure)}`);
+if (readFileSync(`${home}/state/.wake-queue`, "utf8").trim() !== "") {
+  throw new Error("full acknowledgement did not consume both distinct rows");
+}
+
+writeFileSync(
+  `${home}/state/.wake-queue`,
+  "1\t1\tsignal\tbranch-driver.status\tsignal: older status\n" +
+    "2\t2\tsignal\tbranch-driver.status\tsignal: newest status\n",
+);
+const offer = makeOffer("signal: repeated branch-driver status");
+pi.events.emit("fm-branch-supervision:dispatch", offer);
+if (!offer.accepted) throw new Error("branch refused repeated same-key rows");
+const failure = await offer.settlement.then(() => null, (error) => error);
+if (failure !== null) throw new Error(`one report did not settle the presented deduplicated grant: ${String(failure)}`);
+if (existsSync(`${home}/state/.branch-eligible-rows`)) throw new Error("settled deduplicated grant remained claimed");
+if (readFileSync(`${home}/state/.wake-queue`, "utf8").trim() !== "") {
+  throw new Error("acknowledging the latest presented row did not consume the folded queue rows");
+}
+const outcomes = readFileSync(`${home}/state/branch-outcomes.jsonl`, "utf8").trim().split("\n").filter(Boolean);
+if (outcomes.length !== 3 || JSON.parse(outcomes[2]).summary !== "handled the newest repeated status") {
+  throw new Error(`grant coverage did not produce the expected durable outcomes: ${outcomes}`);
+}
+if (sentToMain.length !== 3) throw new Error(`covered grants delivered ${sentToMain.length} outcomes`);
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "branch acknowledgement must wait for complete presented-row coverage: $out"
+  pass "branch acknowledgement waits for coverage and deduplicated rows settle together"
+}
+
+test_reported_prompt_requires_observed_ack_command() {
+  local repo home out status
+  repo="$TMP_ROOT/reported-no-ack-root"
+  home="$TMP_ROOT/reported-no-ack-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { defaultSessionCtx, dispatch, fire, home }; })()`);
+const { defaultSessionCtx, dispatch, fire, home } = globalThis.__t;
+import { existsSync, readFileSync } from "node:fs";
+
+await fire("session_start", {}, defaultSessionCtx);
+globalThis.__fmOnBranchPrompt = async ({ session }) => {
+  const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+  const recorded = await report.execute(
+    "reported-without-drain",
+    { task: "branch-driver", verdict: "routine", summary: "reported without observing the drain acknowledgement" },
+    undefined,
+    undefined,
+    {},
+  );
+  if (recorded.isError) throw new Error(`durable report failed: ${JSON.stringify(recorded)}`);
+  session.messages.push({ role: "assistant", content: [], stopReason: "stop" });
+};
+
+const offer = dispatch("signal: ordinary report without a drain");
+if (!offer.accepted) throw new Error("branch refused the ordinary reported fixture");
+const failure = await offer.settlement.then(() => null, (error) => error);
+if (!(failure instanceof Error) || !failure.message.includes("could not acknowledge its wake-row grant")) {
+  throw new Error(`ordinary settlement did not reject its missing observed acknowledgement: ${String(failure)}`);
+}
+if (existsSync(`${home}/state/.branch-eligible-rows`)) {
+  throw new Error("failed ordinary settlement left its grant active");
+}
+if (!readFileSync(`${home}/state/.wake-queue`, "utf8").includes("ordinary report without a drain")) {
+  throw new Error("missing-ack settlement consumed the wake row");
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "every reported prompt must require the observed acknowledgement command: $out"
+  pass "reported prompts refuse settlement without an observed acknowledgement"
+}
+
+test_ordinary_fallback_reuses_observed_ack_command() {
+  local repo home out status
+  repo="$TMP_ROOT/ordinary-ack-root"
+  home="$TMP_ROOT/ordinary-ack-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { defaultSessionCtx, dispatch, fire, home, realRoot }; })()`);
+const { defaultSessionCtx, dispatch, fire, home, realRoot } = globalThis.__t;
+import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+
+globalThis.__fmExecuteBranchBash = async (context) => {
+  const result = spawnSync("bash", ["-c", context.command], {
+    encoding: "utf8",
+    cwd: context.cwd,
+    env: context.env,
+  });
+  return {
+    content: [{ type: "text", text: `${result.stdout}${result.stderr}` }],
+    details: { stdout: result.stdout, stderr: result.stderr, exitCode: result.status },
+    isError: result.status !== 0,
+  };
+};
+
+await fire("session_start", {}, defaultSessionCtx);
+globalThis.__fmOnBranchPrompt = async ({ session }) => {
+  const bash = session.options.customTools.find((tool) => tool.name === "bash");
+  const drained = await bash.execute("ordinary-drain", { command: "bin/fm-wake-drain.sh" }, undefined, undefined, {});
+  if (drained.isError || !drained.content.some((item) => item.text?.includes("WAKE_ACK_REQUIRED:"))) {
+    throw new Error(`branch drain did not expose an acknowledgement: ${JSON.stringify(drained)}`);
+  }
+  writeFileSync(
+    `${home}/state/.wake-queue`,
+    readFileSync(`${home}/state/.wake-queue`, "utf8") +
+      "2\t2\tsignal\tbranch-driver.turn-ended\tsignal: later ordinary status for main\n",
+  );
+  const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+  const recorded = await report.execute(
+    "ordinary-covered",
+    { task: "branch-driver", verdict: "routine", summary: "ordinary row durably covered" },
+    undefined,
+    undefined,
+    {},
+  );
+  if (recorded.isError) throw new Error(`ordinary report failed: ${JSON.stringify(recorded)}`);
+  session.messages.push({ role: "assistant", content: [], stopReason: "stop" });
+};
+
+const offer = dispatch("signal: ordinary fallback acknowledgement");
+if (!offer.accepted) throw new Error("branch refused the ordinary acknowledgement fixture");
+const failure = await offer.settlement.then(() => null, (error) => error);
+if (failure !== null) throw new Error(`ordinary covered grant did not settle: ${String(failure)}`);
+const laterDrain = spawnSync("bash", [`${realRoot}/bin/fm-wake-drain.sh`], {
+  encoding: "utf8",
+  cwd: realRoot,
+  env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: `${home}/state`, FM_ROOT_OVERRIDE: realRoot },
+});
+if (laterDrain.status !== 0 || !laterDrain.stdout.includes("signal: later ordinary status for main")) {
+  throw new Error(`ordinary fallback hid the row appended after its observed drain: ${laterDrain.stdout}${laterDrain.stderr}`);
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "ordinary fallback acknowledgement must reuse the observed command: $out"
+  pass "ordinary fallback reuses its observed acknowledgement without hiding later rows"
+}
+
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown() {
   local repo home out status
   repo="$TMP_ROOT/provider-error-root"
@@ -1962,9 +2292,31 @@ test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldow
   PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
 const prelude = process.env.DRIVER_PRELUDE;
-await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatch, fire, settle, home, mainUserMessages, sentToMain }; })()`);
-const { pi, makeOffer, dispatch, fire, settle, home, mainUserMessages, sentToMain } = globalThis.__t;
-import { existsSync } from "node:fs";
+await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatch, fire, settle, home, realRoot, mainUserMessages, sentToMain }; })()`);
+const { pi, makeOffer, dispatch, fire, settle, home, realRoot, mainUserMessages, sentToMain } = globalThis.__t;
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+
+globalThis.__fmExecuteBranchBash = async (context) => {
+  const result = spawnSync("bash", ["-c", context.command], {
+    encoding: "utf8",
+    cwd: context.cwd,
+    env: context.env,
+  });
+  return {
+    content: [{ type: "text", text: `${result.stdout}${result.stderr}` }],
+    details: { stdout: result.stdout, stderr: result.stderr, exitCode: result.status },
+    isError: result.status !== 0,
+  };
+};
+
+async function runBranchDrain(session) {
+  const bash = session.options.customTools.find((tool) => tool.name === "bash");
+  const result = await bash.execute("provider-error-drain", { command: "bin/fm-wake-drain.sh" }, undefined, undefined, {});
+  if (result.isError) throw new Error(`branch drain failed: ${JSON.stringify(result)}`);
+  const output = result.content.map((item) => item.text ?? "").join("\n");
+  if (!output.includes("WAKE_ACK_REQUIRED:")) throw new Error(`branch drain returned no acknowledgement command: ${output}`);
+}
 
 let now = 1_000_000;
 Date.now = () => now;
@@ -1991,6 +2343,7 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
     ];
   }
   if (attempt === 2 || attempt === 6 || attempt === 8) {
+    await runBranchDrain(session);
     const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
     const summary = attempt === 2
       ? "healthy branch turn reset the provider-error streak"
@@ -2009,6 +2362,12 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
     return;
   }
   if (attempt === 5) {
+    await runBranchDrain(session);
+    writeFileSync(
+      `${home}/state/.wake-queue`,
+      readFileSync(`${home}/state/.wake-queue`, "utf8") +
+        "2\t2\tsignal\tbranch-driver.turn-ended\tsignal: later status for main\n",
+    );
     const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
     const recorded = await report.execute(
       "reported-before-provider-error",
@@ -2019,6 +2378,27 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
     );
     if (recorded.isError) throw new Error(`pre-error report failed: ${JSON.stringify(recorded)}`);
     await new Promise((resolve) => { releaseFailedProbe = resolve; });
+  }
+  if (attempt === 9 || attempt === 10) {
+    await runBranchDrain(session);
+    const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+    for (let index = 0; index < 2; index += 1) {
+      const wakeSeq = attempt === 9 ? "1" : String(index + 1);
+      const recorded = await report.execute(
+        `grant-${attempt}-${index}`,
+        { task: "branch-driver", wakeSeq, verdict: "routine", summary: `covered wake row ${wakeSeq} of grant ${attempt}` },
+        undefined,
+        undefined,
+        {},
+      );
+      if (attempt === 9 && index === 1) {
+        if (!recorded.isError || !recorded.content[0].text.includes("already has a durable outcome")) {
+          throw new Error(`a duplicate report for one wake row was accepted: ${JSON.stringify(recorded)}`);
+        }
+      } else if (recorded.isError) {
+        throw new Error(`grant report failed: ${JSON.stringify(recorded)}`);
+      }
+    }
   }
   session.messages.push({
     role: "assistant",
@@ -2089,16 +2469,35 @@ const duringProbe = makeOffer("signal: main owns wakes during a branch probe");
 pi.events.emit("fm-branch-supervision:dispatch", duringProbe);
 if (duringProbe.accepted) throw new Error("a second wake entered the branch while its one cooldown probe was in flight");
 releaseFailedProbe();
-const failedProbeError = await failedProbe.settlement.then(() => null, (error) => error);
-if (!(failedProbeError instanceof Error) || !failedProbeError.message.includes("provider failed after construction")) {
-  throw new Error(`failed cooldown probe did not reject settlement: ${String(failedProbeError)}`);
+const reportedProbeError = await failedProbe.settlement.then(() => null, (error) => error);
+if (reportedProbeError !== null) {
+  throw new Error(`a provider error after the durable report returned the handled wake for redelivery: ${String(reportedProbeError)}`);
 }
-if (mainUserMessages.length !== 0) throw new Error("failed cooldown probe bypassed watcher-owned fallback delivery");
+if (mainUserMessages.length !== 0) throw new Error("reported provider-error probe bypassed watcher-owned delivery");
 if (existsSync(`${home}/state/.branch-eligible-rows`)) {
-  throw new Error("failed cooldown probe left the claimed row grant active");
+  throw new Error("reported provider-error probe left the handled row grant active");
+}
+const laterDrain = spawnSync("bash", [`${realRoot}/bin/fm-wake-drain.sh`], {
+  encoding: "utf8",
+  cwd: realRoot,
+  env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: `${home}/state`, FM_ROOT_OVERRIDE: realRoot },
+});
+if (laterDrain.status !== 0 || !laterDrain.stdout.includes("signal: later status for main")) {
+  throw new Error(`the reported provider-error acknowledgement hid a later main row: ${laterDrain.stdout}${laterDrain.stderr}`);
+}
+const laterAck = laterDrain.stderr.match(/(bin\/fm-wake-drain\.sh --ack-through [0-9]+ --recovery-generation [A-Za-z0-9._-]+)/);
+if (!laterAck) throw new Error(`the later main row had no acknowledgement command: ${laterDrain.stderr}`);
+const laterAckResult = spawnSync("bash", ["-c", laterAck[1]], {
+  encoding: "utf8",
+  cwd: realRoot,
+  env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: `${home}/state`, FM_ROOT_OVERRIDE: realRoot },
+});
+if (laterAckResult.status !== 0) throw new Error(`the later main row could not be acknowledged: ${laterAckResult.stderr}`);
+if (sentToMain.some((sent) => sent.message.content.includes("Supervision branch recovered after a successful cooldown probe"))) {
+  throw new Error("a post-report provider error was mistaken for provider recovery");
 }
 
-// The failed probe doubles the cooldown from five to ten minutes. Five more
+// The provider failure still doubles the cooldown from five to ten minutes. Five more
 // minutes are not enough, but the next five admit exactly one recovery probe.
 now += 5 * 60 * 1000;
 if (dispatch("signal: inside extended cooldown").accepted) {
@@ -2133,12 +2532,336 @@ if (existsSync(`${home}/state/.branch-eligible-rows`)) {
 const afterRecoveryHealthy = dispatch("signal: healthy turn after one post-recovery error");
 if (!afterRecoveryHealthy.accepted) throw new Error("the successful probe did not clear the provider-error streak");
 await settle(() => attempt === 8 && sentToMain.some((sent) => sent.message.content.includes("post-recovery report proved")), "post-recovery healthy report");
+await afterRecoveryHealthy.settlement;
+
+function dispatchTwoRowGrant(label) {
+  writeFileSync(
+    `${home}/state/.wake-queue`,
+    `1\t1\tsignal\tbranch-driver.status\t${label} first\n` +
+      `2\t2\tsignal\tbranch-driver.turn-ended\t${label} second\n`,
+  );
+  const offer = makeOffer(`signal: ${label}`);
+  pi.events.emit("fm-branch-supervision:dispatch", offer);
+  return offer;
+}
+
+const duplicateGrant = dispatchTwoRowGrant("duplicate grant");
+if (!duplicateGrant.accepted) throw new Error("the branch refused the duplicate-report grant");
+const duplicateFailure = await duplicateGrant.settlement.then(() => null, (error) => error);
+if (!(duplicateFailure instanceof Error) || !duplicateFailure.message.includes("provider failed after construction")) {
+  throw new Error(`two reports for one row falsely settled a two-row grant: ${String(duplicateFailure)}`);
+}
+if (existsSync(`${home}/state/.branch-eligible-rows`)) {
+  throw new Error("duplicate-report fallback left its row grant active");
+}
+
+const fullGrant = dispatchTwoRowGrant("full grant");
+if (!fullGrant.accepted) throw new Error("one duplicate-report provider error latched the branch prematurely");
+const fullFailure = await fullGrant.settlement.then(() => null, (error) => error);
+if (fullFailure !== null) {
+  throw new Error(`a fully reported grant returned to watcher fallback: ${String(fullFailure)}`);
+}
+if (existsSync(`${home}/state/.branch-eligible-rows`)) {
+  throw new Error("fully reported grant left its handled row grant active");
+}
+if (readFileSync(`${home}/state/.wake-queue`, "utf8").trim() !== "") {
+  throw new Error("fully reported provider-error grant remained queued after settlement");
+}
+const nextDrain = spawnSync("bash", [`${realRoot}/bin/fm-wake-drain.sh`], {
+  encoding: "utf8",
+  env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: `${home}/state`, FM_ROOT_OVERRIDE: realRoot },
+});
+if (nextDrain.status !== 0) throw new Error(`next main drain failed: ${nextDrain.stderr}`);
+if (nextDrain.stdout.includes("\tsignal\tbranch-driver.")) {
+  throw new Error(`next drain re-presented a fully reported provider-error grant: ${nextDrain.stdout}`);
+}
 process.exit(0);
 EOF
   status=$?
   out=$(cat "$TMP_ROOT/node-output")
-  expect_code 0 "$status" "provider errors must latch, cool down, re-probe once, back off, and recover through a durable report: $out"
-  pass "provider-error latches cool down, re-probe once with backoff, and recover through a durable report"
+  expect_code 0 "$status" "provider errors must preserve distinctly covered grants, replay duplicate coverage, and retain health cooldowns: $out"
+  pass "provider errors settle only after fully reported grants are acknowledged"
+}
+
+test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model() {
+  local repo home out status
+  repo="$TMP_ROOT/model-chain-root"
+  home="$TMP_ROOT/model-chain-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeCtx, registryModels, dispatch, fire, settle, home, mainUserMessages, sentToMain }; })()`);
+const { makeCtx, registryModels, dispatch, fire, settle, home, mainUserMessages, sentToMain } = globalThis.__t;
+import { writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const chainModule = await import(pathToFileURL(join(dirname(process.env.PLUGIN), "lib/fm-branch-model-chain.ts")).href);
+let duplicateError;
+try {
+  chainModule.parseBranchModelChain("ghost/not-installed\nghost/not-installed\nopenai/cheap-1\n");
+} catch (error) {
+  duplicateError = error;
+}
+if (!(duplicateError instanceof Error) || !duplicateError.message.includes("duplicate supervision model line 2")) {
+  throw new Error(`a duplicate model label did not invalidate the chain: ${String(duplicateError)}`);
+}
+
+let now = 1_000_000;
+Date.now = () => now;
+registryModels.push(
+  { provider: "anthropic", id: "main-model" },
+  { provider: "openai", id: "cheap-1" },
+  { provider: "zai", id: "cheap-2" },
+  { provider: "qwen", id: "cheap-3" },
+);
+// Preference order, with a comment, a blank line, and a model the runtime does
+// not know.
+writeFileSync(
+  `${home}/config/supervision-branch-model`,
+  "# supervision chain\nghost/not-installed\nopenai/cheap-1\n\nzai/cheap-2\nqwen/cheap-3\n",
+);
+const mainEntries = [];
+await fire("session_start", {}, makeCtx({
+  sessionManager: { getSessionFile: () => `${home}/main.jsonl`, getEntries: () => mainEntries },
+}));
+
+const failing = new Set();
+let prompts = 0;
+globalThis.__fmOnBranchPrompt = async ({ session }) => {
+  prompts += 1;
+  const model = `${session.options.model.provider}/${session.options.model.id}`;
+  if (failing.has(model)) {
+    session.messages.push({ role: "assistant", content: [], stopReason: "error", errorMessage: "429: usage limit reached" });
+    return;
+  }
+  const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+  await globalThis.__fmObserveWakeAck(session);
+  const recorded = await report.execute(`ok-${prompts}`, { task: "branch-driver", verdict: "routine", summary: `handled on ${model}` }, undefined, undefined, {});
+  if (recorded.isError) throw new Error(`report failed: ${JSON.stringify(recorded)}`);
+  session.messages.push({ role: "assistant", content: [], stopReason: "stop" });
+};
+const builtOn = () => (globalThis.__fmSessions ?? []).map((s) => `${s.options.model?.provider}/${s.options.model?.id}`);
+const handled = (text) => sentToMain.some((sent) => sent.message.content.includes(text));
+async function wake(label, expectFailure) {
+  const before = prompts;
+  const offer = dispatch(`signal: ${label}`);
+  if (!offer.accepted) throw new Error(`${label}: the chain let the branch refuse a wake it could have served`);
+  const failure = await offer.settlement.then(() => null, (error) => error);
+  if (Boolean(failure) !== expectFailure) throw new Error(`${label}: unexpected settlement ${String(failure)}`);
+  if (prompts !== before + 1) throw new Error(`${label}: expected exactly one branch prompt`);
+}
+
+// 1. The unknown first entry is skipped and the first usable model serves.
+await wake("first wake", false);
+if (builtOn().at(-1) !== "openai/cheap-1") throw new Error(`the chain did not start on its first usable model: ${builtOn()}`);
+
+// 2. That model runs out: the failed wake returns to the watcher-owned
+// fallback, ONE note says where supervision went, and nothing latches.
+failing.add("openai/cheap-1");
+await wake("preferred model out of quota", true);
+if (mainUserMessages.length !== 0) throw new Error("the failed wake bypassed watcher-owned fallback delivery");
+const prematureMove = sentToMain.filter((sent) => sent.message.content.includes("Supervision model openai/cheap-1 failed"));
+if (prematureMove.length !== 0) {
+  throw new Error(`the fallback note named a destination before resolving it: ${JSON.stringify(prematureMove)}`);
+}
+if (handled("Supervision branch paused")) throw new Error("a chain with a ready model must not latch the branch off");
+
+// 3. Resolving the next model is not enough to announce it: if replacement
+// construction fails, the pending fallback note remains pending and names no
+// destination. A later successful construction emits and clears it exactly once.
+globalThis.__fmCreateSessionError = "replacement construction failed";
+const failedReplacement = dispatch("replacement construction fails");
+if (!failedReplacement.accepted) throw new Error("the replacement build wake was not accepted");
+const replacementFailure = await failedReplacement.settlement.then(() => null, (error) => error);
+if (!(replacementFailure instanceof Error) || !replacementFailure.message.includes("replacement construction failed")) {
+  throw new Error(`the replacement build did not expose its construction failure: ${String(replacementFailure)}`);
+}
+if (sentToMain.some((sent) => sent.message.content.includes("Supervision model openai/cheap-1 failed"))) {
+  throw new Error("the fallback note was emitted before the replacement branch was constructed");
+}
+delete globalThis.__fmCreateSessionError;
+await fire("session_shutdown", {});
+await fire("session_start", {}, makeCtx({
+  sessionManager: { getSessionFile: () => `${home}/main.jsonl`, getEntries: () => mainEntries },
+}));
+await wake("new main session retries the preferred model", true);
+if (builtOn().at(-1) !== "openai/cheap-1") {
+  throw new Error(`a new main session retained the preferred model's old cooldown: ${builtOn()}`);
+}
+await wake("served by the second model", false);
+if (builtOn().at(-1) !== "zai/cheap-2" || !handled("handled on zai/cheap-2")) {
+  throw new Error(`the next wake did not run on the second model: ${builtOn()}`);
+}
+const moved = sentToMain.filter((sent) => sent.message.content.includes("Supervision model openai/cheap-1 failed"));
+if (moved.length !== 1 || !moved[0].message.content.includes("zai/cheap-2")) {
+  throw new Error(`the fallback note must name the failed and constructed next model once: ${JSON.stringify(moved)}`);
+}
+
+// 4. Inside the first model's cooldown the branch stays where it is.
+now += 4 * 60 * 1000;
+const sessionsBefore = builtOn().length;
+await wake("still cooling", false);
+if (builtOn().length !== sessionsBefore) throw new Error("the branch was rebuilt while the preferred model was still cooling down");
+
+// 5. After the cooldown the preferred model is tried again and keeps the job.
+failing.delete("openai/cheap-1");
+now += 2 * 60 * 1000;
+await wake("back to the preferred model", false);
+if (builtOn().at(-1) !== "openai/cheap-1" || !handled("handled on openai/cheap-1")) {
+  throw new Error(`supervision did not return to the preferred model after its cooldown: ${builtOn()}`);
+}
+
+// 6. A successful one-line pin clears retained cooldown for that model. Pinning
+// the failed preferred model alone permits an explicit retry; restoring the
+// chain inside its former cooldown must keep that recovered model preferred.
+failing.add("openai/cheap-1");
+await wake("preferred model fails before an explicit pin retry", true);
+await wake("second model serves while the preferred model cools", false);
+if (builtOn().at(-1) !== "zai/cheap-2") throw new Error(`the chain did not move off the failed preferred model: ${builtOn()}`);
+failing.delete("openai/cheap-1");
+writeFileSync(`${home}/config/supervision-branch-model`, "openai/cheap-1\n");
+await fire("session_shutdown", {});
+await fire("session_start", {}, makeCtx({
+  sessionManager: { getSessionFile: () => `${home}/main.jsonl`, getEntries: () => mainEntries },
+}));
+await wake("single pin retries the recovered preferred model", false);
+if (builtOn().at(-1) !== "openai/cheap-1") throw new Error(`the explicit single pin did not retry its model: ${builtOn()}`);
+writeFileSync(`${home}/config/supervision-branch-model`, "openai/cheap-1\nzai/cheap-2\nqwen/cheap-3\n");
+await fire("session_shutdown", {});
+await fire("session_start", {}, makeCtx({
+  sessionManager: { getSessionFile: () => `${home}/main.jsonl`, getEntries: () => mainEntries },
+}));
+await wake("restored chain honors the successful pin retry", false);
+if (builtOn().at(-1) !== "openai/cheap-1") {
+  throw new Error(`a successful single-pin retry left its old chain cooldown active: ${builtOn()}`);
+}
+
+// 7. Every model failing in turn walks the whole chain. As soon as the last
+// ready model fails, the live failed branch is released and ordinary wakes are
+// declined until the earliest chain cooldown permits one probe.
+failing.add("openai/cheap-1"); failing.add("zai/cheap-2"); failing.add("qwen/cheap-3");
+await wake("chain exhausted 1", true);
+await wake("chain exhausted 2", true);
+await wake("chain exhausted 3", true);
+if (builtOn().at(-1) !== "qwen/cheap-3") throw new Error(`the chain did not reach its last model: ${builtOn()}`);
+if (!handled("Supervision branch paused because every configured model is cooling down")) {
+  throw new Error("an exhausted chain did not enter cooldown recovery immediately");
+}
+if (dispatch("signal: cooling chain").accepted) throw new Error("the exhausted chain retried a failed model during cooldown");
+now += 5 * 60 * 1000;
+globalThis.__fmCreateSessionError = "chain probe construction failed";
+const probe = dispatch("signal: earliest chain cooldown probe");
+if (!probe.accepted) throw new Error("the exhausted chain did not admit a probe at its earliest cooldown");
+const probeFailure = await probe.settlement.then(() => null, (error) => error);
+if (!(probeFailure instanceof Error) || !probeFailure.message.includes("chain probe construction failed")) {
+  throw new Error(`the chain probe did not expose its build failure: ${String(probeFailure)}`);
+}
+delete globalThis.__fmCreateSessionError;
+if (dispatch("signal: immediately after failed chain probe").accepted) {
+  throw new Error("a chain probe build failure allowed an immediate retry");
+}
+now += (5 * 60 * 1000) - 1;
+if (dispatch("signal: inside renewed chain cooldown").accepted) {
+  throw new Error("a chain probe build failure did not renew the cooldown");
+}
+now += 1;
+const retry = dispatch("signal: chain probe after renewed cooldown");
+if (!retry.accepted) throw new Error("the exhausted chain did not admit a probe after the renewed cooldown");
+const retryFailure = await retry.settlement.then(() => null, (error) => error);
+if (!(retryFailure instanceof Error) || !retryFailure.message.includes("provider failed after construction")) {
+  throw new Error(`the renewed chain probe did not reach a ready model: ${String(retryFailure)}`);
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "a supervision model chain must fall back on provider errors, return to the preferred model, and latch only when exhausted: $out"
+  pass "a supervision model chain falls back on provider errors, returns to the preferred model, and latches only when exhausted"
+}
+
+test_model_chain_rejects_malformed_lines_and_reprobes_unresolvable_entries() {
+  local repo home out status
+  repo="$TMP_ROOT/model-chain-invalid-root"
+  home="$TMP_ROOT/model-chain-invalid-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { commands, dispatch, fire, makeCtx, registryModels, home, sentToMain, uiPrompts }; })()`);
+const { commands, dispatch, fire, makeCtx, registryModels, home, sentToMain, uiPrompts } = globalThis.__t;
+import { writeFileSync } from "node:fs";
+
+let now = 2_000_000;
+Date.now = () => now;
+registryModels.push(
+  { provider: "anthropic", id: "main-model" },
+  { provider: "openai", id: "cheap-model" },
+);
+writeFileSync(`${home}/config/supervision-branch-model`, "# preferred\n openai/cheap-model\n");
+await fire("session_start", {}, makeCtx());
+const command = commands.get("supervision-model");
+if (!command) throw new Error("the supervision-model command was not registered");
+await command.handler("", makeCtx());
+const malformedPrompt = uiPrompts.at(-1);
+if (!malformedPrompt?.title.includes("invalid config (invalid supervision model line 2") ||
+    !malformedPrompt.title.includes(" openai/cheap-model")) {
+  throw new Error(`the model picker mislabeled malformed config: ${JSON.stringify(malformedPrompt)}`);
+}
+const malformed = dispatch("signal: malformed mixed chain");
+if (!malformed.accepted) throw new Error("the malformed chain wake was not initially accepted for fail-open settlement");
+const malformedFailure = await malformed.settlement.then(() => null, (error) => error);
+if (!(malformedFailure instanceof Error) ||
+    !malformedFailure.message.includes("invalid supervision model line 2") ||
+    !malformedFailure.message.includes(" openai/cheap-model")) {
+  throw new Error(`the mixed malformed chain did not refuse with the malformed line: ${String(malformedFailure)}`);
+}
+
+await fire("session_shutdown", {});
+writeFileSync(`${home}/config/supervision-branch-model`, "openai/bad\u0080\nopenai/cheap-model\n");
+await fire("session_start", {}, makeCtx());
+const sessionsBeforeControl = (globalThis.__fmSessions ?? []).length;
+const controlled = dispatch("signal: C1 control in mixed chain");
+if (!controlled.accepted) throw new Error("the C1-control wake was not initially accepted for fail-open settlement");
+const controlledFailure = await controlled.settlement.then(() => null, (error) => error);
+if (!(controlledFailure instanceof Error) ||
+    !controlledFailure.message.includes("invalid supervision model line 1")) {
+  throw new Error(`the C1-control chain did not refuse with its malformed line: ${String(controlledFailure)}`);
+}
+if ((globalThis.__fmSessions ?? []).length !== sessionsBeforeControl) {
+  throw new Error("a C1-control model reference selected around itself to build a branch");
+}
+
+await fire("session_shutdown", {});
+writeFileSync(`${home}/config/supervision-branch-model`, "ghost/a\nghost/b\n");
+await fire("session_start", {}, makeCtx());
+const exhausted = dispatch("signal: every configured model is unavailable");
+if (!exhausted.accepted) throw new Error("the unavailable chain wake was not initially accepted");
+const exhaustedFailure = await exhausted.settlement.then(() => null, (error) => error);
+if (!(exhaustedFailure instanceof Error) || !exhaustedFailure.message.includes("no model in the supervision chain is usable")) {
+  throw new Error(`the unavailable chain did not expose its build failure: ${String(exhaustedFailure)}`);
+}
+if (dispatch("signal: unavailable chain cooling").accepted) {
+  throw new Error("an unavailable chain accepted another wake during cooldown");
+}
+now += 5 * 60 * 1000;
+const probe = dispatch("signal: unavailable chain recovery probe");
+if (!probe.accepted) throw new Error("an unavailable chain never re-probed after its cooldown");
+const probeFailure = await probe.settlement.then(() => null, (error) => error);
+if (!(probeFailure instanceof Error) || !probeFailure.message.includes("no model in the supervision chain is usable")) {
+  throw new Error(`the unavailable-chain probe did not retry resolution: ${String(probeFailure)}`);
+}
+const pauses = sentToMain.filter((sent) => sent.message.content.includes("every configured model is cooling down"));
+if (pauses.length !== 1) throw new Error(`chain recovery should announce one pause: ${JSON.stringify(pauses)}`);
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "model-chain syntax and resolution exhaustion must fail visibly and recoverably: $out"
+  pass "malformed chains refuse visibly and unavailable chains re-probe after cooldown"
 }
 
 test_selection_change_does_not_corrupt_inflight_provider_state() {
@@ -2169,6 +2892,7 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
   attempt += 1;
   if (attempt === 3) {
     const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+    await globalThis.__fmObserveWakeAck(session);
     const recorded = await report.execute(
       "healthy-after-selection",
       { task: "branch-driver", verdict: "routine", summary: "replacement branch remains available" },
@@ -3404,7 +4128,7 @@ EOF
   pass "supervision-model runs an effort picker after the model picker and persists both independently"
 }
 
-test_unusable_model_pin_falls_back_to_main() {
+test_invalid_model_pins_refuse_branch_builds() {
   local repo home out status
   repo="$TMP_ROOT/modelbad-root"
   home="$TMP_ROOT/modelbad-home"
@@ -3413,8 +4137,8 @@ test_unusable_model_pin_falls_back_to_main() {
   PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
 const prelude = process.env.DRIVER_PRELUDE;
-await eval(`(async () => { ${prelude}; globalThis.__t = { fire, dispatch, settle, makeCtx, registryModels, mainUserMessages, home }; })()`);
-const { fire, dispatch, settle, makeCtx, registryModels, mainUserMessages, home } = globalThis.__t;
+await eval(`(async () => { ${prelude}; globalThis.__t = { fire, dispatch, makeCtx, registryModels, mainUserMessages, home }; })()`);
+const { fire, dispatch, makeCtx, registryModels, mainUserMessages, home } = globalThis.__t;
 import { writeFileSync } from "node:fs";
 
 registryModels.push(
@@ -3442,17 +4166,20 @@ if (
 if (mainUserMessages.length !== 0) throw new Error("branch bypassed watcher-owned fallback delivery");
 if ((globalThis.__fmSessions ?? []).length !== 0) throw new Error("an unusable pin must not build a branch session");
 
-// An unparseable file is simply no pin, so supervision keeps working and the
-// branch follows main's own model.
+// Any malformed non-comment line refuses the build, even when the file has no
+// valid model reference that could otherwise make the parser notice it.
 writeFileSync(`${home}/config/supervision-branch-model`, "not-a-model-reference\n");
 await fire("session_shutdown", {});
 await fire("session_start", {}, makeCtx());
-dispatch("signal: unparseable pin probe");
-await settle(() => (globalThis.__fmSessions ?? []).length === 1, "unparseable-pin branch build");
-const unparseable = globalThis.__fmSessions[0].options.model;
-if (unparseable?.provider !== "anthropic" || unparseable?.id !== "main-model") {
-  throw new Error(`an unparseable pin must be treated as no pin and follow main: ${JSON.stringify(unparseable)}`);
+const malformedOffer = dispatch("signal: malformed-only pin probe");
+if (!malformedOffer.accepted) throw new Error("malformed-only wake was not initially accepted");
+const malformedFailure = await malformedOffer.settlement.then(() => null, (error) => error);
+if (!(malformedFailure instanceof Error) ||
+    !malformedFailure.message.includes("invalid supervision model line 1") ||
+    !malformedFailure.message.includes("not-a-model-reference")) {
+  throw new Error(`the malformed-only pin did not refuse with its line: ${String(malformedFailure)}`);
 }
+if ((globalThis.__fmSessions ?? []).length !== 0) throw new Error("a malformed-only pin must not build a branch session");
 // Even a registered native provider cannot be selected by the independent
 // supervision session: its persistent native thread belongs to main.
 registryModels.push({ provider: "codex-native", id: "gpt-6-astra" });
@@ -3464,13 +4191,13 @@ const nativeFailure = await nativeOffer.settlement.then(() => null, (error) => e
 if (!(nativeFailure instanceof Error) || !nativeFailure.message.includes("ordinary Pi provider")) {
   throw new Error(`native branch pin was not explicitly refused: ${String(nativeFailure)}`);
 }
-if (globalThis.__fmSessions.length !== 1) throw new Error("native pin built a shared native branch");
+if ((globalThis.__fmSessions ?? []).length !== 0) throw new Error("native pin built a shared native branch");
 process.exit(0);
 EOF
   status=$?
   out=$(cat "$TMP_ROOT/node-output")
-  expect_code 0 "$status" "an unusable model pin must reject to watcher delivery and an unparseable one must be no pin: $out"
-  pass "an unusable model pin rejects to watcher fallback and an unparseable one is treated as no pin"
+  expect_code 0 "$status" "unusable, malformed, and native model pins must refuse branch builds: $out"
+  pass "unusable, malformed, and native model pins refuse branch builds"
 }
 
 test_replacement_activation_cleans_leases_and_retries_failure() {
@@ -4247,6 +4974,7 @@ test_outcomes_tool_uses_stock_execution_and_export_consumers() {
   cp "$ROOT/.pi/extensions/lib/fm-native-contract.ts" "$fixture/.pi/extensions/lib/fm-native-contract.ts"
   cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$fixture/.pi/extensions/lib/fm-async-exec.ts"
   cp "$ROOT/.pi/extensions/lib/fm-branch-model-picker.ts" "$fixture/.pi/extensions/lib/fm-branch-model-picker.ts"
+  cp "$ROOT/.pi/extensions/lib/fm-branch-model-chain.ts" "$fixture/.pi/extensions/lib/fm-branch-model-chain.ts"
   cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$fixture/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/fm-operational-input.ts"
   ln -s "$package_dir" "$fixture/node_modules/@earendil-works/pi-coding-agent"
@@ -4390,10 +5118,12 @@ const { fire, dispatch, settle, outcomeScript, sentToMain, mainEntries, defaultS
 await fire("session_start", {}, defaultSessionCtx);
 let finishWakePrompt;
 globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finishWakePrompt = resolve; });
-const offer = dispatch("signal: branch-driver working");
-if (!offer.accepted) throw new Error("branch did not accept the wake offer");
-await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "branch wake prompt");
-const report = globalThis.__fmSessions[0].options.customTools.find((tool) => tool.name === "fm_branch_report");
+const offer = dispatch("heartbeat", [], true, true);
+if (!offer.accepted) throw new Error("branch did not accept the heartbeat offer");
+await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "heartbeat branch prompt");
+const deliverySession = globalThis.__fmSessions[0];
+const report = deliverySession.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(deliverySession);
 
 // A repeating timer is the event loop's own liveness: it cannot tick while
 // the single JS thread is blocked, which is exactly what the TUI's repaint
@@ -4773,9 +5503,9 @@ const captainCopies = (seq) => mainEntries.filter(
 await fire("session_start", {}, defaultSessionCtx);
 let finishWakePrompt;
 globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finishWakePrompt = resolve; });
-const offer = dispatch("signal: branch-driver working");
-if (!offer.accepted) throw new Error("branch did not accept the wake offer");
-await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "branch wake prompt");
+const offer = dispatch("heartbeat", [], true, true);
+if (!offer.accepted) throw new Error("branch did not accept the heartbeat offer");
+await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "heartbeat branch prompt");
 const report = globalThis.__fmSessions[0].options.customTools.find((tool) => tool.name === "fm_branch_report");
 
 // A routine note is delivered, then its cursor write fails.
@@ -4950,7 +5680,12 @@ test_branch_report_refuses_a_task_the_wake_did_not_name
 test_branch_predrain_recheck_excludes_new_main_owned_row_without_deferring_eligible_work
 test_branch_predrain_needs_decision_keeps_routine_row_branch_eligible
 test_settled_branch_prompt_releases_unacknowledged_grant
+test_branch_ack_waits_for_complete_presented_coverage
+test_reported_prompt_requires_observed_ack_command
+test_ordinary_fallback_reuses_observed_ack_command
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown
+test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model
+test_model_chain_rejects_malformed_lines_and_reprobes_unresolvable_entries
 test_selection_change_does_not_corrupt_inflight_provider_state
 test_main_owned_grant_result_falls_back_to_main
 test_branch_predrain_recheck_noops_already_drained_wake
@@ -4966,7 +5701,7 @@ test_branch_effort_pin_applies_and_absent_pin_follows_main
 test_unpinned_branch_follows_main_effort_changes_live
 test_extension_registered_provider_resolves_in_the_branch
 test_supervision_model_command_picks_effort_after_the_model
-test_unusable_model_pin_falls_back_to_main
+test_invalid_model_pins_refuse_branch_builds
 test_replacement_activation_cleans_leases_and_retries_failure
 test_cold_start_activates_after_lock_acquisition
 test_queued_actions_recheck_lock_ownership

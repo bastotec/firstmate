@@ -779,6 +779,43 @@ remote_recovery_paths_validate() {
   fi
 }
 
+preflight_wake_gate_task_state() {
+  local state_dir=$1 task_id=$2 helper="$SCRIPT_DIR/fm-state-io.py"
+  local wake_dir="$state_dir/wake-gate" look
+  look="$wake_dir/$task_id.look"
+  if [ ! -e "$wake_dir" ] && [ ! -L "$wake_dir" ]; then
+    return 0
+  fi
+  if [ -d "$wake_dir" ] && [ ! -L "$wake_dir" ] \
+    && [ ! -e "$look" ] && [ ! -L "$look" ]; then
+    return 0
+  fi
+  command -v python3 >/dev/null 2>&1 || {
+    echo "REFUSED: python3 is required to retire wake-gate state safely." >&2
+    return 1
+  }
+  [ -f "$helper" ] && [ ! -L "$helper" ] || {
+    echo "REFUSED: safe wake-gate state I/O helper is unavailable." >&2
+    return 1
+  }
+  python3 "$helper" read "$state_dir" "$task_id.look" >/dev/null
+}
+
+retire_wake_gate_task_state() {
+  local state_dir=$1 task_id=$2 helper="$SCRIPT_DIR/fm-state-io.py"
+  local wake_dir="$state_dir/wake-gate" look
+  preflight_wake_gate_task_state "$state_dir" "$task_id" || return 1
+  look="$wake_dir/$task_id.look"
+  if [ ! -e "$wake_dir" ] && [ ! -L "$wake_dir" ]; then
+    return 0
+  fi
+  if [ -d "$wake_dir" ] && [ ! -L "$wake_dir" ] \
+    && [ ! -e "$look" ] && [ ! -L "$look" ]; then
+    return 0
+  fi
+  python3 "$helper" remove "$state_dir" "$task_id.look"
+}
+
 remote_pending_replies_cleanup() {
   local rec
   [ "$REMOTE_PENDING_DIR_PRESENT" -eq 1 ] || return 0
@@ -821,6 +858,7 @@ remote_secondmate_teardown() {
     || { echo "REFUSED: remote secondmate metadata does not match its registry route" >&2; return 1; }
   handoff_wake_retire_validate || return 1
   remote_recovery_paths_validate initial || return 1
+  preflight_wake_gate_task_state "$STATE" "$ID" || return 1
   if [ "$FORCE" != --force ] && [ "$REMOTE_OUTBOX_PRESENT" -eq 1 ]; then
     echo "REFUSED: remote secondmate $ID still has a pending backlog outbox; deliver it or explicitly discard with --force" >&2
     return 1
@@ -875,6 +913,7 @@ remote_secondmate_teardown() {
   grep -vE "^- $ID( |$)" "$SECONDMATE_REG" > "$tmp" || true
   mv -f -- "$tmp" "$SECONDMATE_REG"
   status_retire_presentation_task "$STATE" "$ID" || return 1
+  retire_wake_gate_task_state "$STATE" "$ID" || return 1
   fm_backlog_atomic_transition remove "$STATE/$ID.meta" "task record" "$STATE" || return 1
   rm -f -- "$STATE/$ID.turn-ended" "$STATE/$ID.progress"
   printf 'teardown %s complete (remote %s:%s)\n' "$ID" "$remote_host" "$remote_home"
@@ -2827,8 +2866,8 @@ FMEOF
 }
 
 teardown_herdr_require_prerequisites() {  # <task-id>
-  local task_id=$1 prerequisite
-  if ! fm_backend_source herdr; then
+  local task_id=$1 prerequisite adapter="$FM_BACKEND_LIB_DIR/backends/herdr.sh"
+  if [ ! -f "$adapter" ] || [ -L "$adapter" ] || ! fm_backend_source herdr; then
     echo "error: herdr teardown prerequisites are unavailable for $task_id; nothing was changed - restore the adapter and rerun teardown" >&2
     return 1
   fi
@@ -2911,6 +2950,25 @@ $session	$lock_path"
   done
   echo "error: herdr session presentation lock is contended for $task_id; nothing was changed - rerun teardown once the contention clears" >&2
   return 1
+}
+
+preflight_firstmate_home_wake_gate_state() {
+  local home=$1 sub_state child_meta child_id child_kind child_home child_wt
+  sub_state="$home/state"
+  [ -d "$sub_state" ] || return 0
+  for child_meta in "$sub_state"/*.meta; do
+    [ -e "$child_meta" ] || continue
+    child_id=$(basename "$child_meta" .meta)
+    preflight_wake_gate_task_state "$sub_state" "$child_id" || return 1
+    child_kind=$(meta_value "$child_meta" kind)
+    [ -n "$child_kind" ] || child_kind=ship
+    if [ "$child_kind" = secondmate ]; then
+      child_wt=$(meta_value "$child_meta" worktree)
+      child_home=$(meta_value "$child_meta" home)
+      [ -n "$child_home" ] || child_home=$child_wt
+      preflight_firstmate_home_wake_gate_state "$child_home" || return 1
+    fi
+  done
 }
 
 preflight_firstmate_home_herdr_children() {  # <home>
@@ -3204,6 +3262,7 @@ cleanup_firstmate_home_children() {
     fi
     retire_busy_state "$sub_state" "$child_id" "$child_busy_gen" || return 1
     status_retire_presentation_task "$sub_state" "$child_id" || return 1
+    retire_wake_gate_task_state "$sub_state" "$child_id" || return 1
     fm_backlog_atomic_transition remove "$sub_state/$child_id.meta" "task record" "$sub_state" || return 1
     rm -f "$sub_state/$child_id.turn-ended" "$sub_state/$child_id.progress" \
       "$sub_state/$child_id.pi-ext.ts" "$sub_state/$child_id.omp-ext.ts" \
@@ -3229,6 +3288,7 @@ remove_secondmate_registry_entry() {
   return "$rc"
 }
 
+preflight_wake_gate_task_state "$STATE" "$ID" || exit 1
 require_exclusive_task_worktree_slot || exit 1
 require_owned_task_worktree_slot || exit 1
 
@@ -3248,6 +3308,7 @@ if [ "$KIND" = secondmate ]; then
     preflight_descendant_task_locks "$HOME_PATH" || exit 1
     validate_firstmate_home_children_removal "$HOME_PATH" || exit 1
     preflight_descendant_treehouse_slots || exit 1
+    preflight_firstmate_home_wake_gate_state "$HOME_PATH" || exit 1
     if [ "$BACKEND" = herdr ]; then
       teardown_herdr_preflight_target "$T" "$ID" || exit 1
     fi
@@ -3643,6 +3704,7 @@ fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
 status_retire_presentation_task "$STATE" "$ID" || exit 1
+retire_wake_gate_task_state "$STATE" "$ID" || exit 1
 rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.omp-ext.ts" "$STATE/$ID.grok-turnend-token" \
   "$STATE/$ID.kimi-turnend-token" "$STATE/$ID.muse-session" \

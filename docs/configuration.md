@@ -61,8 +61,19 @@ It persists the model pick in gitignored `config/supervision-branch-model` and t
 Firstmate keeps no model catalog of its own; the list is the intersection of what Pi reports when the picker opens and what a fresh isolated branch runtime can run.
 A provider that exists only because an extension registered it inside the captain's session, such as pi-devin-auth's `devin`, is offered and can be pinned or followed like any other; [pi-supervision-branch.md](pi-supervision-branch.md#cost-model-and-the-byte-stable-prefix) owns how that registration reaches the isolated branch runtime.
 Stored OAuth and API-key credentials retain their native credential type because Firstmate never copies, converts, installs, or overwrites credentials for the branch runtime.
-The file holds one `<provider>/<model-id>` line followed by one newline, split at the first `/` so a provider-qualified model id such as `openrouter/anthropic/claude-sonnet-4-5` survives intact.
-An absent, unreadable, or unparseable file means no pin, and the branch then follows main's own current model, applied explicitly and live whenever main changes models mid-session.
+Each configured model is one `<provider>/<model-id>` line, split at the first `/` so a provider-qualified model id such as `openrouter/anthropic/claude-sonnet-4-5` survives intact.
+A model reference contains no whitespace or control characters.
+Several such lines make a fallback chain in preference order, for a captain whose subscriptions run out at different times; blank lines and `#` comments are skipped, and each model label may appear only once.
+Any malformed, duplicate, non-comment line refuses the branch build and makes `/supervision-model` label the current selection as invalid config with that line named instead of silently selecting around it; only an empty or comment-only file means no pin.
+The chain is edited by hand, and the picker still writes a single line, so picking a model replaces a chain with that one pin.
+When a branch turn ends in a provider error, the model it ran on sits out for five minutes, doubling to an hour on repeated failures, and the next wake is served by the next ready model in the chain.
+A wake not yet durably reported for every granted row returns to main exactly as it does for a single pin; a fully reported grant stays handled instead of being delivered again, while the provider still enters cooldown.
+One note in the captain's conversation names the model that failed and the one that takes over.
+A model the isolated branch runtime cannot resolve sits out on the same backoff instead of refusing the build.
+Once an earlier model's cooldown has passed, the next wake rebuilds the branch on it, which is the way back to the preferred model; a turn that settles with all granted rows durably reported and no provider error clears that model's backoff.
+The cooldowns live in memory only, so a new Pi session simply tries the preferred model first.
+Only when every model in the chain is sitting out does the single-pin behavior below take over: the branch pauses, main handles wakes, and one recovery probe runs after each cooldown on the model that becomes ready soonest.
+An absent or unreadable file, or an empty or comment-only file, means no pin, and the branch then follows main's own current model, applied explicitly and live whenever main changes models mid-session.
 When main uses `codex-native`, following main explicitly selects the same model through ordinary Pi's `openai-codex` provider, so the background branch owns an independent Pi conversation.
 If that ordinary Pi model is unavailable, the branch refuses to build and returns the notification to main; it never inherits the main native thread or silently selects a different model.
 Picking "Follow main" under a `codex-native` main reports that same `openai-codex` model, or that same refusal, because the command and the branch build share one follow rule.
@@ -219,6 +230,18 @@ The bound is required rather than cosmetic because churn and pane staleness read
 The flag is a home-local supervision-noise preference and is not inherited by secondmate homes, which run their own crew mix.
 [`architecture.md`](architecture.md) owns the triage contract and `bin/fm-watch.sh`'s `signal_turnend_panes_churned` owns the exact evidence and fail-closed boundaries.
 
+## Wake gate (config/wake-gate-key-var / config/wake-gate-mode)
+
+The optional wake gate uses Jev (`typesafe-ai/jev`) to decide whether a possible-wedge alarm needs an expensive supervision-model turn; it never replaces that model and does not gate worker-update wakes.
+From the tracked Firstmate root, install its pinned runtime with `npm ci --prefix bin/wake-gate --omit=dev`; the resulting `bin/wake-gate/node_modules/` is local and gitignored, and `python3` provides the descriptor-bound state-file writes.
+Put the gateway key in `~/.secrets`, then put that variable's name on the first line of the local, gitignored `config/wake-gate-key-var`; for example, a secret named `AI_GATEWAY_API_KEY` requires `AI_GATEWAY_API_KEY` in that config file.
+Each enabled decision sends the alarm reason, the worker's current-state output, and up to 40 lines of its pane tail to Jev through the Vercel AI Gateway; the key value is read at call time and is not included in that evidence or in the gate's logs.
+Leading and trailing whitespace is ignored, but the remaining key variable must be a shell identifier (`[A-Za-z_][A-Za-z0-9_]*`) or the gate stays inert.
+With the key-variable file absent the gate is inert, while a missing key, runtime, evidence read, model response, or decision-log write escalates the alarm instead of absorbing it.
+An absent `config/wake-gate-mode`, or any first-line value other than exactly `enforce` after trimming outer whitespace, selects shadow mode and changes no wake; use `enforce` only after reviewing the shadow results to let proven skips be absorbed.
+Both config files are home-local, gitignored, and not inherited by secondmate homes; environment variables cannot opt in or enable enforcement.
+`bin/fm-wake-gate.sh`'s header owns the exact evidence, thresholds, state files, reporting commands, and fail-open mechanics.
+
 ## Possible-ask ranking (config/ask-triage-key-var)
 
 An optional pass ranks `working:` status lines that politely ask firstmate for something, such as a hedged "if you would rather keep it, say so", which the status vocabulary cannot declare and a keyword rule misses.
@@ -327,7 +350,7 @@ The full cmux home label also includes a short hash of the resolved `FM_ROOT` pa
 
 ## Harness support
 
-claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, and omp are empirically verified for crewmate and secondmate launches; gemini is verified for crewmate and scout launches only, and [README requirements](../README.md#requirements) own the set supported for the primary session.
+claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, and omp are empirically verified for crewmate and secondmate launches; gemini and deck are verified for crewmate and scout launches only, and [README requirements](../README.md#requirements) own the set supported for the primary session.
 A cursor secondmate or primary runs the tracked project-scope `.cursor/hooks.json` in its own home and must be launched with `--trust`, or no project hook loads; [`docs/supervision-protocols/cursor.md`](supervision-protocols/cursor.md) owns its supervision protocol.
 Cursor typed-submit confirmation is verified on tmux and Herdr only.
 On Zellij, cmux, Orca, and stream a typed-plane Cursor send (a harness-native invocation or an explicit backend target; ordinary text steers ride the durable inbox and exit 0 at enqueue) lands, but `fm-send` reports delivery unconfirmed and exits non-zero because their shared submit core does not consult the busy footer; [runtime backend verification](verification/runtime-backends.md#cursor-agent-cli) owns the evidence and transcript-state boundary.
@@ -336,6 +359,11 @@ muse also needs a worker-reachable credential before spawning, and the portable 
 gemini is likewise refused for secondmates because it has no primary supervision protocol; [its adapter reference](../.agents/skills/harness-adapters/references/harness/gemini.md) owns the credential precondition, canonical-launch wiring, and raw-launch limitations.
 rovo is likewise verified for crewmate and scout launches ONLY, refused for a secondmate for the same reason - no turn-end hook and no primary supervision protocol; [`docs/verification/rovo.md`](verification/rovo.md) owns that evidence, including the OAuth token's silent background refresh from a stored refresh token and both tmux and herdr pane liveness (herdr placement is verified live, with a Herdr-side agent-detection gap left open for recovery classification).
 agy is likewise verified for crewmate and scout launches ONLY, refused for a secondmate for the same reason - no hook surface and no primary supervision protocol; [`docs/verification/agy.md`](verification/agy.md) owns that evidence, including the spawn-time worktree trust pre-registration through `bin/fm-agy-trust.sh` and Herdr's native agy pane recognition.
+deck is likewise verified for crewmate and scout launches ONLY, refused for a secondmate because its pane driver supervises one task rather than a home.
+Select it through the ordinary static harness or dispatch-profile configuration; Deck has no effort control, so dispatch profiles with effort and relaunches with non-default effort are refused before a worker is created or stopped.
+A Deck spawn requires `deck`, `jq`, and Python 3 on the worker's `PATH`, plus a worker-readable credential for Deck's proxai endpoint.
+Deck runs tools without approval prompts, and Firstmate adds status-evidence and progress hooks but no `pre_tool_use` guard, so dispatch it only where that autonomy is acceptable.
+[The Deck adapter reference](../.agents/skills/harness-adapters/references/harness/deck.md) and `bin/fm-deck-worker.sh`'s header own current operating mechanics, while [`docs/verification/deck.md`](verification/deck.md) owns the live evidence.
 New harnesses get verified through a supervised trial task before joining the set.
 The verified adapter evidence - each harness's busy-state source, interrupt and exit behavior, skill-invocation syntax, and per-harness quirks - lives in the skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
 The executable interrupt and exit mechanics live in [`bin/fm-control-lib.sh`](../bin/fm-control-lib.sh), and [`docs/agent-control.md`](agent-control.md) owns their lifecycle-control architecture.

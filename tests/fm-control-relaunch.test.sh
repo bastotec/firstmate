@@ -820,6 +820,39 @@ test_relaunch_onto_an_unverified_harness_is_refused() {
   pass "fm-control relaunch: refuses to relaunch onto an adapter with no verified mechanics"
 }
 
+test_relaunch_onto_verified_deck_replaces_the_agent() {
+  local dir out rc
+  dir=$(new_case deck-relaunch rl53)
+  add_ship_task "$dir" rl53 claude
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/deck"
+  chmod +x "$dir/fakebin/deck"
+  printf deck > "$dir/fake/becomes"
+  out=$(run_control "$dir" rl53 relaunch --harness deck --note "move to Deck"); rc=$?
+  expect_code 0 "$rc" "verified Deck relaunch should succeed: $out"
+  [ "$(meta_field "$dir" rl53 harness)" = deck ] || fail "Deck relaunch did not publish the target harness"
+  [ "$(cat "$dir/fake/command")" = deck ] || fail "Deck relaunch did not start the replacement agent"
+  assert_grep "move to Deck" "$dir/home/data/rl53/brief.md" "Deck relaunch did not preserve its note"
+  pass "fm-control relaunch: verified Deck replaces an existing crewmate"
+}
+
+test_relaunch_onto_deck_with_effort_refuses_before_stop() {
+  local dir out rc
+  dir=$(new_case deck-effort-refusal rl54)
+  add_ship_task "$dir" rl54 claude
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/deck"
+  chmod +x "$dir/fakebin/deck"
+  printf deck > "$dir/fake/becomes"
+
+  out=$(run_control "$dir" rl54 relaunch --harness deck --effort high --note "move to Deck"); rc=$?
+  expect_code 1 "$rc" "Deck relaunch with effort should refuse"
+  assert_contains "$out" "deck has no effort control" "Deck relaunch refusal did not name its unsupported effort"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "unsupported Deck effort stopped the running agent"
+  [ ! -s "$dir/fake/literal" ] || fail "unsupported Deck effort sent lifecycle input"
+  [ "$(meta_field "$dir" rl54 harness)" = claude ] || fail "unsupported Deck effort changed task metadata"
+  [ ! -e "$dir/home/state/rl54.control-relaunch" ] || fail "unsupported Deck effort started a relaunch transaction"
+  pass "fm-control relaunch: Deck effort refuses before stopping the agent"
+}
+
 test_prior_harness_turnend_registry_entry_is_cleared() {
   local dir auth
   dir=$(new_case grokauth rl9)
@@ -1954,6 +1987,8 @@ test_same_harness_relaunch_keeps_the_profile_axes
 test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
+test_relaunch_onto_verified_deck_replaces_the_agent
+test_relaunch_onto_deck_with_effort_refuses_before_stop
 test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
 test_turnend_auth_paths_are_owned_by_the_control_adapter

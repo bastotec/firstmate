@@ -60,18 +60,16 @@ fm_control_verb_allowed() {  # <verb>
   return 1
 }
 
-# The harnesses whose control mechanics are verified. Mirrors AGENTS.md
-# section 4's verified-adapter list; an unverified adapter is refused rather
-# than guessed at, exactly as a spawn on it would be.
+# The harnesses whose control mechanics are implemented.
 fm_control_harness_supported() {  # <harness>
   case "${1-}" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy) return 0 ;;
+    claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|deck) return 0 ;;
   esac
   return 1
 }
 
-# The verified adapter a RECORDED harness value belongs to. Every table below
-# is keyed by the exact verified adapter name, but a task launched from a raw
+# The recognized adapter a RECORDED harness value belongs to. Every table below
+# is keyed by the exact adapter name, but a task launched from a raw
 # command records the command's basename instead (bin/fm-spawn.sh derives
 # harness= that way), which is why the spawn adapters match `claude*`, `muse*`,
 # and friends. This is the one place that prefix rule is stated. `pi` and
@@ -85,6 +83,7 @@ fm_control_harness_family() {  # <recorded-harness>
     pi-signed) printf 'pi-signed' ;;
     omp) printf 'omp' ;;
     agy) printf 'agy' ;;
+    deck) printf 'deck' ;;
     claude*) printf 'claude' ;;
     codex*) printf 'codex' ;;
     opencode*) printf 'opencode' ;;
@@ -98,17 +97,15 @@ fm_control_harness_family() {  # <recorded-harness>
   esac
 }
 
-# Which task kinds an adapter is verified to run. muse, gemini, rovo, and agy
-# are crewmate/scout adapters only: none has a primary supervision protocol,
-# and bin/fm-spawn.sh refuses a --secondmate launch on any of them. The control
-# plane asks this BEFORE it stops anything, so an incompatible relaunch target is
-# refused while the current agent is still running rather than after it has
-# been stopped.
+# Which task kinds an adapter can run.
+# muse, gemini, rovo, agy, and Deck are crewmate/scout adapters only.
+# None has a primary supervision protocol, and bin/fm-spawn.sh refuses a --secondmate launch on any of them.
+# The control plane asks this BEFORE it stops anything, so an incompatible relaunch target is refused while the current agent is still running rather than after it has been stopped.
 fm_control_harness_supports_kind() {  # <harness> <kind>
   local harness=${1-} kind=${2-}
   fm_control_harness_supported "$harness" || return 1
   case "$harness" in
-    muse|gemini|rovo|agy) [ "$kind" != secondmate ] || return 1 ;;
+    muse|gemini|rovo|agy|deck) [ "$kind" != secondmate ] || return 1 ;;
   esac
   return 0
 }
@@ -126,7 +123,10 @@ fm_control_harness_supports_kind() {  # <harness> <kind>
 fm_control_interrupt_key() {  # <harness>
   case "${1-}" in
     claude|codex|opencode|pi|pi-signed|omp|kimi|cursor|gemini|muse|rovo|agy) printf 'Escape' ;;
-    grok) printf 'C-c' ;;
+    # deck's pane runs bin/fm-deck-worker.sh, which cancels the running turn on
+    # Ctrl+C (the whole foreground group gets SIGINT; the driver traps it and
+    # returns to its prompt), and has no Escape binding.
+    grok|deck) printf 'C-c' ;;
     *) return 1 ;;
   esac
 }
@@ -136,7 +136,7 @@ fm_control_interrupt_key() {  # <harness>
 fm_control_interrupt_repeat() {  # <harness>
   case "${1-}" in
     opencode) printf '2' ;;
-    claude|codex|pi|pi-signed|omp|grok|kimi|cursor|gemini|muse|rovo|agy) printf '1' ;;
+    claude|codex|pi|pi-signed|omp|grok|kimi|cursor|gemini|muse|rovo|agy|deck) printf '1' ;;
     *) return 1 ;;
   esac
 }
@@ -157,7 +157,7 @@ fm_control_interrupt_repeat() {  # <harness>
 fm_control_interrupt_clear_key() {  # <harness>
   case "${1-}" in
     muse) printf 'C-u' ;;
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy) ;;
+    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy|deck) ;;
     *) return 1 ;;
   esac
 }
@@ -172,7 +172,7 @@ fm_control_interrupt_ack_source() {  # <harness>
     # rovo's TUI prints "Agent cancelled" on Escape, but for parity with
     # claude/cursor this stays 'none': the ack is a rendered string, not a
     # recorded state source, and rovo has no busy wiring to confirm against.
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy) printf 'none' ;;
+    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy|deck) printf 'none' ;;
     *) return 1 ;;
   esac
 }
@@ -181,7 +181,7 @@ fm_control_interrupt_ack_source() {  # <harness>
 fm_control_exit_command() {  # <harness>
   case "${1-}" in
     claude|opencode|grok|kimi|cursor|muse|rovo) printf '/exit' ;;
-    codex|pi|pi-signed|omp|gemini|agy) printf '/quit' ;;
+    codex|pi|pi-signed|omp|gemini|agy|deck) printf '/quit' ;;
     *) return 1 ;;
   esac
 }

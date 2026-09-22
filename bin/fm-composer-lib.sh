@@ -322,8 +322,8 @@ fm_composer_strip_ghost() {
 # The full moon-phase set remains locale- and emoji-font-sensitive because Kimi
 # exposes no stable ASCII busy token.
 # The harness-less default is the UNION of the per-harness tokens below, used
-# when a caller has no recorded harness for the pane (the submit cores read the
-# baseline and the post-Enter transition this way). cursor's `ctrl+c to stop` is
+# only when a caller has no recorded harness for the pane. cursor's
+# `ctrl+c to stop` is
 # part of that union for the same reason the others are: without it a cursor
 # submit could never be acknowledged, because cursor parks its terminal cursor
 # outside its composer and the composer verdict is therefore always `unknown`.
@@ -388,6 +388,7 @@ fm_busy_lines_match() {  # [harness]
       agy) regex=$FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT ;;
       kimi) regex=$FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT ;;
       cursor) regex=$FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT ;;
+      deck) regex= ;;
       '') regex=$FM_DELIVERY_BUSY_REGEX_DEFAULT ;;
       *)
         # A supplied harness must never borrow another harness's signature.

@@ -231,7 +231,8 @@ Enter, Escape, and Ctrl-C are supported.
 Typed-plane slash input, and dollar-prefixed skill input for Codex, uses the shared harness-aware settle before the first Enter so a completion popup cannot consume it.
 Typed-plane text is typed once; only Enter is retried.
 
-On an idle or done native baseline, submit confirmation first waits for `working` or `blocked` across a bounded polling window.
+Deck bypasses Herdr native state, composer, and rendered-footer evidence: only the next exact `deck-wrapper` busy `turn-start` sequence after an idle wrapper baseline confirms delivery, and an absent or inexact transition remains `pending`.
+For every other harness, an idle or done native baseline makes submit confirmation wait first for `working` or `blocked` across a bounded polling window.
 If native status stays idle, the shared composer verdict is the next positive signal: a cleared composer is delivery, and proven pending text retries Enter.
 After the retry budget, `fm_composer_queued_enter_verdict` treats proven pending text plus a generating busy signal as a queued delivered Enter, and keeps an idle pending composer as a genuine swallow.
 On an already active or unreadable baseline, the adapter falls back to conservative composer clearance, with a pre-Enter rendered-footer transition when that baseline is unavailable.

@@ -664,6 +664,16 @@ make_path_without_lsof() {  # <case-dir>
   printf '%s\n' "$path_dir"
 }
 
+add_logging_treehouse() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+exit 0
+EOF
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
 test_local_only_fork_remote_allows() {
   local case_dir rc
   case_dir=$(make_case fork-allow)
@@ -673,6 +683,8 @@ test_local_only_fork_remote_allows() {
   # The supervision branch's bounded per-task outcome cache is a footprint of
   # the retired task, not a record anything reads after it is gone.
   printf 'fm-branch-outcome-index-v1\t5\t0\t-\n' > "$case_dir/state/.task-x1.branch-outcome-index"
+  mkdir -p "$case_dir/state/wake-gate"
+  printf '%s\tfailure\n' "$(date +%s)" > "$case_dir/state/wake-gate/task-x1.look"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -683,6 +695,8 @@ test_local_only_fork_remote_allows() {
   ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"
   [ ! -e "$case_dir/state/.task-x1.branch-outcome-index" ] \
     || fail "fork-allow: teardown left the task's branch outcome index behind"
+  assert_absent "$case_dir/state/wake-gate/task-x1.look" \
+    "fork-allow: teardown left the task's model-look state for a replacement"
   # The supervision branch reports the teardown it just performed AFTER the
   # task's records are gone (bin/fm-branch-prompt.sh); that report must be
   # stored, must publish its ready sequence, and must not recreate the index.
@@ -702,6 +716,65 @@ test_local_only_fork_remote_allows() {
   ' "$case_dir/state/home-summary.json" >/dev/null \
     || fail "successful task teardown did not publish the task's removal from the home summary ledger"
   pass "local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed"
+}
+
+test_wake_gate_retirement_refuses_a_symlinked_parent() {
+  local case_dir rc
+  case_dir=$(make_case wake-gate-parent-symlink)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+  add_logging_treehouse "$case_dir"
+  mkdir -p "$case_dir/redirected-wake-gate"
+  printf 'protected\n' > "$case_dir/redirected-wake-gate/task-x1.look"
+  ln -s "$case_dir/redirected-wake-gate" "$case_dir/state/wake-gate"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "wake-gate-parent-symlink: teardown must refuse unsafe retirement"
+  [ "$(cat "$case_dir/redirected-wake-gate/task-x1.look")" = protected ] \
+    || fail "wake-gate-parent-symlink: teardown followed the parent symlink and removed its target"
+  assert_grep 'fm-state-io refused' "$case_dir/stderr" \
+    "wake-gate-parent-symlink: teardown did not report the no-follow refusal"
+  assert_absent "$case_dir/treehouse.log" \
+    "wake-gate-parent-symlink: teardown returned the worktree before refusing unsafe state"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "wake-gate-parent-symlink: teardown removed task identity after refusing unsafe state"
+  pass "teardown refuses unsafe wake-gate state before destructive cleanup"
+}
+
+test_wake_gate_retirement_requires_python_only_for_existing_state() {
+  local absent present path rc
+  absent=$(make_case wake-gate-no-python-absent)
+  write_meta "$absent" local-only ship
+  wt_commit "$absent" "fix the thing"
+  add_fork_with_pushed_branch "$absent"
+  path=$(make_path_without_lsof "$absent")
+  rc=0
+  FM_TEARDOWN_TEST_PATH="$path" run_teardown "$absent" > "$absent/stdout" 2> "$absent/stderr" || rc=$?
+  expect_code 0 "$rc" "wake-gate-no-python-absent: teardown should not require an optional runtime"
+
+  present=$(make_case wake-gate-no-python-present)
+  write_meta "$present" local-only ship
+  wt_commit "$present" "fix the thing"
+  add_fork_with_pushed_branch "$present"
+  add_logging_treehouse "$present"
+  mkdir -p "$present/state/wake-gate"
+  printf 'look\n' > "$present/state/wake-gate/task-x1.look"
+  path=$(make_path_without_lsof "$present")
+  rc=0
+  FM_TEARDOWN_TEST_PATH="$path" run_teardown "$present" > "$present/stdout" 2> "$present/stderr" || rc=$?
+  expect_code 1 "$rc" "wake-gate-no-python-present: teardown removed state without descriptor-bound I/O"
+  assert_present "$present/state/wake-gate/task-x1.look" \
+    "wake-gate-no-python-present: teardown removed the look state without Python"
+  assert_grep 'python3 is required to retire wake-gate state safely' "$present/stderr" \
+    "wake-gate-no-python-present: teardown did not explain the required runtime"
+  assert_absent "$present/treehouse.log" \
+    "wake-gate-no-python-present: teardown returned the worktree before refusing the missing runtime"
+  assert_present "$present/state/task-x1.meta" \
+    "wake-gate-no-python-present: teardown removed task identity after refusing the missing runtime"
+  pass "teardown preflights the optional wake-gate runtime before destructive cleanup"
 }
 
 test_teardown_closes_the_backlog_item_itself() {
@@ -3667,6 +3740,8 @@ EOF
 }
 
 test_local_only_fork_remote_allows
+test_wake_gate_retirement_refuses_a_symlinked_parent
+test_wake_gate_retirement_requires_python_only_for_existing_state
 test_teardown_closes_the_backlog_item_itself
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses

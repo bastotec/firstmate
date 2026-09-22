@@ -27,12 +27,14 @@ export interface UnreadWakeScope {
   projects: string[];
   /**
    * The exact durable-queue sequence numbers this scan proved safe for the
-   * branch to drain and acknowledge right now (docs/watcher-continuity.md
+   * branch to own, drain, and acknowledge (docs/watcher-continuity.md
    * "Per-actor acknowledgement" - the single owner of the consume contract
    * bin/fm-wake-drain.sh implements against this list). Empty whenever
    * `eligible` is false.
    */
   eligibleSeqs: string[];
+  /** The task binding for each row the actor-local deduplicated drain presents. */
+  presentedTaskBySeq: Record<string, string | null>;
   /**
    * The exact task ids the eligible signal/stale rows name (a signal row by
    * its status-log key, a stale row through the task metadata recording that
@@ -71,6 +73,7 @@ const EMPTY_SCOPE: UnreadWakeScope = {
   eligible: false,
   projects: [],
   eligibleSeqs: [],
+  presentedTaskBySeq: {},
   eligibleTasks: [],
   corrupted: false,
   needsDecisionKeys: [],
@@ -81,6 +84,7 @@ const UNSAFE_SCOPE: UnreadWakeScope = {
   eligible: false,
   projects: [],
   eligibleSeqs: [],
+  presentedTaskBySeq: {},
   eligibleTasks: [],
   corrupted: true,
   needsDecisionKeys: [],
@@ -226,7 +230,7 @@ export function scopeForUnreadWake(state: string, heartbeat: boolean): UnreadWak
   }
 
   const eligibleSeqs: string[] = [];
-  const eligibleTasks = new Set<string>();
+  const presentedRowsByKey = new Map<string, { seq: string; task: string | null; project: string }>();
   const needsDecisionKeys: string[] = [];
   const staleDecisionOwnership = new Map<string, boolean>();
   const resolveVerb = process.env.FM_CLASSIFY_RESOLVE_VERB || "resolved";
@@ -242,7 +246,10 @@ export function scopeForUnreadWake(state: string, heartbeat: boolean): UnreadWak
     const kind = fields[2];
     const key = fields[3];
     if (kind === "heartbeat") {
-      if (heartbeat) eligibleSeqs.push(seq);
+      if (heartbeat) {
+        eligibleSeqs.push(seq);
+        presentedRowsByKey.set("heartbeat", { seq, task: null, project: "" });
+      }
       continue;
     }
     if (kind === "check") {
@@ -313,9 +320,15 @@ export function scopeForUnreadWake(state: string, heartbeat: boolean): UnreadWak
       return UNSAFE_SCOPE;
     }
     if (!project || !task) return UNSAFE_SCOPE;
-    projects.add(project);
-    eligibleTasks.add(task);
     eligibleSeqs.push(seq);
+    presentedRowsByKey.set(`${kind}\0${key}`, { seq, task, project });
+  }
+  const presentedRows = [...presentedRowsByKey.values()];
+  const presentedTaskBySeq = Object.fromEntries(presentedRows.map(({ seq, task }) => [seq, task]));
+  const eligibleTasks = new Set<string>();
+  for (const { task, project } of presentedRows) {
+    if (project) projects.add(project);
+    if (task) eligibleTasks.add(task);
   }
   const eligible = eligibleSeqs.length > 0;
   // Reached only after every row passed classification without a veto. A scan
@@ -330,6 +343,7 @@ export function scopeForUnreadWake(state: string, heartbeat: boolean): UnreadWak
     eligible,
     projects: [...projects],
     eligibleSeqs,
+    presentedTaskBySeq,
     eligibleTasks: [...eligibleTasks],
     corrupted: false,
     needsDecisionKeys,

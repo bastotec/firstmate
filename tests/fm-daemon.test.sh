@@ -1263,6 +1263,96 @@ test_housekeeping_persistent_stale_escalates() {
   pass "persistent stale escalates after threshold and clears its marker"
 }
 
+test_housekeeping_capture_failure_escalates_without_losing_retry() {
+  local dir state win key marker before gate_log
+  dir=$(make_supercase stale-capture-failure)
+  state="$dir/state"
+  win="sess:fm-unreadable-w5"
+  fm_write_meta "$state/unreadable-w5.meta" "window=$win" "backend=tmux" "harness=pi"
+  printf 'working: compiling\n' > "$state/unreadable-w5.status"
+  key=$(printf '%s' unreadable-w5 | tr ':/.' '___')
+  marker="$state/.subsuper-stale-$key"
+  before=$(( $(date +%s) - 500 ))
+  printf '%s\n' "$before" > "$marker"
+  gate_log="$dir/gate-called"
+
+  (
+    # shellcheck disable=SC2329 # Runtime overrides invoked indirectly by housekeeping.
+    fm_backend_capture() { return 1; }
+    # shellcheck disable=SC2329 # Runtime override invoked indirectly by housekeeping.
+    wedge_gate_verdict() { : > "$gate_log"; printf 'absorb:jev-working\n'; }
+    escalate_add() { return 1; }
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  )
+  [ -e "$marker" ] || fail "an unreadable away-mode wedge lost its marker after escalation persistence failed"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "the failed escalation append unexpectedly wrote a record"
+  [ ! -e "$gate_log" ] || fail "an unreadable away-mode wedge consulted the absorption gate"
+
+  (
+    # shellcheck disable=SC2329 # Runtime overrides invoked indirectly by housekeeping.
+    fm_backend_capture() { return 1; }
+    # shellcheck disable=SC2329 # Runtime override invoked indirectly by housekeeping.
+    wedge_gate_verdict() { : > "$gate_log"; printf 'absorb:jev-working\n'; }
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  )
+  [ -s "$state/.subsuper-escalations" ] || fail "an unreadable away-mode wedge did not escalate"
+  [ ! -e "$marker" ] || fail "a durably escalated unreadable wedge retained its retry marker"
+  [ ! -e "$gate_log" ] || fail "a durably escalated unreadable wedge consulted the absorption gate"
+  pass "away-mode capture failures escalate and retain retries until durable"
+}
+
+test_housekeeping_wedge_gate_absorbs_or_commits_after_escalation() {
+  local dir state fakebin win pane key marker before gate_log
+  dir=$(make_supercase stale-wake-gate)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  win="sess:fm-gated-w5"
+  pane="$dir/pane.txt"
+  gate_log="$dir/gate.log"
+  printf 'working: compiling\n' > "$state/gated-w5.status"
+  printf 'idle prompt $\n' > "$pane"
+  fm_write_meta "$state/gated-w5.meta" "window=$win" "backend=tmux" "harness=pi"
+  key=$(printf '%s' gated-w5 | tr ':/.' '___')
+  marker="$state/.subsuper-stale-$key"
+  cat > "$fakebin/fm-wake-gate.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GATE_LOG"
+case "${1:-}" in
+  stale-verdict) printf '%s\n' "$FM_TEST_GATE_VERDICT" ;;
+  commit-look)
+    [ -s "$FM_STATE_DIR/.subsuper-escalations" ] || exit 9
+    printf 'commit-after-append\n' >> "$FM_TEST_GATE_LOG"
+    ;;
+esac
+SH
+  chmod +x "$fakebin/fm-wake-gate.sh"
+
+  before=$(( $(date +%s) - 500 ))
+  printf '%s\n' "$before" > "$marker"
+  PATH="$fakebin:$PATH" FM_DAEMON_DIR="$fakebin" FM_FAKE_TMUX_WINDOW="$win" \
+    FM_FAKE_TMUX_CAPTURE="$pane" FM_TEST_GATE_LOG="$gate_log" \
+    FM_TEST_GATE_VERDICT=absorb:jev-working FM_STATE_OVERRIDE="$state" \
+    FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  [ "$(cat "$marker")" -gt "$before" ] || fail "an absorbed away-mode wedge did not restart its idle window"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "an absorbed away-mode wedge was escalated"
+  [ "$(grep -c '^commit-look ' "$gate_log" 2>/dev/null || true)" -eq 0 ] \
+    || fail "an absorbed away-mode wedge committed a model look"
+
+  printf '%s\n' "$before" > "$marker"
+  : > "$gate_log"
+  PATH="$fakebin:$PATH" FM_DAEMON_DIR="$fakebin" FM_FAKE_TMUX_WINDOW="$win" \
+    FM_FAKE_TMUX_CAPTURE="$pane" FM_TEST_GATE_LOG="$gate_log" \
+    FM_TEST_GATE_VERDICT="$(printf 'escalate\tfailure')" FM_STATE_OVERRIDE="$state" \
+    FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  [ -s "$state/.subsuper-escalations" ] || fail "an away-mode gate escalation was not durably appended"
+  [ ! -e "$marker" ] || fail "an escalated away-mode wedge retained its idle marker"
+  grep -q '^commit-look gated-w5 failure$' "$gate_log" \
+    || fail "the away-mode escalation did not commit its granted model look"
+  grep -q '^commit-after-append$' "$gate_log" \
+    || fail "the away-mode model look was committed before the escalation append"
+  pass "away-mode wedge gating absorbs or commits only after escalation"
+}
+
 test_housekeeping_resumed_stale_cleared() {
   local dir state fakebin win pane key
   dir=$(make_supercase stale-resumed)
@@ -2802,6 +2892,8 @@ test_housekeeping_migrates_watcher_pause_marker
 test_housekeeping_migrates_watcher_unpaused_marker_to_clear
 test_housekeeping_seeds_pause_marker_from_status
 test_housekeeping_persistent_stale_escalates
+test_housekeeping_capture_failure_escalates_without_losing_retry
+test_housekeeping_wedge_gate_absorbs_or_commits_after_escalation
 test_housekeeping_resumed_stale_cleared
 test_housekeeping_paused_resurfaces_and_resets
 test_housekeeping_captain_held_resurfaces_and_resets

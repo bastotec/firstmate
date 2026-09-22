@@ -34,6 +34,9 @@
 #   claude-hook      Claude lifecycle hooks (UserPromptSubmit/Stop/StopFailure/SessionEnd)
 #   gemini-hook      Gemini agent hooks (BeforeAgent opens; AfterAgent and
 #                    SessionEnd close)
+#   deck-wrapper     bin/fm-deck-worker.sh, which starts and ends every Deck
+#                    turn itself (turn-start opens; turn-end, turn-failed,
+#                    interrupted, and session-end close)
 #   codex-hook, codex-appserver  reserved: Codex, gated by
 #                    fm_busy_codex_semantic_source
 #   kimi-wire, kimi-hook  reserved: standalone Kimi, gated by fm_busy_kimi_verified
@@ -198,6 +201,7 @@ fm_busy_sources_for_harness() {  # <harness>
       ;;
     opencode*) adapter=opencode-plugin ;;
     gemini*) adapter=gemini-hook ;;
+    deck) adapter=deck-wrapper ;;
     pi|pi-signed) adapter=pi-ext ;;
     omp) adapter=omp-ext ;;
     kimi*)
@@ -271,6 +275,26 @@ fm_busy_record_read() {  # <state-dir> <id>
     return 1
   fi
   printf '%s %s %s %s' "$r_state" "$r_source" "$r_event" "$r_seq"
+}
+
+# A Deck submit can be correlated only from the wrapper's idle prompt state.
+# A busy baseline may belong to an older turn with input already queued behind
+# it, so its eventual next start cannot acknowledge the Enter being sent now.
+fm_busy_deck_delivery_baseline() {
+  local record state source _event seq
+  record=$(fm_busy_record_read "$1" "$2") || return 1
+  read -r state source _event seq <<< "$record"
+  [ "$state" = idle ] && [ "$source" = deck-wrapper ] || return 1
+  printf '%s' "$seq"
+}
+
+fm_busy_deck_delivery_started() {
+  local record state source event seq baseline=$3
+  case "$baseline" in ''|*[!0-9]*) return 1 ;; esac
+  record=$(fm_busy_record_read "$1" "$2") || return 1
+  read -r state source event seq <<< "$record"
+  [ "$state" = busy ] && [ "$source" = deck-wrapper ] \
+    && [ "$event" = turn-start ] && [ "$seq" -eq $((baseline + 1)) ]
 }
 
 # ---------------------------------------------------------------------------

@@ -691,6 +691,17 @@ stale_window_is_busy() {  # <window> <state>
   [ "${verdict%% *}" = busy ]
 }
 
+wedge_gate_verdict() {  # <state> <task> <window> <idle-age>
+  local state=$1 task=$2 win=$3 age=$4 verdict
+  [ -x "$FM_DAEMON_DIR/fm-wake-gate.sh" ] || { printf 'escalate\n'; return 0; }
+  if verdict=$(FM_STATE_DIR="$state" "$FM_DAEMON_DIR/fm-wake-gate.sh" stale-verdict "$task" "$win" \
+    "stale: $win (idle ${age}s, possible wedge)" --with-look 2>/dev/null </dev/null); then
+    printf '%s\n' "$verdict"
+  else
+    printf 'escalate\n'
+  fi
+}
+
 escalate_add() {  # <state> <distilled-item>
   local state=$1 item=$2 buf
   buf="$state/.subsuper-escalations"
@@ -1019,7 +1030,7 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #  3) heartbeat scan: every HEARTBEAT_SCAN_SECS, grep state/*.status for a
 #     captain-relevant line the per-wake classifier missed and escalate it.
 housekeeping() {  # <state>
-  local state=$1 now due f key task win marker age last max_defer oldest pause_secs marker_epoch until bounded_until pause_reason
+  local state=$1 now due f key task win marker age last max_defer oldest pause_secs marker_epoch until bounded_until pause_reason gate_result look_flags
   now=$(_now)
   migrate_watcher_pause_markers "$state"
 
@@ -1075,10 +1086,26 @@ housekeeping() {  # <state>
     stale_window_is_busy "$win" "$state"
     case "$?" in
       0) rm -f "$marker" ;;
-      2) rm -f "$marker" ;;
-      *) if escalate_add "$state" "stale persisted ${age}s (possible wedge): $win"; then
-           stale_marker_remove "$win" "$state"
-         fi ;;
+      2)
+        if escalate_add "$state" "stale persisted ${age}s (possible wedge): $win"; then
+          stale_marker_remove "$win" "$state"
+        fi
+        ;;
+      *)
+        gate_result=$(wedge_gate_verdict "$state" "$task" "$win" "$age")
+        look_flags=
+        case "$gate_result" in
+          absorb:*) _now > "$marker"; continue ;;
+          escalate$'\t'*) look_flags=${gate_result#*$'\t'} ;;
+        esac
+        if escalate_add "$state" "stale persisted ${age}s (possible wedge): $win"; then
+          stale_marker_remove "$win" "$state"
+          if [ -n "$look_flags" ]; then
+            FM_STATE_DIR="$state" "$FM_DAEMON_DIR/fm-wake-gate.sh" commit-look "$task" "$look_flags" \
+              2>/dev/null </dev/null || log "wake-gate look commit failed after escalation append: $task"
+          fi
+        fi
+        ;;
     esac
   done
 
@@ -1242,7 +1269,7 @@ window_for_task() {  # <task-key> [state]
 #     line, or a previous injection's unsent text), defer entirely - injecting
 #     would merge with the human's text.
 inject_msg() {  # <message> [state]
-  local msg=$1 state target backend retries sleep_s verdict composer encoded
+  local msg=$1 state target backend harness retries sleep_s verdict composer encoded
   state="${2:-$(_state_root)}"
   # (1) Presence-gate: inject ONLY when afk is active. When afk is off, the
   # daemon self-handles and stays quiet; firstmate drives the normal always-on
@@ -1262,6 +1289,7 @@ inject_msg() {  # <message> [state]
   # when unset (sourced/test contexts that never ran fm_super_main's startup
   # discovery), matching this function's pre-existing default assumption.
   backend="${FM_SUPERVISOR_BACKEND:-tmux}"
+  harness=$(fm_daemon_primary_harness)
   fm_backend_target_exists "$backend" "$target" || return 1
   # (3) Busy-guard: never inject into an in-use supervisor pane.
   if pane_is_busy "$target" "$backend"; then
@@ -1286,12 +1314,11 @@ inject_msg() {  # <message> [state]
   # retype) via the shared submit primitive. Success = the backend confirms
   # submit. An unconfirmed/unknown pane does NOT count as delivered, so the
   # buffer is preserved (strict) rather than cleared.
-  # Dispatches through fm_backend_send_text_submit (bin/fm-backend.sh): for
-  # backend=tmux this calls fm_backend_tmux_send_text_submit, a verbatim
-  # re-export of fm_tmux_submit_core - byte-identical to calling it directly.
+  # Dispatches through fm_backend_send_text_submit (bin/fm-backend.sh), which
+  # supplies the primary harness to tmux and Herdr's scoped busy checks.
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
-  verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s")
+  verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s" '' "$harness")
   if [ "$verdict" = empty ]; then
     return 0  # Backend confirmed the submit.
   fi

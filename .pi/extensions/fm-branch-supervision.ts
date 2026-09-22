@@ -97,6 +97,7 @@ import {
 } from "./lib/fm-calm-visibility.ts";
 import {
   activateEligibleRowsOwner,
+  BRANCH_ELIGIBLE_ROWS_FILE,
   deactivateEligibleRowsOwner,
   FM_BRANCH_DISPATCH_EVENT,
   releaseEligibleRowsSnapshot,
@@ -111,6 +112,16 @@ import {
   FOLLOW_MAIN_VALUE,
   type BranchPickerItem,
 } from "./lib/fm-branch-model-picker.ts";
+import {
+  BRANCH_MODEL_COOLDOWN_BASE_MS,
+  type BranchModelCooldown,
+  type BranchModelRef,
+  branchModelLabel,
+  chainHasReadyAlternative,
+  chainPrefersEarlierModel,
+  nextBranchModelCooldown,
+  parseBranchModelChain,
+} from "./lib/fm-branch-model-chain.ts";
 import {
   classifyFirstmateOperationalText,
   encodeFirstmateOperationalInputWith,
@@ -192,7 +203,18 @@ type ProviderRecovery = {
   cooldownMs: number;
   retryNotBefore: number;
   probeInFlight: boolean;
+  source: "provider" | "chain";
 };
+
+class BranchModelChainExhaustedError extends Error {
+  readonly retryNotBefore: number;
+
+  constructor(message: string, retryNotBefore: number) {
+    super(message);
+    this.name = "BranchModelChainExhaustedError";
+    this.retryNotBefore = retryNotBefore;
+  }
+}
 
 const scriptEnv = {
   ...process.env,
@@ -234,6 +256,11 @@ function settledPromptProviderError(sessionManager: SessionManager, entryOffset:
 type BranchModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 type BranchEffort = ReturnType<NonNullable<ExtensionAPI["getThinkingLevel"]>>;
 type PinnedBranchModel = { model: BranchModel; modelRuntime: ModelRuntime };
+type BranchModelSelection = { pinned?: PinnedBranchModel; chainModel: string };
+type BranchModelPinState =
+  | { kind: "absent" }
+  | { kind: "valid"; ref: BranchModelRef }
+  | { kind: "invalid"; reason: string };
 type BranchModelResolution = { ok: true; selection: PinnedBranchModel } | { ok: false; reason: string };
 type FollowMainResolution =
   | { ok: true; selection: PinnedBranchModel }
@@ -256,23 +283,32 @@ const piOwnsTheEffortVocabulary: [DeclaredBranchEffort] extends [BranchEffort]
   : never = true;
 void piOwnsTheEffortVocabulary;
 
-// The supervision-branch model pin, owned operator-side by
-// docs/configuration.md: one "<provider>/<model-id>" line under this home's
-// config/. An absent, unreadable, or unparseable file means no pin, and the
-// branch then follows main's own model. Only the FIRST "/" separates the two
-// halves, so a provider-qualified model id such as
-// openrouter/anthropic/claude survives.
-function readModelPin(): { provider: string; modelId: string } | null {
+// The supervision-branch model chain, owned operator-side by
+// docs/configuration.md: "<provider>/<model-id>" lines under this home's
+// config/, in preference order. An absent, unreadable, or empty file means no
+// pin, and the branch then follows main's own model. One line is a plain pin;
+// several lines are a fallback chain (lib/fm-branch-model-chain.ts owns the
+// parsing and ordering rules).
+function readModelChain(): BranchModelRef[] {
   let stored: string;
   try {
     stored = readFileSync(modelPinFile, "utf8");
   } catch {
-    return null;
+    return [];
   }
-  const line = (stored.split("\n")[0] ?? "").trim();
-  const separator = line.indexOf("/");
-  if (separator <= 0 || separator >= line.length - 1) return null;
-  return { provider: line.slice(0, separator), modelId: line.slice(separator + 1) };
+  return parseBranchModelChain(stored);
+}
+
+// The preferred model: the chain's first entry, which is also what the
+// /supervision-model picker shows as the current pin. A malformed mixed chain
+// is still replaceable through the picker; branch construction refuses it.
+function readModelPin(): BranchModelPinState {
+  try {
+    const ref = readModelChain()[0];
+    return ref ? { kind: "valid", ref } : { kind: "absent" };
+  } catch (error) {
+    return { kind: "invalid", reason: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 // The supervision-branch effort pin, owned operator-side by the same
@@ -565,18 +601,21 @@ export default function (pi: ExtensionAPI) {
   let branchBroken = "";
   let consecutiveProviderErrors = 0;
   let providerRecovery: ProviderRecovery | null = null;
-  // A revision advances only after fm_branch_report has appended successfully,
-  // so a prompt can prove that it created a durable outcome after claiming its
-  // wake rows without relying on provider text or incidental session shape.
-  let durableReportRevision = 0;
-  // The task set the wake being handled right now may be reported on, fixed
-  // deterministically from the eligible rows before a signal or stale prompt
-  // opens and cleared when it settles: exactly the tasks those rows resolve
-  // to. fm_branch_report refuses every other task id during such a prompt,
-  // `fleet` included, so a report typed from memory about a task the wake
-  // never named is never stored or delivered. Null outside a wake prompt and
-  // during a heartbeat review, which is not scoped by task.
-  let wakeTaskScope: { rows: string[]; tasks: Set<string> } | null = null;
+  // Fallback-chain state, in memory only: a restart simply tries the preferred
+  // model again. activeChainModel names the configured model the live branch was
+  // built on for cooldown accounting, and is empty when the branch follows main.
+  const chainCooldowns = new Map<string, BranchModelCooldown>();
+  let activeChainModel = "";
+  let pendingChainFallbackFrom = "";
+  // The wake rows being handled right now and the durable reports that cover
+  // them, fixed from the eligible snapshot before a prompt opens and cleared
+  // when it settles. Null outside a wake prompt.
+  let wakeTaskScope: {
+    rows: Map<string, string | null>;
+    reported: Set<string>;
+    acknowledgementCommands: Set<string>;
+    unscoped: boolean;
+  } | null = null;
   let mainStreaming = false;
   let shuttingDown = false;
   // Bumps at every session replacement so a stale chain continuation from the
@@ -678,7 +717,56 @@ export default function (pi: ExtensionAPI) {
     else pi.sendMessage(message, {});
   }
 
+  // A provider failure on one model of a fallback chain sits that model out and
+  // hands the NEXT wake to the next ready model, instead of counting toward the
+  // latch that gives every wake to main. The failed wake itself still returns
+  // to the watcher-owned fallback exactly as before. When no model is ready,
+  // the failed branch is released and the chain pauses until its earliest
+  // cooldown expires.
+  function earliestChainRetry(chain: readonly BranchModelRef[], now: number): number {
+    const retries = chain
+      .map((ref) => chainCooldowns.get(branchModelLabel(ref))?.retryNotBefore)
+      .filter((retry): retry is number => retry !== undefined && retry > now);
+    return retries.length > 0 ? Math.min(...retries) : now + BRANCH_MODEL_COOLDOWN_BASE_MS;
+  }
+
+  function pauseForModelChain(detail: string, retryNotBefore: number, probeInFlight: boolean): void {
+    const firstPause = providerRecovery?.source !== "chain";
+    const cooldownMs = Math.max(1, retryNotBefore - Date.now());
+    branchBroken = detail;
+    providerRecovery = { cooldownMs, retryNotBefore, probeInFlight, source: "chain" };
+    if (firstPause) {
+      deliverBranchHealthNote("Supervision branch paused because every configured model is cooling down; main will handle wakes until the next probe.");
+    }
+  }
+
+  function advanceModelChain(): "not-chain" | "ready" | "exhausted" {
+    const failed = activeChainModel;
+    if (!failed) return "not-chain";
+    let chain: BranchModelRef[];
+    try {
+      chain = readModelChain();
+    } catch {
+      return "not-chain";
+    }
+    if (chain.length < 2) return "not-chain";
+    const now = Date.now();
+    chainCooldowns.set(failed, nextBranchModelCooldown(chainCooldowns.get(failed), now));
+    const hasReadyAlternative = chainHasReadyAlternative(chain, chainCooldowns, failed, now);
+    branchSelectionRevision += 1;
+    releaseBranchForSelectionChange();
+    pendingChainFallbackFrom = failed;
+    if (hasReadyAlternative) return "ready";
+    pauseForModelChain("every model in the supervision chain is cooling down", earliestChainRetry(chain, now), false);
+    return "exhausted";
+  }
+
   function recordSettledProviderError(detail: string): void {
+    const chainAdvance = advanceModelChain();
+    if (chainAdvance !== "not-chain") {
+      if (chainAdvance === "exhausted") branchBroken = detail;
+      return;
+    }
     consecutiveProviderErrors += 1;
     if (consecutiveProviderErrors < PROVIDER_ERROR_LATCH_THRESHOLD && !providerRecovery) return;
     const previousCooldownMs = providerRecovery?.cooldownMs;
@@ -691,6 +779,7 @@ export default function (pi: ExtensionAPI) {
       cooldownMs,
       retryNotBefore: Date.now() + cooldownMs,
       probeInFlight: false,
+      source: "provider",
     };
     if (firstLatch) {
       deliverBranchHealthNote("Supervision branch paused after repeated provider errors; main will handle wakes while it cools down.");
@@ -700,6 +789,7 @@ export default function (pi: ExtensionAPI) {
   function recordDurableBranchReport(reportGeneration: number, reportSelectionRevision: number): void {
     if (reportGeneration !== generation || reportSelectionRevision !== branchSelectionRevision) return;
     consecutiveProviderErrors = 0;
+    if (activeChainModel) chainCooldowns.delete(activeChainModel);
     if (!providerRecovery) return;
     branchBroken = "";
     providerRecovery = null;
@@ -822,14 +912,43 @@ export default function (pi: ExtensionAPI) {
   // says the isolated runtime cannot run an ordinary provider, does the build
   // fall back to passing no override at all, which is the pre-feature
   // behavior.
-  async function branchModelSelection(): Promise<PinnedBranchModel | undefined> {
-    const pin = readModelPin();
-    if (pin) return preparePinnedBranchModel(pin);
-    if (!mainModel) return undefined;
+  // A fallback chain tries only models whose cooldowns have elapsed, in
+  // preference order. A model the isolated runtime cannot resolve sits out on
+  // the same backoff as one that failed, which keeps an unusable preferred
+  // entry from forcing a rebuild on every wake. When none resolves, the build
+  // reports the earliest retry so the dispatch latch can pause and probe.
+  async function chainBranchModelSelection(chain: readonly BranchModelRef[]): Promise<BranchModelSelection> {
+    const reasons: string[] = [];
+    for (const ref of chain) {
+      const label = branchModelLabel(ref);
+      const cooldown = chainCooldowns.get(label);
+      if (cooldown && cooldown.retryNotBefore > Date.now()) continue;
+      let resolved: BranchModelResolution;
+      try {
+        resolved = await resolveBranchModel(ref.provider, ref.modelId);
+      } catch (error) {
+        resolved = { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      }
+      if (resolved.ok) {
+        return { pinned: resolved.selection, chainModel: branchModelLabel(ref) };
+      }
+      chainCooldowns.set(label, nextBranchModelCooldown(chainCooldowns.get(label), Date.now()));
+      reasons.push(resolved.reason);
+    }
+    const detail = `no model in the supervision chain is usable: ${reasons.join("; ") || "every model is cooling down"} (config/supervision-branch-model)`;
+    throw new BranchModelChainExhaustedError(detail, earliestChainRetry(chain, Date.now()));
+  }
+
+  async function branchModelSelection(): Promise<BranchModelSelection> {
+    const chain = readModelChain();
+    if (chain.length > 1) return chainBranchModelSelection(chain);
+    const pin = chain[0];
+    if (pin) return { pinned: await preparePinnedBranchModel(pin), chainModel: branchModelLabel(pin) };
+    if (!mainModel) return { chainModel: "" };
     const following = await followMainModel(mainModel);
-    if (following.ok) return following.selection;
+    if (following.ok) return { pinned: following.selection, chainModel: "" };
     if (following.refusesBuild) throw new Error(following.reason);
-    return undefined;
+    return { chainModel: "" };
   }
 
   async function effectiveBranchModel(selected: BranchModel | undefined): Promise<BranchModel | undefined> {
@@ -1118,11 +1237,52 @@ export default function (pi: ExtensionAPI) {
     return presentUnprocessedOutcomes(expectedGeneration);
   }
 
-  function wakeScopeRefusal(task: string): string {
-    if (!wakeTaskScope || wakeTaskScope.tasks.has(task)) return "";
-    const named = [...wakeTaskScope.tasks].sort().join(", ");
-    const rows = wakeTaskScope.rows.join(", ");
-    return `report refused: the wake being handled (row ${rows}) names ${named}, not ${task}; report only that task, never fleet or a task from memory`;
+  function wakeScopeRow(task: string, requestedSeq: string): {
+    scope: typeof wakeTaskScope;
+    seq: string;
+    refusal: string;
+  } {
+    const scope = wakeTaskScope;
+    if (!scope) return { scope, seq: "", refusal: "" };
+    const named = [...new Set([...scope.rows.values()].filter((value): value is string => value !== null))].sort();
+    const rows = [...scope.rows.keys()];
+    const candidates = [...scope.rows].filter(([, expectedTask]) => expectedTask === null || expectedTask === task);
+    if (!requestedSeq && scope.unscoped) {
+      const uncovered = candidates.filter(([seq]) => !scope.reported.has(seq));
+      if (uncovered.length === 1) return { scope, seq: uncovered[0][0], refusal: "" };
+      if ([...scope.rows.keys()].every((seq) => scope.reported.has(seq))) return { scope, seq: "", refusal: "" };
+    }
+    if (requestedSeq) {
+      if (!/^[0-9]+$/.test(requestedSeq) || !scope.rows.has(requestedSeq)) {
+        return {
+          scope,
+          seq: "",
+          refusal: `report refused: wakeSeq ${requestedSeq || "<missing>"} is not one of the wake rows being handled (${rows.join(", ")})`,
+        };
+      }
+      const expectedTask = scope.rows.get(requestedSeq);
+      if (expectedTask !== null && expectedTask !== task) {
+        return {
+          scope,
+          seq: "",
+          refusal: `report refused: wake row ${requestedSeq} names ${expectedTask}, not ${task}; report only that row's task`,
+        };
+      }
+      return { scope, seq: requestedSeq, refusal: "" };
+    }
+    if (candidates.length === 1) return { scope, seq: candidates[0][0], refusal: "" };
+    if (candidates.length === 0 && named.length > 0) {
+      return {
+        scope,
+        seq: "",
+        refusal: `report refused: the wake being handled (row ${rows.join(", ")}) names ${named.join(", ")}, not ${task}; report only that task, never fleet or a task from memory`,
+      };
+    }
+    return {
+      scope,
+      seq: "",
+      refusal: `report refused: wakeSeq is required to identify one of the wake rows being handled (${rows.join(", ")})`,
+    };
   }
 
   function createReportTool(toolGeneration: number): ToolDefinition {
@@ -1142,6 +1302,9 @@ export default function (pi: ExtensionAPI) {
             "One or two sentences in captain outcome language; include the full https:// PR URL when a PR is involved",
         }),
         wake: Type.Optional(Type.String({ description: "The wake reason line this outcome answers" })),
+        wakeSeq: Type.Optional(Type.String({
+          description: "The durable wake-row sequence this outcome answers; required when more than one claimed row could match the task",
+        })),
         silent: Type.Optional(Type.Boolean({
           description: "True only when a fleet-wide heartbeat review found literally nothing worth reporting; omit or use false whenever any action was taken or any routine result is worth a note",
         })),
@@ -1151,6 +1314,7 @@ export default function (pi: ExtensionAPI) {
         const verdictRaw = String((params as { verdict: unknown }).verdict || "");
         const summary = String((params as { summary: unknown }).summary || "").trim();
         const wake = String((params as { wake?: unknown }).wake ?? "").trim();
+        const wakeSeq = String((params as { wakeSeq?: unknown }).wakeSeq ?? "").trim();
         const silent = (params as { silent?: unknown }).silent === true;
         if (!task || !summary || (verdictRaw !== "routine" && verdictRaw !== "captain") || (silent && (task !== "fleet" || verdictRaw !== "routine"))) {
           return {
@@ -1160,9 +1324,9 @@ export default function (pi: ExtensionAPI) {
           };
         }
         const verdict = verdictRaw as Verdict;
-        const scopeRefusal = wakeScopeRefusal(task);
-        if (scopeRefusal) {
-          return { content: [{ type: "text", text: scopeRefusal }], details: undefined, isError: true };
+        const reportRow = wakeScopeRow(task, wakeSeq);
+        if (reportRow.refusal) {
+          return { content: [{ type: "text", text: reportRow.refusal }], details: undefined, isError: true };
         }
         const appendArgs = ["append", "--task", task, "--verdict", verdict, "--summary", summary, "--silent", String(silent)];
         if (wake) appendArgs.push("--wake", wake);
@@ -1171,6 +1335,13 @@ export default function (pi: ExtensionAPI) {
         // this report's place in sequence order are exactly what another
         // outcome or turn boundary arriving mid-append must not break into.
         return enqueueDelivery(async () => {
+          if (reportRow.seq && reportRow.scope?.reported.has(reportRow.seq)) {
+            return {
+              content: [{ type: "text", text: `report refused: wake row ${reportRow.seq} already has a durable outcome in this prompt` }],
+              details: undefined,
+              isError: true,
+            };
+          }
           if (!(await actingAsOwner(toolGeneration))) {
             return {
               content: [{ type: "text", text: "report refused: supervision session was replaced or lost lock ownership" }],
@@ -1186,7 +1357,7 @@ export default function (pi: ExtensionAPI) {
               isError: true,
             };
           }
-          durableReportRevision += 1;
+          if (reportRow.seq) reportRow.scope?.reported.add(reportRow.seq);
           const seq = Number(appended.stdout);
           if (!Number.isSafeInteger(seq) || seq < 1 || !(await reconcileUnreadOutcomes(toolGeneration))) {
             return {
@@ -1207,14 +1378,15 @@ export default function (pi: ExtensionAPI) {
   async function createBranch(
     branchGeneration: number,
     selectionRevision: number,
-  ): Promise<{ session: AgentSession; sessionManager: SessionManager }> {
+  ): Promise<{ session: AgentSession; sessionManager: SessionManager; chainModel: string }> {
     // Resolved first, before any session file or prompt work: a model pin Pi
     // cannot honor must fail before this build leaves anything behind. Every
     // branch build goes through here - the new conversation each main session
     // start opens, and the reopen after a model or effort change inside one
     // session - so resolving the model and the effort here is what makes the
     // captain's current choices authoritative on all of them.
-    const pinned = await branchModelSelection();
+    const selection = await branchModelSelection();
+    const pinned = selection.pinned;
     const effort = branchEffortSelection(pinned?.model);
     const prompt = await runCommandAsync("bash", [promptScript], {
       cwd: fmRoot,
@@ -1278,13 +1450,20 @@ export default function (pi: ExtensionAPI) {
     await loader.reload();
     if (!(await actingAsOwner(branchGeneration))) throw new Error("supervision session was replaced or lost lock ownership");
     const leaseHolderPid = ownedLockPid;
-    const bashTool = createBashToolDefinition(fmRoot, {
+    const baseBashTool = createBashToolDefinition(fmRoot, {
       spawnHook: (context) => {
         // Activation has always already happened by the time the branch can
         // run a shell command, so an unactivated generation is refused here
         // rather than quietly granted.
         if (activatedGeneration !== branchGeneration || !generationOwnsLockSync(branchGeneration)) {
           throw new Error("bash refused: supervision session was replaced or lost lock ownership");
+        }
+        if (
+          context.command.includes("fm-wake-drain.sh") &&
+          context.command.includes("--ack-through") &&
+          (!wakeTaskScope || [...wakeTaskScope.rows.keys()].some((seq) => !wakeTaskScope?.reported.has(seq)))
+        ) {
+          throw new Error("bash refused: wake acknowledgement requires a durable outcome for every presented wake row");
         }
         return {
           ...context,
@@ -1306,6 +1485,25 @@ ${context.command}
         };
       },
     });
+    const bashTool: typeof baseBashTool = {
+      ...baseBashTool,
+      execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+        const result = await baseBashTool.execute(toolCallId, params, signal, onUpdate, ctx);
+        if (
+          wakeTaskScope &&
+          params.command.includes("fm-wake-drain.sh") &&
+          !params.command.includes("--ack-through")
+        ) {
+          const output = textOfContent(result.content);
+          for (const match of output.matchAll(
+            /^WAKE_ACK_REQUIRED: after handling completes run (bin\/fm-wake-drain\.sh --ack-through [0-9]+ --recovery-generation [A-Za-z0-9._-]+)$/gm,
+          )) {
+            wakeTaskScope.acknowledgementCommands.add(match[1]);
+          }
+        }
+        return result;
+      },
+    };
     const created = await createAgentSession({
       cwd: fmRoot,
       sessionManager,
@@ -1332,12 +1530,22 @@ ${context.command}
       // reopening reads the in-memory record above, so a failed write costs
       // neither the live session nor its replacement.
     }
-    return { session: created.session, sessionManager };
+    return { session: created.session, sessionManager, chainModel: selection.chainModel };
   }
 
   async function ensureBranch(expectedGeneration: number, recoveryProbe = false): Promise<BranchSession> {
     if (!(await actingAsOwner(expectedGeneration))) throw new Error("supervision session was replaced or lost lock ownership");
     if (branchBroken && !(recoveryProbe && providerRecovery?.probeInFlight)) throw new Error(branchBroken);
+    // The way back up a fallback chain: once a model earlier than the one the
+    // live branch runs on is ready again, rebuild so this wake tries it.
+    if (
+      branch &&
+      activeChainModel &&
+      chainPrefersEarlierModel(readModelChain(), chainCooldowns, activeChainModel, Date.now())
+    ) {
+      branchSelectionRevision += 1;
+      releaseBranchForSelectionChange();
+    }
     if (branch) return branch;
     while (true) {
       const buildRevision = branchSelectionRevision;
@@ -1356,15 +1564,30 @@ ${context.command}
           throw new Error("supervision session was replaced or lost lock ownership");
         }
         branch = {
-          ...created,
+          session: created.session,
+          sessionManager: created.sessionManager,
           generation: expectedGeneration,
           selectionRevision: buildRevision,
         };
+        activeChainModel = created.chainModel;
+        if (pendingChainFallbackFrom) {
+          if (activeChainModel) {
+            deliverBranchHealthNote(
+              `Supervision model ${pendingChainFallbackFrom} failed; the next wake uses ${activeChainModel} and ${pendingChainFallbackFrom} is retried after its cooldown.`,
+            );
+          }
+          pendingChainFallbackFrom = "";
+        }
         return branch;
       } catch (error) {
         if (buildRevision !== branchSelectionRevision) continue;
         if (expectedGeneration === generation && !shuttingDown) {
-          branchBroken = error instanceof Error ? error.message : String(error);
+          const detail = error instanceof Error ? error.message : String(error);
+          if (error instanceof BranchModelChainExhaustedError) {
+            pauseForModelChain(detail, error.retryNotBefore, recoveryProbe && providerRecovery?.probeInFlight === true);
+          } else {
+            branchBroken = detail;
+          }
         }
         throw error;
       }
@@ -1388,6 +1611,29 @@ ${context.command}
       writeMirrorCursor(mirrorCollection.pendingCursor);
       mirrorCollection.pendingCursor = null;
     }
+  }
+
+  async function acknowledgeReportedGrant(
+    expectedGeneration: number,
+    scope: NonNullable<typeof wakeTaskScope>,
+  ): Promise<boolean> {
+    if (scope.acknowledgementCommands.size !== 1) return false;
+    const eligibleRows = join(state, BRANCH_ELIGIBLE_ROWS_FILE);
+    if (!existsSync(eligibleRows)) return true;
+    if (!(await actingAsOwner(expectedGeneration))) return false;
+    const acknowledged = await runCommandAsync(
+      "bash",
+      ["-c", [...scope.acknowledgementCommands][0]],
+      {
+        cwd: fmRoot,
+        env: {
+          ...scriptEnv,
+          FM_SUPERVISION_ACTOR: "branch",
+          FM_LEASE_HOLDER_PID: ownedLockPid,
+        },
+      },
+    );
+    return acknowledged.status === 0 && !existsSync(eligibleRows);
   }
 
   function enqueueWake(message: string, acceptedGeneration: number, recoveryProbe = false): Promise<void> {
@@ -1441,9 +1687,14 @@ ${context.command}
         if (grant !== "published") throw new Error("could not record the branch's eligible row snapshot");
         // A row can still arrive between this re-check and the model starting
         // the drain; that residual is accepted by the confused-agent-grade boundary.
-        const reportRevisionBeforePrompt = durableReportRevision;
         const entryOffset = sessionManager.getEntries().length;
-        wakeTaskScope = heartbeat ? null : { rows: [...scope.eligibleSeqs], tasks: new Set(scope.eligibleTasks) };
+        const promptWakeScope = {
+          rows: new Map(Object.entries(scope.presentedTaskBySeq)),
+          reported: new Set<string>(),
+          acknowledgementCommands: new Set<string>(),
+          unscoped: heartbeat,
+        };
+        wakeTaskScope = promptWakeScope;
         try {
           await session.prompt(
             `FIRSTMATE SUPERVISION WAKE: ${message}\n\nHandle this per your operating procedure and finish with fm_branch_report.`,
@@ -1451,21 +1702,31 @@ ${context.command}
         } finally {
           wakeTaskScope = null;
         }
+        const grantFullyReported = [...promptWakeScope.rows.keys()].every((seq) => promptWakeScope.reported.has(seq));
         const providerError = settledPromptProviderError(sessionManager, entryOffset);
-        if (providerError) {
-          const detail = `supervision branch provider failed after construction: ${providerError}`;
-          if (
-            branchForWake.generation === generation &&
-            branchForWake.selectionRevision === branchSelectionRevision
-          ) {
-            recordSettledProviderError(detail);
-          }
-          throw new Error(detail);
+        const grantAcknowledged = grantFullyReported && await acknowledgeReportedGrant(
+          acceptedGeneration,
+          promptWakeScope,
+        );
+        const providerDetail = providerError
+          ? `supervision branch provider failed after construction: ${providerError}`
+          : "";
+        if (
+          providerDetail &&
+          branchForWake.generation === generation &&
+          branchForWake.selectionRevision === branchSelectionRevision
+        ) {
+          recordSettledProviderError(providerDetail);
         }
-        if (durableReportRevision <= reportRevisionBeforePrompt) {
-          throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+        if (!grantFullyReported) {
+          throw new Error(providerDetail || "supervision branch prompt settled but produced no durable outcome for every claimed wake row");
         }
-        recordDurableBranchReport(branchForWake.generation, branchForWake.selectionRevision);
+        if (!grantAcknowledged) {
+          throw new Error("supervision branch produced every durable outcome but could not acknowledge its wake-row grant");
+        }
+        if (!providerDetail) {
+          recordDurableBranchReport(branchForWake.generation, branchForWake.selectionRevision);
+        }
         if (!(await releaseEligibleRowsSnapshot(state, wakeGrantScript, String(acceptedGeneration)))) {
           throw new Error("could not release the branch's settled wake-row grant");
         }
@@ -1491,6 +1752,7 @@ ${context.command}
     branchBroken = "";
     consecutiveProviderErrors = 0;
     providerRecovery = null;
+    pendingChainFallbackFrom = "";
     const stale = branch;
     branch = null;
     if (!stale) return;
@@ -1658,6 +1920,9 @@ ${context.command}
     branchBroken = "";
     consecutiveProviderErrors = 0;
     providerRecovery = null;
+    chainCooldowns.clear();
+    activeChainModel = "";
+    pendingChainFallbackFrom = "";
     generation += 1;
     mirrorCollection.collectAnchor = null;
     mirrorCollection.pendingCursor = null;
@@ -1682,7 +1947,7 @@ ${context.command}
     if (!selected) return;
     const changed = !mainModel || mainModel.provider !== selected.provider || mainModel.id !== selected.id;
     mainModel = { provider: selected.provider, id: selected.id };
-    if (!changed || readModelPin()) return;
+    if (!changed || readModelPin().kind !== "absent") return;
     branchSelectionRevision += 1;
     releaseBranchForSelectionChange();
   });
@@ -1738,7 +2003,11 @@ ${context.command}
     handler: async (_args, ctx) => {
       rememberMainModel(ctx);
       const pin = readModelPin();
-      const current = pin ? `${pin.provider}/${pin.modelId}` : "follows main";
+      const current = pin.kind === "valid"
+        ? `${pin.ref.provider}/${pin.ref.modelId}`
+        : pin.kind === "invalid"
+          ? `invalid config (${pin.reason})`
+          : "follows main";
       const followMain = `Follow main${ctx.model ? ` (${modelLabel(ctx.model)})` : ""}`;
       let available: string[];
       try {
@@ -1758,7 +2027,7 @@ ${context.command}
       const picked = await pickBranchModel(
         ctx,
         `Supervision branch model (now: ${current})`,
-        buildBranchModelItems(followMain, available, pin ? `${pin.provider}/${pin.modelId}` : null),
+        buildBranchModelItems(followMain, available, pin.kind === "valid" ? branchModelLabel(pin.ref) : null),
       );
       if (picked === undefined) return; // cancelled: the current choice stands
       // Whatever the model step resolves is also the model the effort step
