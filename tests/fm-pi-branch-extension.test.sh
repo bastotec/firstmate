@@ -2369,6 +2369,21 @@ if (!(malformedFailure instanceof Error) ||
 }
 
 await fire("session_shutdown", {});
+writeFileSync(`${home}/config/supervision-branch-model`, "openai/bad\u0080\nopenai/cheap-model\n");
+await fire("session_start", {}, makeCtx());
+const sessionsBeforeControl = (globalThis.__fmSessions ?? []).length;
+const controlled = dispatch("signal: C1 control in mixed chain");
+if (!controlled.accepted) throw new Error("the C1-control wake was not initially accepted for fail-open settlement");
+const controlledFailure = await controlled.settlement.then(() => null, (error) => error);
+if (!(controlledFailure instanceof Error) ||
+    !controlledFailure.message.includes("invalid supervision model line 1")) {
+  throw new Error(`the C1-control chain did not refuse with its malformed line: ${String(controlledFailure)}`);
+}
+if ((globalThis.__fmSessions ?? []).length !== sessionsBeforeControl) {
+  throw new Error("a C1-control model reference selected around itself to build a branch");
+}
+
+await fire("session_shutdown", {});
 writeFileSync(`${home}/config/supervision-branch-model`, "ghost/a\nghost/b\n");
 await fire("session_start", {}, makeCtx());
 const exhausted = dispatch("signal: every configured model is unavailable");

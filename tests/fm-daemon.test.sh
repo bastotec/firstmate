@@ -1263,6 +1263,37 @@ test_housekeeping_persistent_stale_escalates() {
   pass "persistent stale escalates after threshold and clears its marker"
 }
 
+test_housekeeping_capture_failure_escalates_without_losing_retry() {
+  local dir state win key marker before
+  dir=$(make_supercase stale-capture-failure)
+  state="$dir/state"
+  win="sess:fm-unreadable-w5"
+  fm_write_meta "$state/unreadable-w5.meta" "window=$win" "backend=tmux" "harness=pi"
+  printf 'working: compiling\n' > "$state/unreadable-w5.status"
+  key=$(printf '%s' unreadable-w5 | tr ':/.' '___')
+  marker="$state/.subsuper-stale-$key"
+  before=$(( $(date +%s) - 500 ))
+  printf '%s\n' "$before" > "$marker"
+
+  (
+    fm_backend_capture() { return 1; }
+    wedge_gate_verdict() { printf 'escalate\n'; }
+    escalate_add() { return 1; }
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  )
+  [ -e "$marker" ] || fail "an unreadable away-mode wedge lost its marker after escalation persistence failed"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "the failed escalation append unexpectedly wrote a record"
+
+  (
+    fm_backend_capture() { return 1; }
+    wedge_gate_verdict() { printf 'escalate\n'; }
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  )
+  [ -s "$state/.subsuper-escalations" ] || fail "an unreadable away-mode wedge did not escalate"
+  [ ! -e "$marker" ] || fail "a durably escalated unreadable wedge retained its retry marker"
+  pass "away-mode capture failures escalate and retain retries until durable"
+}
+
 test_housekeeping_wedge_gate_absorbs_or_commits_after_escalation() {
   local dir state fakebin win pane key marker before gate_log
   dir=$(make_supercase stale-wake-gate)
@@ -2854,6 +2885,7 @@ test_housekeeping_migrates_watcher_pause_marker
 test_housekeeping_migrates_watcher_unpaused_marker_to_clear
 test_housekeeping_seeds_pause_marker_from_status
 test_housekeeping_persistent_stale_escalates
+test_housekeeping_capture_failure_escalates_without_losing_retry
 test_housekeeping_wedge_gate_absorbs_or_commits_after_escalation
 test_housekeeping_resumed_stale_cleared
 test_housekeeping_paused_resurfaces_and_resets

@@ -1086,7 +1086,6 @@ housekeeping() {  # <state>
     stale_window_is_busy "$win" "$state"
     case "$?" in
       0) rm -f "$marker" ;;
-      2) rm -f "$marker" ;;
       *)
         gate_result=$(wedge_gate_verdict "$state" "$task" "$win" "$age")
         look_flags=
