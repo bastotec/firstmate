@@ -1598,7 +1598,8 @@ ${context.command}
         } finally {
           wakeTaskScope = null;
         }
-        const durableReportAdvanced = durableReportRevision > reportRevisionBeforePrompt;
+        const durableReportCount = durableReportRevision - reportRevisionBeforePrompt;
+        const grantFullyReported = durableReportCount >= scope.eligibleSeqs.length;
         const providerError = settledPromptProviderError(sessionManager, entryOffset);
         if (providerError) {
           const detail = `supervision branch provider failed after construction: ${providerError}`;
@@ -1610,10 +1611,10 @@ ${context.command}
           }
           // The provider failure remains health evidence, but it cannot return
           // an already durably reported wake to the watcher for redelivery.
-          if (!durableReportAdvanced) throw new Error(detail);
+          if (!grantFullyReported) throw new Error(detail);
         } else {
-          if (!durableReportAdvanced) {
-            throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
+          if (!grantFullyReported) {
+            throw new Error("supervision branch prompt settled but produced no durable outcome for every claimed wake row");
           }
           recordDurableBranchReport(branchForWake.generation, branchForWake.selectionRevision);
         }

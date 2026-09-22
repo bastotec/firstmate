@@ -309,10 +309,18 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle
   while :; do
     tmux send-keys -t "$target" Enter 2>/dev/null || true
     sleep "$sleep_s"
-    if [ "$harness" = deck ] && [ -n "$deck_seq" ] \
-      && fm_busy_deck_delivery_started "$state_dir" "$task_id" "$deck_seq"; then
-      printf 'empty'
-      return 0
+    if [ "$harness" = deck ]; then
+      if [ -n "$deck_seq" ] \
+        && fm_busy_deck_delivery_started "$state_dir" "$task_id" "$deck_seq"; then
+        printf 'empty'
+        return 0
+      fi
+      i=$((i + 1))
+      if [ "$i" -ge "$retries" ]; then
+        printf 'pending'
+        return 0
+      fi
+      continue
     fi
     state=$(fm_tmux_composer_state "$target")
     case "$state" in
@@ -344,7 +352,7 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle
   # Retries exhausted, composer still shows proven pending.
   # Busy conversion is owned by fm_composer_queued_enter_verdict.
   busy_state=idle
-  [ "$harness" = deck ] || { fm_pane_is_busy "$target" "$harness" && busy_state=busy; }
+  if fm_pane_is_busy "$target" "$harness"; then busy_state=busy; fi
   fm_composer_queued_enter_verdict "$state" "$busy_state"
 }
 

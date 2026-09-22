@@ -1965,7 +1965,7 @@ test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldow
 const prelude = process.env.DRIVER_PRELUDE;
 await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatch, fire, settle, home, mainUserMessages, sentToMain }; })()`);
 const { pi, makeOffer, dispatch, fire, settle, home, mainUserMessages, sentToMain } = globalThis.__t;
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 
 let now = 1_000_000;
 Date.now = () => now;
@@ -2020,6 +2020,20 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
     );
     if (recorded.isError) throw new Error(`pre-error report failed: ${JSON.stringify(recorded)}`);
     await new Promise((resolve) => { releaseFailedProbe = resolve; });
+  }
+  if (attempt === 9 || attempt === 10) {
+    const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+    const reportCount = attempt === 9 ? 1 : 2;
+    for (let index = 0; index < reportCount; index += 1) {
+      const recorded = await report.execute(
+        `grant-${attempt}-${index}`,
+        { task: "branch-driver", verdict: "routine", summary: `covered row ${index + 1} of grant ${attempt}` },
+        undefined,
+        undefined,
+        {},
+      );
+      if (recorded.isError) throw new Error(`grant report failed: ${JSON.stringify(recorded)}`);
+    }
   }
   session.messages.push({
     role: "assistant",
@@ -2137,12 +2151,44 @@ if (existsSync(`${home}/state/.branch-eligible-rows`)) {
 const afterRecoveryHealthy = dispatch("signal: healthy turn after one post-recovery error");
 if (!afterRecoveryHealthy.accepted) throw new Error("the successful probe did not clear the provider-error streak");
 await settle(() => attempt === 8 && sentToMain.some((sent) => sent.message.content.includes("post-recovery report proved")), "post-recovery healthy report");
+await afterRecoveryHealthy.settlement;
+
+function dispatchTwoRowGrant(label) {
+  writeFileSync(
+    `${home}/state/.wake-queue`,
+    `1\t1\tsignal\tbranch-driver.status\t${label} first\n` +
+      `2\t2\tsignal\tbranch-driver.status\t${label} second\n`,
+  );
+  const offer = makeOffer(`signal: ${label}`);
+  pi.events.emit("fm-branch-supervision:dispatch", offer);
+  return offer;
+}
+
+const partialGrant = dispatchTwoRowGrant("partial grant");
+if (!partialGrant.accepted) throw new Error("the branch refused the partial-coverage grant");
+const partialFailure = await partialGrant.settlement.then(() => null, (error) => error);
+if (!(partialFailure instanceof Error) || !partialFailure.message.includes("provider failed after construction")) {
+  throw new Error(`a partially reported grant did not return to watcher fallback: ${String(partialFailure)}`);
+}
+if (existsSync(`${home}/state/.branch-eligible-rows`)) {
+  throw new Error("partial grant fallback left its row grant active");
+}
+
+const fullGrant = dispatchTwoRowGrant("full grant");
+if (!fullGrant.accepted) throw new Error("one partial-coverage provider error latched the branch prematurely");
+const fullFailure = await fullGrant.settlement.then(() => null, (error) => error);
+if (fullFailure !== null) {
+  throw new Error(`a fully reported grant returned to watcher fallback: ${String(fullFailure)}`);
+}
+if (existsSync(`${home}/state/.branch-eligible-rows`)) {
+  throw new Error("fully reported grant left its handled row grant active");
+}
 process.exit(0);
 EOF
   status=$?
   out=$(cat "$TMP_ROOT/node-output")
-  expect_code 0 "$status" "provider errors must latch, cool down, preserve handled reports, back off, and recover: $out"
-  pass "provider errors preserve handled reports while health cooldowns still back off and recover"
+  expect_code 0 "$status" "provider errors must preserve fully covered grants, replay partial grants, and retain health cooldowns: $out"
+  pass "provider errors settle only fully reported grants while health cooldowns remain intact"
 }
 
 test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model() {

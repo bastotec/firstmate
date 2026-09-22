@@ -4654,13 +4654,13 @@ test_send_text_submit_uses_deck_wrapper_state_not_rendered_output() {
   dir="$TMP_ROOT/submit-deck-skipped-sequence"; mkdir -p "$dir/responses" "$dir/state"; log="$dir/log"; resp="$dir/responses"; state="$dir/state"; : > "$log"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" t1 --state idle --source deck-wrapper --event turn-end)
   printf '{"result":{"agent":{"agent_status":"blocked"}}}\n' > "$resp/2.out"
-  printf '  ╭────────────────────────╮\n  │ ❯ hello captain        │\n  ╰──────── Composer ──────╯\n\n  Enter:send\n' > "$resp/4.out"
+  printf '  ╭────────────────────────╮\n  │ ❯                      │\n  ╰──────── Composer ──────╯\n\n  Shift+Tab:mode\n' > "$resp/4.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
     FM_FAKE_DECK_BUSY_STATE="$state" FM_FAKE_DECK_TASK=t1 FM_FAKE_DECK_GEN="$gen" FM_FAKE_BUSY_EVENT="$ROOT/bin/fm-busy-event.sh" \
     FM_FAKE_DECK_FINISH_THEN_START=1 \
     bash -c '. "$0/bin/fm-backend.sh"; fm_backend_send_text_submit herdr default:w1:p2 "hello captain" 1 0.01 0.01 "" deck "$1" t1' "$ROOT" "$state" )
-  [ "$out" = pending ] || fail "a skipped Deck wrapper sequence falsely acknowledged this Enter: '$out'"
+  [ "$out" = pending ] || fail "a skipped Deck wrapper sequence borrowed an empty composer to acknowledge this Enter: '$out'"
   pass "fm_backend_herdr_send_text_submit: Deck delivery requires the next wrapper start from an idle baseline"
 }
 

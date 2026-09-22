@@ -3298,23 +3298,22 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
       sleep "$sleep_s"
       continue
     fi
-    if [ "$harness" = deck ] && [ -n "$deck_seq" ]; then
+    if [ "$harness" = deck ]; then
       sleep "$sleep_s"
-      if fm_busy_deck_delivery_started "$state_dir" "$task_id" "$deck_seq"; then
+      if [ -n "$deck_seq" ] && fm_busy_deck_delivery_started "$state_dir" "$task_id" "$deck_seq"; then
         printf 'empty'
         return 0
       fi
+      i=$((i + 1))
+      if [ "$i" -ge "$retries" ]; then
+        printf 'pending'
+        return 0
+      fi
+      continue
     fi
     if [ "$baseline" = idle ]; then
       verdict=$(fm_backend_herdr_wait_for_working "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" \
         "$confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS")
-      if [ "$harness" = deck ]; then
-        if [ -n "$deck_seq" ] && fm_busy_deck_delivery_started "$state_dir" "$task_id" "$deck_seq"; then
-          printf 'empty'
-          return 0
-        fi
-        verdict=idle
-      fi
       case "$verdict" in
         busy) printf 'empty'; return 0 ;;
         unknown) printf 'unknown'; return 0 ;;
@@ -3328,7 +3327,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
         *) printf '%s' "$verdict"; return 0 ;;
       esac
     else
-      [ "$harness" = deck ] && [ -n "$deck_seq" ] || sleep "$sleep_s"
+      sleep "$sleep_s"
       verdict=$(fm_backend_herdr_composer_state "$target")
       if [ "$verdict" = pending ] && [ "$raw_status" != working ] \
         && [ "$footer_baseline" = idle ] \

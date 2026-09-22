@@ -48,7 +48,13 @@ case "${1:-}" in
     done
     if [ "$is_enter" = 1 ]; then
       [ -z "${FM_FAKE_SENT:-}" ] || printf 'Enter\n' >> "$FM_FAKE_SENT"
-      if [ -n "${FM_FAKE_SWALLOW:-}" ] && [ -f "$FM_FAKE_SWALLOW" ]; then
+      if [ -n "${FM_FAKE_DECK_BUSY_STATE:-}" ]; then
+        "$FM_FAKE_BUSY_EVENT" apply "$FM_FAKE_DECK_BUSY_STATE" "$FM_FAKE_DECK_TASK" idle \
+          --gen "$FM_FAKE_DECK_GEN" --source deck-wrapper --event turn-end >/dev/null
+        "$FM_FAKE_BUSY_EVENT" apply "$FM_FAKE_DECK_BUSY_STATE" "$FM_FAKE_DECK_TASK" busy \
+          --gen "$FM_FAKE_DECK_GEN" --source deck-wrapper --event turn-start >/dev/null
+        printf '╭─────╮\n│ >   │\n╰─────╯\n' > "$COMPOSER"
+      elif [ -n "${FM_FAKE_SWALLOW:-}" ] && [ -f "$FM_FAKE_SWALLOW" ]; then
         [ "${FM_FAKE_PERSIST_SWALLOW:-0}" = 1 ] || rm -f "$FM_FAKE_SWALLOW"
         [ "${FM_FAKE_APPEND_BUSY:-0}" != 1 ] || printf '✻ Working…\n' >> "$COMPOSER"
       else
@@ -232,6 +238,30 @@ test_busy_pane_ambiguous_pending_retries_without_conversion() {
   pass "fm_tmux_submit_enter_core: pending-unproven retries without busy conversion"
 }
 
+test_deck_skipped_start_never_borrows_empty_composer() {
+  local dir fakebin composer sent state gen vfile record
+  dir="$TMP_ROOT/deck-skipped-start"
+  fakebin=$(make_submit_mock "$dir")
+  composer="$dir/composer"
+  sent="$dir/sent.log"
+  state="$dir/state"
+  vfile="$dir/verdict"
+  mkdir -p "$state"
+  printf '╭────────────╮\n│ > fix      │\n╰────────────╯\n' > "$composer"
+  : > "$sent"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" t1 --state idle --source deck-wrapper --event turn-end)
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_FAKE_SENT="$sent" \
+    FM_FAKE_DECK_BUSY_STATE="$state" FM_FAKE_DECK_TASK=t1 FM_FAKE_DECK_GEN="$gen" \
+    FM_FAKE_BUSY_EVENT="$ROOT/bin/fm-busy-event.sh" \
+    fm_tmux_submit_core "win" "fix" 1 0.01 0.01 deck "$state" t1 > "$vfile" 2>/dev/null
+  [ "$(cat "$vfile")" = pending ] \
+    || fail "Deck borrowed an empty composer after a skipped wrapper sequence: '$(cat "$vfile")'"
+  record=$(fm_busy_record_read "$state" t1) || fail "Deck wrapper fixture did not publish its buffered turn"
+  [ "$record" = "busy deck-wrapper turn-start 3" ] \
+    || fail "Deck wrapper fixture did not end at the skipped turn-start sequence: '$record'"
+  pass "fm_tmux_submit_core: Deck requires exact wrapper proof despite an empty composer"
+}
+
 test_unrecognized_state_skips_busy_conversion() {
   local dir fakebin composer busy_called vfile
   dir="$TMP_ROOT/unrecognized-state"
@@ -351,5 +381,6 @@ test_idle_pane_composer_clears_first_try
 test_busy_pane_unknown_stays_unknown
 test_failed_baseline_capture_keeps_busy_unknown_unconfirmed
 test_busy_pane_ambiguous_pending_retries_without_conversion
+test_deck_skipped_start_never_borrows_empty_composer
 test_unrecognized_state_skips_busy_conversion
 test_claude_busy_signature_uses_real_capture_shapes
