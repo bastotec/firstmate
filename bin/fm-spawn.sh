@@ -1677,7 +1677,7 @@ launch_template() {
     # argv[0] `fm-deck-worker`, so pane liveness reads it as an agent rather
     # than an idle shell (bin/fm-agent-process-lib.sh). Deck has no effort
     # control, so effort is recorded and omitted.
-    deck) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS bash -c '\''exec -a fm-deck-worker bash "$@"'\'' fm-deck-worker __DECKWORKER__ --id __DECKID__ --state __DECKSTATE__ --gen __DECKGEN__ --turnend __TURNEND__ --deck __DECKBIN__ __MODELFLAG__-- "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    deck) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS bash -c '\''exec -a fm-deck-worker bash "$@"'\'' fm-deck-worker __DECKWORKER__ --id __DECKID__ --state __DECKSTATE__ --gen __DECKGEN__ --deck __DECKBIN__ __MODELFLAG__-- "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     # grok (Grok Build TUI): a positional prompt starts the supervised interactive
     # session. --always-approve auto-approves every tool execution (verified: the
     # crewmate runs fully autonomously, no permission gate), which an unattended

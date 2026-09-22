@@ -29,15 +29,14 @@ export function branchModelLabel(ref: BranchModelRef): string {
 /**
  * Parses config/supervision-branch-model: one "<provider>/<model-id>" per
  * line in preference order, split at the FIRST "/" so a provider-qualified
- * model id survives. Blank lines and "#" comments are skipped, and a repeated
- * model keeps its first position. Any malformed non-comment line rejects the
+ * model id survives. Blank lines and "#" comments are skipped. Any malformed
+ * non-comment line rejects the
  * chain instead of silently selecting around it. Only an empty or comment-only
  * file means no pin.
  */
 export function parseBranchModelChain(stored: string): BranchModelRef[] {
   const chain: BranchModelRef[] = [];
   const malformed: Array<{ number: number; line: string }> = [];
-  const seen = new Set<string>();
   for (const [index, line] of stored.split("\n").entries()) {
     const trimmed = line.trim();
     if (trimmed === "" || trimmed.startsWith("#")) continue;
@@ -46,8 +45,6 @@ export function parseBranchModelChain(stored: string): BranchModelRef[] {
       malformed.push({ number: index + 1, line });
       continue;
     }
-    if (seen.has(line)) continue;
-    seen.add(line);
     chain.push({ provider: line.slice(0, separator), modelId: line.slice(separator + 1) });
   }
   if (malformed.length > 0) {

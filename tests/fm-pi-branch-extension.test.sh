@@ -2154,6 +2154,14 @@ const prelude = process.env.DRIVER_PRELUDE;
 await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeCtx, registryModels, dispatch, fire, settle, home, mainUserMessages, sentToMain }; })()`);
 const { makeCtx, registryModels, dispatch, fire, settle, home, mainUserMessages, sentToMain } = globalThis.__t;
 import { writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const chainModule = await import(pathToFileURL(join(dirname(process.env.PLUGIN), "lib/fm-branch-model-chain.ts")).href);
+const duplicateChain = chainModule.parseBranchModelChain("ghost/not-installed\nghost/not-installed\nopenai/cheap-1\n");
+if (duplicateChain.map(chainModule.branchModelLabel).join(",") !== "ghost/not-installed,ghost/not-installed,openai/cheap-1") {
+  throw new Error(`configured duplicate lines were not preserved in order: ${JSON.stringify(duplicateChain)}`);
+}
 
 let now = 1_000_000;
 Date.now = () => now;
@@ -2163,11 +2171,11 @@ registryModels.push(
   { provider: "zai", id: "cheap-2" },
   { provider: "qwen", id: "cheap-3" },
 );
-// Preference order, with a comment, a blank line, a duplicate, and a model the
+// Preference order, with a comment, a blank line, duplicates, and a model the
 // runtime does not know.
 writeFileSync(
   `${home}/config/supervision-branch-model`,
-  "# supervision chain\nghost/not-installed\nopenai/cheap-1\n\nzai/cheap-2\nopenai/cheap-1\nqwen/cheap-3\n",
+  "# supervision chain\nghost/not-installed\nghost/not-installed\nopenai/cheap-1\n\nzai/cheap-2\nopenai/cheap-1\nqwen/cheap-3\n",
 );
 const mainEntries = [];
 await fire("session_start", {}, makeCtx({
@@ -2331,8 +2339,8 @@ test_model_chain_rejects_malformed_lines_and_reprobes_unresolvable_entries() {
   PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
 const prelude = process.env.DRIVER_PRELUDE;
-await eval(`(async () => { ${prelude}; globalThis.__t = { dispatch, fire, makeCtx, registryModels, home, sentToMain }; })()`);
-const { dispatch, fire, makeCtx, registryModels, home, sentToMain } = globalThis.__t;
+await eval(`(async () => { ${prelude}; globalThis.__t = { commands, dispatch, fire, makeCtx, registryModels, home, sentToMain, uiPrompts }; })()`);
+const { commands, dispatch, fire, makeCtx, registryModels, home, sentToMain, uiPrompts } = globalThis.__t;
 import { writeFileSync } from "node:fs";
 
 let now = 2_000_000;
@@ -2343,6 +2351,14 @@ registryModels.push(
 );
 writeFileSync(`${home}/config/supervision-branch-model`, "# preferred\n openai/cheap-model\n");
 await fire("session_start", {}, makeCtx());
+const command = commands.get("supervision-model");
+if (!command) throw new Error("the supervision-model command was not registered");
+await command.handler("", makeCtx());
+const malformedPrompt = uiPrompts.at(-1);
+if (!malformedPrompt?.title.includes("invalid config (invalid supervision model line 2") ||
+    !malformedPrompt.title.includes(" openai/cheap-model")) {
+  throw new Error(`the model picker mislabeled malformed config: ${JSON.stringify(malformedPrompt)}`);
+}
 const malformed = dispatch("signal: malformed mixed chain");
 if (!malformed.accepted) throw new Error("the malformed chain wake was not initially accepted for fail-open settlement");
 const malformedFailure = await malformed.settlement.then(() => null, (error) => error);

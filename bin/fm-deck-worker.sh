@@ -23,7 +23,7 @@
 #
 # USAGE (bin/fm-spawn.sh builds this; the brief arrives already encoded)
 #   fm-deck-worker.sh --id <task-id> --state <state-dir> --gen <busy-gen>
-#       --turnend <file> --deck <deck-binary> [--model <route>] -- <first-prompt>
+#       --deck <deck-binary> [--model <route>] -- <first-prompt>
 #
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
@@ -41,13 +41,12 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 BUSY_EVENT="$SCRIPT_DIR/fm-busy-event.sh"
 STATE_IO="$SCRIPT_DIR/fm-state-io.py"
 
-ID='' STATE='' GEN='' TURNEND='' DECK='' MODEL=''
+ID='' STATE='' GEN='' DECK='' MODEL=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --id) ID=${2-}; shift 2 ;;
     --state) STATE=${2-}; shift 2 ;;
     --gen) GEN=${2-}; shift 2 ;;
-    --turnend) TURNEND=${2-}; shift 2 ;;
     --deck) DECK=${2-}; shift 2 ;;
     --model) MODEL=${2-}; shift 2 ;;
     --) shift; break ;;
@@ -59,15 +58,12 @@ if [ -z "$ID" ] || [ -z "$STATE" ] || [ -z "$DECK" ] || [ -z "$PROMPT" ]; then
   echo "fm-deck-worker: --id, --state, --deck, and a first prompt are required" >&2
   exit 2
 fi
-if [ -n "$TURNEND" ] && [ "$TURNEND" != "$STATE/$ID.turn-ended" ]; then
-  echo "fm-deck-worker: --turnend must name the task's signal in its state directory" >&2
-  exit 2
-fi
 command -v jq >/dev/null 2>&1 || { echo "fm-deck-worker: jq is required to render Deck's event stream" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "fm-deck-worker: python3 is required for safe status I/O" >&2; exit 2; }
 [ -f "$STATE_IO" ] && [ ! -L "$STATE_IO" ] || { echo "fm-deck-worker: safe status I/O helper is unavailable" >&2; exit 2; }
 
 STATUS_FILE="$STATE/$ID.status"
+TURNEND_FILE="$STATE/$ID.turn-ended"
 MAX_TURNS=${FM_DECK_MAX_TURNS:-200}
 DEADLINE=${FM_DECK_DEADLINE_SECS:-3600}
 case "$MAX_TURNS" in ''|*[!0-9]*) MAX_TURNS=200 ;; esac
@@ -111,9 +107,8 @@ status_has_worker_evidence() {
 }
 
 publish_turnend() {
-  [ -z "$TURNEND" ] && return 0
   python3 "$STATE_IO" root-touch "$STATE" "$ID.turn-ended" || {
-    printf 'fm-deck-worker: could not safely publish turn-end signal %s\n' "$TURNEND" >&2
+    printf 'fm-deck-worker: could not safely publish turn-end signal %s\n' "$TURNEND_FILE" >&2
     return 1
   }
 }

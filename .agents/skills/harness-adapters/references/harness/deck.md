@@ -11,7 +11,7 @@ Deck is not live-verified and must not be dispatched for real work.
 | Fact | Value |
 |---|---|
 | Binary | Absolute `deck` from `PATH`, refused if absent; built from `bastotec/deck` with `cargo build --release --locked`. The spawn also refuses when `jq` or Python 3 is missing, because the driver renders Deck's events with `jq` and performs descriptor-bound status I/O with Python. |
-| Launch | `bash -c 'exec -a fm-deck-worker bash "$@"' fm-deck-worker bin/fm-deck-worker.sh --id <task> --state <state> --gen <busy-gen> --turnend <file> --deck <binary> [--model <route>] -- <brief>`. The brief is the first turn. |
+| Launch | `bash -c 'exec -a fm-deck-worker bash "$@"' fm-deck-worker bin/fm-deck-worker.sh --id <task> --state <state> --gen <busy-gen> --deck <binary> [--model <route>] -- <brief>`. The brief is the first turn, and the driver derives the turn-end signal as `<state>/<task>.turn-ended`. |
 | Turns | Every line typed at the driver's `❯` prompt is the next turn of the SAME Deck session (`--session`), so a steer or the steering-inbox doorbell keeps the conversation's context. |
 | Endpoint | Deck's own settings (`PROXAI_BASE_URL`, `PROXAI_MODEL`, `PROXAI_API_KEY_FILE`); with no key variable set the driver uses `~/.config/proxai/client.key`. The default base URL is the local proxai gateway. |
 | Model | `--model <route>` with a gateway route such as `codex/gpt-5.6-luna`, passed to every turn. No local catalog check: the gateway answers an unknown route with an error on the first turn. |

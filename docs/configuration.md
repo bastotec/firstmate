@@ -63,8 +63,8 @@ A provider that exists only because an extension registered it inside the captai
 Stored OAuth and API-key credentials retain their native credential type because Firstmate never copies, converts, installs, or overwrites credentials for the branch runtime.
 The file holds one `<provider>/<model-id>` line followed by one newline, split at the first `/` so a provider-qualified model id such as `openrouter/anthropic/claude-sonnet-4-5` survives intact.
 A model reference contains no whitespace or control characters.
-Several such lines make a fallback chain in preference order, for a captain whose subscriptions run out at different times; blank lines and `#` comments are skipped, and a repeated model keeps its first position.
-Any malformed non-comment line refuses the branch build and names that line instead of silently selecting around it; only an empty or comment-only file means no pin.
+Several such lines make a fallback chain in preference order, for a captain whose subscriptions run out at different times; blank lines and `#` comments are skipped, while every valid model line remains in its configured position.
+Any malformed non-comment line refuses the branch build and makes `/supervision-model` label the current selection as invalid config with that line named instead of silently selecting around it; only an empty or comment-only file means no pin.
 The chain is edited by hand, and the picker still writes a single line, so picking a model replaces a chain with that one pin.
 When a branch turn ends in a provider error, the model it ran on sits out for five minutes, doubling to an hour on repeated failures, and the next wake is served by the next ready model in the chain; the failed wake itself returns to main exactly as it does for a single pin, and one note in the captain's conversation names the model that failed and the one that takes over.
 A model the isolated branch runtime cannot resolve sits out on the same backoff instead of refusing the build.

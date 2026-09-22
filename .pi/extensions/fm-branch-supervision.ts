@@ -257,6 +257,10 @@ type BranchModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 type BranchEffort = ReturnType<NonNullable<ExtensionAPI["getThinkingLevel"]>>;
 type PinnedBranchModel = { model: BranchModel; modelRuntime: ModelRuntime };
 type BranchModelSelection = { pinned?: PinnedBranchModel; chainModel: string };
+type BranchModelPinState =
+  | { kind: "absent" }
+  | { kind: "valid"; ref: BranchModelRef }
+  | { kind: "invalid"; reason: string };
 type BranchModelResolution = { ok: true; selection: PinnedBranchModel } | { ok: false; reason: string };
 type FollowMainResolution =
   | { ok: true; selection: PinnedBranchModel }
@@ -297,13 +301,13 @@ function readModelChain(): BranchModelRef[] {
 
 // The preferred model: the chain's first entry, which is also what the
 // /supervision-model picker shows as the current pin. A malformed mixed chain
-// is still replaceable through the picker; branch construction is where its
-// parse error refuses service instead of silently following main.
-function readModelPin(): BranchModelRef | null {
+// is still replaceable through the picker; branch construction refuses it.
+function readModelPin(): BranchModelPinState {
   try {
-    return readModelChain()[0] ?? null;
-  } catch {
-    return null;
+    const ref = readModelChain()[0];
+    return ref ? { kind: "valid", ref } : { kind: "absent" };
+  } catch (error) {
+    return { kind: "invalid", reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -1826,7 +1830,7 @@ ${context.command}
     if (!selected) return;
     const changed = !mainModel || mainModel.provider !== selected.provider || mainModel.id !== selected.id;
     mainModel = { provider: selected.provider, id: selected.id };
-    if (!changed || readModelPin()) return;
+    if (!changed || readModelPin().kind !== "absent") return;
     branchSelectionRevision += 1;
     releaseBranchForSelectionChange();
   });
@@ -1882,7 +1886,11 @@ ${context.command}
     handler: async (_args, ctx) => {
       rememberMainModel(ctx);
       const pin = readModelPin();
-      const current = pin ? `${pin.provider}/${pin.modelId}` : "follows main";
+      const current = pin.kind === "valid"
+        ? `${pin.ref.provider}/${pin.ref.modelId}`
+        : pin.kind === "invalid"
+          ? `invalid config (${pin.reason})`
+          : "follows main";
       const followMain = `Follow main${ctx.model ? ` (${modelLabel(ctx.model)})` : ""}`;
       let available: string[];
       try {
@@ -1902,7 +1910,7 @@ ${context.command}
       const picked = await pickBranchModel(
         ctx,
         `Supervision branch model (now: ${current})`,
-        buildBranchModelItems(followMain, available, pin ? `${pin.provider}/${pin.modelId}` : null),
+        buildBranchModelItems(followMain, available, pin.kind === "valid" ? branchModelLabel(pin.ref) : null),
       );
       if (picked === undefined) return; // cancelled: the current choice stands
       // Whatever the model step resolves is also the model the effort step

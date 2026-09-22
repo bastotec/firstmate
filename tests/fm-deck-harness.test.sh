@@ -94,7 +94,7 @@ run_worker() {
   gen=$("$BUSY_EVENT" arm "$dir/state" t1)
   printf '%s' "$gen" > "$dir/gen"
   printf '%s' "$input" | FM_TEST_STATUS="$dir/state/t1.status" FM_TEST_EXTERNAL="${FM_TEST_EXTERNAL:-}" \
-    "$WORKER" --id t1 --state "$dir/state" --gen "$gen" --turnend "$dir/state/t1.turn-ended" \
+    "$WORKER" --id t1 --state "$dir/state" --gen "$gen" \
       --deck "$dir/deck" --model codex/gpt-5.6-luna -- "$prompt" > "$dir/pane.out" 2>&1
 }
 
@@ -241,7 +241,7 @@ test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
   # the driver gets a group of its own (job control) and the group is signalled.
   set -m
   FM_TEST_STATUS="$dir/state/t1.status" "$WORKER" --id t1 --state "$dir/state" --gen "$gen" \
-    --turnend "$dir/state/t1.turn-ended" --deck "$dir/deck" -- "please sleep" < "$dir/in" > "$dir/pane.out" 2>&1 &
+    --deck "$dir/deck" -- "please sleep" < "$dir/in" > "$dir/pane.out" 2>&1 &
   pid=$!
   set +m
   for _ in $(seq 50); do grep -q 'state=busy' "$dir/state/t1.busy-state" 2>/dev/null && pgrep -f "$dir/deck" >/dev/null && break; sleep 0.1; done
@@ -251,6 +251,7 @@ test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
   assert_grep 'event=interrupted' "$dir/state/t1.busy-state" "Ctrl+C did not close the turn as interrupted"
   [ "$(cat "$dir/state/t1.status")" = 'failed: deck turn ended without a status line (interrupted)' ] \
     || fail "an interrupted turn did not receive the exact fallback status: $(cat "$dir/state/t1.status")"
+  for _ in $(seq 50); do [ -f "$dir/state/t1.turn-ended" ] && break; sleep 0.1; done
   [ -f "$dir/state/t1.turn-ended" ] || fail "the interrupted turn did not publish turn-ended after its fallback status"
   kill -0 "$pid" 2>/dev/null || fail "the driver exited on Ctrl+C instead of returning to its prompt"
   assert_grep 'Interrupted.' "$dir/pane.out" "the pane did not show the cancelled turn"
@@ -396,6 +397,7 @@ EOF
   assert_contains "$launch" "--deck '$fakebin/deck'" "the launch did not pin the resolved deck binary"
   assert_contains "$launch" "--model 'codex/gpt-5.6-luna'" "the launch did not carry the model"
   assert_contains "$launch" "--id '$id'" "the launch did not name the task"
+  assert_not_contains "$launch" "--turnend" "the launch passed a redundant turn-end path"
   assert_not_contains "$launch" "--effort" "deck has no effort control; effort must not be passed"
   assert_not_contains "$launch" "__DECK" "the launch left a deck placeholder unsubstituted"
   meta="$home/state/$id.meta"
