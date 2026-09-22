@@ -1,0 +1,1893 @@
+FM_TEST_BEGIN 2026-09-22T18:31:38Z tests/fm-teardown.test.sh family=pr-forge expected_gate_skip=none
+ok - local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed
+ok - teardown refuses unsafe wake-gate state before destructive cleanup
+ok - teardown preflights the optional wake-gate runtime before destructive cleanup
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher process holds this home lock (last beat: 1s ago).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ok - teardown closes its own backlog item before reporting success
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher process holds this home lock (last beat: 1s ago).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ok - teardown honors config/backlog-backend=manual and still finishes cleanly
+ok - local-only worktree with truly unpushed work is refused (safety preserved)
+ok - local-only worktree with work merged into local main is torn down (no regression)
+ok - no-mistakes worktree with HEAD on origin is torn down (no regression)
+ok - no-mistakes worktree with genuinely unlanded work is refused (safety preserved)
+ok - local-only worktree with unpushed work is torn down under --force (escape hatch)
+ok - fm-pr-check publishes the PR-ready line on a secondmate's parent channel once
+ok - a secondmate home's teardown delivers the child's final line or refuses until it can
+ok - teardown completes when an exact busy-state sidecar is already absent
+ok - herdr teardown removes pane-owned escalation dedupe state
+ok - herdr flat teardown refuses before returning the isolated copy under lock contention and the retry completes cleanly
+ok - herdr flat teardown never erases records when pane presence is unparseable
+not ok - herdr-preflight-missing-adapter: teardown continued without its required preflight; stderr=+ set -eu
++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-teardown.sh
+++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++ pwd
++ SCRIPT_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++ FM_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG
++ STATE=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ DATA=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++ CONFIG=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config
++ SECONDMATE_REG=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data/secondmates.md
++ SUB_HOME_MARKER=.fm-secondmate-home
++ SUB_HOME_PARENT_MARKER=.fm-secondmate-parent
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-tasks-axi-lib.sh
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-tasks-axi-lib.sh
++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++++ pwd
+++ _FM_TASKS_AXI_LIB_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-tool-version-lib.sh
+++ unset _FM_TASKS_AXI_LIB_DIR
+++ FM_TASKS_AXI_MIN=0.2.4
+++ FM_TASKS_AXI_COMPATIBLE_MEMO=
+++ unset FM_TASKS_AXI_COMPATIBLE
+++ case "$FM_TASKS_AXI_COMPATIBLE_MEMO" in
+++ FM_TASKS_AXI_COMPATIBLE_MEMO=
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-backlog-transition-lib.sh
+++ FM_BACKLOG_TRANSITION_SKIP=
+++ FM_BACKLOG_TRANSITION_ERROR=
+++ FM_BACKLOG_TRANSITION_TASKS_AXI_STATUS=
+++ FM_BACKLOG_ROW_RESULT=
+++ FM_BACKLOG_ROW_STATE=
+++ FM_BACKLOG_ROW_ERROR=
+++ FM_BACKLOG_ROW_HOLD_KIND=
+++ FM_BACKLOG_CLOSE_REPLAY_RESULT=
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-backlog-transition-lib.sh
++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++++ pwd
+++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-timeout-lib.sh
++++ set -u
+++ FM_BACKLOG_ROW_SHOW_WEDGED=0
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-backend.sh
+++ FM_BACKEND_SCRIPT=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-backend.sh
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-backend.sh
++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++++ pwd
+++ FM_BACKEND_LIB_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++ unset FM_BACKEND_SCRIPT
++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/..
++++ pwd
+++ FM_BACKEND_DEFAULT_ROOT=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root
+++ FM_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG
+++ FM_BACKEND_CONFIG_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config
+++ FM_BACKEND_KNOWN='tmux herdr zellij orca cmux stream'
+++ FM_BACKEND_SPAWN='tmux herdr zellij orca cmux stream'
+++ FM_BACKEND_CMUX_BUNDLE_ID=com.cmuxterm.app
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-control-lib.sh
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-lock-lib.sh
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-classify-lib.sh
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-classify-lib.sh
++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++++ pwd
+++ _FM_CLASSIFY_LIB_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++ FM_CREW_STATE_BIN=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-crew-state.sh
+++ case $- in
+++ _fm_classify_nounset=on
+++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-timeout-lib.sh
++++ set -u
+++ '[' on = on ']'
+++ unset _fm_classify_nounset
+++ FM_CLASSIFY_CAPTAIN_RE_DEFAULT='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
+++ FM_CLASSIFY_PAUSED_VERB_DEFAULT=paused
+++ FM_PAUSE_RESURFACE_SECS_DEFAULT=14400
+++ FM_CLASSIFY_RESOLVE_VERB_DEFAULT=resolved
+++ FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT=captain-held
+++ FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT=pending-reply-
+++ FM_OPEN_DECISIONS_FOLD_VERSION=5
+++ FM_STATUS_SNAPSHOT_EVENT_LINE=
+++ FM_STATUS_SNAPSHOT_EVENT_MTIME=
+++ FM_STATUS_SNAPSHOT_EVENT_ENDPOINT=
+++ STATUS_PRESENTATION_REPORTED=
+++ STATUS_PRESENTATION_CLASSIFIED=
+++ FM_WORKTREE_WRITE_PRUNE='.git node_modules .venv venv __pycache__ .mypy_cache .pytest_cache .ruff_cache .tox target dist build .next .cache vendor'
+++ FM_WORKTREE_WRITE_MAXDEPTH=6
+++ FM_WORKTREE_WRITE_TIMEOUT=10
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-gate-refuse-lib.sh
+++ FM_GATE_REFUSE_EXIT=3
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-pr-lib.sh
+++ FM_PR_PROVIDER=
+++ FM_PR_URL=
+++ FM_PR_HOST=
+++ FM_PR_PATH=
+++ FM_PR_OWNER=
+++ FM_PR_REPO=
+++ FM_PR_NUMBER=
+++ FM_PR_DATA_PROVIDER=
+++ FM_PR_DATA_URL=
+++ FM_PR_DATA_HOST=
+++ FM_PR_DATA_PATH=
+++ FM_PR_DATA_NUMBER=
+++ FM_PR_META_PROVIDER=
+++ FM_PR_META_URL=
+++ FM_PR_META_HOST=
+++ FM_PR_META_PATH=
+++ FM_PR_META_NUMBER=
+++ FM_PR_REG_ID=
+++ FM_PR_REG_PROVIDER=
+++ FM_PR_REG_URL=
+++ FM_PR_REG_HOST=
+++ FM_PR_REG_PATH=
+++ FM_PR_REG_NUMBER=
+++ FM_PR_REG_DATA_HASH=
+++ FM_PR_REG_TEMPLATE_HASH=
+++ FM_PR_REG_DATA_IDENTITY=
+++ FM_PR_REG_CHECK_IDENTITY=
+++ FM_PR_POLL_DATA_TMP=
+++ FM_PR_POLL_CHECK_TMP=
+++ FM_PR_POLL_REG_TMP=
+++ FM_PR_POLL_DATA_DEST=
+++ FM_PR_POLL_CHECK_DEST=
+++ FM_PR_POLL_REG_DEST=
+++ FM_PR_POLL_EXPECT_ID=
+++ FM_PR_POLL_EXPECT_PROVIDER=
+++ FM_PR_POLL_EXPECT_URL=
+++ FM_PR_POLL_EXPECT_HOST=
+++ FM_PR_POLL_EXPECT_PATH=
+++ FM_PR_POLL_EXPECT_NUMBER=
+++ FM_PR_POLL_EXPECT_DATA_HASH=
+++ FM_PR_POLL_EXPECT_TEMPLATE_HASH=
+++ FM_PR_POLL_EXPECT_DATA_IDENTITY=
+++ FM_PR_POLL_EXPECT_CHECK_IDENTITY=
+++ FM_PR_POLL_TEMPLATE=
+++ FM_PR_POLL_STATE_DEVICE=
+++ FM_PR_POLL_SNAPSHOT_ID=
+++ FM_PR_POLL_SNAPSHOT_PROVIDER=
+++ FM_PR_POLL_SNAPSHOT_URL=
+++ FM_PR_POLL_SNAPSHOT_HOST=
+++ FM_PR_POLL_SNAPSHOT_PATH=
+++ FM_PR_POLL_SNAPSHOT_NUMBER=
+++ FM_PR_POLL_SNAPSHOT_DATA_HASH=
+++ FM_PR_POLL_SNAPSHOT_TEMPLATE_HASH=
+++ FM_PR_POLL_SNAPSHOT_DATA_IDENTITY=
+++ FM_PR_POLL_SNAPSHOT_CHECK_IDENTITY=
+++ FM_PR_POLL_SNAPSHOT_REG_HASH=
+++ FM_PR_POLL_SNAPSHOT_REG_IDENTITY=
+++ FM_PR_RETIRE_ID=
+++ FM_PR_RETIRE_PROVIDER=
+++ FM_PR_RETIRE_URL=
+++ FM_PR_RETIRE_HOST=
+++ FM_PR_RETIRE_PATH=
+++ FM_PR_RETIRE_NUMBER=
+++ FM_PR_RETIRE_DATA_HASH=
+++ FM_PR_RETIRE_TEMPLATE_HASH=
+++ FM_PR_RETIRE_DATA_IDENTITY=
+++ FM_PR_RETIRE_CHECK_IDENTITY=
+++ FM_PR_RETIRE_REG_HASH=
+++ FM_PR_RETIRE_REG_IDENTITY=
+++ FM_PR_RETIRE_RECEIPT_HASH=
+++ FM_PR_RETIRE_RECEIPT_IDENTITY=
+++ FM_PR_POLL_RETIREMENT_REJECTED=
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-public-followup-lib.sh
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-public-followup-lib.sh
++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++++ pwd
+++ _FM_PF_LIB_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-x-lib.sh
++++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-x-lib.sh
+++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++++ pwd
++++ _FM_X_LIB_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++++ command -v fm_backlog_atomic_transition
+++ FM_PF_DIRNAME=public-followup
+++ FM_PF_EVENT_SCHEMA_VERSION=1
+++ FM_PF_OUTCOME_TEXT_MAX=600
+++ FM_PF_EVENT_BYTES_MAX=8192
+++ FM_PF_SURFACED_BASENAME=surfaced
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-secondmate-registry-lib.sh
+++ SECONDMATE_REGISTRY_ID=
+++ SECONDMATE_REGISTRY_SUMMARY=
+++ SECONDMATE_REGISTRY_HOST=
+++ SECONDMATE_REGISTRY_ROOT=
+++ SECONDMATE_REGISTRY_HOME=
+++ SECONDMATE_REGISTRY_SCOPE=
+++ SECONDMATE_REGISTRY_PROJECTS=
+++ SECONDMATE_REGISTRY_ADDED=
+++ SECONDMATE_REGISTRY_REMOTE=0
+++ SECONDMATE_REGISTRY_LINE=
+++ SECONDMATE_REGISTRY_MATCH_HOST=
+++ SECONDMATE_REGISTRY_MATCH_ROOT=
+++ SECONDMATE_REGISTRY_MATCH_HOME=
+++ SECONDMATE_REGISTRY_MATCH_HOME_KEY=
+++ SECONDMATE_REGISTRY_MATCH_PROJECTS=
+++ SECONDMATE_REGISTRY_MATCH_REMOTE=0
+++ SECONDMATE_REGISTRY_ERROR=
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-secondmate-parent-lib.sh
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-pending-reply-lib.sh
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-pending-reply-lib.sh
++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++++ pwd
+++ _FM_PENDING_REPLY_LIB_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-marker-lib.sh
++++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-marker-lib.sh
+++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++++ pwd
++++ _FM_MARKER_LIB_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-operational-input.sh
+++++ FM_OPERATIONAL_MARK=$'�\201�'
+++++ FM_OPERATIONAL_PREFIX='⁣FIRSTMATE_OP: '
+++++ FM_OPERATIONAL_VERSION=v1
+++++ FM_OPERATIONAL_HEADER_PREFIX='⁣FIRSTMATE_OP: v1 '
+++++ FM_OPERATIONAL_KINDS='session-start watcher turn-end-guard away-supervisor launch-brief branch-outcome'
+++++ FM_INJECT_MARK=$'�\201�'
+++++ FM_FROMFIRST_LABEL='[fm-from-firstmate]'
+++++ FM_FROMFIRST_SEPARATOR=$'�\201�'
+++++ FM_FROMFIRST_MARK='[fm-from-firstmate]⁣'
+++++ FM_LEGACY_SESSIONSTART='Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions.'
+++++ FM_LEGACY_WATCHER_PREFIX='FIRSTMATE WATCHER WAKE: '
+++++ FM_LEGACY_WATCHER_SUFFIX='
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.'
+++++ FM_LEGACY_TURNEND_PREFIX='TURN WOULD END BLIND - supervision is off. The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.
+
+'
+++++ FM_LEGACY_AWAY_PREFIX='⁣Supervisor escalate ('
+++++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-operational-input.sh = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-teardown.sh ']'
++++ unset _FM_MARKER_LIB_DIR
+++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-backend.sh
++++ FM_BACKEND_SCRIPT=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-backend.sh
++++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-backend.sh
+++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++++ pwd
++++ FM_BACKEND_LIB_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++++ unset FM_BACKEND_SCRIPT
+++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/..
+++++ pwd
++++ FM_BACKEND_DEFAULT_ROOT=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root
++++ FM_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG
++++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG
++++ FM_BACKEND_CONFIG_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config
++++ FM_BACKEND_KNOWN='tmux herdr zellij orca cmux stream'
++++ FM_BACKEND_SPAWN='tmux herdr zellij orca cmux stream'
++++ FM_BACKEND_CMUX_BUNDLE_ID=com.cmuxterm.app
+++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-tmux-lib.sh
+++++ dirname -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-tmux-lib.sh
++++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-composer-lib.sh
+++++ FM_COMPOSER_UNICODE_SPACES=()
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0302\0205'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0302\0240'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0341\0232\0200'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0200'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0201'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0202'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0203'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0204'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0205'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0206'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0207'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0210'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0211'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0212'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0250'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0251'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0257'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0201\0237'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in ''\''\0302\0205'\''' ''\''\0302\0240'\''' ''\''\0341\0232\0200'\''' ''\''\0342\0200\0200'\''' ''\''\0342\0200\0201'\''' ''\''\0342\0200\0202'\''' ''\''\0342\0200\0203'\''' ''\''\0342\0200\0204'\''' ''\''\0342\0200\0205'\''' ''\''\0342\0200\0206'\''' ''\''\0342\0200\0207'\''' ''\''\0342\0200\0210'\''' ''\''\0342\0200\0211'\''' ''\''\0342\0200\0212'\''' ''\''\0342\0200\0250'\''' ''\''\0342\0200\0251'\''' ''\''\0342\0200\0257'\''' ''\''\0342\0201\0237'\''' ''\''\0343\0200\0200'\'''
+++++ printf -v _fm_composer_space_utf8 %b '\0343\0200\0200'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ unset -v _fm_composer_space_octal _fm_composer_space_utf8
+++++ FM_DELIVERY_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working(\.\.\.|…)|Ctrl\+c:cancel|ctrl\+c to stop|esc[[:space:]]+to[[:space:]]+cancel'
+++++ FM_DELIVERY_CLAUDE_BUSY_REGEX_DEFAULT='esc to interrupt|…[[:space:]]+\([0-9]+[smh]'
+++++ FM_DELIVERY_CODEX_BUSY_REGEX_DEFAULT='esc to interrupt'
+++++ FM_DELIVERY_OPENCODE_BUSY_REGEX_DEFAULT='esc interrupt'
+++++ FM_DELIVERY_PI_BUSY_REGEX_DEFAULT='Working\.\.\.'
+++++ FM_OMP_SPINNER_FRAMES_RE='(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)'
+++++ FM_DELIVERY_OMP_BUSY_REGEX_DEFAULT='Working…|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)[[:space:]]+[0-9]+[smh]'
+++++ FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
+++++ FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT='ctrl\+c to stop'
+++++ FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT='esc[[:space:]]+to[[:space:]]+cancel'
+++++ FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
++++++ printf '%s\n' $'�\235�' $'�\200�' $'�\237�' $'�\206\222'
+++++ FM_COMPOSER_AGENT_PROMPT_GLYPHS='❯
+›
+⟩
+→'
++++++ printf '%s\n' '>' '$' % '#'
+++++ FM_COMPOSER_SHELL_PROMPT_GLYPHS='>
+$
+%
+#'
+++++ FM_COMPOSER_IDLE_RE_DEFAULT='^Type a message\.\.\.$|^Ask anything(\.\.\.|…)|^Plan, search, build anything$|^Add a follow-up$'
+++++ FM_COMPOSER_LEFTBAR_FOOTER_RE_DEFAULT='^(Build|Plan)[[:space:]]+·[[:space:]]+'
+++++ FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K'
+++++ FM_COMPOSER_CAPTURE_LINES=20
+++++ FM_COMPOSER_PI_MAX_LINES=8
+++++ FM_COMPOSER_GROK_TITLE_OVERHANG=3
+++++ dirname -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-tmux-lib.sh
++++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-cursor-lib.sh
+++++ FM_CURSOR_PROBE_TIMEOUT=10
+++++ dirname -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-tmux-lib.sh
++++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-busy-lib.sh
+++++ FM_BUSY_LIB_VERSION=v1
+++++ FM_BUSY_KIMI_VERIFIED_VERSIONS=
+++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-classify-lib.sh
++++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-classify-lib.sh
+++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++++ pwd
++++ _FM_CLASSIFY_LIB_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++++ FM_CREW_STATE_BIN=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-crew-state.sh
++++ case $- in
++++ _fm_classify_nounset=on
++++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-timeout-lib.sh
+++++ set -u
++++ '[' on = on ']'
++++ unset _fm_classify_nounset
++++ FM_CLASSIFY_CAPTAIN_RE_DEFAULT='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
++++ FM_CLASSIFY_PAUSED_VERB_DEFAULT=paused
++++ FM_PAUSE_RESURFACE_SECS_DEFAULT=14400
++++ FM_CLASSIFY_RESOLVE_VERB_DEFAULT=resolved
++++ FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT=captain-held
++++ FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT=pending-reply-
++++ FM_OPEN_DECISIONS_FOLD_VERSION=5
++++ FM_STATUS_SNAPSHOT_EVENT_LINE=
++++ FM_STATUS_SNAPSHOT_EVENT_MTIME=
++++ FM_STATUS_SNAPSHOT_EVENT_ENDPOINT=
++++ STATUS_PRESENTATION_REPORTED=
++++ STATUS_PRESENTATION_CLASSIFIED=
++++ FM_WORKTREE_WRITE_PRUNE='.git node_modules .venv venv __pycache__ .mypy_cache .pytest_cache .ruff_cache .tox target dist build .next .cache vendor'
++++ FM_WORKTREE_WRITE_MAXDEPTH=6
++++ FM_WORKTREE_WRITE_TIMEOUT=10
+++ FM_PENDING_REPLY_SCHEMA=fm-pending-reply.v1
+++ FM_PENDING_REPLY_CORR_RE='corr=[A-Fa-f0-9]{16}'
+++ FM_PENDING_REPLY_GRACE_DEFAULT=120
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-nm-run-lib.sh
++ '[' 2 -lt 1 ']'
++ fm_task_id_path_safe task-x1
++ local id=task-x1
++ local LC_ALL=C
++ case "$id" in
++ ID=task-x1
++ FORCE=
++ LEGACY_RECORD_GIVEN=0
++ shift
++ '[' 1 -gt 0 ']'
++ case "$1" in
++ FORCE=--force
++ shift
++ '[' 0 -gt 0 ']'
++ fm_backlog_directory_present /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state 'state directory'
++ local path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state 'label=state directory' check=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state '!=' / ']'
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state '!=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state ']'
++ '[' '!' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state ']'
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-wake-lib.sh
+++ case "${BASH_SOURCE[0]}" in
+++ FM_WAKE_LIB_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin ']'
+++ case "$FM_WAKE_LIB_DIR" in
+++ FM_WAKE_DEFAULT_ROOT=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root ']'
+++ FM_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG
+++ STATE=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++ FM_WAKE_QUEUE=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.wake-queue
+++ FM_WAKE_QUEUE_LOCK=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.wake-queue.lock
+++ FM_LOCK_STALE_AFTER=2
++++ uname
+++ _FM_UNAME=Darwin
+++ mkdir -p /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++ FM_WATCHER_MATCHED_IDENTITY=
+++ FM_WATCHER_HEALTHY_PID=
+++ FM_WATCHER_HEALTHY_IDENTITY=
+++ FM_WATCHER_VERDICT_OK=false
+++ FM_WATCHER_VERDICT_REASON=stale-beacon
+++ FM_RECOVERY_MARKER_TOKEN=
+++ FM_RECOVERY_MARKER_ACTION=none
+++ FM_WAKE_STATUS_KEY=
+++ FM_WAKE_STATUS_HISTORICAL=false
+++ FM_WAKE_EVENT_LINE=
+++ FM_WAKE_UNREAD_LINES=
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-lease-lib.sh
+++ FM_LEASE_REFUSE_EXIT=6
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-lease-lib.sh
++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
++++ pwd
+++ FM_LEASE_LIB_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin
+++ FM_LEASE_GUARD_LOCK=
++ '[' --force = --force ']'
+++ fm_lease_actor
+++ local actor=main
+++ case "$actor" in
+++ printf '%s\n' main
++ '[' main = branch ']'
++ fm_lease_guard task-x1 'teardown (fm-teardown)'
++ local task=task-x1 'action=teardown (fm-teardown)' actor lock lease_actor active=0
++ fm_lease_valid_id task-x1
++ case "${1:-}" in
++ return 0
+++ fm_lease_actor
+++ local actor=main
+++ case "$actor" in
+++ printf '%s\n' main
++ actor=main
++ case "${PI_CODING_AGENT:-}:${FM_SUPERVISION_ACTOR:-}" in
++ active=1
++ '[' 1 = 1 ']'
++ fm_lease_lock_helpers
++ command -v fm_lock_acquire_wait
++ return 0
++ lock=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++ '[' '' '!=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock ']'
++ fm_lock_acquire_wait /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++ fm_lock_try_acquire /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock pid steal cur rc steal_owner primary_owner current
++ FM_LOCK_HELD_PID=
++ FM_LOCK_OWNER_DIR=
++ FM_LOCK_RECOVERED_PID=
++ fm_lock_try_create /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock allowed_steal_owner= ownerdir
++ FM_LOCK_OWNER_DIR=
+++ fm_lock_owner_dir /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock lock_abs
++++ fm_lock_abs_path /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++++ local path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock dir base
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++++ dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++++ basename /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++++ base=.fm-lease-command.lock
+++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++++ pwd -P
++++ dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++++ printf '%s/%s\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state .fm-lease-command.lock
+++ lock_abs=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
+++ mktemp -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.XXXXXX
++ ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock ']'
++ fm_lock_prepare_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
++ local ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH mypid back
++ fm_current_pid mypid
++ local fm_pid
+++ exec sh -c 'printf "%s\n" "$PPID"'
++ fm_pid=96954
++ case "$fm_pid" in
++ '[' 1 -gt 0 ']'
++ printf -v mypid %s 96954
++ printf '%s\n' 96954
+++ cat /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH/pid
++ back=96954
++ '[' 96954 = 96954 ']'
++ ln -s /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++ fm_lock_points_to_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH actual
+++ readlink /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++ actual=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH ']'
++ fm_lock_claim /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH ''
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH allowed_steal_owner= mypid back
++ fm_current_pid mypid
++ local fm_pid
+++ exec sh -c 'printf "%s\n" "$PPID"'
++ fm_pid=96954
++ case "$fm_pid" in
++ '[' 1 -gt 0 ']'
++ printf -v mypid %s 96954
+++ cat /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH/pid
++ back=96954
++ '[' 96954 '!=' 96954 ']'
++ fm_lock_points_to_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH actual
+++ readlink /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++ actual=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH ']'
++ fm_lock_claim_blocked_by_steal /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock ''
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock allowed_steal_owner= steal
++ steal=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.steal
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.steal ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.steal ']'
++ return 1
++ return 0
++ FM_LOCK_OWNER_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
++ return 0
++ return 0
++ FM_LEASE_GUARD_LOCK=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
++ fm_lease_live task-x1
++ local lock_pid
++ case "${PI_CODING_AGENT:-}:${FM_SUPERVISION_ACTOR:-}" in
++ fm_lease_read task-x1
++ local file line
+++ fm_lease_path task-x1
+++ printf '%s/.lease-%s\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state task-x1
++ file=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.lease-task-x1
++ FM_LEASE_ACTOR=
++ FM_LEASE_PID=
++ FM_LEASE_EPOCH=
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.lease-task-x1 ']'
++ return 1
++ return 1
++ fm_lease_clear_stale task-x1
++ local file
+++ fm_lease_path task-x1
+++ printf '%s/.lease-%s\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state task-x1
++ file=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.lease-task-x1
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.lease-task-x1 ']'
++ return 0
++ '[' 1 '!=' 1 ']'
++ return 0
++ META=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ TREEHOUSE_PROJECT_LOCK=
++ TREEHOUSE_PROJECT_LOCK_HELD=0
++ TREEHOUSE_SLOT_LOCK_REQUIRED=0
++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ '[' '!' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ fm_meta_get /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta kind
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=kind line value=
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ printf %s ship
++ TEARDOWN_LOCK_KIND=ship
++ '[' -n ship ']'
+++ fm_meta_get /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta backend
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=backend line value=
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ printf %s herdr
++ TEARDOWN_LOCK_BACKEND=herdr
++ '[' -n herdr ']'
+++ fm_meta_get /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta worktree
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=worktree line value=
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ printf %s /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
++ TEARDOWN_LOCK_WT=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++ fm_meta_get /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta project
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=project line value=
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ printf %s /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project
++ TEARDOWN_LOCK_PROJECT=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project
++ '[' ship '!=' secondmate ']'
++ '[' herdr '!=' orca ']'
++ fm_treehouse_pool_slot /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
++ local project=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt slot pool state project_common slot_common
++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project ']'
++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt ']'
+++ CDPATH=
+++ cd -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++ pwd -P
++ slot=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
++ pool=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M
++ state=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/treehouse-state.json
++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/treehouse-state.json ']'
++ return 1
++ CONTROL_LOCK=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
++ CONTROL_LOCK_HELD=0
++ META_LOCK=
++ META_LOCK_HELD=0
++ DESCENDANT_LOCK_PATHS=()
++ DESCENDANT_TASK_STATES=()
++ DESCENDANT_TASK_IDS=()
++ DESCENDANT_TASK_KINDS=()
++ DESCENDANT_TASK_HOMES=()
++ DESCENDANT_TREEHOUSE_LOCK_PATHS=()
++ trap teardown_release_locks EXIT
++ fm_lock_try_acquire /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock pid steal cur rc steal_owner primary_owner current
++ FM_LOCK_HELD_PID=
++ FM_LOCK_OWNER_DIR=
++ FM_LOCK_RECOVERED_PID=
++ fm_lock_try_create /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock allowed_steal_owner= ownerdir
++ FM_LOCK_OWNER_DIR=
+++ fm_lock_owner_dir /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock lock_abs
++++ fm_lock_abs_path /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
++++ local path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock dir base
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
++++ dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++++ basename /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
++++ base=.control-task-x1.lock
+++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++++ pwd -P
++++ dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++++ printf '%s/%s\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state .control-task-x1.lock
+++ lock_abs=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
+++ mktemp -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.XXXXXX
++ ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock ']'
++ fm_lock_prepare_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
++ local ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU mypid back
++ fm_current_pid mypid
++ local fm_pid
+++ exec sh -c 'printf "%s\n" "$PPID"'
++ fm_pid=96954
++ case "$fm_pid" in
++ '[' 1 -gt 0 ']'
++ printf -v mypid %s 96954
++ printf '%s\n' 96954
+++ cat /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU/pid
++ back=96954
++ '[' 96954 = 96954 ']'
++ ln -s /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
++ fm_lock_points_to_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU actual
+++ readlink /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
++ actual=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU ']'
++ fm_lock_claim /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU ''
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU allowed_steal_owner= mypid back
++ fm_current_pid mypid
++ local fm_pid
+++ exec sh -c 'printf "%s\n" "$PPID"'
++ fm_pid=96954
++ case "$fm_pid" in
++ '[' 1 -gt 0 ']'
++ printf -v mypid %s 96954
+++ cat /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU/pid
++ back=96954
++ '[' 96954 '!=' 96954 ']'
++ fm_lock_points_to_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU actual
+++ readlink /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
++ actual=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU ']'
++ fm_lock_claim_blocked_by_steal /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock ''
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock allowed_steal_owner= steal
++ steal=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.steal
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.steal ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.steal ']'
++ return 1
++ return 0
++ FM_LOCK_OWNER_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
++ return 0
++ return 0
++ CONTROL_LOCK_HELD=1
++ fm_refuse_if_gate_agent
++ fm_is_gate_agent .
++ local anchor=. common
++ '[' 1 = 1 ']'
++ return 1
++ return 0
++ FM_LOCK_LOG_PREFIX=teardown
++ fm_backlog_record_present /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'task record' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ local path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'label=task record' root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ fm_backlog_record_parent_authorized /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'task record' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ local path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'label=task record' root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state parent_only= parent base parent_resolved expected_path
++ local path_resolved root_resolved root_prefix home_resolved final_matches=1
++ parent=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state '!=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ base=task-x1.meta
+++ fm_backlog_canonical_existing /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++ LC_ALL=C
+++ perl -MCwd=realpath -e '
+    my $resolved = realpath($ARGV[0]);
+    exit 1 unless defined $resolved;
+    print $resolved;
+  ' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ root_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state ']'
++ '[' -n /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG ']'
++ case "$root" in
+++ fm_backlog_canonical_existing /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++ LC_ALL=C
+++ perl -MCwd=realpath -e '
+    my $resolved = realpath($ARGV[0]);
+    exit 1 unless defined $resolved;
+    print $resolved;
+  ' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ parent_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ expected_path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ '[' -z '' ']'
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ fm_backlog_canonical_existing /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ LC_ALL=C
+++ perl -MCwd=realpath -e '
+    my $resolved = realpath($ARGV[0]);
+    exit 1 unless defined $resolved;
+    print $resolved;
+  ' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ path_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ root_prefix=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/
++ case "$path_resolved" in
++ '[' 1 '!=' 1 ']'
++ '[' '!' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ return 0
+++ fm_meta_lock_path /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta dir base id
+++ dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++ base=task-x1.meta
+++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state '!=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ case "$base" in
+++ id=task-x1
+++ case "$id" in
+++ printf '%s/.meta-%s.lock\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state task-x1
++ META_LOCK=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
++ fm_lock_acquire_wait /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
++ fm_lock_try_acquire /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock pid steal cur rc steal_owner primary_owner current
++ FM_LOCK_HELD_PID=
++ FM_LOCK_OWNER_DIR=
++ FM_LOCK_RECOVERED_PID=
++ fm_lock_try_create /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock allowed_steal_owner= ownerdir
++ FM_LOCK_OWNER_DIR=
+++ fm_lock_owner_dir /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock lock_abs
++++ fm_lock_abs_path /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
++++ local path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock dir base
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
++++ dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++++ basename /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
++++ base=.meta-task-x1.lock
+++++ cd /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++++ pwd -P
++++ dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++++ printf '%s/%s\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state .meta-task-x1.lock
+++ lock_abs=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
+++ mktemp -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.XXXXXX
++ ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock ']'
++ fm_lock_prepare_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
++ local ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk mypid back
++ fm_current_pid mypid
++ local fm_pid
+++ exec sh -c 'printf "%s\n" "$PPID"'
++ fm_pid=96954
++ case "$fm_pid" in
++ '[' 1 -gt 0 ']'
++ printf -v mypid %s 96954
++ printf '%s\n' 96954
+++ cat /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk/pid
++ back=96954
++ '[' 96954 = 96954 ']'
++ ln -s /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
++ fm_lock_points_to_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk actual
+++ readlink /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
++ actual=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk ']'
++ fm_lock_claim /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk ''
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk allowed_steal_owner= mypid back
++ fm_current_pid mypid
++ local fm_pid
+++ exec sh -c 'printf "%s\n" "$PPID"'
++ fm_pid=96954
++ case "$fm_pid" in
++ '[' 1 -gt 0 ']'
++ printf -v mypid %s 96954
+++ cat /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk/pid
++ back=96954
++ '[' 96954 '!=' 96954 ']'
++ fm_lock_points_to_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk actual
+++ readlink /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
++ actual=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk ']'
++ fm_lock_claim_blocked_by_steal /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock ''
++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock allowed_steal_owner= steal
++ steal=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.steal
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.steal ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.steal ']'
++ return 1
++ return 0
++ FM_LOCK_OWNER_DIR=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
++ return 0
++ return 0
++ META_LOCK_HELD=1
++ fm_backlog_record_present /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'task record' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ local path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'label=task record' root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ fm_backlog_record_parent_authorized /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'task record' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ local path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'label=task record' root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state parent_only= parent base parent_resolved expected_path
++ local path_resolved root_resolved root_prefix home_resolved final_matches=1
++ parent=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state '!=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ base=task-x1.meta
+++ fm_backlog_canonical_existing /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++ LC_ALL=C
+++ perl -MCwd=realpath -e '
+    my $resolved = realpath($ARGV[0]);
+    exit 1 unless defined $resolved;
+    print $resolved;
+  ' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ root_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state ']'
++ '[' -n /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG ']'
++ case "$root" in
+++ fm_backlog_canonical_existing /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++ LC_ALL=C
+++ perl -MCwd=realpath -e '
+    my $resolved = realpath($ARGV[0]);
+    exit 1 unless defined $resolved;
+    print $resolved;
+  ' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ parent_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ expected_path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ '[' -z '' ']'
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ fm_backlog_canonical_existing /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ LC_ALL=C
+++ perl -MCwd=realpath -e '
+    my $resolved = realpath($ARGV[0]);
+    exit 1 unless defined $resolved;
+    print $resolved;
+  ' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ path_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ root_prefix=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/
++ case "$path_resolved" in
++ '[' 1 '!=' 1 ']'
++ '[' '!' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ return 0
+++ fm_meta_get /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta kind
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=kind line value=
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ printf %s ship
++ TEARDOWN_META_KIND=ship
++ '[' -n ship ']'
+++ fm_meta_get /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta cleanup_recovery
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=cleanup_recovery line value=
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ printf %s ''
++ TEARDOWN_CLEANUP_RECOVERY=
++ TEARDOWN_META_SPAWN_GEN=
++ TEARDOWN_LEGACY_PENDING=0
++ TEARDOWN_LEGACY_ACCEPTED=0
++ TEARDOWN_LEGACY_ENDPOINT=
++ TEARDOWN_LEGACY_RETAINED_STAMP=
++ TEARDOWN_LEGACY_PRESTAMP_SIZE=0
++ TEARDOWN_BACKLOG_APPLIES=0
++ TEARDOWN_BACKLOG_SKIP_REASON=
++ '[' '' '!=' orca ']'
++ fm_backlog_transition_applies /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data ship
++ local config=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config data authorized_data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data kind=ship file root backend authorized_root tasks_axi_status
++ FM_BACKLOG_TRANSITION_SKIP=
++ FM_BACKLOG_TRANSITION_TASKS_AXI_STATUS=
++ '[' ship = secondmate ']'
++ fm_backlog_backend_manual /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config
++ local config_dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config
+++ fm_backlog_backend_value /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config
+++ local config_dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config backend_file value
+++ backend_file=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config/backlog-backend
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config/backlog-backend ']'
+++ printf '%s\n' tasks-axi
++ '[' tasks-axi = manual ']'
+++ fm_backlog_data_absolute /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ local data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data raw_bytes check
++++ fm_backlog_bytes_of_string /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++++ perl -e 'print join(" ", unpack("C*", $ARGV[0])), "\n"' -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ raw_bytes='47 112 114 105 118 97 116 101 47 118 97 114 47 102 111 108 100 101 114 115 47 122 107 47 56 103 51 50 55 119 119 110 53 56 120 52 55 53 110 48 118 102 119 106 108 107 112 104 48 48 48 48 103 110 47 84 47 102 109 45 116 101 97 114 100 111 119 110 45 116 101 115 116 115 46 76 68 122 119 55 77 47 104 101 114 100 114 45 112 114 101 102 108 105 103 104 116 45 109 105 115 115 105 110 103 45 97 100 97 112 116 101 114 47 100 97 116 97'
+++ fm_backlog_control_bytes_valid 0 '47 112 114 105 118 97 116 101 47 118 97 114 47 102 111 108 100 101 114 115 47 122 107 47 56 103 51 50 55 119 119 110 53 56 120 52 55 53 110 48 118 102 119 106 108 107 112 104 48 48 48 48 103 110 47 84 47 102 109 45 116 101 97 114 100 111 119 110 45 116 101 115 116 115 46 76 68 122 119 55 77 47 104 101 114 100 114 45 112 114 101 102 108 105 103 104 116 45 109 105 115 115 105 110 103 45 97 100 97 112 116 101 114 47 100 97 116 97'
+++ printf '%s\n' '47 112 114 105 118 97 116 101 47 118 97 114 47 102 111 108 100 101 114 115 47 122 107 47 56 103 51 50 55 119 119 110 53 56 120 52 55 53 110 48 118 102 119 106 108 107 112 104 48 48 48 48 103 110 47 84 47 102 109 45 116 101 97 114 100 111 119 110 45 116 101 115 116 115 46 76 68 122 119 55 77 47 104 101 114 100 114 45 112 114 101 102 108 105 103 104 116 45 109 105 115 115 105 110 103 45 97 100 97 112 116 101 114 47 100 97 116 97'
+++ awk -v allow_newline=0 '
+    { for (i = 1; i <= NF; i++) if (($i < 32 && !(allow_newline && $i == 10)) || $i == 127) exit 1 }
+  '
+++ check=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data '!=' / ']'
+++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data '!=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data ']'
+++ '[' '!' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data ']'
++++ CDPATH=
++++ cd -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++++ pwd -P
+++ data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ printf '%s\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++ data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ fm_backlog_root /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ local data parent
++++ fm_backlog_data_absolute /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++++ local data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data raw_bytes check
+++++ fm_backlog_bytes_of_string /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++++ perl -e 'print join(" ", unpack("C*", $ARGV[0])), "\n"' -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++++ raw_bytes='47 112 114 105 118 97 116 101 47 118 97 114 47 102 111 108 100 101 114 115 47 122 107 47 56 103 51 50 55 119 119 110 53 56 120 52 55 53 110 48 118 102 119 106 108 107 112 104 48 48 48 48 103 110 47 84 47 102 109 45 116 101 97 114 100 111 119 110 45 116 101 115 116 115 46 76 68 122 119 55 77 47 104 101 114 100 114 45 112 114 101 102 108 105 103 104 116 45 109 105 115 115 105 110 103 45 97 100 97 112 116 101 114 47 100 97 116 97'
++++ fm_backlog_control_bytes_valid 0 '47 112 114 105 118 97 116 101 47 118 97 114 47 102 111 108 100 101 114 115 47 122 107 47 56 103 51 50 55 119 119 110 53 56 120 52 55 53 110 48 118 102 119 106 108 107 112 104 48 48 48 48 103 110 47 84 47 102 109 45 116 101 97 114 100 111 119 110 45 116 101 115 116 115 46 76 68 122 119 55 77 47 104 101 114 100 114 45 112 114 101 102 108 105 103 104 116 45 109 105 115 115 105 110 103 45 97 100 97 112 116 101 114 47 100 97 116 97'
++++ printf '%s\n' '47 112 114 105 118 97 116 101 47 118 97 114 47 102 111 108 100 101 114 115 47 122 107 47 56 103 51 50 55 119 119 110 53 56 120 52 55 53 110 48 118 102 119 106 108 107 112 104 48 48 48 48 103 110 47 84 47 102 109 45 116 101 97 114 100 111 119 110 45 116 101 115 116 115 46 76 68 122 119 55 77 47 104 101 114 100 114 45 112 114 101 102 108 105 103 104 116 45 109 105 115 115 105 110 103 45 97 100 97 112 116 101 114 47 100 97 116 97'
++++ awk -v allow_newline=0 '
+    { for (i = 1; i <= NF; i++) if (($i < 32 && !(allow_newline && $i == 10)) || $i == 127) exit 1 }
+  '
++++ check=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data '!=' / ']'
++++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data '!=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data ']'
++++ '[' '!' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data ']'
+++++ CDPATH=
+++++ cd -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++++ pwd -P
++++ data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++++ printf '%s\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ case "$data" in
+++ parent=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter ']'
+++ printf '%s\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
++ root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
+++ fm_backlog_authorized_root /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ local data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data parent
+++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data '!=' / ']'
+++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data '!=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data ']'
+++ case "$data" in
+++ parent=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter ']'
+++ printf '%s\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
++ authorized_root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
++ fm_backlog_config_present /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
++ local root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter authorized_root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter tasks_config=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml ']'
++ return 0
+++ fm_tasks_axi_backend /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
++ backend='++ fm_tasks_axi_backend_resolve /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
+++ local root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter backend
+++ '\''['\'' '\'''\'' = x '\'']'\''
+++ local config=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
+++ '\''['\'' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter '\'']'\''
+++ '\''['\'' '\''!'\'' -x /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter '\'']'\''
+++ '\''['\'' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
+++ '\''['\'' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
++++ fm_tasks_axi_backend_from_toml /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
++++ local toml=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
++++ '\''['\'' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
++++ return 1
+++ backend=
+++ '\''['\'' -n /Users/bastotecnologia '\'']'\''
+++ config=/Users/bastotecnologia/.tasks-axi/config.toml
+++ '\''['\'' -d /Users/bastotecnologia/.tasks-axi '\'']'\''
+++ '\''['\'' -e /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
+++ '\''['\'' -L /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
++++ fm_tasks_axi_backend_from_toml /Users/bastotecnologia/.tasks-axi/config.toml
++++ local toml=/Users/bastotecnologia/.tasks-axi/config.toml
++++ '\''['\'' -f /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
++++ return 1
+++ backend=
+++ printf '\''%s\n'\'' markdown
+markdown'
++ '[' '++ fm_tasks_axi_backend_resolve /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
+++ local root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter backend
+++ '\''['\'' '\'''\'' = x '\'']'\''
+++ local config=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
+++ '\''['\'' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter '\'']'\''
+++ '\''['\'' '\''!'\'' -x /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter '\'']'\''
+++ '\''['\'' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
+++ '\''['\'' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
++++ fm_tasks_axi_backend_from_toml /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
++++ local toml=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
++++ '\''['\'' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
++++ return 1
+++ backend=
+++ '\''['\'' -n /Users/bastotecnologia '\'']'\''
+++ config=/Users/bastotecnologia/.tasks-axi/config.toml
+++ '\''['\'' -d /Users/bastotecnologia/.tasks-axi '\'']'\''
+++ '\''['\'' -e /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
+++ '\''['\'' -L /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
++++ fm_tasks_axi_backend_from_toml /Users/bastotecnologia/.tasks-axi/config.toml
++++ local toml=/Users/bastotecnologia/.tasks-axi/config.toml
++++ '\''['\'' -f /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
++++ return 1
+++ backend=
+++ printf '\''%s\n'\'' markdown
+markdown' = markdown ']'
++ fm_backlog_source_present /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
++ local data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data authorized_data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter authorized_root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter file backend
++ '[' -z /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter ']'
++ '[' -z /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter ']'
++ fm_backlog_config_present /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
++ local root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter authorized_root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter tasks_config=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml ']'
++ return 0
+++ fm_tasks_axi_backend /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
++ backend='++ fm_tasks_axi_backend_resolve /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
+++ local root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter backend
+++ '\''['\'' '\'''\'' = x '\'']'\''
+++ local config=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
+++ '\''['\'' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter '\'']'\''
+++ '\''['\'' '\''!'\'' -x /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter '\'']'\''
+++ '\''['\'' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
+++ '\''['\'' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
++++ fm_tasks_axi_backend_from_toml /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
++++ local toml=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
++++ '\''['\'' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
++++ return 1
+++ backend=
+++ '\''['\'' -n /Users/bastotecnologia '\'']'\''
+++ config=/Users/bastotecnologia/.tasks-axi/config.toml
+++ '\''['\'' -d /Users/bastotecnologia/.tasks-axi '\'']'\''
+++ '\''['\'' -e /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
+++ '\''['\'' -L /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
++++ fm_tasks_axi_backend_from_toml /Users/bastotecnologia/.tasks-axi/config.toml
++++ local toml=/Users/bastotecnologia/.tasks-axi/config.toml
++++ '\''['\'' -f /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
++++ return 1
+++ backend=
+++ printf '\''%s\n'\'' markdown
+markdown'
+++ fm_backlog_file /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ local data
++++ fm_backlog_data_absolute /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++++ local data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data raw_bytes check
+++++ fm_backlog_bytes_of_string /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++++ perl -e 'print join(" ", unpack("C*", $ARGV[0])), "\n"' -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++++ raw_bytes='47 112 114 105 118 97 116 101 47 118 97 114 47 102 111 108 100 101 114 115 47 122 107 47 56 103 51 50 55 119 119 110 53 56 120 52 55 53 110 48 118 102 119 106 108 107 112 104 48 48 48 48 103 110 47 84 47 102 109 45 116 101 97 114 100 111 119 110 45 116 101 115 116 115 46 76 68 122 119 55 77 47 104 101 114 100 114 45 112 114 101 102 108 105 103 104 116 45 109 105 115 115 105 110 103 45 97 100 97 112 116 101 114 47 100 97 116 97'
++++ fm_backlog_control_bytes_valid 0 '47 112 114 105 118 97 116 101 47 118 97 114 47 102 111 108 100 101 114 115 47 122 107 47 56 103 51 50 55 119 119 110 53 56 120 52 55 53 110 48 118 102 119 106 108 107 112 104 48 48 48 48 103 110 47 84 47 102 109 45 116 101 97 114 100 111 119 110 45 116 101 115 116 115 46 76 68 122 119 55 77 47 104 101 114 100 114 45 112 114 101 102 108 105 103 104 116 45 109 105 115 115 105 110 103 45 97 100 97 112 116 101 114 47 100 97 116 97'
++++ awk -v allow_newline=0 '
+    { for (i = 1; i <= NF; i++) if (($i < 32 && !(allow_newline && $i == 10)) || $i == 127) exit 1 }
+  '
++++ printf '%s\n' '47 112 114 105 118 97 116 101 47 118 97 114 47 102 111 108 100 101 114 115 47 122 107 47 56 103 51 50 55 119 119 110 53 56 120 52 55 53 110 48 118 102 119 106 108 107 112 104 48 48 48 48 103 110 47 84 47 102 109 45 116 101 97 114 100 111 119 110 45 116 101 115 116 115 46 76 68 122 119 55 77 47 104 101 114 100 114 45 112 114 101 102 108 105 103 104 116 45 109 105 115 115 105 110 103 45 97 100 97 112 116 101 114 47 100 97 116 97'
++++ check=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data '!=' / ']'
++++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data '!=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data ']'
++++ '[' '!' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data ']'
+++++ CDPATH=
+++++ cd -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++++ pwd -P
++++ data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++++ printf '%s\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ data=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data = / ']'
+++ printf '%s/backlog.md\n' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++ file=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data/backlog.md
++ '[' '++ fm_tasks_axi_backend_resolve /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
+++ local root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter backend
+++ '\''['\'' '\'''\'' = x '\'']'\''
+++ local config=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
+++ '\''['\'' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter '\'']'\''
+++ '\''['\'' '\''!'\'' -x /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter '\'']'\''
+++ '\''['\'' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
+++ '\''['\'' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
++++ fm_tasks_axi_backend_from_toml /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
++++ local toml=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml
++++ '\''['\'' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/.tasks.toml '\'']'\''
++++ return 1
+++ backend=
+++ '\''['\'' -n /Users/bastotecnologia '\'']'\''
+++ config=/Users/bastotecnologia/.tasks-axi/config.toml
+++ '\''['\'' -d /Users/bastotecnologia/.tasks-axi '\'']'\''
+++ '\''['\'' -e /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
+++ '\''['\'' -L /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
++++ fm_tasks_axi_backend_from_toml /Users/bastotecnologia/.tasks-axi/config.toml
++++ local toml=/Users/bastotecnologia/.tasks-axi/config.toml
++++ '\''['\'' -f /Users/bastotecnologia/.tasks-axi/config.toml '\'']'\''
++++ return 1
+++ backend=
+++ printf '\''%s\n'\'' markdown
+markdown' = markdown ']'
++ fm_backlog_record_parent_authorized /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data/backlog.md 'backlog data directory' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data parent-only
++ local path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data/backlog.md 'label=backlog data directory' root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data parent_only=parent-only parent base parent_resolved expected_path
++ local path_resolved root_resolved root_prefix home_resolved final_matches=1
++ parent=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data '!=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data/backlog.md ']'
++ base=backlog.md
+++ fm_backlog_canonical_existing /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ LC_ALL=C
+++ perl -MCwd=realpath -e '
+    my $resolved = realpath($ARGV[0]);
+    exit 1 unless defined $resolved;
+    print $resolved;
+  ' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++ root_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data ']'
++ '[' -n /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG ']'
++ case "$root" in
+++ fm_backlog_canonical_existing /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ LC_ALL=C
+++ perl -MCwd=realpath -e '
+    my $resolved = realpath($ARGV[0]);
+    exit 1 unless defined $resolved;
+    print $resolved;
+  ' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++ parent_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
++ expected_path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data/backlog.md
++ '[' -z parent-only ']'
++ path_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data/backlog.md
++ root_prefix=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data/
++ case "$path_resolved" in
++ '[' 1 '!=' 1 ']'
++ fm_tasks_axi_compatible
++ local status
++ case "$FM_TASKS_AXI_COMPATIBLE_MEMO" in
++ fm_tasks_axi_compatible_probe
++ local parts
++ command -v tasks-axi
+++ fm_tasks_axi_version_parts
+++ local output
+++ command -v tasks-axi
++++ tasks-axi --version
+++ output=0.2.5
+++ fm_tool_semver_parts tasks-axi 0.2.5
+++ local tool=tasks-axi output=0.2.5
+++ case "$tool" in
+++ printf '%s\n' 0.2.5
+++ LC_ALL=C
+++ awk -v tool=tasks-axi '
+    function identifiers_valid(value, prerelease, identifiers, count, i) {
+      count = split(value, identifiers, /\./)
+      if (count == 0) return 0
+      for (i = 1; i <= count; i++) {
+        if (identifiers[i] == "" || identifiers[i] !~ /^[0-9A-Za-z-]+$/) return 0
+        if (prerelease && identifiers[i] ~ /^[0-9]+$/ && identifiers[i] !~ /^(0|[1-9][0-9]*)$/) return 0
+      }
+      return 1
+    }
+    function parse(token, core, prerelease, build, plus, dash, parts, count) {
+      sub(/^[vV]/, "", token)
+      plus = index(token, "+")
+      if (plus) {
+        build = substr(token, plus + 1)
+        token = substr(token, 1, plus - 1)
+        if (!identifiers_valid(build, 0)) return 0
+      }
+      dash = index(token, "-")
+      if (dash) {
+        prerelease = substr(token, dash + 1)
+        core = substr(token, 1, dash - 1)
+        if (!identifiers_valid(prerelease, 1)) return 0
+      } else {
+        prerelease = "_"
+        core = token
+      }
+      count = split(core, parts, /\./)
+      if (count != 3) return 0
+      if (parts[1] !~ /^(0|[1-9][0-9]*)$/ ||
+          parts[2] !~ /^(0|[1-9][0-9]*)$/ ||
+          parts[3] !~ /^(0|[1-9][0-9]*)$/) return 0
+      if (length(parts[1]) == 4 && parts[2] >= 1 && parts[2] <= 12 && parts[3] >= 1 && parts[3] <= 31) return 0
+      parsed = parts[1] " " parts[2] " " parts[3] " " prerelease
+      return 1
+    }
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "") next
+      nonblank++
+      count = split(line, fields, /[[:space:]]+/)
+      if (fields[1] == tool && fields[2] == "version" && count >= 3) {
+        if (associated == "" && parse(fields[3])) associated = parsed
+      } else if (fields[1] == tool && count >= 2) {
+        if (associated == "" && parse(fields[2])) associated = parsed
+      } else if (count == 1) {
+        bare = fields[1]
+      }
+    }
+    END {
+      if (associated != "") {
+        print associated
+      } else if (nonblank == 1 && parse(bare)) {
+        print parsed
+      }
+    }
+  '
++ parts='0 2 5 _'
++ '[' -n '0 2 5 _' ']'
++ fm_semver_parts_at_least '0 2 5 _' 0.2.4
++ local 'parsed=0 2 5 _' minimum=0.2.4 major minor patch prerelease extra
++ local min_major min_minor min_patch min_extra component
++ IFS=' '
++ read -r major minor patch prerelease extra
++ '[' -n 0 ']'
++ '[' -n 2 ']'
++ '[' -n 5 ']'
++ '[' -n _ ']'
++ '[' -z '' ']'
++ IFS=.
++ read -r min_major min_minor min_patch min_extra
++ '[' -n 0 ']'
++ '[' -n 2 ']'
++ '[' -n 4 ']'
++ '[' -z '' ']'
++ for component in '"$min_major"' '"$min_minor"' '"$min_patch"'
++ case "$component" in
++ for component in '"$min_major"' '"$min_minor"' '"$min_patch"'
++ case "$component" in
++ for component in '"$min_major"' '"$min_minor"' '"$min_patch"'
++ case "$component" in
++ '[' 0 -gt 0 ']'
++ '[' 0 -eq 0 ']'
++ '[' 2 -gt 2 ']'
++ '[' 2 -eq 2 ']'
++ '[' 5 -gt 4 ']'
++ return 0
++ fm_tasks_axi_update_has_archive_body
++ local output
++ command -v tasks-axi
+++ tasks-axi update --help
++ output='usage: tasks-axi update <id> [flags]
+aliases: edit
+flags:
+  --title <text>, --body <text> or --body-file <path>
+  --archive-body   with --body/--body-file, archive the previous body
+  --repo <name>, --kind <name>, --priority <0-4>, --pr <url>, --report <path>
+  --json   print the resulting task as a JSON object
+examples:
+  tasks-axi show nm-release-validation --full
+  tasks-axi update nm-release-validation --body-file notes.md --archive-body
+  tasks-axi update fm-x --repo firstmate --kind ship'
++ printf '%s\n' 'usage: tasks-axi update <id> [flags]
+aliases: edit
+flags:
+  --title <text>, --body <text> or --body-file <path>
+  --archive-body   with --body/--body-file, archive the previous body
+  --repo <name>, --kind <name>, --priority <0-4>, --pr <url>, --report <path>
+  --json   print the resulting task as a JSON object
+examples:
+  tasks-axi show nm-release-validation --full
+  tasks-axi update nm-release-validation --body-file notes.md --archive-body
+  tasks-axi update fm-x --repo firstmate --kind ship'
++ grep -F -- --archive-body
++ fm_tasks_axi_mv_has_multi_id
++ local output
++ command -v tasks-axi
+++ tasks-axi mv --help
++ output='usage: tasks-axi mv <id> [<id>...] --to <path-or-dir>
+Move one or more tasks to another backlog file in a single atomic transaction.
+Pass a whole connected set (a blocker and its dependents) to move it together;
+their blocked-by links and reason strings are preserved byte-exact.
+Duplicate ids are ignored after their first occurrence.
+Refuses if a moved item'\''s dependency or active dependent would be stranded in the other
+file - include the whole set, or move the missing endpoint there first.
+flags:
+  --json   print the result as a JSON object
+examples:
+  tasks-axi mv hibit-cert-cleanup --to ../homemux/data/backlog.md
+  tasks-axi mv blocker-b1 dependent-d2 --to ../homemux/data/backlog.md'
++ printf '%s\n' 'usage: tasks-axi mv <id> [<id>...] --to <path-or-dir>
+Move one or more tasks to another backlog file in a single atomic transaction.
+Pass a whole connected set (a blocker and its dependents) to move it together;
+their blocked-by links and reason strings are preserved byte-exact.
+Duplicate ids are ignored after their first occurrence.
+Refuses if a moved item'\''s dependency or active dependent would be stranded in the other
+file - include the whole set, or move the missing endpoint there first.
+flags:
+  --json   print the result as a JSON object
+examples:
+  tasks-axi mv hibit-cert-cleanup --to ../homemux/data/backlog.md
+  tasks-axi mv blocker-b1 dependent-d2 --to ../homemux/data/backlog.md'
++ grep -F -- '[<id>...]'
++ FM_TASKS_AXI_COMPATIBLE_MEMO=1
++ return 0
++ return 0
++ TEARDOWN_BACKLOG_APPLIES=1
++ '[' 1 = 1 ']'
++ fm_backlog_meta_spawn_gen /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta state=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state count value
++ FM_BACKLOG_META_SPAWN_GEN=
++ fm_backlog_record_present /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'task record' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ local path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'label=task record' root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ fm_backlog_record_parent_authorized /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'task record' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ local path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta 'label=task record' root=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state parent_only= parent base parent_resolved expected_path
++ local path_resolved root_resolved root_prefix home_resolved final_matches=1
++ parent=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state '!=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ base=task-x1.meta
+++ fm_backlog_canonical_existing /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++ LC_ALL=C
+++ perl -MCwd=realpath -e '
+    my $resolved = realpath($ARGV[0]);
+    exit 1 unless defined $resolved;
+    print $resolved;
+  ' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ root_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state ']'
++ '[' -n /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG ']'
++ case "$root" in
+++ fm_backlog_canonical_existing /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++ LC_ALL=C
+++ perl -MCwd=realpath -e '
+    my $resolved = realpath($ARGV[0]);
+    exit 1 unless defined $resolved;
+    print $resolved;
+  ' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ parent_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ expected_path=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ '[' -z '' ']'
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ fm_backlog_canonical_existing /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ LC_ALL=C
+++ perl -MCwd=realpath -e '
+    my $resolved = realpath($ARGV[0]);
+    exit 1 unless defined $resolved;
+    print $resolved;
+  ' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ path_resolved=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ root_prefix=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/
++ case "$path_resolved" in
++ '[' 1 '!=' 1 ']'
++ '[' '!' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ return 0
+++ LC_ALL=C
+++ awk -F= '$1 == "spawn_gen" { count++ } END { print count + 0 }' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ count=1
++ '[' 1 -ne 1 ']'
+++ LC_ALL=C
+++ awk -F= '$1 == "spawn_gen" { sub(/^[^=]*=/, ""); print }' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ value=teardown-test-task-x1
++ case "$value" in
++ FM_BACKLOG_META_SPAWN_GEN=teardown-test-task-x1
++ case "$FM_BACKLOG_META_SPAWN_GEN" in
++ '[' 0 = 1 ']'
++ TEARDOWN_META_SPAWN_GEN=teardown-test-task-x1
++ TEARDOWN_BACKLOG_TRANSITION=close
++ '[' 1 = 1 ']'
++ TEARDOWN_CAPTAIN_OPEN_STATUS=0
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG
+++ FM_STATE_OVERRIDE=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
+++ FM_DATA_OVERRIDE=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/data
+++ FM_CONFIG_OVERRIDE=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/config
+++ /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-captain-hold.sh open task-x1
++ TEARDOWN_CAPTAIN_OPEN_OUT=
++ TEARDOWN_CAPTAIN_OPEN_STATUS=1
++ case "$TEARDOWN_CAPTAIN_OPEN_STATUS" in
++ REMOTE_HANDOFF_DIR_PRESENT=0
++ REMOTE_HANDOFF_DIR_REAL=
++ REMOTE_OUTBOX_PRESENT=0
++ REMOTE_PENDING_DIR_PRESENT=0
++ REMOTE_PENDING_DIR_REAL=
++ REMOTE_HANDOFF_LOCK=
++ REMOTE_REGISTRY_LOCK=
++ REMOTE_REPLY_LIFECYCLE_LOCK=
++ LOCAL_HANDOFF_LOCK=
++ LOCAL_REGISTRY_LOCK=
++ HANDOFF_WAKE_RETIRE_MARKER=
++ HANDOFF_WAKE_RETIRE_VALUE=
++ HANDOFF_WAKE_RETIRE_CORR=
++ HANDOFF_WAKE_RETIRE_LOCK=
++ HANDOFF_WAKE_RETIRE_STAGE=
++ remote_secondmate_teardown_locked
++ local rc
+++ fm_meta_get /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta remote_host
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=remote_host line value=
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ printf %s ''
++ '[' -n '' ']'
++ return 3
++ remote_teardown_rc=3
++ '[' 3 -eq 3 ']'
++ fm_backend_validate_task_endpoint /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta task-x1
++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta id=task-x1 backend_count backend window worktree project binding_count binding
++ local session pane recorded_session workspace tab terminal worktree_id surface
++ local hub_url endpoint_id hub_tag
++ FM_BACKEND_VALIDATED_BACKEND=
++ FM_BACKEND_VALIDATED_TARGET=
++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ '[' '!' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
++ case "$id" in
+++ fm_backend_meta_exact_value /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta window
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=window count value
++++ grep -c '^window=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ count=1
+++ '[' 1 -eq 1 ']'
++++ grep '^window=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++++ cut -d= -f2-
+++ value=default:wG:pQ
+++ '[' -n default:wG:pQ ']'
+++ printf %s default:wG:pQ
++ window=default:wG:pQ
+++ fm_backend_meta_exact_value /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta worktree
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=worktree count value
++++ grep -c '^worktree=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ count=1
+++ '[' 1 -eq 1 ']'
++++ grep '^worktree=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++++ cut -d= -f2-
+++ value=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt ']'
+++ printf %s /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
++ worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++ fm_backend_meta_exact_value /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta project
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=project count value
++++ grep -c '^project=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ count=1
+++ '[' 1 -eq 1 ']'
++++ grep '^project=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++++ cut -d= -f2-
+++ value=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project ']'
+++ printf %s /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project
++ project=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project
++ case "$worktree$project$window" in
+++ grep -c '^backend=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ backend_count=1
++ case "$backend_count" in
+++ fm_backend_meta_exact_value /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta backend
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=backend count value
++++ grep -c '^backend=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ count=1
+++ '[' 1 -eq 1 ']'
++++ grep '^backend=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++++ cut -d= -f2-
+++ value=herdr
+++ '[' -n herdr ']'
+++ printf %s herdr
++ backend=herdr
++ '[' -z herdr ']'
++ fm_backend_is_known herdr
++ fm_backend_list_contains 'tmux herdr zellij orca cmux stream' herdr
++ local 'list=tmux herdr zellij orca cmux stream' name=herdr
++ case "$name" in
++ case " $list " in
++ return 0
+++ grep -c '^endpoint_task_id=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++ binding_count=1
++ case "$binding_count" in
+++ fm_backend_meta_exact_value /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta endpoint_task_id
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=endpoint_task_id count value
++++ grep -c '^endpoint_task_id=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ count=1
+++ '[' 1 -eq 1 ']'
++++ grep '^endpoint_task_id=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++++ cut -d= -f2-
+++ value=task-x1
+++ '[' -n task-x1 ']'
+++ printf %s task-x1
++ binding=task-x1
++ '[' -n task-x1 ']'
++ '[' task-x1 '!=' task-x1 ']'
++ case "$backend" in
++ '[' task-x1 = task-x1 ']'
+++ fm_backend_meta_exact_value /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta herdr_session
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=herdr_session count value
++++ grep -c '^herdr_session=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ count=1
+++ '[' 1 -eq 1 ']'
++++ grep '^herdr_session=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++++ cut -d= -f2-
+++ value=default
+++ '[' -n default ']'
+++ printf %s default
++ recorded_session=default
+++ fm_backend_meta_exact_value /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta herdr_workspace_id
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=herdr_workspace_id count value
++++ grep -c '^herdr_workspace_id=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ count=1
+++ '[' 1 -eq 1 ']'
++++ grep '^herdr_workspace_id=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++++ cut -d= -f2-
+++ value=wG
+++ '[' -n wG ']'
+++ printf %s wG
++ workspace=wG
+++ fm_backend_meta_exact_value /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta herdr_tab_id
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=herdr_tab_id count value
++++ grep -c '^herdr_tab_id=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ count=1
+++ '[' 1 -eq 1 ']'
++++ grep '^herdr_tab_id=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++++ cut -d= -f2-
+++ value=wG:tQ
+++ '[' -n wG:tQ ']'
+++ printf %s wG:tQ
++ tab=wG:tQ
+++ fm_backend_meta_exact_value /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta herdr_pane_id
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=herdr_pane_id count value
++++ grep -c '^herdr_pane_id=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ count=1
+++ '[' 1 -eq 1 ']'
++++ grep '^herdr_pane_id=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
++++ cut -d= -f2-
+++ value=wG:pQ
+++ '[' -n wG:pQ ']'
+++ printf %s wG:pQ
++ pane=wG:pQ
++ '[' -z default ']'
++ '[' -z wG ']'
++ '[' -z wG:tQ ']'
++ '[' -z wG:pQ ']'
++ '[' default:wG:pQ '!=' default:wG:pQ ']'
++ fm_backend_endpoint_atom_valid default
++ case "$1" in
++ fm_backend_endpoint_atom_valid wG
++ case "$1" in
++ fm_backend_endpoint_atom_valid wG_tQ
++ case "$1" in
++ fm_backend_endpoint_atom_valid wG_pQ
++ case "$1" in
++ FM_BACKEND_VALIDATED_BACKEND=herdr
++ FM_BACKEND_VALIDATED_TARGET=default:wG:pQ
++ return 0
++ BACKEND=herdr
++ T=default:wG:pQ
+++ fm_meta_get /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta worktree
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=worktree line value=
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ printf %s /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
++ WT=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++ fm_meta_get /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta project
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=project line value=
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ printf %s /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project
++ PROJ=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project
++ T_ORCA=
++ '[' herdr '!=' orca ']'
++ '[' 0 '!=' 1 ']'
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG/bin/fm-guard.sh
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher process holds this home lock (last beat: 1s ago).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+++ grep '^home=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ cut -d= -f2-
++ HOME_PATH=
+++ grep '^pr=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ tail -1
+++ cut -d= -f2-
++ PR_URL=
+++ grep '^tasktmp=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ cut -d= -f2-
++ TASK_TMP=
+++ fm_meta_get /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta busy_gen
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=busy_gen line value=
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ printf %s ''
++ BUSY_GEN=
++ '[' -z '' ']'
+++ cat /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.busy-gen
+++ true
++ BUSY_GEN=
+++ fm_meta_get /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta orca_worktree_id
+++ local meta=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta key=orca_worktree_id line value=
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta ']'
+++ printf %s ''
++ ORCA_WORKTREE_ID=
++ ORCA_PATH_MATCH_VERIFIED=0
++ CLEANUP_RECOVERY=
++ KIND=ship
++ EXPECTED_TREEHOUSE_PROJECT_LOCK=
++ '[' ship '!=' secondmate ']'
++ '[' herdr '!=' orca ']'
++ fm_treehouse_pool_slot /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
++ local project=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt slot pool state project_common slot_common
++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project ']'
++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt ']'
+++ CDPATH=
+++ cd -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++ pwd -P
++ slot=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
++ pool=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M
++ state=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/treehouse-state.json
++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/treehouse-state.json ']'
++ return 1
++ '[' 0 = 1 ']'
+++ grep '^mode=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ cut -d= -f2-
++ MODE=local-only
++ '[' -n local-only ']'
++ '[' 0 = 1 ']'
++ PUBLIC_FOLLOWUP_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG
++ PUBLIC_FOLLOWUP_STATE=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state
++ PUBLIC_FOLLOWUP_WORK_HOME=main
++ PUBLIC_FOLLOWUP_PARENT_UNRESOLVED=0
++ PUBLIC_FOLLOWUP_PARENT_RELAY_ACTIVE=0
++ PUBLIC_FOLLOWUP_RELAY_ACTIVE=0
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M34QFFNA8GHX8N66YZVVJXKG/.fm-secondmate-home ']'
++ '[' ship = secondmate ']'
++ '[' --force '!=' --force ']'
++ '[' herdr = orca ']'
++ BACKLOG_DONE_ARGS=()
++ STALE_WORKTREE_LOCK_AGE_SECS=30
++ TREEHOUSE_RETURN_LOCK_RETRIES=3
++ TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=1
++ retry_wait_secs_is_valid 1
++ [[ 1 =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]
++ STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=1
++ TEARDOWN_TREEHOUSE_LOCK_REFUSED=2
++ TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED=3
++ TEARDOWN_PROCEVENT_RESTORE_FAILED=4
++ NM_TEARDOWN_TIMEOUT=10
++ case "$NM_TEARDOWN_TIMEOUT" in
++ NM_TEARDOWN_RUNS_LIMIT=200
++ case "$NM_TEARDOWN_RUNS_LIMIT" in
++ TASK_RUN_ID=
++ TEARDOWN_SLOT_REASSIGNED_RC=3
++ TEARDOWN_SLOT_REASSIGNED=0
++ TEARDOWN_SLOT_REASSIGNED_TO=
++ TEARDOWN_SLOT_REASSIGNED_HOME=
++ TEARDOWN_HERDR_LOCK_RECORDS=
++ FM_TEARDOWN_RUNTIME_REFUSAL_EXIT=71
++ FM_TEARDOWN_WORK_GATE_EXIT=72
++ OPERATOR_RETIREMENT_STATE=unread
++ OPERATOR_RETIREMENT_BY=
++ OPERATOR_RETIREMENT_AT=
++ OPERATOR_RETIREMENT_OVERRIDE=0
++ preflight_wake_gate_task_state /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state task-x1
++ local state_dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state task_id=task-x1 helper=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-state-io.py
++ local wake_dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/wake-gate look
++ look=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/wake-gate/task-x1.look
++ '[' '!' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/wake-gate ']'
++ '[' '!' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/wake-gate ']'
++ return 0
++ require_exclusive_task_worktree_slot
++ local slot
+++ teardown_live_slot_path
+++ '[' ship '!=' secondmate ']'
+++ fm_treehouse_pool_slot /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++ local project=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt slot pool state project_common slot_common
+++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project ']'
+++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt ']'
++++ CDPATH=
++++ cd -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
++++ pwd -P
+++ slot=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
+++ pool=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M
+++ state=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/treehouse-state.json
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/treehouse-state.json ']'
+++ return 1
+++ return 1
++ slot=
++ return 0
++ require_owned_task_worktree_slot
++ local slot rc=0
+++ teardown_live_slot_path
+++ '[' ship '!=' secondmate ']'
+++ fm_treehouse_pool_slot /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++ local project=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt slot pool state project_common slot_common
+++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/project ']'
+++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt ']'
++++ CDPATH=
++++ cd -- /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
++++ pwd -P
+++ slot=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
+++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt
++++ dirname /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter
+++ pool=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M
+++ state=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/treehouse-state.json
+++ '[' -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/treehouse-state.json ']'
+++ return 1
+++ return 1
++ slot=
++ return 0
++ validate_pr_poll_cleanup /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state task-x1
++ local state_dir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state id=task-x1 state_device artifact has_artifact=0
++ fm_task_id_path_safe task-x1
++ local id=task-x1
++ local LC_ALL=C
++ case "$id" in
++ for artifact in '"$state_dir/$id.check.sh"' '"$state_dir/$id.pr-poll"' '"$state_dir/$id.pr-poll-registration"' '"$state_dir/$id.pr-poll-retirement"' '"$state_dir/$id.merge-authority"' '"$state_dir/$id.check-trust"'
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.check.sh ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.check.sh ']'
++ continue
++ for artifact in '"$state_dir/$id.check.sh"' '"$state_dir/$id.pr-poll"' '"$state_dir/$id.pr-poll-registration"' '"$state_dir/$id.pr-poll-retirement"' '"$state_dir/$id.merge-authority"' '"$state_dir/$id.check-trust"'
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.pr-poll ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.pr-poll ']'
++ continue
++ for artifact in '"$state_dir/$id.check.sh"' '"$state_dir/$id.pr-poll"' '"$state_dir/$id.pr-poll-registration"' '"$state_dir/$id.pr-poll-retirement"' '"$state_dir/$id.merge-authority"' '"$state_dir/$id.check-trust"'
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.pr-poll-registration ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.pr-poll-registration ']'
++ continue
++ for artifact in '"$state_dir/$id.check.sh"' '"$state_dir/$id.pr-poll"' '"$state_dir/$id.pr-poll-registration"' '"$state_dir/$id.pr-poll-retirement"' '"$state_dir/$id.merge-authority"' '"$state_dir/$id.check-trust"'
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.pr-poll-retirement ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.pr-poll-retirement ']'
++ continue
++ for artifact in '"$state_dir/$id.check.sh"' '"$state_dir/$id.pr-poll"' '"$state_dir/$id.pr-poll-registration"' '"$state_dir/$id.pr-poll-retirement"' '"$state_dir/$id.merge-authority"' '"$state_dir/$id.check-trust"'
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.merge-authority ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.merge-authority ']'
++ continue
++ for artifact in '"$state_dir/$id.check.sh"' '"$state_dir/$id.pr-poll"' '"$state_dir/$id.pr-poll-registration"' '"$state_dir/$id.pr-poll-retirement"' '"$state_dir/$id.merge-authority"' '"$state_dir/$id.check-trust"'
++ '[' -e /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.check-trust ']'
++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.check-trust ']'
++ continue
++ '[' 0 -eq 1 ']'
++ return 0
++ '[' ship = secondmate ']'
++ '[' ship = secondmate ']'
++ '[' ship = secondmate ']'
++ '[' ship = secondmate ']'
++ '[' ship = scout ']'
++ '[' --force '!=' --force ']'
++ '[' --force '!=' --force ']'
++ '[' ship = ship ']'
++ '[' -n '' ']'
+++ grep '^x_request=' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/task-x1.meta
+++ tail -1
+++ cut -d= -f2-
++ X_REQUEST=
++ '[' -n '' ']'
++ '[' herdr = orca ']'
++ teardown_owns_worktree
++ '[' 0 '!=' 1 ']'
++ '[' -d /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/wt ']'
++ '[' --force '!=' --force ']'
++ TEARDOWN_HERDR_SESSION=
++ TEARDOWN_HERDR_PANE=
++ '[' herdr = herdr ']'
++ teardown_herdr_preflight_target default:wG:pQ task-x1
++ local target=default:wG:pQ task_id=task-x1 session pane presence lock_path verified_lock_path lock_session held_path attempt
++ teardown_herdr_require_prerequisites task-x1
++ local task_id=task-x1 prerequisite
++ fm_backend_source herdr
++ local name=herdr
++ fm_backend_validate herdr
++ local name=herdr
++ fm_backend_is_known herdr
++ fm_backend_list_contains 'tmux herdr zellij orca cmux stream' herdr
++ local 'list=tmux herdr zellij orca cmux stream' name=herdr
++ case "$name" in
++ case " $list " in
++ return 0
++ return 0
++ case "$name" in
++ '[' -z '' ']'
++ . /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/backends/herdr.sh
+/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/fm-backend.sh: line 649: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/test-root/bin/backends/herdr.sh: No such file or directory
+++ teardown_release_locks
+++ local status=0 i
+++ declare -F teardown_release_herdr_locks
+++ teardown_release_herdr_locks
+++ local lock_session lock_path
+++ '[' -n '' ']'
+++ return 0
+++ (( i=0 - 1 ))
+++ (( i >= 0 ))
+++ DESCENDANT_LOCK_PATHS=()
+++ '[' -n '' ']'
+++ '[' -n '' ']'
+++ '[' -n '' ']'
+++ '[' 1 = 1 ']'
+++ fm_lock_release /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock pid current ownerdir
+++ fm_current_pid current
+++ local fm_pid
++++ exec sh -c 'printf "%s\n" "$PPID"'
+++ fm_pid=96954
+++ case "$fm_pid" in
+++ '[' 1 -gt 0 ']'
+++ printf -v current %s 96954
+++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock ']'
++++ fm_lock_link_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
+++ ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk ']'
++++ cat /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk/pid
+++ pid=96954
+++ '[' 96954 = 96954 ']'
+++ fm_lock_points_to_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk actual
++++ readlink /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
+++ actual=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
+++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk ']'
+++ rm -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock
+++ fm_lock_discard_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
+++ local ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk ']'
+++ fm_lock_clean_known_files /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
+++ rm -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk/pid /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk/fm-home /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk/pid-identity /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk/role /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk/watcher-path
+++ rmdir /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.meta-task-x1.lock.owner.y3PQqk
+++ return 0
+++ META_LOCK_HELD=0
+++ '[' 1 = 1 ']'
+++ fm_lock_release /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock pid current ownerdir
+++ fm_current_pid current
+++ local fm_pid
++++ exec sh -c 'printf "%s\n" "$PPID"'
+++ fm_pid=96954
+++ case "$fm_pid" in
+++ '[' 1 -gt 0 ']'
+++ printf -v current %s 96954
+++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock ']'
++++ fm_lock_link_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
+++ ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU ']'
++++ cat /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU/pid
+++ pid=96954
+++ '[' 96954 = 96954 ']'
+++ fm_lock_points_to_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU actual
++++ readlink /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
+++ actual=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
+++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU ']'
+++ rm -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock
+++ fm_lock_discard_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
+++ local ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU ']'
+++ fm_lock_clean_known_files /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
+++ rm -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU/pid /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU/fm-home /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU/pid-identity /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU/role /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU/watcher-path
+++ rmdir /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.control-task-x1.lock.owner.4aX2OU
+++ return 0
+++ CONTROL_LOCK_HELD=0
+++ '[' 0 = 1 ']'
+++ fm_lease_guard_release
+++ local lock=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock ']'
+++ FM_LEASE_GUARD_LOCK=
+++ fm_lock_release /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock pid current ownerdir
+++ fm_current_pid current
+++ local fm_pid
++++ exec sh -c 'printf "%s\n" "$PPID"'
+++ fm_pid=96954
+++ case "$fm_pid" in
+++ '[' 1 -gt 0 ']'
+++ printf -v current %s 96954
+++ '[' -L /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock ']'
++++ fm_lock_link_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
+++ ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH ']'
++++ cat /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH/pid
+++ pid=96954
+++ '[' 96954 = 96954 ']'
+++ fm_lock_points_to_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH actual
++++ readlink /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
+++ actual=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
+++ '[' /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH = /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH ']'
+++ rm -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock
+++ fm_lock_discard_owner /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
+++ local ownerdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
+++ '[' -n /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH ']'
+++ fm_lock_clean_known_files /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
+++ local lockdir=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
+++ rm -f /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH/pid /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH/fm-home /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH/pid-identity /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH/role /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH/watcher-path
+++ rmdir /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-teardown-tests.LDzw7M/herdr-preflight-missing-adapter/state/.fm-lease-command.lock.owner.8jYNbH
+++ return 0
+++ return 0; stdout=; herdr=; treehouse=
+FM_TEST_END 2026-09-22T18:33:09Z tests/fm-teardown.test.sh exit=1 duration_ms=90125 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=90437
+FM_TEST_SUMMARY_FAMILY family=pr-forge count=1 duration_ms=90125 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-teardown.test.sh duration_ms=90125
