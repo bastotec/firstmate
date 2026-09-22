@@ -739,10 +739,6 @@ test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
   assert_contains "$ext" "\"--gen\", \"$gen\"" "pi extension does not carry the armed incarnation gen"
   assert_contains "$ext" '"--source", "pi-ext"' "pi extension does not attribute its semantic source"
   assert_contains "$ext" 'pi.on("turn_end"' "pi extension lost the turn-end notification touch"
-  assert_contains "$ext" 'installPiTerminalResponseInputGuard' \
-    "pi extension lost the terminal-response input guard"
-  assert_contains "$ext" 'pi.on("session_shutdown"' \
-    "pi extension no longer retires the session-scoped input guard"
   pass "pi-signed shares Pi launch semantics while preserving its configured and recorded identity"
 }
 

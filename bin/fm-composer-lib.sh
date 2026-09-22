@@ -140,6 +140,7 @@ fm_composer_strip_complete_osc() {
         if (substr(line, i, 2) == "\033]") {
           end = 0; j = i + 2
           while (j <= n) {
+            if (j < n && substr(line, j, 2) == "\033]") break
             if (substr(line, j, 1) == "\007") { end = j; break }
             if (j < n && substr(line, j, 2) == "\033\\") { end = j + 1; break }
             j++
