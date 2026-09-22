@@ -806,10 +806,14 @@ test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   sm=$(cd "$sm" && pwd -P)
   cp "$ROOT/AGENTS.md" "$sm/AGENTS.md"
   cp "$sm/data/charter.md" "$CASE_DIR/charter-before"
+  assert_absent "$sm/.pi/extensions/lib/fm-terminal-response-input.ts" \
+    "pre-change secondmate fixture unexpectedly contains the new Pi input guard"
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
   status=$?
   expect_code 0 "$status" "pi-signed persistent secondmate spawn should succeed"
+  assert_contains "$out" "sync skipped before launch" \
+    "pre-change secondmate fixture did not exercise the unsynchronized launch path"
   assert_contains "$out" "spawned $id harness=pi-signed kind=secondmate" \
     "pi-signed secondmate spawn did not preserve its runtime identity"
   assert_meta_profile "$HOME_DIR/state/$id.meta" pi-signed default default
@@ -818,8 +822,8 @@ test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   assert_absent "$HOME_DIR/data/$id/launch-brief.md" "secondmate launch received a worker overlay"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "< '$sm/data/charter.md'" "secondmate launch lost its original charter"
-  assert_contains "$launch" "FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed' --tui-mode regular -e '$sm/.pi/extensions/lib/fm-terminal-response-input.ts' -e '$sm/.pi/extensions/fm-primary-turnend-guard.ts' -e '$sm/.pi/extensions/fm-primary-pi-watch.ts'" \
-    "pi-signed secondmate did not carry the shared terminal-response guard and primary extensions"
+  assert_contains "$launch" "FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed' --tui-mode regular -e '$ROOT/.pi/extensions/lib/fm-terminal-response-input.ts' -e '$sm/.pi/extensions/fm-primary-turnend-guard.ts' -e '$sm/.pi/extensions/fm-primary-pi-watch.ts'" \
+    "pi-signed secondmate did not carry the active root's terminal-response guard and its primary extensions"
   if [ "${FM_TEST_EVIDENCE:-0}" = 1 ]; then
     printf '# evidence begin: persistent secondmate\n%s\n' "$out"
     printf 'launch command:\n%s\noriginal charter:\n' "$launch"
