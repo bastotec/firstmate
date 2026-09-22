@@ -115,6 +115,7 @@ The adapter's header owns the three record shapes, required identity and payload
 At operator level, every order names both a worker by `leaf_worker_id` - `<machine>/<label>`, from the same machine and label the feed emits and `fm-stream.sh tasks` lists - and the exact execution the feed showed.
 That binding prevents an order composed for one run from being typed into its replacement.
 Acceptance means the owning agent wrote the complete order, including its submit byte, to that execution's pseudoterminal and acknowledged it; an authoritative membership refusal produces a nack, while an indeterminate order produces no record and remains pending.
+Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
 
 Reconciliation state lives in the hub's memory, not on disk.
 The journal retains at most 512 order ids, and while an id remains there a resend is answered from the original order, including when it overtakes the original placement.

@@ -509,8 +509,12 @@ class Commander:
 
     def answer(self, command_id: str, leaf: str, status: int, body: dict) -> list:
         outcome = body.get("outcome")
+        response_leaf = body.get("leaf_worker_id")
         if outcome == "accepted":
-            return [self.ack(command_id, leaf, "accepted")]
+            if not isinstance(response_leaf, str) or not response_leaf:
+                raise BridgeError("the hub accepted command %s without naming the leaf "
+                                  "that received it" % command_id)
+            return [self.ack(command_id, response_leaf, "accepted")]
         if outcome == "unconfirmed":
             # The hub has it and cannot say whether the worker took it. Saying
             # either would be a guess, so the id stays pending and nothing is

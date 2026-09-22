@@ -1433,6 +1433,24 @@ start_stub() {
   URL="http://$host:$port"
 }
 
+test_an_agent_refuses_a_hub_without_idempotent_results() {
+  local out rc ready="$TMP_ROOT/old-result-contract.ready"
+  start_stub old-result-contract --omit-result-capability
+  out=$(python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+    --machine box-a --label "old-result-contract-$RUN" --cwd "$CASE_DIR/cwd" \
+    --ready-file "$ready" 2>&1)
+  rc=$?
+  assert_equals "$rc" 1 "an agent should refuse a hub that cannot accept result retries"
+  assert_contains "$out" "idempotent_command_results" \
+    "the refusal should name the missing result capability"
+  assert_contains "$out" "restart or upgrade the hub" \
+    "the refusal should explain how to replace the incompatible hub"
+  [ ! -e "$ready" ] || fail "an incompatible hub must not produce a ready endpoint"
+  assert_equals "$(grep -c 'POST /v1/agent/endpoints' "$STUB_JOURNAL" 2>/dev/null || true)" 0 \
+    "the agent must reject the hub before registering a worker"
+  pass "hub: an agent negotiates idempotent command results before startup"
+}
+
 test_an_agent_retries_a_result_without_applying_the_command_twice() {
   local command_id=0123456789abcdef0123456789abcdef status ready result log pid waited=0 attempts
   status="$TMP_ROOT/result-retry.status"
@@ -2067,6 +2085,7 @@ test_a_restarted_hub_gets_its_workers_back
 test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
 test_a_closing_frame_outlives_the_pace_its_own_outage_set
 test_a_closing_frame_waits_out_a_recovery_already_in_flight
+test_an_agent_refuses_a_hub_without_idempotent_results
 test_an_agent_retries_a_result_without_applying_the_command_twice
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
 test_a_steer_lands_as_soon_as_the_worker_is_listed_again

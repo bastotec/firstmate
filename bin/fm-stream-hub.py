@@ -119,7 +119,7 @@ HUB_VERSION = "2.0.0"
 # The wire protocol the agent and the shell adapter implement.  A peer
 # announcing anything else is refused rather than driven on guessed routes.
 HUB_PROTOCOL = 2
-HUB_CAPABILITIES = ("current_execution",)
+HUB_CAPABILITIES = ("current_execution", "idempotent_command_results")
 
 DEFAULT_PORT = 7717
 DEFAULT_RING_BYTES = 262144
