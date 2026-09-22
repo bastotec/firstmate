@@ -1,8 +1,5 @@
 // The one Firstmate-owned Pi input filter for terminal palette responses that
 // Pi's 50 ms sequence buffer can split into ordinary editor text.
-// It consumes only a complete OSC 4 response with a structural prefix, valid
-// palette grammar, and BEL or ST terminator; every malformed or timed-out
-// candidate is replayed byte-for-byte to the editor.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const ESC = "\x1b";
@@ -20,54 +17,50 @@ type InputForwarder = (data: string) => void;
 
 export class PiTerminalResponseInputFilter {
   private pending = "";
-  private pendingChunks: string[] = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly forward: InputForwarder;
-  private readonly onDeferredForward: () => void;
   private readonly timeoutMs: number;
 
   constructor(
     forward: InputForwarder,
-    onDeferredForward: () => void,
     timeoutMs = OSC_PALETTE_FRAGMENT_TIMEOUT_MS,
   ) {
     this.forward = forward;
-    this.onDeferredForward = onDeferredForward;
     this.timeoutMs = timeoutMs;
   }
 
   handleInput(data: string): void {
     if (this.pending) {
       this.pending += data;
-      this.pendingChunks.push(data);
-      this.resolvePending();
+      this.resolvePending(data);
       return;
     }
     if (OSC_PALETTE_RESPONSE.test(data)) return;
     if (this.isPaletteResponsePrefix(data)) {
       this.pending = data;
-      this.pendingChunks = [data];
       this.scheduleFlush();
       return;
     }
+    if (data.startsWith(`${ESC}]4`)) return;
     this.forward(data);
   }
 
   dispose(): void {
     this.clearTimer();
     this.pending = "";
-    this.pendingChunks = [];
   }
 
-  private resolvePending(): void {
+  private resolvePending(latest: string): void {
     if (OSC_PALETTE_RESPONSE.test(this.pending)) {
       this.clearTimer();
       this.pending = "";
-      this.pendingChunks = [];
       return;
     }
-    if (this.hasControlTerminator(this.pending) || !this.isPaletteResponsePrefix(this.pending)) {
-      this.flush();
+    const terminated = this.hasControlTerminator(this.pending);
+    if (terminated || !this.isPaletteResponsePrefix(this.pending)) {
+      this.clearTimer();
+      this.pending = "";
+      if (!terminated) this.forward(latest);
       return;
     }
     this.scheduleFlush();
@@ -98,41 +91,28 @@ export class PiTerminalResponseInputFilter {
 
   private flush(): void {
     this.clearTimer();
-    if (!this.pending) return;
-    const chunks = this.pendingChunks;
     this.pending = "";
-    this.pendingChunks = [];
-    for (const chunk of chunks) this.forward(chunk);
-    this.onDeferredForward();
   }
 }
 
 export function installPiTerminalResponseInputGuard(ctx: ExtensionContext): () => void {
   if (ctx.mode !== "tui") return () => {};
   let handlingInput = false;
-  let forwarded: string[] = [];
-  const replay = (data: string): void => ctx.ui.pasteToEditor(data);
-  const filter = new PiTerminalResponseInputFilter(
-    (data) => {
-      if (handlingInput) forwarded.push(data);
-      else replay(data);
-    },
-    () => {},
-  );
+  let forwardCurrent = false;
+  let currentInput = "";
+  const filter = new PiTerminalResponseInputFilter((data) => {
+    if (handlingInput && data === currentInput) forwardCurrent = true;
+  });
   const unsubscribe = ctx.ui.onTerminalInput((data) => {
-    forwarded = [];
+    currentInput = data;
+    forwardCurrent = false;
     handlingInput = true;
     try {
       filter.handleInput(data);
     } finally {
       handlingInput = false;
     }
-    if (forwarded.length === 0) return { consume: true };
-    const current = forwarded.pop();
-    for (const chunk of forwarded) replay(chunk);
-    if (current === data) return undefined;
-    if (current !== undefined) replay(current);
-    return { consume: true };
+    return forwardCurrent ? undefined : { consume: true };
   });
   return () => {
     filter.dispose();
