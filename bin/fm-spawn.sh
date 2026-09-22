@@ -1675,7 +1675,7 @@ launch_template() {
     # and evidence gate (its header owns all of that). It runs under bash with
     # argv[0] `fm-deck-worker`, so pane liveness reads it as an agent rather
     # than an idle shell (bin/fm-agent-process-lib.sh). Deck has no effort
-    # control, so effort is recorded and omitted.
+    # control, so a non-default effort is refused during spawn validation.
     deck) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS bash -c '\''exec -a fm-deck-worker bash "$@"'\'' fm-deck-worker __DECKWORKER__ --id __DECKID__ --state __DECKSTATE__ --gen __DECKGEN__ --deck __DECKBIN__ __MODELFLAG__-- "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     # grok (Grok Build TUI): a positional prompt starts the supervised interactive
     # session. --always-approve auto-approves every tool execution (verified: the
@@ -1876,6 +1876,10 @@ fi
 # deck has none either: its worker driver supervises one task, not a home.
 if [ "$KIND" = secondmate ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = agy ] || [ "$HARNESS" = deck ]; }; then
   echo "error: $HARNESS is a crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
+  exit 1
+fi
+if [ "$HARNESS" = deck ] && [ -n "$EFFORT" ]; then
+  echo "error: deck has no effort control; omit --effort or select a harness that supports it" >&2
   exit 1
 fi
 

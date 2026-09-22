@@ -41,11 +41,13 @@ ok - fm-deck-worker: each completed turn leaves the next steer an idle baseline
 ok - liveness: the deck driver and binary are agents, unrelated names are not
 ok - tmux liveness: Deck's Linux comm and argv0 classify alive
 ok - control and busy-source tables carry Deck mechanics without rendered delivery evidence
-ok - fm-spawn: ordinary Deck dispatch launches the driver and records effort only
+ok - fm-spawn: ordinary Deck dispatch records only default effort
+ok - fm-spawn: Deck refuses unsupported effort before launch metadata
 ok - fm-spawn: a secondmate on deck is refused
 fm-deck-harness: all cases passed
 ```
 
+The spawn refuses a non-default `--effort` before launch or task metadata because Deck has no effort control.
 The driver refuses to run Deck when it cannot record `turn-start`, and a failed closing busy-state write publishes failure evidence and makes the turn fail.
 The evidence gate snapshots the status log's byte offset at turn start and searches a bounded appended suffix for a complete `done`, `needs-decision`, `blocked`, `failed`, or `working` line.
 Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy the gate or the driver's postcondition.

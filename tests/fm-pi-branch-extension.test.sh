@@ -2140,6 +2140,58 @@ EOF
   pass "branch acknowledgement waits for coverage and deduplicated rows settle together"
 }
 
+test_reported_provider_error_requires_observed_ack_command() {
+  local repo home out status
+  repo="$TMP_ROOT/provider-error-no-ack-root"
+  home="$TMP_ROOT/provider-error-no-ack-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { defaultSessionCtx, dispatch, fire, home }; })()`);
+const { defaultSessionCtx, dispatch, fire, home } = globalThis.__t;
+import { existsSync, readFileSync } from "node:fs";
+
+await fire("session_start", {}, defaultSessionCtx);
+globalThis.__fmOnBranchPrompt = async ({ session }) => {
+  const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+  const recorded = await report.execute(
+    "reported-without-drain",
+    { task: "branch-driver", verdict: "routine", summary: "reported without observing the drain acknowledgement" },
+    undefined,
+    undefined,
+    {},
+  );
+  if (recorded.isError) throw new Error(`durable report failed: ${JSON.stringify(recorded)}`);
+  session.messages.push({
+    role: "assistant",
+    content: [],
+    stopReason: "error",
+    errorMessage: "provider failed after report",
+  });
+};
+
+const offer = dispatch("signal: provider error without a drain");
+if (!offer.accepted) throw new Error("branch refused the provider-error fixture");
+const failure = await offer.settlement.then(() => null, (error) => error);
+if (!(failure instanceof Error) || !failure.message.includes("could not acknowledge its wake-row grant")) {
+  throw new Error(`provider-error settlement did not reject its missing observed acknowledgement: ${String(failure)}`);
+}
+if (existsSync(`${home}/state/.branch-eligible-rows`)) {
+  throw new Error("failed provider-error settlement left its grant active");
+}
+if (!readFileSync(`${home}/state/.wake-queue`, "utf8").includes("provider error without a drain")) {
+  throw new Error("missing-ack settlement consumed the wake row");
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "reported provider errors must require the observed acknowledgement command: $out"
+  pass "reported provider errors refuse settlement without an observed acknowledgement"
+}
+
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown() {
   local repo home out status
   repo="$TMP_ROOT/provider-error-root"
@@ -2153,6 +2205,27 @@ await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatc
 const { pi, makeOffer, dispatch, fire, settle, home, realRoot, mainUserMessages, sentToMain } = globalThis.__t;
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+
+globalThis.__fmExecuteBranchBash = async (context) => {
+  const result = spawnSync("bash", ["-c", context.command], {
+    encoding: "utf8",
+    cwd: context.cwd,
+    env: context.env,
+  });
+  return {
+    content: [{ type: "text", text: `${result.stdout}${result.stderr}` }],
+    details: { stdout: result.stdout, stderr: result.stderr, exitCode: result.status },
+    isError: result.status !== 0,
+  };
+};
+
+async function runBranchDrain(session) {
+  const bash = session.options.customTools.find((tool) => tool.name === "bash");
+  const result = await bash.execute("provider-error-drain", { command: "bin/fm-wake-drain.sh" }, undefined, undefined, {});
+  if (result.isError) throw new Error(`branch drain failed: ${JSON.stringify(result)}`);
+  const output = result.content.map((item) => item.text ?? "").join("\n");
+  if (!output.includes("WAKE_ACK_REQUIRED:")) throw new Error(`branch drain returned no acknowledgement command: ${output}`);
+}
 
 let now = 1_000_000;
 Date.now = () => now;
@@ -2197,6 +2270,12 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
     return;
   }
   if (attempt === 5) {
+    await runBranchDrain(session);
+    writeFileSync(
+      `${home}/state/.wake-queue`,
+      readFileSync(`${home}/state/.wake-queue`, "utf8") +
+        "2\t2\tsignal\tbranch-driver.turn-ended\tsignal: later status for main\n",
+    );
     const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
     const recorded = await report.execute(
       "reported-before-provider-error",
@@ -2209,6 +2288,7 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
     await new Promise((resolve) => { releaseFailedProbe = resolve; });
   }
   if (attempt === 9 || attempt === 10) {
+    await runBranchDrain(session);
     const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
     for (let index = 0; index < 2; index += 1) {
       const wakeSeq = attempt === 9 ? "1" : String(index + 1);
@@ -2305,6 +2385,22 @@ if (mainUserMessages.length !== 0) throw new Error("reported provider-error prob
 if (existsSync(`${home}/state/.branch-eligible-rows`)) {
   throw new Error("reported provider-error probe left the handled row grant active");
 }
+const laterDrain = spawnSync("bash", [`${realRoot}/bin/fm-wake-drain.sh`], {
+  encoding: "utf8",
+  cwd: realRoot,
+  env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: `${home}/state`, FM_ROOT_OVERRIDE: realRoot },
+});
+if (laterDrain.status !== 0 || !laterDrain.stdout.includes("signal: later status for main")) {
+  throw new Error(`the reported provider-error acknowledgement hid a later main row: ${laterDrain.stdout}${laterDrain.stderr}`);
+}
+const laterAck = laterDrain.stderr.match(/(bin\/fm-wake-drain\.sh --ack-through [0-9]+ --recovery-generation [A-Za-z0-9._-]+)/);
+if (!laterAck) throw new Error(`the later main row had no acknowledgement command: ${laterDrain.stderr}`);
+const laterAckResult = spawnSync("bash", ["-c", laterAck[1]], {
+  encoding: "utf8",
+  cwd: realRoot,
+  env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: `${home}/state`, FM_ROOT_OVERRIDE: realRoot },
+});
+if (laterAckResult.status !== 0) throw new Error(`the later main row could not be acknowledged: ${laterAckResult.stderr}`);
 if (sentToMain.some((sent) => sent.message.content.includes("Supervision branch recovered after a successful cooldown probe"))) {
   throw new Error("a post-report provider error was mistaken for provider recovery");
 }
@@ -5489,6 +5585,7 @@ test_branch_predrain_recheck_excludes_new_main_owned_row_without_deferring_eligi
 test_branch_predrain_needs_decision_keeps_routine_row_branch_eligible
 test_settled_branch_prompt_releases_unacknowledged_grant
 test_branch_ack_waits_for_complete_presented_coverage
+test_reported_provider_error_requires_observed_ack_command
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown
 test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model
 test_model_chain_rejects_malformed_lines_and_reprobes_unresolvable_entries

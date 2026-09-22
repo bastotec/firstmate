@@ -614,6 +614,7 @@ export default function (pi: ExtensionAPI) {
   let wakeTaskScope: {
     rows: Map<string, string | null>;
     reported: Set<string>;
+    acknowledgementCommands: Set<string>;
     unscoped: boolean;
   } | null = null;
   let mainStreaming = false;
@@ -1450,7 +1451,7 @@ export default function (pi: ExtensionAPI) {
     await loader.reload();
     if (!(await actingAsOwner(branchGeneration))) throw new Error("supervision session was replaced or lost lock ownership");
     const leaseHolderPid = ownedLockPid;
-    const bashTool = createBashToolDefinition(fmRoot, {
+    const baseBashTool = createBashToolDefinition(fmRoot, {
       spawnHook: (context) => {
         // Activation has always already happened by the time the branch can
         // run a shell command, so an unactivated generation is refused here
@@ -1485,6 +1486,25 @@ ${context.command}
         };
       },
     });
+    const bashTool: typeof baseBashTool = {
+      ...baseBashTool,
+      execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+        const result = await baseBashTool.execute(toolCallId, params, signal, onUpdate, ctx);
+        if (
+          wakeTaskScope &&
+          params.command.includes("fm-wake-drain.sh") &&
+          !params.command.includes("--ack-through")
+        ) {
+          const output = textOfContent(result.content);
+          for (const match of output.matchAll(
+            /^WAKE_ACK_REQUIRED: after handling completes run (bin\/fm-wake-drain\.sh --ack-through [0-9]+ --recovery-generation [A-Za-z0-9._-]+)$/gm,
+          )) {
+            wakeTaskScope.acknowledgementCommands.add(match[1]);
+          }
+        }
+        return result;
+      },
+    };
     const created = await createAgentSession({
       cwd: fmRoot,
       sessionManager,
@@ -1594,8 +1614,30 @@ ${context.command}
     }
   }
 
-  async function acknowledgeReportedGrant(expectedGeneration: number): Promise<boolean> {
+  async function acknowledgeReportedGrant(
+    expectedGeneration: number,
+    scope: NonNullable<typeof wakeTaskScope>,
+    providerError: boolean,
+  ): Promise<boolean> {
     const eligibleRows = join(state, BRANCH_ELIGIBLE_ROWS_FILE);
+    if (providerError && scope.rows.size > 0) {
+      if (scope.acknowledgementCommands.size !== 1) return false;
+      if (!existsSync(eligibleRows)) return true;
+      if (!(await actingAsOwner(expectedGeneration))) return false;
+      const acknowledged = await runCommandAsync(
+        "bash",
+        ["-c", [...scope.acknowledgementCommands][0]],
+        {
+          cwd: fmRoot,
+          env: {
+            ...scriptEnv,
+            FM_SUPERVISION_ACTOR: "branch",
+            FM_LEASE_HOLDER_PID: ownedLockPid,
+          },
+        },
+      );
+      return acknowledged.status === 0 && !existsSync(eligibleRows);
+    }
     if (!existsSync(eligibleRows)) return true;
     if (!(await actingAsOwner(expectedGeneration))) return false;
     const env = {
@@ -1672,6 +1714,7 @@ ${context.command}
         const promptWakeScope = {
           rows: new Map(Object.entries(scope.presentedTaskBySeq)),
           reported: new Set<string>(),
+          acknowledgementCommands: new Set<string>(),
           unscoped: heartbeat,
         };
         wakeTaskScope = promptWakeScope;
@@ -1684,7 +1727,11 @@ ${context.command}
         }
         const grantFullyReported = [...promptWakeScope.rows.keys()].every((seq) => promptWakeScope.reported.has(seq));
         const providerError = settledPromptProviderError(sessionManager, entryOffset);
-        const grantAcknowledged = grantFullyReported && await acknowledgeReportedGrant(acceptedGeneration);
+        const grantAcknowledged = grantFullyReported && await acknowledgeReportedGrant(
+          acceptedGeneration,
+          promptWakeScope,
+          providerError !== null,
+        );
         const providerDetail = providerError
           ? `supervision branch provider failed after construction: ${providerError}`
           : "";

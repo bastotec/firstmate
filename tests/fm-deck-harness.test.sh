@@ -485,7 +485,7 @@ test_spawn_launches_the_driver_with_binary_gen_and_model() {
   IFS='|' read -r case_dir home proj wt fakebin <<EOF
 $rec
 EOF
-  out=$(run_deck_spawn "$case_dir" "$home" "$proj" "$wt" "$fakebin" "$id" --model codex/gpt-5.6-luna --effort high)
+  out=$(run_deck_spawn "$case_dir" "$home" "$proj" "$wt" "$fakebin" "$id" --model codex/gpt-5.6-luna)
   rc=$?
   expect_code 0 "$rc" "ordinary Deck spawn should succeed: $out"
   launch=$(cat "$case_dir/launch.log")
@@ -499,10 +499,26 @@ EOF
   assert_not_contains "$launch" "__DECK" "the launch left a deck placeholder unsubstituted"
   meta="$home/state/$id.meta"
   assert_grep 'harness=deck' "$meta" "meta did not record the deck harness"
-  assert_grep 'effort=high' "$meta" "meta did not record the requested effort"
+  assert_grep 'effort=default' "$meta" "meta must not imply Deck applies an effort"
   [ -s "$home/state/$id.busy-gen" ] || fail "the spawn did not arm the busy contract"
   assert_contains "$launch" "--gen '$(cat "$home/state/$id.busy-gen")'" "the launch did not carry the armed busy gen"
-  pass "fm-spawn: ordinary Deck dispatch launches the driver and records effort only"
+  pass "fm-spawn: ordinary Deck dispatch records only default effort"
+}
+
+test_spawn_refuses_deck_effort() {
+  local id rec out rc case_dir home proj wt fakebin
+  id="deck-effort-$$"
+  rec=$(make_deck_spawn_case effort "$id")
+  IFS='|' read -r case_dir home proj wt fakebin <<EOF
+$rec
+EOF
+  out=$(run_deck_spawn "$case_dir" "$home" "$proj" "$wt" "$fakebin" "$id" --effort high)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "Deck spawn accepted unsupported effort control"
+  assert_contains "$out" "deck has no effort control" "the Deck effort refusal must explain the unsupported axis"
+  [ ! -s "$case_dir/launch.log" ] || fail "Deck effort refusal launched a worker"
+  [ ! -e "$home/state/$id.meta" ] || fail "Deck effort refusal wrote misleading task metadata"
+  pass "fm-spawn: Deck refuses unsupported effort before launch metadata"
 }
 
 test_spawn_refuses_a_deck_secondmate() {
@@ -530,5 +546,6 @@ test_liveness_reads_the_driver_as_an_agent
 test_tmux_liveness_uses_the_deck_driver_argv0
 test_control_busy_and_delivery_tables_name_deck
 test_spawn_launches_the_driver_with_binary_gen_and_model
+test_spawn_refuses_deck_effort
 test_spawn_refuses_a_deck_secondmate
 echo "fm-deck-harness: all cases passed"
