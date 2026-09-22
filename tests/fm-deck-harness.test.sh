@@ -76,7 +76,9 @@ case "$prompt" in
     ;;
   *write-status*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
   *resolve-only*) printf 'resolved [key=choice]: answered: yes\n' >> "$FM_TEST_STATUS" ;;
-  *sleep*) sleep 30 ;;
+  *sleep*)
+    bash -c 'printf "%s\n" "$$" > "$1/interrupt-ready"; exec sleep 30' _ "$dir"
+    ;;
 esac
 if [ -n "$gate" ]; then
   if bash -c "$gate" </dev/null 2>>"$dir/gate.err"; then
@@ -259,22 +261,37 @@ test_driver_backstops_silent_and_failed_turns() {
 }
 
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
-  local dir="$TMP_ROOT/interrupt" gen pid
+  local dir="$TMP_ROOT/interrupt" gen pid sleeper ready=0 pgid
   make_fake_deck "$dir"
   mkdir -p "$dir/state"
   gen=$("$BUSY_EVENT" arm "$dir/state" t1)
   mkfifo "$dir/in"
-  ( exec 3>"$dir/in"; sleep 8 ) &
+  # Hold stdin open without a timer: after cancellation the driver must remain
+  # at its prompt until this test deliberately closes the writer.
+  exec 3<>"$dir/in"
   # A terminal's Ctrl+C signals the pane's whole foreground process group, so
   # the driver gets a group of its own (job control) and the group is signalled.
+  # Reset SIGINT before exec because a bounded test runner may itself have been
+  # launched asynchronously, while a real terminal-launched pane is not.
   set -m
-  FM_TEST_STATUS="$dir/state/t1.status" "$WORKER" --id t1 --state "$dir/state" --gen "$gen" \
-    --deck "$dir/deck" -- "please sleep" < "$dir/in" > "$dir/pane.out" 2>&1 &
+  FM_TEST_STATUS="$dir/state/t1.status" python3 -c \
+    'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execv(sys.argv[1], sys.argv[1:])' \
+    "$WORKER" --id t1 --state "$dir/state" --gen "$gen" \
+      --deck "$dir/deck" -- "please sleep" < "$dir/in" > "$dir/pane.out" 2>&1 &
   pid=$!
   set +m
-  for _ in $(seq 50); do grep -q 'state=busy' "$dir/state/t1.busy-state" 2>/dev/null && pgrep -f "$dir/deck" >/dev/null && break; sleep 0.1; done
-  sleep 0.3
-  kill -INT -- -"$pid" 2>/dev/null
+  for _ in $(seq 50); do
+    sleeper=$(cat "$dir/interrupt-ready" 2>/dev/null || true)
+    pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+    if grep -q 'state=busy' "$dir/state/t1.busy-state" 2>/dev/null \
+      && [ "$pgid" = "$pid" ] && kill -0 "$sleeper" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    sleep 0.1
+  done
+  [ "$ready" -eq 1 ] || fail "the Deck turn never reached its interruptible child process"
+  kill -INT -- -"$pid" 2>/dev/null || fail "could not signal the Deck worker process group"
   for _ in $(seq 50); do grep -q 'event=interrupted' "$dir/state/t1.busy-state" 2>/dev/null && break; sleep 0.1; done
   assert_grep 'event=interrupted' "$dir/state/t1.busy-state" "Ctrl+C did not close the turn as interrupted"
   [ "$(cat "$dir/state/t1.status")" = 'failed: deck turn ended without a status line (interrupted)' ] \
@@ -284,6 +301,7 @@ test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
   kill -0 "$pid" 2>/dev/null || fail "the driver exited on Ctrl+C instead of returning to its prompt"
   assert_grep 'Interrupted.' "$dir/pane.out" "the pane did not show the cancelled turn"
   kill -TERM -- -"$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  exec 3>&-
   pass "fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt"
 }
 
@@ -333,7 +351,10 @@ test_completed_turn_removes_busy_ack_before_the_next_steer() {
     "$ROOT/bin/fm-send.sh" "$target" 'write-status slow second steer' >/dev/null 2>"$dir/second.err" || rc=$?
   tmux send-keys -t "$target" -l /quit 2>/dev/null || true
   tmux send-keys -t "$target" Enter 2>/dev/null || true
-  sleep 0.1
+  for _ in $(seq 60); do
+    tmux has-session -t "$session" 2>/dev/null || break
+    sleep 0.05
+  done
   tmux kill-session -t "$session" 2>/dev/null || true
   expect_code 0 "$rc" "the second Deck steer was not confirmed from an idle baseline: $(cat "$dir/second.err")"
   pass "fm-deck-worker: each completed turn leaves the next steer an idle baseline"
