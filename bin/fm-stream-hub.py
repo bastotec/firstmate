@@ -119,7 +119,8 @@ HUB_VERSION = "2.0.0"
 # The wire protocol the agent and the shell adapter implement.  A peer
 # announcing anything else is refused rather than driven on guessed routes.
 HUB_PROTOCOL = 2
-HUB_CAPABILITIES = ("current_execution", "idempotent_command_results")
+RESULT_RETRY_CAPABILITY = "idempotent_command_results"
+HUB_CAPABILITIES = ("current_execution", RESULT_RETRY_CAPABILITY)
 
 DEFAULT_PORT = 7717
 DEFAULT_RING_BYTES = 262144
@@ -948,13 +949,15 @@ class Endpoint:
     """
 
     def __init__(self, endpoint_id: str, machine: str, label: str, cwd: str,
-                 rows: int, cols: int, ring_bytes: int, scrollback: int) -> None:
+                 rows: int, cols: int, ring_bytes: int, scrollback: int,
+                 result_retry: bool = False) -> None:
         self.endpoint_id = endpoint_id
         self.machine = machine
         self.label = label
         self.cwd = cwd
         self.rows = rows
         self.cols = cols
+        self.result_retry = result_retry
         self.created_at = _now()
         self.closed_at = 0.0
         # Who ended this endpoint: "agent" when its own agent reported the
@@ -1247,6 +1250,12 @@ class Hub:
         cwd = str(payload.get("cwd") or "")
         rows = _positive_int(payload.get("rows"), 40, "rows")
         cols = _positive_int(payload.get("cols"), 200, "cols")
+        capabilities = payload.get("capabilities", [])
+        if (not isinstance(capabilities, list)
+                or any(not isinstance(value, str) for value in capabilities)):
+            raise HubError(HTTPStatus.BAD_REQUEST, "bad_capabilities",
+                           "capabilities must be an array of strings")
+        result_retry = RESULT_RETRY_CAPABILITY in capabilities
         # A label is only claimed by an endpoint that still has an agent, so
         # the silence check runs before the claim is tested rather than waiting
         # for the next listing call to notice.
@@ -1261,6 +1270,10 @@ class Hub:
                     raise HubError(HTTPStatus.CONFLICT, "endpoint_owned_elsewhere",
                                    "endpoint %s is registered to machine %s"
                                    % (endpoint_id, existing.machine))
+                if existing.result_retry != result_retry:
+                    raise HubError(HTTPStatus.CONFLICT, "endpoint_capabilities_changed",
+                                   "endpoint %s cannot change its registered capabilities"
+                                   % endpoint_id)
                 self.touch_machine(machine)
                 return existing
             for other in self.endpoints.values():
@@ -1280,7 +1293,8 @@ class Hub:
                                    "machine %s already has a live endpoint labelled %s"
                                    % (machine, label))
             endpoint = Endpoint(endpoint_id, machine, label, cwd, rows, cols,
-                                DEFAULT_RING_BYTES, DEFAULT_SCROLLBACK)
+                                DEFAULT_RING_BYTES, DEFAULT_SCROLLBACK,
+                                result_retry=result_retry)
             self.endpoints[endpoint_id] = endpoint
             self.touch_machine(machine)
             return endpoint
@@ -1577,6 +1591,11 @@ class Hub:
                     "the hub closed its record of execution %s because it could no longer "
                     "steer it; the order was not delivered, and this is not evidence about "
                     "the worker" % current.endpoint_id)
+            if not current.result_retry:
+                self._refuse_order(
+                    order, HTTPStatus.CONFLICT, "endpoint_not_orderable",
+                    "execution %s did not advertise reliable result acknowledgement, so "
+                    "the order was not delivered" % current.endpoint_id)
 
             try:
                 self.submit_command(current, "input", {

@@ -451,6 +451,22 @@ test_a_duplicate_command_id_keeps_the_leaf_that_received_it() {
   assert_not_contains "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
     "$URL/v1/tasks/$second/capture?lines=40" 2>/dev/null)" SECOND-MUST-NOT-RUN \
     "a reused command id must not fabricate acceptance for another leaf"
+
+  local legacy=cccccccccccccccccccccccccccccccc
+  register "$legacy" box-a "legacy-$RUN"
+  out=$(commander "$(composer_command c-reused-refusal "box-a/legacy-$RUN" \
+    "echo LEGACY-MUST-NOT-RUN" "$legacy")")
+  assert_equals "$(printf '%s' "$out" | jq -r '.state')" refused \
+    "an endpoint without result retries should refuse an order"
+  out=$(commander "$(composer_command c-reused-refusal "box-a/second-$RUN" \
+    "echo REFUSED-ID-MUST-NOT-RUN" "$second")")
+  assert_equals "$(printf '%s' "$out" | jq -r '.state')" refused \
+    "reusing a refused command id should report its recorded result"
+  assert_equals "$(printf '%s' "$out" | jq -r '.leaf_worker_id')" "box-a/legacy-$RUN" \
+    "a recorded refusal must keep the leaf whose order was actually considered"
+  assert_not_contains "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
+    "$URL/v1/tasks/$second/capture?lines=40" 2>/dev/null)" REFUSED-ID-MUST-NOT-RUN \
+    "a reused refused command id must not resolve another leaf's command"
   pass "bridge: a reused command id keeps its recorded leaf"
 }
 

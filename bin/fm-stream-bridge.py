@@ -510,11 +510,13 @@ class Commander:
     def answer(self, command_id: str, leaf: str, status: int, body: dict) -> list:
         outcome = body.get("outcome")
         response_leaf = body.get("leaf_worker_id")
+        recorded_leaf = (response_leaf
+                         if isinstance(response_leaf, str) and response_leaf else leaf)
         if outcome == "accepted":
             if not isinstance(response_leaf, str) or not response_leaf:
                 raise BridgeError("the hub accepted command %s without naming the leaf "
                                   "that received it" % command_id)
-            return [self.ack(command_id, response_leaf, "accepted")]
+            return [self.ack(command_id, recorded_leaf, "accepted")]
         if outcome == "unconfirmed":
             # The hub has it and cannot say whether the worker took it. Saying
             # either would be a guess, so the id stays pending and nothing is
@@ -529,7 +531,7 @@ class Commander:
             return [self.nack(command_id, NACK_NOT_REGISTERED)]
         reason = body.get("reason") or body.get("error") or ("HTTP %d" % status)
         message = body.get("reason_message") or body.get("message") or ""
-        return [self.ack(command_id, leaf, "refused",
+        return [self.ack(command_id, recorded_leaf, "refused",
                          "%s: %s" % (reason, message) if message else str(reason))]
 
 
