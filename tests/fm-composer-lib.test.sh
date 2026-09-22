@@ -816,7 +816,7 @@ test_pi_terminal_response_input_filter() {
   FILTER="$tmp/filter.ts" node --experimental-strip-types --input-type=module <<'JS' \
     || fail "Pi terminal-response input filter regression failed"
 import assert from "node:assert/strict";
-const { PiTerminalResponseInputFilter, installPiTerminalResponseInputGuard } = await import(process.env.FILTER);
+const { default: registerGuard, PiTerminalResponseInputFilter } = await import(process.env.FILTER);
 const ESC = "\x1b";
 const BEL = "\x07";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -848,6 +848,16 @@ const makeFilter = (timeout = 30) => {
   filter.dispose();
 }
 {
+  const { filter, forwarded } = makeFilter(200);
+  filter.handleInput(`${ESC}]`);
+  await sleep(60);
+  filter.handleInput("4");
+  await sleep(60);
+  filter.handleInput(`;38;rgb:0000/afaf/d7d7${BEL}`);
+  assert.deepEqual(forwarded, []);
+  filter.dispose();
+}
+{
   const { filter, forwarded } = makeFilter();
   filter.handleInput(`${ESC}]4;38`);
   for (const char of `;rgb:0000/afaf/d7d7${BEL}`) filter.handleInput(char);
@@ -873,14 +883,25 @@ const makeFilter = (timeout = 30) => {
   const { filter, forwarded, deferredRenders } = makeFilter(10);
   const incomplete = `${ESC}]4;38;rgb:0000/afaf`;
   filter.handleInput(incomplete);
+  filter.handleInput("a");
   await sleep(30);
-  assert.deepEqual(forwarded, [incomplete]);
+  assert.deepEqual(forwarded, [incomplete, "a"]);
   assert.equal(deferredRenders(), 1);
   filter.dispose();
 }
 {
   let factory;
-  const priorFactory = () => ({ handleInput() {} });
+  let deferredRenders = 0;
+  const handlers = new Map();
+  const editor = {
+    events: [],
+    text: "",
+    handleInput(data) {
+      this.events.push(data);
+      if (!data.startsWith(ESC)) this.text += data;
+    },
+  };
+  const priorFactory = () => editor;
   factory = priorFactory;
   const ctx = {
     mode: "tui",
@@ -889,11 +910,27 @@ const makeFilter = (timeout = 30) => {
       setEditorComponent: (next) => { factory = next; },
     },
   };
-  const dispose = await installPiTerminalResponseInputGuard(ctx);
+  registerGuard({ on(event, handler) { handlers.set(event, handler); } });
+  handlers.get("session_start")({}, ctx);
   assert.notEqual(factory, priorFactory);
-  const guarded = factory({}, {}, {});
-  assert.equal(typeof guarded.handleInput, "function");
-  dispose();
+  const guarded = factory({ requestRender: () => deferredRenders += 1 }, {}, {});
+
+  guarded.handleInput(`${ESC}]4;38`);
+  guarded.handleInput("x");
+  assert.deepEqual(editor.events, [`${ESC}]4;38`, "x"]);
+  assert.equal(editor.text, "x");
+  assert.equal(deferredRenders, 1);
+
+  editor.events = [];
+  editor.text = "";
+  guarded.handleInput(`${ESC}]4;38;`);
+  guarded.handleInput("a");
+  await sleep(650);
+  assert.deepEqual(editor.events, [`${ESC}]4;38;`, "a"]);
+  assert.equal(editor.text, "a");
+  assert.equal(deferredRenders, 2);
+
+  handlers.get("session_shutdown")();
   assert.equal(factory, priorFactory);
 }
 JS

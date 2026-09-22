@@ -63,20 +63,7 @@ exec "$REAL_TMUX" -L "$SOCKET" "\$@"
 SH
 chmod +x "$SHIM_DIR/tmux"
 PATH="$SHIM_DIR:$PATH"
-PI_GUARD_HELPER_URL=$(node -e 'console.log(require("node:url").pathToFileURL(process.argv[1]).href)' \
-  "$ROOT/.pi/extensions/lib/fm-terminal-response-input.ts")
-PI_GUARD_EXTENSION="$SHIM_DIR/pi-terminal-response-guard.ts"
-cat > "$PI_GUARD_EXTENSION" <<EOF
-import { installPiTerminalResponseInputGuard } from "$PI_GUARD_HELPER_URL";
-export default function (pi: any) {
-  let dispose = () => {};
-  pi.on("session_start", async (_event: any, ctx: any) => {
-    dispose();
-    dispose = await installPiTerminalResponseInputGuard(ctx);
-  });
-  pi.on("session_shutdown", () => dispose());
-}
-EOF
+PI_GUARD_EXTENSION="$ROOT/.pi/extensions/lib/fm-terminal-response-input.ts"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-tmux-lib.sh"
 
