@@ -490,6 +490,10 @@ test_matrix_pi_separated_needs_identity() {
   pi085=$'transcript\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter'
   assert_screen "pi 0.85.1 idle reverse-video cursor on tmux" empty "$CAPS_TMUX" "$pi085" 2 "$pi_idle"
   assert_screen "pi 0.85.1 idle reverse-video cursor on herdr" empty "$CAPS_STYLED" "$pi085" '' "$pi_idle"
+  typed=$'transcript\n────────────────────────\n\033[39m ❯  \033[7m \033[0m\n────────────────────────\nfooter'
+  assert_screen "pi 0.85.1 one-space draft before cursor on tmux" pending "$CAPS_TMUX" "$typed" 2 "$pi_idle"
+  typed=$'transcript\n────────────────────────\n\033[39m ❯     \033[7m \033[0m\n────────────────────────\nfooter'
+  assert_screen "pi 0.85.1 multi-space draft before cursor on herdr" pending "$CAPS_STYLED" "$typed" '' "$pi_idle"
   assert_screen "pi 0.85.1 prompt without styled cursor proof" pending "$caps_plain_id" \
     $'transcript\n────────────────────────\n ❯  \n────────────────────────' '' "$pi_idle"
 
