@@ -280,10 +280,13 @@ fm_pane_is_busy() {  # <target> [harness]
 }
 
 # fm_tmux_submit_core: type <text> into <target> ONCE, then submit with Enter,
-# verifying the composer cleared. Retries Enter ONLY — never retypes, because a
-# swallowed Enter leaves our text in the composer and retyping would duplicate
-# it. Echoes the final proof-carrying verdict on stdout so callers can require
-# exact `empty` before treating submission as confirmed.
+# verifying harness-specific delivery evidence. Retries Enter ONLY — never
+# retypes, because an unconfirmed Enter may still have delivered and retyping
+# would duplicate the request. Echoes the final proof-carrying verdict on stdout
+# so callers can require exact `empty` before treating submission as confirmed.
+# Deck confirmation bypasses composer and rendered-footer evidence: only the
+# next exact deck-wrapper busy turn-start sequence after an idle wrapper baseline
+# confirms the Enter, while an absent or inexact transition remains pending.
 # Busy-queued Enter (opencode 1.18.4): the harness accepts Enter while mid-turn
 # and queues it for after the current turn, but keeps the typed text visible in
 # the composer. Once the Enter-retry budget is spent and a structurally proven
