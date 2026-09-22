@@ -148,18 +148,24 @@ check_harness_idle_empty() {  # <name> <launch-cmd...>
       tmux -L "$SOCKET" send-keys -t "$SESSION:$win" C-u
       sleep 0.25
       pi_cleared=$(fm_tmux_composer_state "$SESSION:$win")
-      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l $'\033]4;38;rgb:0000/afaf/d7d7\007'
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l $'\033]'
+      sleep 0.12
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l '4;38;'
+      sleep 0.12
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l 'rgb:0000/afaf/d7d7'
+      sleep 0.12
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l $'\007'
       sleep 0.25
       pi_palette=$(fm_tmux_composer_state "$SESSION:$win")
       if [ "$transitioned" != 1 ] || [ "$pi_replacement" != empty ] || [ "$pi_draft" != pending ] \
          || [ "$pi_cleared" != empty ] || [ "$pi_palette" != empty ]; then
         FAILED=1
-        printf 'not ok - %s (%s): Pi replacement/draft/C-u/complete-OSC matrix was transitioned=%s replacement=%s draft=%s cleared=%s palette=%s\n' \
+        printf 'not ok - %s (%s): Pi replacement/draft/C-u/fragmented-OSC matrix was transitioned=%s replacement=%s draft=%s cleared=%s palette=%s\n' \
           "$name" "$version" "$transitioned" "${pi_replacement:-unreadable}" "${pi_draft:-unreadable}" \
           "${pi_cleared:-unreadable}" "${pi_palette:-unreadable}" >&2
       else
         CHECKED=$((CHECKED + 1))
-        pass "$name ($version): replacement idle is empty, RGB-like draft is pending, C-u clears, and a complete OSC reply is consumed"
+        pass "$name ($version): replacement idle is empty, RGB-like draft is pending, C-u clears, and a fragmented OSC reply is consumed"
       fi
     else
       CHECKED=$((CHECKED + 1))

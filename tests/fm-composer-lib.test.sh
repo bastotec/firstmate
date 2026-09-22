@@ -826,9 +826,11 @@ test_pi_terminal_response_input_filter() {
   ln -s "$pi_package/node_modules/@earendil-works/pi-tui" "$tmp/node_modules/@earendil-works/pi-tui"
   cp "$ROOT/.pi/extensions/lib/fm-terminal-response-input.ts" "$tmp/filter.ts"
   printf '{"type":"module"}\n' > "$tmp/package.json"
-  FILTER="$tmp/filter.ts" node --experimental-strip-types --input-type=module <<'JS' \
+  FILTER="$tmp/filter.ts" TUI="$tmp/node_modules/@earendil-works/pi-tui/dist/index.js" \
+    node --experimental-strip-types --input-type=module <<'JS' \
     || fail "Pi terminal-response input filter regression failed"
 import assert from "node:assert/strict";
+const { StdinBuffer } = await import(process.env.TUI);
 const { default: registerGuard, PiTerminalResponseInputFilter } = await import(process.env.FILTER);
 const ESC = "\x1b";
 const BEL = "\x07";
@@ -871,15 +873,31 @@ const makeFilter = (timeout = 30) => {
   filter.dispose();
 }
 {
+  const { filter, forwarded } = makeFilter(200);
+  const stdin = new StdinBuffer({ timeout: 10, escapeTimeout: 2 });
+  stdin.on("data", (data) => filter.handleInput(data));
+  stdin.process(`${ESC}]`);
+  await sleep(30);
+  stdin.process("4;38;");
+  await sleep(30);
+  stdin.process("rgb:0000/afaf/d7d7");
+  await sleep(30);
+  stdin.process(BEL);
+  await sleep(10);
+  assert.deepEqual(forwarded, []);
+  stdin.destroy();
+  filter.dispose();
+}
+{
   const { filter, forwarded } = makeFilter(10);
   const incomplete = `${ESC}]4;38;rgb:0000/afaf`;
   filter.handleInput(incomplete);
   filter.handleInput("a");
   filter.handleInput("deadbeef");
-  assert.deepEqual(forwarded, ["a", "deadbeef"]);
+  assert.deepEqual(forwarded, []);
   await sleep(30);
   filter.handleInput("z");
-  assert.deepEqual(forwarded, ["a", "deadbeef", "z"]);
+  assert.deepEqual(forwarded, ["z"]);
   filter.dispose();
 }
 {
@@ -948,6 +966,13 @@ const makeFilter = (timeout = 30) => {
   assert.equal(editor.text, "");
   assert.equal(pasteCalls, 0);
 
+  dispatch(`${ESC}]`);
+  dispatch("4;38;");
+  dispatch("rgb:0000/afaf/d7d7");
+  dispatch(BEL);
+  assert.deepEqual(editor.events, []);
+  assert.equal(editor.text, "");
+
   dispatch(`${ESC}]4;38;not-a-color${BEL}`);
   assert.deepEqual(editor.events, []);
   assert.equal(editor.text, "");
@@ -966,18 +991,18 @@ const makeFilter = (timeout = 30) => {
   dispatch(`${ESC}]4;38;`);
   dispatch("a");
   dispatch("deadbeef");
-  assert.deepEqual(editor.events, ["a", "deadbeef"]);
-  assert.equal(editor.text, "adeadbeef");
-  assert.equal(renders, 2);
+  assert.deepEqual(editor.events, []);
+  assert.equal(editor.text, "");
+  assert.equal(renders, 0);
   assert.equal(pasteCalls, 0);
   await sleep(650);
-  assert.deepEqual(editor.events, ["a", "deadbeef"]);
-  assert.equal(editor.text, "adeadbeef");
-  assert.equal(renders, 2);
+  assert.deepEqual(editor.events, []);
+  assert.equal(editor.text, "");
+  assert.equal(renders, 0);
   dispatch("z");
-  assert.deepEqual(editor.events, ["a", "deadbeef", "z"]);
-  assert.equal(editor.text, "adeadbeefz");
-  assert.equal(renders, 3);
+  assert.deepEqual(editor.events, ["z"]);
+  assert.equal(editor.text, "z");
+  assert.equal(renders, 1);
 
   handlers.get("session_shutdown")();
   assert.equal(subscribed, false);
@@ -991,7 +1016,7 @@ const makeFilter = (timeout = 30) => {
   assert.equal(renders, 1);
 }
 JS
-  pass "Pi input filter discards terminal palette debris while preserving later draft input"
+  pass "Pi input filter consumes fragmented palette replies under the accepted worker-input policy"
 }
 
 test_bare_shell_glyphs_are_unknown
