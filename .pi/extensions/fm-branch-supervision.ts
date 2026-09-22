@@ -1456,6 +1456,13 @@ export default function (pi: ExtensionAPI) {
         if (activatedGeneration !== branchGeneration || !generationOwnsLockSync(branchGeneration)) {
           throw new Error("bash refused: supervision session was replaced or lost lock ownership");
         }
+        if (
+          context.command.includes("fm-wake-drain.sh") &&
+          context.command.includes("--ack-through") &&
+          (!wakeTaskScope || [...wakeTaskScope.rows.keys()].some((seq) => !wakeTaskScope?.reported.has(seq)))
+        ) {
+          throw new Error("bash refused: wake acknowledgement requires a durable outcome for every presented wake row");
+        }
         return {
           ...context,
           // Loud accidental-override guard (captain-decided): the actor

@@ -1993,7 +1993,7 @@ EOF
   pass "a settled branch turn without a durable outcome falls back and releases its grant for main replay"
 }
 
-test_repeated_same_key_rows_share_one_presented_grant() {
+test_branch_ack_waits_for_complete_presented_coverage() {
   local repo home out status
   repo="$TMP_ROOT/deduped-grant-root"
   home="$TMP_ROOT/deduped-grant-home"
@@ -2034,15 +2034,60 @@ async function runFleetCommand(session, args) {
 }
 
 await fire("session_start", {}, defaultSessionCtx);
+let promptNumber = 0;
 globalThis.__fmOnBranchPrompt = async ({ session }) => {
+  promptNumber += 1;
   const drained = await runFleetCommand(session, []);
+  const ack = drained.stderr.match(/--ack-through ([0-9]+) --recovery-generation ([A-Za-z0-9._-]+)/);
+  if (!ack || ack[1] !== "2") throw new Error(`branch drain returned the wrong acknowledgement: ${drained.stderr}`);
+  const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+  if (promptNumber === 1) {
+    const presented = drained.stdout.split("\n").filter((line) => line.includes("\tsignal\tbranch-driver."));
+    if (presented.length !== 2) throw new Error(`branch drain did not present both distinct rows: ${drained.stdout}`);
+    const first = await report.execute(
+      "partial-first",
+      { task: "branch-driver", wakeSeq: "1", verdict: "routine", summary: "handled the first distinct row" },
+      undefined,
+      undefined,
+      {},
+    );
+    if (first.isError) throw new Error(`first distinct report failed: ${JSON.stringify(first)}`);
+    const bash = session.options.customTools.find((tool) => tool.name === "bash");
+    let partialAckError;
+    try {
+      await bash.execute(
+        "partial-ack",
+        { command: `bin/fm-wake-drain.sh --ack-through ${ack[1]} --recovery-generation ${ack[2]}` },
+        undefined,
+        undefined,
+        {},
+      );
+    } catch (error) {
+      partialAckError = error;
+    }
+    if (!(partialAckError instanceof Error) || !partialAckError.message.includes("every presented wake row")) {
+      throw new Error(`partial acknowledgement was not refused by coverage: ${String(partialAckError)}`);
+    }
+    const queued = readFileSync(`${home}/state/.wake-queue`, "utf8");
+    if (!queued.includes("\t1\tsignal\tbranch-driver.status\t") ||
+        !queued.includes("\t2\tsignal\tbranch-driver.turn-ended\t")) {
+      throw new Error(`partial acknowledgement consumed an unreported row: ${queued}`);
+    }
+    const second = await report.execute(
+      "partial-second",
+      { task: "branch-driver", wakeSeq: "2", verdict: "routine", summary: "handled the second distinct row" },
+      undefined,
+      undefined,
+      {},
+    );
+    if (second.isError) throw new Error(`second distinct report failed: ${JSON.stringify(second)}`);
+    await runFleetCommand(session, ["--ack-through", ack[1], "--recovery-generation", ack[2]]);
+    return;
+  }
   const presented = drained.stdout.split("\n").filter((line) => line.includes("\tsignal\tbranch-driver.status\t"));
   if (presented.length !== 1 || !presented[0].includes("\t2\tsignal\tbranch-driver.status\tsignal: newest status")) {
     throw new Error(`branch drain did not present only the latest repeated status row: ${drained.stdout}`);
   }
-  const ack = drained.stderr.match(/--ack-through ([0-9]+) --recovery-generation ([A-Za-z0-9._-]+)/);
-  if (!ack || ack[1] !== "2") throw new Error(`branch drain returned the wrong acknowledgement: ${drained.stderr}`);
-  const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
   const recorded = await report.execute(
     "deduped-status",
     { task: "branch-driver", wakeSeq: "2", verdict: "routine", summary: "handled the newest repeated status" },
@@ -2053,6 +2098,20 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
   if (recorded.isError) throw new Error(`deduped row report failed: ${JSON.stringify(recorded)}`);
   await runFleetCommand(session, ["--ack-through", ack[1], "--recovery-generation", ack[2]]);
 };
+
+writeFileSync(
+  `${home}/state/.wake-queue`,
+  "1\t1\tsignal\tbranch-driver.status\tsignal: distinct status\n" +
+    "2\t2\tsignal\tbranch-driver.turn-ended\tsignal: distinct turn end\n",
+);
+const partialOffer = makeOffer("signal: two distinct branch-driver rows");
+pi.events.emit("fm-branch-supervision:dispatch", partialOffer);
+if (!partialOffer.accepted) throw new Error("branch refused two distinct rows");
+const partialFailure = await partialOffer.settlement.then(() => null, (error) => error);
+if (partialFailure !== null) throw new Error(`fully reported distinct grant did not settle: ${String(partialFailure)}`);
+if (readFileSync(`${home}/state/.wake-queue`, "utf8").trim() !== "") {
+  throw new Error("full acknowledgement did not consume both distinct rows");
+}
 
 writeFileSync(
   `${home}/state/.wake-queue`,
@@ -2069,16 +2128,16 @@ if (readFileSync(`${home}/state/.wake-queue`, "utf8").trim() !== "") {
   throw new Error("acknowledging the latest presented row did not consume the folded queue rows");
 }
 const outcomes = readFileSync(`${home}/state/branch-outcomes.jsonl`, "utf8").trim().split("\n").filter(Boolean);
-if (outcomes.length !== 1 || JSON.parse(outcomes[0]).summary !== "handled the newest repeated status") {
-  throw new Error(`deduplicated grant did not produce exactly one durable outcome: ${outcomes}`);
+if (outcomes.length !== 3 || JSON.parse(outcomes[2]).summary !== "handled the newest repeated status") {
+  throw new Error(`grant coverage did not produce the expected durable outcomes: ${outcomes}`);
 }
-if (sentToMain.length !== 1) throw new Error(`deduplicated grant delivered ${sentToMain.length} outcomes`);
+if (sentToMain.length !== 3) throw new Error(`covered grants delivered ${sentToMain.length} outcomes`);
 process.exit(0);
 EOF
   status=$?
   out=$(cat "$TMP_ROOT/node-output")
-  expect_code 0 "$status" "same-key queue rows must align grant coverage with drain presentation: $out"
-  pass "same-key wake rows fold into one reported grant and acknowledge together"
+  expect_code 0 "$status" "branch acknowledgement must wait for complete presented-row coverage: $out"
+  pass "branch acknowledgement waits for coverage and deduplicated rows settle together"
 }
 
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown() {
@@ -5417,7 +5476,7 @@ test_branch_report_refuses_a_task_the_wake_did_not_name
 test_branch_predrain_recheck_excludes_new_main_owned_row_without_deferring_eligible_work
 test_branch_predrain_needs_decision_keeps_routine_row_branch_eligible
 test_settled_branch_prompt_releases_unacknowledged_grant
-test_repeated_same_key_rows_share_one_presented_grant
+test_branch_ack_waits_for_complete_presented_coverage
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown
 test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model
 test_model_chain_rejects_malformed_lines_and_reprobes_unresolvable_entries

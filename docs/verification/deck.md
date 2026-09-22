@@ -29,6 +29,7 @@ Deck's own tests pin that contract (`cargo test --locked`, 85 tests at `7308f21`
 $ bash tests/fm-deck-harness.test.sh
 ok - fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model
 ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
+ok - fm-deck-worker: busy-state failures stop turns and publish status evidence
 ok - fm-deck-worker: turn-end publication refuses unsafe targets
 ok - fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported
 ok - fm-deck-worker: Deck stderr cannot break completion-blocked rendering
@@ -45,6 +46,7 @@ ok - fm-spawn: a secondmate on deck is refused
 fm-deck-harness: all cases passed
 ```
 
+The driver refuses to run Deck when it cannot record `turn-start`, and a failed closing busy-state write publishes failure evidence and makes the turn fail.
 The evidence gate snapshots the status log's byte offset at turn start and searches a bounded appended suffix for a complete `done`, `needs-decision`, `blocked`, `failed`, or `working` line.
 Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy the gate or the driver's postcondition.
 Those reads, the driver's fallback append, and turn-end publication use Python 3 descriptor-bound I/O, reject symlinks and non-regular or multiply linked files, and never touch an unsafe target.
