@@ -377,12 +377,12 @@ test_pi_identity_requires_readable_busy_state() (
 )
 
 test_pi_identity_prompt_shape_matrix() (
-  local dir fb capture out state kind expected state_expected cy
+  local dir fb capture out state kind expected state_expected cy i
   dir="$TMP_ROOT/pi-prompt-shapes"; mkdir -p "$dir"
   fb=$(make_fake_tmux "$dir")
   capture="$dir/styled.txt"
   fm_pane_busy_state() { printf 'idle'; }
-  for kind in tool-approval ask-user model-picker transcript-idle idle; do
+  for kind in tool-approval title-approval ask-user tall-selector model-picker transcript-idle idle; do
     case "$kind" in
       tool-approval)
         printf '────────────────────────\nTool approval\nRun this command?\n→ Allow once\n  Deny\n↑↓ navigate  enter select  esc cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
@@ -390,11 +390,31 @@ test_pi_identity_prompt_shape_matrix() (
         state_expected=pending
         cy=8
         ;;
+      title-approval)
+        printf 'Tool approval\nRun this command?\n→ Allow once\n  Deny\n↑↓ navigate  enter select  esc cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
+        expected=$'pi\tblocked'
+        state_expected=pending
+        cy=7
+        ;;
       ask-user)
         printf '────────────────────────\nWhich approach should we use?\n❯ 1. Keep current behavior\n  2. Change it\nEnter to select · ↑/↓ to\nnavigate · n to add notes ·\nEsc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
         expected=$'pi\tblocked'
         state_expected=pending
         cy=9
+        ;;
+      tall-selector)
+        {
+          printf '────────────────────────\nWhich approach should we use?\n❯ 1. Keep current behavior\n'
+          i=1
+          while [ "$i" -le 26 ]; do
+            printf '  wrapped option detail %s\n' "$i"
+            i=$((i + 1))
+          done
+          printf 'Enter to select · ↑/↓ to\nnavigate · n to add notes ·\nEsc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n'
+        } > "$capture"
+        expected=$'pi\tblocked'
+        state_expected=pending
+        cy=34
         ;;
       model-picker)
         printf '────────────────────────\nOnly showing models from configured providers. Use /login to add providers.\nsearch models\n→ openai/gpt-5\n  enter to select · ctrl+s to set as default · esc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
