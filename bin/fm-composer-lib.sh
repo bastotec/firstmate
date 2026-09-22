@@ -1558,6 +1558,10 @@ fm_composer_queued_enter_verdict() {  # <composer-state> <busy|idle|unknown>
 # complete reverse-video blank cell - before discarding the row as furniture.
 # This also handles a complete OSC reply on the row because the shared terminal
 # parser removes that protocol control before the exact-content check.
+# Accepted residual limitation: after a whitespace-only draft moves its cursor
+# to the first space, tmux omits the trailing spaces after the reset and the
+# captured row is byte-identical to idle furniture. This classifier deliberately
+# keeps that indistinguishable capture empty so ordinary idle Pi remains reachable.
 _fm_composer_pi_idle_prompt_row() {  # <raw-row> <classified-content> <styled>
   local raw=$1 content=$2 styled=$3 esc geometry
   [ "$styled" = 1 ] || return 1
@@ -1678,6 +1682,7 @@ _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   fi
   case "$agent_status" in
     idle|done) printf 'empty' ;;
+    blocked) printf 'pending' ;;
     *) printf 'unknown' ;;
   esac
 }

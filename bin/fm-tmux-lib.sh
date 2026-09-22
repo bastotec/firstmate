@@ -101,18 +101,17 @@ fm_tmux_composer_caps() {
 # Prints "pi<TAB>idle", "pi<TAB>working", or "pi<TAB>blocked"; exits 1 when the pane is not a
 # live pi.
 fm_tmux_pi_prompt_is_blocked() {  # <target>
-  local target=$1 pane start row band=''
+  local target=$1 pane footer dialog_bottom
   pane=$(tmux capture-pane -p -t "$target" -S 0 -E - 2>/dev/null) || return 1
   _fm_composer_scan_screen "$pane" ''
   [ "$FM_COMPOSER_SCAN_PI_PAIR_FOUND" = 1 ] || return 1
-  start=$((FM_COMPOSER_SCAN_PI_OPEN - 8))
-  [ "$start" -ge 0 ] || start=0
-  row=$start
-  while [ "$row" -lt "$FM_COMPOSER_SCAN_PI_OPEN" ]; do
-    band="${band}${band:+$'\n'}$(_fm_composer_screen_row "$row" "$pane")"
-    row=$((row + 1))
-  done
-  case "$band" in
+  [ "$FM_COMPOSER_SCAN_PI_OPEN" -ge 2 ] || return 1
+  dialog_bottom=$(_fm_composer_screen_row "$((FM_COMPOSER_SCAN_PI_OPEN - 1))" "$pane")
+  fm_composer_normalize_trim_var dialog_bottom
+  _fm_composer_pi_separator_row "$dialog_bottom" || return 1
+  footer=$(_fm_composer_screen_row "$((FM_COMPOSER_SCAN_PI_OPEN - 2))" "$pane")
+  fm_composer_normalize_trim_var footer
+  case "$footer" in
     *'↑↓ navigate'*'select'*'cancel'*|\
     *'Enter to select'*'↑/↓ to navigate'*'Esc to cancel'*|\
     *'to select'*'to set as default'*'to cancel'*) return 0 ;;
