@@ -691,6 +691,17 @@ stale_window_is_busy() {  # <window> <state>
   [ "${verdict%% *}" = busy ]
 }
 
+wedge_gate_verdict() {  # <state> <task> <window> <idle-age>
+  local state=$1 task=$2 win=$3 age=$4 verdict
+  [ -x "$FM_DAEMON_DIR/fm-wake-gate.sh" ] || { printf 'escalate\n'; return 0; }
+  if verdict=$(FM_STATE_DIR="$state" "$FM_DAEMON_DIR/fm-wake-gate.sh" stale-verdict "$task" "$win" \
+    "stale: $win (idle ${age}s, possible wedge)" --with-look 2>/dev/null </dev/null); then
+    printf '%s\n' "$verdict"
+  else
+    printf 'escalate\n'
+  fi
+}
+
 escalate_add() {  # <state> <distilled-item>
   local state=$1 item=$2 buf
   buf="$state/.subsuper-escalations"
@@ -1019,7 +1030,7 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #  3) heartbeat scan: every HEARTBEAT_SCAN_SECS, grep state/*.status for a
 #     captain-relevant line the per-wake classifier missed and escalate it.
 housekeeping() {  # <state>
-  local state=$1 now due f key task win marker age last max_defer oldest pause_secs marker_epoch until bounded_until pause_reason
+  local state=$1 now due f key task win marker age last max_defer oldest pause_secs marker_epoch until bounded_until pause_reason gate_result look_flags
   now=$(_now)
   migrate_watcher_pause_markers "$state"
 
@@ -1076,9 +1087,21 @@ housekeeping() {  # <state>
     case "$?" in
       0) rm -f "$marker" ;;
       2) rm -f "$marker" ;;
-      *) if escalate_add "$state" "stale persisted ${age}s (possible wedge): $win"; then
-           stale_marker_remove "$win" "$state"
-         fi ;;
+      *)
+        gate_result=$(wedge_gate_verdict "$state" "$task" "$win" "$age")
+        look_flags=
+        case "$gate_result" in
+          absorb:*) _now > "$marker"; continue ;;
+          escalate$'\t'*) look_flags=${gate_result#*$'\t'} ;;
+        esac
+        if escalate_add "$state" "stale persisted ${age}s (possible wedge): $win"; then
+          stale_marker_remove "$win" "$state"
+          if [ -n "$look_flags" ]; then
+            FM_STATE_DIR="$state" "$FM_DAEMON_DIR/fm-wake-gate.sh" commit-look "$task" "$look_flags" \
+              2>/dev/null </dev/null || log "wake-gate look commit failed after escalation append: $task"
+          fi
+        fi
+        ;;
     esac
   done
 
