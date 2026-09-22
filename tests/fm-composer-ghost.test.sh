@@ -391,10 +391,10 @@ test_pi_identity_prompt_shape_matrix() (
         cy=8
         ;;
       ask-user)
-        printf '────────────────────────\nWhich approach should we use?\n❯ 1. Keep current behavior\n  2. Change it\nEnter to select · ↑/↓ to navigate · n to add notes · Esc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
+        printf '────────────────────────\nWhich approach should we use?\n❯ 1. Keep current behavior\n  2. Change it\nEnter to select · ↑/↓ to\nnavigate · n to add notes ·\nEsc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
         expected=$'pi\tblocked'
         state_expected=pending
-        cy=7
+        cy=9
         ;;
       model-picker)
         printf '────────────────────────\nOnly showing models from configured providers. Use /login to add providers.\nsearch models\n→ openai/gpt-5\n  enter to select · ctrl+s to set as default · esc to cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
@@ -403,10 +403,10 @@ test_pi_identity_prompt_shape_matrix() (
         cy=7
         ;;
       transcript-idle)
-        printf 'ordinary assistant response\nThe keys are ↑↓ navigate, enter select, and esc cancel.\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
+        printf 'ordinary assistant response\n↑↓ navigate  enter select  esc cancel\n────────────────────────\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"
         expected=$'pi\tidle'
         state_expected=empty
-        cy=3
+        cy=4
         ;;
       idle)
         printf 'completed turn\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter\n' > "$capture"

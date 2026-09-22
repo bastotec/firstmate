@@ -1,5 +1,8 @@
 // The one Firstmate-owned Pi input filter for terminal palette responses that
 // Pi's 50 ms sequence buffer can split into ordinary editor text.
+// A palette-grammar keystroke arriving during the 500 ms candidate window is
+// intentionally absorbed with that candidate; firstmate-launched workers have
+// no concurrent human typing, and preserving split terminal replies wins.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const ESC = "\x1b";
@@ -28,8 +31,24 @@ export class PiTerminalResponseInputFilter {
   }
 
   handleInput(data: string): void {
-    if (OSC_PALETTE_RESPONSE.test(data)) return;
+    if (OSC_PALETTE_RESPONSE.test(data)) {
+      this.clearTimer();
+      this.pending = "";
+      return;
+    }
     if (this.pending) {
+      const candidate = this.pending + data;
+      if (OSC_PALETTE_RESPONSE.test(candidate)) {
+        this.clearTimer();
+        this.pending = "";
+        return;
+      }
+      if (this.isPaletteResponsePrefix(candidate)) {
+        this.pending = candidate;
+        return;
+      }
+      this.clearTimer();
+      this.pending = "";
       this.forward(data);
       return;
     }
@@ -48,8 +67,8 @@ export class PiTerminalResponseInputFilter {
   }
 
   private isPaletteResponsePrefix(data: string): boolean {
-    if (!data.startsWith(`${ESC}]4`)) return false;
-    if (OSC_PALETTE_PREFIX.startsWith(data)) return true;
+    if (data.length >= 2 && OSC_PALETTE_PREFIX.startsWith(data)) return true;
+    if (!data.startsWith(OSC_PALETTE_PREFIX)) return false;
     let body = data.slice(OSC_PALETTE_PREFIX.length);
     if (body.endsWith(ESC)) body = body.slice(0, -1);
     return /^[0-9a-fgr;:/#]*$/i.test(body);
