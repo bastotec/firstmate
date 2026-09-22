@@ -77,10 +77,36 @@ STATE=${FM_STATE_DIR:-${FM_STATE_OVERRIDE:-$HOME_ROOT/state}}
 # the real home's opt-in.
 CONFIG=${FM_CONFIG_OVERRIDE:-$STATE/../config}
 
+wake_gate_dir_prepare() {
+  local dir="$STATE/wake-gate"
+  [ -d "$STATE" ] && [ ! -L "$STATE" ] || return 1
+  if [ -e "$dir" ] || [ -L "$dir" ]; then
+    [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  else
+    (umask 077; mkdir "$dir") 2>/dev/null || return 1
+  fi
+}
+
+wake_gate_regular_or_absent() {  # <path>
+  if [ -e "$1" ] || [ -L "$1" ]; then
+    [ -f "$1" ] && [ ! -L "$1" ]
+  fi
+}
+
+wake_gate_log_append() {  # <name> <record>
+  local target
+  case "$1" in shadow.log|usage.log) ;; *) return 1 ;; esac
+  wake_gate_dir_prepare || return 1
+  target="$STATE/wake-gate/$1"
+  wake_gate_regular_or_absent "$target" || return 1
+  (umask 077; printf '%s\n' "$2" >> "$target") 2>/dev/null || return 1
+  [ -f "$target" ] && [ ! -L "$target" ]
+}
+
 log_usage() {  # <calls> <in> <out> <ms> <outcome>
-  mkdir -p "$STATE/wake-gate" 2>/dev/null || return 0
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$1" "$2" "$3" "$4" "$5" \
-    >> "$STATE/wake-gate/usage.log" 2>/dev/null || true
+  local record
+  record=$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$(date +%s)" "$1" "$2" "$3" "$4" "$5")
+  wake_gate_log_append usage.log "$record" || true
 }
 
 # bounded <secs> <cmd...>: run a command under a wall-clock bound, best effort.
@@ -116,9 +142,9 @@ gate_mode() {
 }
 
 log_shadow() {  # <task> <mode> <decision> <why> <working> <waiting> <failure> <finished>
-  mkdir -p "$STATE/wake-gate" 2>/dev/null || return 1
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$@" \
-    >> "$STATE/wake-gate/shadow.log" 2>/dev/null
+  local record
+  record=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$(date +%s)" "$@")
+  wake_gate_log_append shadow.log "$record"
 }
 
 # gather_evidence <task>: print a JSON array of {command, output}; empty on failure.
@@ -192,8 +218,9 @@ EOF_ANSWERS
 
   look_file="$STATE/wake-gate/$task.look"
   now=$(date +%s)
-  if [ -f "$look_file" ]; then
-    if IFS= read -r look_record < "$look_file"; then
+  if [ -e "$look_file" ] || [ -L "$look_file" ]; then
+    if [ -f "$look_file" ] && [ ! -L "$look_file" ] \
+      && IFS= read -r look_record < "$look_file"; then
       case "$look_record" in
         *$'\t'*)
           last_epoch=${look_record%%$'\t'*}
@@ -260,11 +287,15 @@ cmd_commit_look() {
     *) return 1 ;;
   esac
   now=$(date +%s) || return 1
-  mkdir -p "$STATE/wake-gate" 2>/dev/null || return 1
-  tmp=$(mktemp "$STATE/wake-gate/.look.XXXXXX") || return 1
+  wake_gate_dir_prepare || return 1
   look_file="$STATE/wake-gate/$task.look"
+  wake_gate_regular_or_absent "$look_file" || return 1
+  tmp=$(mktemp "$STATE/wake-gate/.look.XXXXXX") || return 1
   if ! (umask 077; printf '%s\t%s\n' "$now" "$flags" > "$tmp") \
-    || ! mv -f -- "$tmp" "$look_file"; then
+    || ! wake_gate_dir_prepare \
+    || ! wake_gate_regular_or_absent "$look_file" \
+    || ! mv -f -- "$tmp" "$look_file" \
+    || [ ! -f "$look_file" ] || [ -L "$look_file" ]; then
     rm -f -- "$tmp"
     return 1
   fi

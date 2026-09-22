@@ -598,8 +598,8 @@ export default function (pi: ExtensionAPI) {
   let consecutiveProviderErrors = 0;
   let providerRecovery: ProviderRecovery | null = null;
   // Fallback-chain state, in memory only: a restart simply tries the preferred
-  // model again. activeChainModel names the chain entry the live branch was
-  // built on, and is empty for a single pin or a branch that follows main.
+  // model again. activeChainModel names the configured model the live branch was
+  // built on for cooldown accounting, and is empty when the branch follows main.
   const chainCooldowns = new Map<string, BranchModelCooldown>();
   let activeChainModel = "";
   let pendingChainFallbackFrom = "";
@@ -942,7 +942,7 @@ export default function (pi: ExtensionAPI) {
     const chain = readModelChain();
     if (chain.length > 1) return chainBranchModelSelection(chain);
     const pin = chain[0];
-    if (pin) return { pinned: await preparePinnedBranchModel(pin), chainModel: "" };
+    if (pin) return { pinned: await preparePinnedBranchModel(pin), chainModel: branchModelLabel(pin) };
     if (!mainModel) return { chainModel: "" };
     const following = await followMainModel(mainModel);
     if (following.ok) return { pinned: following.selection, chainModel: "" };

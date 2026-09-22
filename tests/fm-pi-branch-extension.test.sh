@@ -2254,7 +2254,32 @@ if (builtOn().at(-1) !== "openai/cheap-1" || !handled("handled on openai/cheap-1
   throw new Error(`supervision did not return to the preferred model after its cooldown: ${builtOn()}`);
 }
 
-// 6. Every model failing in turn walks the whole chain. As soon as the last
+// 6. A successful one-line pin clears retained cooldown for that model. Pinning
+// the failed preferred model alone permits an explicit retry; restoring the
+// chain inside its former cooldown must keep that recovered model preferred.
+failing.add("openai/cheap-1");
+await wake("preferred model fails before an explicit pin retry", true);
+await wake("second model serves while the preferred model cools", false);
+if (builtOn().at(-1) !== "zai/cheap-2") throw new Error(`the chain did not move off the failed preferred model: ${builtOn()}`);
+failing.delete("openai/cheap-1");
+writeFileSync(`${home}/config/supervision-branch-model`, "openai/cheap-1\n");
+await fire("session_shutdown", {});
+await fire("session_start", {}, makeCtx({
+  sessionManager: { getSessionFile: () => `${home}/main.jsonl`, getEntries: () => mainEntries },
+}));
+await wake("single pin retries the recovered preferred model", false);
+if (builtOn().at(-1) !== "openai/cheap-1") throw new Error(`the explicit single pin did not retry its model: ${builtOn()}`);
+writeFileSync(`${home}/config/supervision-branch-model`, "openai/cheap-1\nzai/cheap-2\nqwen/cheap-3\n");
+await fire("session_shutdown", {});
+await fire("session_start", {}, makeCtx({
+  sessionManager: { getSessionFile: () => `${home}/main.jsonl`, getEntries: () => mainEntries },
+}));
+await wake("restored chain honors the successful pin retry", false);
+if (builtOn().at(-1) !== "openai/cheap-1") {
+  throw new Error(`a successful single-pin retry left its old chain cooldown active: ${builtOn()}`);
+}
+
+// 7. Every model failing in turn walks the whole chain. As soon as the last
 // ready model fails, the live failed branch is released and ordinary wakes are
 // declined until the earliest chain cooldown permits one probe.
 failing.add("openai/cheap-1"); failing.add("zai/cheap-2"); failing.add("qwen/cheap-3");

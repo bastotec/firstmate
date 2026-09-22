@@ -1906,6 +1906,8 @@ SH
 
   # Working evidence, recently looked at: the alarm is absorbed, nothing is queued.
   before=$(( $(date +%s) - 500 )); echo "$before" > "$state/.stale-since-$key"
+  : > "$state/.writing-since-$key"
+  : > "$state/.writing-resurfaced-$key"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE=enforce \
@@ -1916,6 +1918,8 @@ SH
   fi
   [ ! -s "$state/.wake-queue" ] || fail "an absorbed wedge alarm enqueued a wake"
   [ "$(cat "$state/.stale-since-$key")" -gt "$before" ] || fail "an absorbed wedge alarm did not restart the idle window"
+  [ ! -e "$state/.writing-since-$key" ] && [ ! -e "$state/.writing-resurfaced-$key" ] \
+    || fail "an absorbed wedge alarm kept the previous write-deferral chain"
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional watcher stop"
 

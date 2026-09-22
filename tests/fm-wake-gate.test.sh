@@ -174,6 +174,38 @@ mkdir "$s/wake-gate/shadow.log"
   || fail "SAFETY: an unrecordable skip decision must escalate"
 pass "enforce mode fails open when its decision log cannot be written"
 
+s=$(new_state sv-log-symlinks)
+mkdir -p "$s/wake-gate"
+printf 'protected\n' > "$s/protected"
+printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+ln -s ../protected "$s/wake-gate/shadow.log"
+ln -s ../protected "$s/wake-gate/usage.log"
+[ "$(raw_verdict "$s" enforce "$WORKING")" = escalate ] \
+  || fail "SAFETY: symlinked wake-gate logs allowed an absorb decision"
+[ "$(cat "$s/protected")" = protected ] || fail "SAFETY: a wake-gate log append followed its symlink target"
+pass "wake-gate log appends refuse symlinked targets"
+
+s=$(new_state sv-log-parent-symlink)
+mkdir -p "$s/redirected"
+printf '%s\t\n' "$(date +%s)" > "$s/redirected/t1.look"
+ln -s redirected "$s/wake-gate"
+[ "$(raw_verdict "$s" enforce "$WORKING")" = escalate ] \
+  || fail "SAFETY: a symlinked wake-gate parent allowed an absorb decision"
+[ ! -e "$s/redirected/shadow.log" ] && [ ! -e "$s/redirected/usage.log" ] \
+  || fail "SAFETY: wake-gate logs were written through a symlinked parent"
+pass "wake-gate log appends refuse an unsafe parent"
+
+s=$(new_state sv-look-symlink)
+mkdir -p "$s/wake-gate"
+printf 'protected\n' > "$s/protected"
+ln -s ../protected "$s/wake-gate/t1.look"
+if FM_STATE_DIR="$s" "$GATE" commit-look t1 none 2>/dev/null; then
+  fail "SAFETY: commit-look accepted a symlinked destination"
+fi
+[ "$(cat "$s/protected")" = protected ] || fail "SAFETY: commit-look followed its symlink target"
+[ -L "$s/wake-gate/t1.look" ] || fail "a refused commit-look replaced the unsafe destination"
+pass "wake-gate look commits refuse symlinked targets"
+
 s=$(new_state sv-waiting)
 verdict "$s" enforce "$WORKING" >/dev/null
 [ "$(verdict "$s" enforce '0.10 0.86 0.05 0.04')" = escalate ] || fail "SAFETY: a worker waiting on someone must reach the model"

@@ -961,6 +961,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         gate_result=$(wedge_gate_verdict "$task" "$win" "$age")
         case "$gate_result" in
           absorb:*)
+            clear_write_tracking "$(window_key "$win")"
             date +%s > "$since_file"
             triage_log "absorbed $label (wake gate read the evidence, idle ${age}s): $win"
             return 0
