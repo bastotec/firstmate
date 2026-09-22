@@ -10,7 +10,7 @@ Deck is not live-verified and must not be dispatched for real work.
 
 | Fact | Value |
 |---|---|
-| Binary | Absolute `deck` from `PATH`, refused if absent; built from `bastotec/deck` with `cargo build --release --locked`. The spawn also refuses when `jq` is missing, because the driver renders Deck's events with it. |
+| Binary | Absolute `deck` from `PATH`, refused if absent; built from `bastotec/deck` with `cargo build --release --locked`. The spawn also refuses when `jq` or Python 3 is missing, because the driver renders Deck's events with `jq` and performs descriptor-bound status I/O with Python. |
 | Launch | `bash -c 'exec -a fm-deck-worker bash "$@"' fm-deck-worker bin/fm-deck-worker.sh --id <task> --state <state> --gen <busy-gen> --turnend <file> --deck <binary> [--model <route>] -- <brief>`. The brief is the first turn. |
 | Turns | Every line typed at the driver's `❯` prompt is the next turn of the SAME Deck session (`--session`), so a steer or the steering-inbox doorbell keeps the conversation's context. |
 | Endpoint | Deck's own settings (`PROXAI_BASE_URL`, `PROXAI_MODEL`, `PROXAI_API_KEY_FILE`); with no key variable set the driver uses `~/.config/proxai/client.key`. The default base URL is the local proxai gateway. |
@@ -19,9 +19,9 @@ Deck is not live-verified and must not be dispatched for real work.
 | Per-turn bounds | `--max-turns` 200 and `--deadline-secs` 3600 by default (`FM_DECK_MAX_TURNS`, `FM_DECK_DEADLINE_SECS`); Deck's own defaults are sized for one question. |
 | Busy state | Semantic source `deck-wrapper`: the driver writes busy at turn start and idle at turn end, failure, interrupt, and `/quit` through `bin/fm-busy-event.sh`; the spawn arms the task's busy gen and passes it in. |
 | Progress | Deck's `post_tool_use` hook refreshes the task's progress marker on every tool call. |
-| Turn end | Before touching the task's turn-end notification, the driver ensures the status log grew and appends `failed: deck turn ended without a status line (<event>)` when it did not. |
+| Turn end | Before touching the task's turn-end notification, the driver ensures the status log grew and safely appends `failed: deck turn ended without a status line (<event>)` when it did not; status size checks and fallback appends reject symlinks, non-regular files, and hard links. |
 | Evidence gate | Deck's `pre_complete` hook refuses a turn that did not grow the task's status log and feeds the reason back to the model; the driver's postcondition also covers provider failure, exhausted refusal, and interrupt paths that end outside that hook. |
-| Rendered tail | The driver prints `⛵ deck working - ctrl+c to stop` when a submitted line starts a turn (the delivery acknowledgement token), the turn's text and tool calls, then `── turn finished` or `✗ turn failed`, and the `❯` prompt. |
+| Rendered tail | The driver prints `⛵ deck working - ctrl+c to stop` when a submitted line starts a turn (the delivery acknowledgement token), the turn's text and tool calls, then replaces that transient acknowledgement with the final rendering and the `❯` prompt so the next steer starts from an idle pane. |
 | Interrupt | `Ctrl+C`: the whole pane group gets SIGINT, Deck stops, the driver prints `Interrupted.`, records idle, and returns to its prompt. No clear key. |
 | Exit | `/quit`, one Enter; the driver records session-end and exits, leaving the pane's shell. |
 | Skill | No slash-skill form; use natural language. Deck reads the worktree's `AGENTS.md` chain and `.agents/skills` itself. |

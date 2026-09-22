@@ -39,6 +39,7 @@ set -u
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 BUSY_EVENT="$SCRIPT_DIR/fm-busy-event.sh"
+STATE_IO="$SCRIPT_DIR/fm-state-io.py"
 
 ID='' STATE='' GEN='' TURNEND='' DECK='' MODEL=''
 while [ $# -gt 0 ]; do
@@ -59,6 +60,8 @@ if [ -z "$ID" ] || [ -z "$STATE" ] || [ -z "$DECK" ] || [ -z "$PROMPT" ]; then
   exit 2
 fi
 command -v jq >/dev/null 2>&1 || { echo "fm-deck-worker: jq is required to render Deck's event stream" >&2; exit 2; }
+command -v python3 >/dev/null 2>&1 || { echo "fm-deck-worker: python3 is required for safe status I/O" >&2; exit 2; }
+[ -f "$STATE_IO" ] && [ ! -L "$STATE_IO" ] || { echo "fm-deck-worker: safe status I/O helper is unavailable" >&2; exit 2; }
 
 STATUS_FILE="$STATE/$ID.status"
 MAX_TURNS=${FM_DECK_MAX_TURNS:-200}
@@ -72,7 +75,14 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/fm-deck-worker.XXXXXX") || exit 2
 TURN_MARK="$WORK/turn-start"
 EVENTS="$WORK/events.ndjson"
-cleanup() { rm -rf -- "$WORK"; }
+TTY_SETTINGS=''
+[ ! -t 0 ] || TTY_SETTINGS=$(stty -g 2>/dev/null || true)
+tty_busy() { [ -z "$TTY_SETTINGS" ] || stty icanon 2>/dev/null || true; }
+tty_ready() { [ -z "$TTY_SETTINGS" ] || stty -icanon min 1 time 0 2>/dev/null || true; }
+cleanup() {
+  [ -z "$TTY_SETTINGS" ] || stty "$TTY_SETTINGS" 2>/dev/null || true
+  rm -rf -- "$WORK"
+}
 trap cleanup EXIT
 # Ctrl+C reaches the whole foreground group: Deck and the renderer stop, this
 # driver survives, records the cancelled turn, and returns to the prompt.
@@ -85,7 +95,11 @@ busy_event() {  # <busy|idle> <event>
 }
 
 status_size() {
-  { { wc -c < "$STATUS_FILE"; } 2>/dev/null || printf '0\n'; } | tr -d '[:space:]'
+  python3 "$STATE_IO" root-size "$STATE" "$ID.status"
+}
+
+status_append() {
+  python3 "$STATE_IO" root-append "$STATE" "$ID.status"
 }
 
 q() { printf '%q' "$1"; }
@@ -95,7 +109,7 @@ q() { printf '%q' "$1"; }
 # an mtime: bash 3.2's -nt compares whole seconds, so a fast turn would be
 # refused). Deck feeds this stderr back to the model and fails the run after
 # its own bounded number of refusals.
-EVIDENCE_HOOK="[ \"\$(wc -c < $(q "$STATUS_FILE") 2>/dev/null || echo 0)\" -gt \"\$(cat $(q "$TURN_MARK") 2>/dev/null || echo 0)\" ] || { echo $(q "Before you finish, append one line to $STATUS_FILE as your instructions' status protocol describes (done:, needs-decision:, blocked:, failed:, or working:), stating what you did and the evidence. Then finish.") >&2; exit 2; }"
+EVIDENCE_HOOK="current=\$(python3 $(q "$STATE_IO") root-size $(q "$STATE") $(q "$ID.status") 2>/dev/null) && [ -n \"\$current\" ] && [ \"\$current\" -gt \"\$(cat $(q "$TURN_MARK") 2>/dev/null || echo 0)\" ] || { echo $(q "Before you finish, append one line to $STATUS_FILE as your instructions' status protocol describes (done:, needs-decision:, blocked:, failed:, or working:), stating what you did and the evidence. Then finish.") >&2; exit 2; }"
 PROGRESS_HOOK=''
 [ -z "$GEN" ] || PROGRESS_HOOK="$(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID") --gen $(q "$GEN") >/dev/null 2>&1 || true"
 
@@ -118,12 +132,26 @@ run_turn() {  # <prompt>
   [ -z "$MODEL" ] || args+=(--model "$MODEL")
   [ -z "$SESSION" ] || args+=(--session "$SESSION")
   INTERRUPTED=0
-  status_size > "$TURN_MARK"
+  tty_busy
+  if ! status_size > "$TURN_MARK"; then
+    printf 'fm-deck-worker: status path is not a safe regular file: %s\n' "$STATUS_FILE" >&2
+    return 1
+  fi
   busy_event busy turn-start
-  # The delivery acknowledgement token (bin/fm-composer-lib.sh) for a submitted line.
-  printf '\n⛵ deck working - ctrl+c to stop\n'
+  # The delivery acknowledgement token (bin/fm-composer-lib.sh) is transient:
+  # save its screen position so a completed turn can replace it with the final
+  # event rendering. A later steer therefore starts from a genuinely idle pane.
+  if [ -t 1 ]; then
+    printf '\n\033[s⛵ deck working - ctrl+c to stop\n'
+  else
+    printf '\n⛵ deck working - ctrl+c to stop\n'
+  fi
   "$DECK" "${args[@]}" 2>&1 </dev/null | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
   rc=${PIPESTATUS[0]}
+  if [ -t 1 ]; then
+    printf '\033[u\033[J'
+    jq -rj "$RENDER" "$EVENTS" 2>/dev/null
+  fi
   if [ -z "$SESSION" ]; then
     SESSION=$(jq -r 'select(.type == "run_started") | .session' "$EVENTS" 2>/dev/null | head -1)
   fi
@@ -136,19 +164,27 @@ run_turn() {  # <prompt>
     event=turn-failed
   fi
   status_before=$(cat "$TURN_MARK" 2>/dev/null || printf '0\n')
-  status_after=$(status_size)
+  if ! status_after=$(status_size); then
+    printf 'fm-deck-worker: status path became unsafe during the turn: %s\n' "$STATUS_FILE" >&2
+    busy_event idle turn-failed
+    [ -z "$TURNEND" ] || touch "$TURNEND" 2>/dev/null || true
+    return 1
+  fi
   if [ "$status_after" -le "$status_before" ]; then
-    printf 'failed: deck turn ended without a status line (%s)\n' "$event" >> "$STATUS_FILE" || {
-      printf 'fm-deck-worker: could not append required turn evidence to %s\n' "$STATUS_FILE" >&2
-      exit 1
-    }
+    if ! printf 'failed: deck turn ended without a status line (%s)\n' "$event" | status_append; then
+      printf 'fm-deck-worker: could not safely append required turn evidence to %s\n' "$STATUS_FILE" >&2
+      busy_event idle turn-failed
+      [ -z "$TURNEND" ] || touch "$TURNEND" 2>/dev/null || true
+      return 1
+    fi
   fi
   busy_event idle "$event"
   [ -z "$TURNEND" ] || touch "$TURNEND" 2>/dev/null || true
 }
 
-run_turn "$PROMPT"
+run_turn "$PROMPT" || exit 1
 while :; do
+  tty_ready
   printf '\n❯ '
   INTERRUPTED=0
   if ! IFS= read -r line; then
@@ -163,5 +199,5 @@ while :; do
       exit 0
       ;;
   esac
-  run_turn "$line"
+  run_turn "$line" || exit 1
 done

@@ -79,8 +79,8 @@ CONFIG=${FM_CONFIG_OVERRIDE:-$STATE/../config}
 
 wake_gate_io() {  # <append|read|replace> <name>
   command -v python3 >/dev/null 2>&1 || return 1
-  [ -f "$SCRIPT_DIR/wake-gate/state-io.py" ] && [ ! -L "$SCRIPT_DIR/wake-gate/state-io.py" ] || return 1
-  python3 "$SCRIPT_DIR/wake-gate/state-io.py" "$1" "$STATE" "$2"
+  [ -f "$SCRIPT_DIR/fm-state-io.py" ] && [ ! -L "$SCRIPT_DIR/fm-state-io.py" ] || return 1
+  python3 "$SCRIPT_DIR/fm-state-io.py" "$1" "$STATE" "$2"
 }
 
 wake_gate_log_append() {  # <name> <record>

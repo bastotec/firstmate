@@ -163,7 +163,7 @@ pass "future and malformed look records fail open"
 s=$(new_state sv-oversized-look)
 mkdir -p "$s/wake-gate"
 awk 'BEGIN { for (i = 0; i < 1024; i++) printf "1" }' > "$s/wake-gate/t1.look"
-if python3 "$ROOT/bin/wake-gate/state-io.py" read "$s" t1.look > "$s/read-output" 2>/dev/null; then
+if python3 "$ROOT/bin/fm-state-io.py" read "$s" t1.look > "$s/read-output" 2>/dev/null; then
   fail "SAFETY: the state helper accepted an oversized look record"
 fi
 [ ! -s "$s/read-output" ] || fail "the state helper emitted bytes from an oversized look record"
@@ -317,9 +317,9 @@ verdict "$s" enforce "$WORKING" >/dev/null
   || fail "SAFETY: missing evidence must escalate"
 
 partial="$TMP_ROOT/partial-evidence"
-mkdir -p "$partial/bin/wake-gate" "$partial/state/wake-gate"
+mkdir -p "$partial/bin" "$partial/state/wake-gate"
 cp "$GATE" "$partial/bin/fm-wake-gate.sh"
-cp "$ROOT/bin/wake-gate/state-io.py" "$partial/bin/wake-gate/state-io.py"
+cp "$ROOT/bin/fm-state-io.py" "$partial/bin/fm-state-io.py"
 cat > "$partial/bin/fm-crew-state.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'state: stale cached state\n'

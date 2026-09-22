@@ -780,8 +780,16 @@ remote_recovery_paths_validate() {
 }
 
 retire_wake_gate_task_state() {
-  local state_dir=$1 task_id=$2
-  rm -f -- "$state_dir/wake-gate/$task_id.look"
+  local state_dir=$1 task_id=$2 helper="$SCRIPT_DIR/fm-state-io.py"
+  command -v python3 >/dev/null 2>&1 || {
+    echo "REFUSED: python3 is required to retire wake-gate state safely." >&2
+    return 1
+  }
+  [ -f "$helper" ] && [ ! -L "$helper" ] || {
+    echo "REFUSED: safe wake-gate state I/O helper is unavailable." >&2
+    return 1
+  }
+  python3 "$helper" remove "$state_dir" "$task_id.look"
 }
 
 remote_pending_replies_cleanup() {

@@ -1949,6 +1949,10 @@ case "$HARNESS" in
       echo "error: jq is required to run a deck worker (bin/fm-deck-worker.sh renders Deck's event stream with it)" >&2
       exit 1
     }
+    command -v python3 >/dev/null 2>&1 || {
+      echo "error: python3 is required to run a deck worker (bin/fm-deck-worker.sh uses descriptor-bound status I/O)" >&2
+      exit 1
+    }
     ;;
 esac
 

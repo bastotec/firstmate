@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Descriptor-bound I/O for wake-gate records and root-level status files."""
+
 import errno
 import os
 import re
@@ -36,14 +38,20 @@ def open_safe_directory(path: str, parent_fd=None) -> int:
     return fd
 
 
-def open_state_dir(path: str) -> int:
+def open_state_dir(path: str, create: bool = True):
     root_fd = open_safe_directory(path)
     try:
+        if create:
+            try:
+                os.mkdir("wake-gate", 0o700, dir_fd=root_fd)
+            except FileExistsError:
+                pass
         try:
-            os.mkdir("wake-gate", 0o700, dir_fd=root_fd)
-        except FileExistsError:
-            pass
-        return open_safe_directory("wake-gate", root_fd)
+            return open_safe_directory("wake-gate", root_fd)
+        except FileNotFoundError:
+            if create:
+                raise
+            return None
     finally:
         os.close(root_fd)
 
@@ -103,6 +111,27 @@ def read_record(dir_fd: int, name: str) -> bytes:
         os.close(fd)
 
 
+def record_size(dir_fd: int, name: str) -> int:
+    flags = os.O_RDONLY | os.O_NONBLOCK | require_nofollow()
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return 0
+    try:
+        require_regular_single_link(fd)
+        return os.fstat(fd).st_size
+    finally:
+        os.close(fd)
+
+
+def remove_record(dir_fd: int, name: str) -> None:
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        pass
+
+
 def existing_target_is_safe(dir_fd: int, name: str) -> None:
     try:
         info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
@@ -147,20 +176,30 @@ def replace_record(dir_fd: int, name: str, payload: bytes) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 4 or sys.argv[1] not in ("append", "read", "replace"):
+    operations = ("append", "read", "replace", "remove", "root-append", "root-size")
+    if len(sys.argv) != 4 or sys.argv[1] not in operations:
         return 2
     operation, directory, name = sys.argv[1:]
     validate_name(name)
-    dir_fd = open_state_dir(directory)
+    if operation.startswith("root-"):
+        dir_fd = open_safe_directory(directory)
+    else:
+        dir_fd = open_state_dir(directory, create=operation != "remove")
+        if dir_fd is None:
+            return 0
     try:
         if operation == "read":
             sys.stdout.buffer.write(read_record(dir_fd, name))
-            return 0
-        payload = sys.stdin.buffer.read()
-        if operation == "append":
-            append_record(dir_fd, name, payload)
+        elif operation == "root-size":
+            print(record_size(dir_fd, name))
+        elif operation == "remove":
+            remove_record(dir_fd, name)
         else:
-            replace_record(dir_fd, name, payload)
+            payload = sys.stdin.buffer.read()
+            if operation in ("append", "root-append"):
+                append_record(dir_fd, name, payload)
+            else:
+                replace_record(dir_fd, name, payload)
         return 0
     finally:
         os.close(dir_fd)
@@ -170,5 +209,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (OSError, UnsafeStatePath) as error:
-        print(f"fm-wake-gate state I/O refused: {error}", file=sys.stderr)
+        print(f"fm-state-io refused: {error}", file=sys.stderr)
         raise SystemExit(1)

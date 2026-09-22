@@ -64,9 +64,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$session" ] || session="s-fake-$$"
+case "$prompt" in *slow*) sleep 0.8 ;; esac
 printf '{"type":"run_started","session":"%s","model":"m"}\n' "$session"
 printf '{"type":"text_delta","text":"echo: %s"}\n' "$prompt"
 case "$prompt" in
+  *replace-status*)
+    rm -f -- "$FM_TEST_STATUS"
+    ln -s "$FM_TEST_EXTERNAL" "$FM_TEST_STATUS"
+    ;;
   *write-status*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
   *sleep*) sleep 30 ;;
 esac
@@ -87,7 +92,7 @@ run_worker() {
   mkdir -p "$dir/state"
   gen=$("$BUSY_EVENT" arm "$dir/state" t1)
   printf '%s' "$gen" > "$dir/gen"
-  printf '%s' "$input" | FM_TEST_STATUS="$dir/state/t1.status" \
+  printf '%s' "$input" | FM_TEST_STATUS="$dir/state/t1.status" FM_TEST_EXTERNAL="${FM_TEST_EXTERNAL:-}" \
     "$WORKER" --id t1 --state "$dir/state" --gen "$gen" --turnend "$dir/state/t1.turn-ended" \
       --deck "$dir/deck" --model codex/gpt-5.6-luna -- "$prompt" > "$dir/pane.out" 2>&1
 }
@@ -137,6 +142,38 @@ test_evidence_gate_refuses_a_turn_without_a_status_line() {
   pass "fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported"
 }
 
+test_status_checks_and_fallbacks_refuse_unsafe_paths() {
+  local linked="$TMP_ROOT/status-symlink" replaced="$TMP_ROOT/status-replaced" irregular="$TMP_ROOT/status-directory" rc
+  make_fake_deck "$linked"
+  mkdir -p "$linked/state"
+  printf 'protected\n' > "$linked/external"
+  ln -s "$linked/external" "$linked/state/t1.status"
+  rc=0
+  run_worker "$linked" $'/quit\n' > /dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a symlinked Deck status path was accepted"
+  if printf 'failed: fallback must not land\n' | python3 "$ROOT/bin/fm-state-io.py" \
+    root-append "$linked/state" t1.status >/dev/null 2>&1; then
+    fail "the Deck fallback append accepted a symlinked status path"
+  fi
+  [ "$(cat "$linked/external")" = protected ] || fail "a status check or fallback append touched a symlink target"
+  [ ! -e "$linked/argv.log" ] || fail "Deck ran after the initial status path failed validation"
+
+  make_fake_deck "$replaced"
+  mkdir -p "$replaced/state"
+  printf 'protected\n' > "$replaced/external"
+  rc=0
+  FM_TEST_EXTERNAL="$replaced/external" run_worker "$replaced" $'/quit\n' replace-status || rc=$?
+  [ "$rc" -ne 0 ] || fail "a status path replaced by a symlink during the turn was accepted"
+  [ "$(cat "$replaced/external")" = protected ] || fail "the evidence fallback followed a replacement symlink"
+
+  make_fake_deck "$irregular"
+  mkdir -p "$irregular/state/t1.status"
+  rc=0
+  run_worker "$irregular" $'/quit\n' > /dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a non-regular Deck status path was accepted"
+  pass "fm-deck-worker: status evidence never follows symlinked or non-regular paths"
+}
+
 test_driver_backstops_silent_and_failed_turns() {
   local silent="$TMP_ROOT/postcondition-silent" failed="$TMP_ROOT/postcondition-failed"
   make_fake_deck "$silent"
@@ -180,6 +217,45 @@ test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
   assert_grep 'Interrupted.' "$dir/pane.out" "the pane did not show the cancelled turn"
   kill -TERM -- -"$pid" 2>/dev/null; wait "$pid" 2>/dev/null
   pass "fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt"
+}
+
+test_completed_turn_removes_busy_ack_before_the_next_steer() {
+  local dir="$TMP_ROOT/second-steer" session="fm-deck-second-$$" target command capture rc
+  command -v tmux >/dev/null 2>&1 || { pass "fm-deck-worker: second-steer terminal regression skipped without tmux"; return; }
+  make_fake_deck "$dir"
+  mkdir -p "$dir/state"
+  printf -v command 'exec env FM_TEST_STATUS=%q %q --id t1 --state %q --deck %q -- %q' \
+    "$dir/state/t1.status" "$WORKER" "$dir/state" "$dir/deck" 'write-status initial'
+  tmux new-session -d -s "$session" -n deck -x 100 -y 30 "$command" || fail "could not start the Deck terminal fixture"
+  target="$session:deck"
+  for _ in $(seq 80); do
+    capture=$(tmux capture-pane -p -t "$target" -S -30 2>/dev/null || true)
+    case "$capture" in *'❯'*) break ;; esac
+    sleep 0.05
+  done
+  case "$capture" in *'❯'*) ;; *) tmux kill-session -t "$session" 2>/dev/null; fail "the Deck fixture never reached its first idle prompt" ;; esac
+  assert_not_contains "$capture" 'deck working - ctrl+c to stop' "a completed Deck turn left a stale busy acknowledgement"
+
+  rc=0
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_SEND_SETTLE=0 FM_SEND_SLEEP=0.05 \
+    "$ROOT/bin/fm-send.sh" "$target" 'write-status slow first steer' >/dev/null 2>"$dir/first.err" || rc=$?
+  expect_code 0 "$rc" "the first Deck steer was not confirmed: $(cat "$dir/first.err")"
+  for _ in $(seq 80); do
+    capture=$(tmux capture-pane -p -t "$target" -S -30 2>/dev/null || true)
+    [ "$(grep -c '^done: wrote evidence$' "$dir/state/t1.status" 2>/dev/null || true)" -ge 2 ] && case "$capture" in *'❯'*) break ;; esac
+    sleep 0.05
+  done
+  assert_not_contains "$capture" 'deck working - ctrl+c to stop' "the first steer left its busy acknowledgement in the idle pane"
+
+  rc=0
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_SEND_SETTLE=0 FM_SEND_SLEEP=0.05 \
+    "$ROOT/bin/fm-send.sh" "$target" 'write-status slow second steer' >/dev/null 2>"$dir/second.err" || rc=$?
+  tmux send-keys -t "$target" -l /quit 2>/dev/null || true
+  tmux send-keys -t "$target" Enter 2>/dev/null || true
+  sleep 0.1
+  tmux kill-session -t "$session" 2>/dev/null || true
+  expect_code 0 "$rc" "the second Deck steer was not confirmed from an idle baseline: $(cat "$dir/second.err")"
+  pass "fm-deck-worker: each completed turn leaves the next steer an idle baseline"
 }
 
 test_liveness_reads_the_driver_as_an_agent() {
@@ -310,8 +386,10 @@ test_spawn_refuses_a_deck_secondmate() {
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_drive_the_busy_record_and_turn_end
 test_evidence_gate_refuses_a_turn_without_a_status_line
+test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
+test_completed_turn_removes_busy_ack_before_the_next_steer
 test_liveness_reads_the_driver_as_an_agent
 test_control_busy_and_delivery_tables_name_deck
 test_spawn_refuses_unverified_deck_dispatch

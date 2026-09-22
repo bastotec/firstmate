@@ -708,6 +708,27 @@ test_local_only_fork_remote_allows() {
   pass "local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed"
 }
 
+test_wake_gate_retirement_refuses_a_symlinked_parent() {
+  local case_dir rc
+  case_dir=$(make_case wake-gate-parent-symlink)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+  mkdir -p "$case_dir/redirected-wake-gate"
+  printf 'protected\n' > "$case_dir/redirected-wake-gate/task-x1.look"
+  ln -s "$case_dir/redirected-wake-gate" "$case_dir/state/wake-gate"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "wake-gate-parent-symlink: teardown must refuse unsafe retirement"
+  [ "$(cat "$case_dir/redirected-wake-gate/task-x1.look")" = protected ] \
+    || fail "wake-gate-parent-symlink: teardown followed the parent symlink and removed its target"
+  assert_grep 'fm-state-io refused' "$case_dir/stderr" \
+    "wake-gate-parent-symlink: teardown did not report the no-follow refusal"
+  pass "teardown does not follow a symlinked wake-gate state directory"
+}
+
 test_teardown_closes_the_backlog_item_itself() {
   local case_dir out
   case_dir=$(make_case tasks-axi-close)
@@ -3671,6 +3692,7 @@ EOF
 }
 
 test_local_only_fork_remote_allows
+test_wake_gate_retirement_refuses_a_symlinked_parent
 test_teardown_closes_the_backlog_item_itself
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
