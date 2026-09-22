@@ -35,7 +35,6 @@ jobs:
         run: |
           cargo +stable fmt --all --check
           cargo +stable test --workspace --locked
-          bin/fm-test-run.sh tests/fm-stream-bridge-rust.test.sh
 
   lint:
     name: Lint

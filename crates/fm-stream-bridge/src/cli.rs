@@ -15,7 +15,7 @@
 //! Epochs and intervals are intentionally bounded to signed 64-bit integers,
 //! while accepted spellings and unique long-option prefixes match argparse.
 
-pub const BRIDGE_VERSION: &str = "1.0.0-rust.1";
+pub const BRIDGE_VERSION: &str = "1.0.0";
 pub const DEFAULT_FLEET_ID: &str = "firstmate";
 pub const DEFAULT_INTERVAL_MS: i64 = 500;
 pub const MIN_INTERVAL_MS: i64 = 50;

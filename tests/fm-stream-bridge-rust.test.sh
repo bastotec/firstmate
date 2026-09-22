@@ -275,8 +275,7 @@ test_cli_surface_matches() {
   run_both /dev/null --version --protocol
   assert_parity "protocol beats version"
   run_both /dev/null --version
-  assert_equals "$PY_CODE" 0 "reference version succeeds"
-  assert_equals "$RS_CODE" 0 "Rust version succeeds"
+  assert_parity "the version probe"
   run_both /dev/null translate --fleet=example --epo=1_007
   assert_parity "accepted unique flag prefixes and Python integer separators"
   run_both /dev/null compare --h value
