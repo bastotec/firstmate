@@ -103,16 +103,43 @@ fm_tmux_composer_caps() {
 # Prints "pi<TAB>idle", "pi<TAB>working", or "pi<TAB>blocked"; exits 1 when the pane is not a
 # live pi.
 fm_tmux_pi_prompt_is_blocked() {  # <target>
-  local target=$1 pane footer dialog_bottom
+  local target=$1 pane dialog_close dialog_open=-1 selected=-1 row line footer=''
   pane=$(tmux capture-pane -p -t "$target" -S 0 -E - 2>/dev/null) || return 1
   _fm_composer_scan_screen "$pane" ''
   [ "$FM_COMPOSER_SCAN_PI_PAIR_FOUND" = 1 ] || return 1
-  [ "$FM_COMPOSER_SCAN_PI_OPEN" -ge 2 ] || return 1
-  dialog_bottom=$(_fm_composer_screen_row "$((FM_COMPOSER_SCAN_PI_OPEN - 1))" "$pane")
-  fm_composer_normalize_trim_var dialog_bottom
-  _fm_composer_pi_separator_row "$dialog_bottom" || return 1
-  footer=$(_fm_composer_screen_row "$((FM_COMPOSER_SCAN_PI_OPEN - 2))" "$pane")
-  fm_composer_normalize_trim_var footer
+  dialog_close=$((FM_COMPOSER_SCAN_PI_OPEN - 1))
+  [ "$dialog_close" -ge 2 ] || return 1
+  line=$(_fm_composer_screen_row "$dialog_close" "$pane")
+  fm_composer_normalize_trim_var line
+  _fm_composer_pi_separator_row "$line" || return 1
+  row=$((dialog_close - 1))
+  while [ "$row" -ge 0 ] && [ "$row" -ge $((dialog_close - 24)) ]; do
+    line=$(_fm_composer_screen_row "$row" "$pane")
+    fm_composer_normalize_trim_var line
+    if _fm_composer_pi_separator_row "$line"; then
+      dialog_open=$row
+      break
+    fi
+    row=$((row - 1))
+  done
+  [ "$dialog_open" -ge 0 ] || return 1
+  row=$((dialog_open + 1))
+  while [ "$row" -lt "$dialog_close" ]; do
+    line=$(_fm_composer_screen_row "$row" "$pane")
+    fm_composer_normalize_trim_var line
+    case "$line" in
+      '→ '*|'❯ '*) selected=$row ;;
+    esac
+    row=$((row + 1))
+  done
+  [ "$selected" -ge 0 ] || return 1
+  row=$((selected + 1))
+  while [ "$row" -lt "$dialog_close" ]; do
+    line=$(_fm_composer_screen_row "$row" "$pane")
+    fm_composer_normalize_trim_var line
+    footer="${footer}${footer:+ }$line"
+    row=$((row + 1))
+  done
   case "$footer" in
     *'↑↓ navigate'*'select'*'cancel'*|\
     *'Enter to select'*'↑/↓ to navigate'*'Esc to cancel'*|\
