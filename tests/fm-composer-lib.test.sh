@@ -451,7 +451,7 @@ test_matrix_pi_separated_needs_identity() {
   # added a normal `❯` prompt plus one reverse-video blank software-cursor
   # cell. The blank row alone is exactly what the strict rule refuses; only
   # structure PLUS a live idle/done Pi identity proves either idle shape.
-  local screen typed pi_idle pi_working pi_blocked none pi085 osc_bel osc_st malformed literal
+  local screen typed pi_idle pi_working pi_blocked none pi085 osc_bel osc_st malformed literal protected
   local caps_plain_id=$'styled=0\ncursor=0\nidentity=1\nrows=20'
   screen=$'transcript\n────────────────────────\n\n────────────────────────\n footer'
   pi_idle=$(printf 'pi\tidle'); pi_working=$(printf 'pi\tworking'); none=$(printf 'zsh\t')
@@ -505,6 +505,8 @@ test_matrix_pi_separated_needs_identity() {
   assert_screen "pi literal RGB-like draft stays pending" pending "$CAPS_TMUX" "$literal" 1 "$pi_idle"
   malformed=$'────────────────────────\n\033[39m ❯ \033]4;38;rgb:0000/afaf/d7d7\033[7m \033[0m\n────────────────────────'
   assert_screen "pi unterminated OSC-like fragment stays pending" pending "$CAPS_TMUX" "$malformed" 1 "$pi_idle"
+  protected=$'────────────────────────\n\033[39m ❯ \033]4;38;rgb:0000/afaf draft remains '"$osc_bel"$'\033[7m \033[0m\n────────────────────────'
+  assert_screen "pi draft between unterminated and complete OSC replies stays pending" pending "$CAPS_TMUX" "$protected" 1 "$pi_idle"
   malformed=$'────────────────────────\n\033[39m ❯ ]4;38;rgb:0000/afaf/d7d7\033[7m \033[0m\n────────────────────────'
   assert_screen "pi plain response lookalike stays pending" pending "$CAPS_TMUX" "$malformed" 1 "$pi_idle"
   pass "matrix: Pi separated composers require identity; Pi 0.85 cursor and complete OSC furniture stay distinct from drafts"
@@ -833,6 +835,16 @@ const makeFilter = (timeout = 30) => {
   filter.handleInput(`${ESC}]4;38;rgb:0000/afaf/d7d7${BEL}`);
   filter.handleInput(`${ESC}]4;39;rgb:1111/bbbb/eeee${ESC}\\`);
   assert.deepEqual(forwarded, []);
+  filter.dispose();
+}
+{
+  const { filter, forwarded, deferredRenders } = makeFilter();
+  filter.handleInput(ESC);
+  assert.deepEqual(forwarded, [ESC]);
+  assert.equal(deferredRenders(), 0);
+  filter.handleInput(ESC);
+  assert.deepEqual(forwarded, [ESC, ESC]);
+  assert.equal(deferredRenders(), 0);
   filter.dispose();
 }
 {
