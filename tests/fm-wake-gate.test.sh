@@ -13,6 +13,7 @@ set -u
 
 GATE="$ROOT/bin/fm-wake-gate.sh"
 TMP_ROOT=$(fm_test_tmproot fm-wake-gate-tests)
+unset FM_WAKE_GATE_KEY_VAR FM_WAKE_GATE_MODE
 
 # new_state <name> -> echoes a fresh empty state dir
 new_state() {
@@ -55,6 +56,11 @@ raw_verdict() {  # <state> <mode> <answers> [reason] -> verdict and optional loo
     FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE="$2" FM_TEST_ANSWERS="$3" \
     "$GATE" stale-verdict t1 w:fm-t1 "${4:-$WEDGE}" --with-look 2>/dev/null
 }
+config_verdict() {  # <state> <answers> -> verdict from that state's config files
+  FM_STATE_DIR="$1" FM_CONFIG_OVERRIDE="$1/config" FM_WAKE_GATE_HELPER="$STUB" \
+    FM_WAKE_GATE_EVIDENCE_CMD="$EVID" FM_TEST_ANSWERS="$2" \
+    "$GATE" stale-verdict t1 w:fm-t1 "$WEDGE" --with-look 2>/dev/null
+}
 verdict() {  # <state> <mode> <answers> [reason] -> verdict line after simulated durable queueing
   local state=$1 result flags
   result=$(raw_verdict "$@")
@@ -94,6 +100,40 @@ s=$(new_state sv-inert)
   "$GATE" stale-verdict t1 w:fm-t1 "$WEDGE" 2>/dev/null)" = escalate ] || fail "without a key variable the gate must escalate"
 [ ! -e "$s/wake-gate/shadow.log" ] || fail "an inert gate must not log a decision"
 pass "stale-verdict is inert without the opt-in key variable"
+
+s=$(new_state sv-config-trim)
+mkdir -p "$s/config" "$s/wake-gate"
+printf ' \tDUMMY_KEY \r\n' > "$s/config/wake-gate-key-var"
+printf ' \tenforce \r\n' > "$s/config/wake-gate-mode"
+printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+[ "$(config_verdict "$s" "$WORKING")" = absorb:jev-working ] \
+  || fail "outer whitespace around valid wake-gate config tokens was not trimmed"
+pass "wake-gate config trims outer whitespace without weakening exact tokens"
+
+s=$(new_state sv-config-malformed-mode)
+mkdir -p "$s/config" "$s/wake-gate"
+printf 'DUMMY_KEY\n' > "$s/config/wake-gate-key-var"
+printf 'en force\n' > "$s/config/wake-gate-mode"
+printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+[ "$(config_verdict "$s" "$WORKING")" = escalate ] \
+  || fail "SAFETY: malformed mode whitespace enabled wake absorption"
+[ "$(tail -1 "$s/wake-gate/shadow.log" | cut -f3)" = shadow ] \
+  || fail "a malformed mode did not default to shadow"
+pass "malformed wake-gate mode remains shadow"
+
+s=$(new_state sv-config-malformed-key)
+mkdir -p "$s/config" "$s/wake-gate"
+printf 'DUMMY KEY\n' > "$s/config/wake-gate-key-var"
+printf 'enforce\n' > "$s/config/wake-gate-mode"
+printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+[ "$(config_verdict "$s" "$WORKING")" = escalate ] \
+  || fail "SAFETY: internal key-variable whitespace activated the wake gate"
+[ ! -e "$s/wake-gate/shadow.log" ] || fail "a malformed key-variable name reached Jev decision handling"
+printf '9DUMMY_KEY\n' > "$s/config/wake-gate-key-var"
+[ "$(config_verdict "$s" "$WORKING")" = escalate ] \
+  || fail "SAFETY: a key-variable name beginning with a digit activated the wake gate"
+[ ! -e "$s/wake-gate/shadow.log" ] || fail "an invalid key-variable identifier reached Jev decision handling"
+pass "malformed key-variable names leave the wake gate inert"
 
 s=$(new_state sv-first-look)
 first_result=$(raw_verdict "$s" enforce "$WORKING")

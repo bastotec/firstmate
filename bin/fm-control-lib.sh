@@ -60,9 +60,9 @@ fm_control_verb_allowed() {  # <verb>
   return 1
 }
 
-# The harnesses whose control mechanics are verified. Mirrors AGENTS.md
-# section 4's verified-adapter list; an unverified adapter is refused rather
-# than guessed at, exactly as a spawn on it would be.
+# The harnesses whose control mechanics are implemented. Deck remains here so
+# an adapter-verification run can be interrupted or exited; replacement launch
+# eligibility is the separate table below.
 fm_control_harness_supported() {  # <harness>
   case "${1-}" in
     claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|deck) return 0 ;;
@@ -70,8 +70,12 @@ fm_control_harness_supported() {  # <harness>
   return 1
 }
 
-# The verified adapter a RECORDED harness value belongs to. Every table below
-# is keyed by the exact verified adapter name, but a task launched from a raw
+fm_control_harness_launch_allowed() {  # <harness> <deck-opt-in>
+  [ "${1-}" != deck ] || [ "${2-}" = 1 ]
+}
+
+# The recognized adapter a RECORDED harness value belongs to. Every table below
+# is keyed by the exact adapter name, but a task launched from a raw
 # command records the command's basename instead (bin/fm-spawn.sh derives
 # harness= that way), which is why the spawn adapters match `claude*`, `muse*`,
 # and friends. This is the one place that prefix rule is stated. `pi` and
@@ -99,9 +103,10 @@ fm_control_harness_family() {  # <recorded-harness>
   esac
 }
 
-# Which task kinds an adapter is verified to run. muse, gemini, rovo, and agy
-# are crewmate/scout adapters only: none has a primary supervision protocol,
-# and bin/fm-spawn.sh refuses a --secondmate launch on any of them. The control
+# Which task kinds an adapter can run. muse, gemini, rovo, and agy are
+# crewmate/scout adapters only, while Deck has only its verification launch path:
+# none has a primary supervision protocol, and bin/fm-spawn.sh refuses a
+# --secondmate launch on any of them. The control
 # plane asks this BEFORE it stops anything, so an incompatible relaunch target is
 # refused while the current agent is still running rather than after it has
 # been stopped.

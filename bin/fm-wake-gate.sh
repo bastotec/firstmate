@@ -92,18 +92,25 @@ bounded() {
   fi
 }
 
+first_line_trimmed() {  # <file>
+  LC_ALL=C sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}' "$1" 2>/dev/null
+}
+
 gate_key_var() {
   local v=${FM_WAKE_GATE_KEY_VAR:-}
   if [ -z "$v" ] && [ -f "$CONFIG/wake-gate-key-var" ]; then
-    v=$(head -1 "$CONFIG/wake-gate-key-var" 2>/dev/null | tr -d '[:space:]')
+    v=$(first_line_trimmed "$CONFIG/wake-gate-key-var")
   fi
-  printf '%s' "$v"
+  case "$v" in
+    ''|[!A-Za-z_]*|*[!A-Za-z0-9_]*) return 0 ;;
+    *) printf '%s' "$v" ;;
+  esac
 }
 
 gate_mode() {
   local m=${FM_WAKE_GATE_MODE:-}
   if [ -z "$m" ] && [ -f "$CONFIG/wake-gate-mode" ]; then
-    m=$(head -1 "$CONFIG/wake-gate-mode" 2>/dev/null | tr -d '[:space:]')
+    m=$(first_line_trimmed "$CONFIG/wake-gate-mode")
   fi
   case "$m" in enforce) printf 'enforce' ;; *) printf 'shadow' ;; esac
 }

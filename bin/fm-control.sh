@@ -840,6 +840,8 @@ resolve_relaunch_profile() {
   else
     TARGET_HARNESS=$PRIOR_HARNESS
   fi
+  fm_control_harness_launch_allowed "$TARGET_HARNESS" "${FM_DECK_ALLOW_UNVERIFIED:-0}" \
+    || die "deck is not yet live-verified; refusing lifecycle replacement before touching its endpoint. Set FM_DECK_ALLOW_UNVERIFIED=1 only for an adapter verification run"
   # The launch owner refuses an adapter that cannot run this task's kind, but it
   # is only reached after the old agent has been stopped. Asking the same
   # capability table here keeps that refusal on the pre-stop side of the

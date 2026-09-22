@@ -232,9 +232,10 @@ The flag is a home-local supervision-noise preference and is not inherited by se
 
 The optional wake gate uses Jev (`typesafe-ai/jev`) to decide whether a possible-wedge alarm needs an expensive supervision-model turn; it never replaces that model and does not gate worker-update wakes.
 From the tracked Firstmate root, install its pinned runtime with `npm ci --prefix bin/wake-gate --omit=dev`; the resulting `bin/wake-gate/node_modules/` is local and gitignored.
-Put the gateway key in `~/.secrets`, then put that variable's name alone on the first line of the local, gitignored `config/wake-gate-key-var`; for example, a secret named `AI_GATEWAY_API_KEY` requires `AI_GATEWAY_API_KEY` in that config file.
+Put the gateway key in `~/.secrets`, then put that variable's name on the first line of the local, gitignored `config/wake-gate-key-var`; for example, a secret named `AI_GATEWAY_API_KEY` requires `AI_GATEWAY_API_KEY` in that config file.
+Leading and trailing whitespace is ignored, but the remaining key variable must be a shell identifier (`[A-Za-z_][A-Za-z0-9_]*`) or the gate stays inert.
 With the key-variable file absent the gate is inert, while a missing key, runtime, evidence read, model response, or decision-log write escalates the alarm instead of absorbing it.
-An absent `config/wake-gate-mode`, or one whose first line is `shadow`, logs each decision but changes no wake; put `enforce` alone on its first line only after reviewing the shadow results to let proven skips be absorbed.
+An absent `config/wake-gate-mode`, or any first-line value other than exactly `enforce` after trimming outer whitespace, selects shadow mode and changes no wake; use `enforce` only after reviewing the shadow results to let proven skips be absorbed.
 Both config files are home-local, gitignored, and not inherited by secondmate homes.
 `bin/fm-wake-gate.sh`'s header owns the exact evidence, thresholds, state files, reporting commands, and fail-open mechanics.
 

@@ -1834,7 +1834,7 @@ case "$ARG3" in
     ;;
 esac
 
-if [ "$HARNESS" = deck ] && [ "${FM_DECK_ALLOW_UNVERIFIED:-0}" != 1 ]; then
+if ! fm_control_harness_launch_allowed "$HARNESS" "${FM_DECK_ALLOW_UNVERIFIED:-0}"; then
   echo "error: deck is not yet live-verified; refusing worker dispatch. Set FM_DECK_ALLOW_UNVERIFIED=1 only for an adapter verification run." >&2
   exit 1
 fi

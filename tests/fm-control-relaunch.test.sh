@@ -33,6 +33,7 @@ set -u
 
 CONTROL="$ROOT/bin/fm-control.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
+unset FM_DECK_ALLOW_UNVERIFIED
 PROMOTE="$ROOT/bin/fm-promote.sh"
 BRIEF="$ROOT/bin/fm-brief.sh"
 X_LINK="$ROOT/bin/fm-x-link.sh"
@@ -818,6 +819,20 @@ test_relaunch_onto_an_unverified_harness_is_refused() {
   assert_contains "$out" "not a verified harness" "the refusal should name the unverified adapter"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused relaunch must not stop the agent"
   pass "fm-control relaunch: refuses to relaunch onto an adapter with no verified mechanics"
+}
+
+test_relaunch_onto_deck_requires_the_verification_opt_in_before_stop() {
+  local dir out rc
+  dir=$(new_case deck-preflight rl53)
+  add_ship_task "$dir" rl53 claude
+  out=$(run_control "$dir" rl53 relaunch --harness deck --note "verify Deck"); rc=$?
+  expect_code 1 "$rc" "Deck relaunch without the verification opt-in should refuse"
+  assert_contains "$out" "deck is not yet live-verified" "the refusal should name Deck's verification state"
+  assert_contains "$out" "FM_DECK_ALLOW_UNVERIFIED=1" "the refusal should name the verification-only path"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "Deck preflight refusal stopped the existing agent"
+  assert_no_grep "/exit" "$dir/fake/literal" "Deck preflight refusal delivered the old agent's exit command"
+  [ ! -e "$dir/home/state/rl53.control-relaunch" ] || fail "Deck preflight refusal opened a relaunch transaction"
+  pass "fm-control relaunch: unverified Deck refuses before stopping the agent"
 }
 
 test_prior_harness_turnend_registry_entry_is_cleared() {
@@ -1954,6 +1969,7 @@ test_same_harness_relaunch_keeps_the_profile_axes
 test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
+test_relaunch_onto_deck_requires_the_verification_opt_in_before_stop
 test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
 test_turnend_auth_paths_are_owned_by_the_control_adapter
