@@ -70,7 +70,6 @@ export class PiTerminalResponseInputFilter {
   }
 
   private isPaletteResponsePrefix(data: string): boolean {
-    if (OSC_PALETTE_PREFIX.startsWith(data)) return true;
     if (!data.startsWith(OSC_PALETTE_PREFIX)) return false;
     let body = data.slice(OSC_PALETTE_PREFIX.length);
     if (body.endsWith(ESC)) body = body.slice(0, -1);
