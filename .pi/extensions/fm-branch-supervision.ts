@@ -798,7 +798,6 @@ export default function (pi: ExtensionAPI) {
   function finishProviderProbe(probeGeneration: number, probeSelectionRevision: number): void {
     if (probeGeneration !== generation || probeSelectionRevision !== branchSelectionRevision || !providerRecovery) return;
     providerRecovery.probeInFlight = false;
-    if (providerRecovery.source === "chain") return;
     if (branchBroken && providerRecovery.retryNotBefore <= Date.now()) {
       providerRecovery.retryNotBefore = Date.now() + providerRecovery.cooldownMs;
     }

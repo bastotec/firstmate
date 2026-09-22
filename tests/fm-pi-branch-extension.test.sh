@@ -2292,11 +2292,27 @@ if (!handled("Supervision branch paused because every configured model is coolin
 }
 if (dispatch("signal: cooling chain").accepted) throw new Error("the exhausted chain retried a failed model during cooldown");
 now += 5 * 60 * 1000;
+globalThis.__fmCreateSessionError = "chain probe construction failed";
 const probe = dispatch("signal: earliest chain cooldown probe");
 if (!probe.accepted) throw new Error("the exhausted chain did not admit a probe at its earliest cooldown");
 const probeFailure = await probe.settlement.then(() => null, (error) => error);
-if (!(probeFailure instanceof Error) || !probeFailure.message.includes("provider failed after construction")) {
-  throw new Error(`the chain probe did not reach a ready model: ${String(probeFailure)}`);
+if (!(probeFailure instanceof Error) || !probeFailure.message.includes("chain probe construction failed")) {
+  throw new Error(`the chain probe did not expose its build failure: ${String(probeFailure)}`);
+}
+delete globalThis.__fmCreateSessionError;
+if (dispatch("signal: immediately after failed chain probe").accepted) {
+  throw new Error("a chain probe build failure allowed an immediate retry");
+}
+now += (5 * 60 * 1000) - 1;
+if (dispatch("signal: inside renewed chain cooldown").accepted) {
+  throw new Error("a chain probe build failure did not renew the cooldown");
+}
+now += 1;
+const retry = dispatch("signal: chain probe after renewed cooldown");
+if (!retry.accepted) throw new Error("the exhausted chain did not admit a probe after the renewed cooldown");
+const retryFailure = await retry.settlement.then(() => null, (error) => error);
+if (!(retryFailure instanceof Error) || !retryFailure.message.includes("provider failed after construction")) {
+  throw new Error(`the renewed chain probe did not reach a ready model: ${String(retryFailure)}`);
 }
 process.exit(0);
 EOF
