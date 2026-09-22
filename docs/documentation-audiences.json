@@ -418,6 +418,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": "docs/supervision-protocols/deck.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": "docs/supervision-protocols/cursor.md",
       "audience": "agent-runtime"
     },

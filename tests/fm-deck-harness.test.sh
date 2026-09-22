@@ -18,7 +18,7 @@
 #   5. Pane liveness reads the driver (argv[0] fm-deck-worker) and deck as an
 #      agent, never as an idle shell; unrelated names stay unclaimed.
 #   6. Control, busy-source, and delivery tables name deck, and a secondmate
-#      launch on deck is refused.
+#      launches use the same driver with home-host supervision.
 #   7. Ordinary Deck dispatch launches the driver with the resolved deck
 #      binary, busy gen, and model, records effort without passing it, and arms
 #      the busy contract.
@@ -122,7 +122,7 @@ run_worker() {
 test_turns_share_one_session_and_carry_the_hooks() {
   local dir="$TMP_ROOT/session"
   make_fake_deck "$dir"
-  run_worker "$dir" $'first\nsecond\n/exit\n/quit\n' || fail "the driver did not exit cleanly on /quit"
+  run_worker "$dir" $'first\nsecond\n/exit\n/quit\n' || fail "the driver did not exit cleanly on /quit: $(cat "$dir/pane.out")"
   [ "$(wc -l < "$dir/argv.log" | tr -d ' ')" = 4 ] || fail "expected four deck runs (brief + three prompts): $(cat "$dir/argv.log")"
   head -1 "$dir/argv.log" | grep -q -- '--session' && fail "the first turn must start a new Deck session"
   local sid
@@ -425,10 +425,15 @@ test_tmux_liveness_uses_the_deck_driver_argv0() {
 }
 
 test_control_busy_and_delivery_tables_name_deck() {
+  # shellcheck source=bin/fm-session-lock-lib.sh
+  . "$ROOT/bin/fm-session-lock-lib.sh"
+  fm_harness_process_matches fm-deck-worker fm-deck-worker || fail "driver comm cannot own a lock"
+  fm_harness_process_matches bash 'fm-deck-worker script' || fail "driver argv0 cannot own a lock"
+  fm_harness_process_matches deck deck && fail "transient Deck run must not own a home lock"
   fm_control_harness_supported deck || fail "deck is not a supported control harness"
   [ "$(fm_control_harness_family deck)" = deck ] || fail "deck family"
   fm_control_harness_supports_kind deck ship || fail "deck must run ship tasks"
-  fm_control_harness_supports_kind deck secondmate && fail "deck must not run a secondmate"
+  fm_control_harness_supports_kind deck secondmate || fail "deck must run secondmates"
   [ "$(fm_control_interrupt_key deck)" = C-c ] || fail "deck interrupts on Ctrl+C"
   [ "$(fm_control_interrupt_repeat deck)" = 1 ] || fail "deck interrupt repeat"
   [ "$(fm_control_exit_command deck)" = /quit ] || fail "deck exits with /quit"
@@ -527,16 +532,137 @@ EOF
   pass "fm-spawn: Deck refuses unsupported effort before launch metadata"
 }
 
-test_spawn_refuses_a_deck_secondmate() {
-  local out rc
-  out=$(HOME="$TMP_ROOT" FM_HOME="$TMP_ROOT" FM_STATE_OVERRIDE="$TMP_ROOT/sm-state" FM_CONFIG_OVERRIDE="$TMP_ROOT/sm-config" \
-    "$SPAWN" deck-sm-$$ "$TMP_ROOT" --secondmate --harness deck 2>&1)
-  rc=$?
-  [ "$rc" -ne 0 ] || fail "a deck secondmate launch must be refused"
-  assert_contains "$out" "crewmate/scout adapter only" "the refusal must say why"
-  pass "fm-spawn: a secondmate on deck is refused"
+
+test_secondmate_host_serializes_wakes_and_steering() {
+  local dir="$TMP_ROOT/host"
+  mkdir -p "$dir/home/state" "$dir/parent" "$dir/bin"
+  cp -R "$ROOT/bin/." "$dir/bin/"
+  cat > "$dir/bin/fm-session-start.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'startup\n' >> "$FM_HOME/startups"
+[ "${FM_TEST_START_FAIL:-0}" = 0 ] || exit 7
+"$(dirname "$0")/fm-lock.sh"
+cat "$FM_HOME/state/.lock" > "$FM_HOME/state/.session-start-complete"
+printf 'complete startup digest marker\n'
+SH
+  cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+trap 'exit 143' TERM INT
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+while [ ! -f "$FM_HOME/trigger" ]; do sleep 0.1; done
+rm "$FM_HOME/trigger"
+printf 'check: example\n'
+[ "${FM_TEST_WATCH_FAIL:-0}" = 0 ]
+SH
+  cat > "$dir/deck" <<'PYTHON'
+#!/usr/bin/env python3
+import json, os, pathlib, subprocess, sys, time
+home = pathlib.Path(os.environ['FM_HOME'])
+args = sys.argv[1:]
+prompt = args[1]
+session = args[args.index('--session') + 1] if '--session' in args else 'host-session'
+inbox = pathlib.Path(__file__).parent / 'parent/host.inbox'
+records = list(sorted(inbox.glob('*.msg'))) if 'Firstmate instruction waiting:' in prompt else []
+body = ''.join(record.read_text() for record in records)
+with (home / 'turns').open('a') as f:
+    f.write(json.dumps({'prompt': prompt, 'session': session, 'inbox': body}) + '\n')
+for record in records:
+    record.rename(inbox / 'handled' / record.name)
+print(json.dumps({'type': 'run_started', 'session': session}), flush=True)
+if os.environ.get('FM_TEST_TURN_FAIL') == '1':
+    print(json.dumps({'type': 'run_failed', 'error': 'injected'}), flush=True)
+    sys.exit(9)
+if prompt == 'slow-steer':
+    (home / 'in-turn').touch()
+    while not (home / 'release').exists():
+        time.sleep(.1)
+for i, arg in enumerate(args):
+    if arg == '--hook' and args[i+1].startswith('pre_complete='):
+        result = subprocess.run(args[i+1].split('=', 1)[1], shell=True)
+        if result.returncode:
+            sys.exit(result.returncode)
+print(json.dumps({'type': 'run_finished', 'turns': 1}), flush=True)
+PYTHON
+  chmod +x "$dir/bin/fm-session-start.sh" "$dir/bin/fm-watch-arm.sh" "$dir/deck"
+  python3 - "$dir" <<'PYTHON' || fail "Deck secondmate host integration failed"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def wait_for(check, label):
+    for _ in range(200):
+        if check(): return
+        if p.poll() is not None: raise AssertionError('host exited: '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=env, text=True, start_new_session=True, preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+    try:
+        wait_for(lambda: len(rows()) == 1, 'first turn')
+        assert 'complete startup digest marker' in rows()[0]['prompt']
+        p.stdin.write('slow-steer\n'); p.stdin.flush()
+        wait_for(lambda: (home/'in-turn').exists(), 'steer start')
+        (home/'trigger').touch()
+        time.sleep(.5)
+        assert len(rows()) == 2, 'watcher ran a concurrent turn'
+        (home/'release').touch()
+        wait_for(lambda: len(rows()) == 3, 'deferred wake')
+        assert 'Firstmate instruction waiting:' in rows()[2]['prompt']
+        assert 'actionable wake' in rows()[2]['inbox']
+        assert list((root/'parent/host.inbox/handled').glob('*.msg'))
+        p.stdin.write('split-'); p.stdin.flush()
+        time.sleep(1.3)
+        p.stdin.write('steer\n'); p.stdin.flush()
+        wait_for(lambda: len(rows()) == 4, 'partial input retained')
+        assert rows()[3]['prompt'] == 'split-steer'
+        (home/'trigger').touch()
+        wait_for(lambda: len(rows()) == 5, 'watcher rearmed')
+        assert all(x['session'] == 'host-session' for x in rows())
+        assert (home/'startups').read_text() == 'startup\n'
+        assert (home/'state/.lock').read_text().strip() == str(p.pid), 'lock is not driver-owned'
+        assert not (root/'parent/host.status').exists(), 'idle supervisor manufactured status'
+        (home/'in-turn').unlink()
+        (home/'release').unlink()
+        p.stdin.write('slow-steer\n'); p.stdin.flush()
+        wait_for(lambda: (home/'in-turn').exists(), 'interruptible steer')
+        os.killpg(p.pid, signal.SIGINT)
+        p.stdin.write('after-interrupt\n'); p.stdin.flush()
+        wait_for(lambda: len(rows()) == 7, 'driver survived interrupt')
+        assert rows()[6]['prompt'] == 'after-interrupt'
+        assert 'turn interrupted' in (root/'parent/host.status').read_text()
+        (home/'trigger').touch()
+        wait_for(lambda: len(rows()) == 8, 'watcher survived interrupt')
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=15) == 0
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGTERM)
+            try:
+                p.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL); p.wait()
+for key in ['FM_TEST_START_FAIL', 'FM_TEST_TURN_FAIL', 'FM_TEST_WATCH_FAIL']:
+    failure_env = dict(env, **{key: '1'})
+    (root/'parent/host.status').unlink(missing_ok=True)
+    (home/'trigger').touch()
+    with (root/'failure-pane').open('w') as output:
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=failure_env, text=True)
+        try:
+            assert p.wait(timeout=20) != 0, key+' was swallowed'
+            assert 'failed: Deck secondmate' in (root/'parent/host.status').read_text(), key+' not reported'
+        finally:
+            if p.poll() is None:
+                p.terminate(); p.wait(timeout=15)
+PYTHON
+  pass "Deck host serializes startup, lock, durable inbox wakes, rearm, and split steering; failures reach parent"
 }
 
+test_secondmate_host_serializes_wakes_and_steering
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_drive_the_busy_record_and_turn_end
 test_busy_state_failures_stop_turns_and_publish_status
@@ -553,5 +679,4 @@ test_tmux_liveness_uses_the_deck_driver_argv0
 test_control_busy_and_delivery_tables_name_deck
 test_spawn_launches_the_driver_with_binary_gen_and_model
 test_spawn_refuses_deck_effort
-test_spawn_refuses_a_deck_secondmate
 echo "fm-deck-harness: all cases passed"

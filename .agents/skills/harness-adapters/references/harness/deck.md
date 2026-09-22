@@ -2,7 +2,7 @@
 
 Deck (`bastotec/deck`) is a headless Rust coding agent: `deck run "<prompt>"` streams NDJSON events on stdout and exits when the model finishes.
 Firstmate runs it through its own pane driver, `../../../../../bin/fm-deck-worker.sh`, whose header owns the driver's behavior.
-Deck is verified for crewmates and scouts; `../../../../../bin/fm-spawn.sh` still refuses a secondmate because the driver supervises one task rather than a home.
+Deck supports crewmates, scouts, and persistent secondmates; the latter use the same driver with `--secondmate`.
 `../../../../../docs/verification/deck.md` owns how every fact below was established.
 
 ## Operating facts
@@ -40,5 +40,6 @@ A missing key fails the first turn with Deck's own error in the pane; a quota re
 
 ## Primary integration
 
-Unsupported: no supervision protocol exists for Deck, and the driver has no watcher arming.
-`references/common/primary-hooks.md`'s unsupported-boundary rule applies.
+Persistent secondmates use `../../../../../docs/supervision-protocols/deck.md`; the main primary session remains outside this adapter's supported scope.
+The driver header owns startup, lock lifetime, watcher wake turns, and the supervisor-specific completion postcondition.
+Daemon-owned away/quiet mode (`state/.afk`) is refused rather than competing with a daemon; clear that posture through the owning supervisor before relaunch.

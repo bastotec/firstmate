@@ -1,4 +1,4 @@
-# Verification: the Deck crewmate/scout adapter
+# Verification: the Deck adapter
 
 Active empirical facts for firstmate's Deck adapter.
 The skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../../.agents/skills/harness-adapters/SKILL.md) owns the operating facts through [`references/harness/deck.md`](../../.agents/skills/harness-adapters/references/harness/deck.md); this record owns how they were established.
@@ -10,7 +10,7 @@ The skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../../.age
 | Version | `deck 0.1.0` built from `bastotec/deck` main at `7308f21` (includes `run --hook` and the `pre_complete` hook) |
 | Checked | 2026-09-22T08:31Z |
 | Firstmate commit | `641dc7fe` |
-| Status | Verified for crewmate and scout dispatch; secondmates unsupported |
+| Status | Verified for crewmate, scout, and secondmate dispatch; dated host evidence below |
 | Binary | `~/.local/bin/deck`, copied from `target/release/deck` after `cargo build --release --locked` |
 | Platform | macOS (Darwin 25.6.0, arm64), GNU bash 3.2.57, jq 1.7.1, tmux 3.6a |
 | Backend | tmux |
@@ -43,7 +43,6 @@ ok - tmux liveness: Deck's Linux comm and argv0 classify alive
 ok - control and busy-source tables carry Deck mechanics without rendered delivery evidence
 ok - fm-spawn: ordinary Deck dispatch records only default effort
 ok - fm-spawn: Deck refuses unsupported effort before launch metadata
-ok - fm-spawn: a secondmate on deck is refused
 fm-deck-harness: all cases passed
 ```
 
@@ -64,4 +63,38 @@ The `pre_complete` evidence gate refused completion once, then accepted the retr
 `Ctrl+C` returned the driver to its prompt and recorded `interrupted`.
 `/quit` exited and recorded `session-end`.
 Tmux's `#{pane_current_command}` reported `bash` on macOS, while `ps -o comm=` reported `fm-deck-worker`.
-These results verify ordinary Deck crewmate and scout dispatch; Deck secondmates remain unsupported.
+These results verify ordinary Deck crewmate and scout dispatch; the separate host check below owns secondmate evidence.
+
+## Secondmate host verification
+
+Checked 2026-09-22 with `deck 0.1.0`, macOS Darwin 25.6.0 arm64, Bash 3.2.57, and gateway route `codex/gpt-6-astra`.
+The live check uses a disposable home with no registered projects or workers and the real Deck binary, session-start digest, watcher, durable task steering inbox, and wake acknowledgement path.
+It runs the pane driver over ordinary pipes without tmux injection, so wake delivery does not depend on a terminal backend.
+Existing backend capability guards remain authoritative: this change does not enable secondmates on a backend that already refuses them.
+
+```sh
+FM_DECK_LIVE=1 FM_DECK_LIVE_MODEL=codex/gpt-6-astra bin/fm-test-run.sh tests/fm-deck-host-live-e2e.test.sh
+```
+
+Observed output:
+
+```text
+deck 0.1.0
+startup completed; stable driver owns home lock
+PASS real Deck startup, stable driver lock, watcher wake-as-next-turn, acknowledgement, and clean exit
+```
+
+The initial turn received the complete startup digest and wrote the requested readiness marker without rerunning startup.
+The watcher wake became a durable steering record; the same Deck conversation read it, handled the isolated note, acknowledged the wake queue and inbox record, and returned to the host.
+The home lock still named the persistent driver after both turns, rather than the exited `deck run` process.
+The parent received no manufactured worker status for normal supervisor turns.
+
+Portable checks:
+
+```sh
+bin/fm-test-run.sh tests/fm-deck-harness.test.sh tests/fm-supervision-instructions.test.sh tests/fm-spawn-dispatch-profile.test.sh tests/fm-control-relaunch.test.sh
+```
+
+`fm-deck-harness` exercises a wake arriving during a running steer, the durable doorbell and handled record, rearming, partial typed input across an idle timeout, stable session identity, interrupt survival, and explicit startup, provider, and watcher failure reporting.
+The dispatch and relaunch suites exercise the configured Deck secondmate pin, charter preservation, home selection, semantic busy generation, and migration of an existing secondmate through the normal control entry point.
+The four invariants and driver-specific turn-end postcondition are owned by `bin/fm-deck-worker.sh`'s header; the emitted operating instructions are owned by [`../supervision-protocols/deck.md`](../supervision-protocols/deck.md).

@@ -6,6 +6,12 @@ This record contains reusable version-scoped evidence for active runtime guarant
 The backend guides own current setup, safety boundaries, and limitations.
 Exact task chronology, branch names, temporary homes, local paths, process ids, thread ids, and delivery transcripts remain in private reports or PR evidence.
 
+## Deck secondmate host
+
+On 2026-09-22, `deck 0.1.0` on macOS Darwin 25.6.0 arm64 passed the backend-independent live host check documented in [Deck verification](deck.md#secondmate-host-verification).
+The check proves the persistent `fm-deck-worker` process retains the home lock while transient Deck turns exit and watcher wakes travel through the durable steering inbox.
+Refresh with `FM_DECK_LIVE=1 FM_DECK_LIVE_MODEL=<gateway-route> bin/fm-test-run.sh tests/fm-deck-host-live-e2e.test.sh`.
+
 ## Harness detection precedence
 
 Firstmate's own harness comes from two kinds of evidence, and `bin/fm-harness.sh` owns how they combine: an environment marker names its harness, and the nearest harness process in the parent chain proves who owns the process tree.

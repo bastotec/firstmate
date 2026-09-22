@@ -23,7 +23,23 @@
 #
 # USAGE (bin/fm-spawn.sh builds this; the brief arrives already encoded)
 #   fm-deck-worker.sh --id <task-id> --state <state-dir> --gen <busy-gen>
-#       --deck <deck-binary> [--model <route>] -- <first-prompt>
+#       --deck <deck-binary> [--model <route>] [--secondmate] -- <first-prompt>
+# --secondmate requires FM_HOME and hosts that home, leaving --state pointed
+# at the parent task state for busy/progress, failure, and turn-end publication.
+# Startup runs once before the first turn. After every turn a tracked watcher
+# child is armed; its result becomes a next turn, with queued stdin serialized
+# alongside it. pre_complete checks lock ownership instead of worker evidence.
+# The driver postcondition does not park without an owned watcher or a pending
+# result. A failed watcher exits loudly rather than leaving an idle host blind.
+#
+# SECOND MATE INVARIANTS (--secondmate)
+# The driver, not a turn-scoped Deck process, owns the home session lock.
+# Watcher results pass through the durable task steering inbox and its ordinary
+# doorbell, retained until acknowledged after a serialized next turn;
+# the durable wake queue is acknowledged only by the model after handling.
+# Exactly one Deck turn runs at a time, including stdin and watcher turns.
+# Supervision uses child processes and stdin, never backend-specific injection.
+# Startup, watcher, and turn failures publish failure status and stop the driver.
 #
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
@@ -42,8 +58,12 @@ BUSY_EVENT="$SCRIPT_DIR/fm-busy-event.sh"
 STATE_IO="$SCRIPT_DIR/fm-state-io.py"
 
 ID='' STATE='' GEN='' DECK='' MODEL=''
+SECONDMATE=0 WATCH_PID='' INPUT_PID=''
+# shellcheck source=bin/fm-session-lock-lib.sh
+. "$SCRIPT_DIR/fm-session-lock-lib.sh"
 while [ $# -gt 0 ]; do
   case "$1" in
+    --secondmate) SECONDMATE=1; shift ;;
     --id) ID=${2-}; shift 2 ;;
     --state) STATE=${2-}; shift 2 ;;
     --gen) GEN=${2-}; shift 2 ;;
@@ -80,10 +100,19 @@ TTY_SETTINGS=''
 tty_busy() { [ -z "$TTY_SETTINGS" ] || stty icanon 2>/dev/null || true; }
 tty_ready() { [ -z "$TTY_SETTINGS" ] || stty -icanon min 1 time 0 2>/dev/null || true; }
 cleanup() {
+  if [ -n "$INPUT_PID" ]; then
+    kill -TERM "$INPUT_PID" 2>/dev/null || true
+    wait "$INPUT_PID" 2>/dev/null || true
+  fi
+  if [ -n "$WATCH_PID" ]; then
+    kill -TERM "$WATCH_PID" 2>/dev/null || true
+    wait "$WATCH_PID" 2>/dev/null || true
+  fi
   [ -z "$TTY_SETTINGS" ] || stty "$TTY_SETTINGS" 2>/dev/null || true
   rm -rf -- "$WORK"
 }
 trap cleanup EXIT
+trap 'exit 1' HUP TERM
 # Ctrl+C reaches the whole foreground group: Deck and the renderer stop, this
 # driver survives, records the cancelled turn, and returns to the prompt.
 INTERRUPTED=0
@@ -125,6 +154,61 @@ publish_turnend() {
 
 q() { printf '%q' "$1"; }
 
+host_failure() {
+  printf 'fm-deck-worker: %s\n' "$1" >&2
+  printf 'failed: Deck secondmate %s\n' "$1" | status_append || {
+    printf 'fm-deck-worker: failed to publish secondmate failure\n' >&2
+  }
+  return 1
+}
+
+host_lock_owned() {
+  fm_session_lock_owned_by_self "$FM_HOME/state" || host_failure 'lost home session lock'
+}
+
+# The arm is a tracked child of this persistent driver, never a background
+# tool call. Its output stays in WORK while a turn runs; its actionable reason
+# is merely a doorbell for the durable home queue, never an acknowledgement.
+watch_start() {
+  [ -z "$WATCH_PID" ] || return 0
+  host_lock_owned || return 1
+  if [ -e "$FM_HOME/state/.afk" ]; then
+    host_failure 'daemon-owned away/quiet mode is unsupported; clear it through the owning supervisor before relaunch'
+    return 1
+  fi
+  (
+    trap '' INT
+    if [ -f "$FM_HOME/config/x-mode.env" ]; then
+      # shellcheck source=/dev/null
+      . "$FM_HOME/config/x-mode.env" || exit 1
+    fi
+    exec "$SCRIPT_DIR/fm-watch-arm.sh"
+  ) > "$WORK/watch.out" 2>&1 &
+  WATCH_PID=$!
+}
+
+# Use exactly the ordinary durable steering record and doorbell contract. The
+# local host consumes the doorbell directly as a next turn; backend transports
+# need no keystroke injection, pane scrape, or special wake implementation.
+watch_doorbell() (
+  local record
+  # shellcheck source=bin/fm-task-inbox-lib.sh
+  . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+  record=$(fm_task_inbox_write "$STATE" "$ID" "The home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, handle every emitted wake and open decision, and acknowledge only after handling. Watcher output:
+$(cat "$WORK/watch.out")") || exit 1
+  fm_task_inbox_doorbell_line "$record"
+)
+
+watch_result() {
+  local rc
+  wait "$WATCH_PID"; rc=$?
+  WATCH_PID=''
+  cat "$WORK/watch.out"
+  [ "$rc" -eq 0 ] || { host_failure "watcher failed (exit $rc)"; return 1; }
+  [ -s "$WORK/watch.out" ] || { host_failure 'watcher ended without a result'; return 1; }
+  host_lock_owned || return 1
+}
+
 # The evidence gate: the turn may finish only after it appended a worker status
 # line after the byte offset recorded at turn start. Deck feeds this stderr back
 # to the model and fails the run after its own bounded number of refusals.
@@ -142,9 +226,50 @@ RENDER='
   elif .type == "run_failed" then "\n✗ turn failed: \(.error)\n"
   else empty end'
 
+if [ "$SECONDMATE" = 1 ]; then
+  [ -n "${FM_HOME:-}" ] && [ -d "$FM_HOME" ] || { host_failure 'requires an explicit home'; exit 2; }
+  cd "$FM_HOME" || exit 2
+  # A persistent stdin reader preserves partial lines across watcher wakes on
+  # both Bash 3.2 (timeout and EOF share exit 1) and newer Bash. Atomic files in
+  # this private directory keep typed input pending while Deck owns the turn.
+  python3 -c '
+import os, pathlib, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+root = pathlib.Path(sys.argv[1])
+for seq, line in enumerate(sys.stdin):
+    tmp = root / "input.tmp"
+    tmp.write_text(line)
+    os.replace(tmp, root / ("input." + str(seq)))
+(root / "input.eof").touch()
+' "$WORK" <&0 &
+  INPUT_PID=$!
+  # Startup is executed exactly once by the stable host, not by a short-lived
+  # Deck run. The complete digest is supplied to the first model turn.
+  if ! "$SCRIPT_DIR/fm-session-start.sh" > "$WORK/startup" 2>&1; then
+    cat "$WORK/startup" >&2
+    host_failure 'session start failed'; exit 1
+  fi
+  host_lock_owned || exit 1
+  if [ "$(cat "$FM_HOME/state/.session-start-complete" 2>/dev/null)" != "$$" ]; then
+    cat "$WORK/startup" >&2
+    host_failure 'session start did not publish a complete digest'; exit 1
+  fi
+  PROMPT="$PROMPT
+
+The task steering inbox is $STATE/$ID.inbox. It belongs to this secondmate even outside its home. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
+The Deck host already ran bin/fm-session-start.sh exactly once for this session.
+Read the complete digest below; do not run session start again.
+$(cat "$WORK/startup")"
+  # A persistent supervisor may legitimately finish silently. It is not a
+  # ship worker and must not manufacture a parent status on every idle turn.
+  EVIDENCE_HOOK="bash -c $(q ". $(q "$SCRIPT_DIR/fm-session-lock-lib.sh"); fm_session_lock_owned_by_self $(q "$FM_HOME/state") || { echo 'Home session lock lost; report the failure and stop.' >&2; exit 2; }")"
+fi
+
 SESSION=''
 run_turn() {  # <prompt>
   local prompt=$1 rc event status_before
+  local -a turn_pipeline
+  [ "$SECONDMATE" != 1 ] || host_lock_owned || return 1
   local -a args=(run "$prompt" --max-turns "$MAX_TURNS" --deadline-secs "$DEADLINE" --hook "pre_complete=$EVIDENCE_HOOK")
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
   [ -z "$MODEL" ] || args+=(--model "$MODEL")
@@ -165,7 +290,12 @@ run_turn() {  # <prompt>
     printf '\n⛵ deck working - ctrl+c to stop\n'
   fi
   "$DECK" "${args[@]}" </dev/null | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
-  rc=${PIPESTATUS[0]}
+  turn_pipeline=("${PIPESTATUS[@]}")
+  rc=${turn_pipeline[0]}
+  if [ "$SECONDMATE" = 1 ] && [ "$INTERRUPTED" != 1 ] && { [ "${turn_pipeline[1]}" -ne 0 ] || [ "${turn_pipeline[2]}" -ne 0 ]; }; then
+    host_failure 'event capture or rendering failed' || true
+    return 1
+  fi
   if [ -t 1 ]; then
     printf '\033[u\033[J'
     jq -rj "$RENDER" "$EVENTS" 2>/dev/null
@@ -182,7 +312,20 @@ run_turn() {  # <prompt>
     event=turn-failed
   fi
   status_before=$(cat "$TURN_MARK" 2>/dev/null || printf '0\n')
-  if ! status_has_worker_evidence "$status_before"; then
+  if [ "$SECONDMATE" = 1 ]; then
+    if [ "$event" = turn-end ] && ! jq -es 'any(.[]; .type == "run_finished") and (all(.[]; .type != "run_failed"))' "$EVENTS" >/dev/null; then
+      event=turn-failed
+    fi
+    if [ "$event" = interrupted ] && [ -n "$SESSION" ]; then
+      host_failure 'turn interrupted; returning to supervised prompt' || true
+    elif [ "$event" != turn-end ] || [ -z "$SESSION" ]; then
+      host_failure "turn failed ($event, exit $rc)" || true
+      record_busy_event idle turn-failed || return 1
+      publish_turnend || return 1
+      return 1
+    fi
+    host_lock_owned || return 1
+  elif ! status_has_worker_evidence "$status_before"; then
     if ! printf 'failed: deck turn ended without a status line (%s)\n' "$event" | status_append; then
       printf 'fm-deck-worker: could not safely append required turn evidence to %s\n' "$STATUS_FILE" >&2
       record_busy_event idle turn-failed || return 1
@@ -195,11 +338,42 @@ run_turn() {  # <prompt>
 }
 
 run_turn "$PROMPT" || exit 1
+input_seq=0
+show_prompt=1
 while :; do
-  tty_ready
-  printf '\n❯ '
+  if [ "$SECONDMATE" = 1 ]; then
+    watch_start || exit 1
+    if ! kill -0 "$WATCH_PID" 2>/dev/null; then
+      watch_result || exit 1
+      if ! doorbell=$(watch_doorbell); then
+        host_failure 'could not publish watcher steering doorbell'; exit 1
+      fi
+      run_turn "$doorbell" || exit 1
+      show_prompt=1
+      continue
+    fi
+  fi
+  if [ "$show_prompt" = 1 ]; then
+    tty_ready
+    printf '\n❯ '
+    show_prompt=0
+  fi
   INTERRUPTED=0
-  if ! IFS= read -r line; then
+  if [ "$SECONDMATE" = 1 ]; then
+    if [ -f "$WORK/input.$input_seq" ]; then
+      line=$(cat "$WORK/input.$input_seq")
+      rm "$WORK/input.$input_seq"
+      input_seq=$((input_seq + 1))
+    elif [ -f "$WORK/input.eof" ]; then
+      record_busy_event idle session-end || exit 1
+      exit 0
+    elif ! kill -0 "$INPUT_PID" 2>/dev/null; then
+      host_failure 'stdin reader failed'; exit 1
+    else
+      sleep 0.1
+      continue
+    fi
+  elif ! IFS= read -r line; then
     [ "$INTERRUPTED" = 1 ] && continue
     record_busy_event idle session-end || exit 1
     exit 0
@@ -212,4 +386,5 @@ while :; do
       ;;
   esac
   run_turn "$line" || exit 1
+  show_prompt=1
 done
