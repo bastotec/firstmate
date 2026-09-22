@@ -1,0 +1,37 @@
+[workspace]
+# The Rust port of the stream backend: one workspace, four crates, replacing
+# the Python pieces at bin/fm-stream-hub.py, bin/fm-stream-agent.py, and
+# bin/fm-stream-bridge.py one at a time.  The Python deployment stays up as
+# the reference while each Rust piece takes over; the reference's OBSERVED
+# BEHAVIOUR is the spec, and tests/fm-stream-bridge-rust.test.sh proves the
+# bridge port byte-for-byte against it.
+#
+# Cargo.lock is committed so binary builds are reproducible from a clean
+# checkout (every member is a binary or backs one).
+resolver = "2"
+members = [
+    "crates/fm-stream-wire",
+    "crates/fm-stream-hub",
+    "crates/fm-stream-agent",
+    "crates/fm-stream-bridge",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96"
+license = "MIT"
+
+[workspace.dependencies]
+fm-stream-wire = { path = "crates/fm-stream-wire" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "net"] }
+hyper = { version = "1", features = ["http1", "client"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+http-body-util = "0.1"
+
+[profile.release]
+# Determinism over speed: the bridge's job is a 500 ms poll, and reproducible
+# output matters more than the last few percent of runtime.
+strip = "none"
