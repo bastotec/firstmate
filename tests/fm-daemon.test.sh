@@ -1264,7 +1264,7 @@ test_housekeeping_persistent_stale_escalates() {
 }
 
 test_housekeeping_capture_failure_escalates_without_losing_retry() {
-  local dir state win key marker before
+  local dir state win key marker before gate_log
   dir=$(make_supercase stale-capture-failure)
   state="$dir/state"
   win="sess:fm-unreadable-w5"
@@ -1274,23 +1274,26 @@ test_housekeeping_capture_failure_escalates_without_losing_retry() {
   marker="$state/.subsuper-stale-$key"
   before=$(( $(date +%s) - 500 ))
   printf '%s\n' "$before" > "$marker"
+  gate_log="$dir/gate-called"
 
   (
     fm_backend_capture() { return 1; }
-    wedge_gate_verdict() { printf 'escalate\n'; }
+    wedge_gate_verdict() { : > "$gate_log"; printf 'absorb:jev-working\n'; }
     escalate_add() { return 1; }
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
   )
   [ -e "$marker" ] || fail "an unreadable away-mode wedge lost its marker after escalation persistence failed"
   [ ! -s "$state/.subsuper-escalations" ] || fail "the failed escalation append unexpectedly wrote a record"
+  [ ! -e "$gate_log" ] || fail "an unreadable away-mode wedge consulted the absorption gate"
 
   (
     fm_backend_capture() { return 1; }
-    wedge_gate_verdict() { printf 'escalate\n'; }
+    wedge_gate_verdict() { : > "$gate_log"; printf 'absorb:jev-working\n'; }
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
   )
   [ -s "$state/.subsuper-escalations" ] || fail "an unreadable away-mode wedge did not escalate"
   [ ! -e "$marker" ] || fail "a durably escalated unreadable wedge retained its retry marker"
+  [ ! -e "$gate_log" ] || fail "a durably escalated unreadable wedge consulted the absorption gate"
   pass "away-mode capture failures escalate and retain retries until durable"
 }
 

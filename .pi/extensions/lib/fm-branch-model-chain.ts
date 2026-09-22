@@ -54,23 +54,6 @@ export function parseBranchModelChain(stored: string): BranchModelRef[] {
   return chain;
 }
 
-/**
- * The order in which an ordinary build should try the chain: every model that
- * is not cooling down, in preference order. Recovery probes are offered only
- * after the earliest cooldown expires, so ordinary builds never retry a model
- * during its sit-out.
- */
-export function orderBranchModelChain(
-  chain: readonly BranchModelRef[],
-  cooldowns: ReadonlyMap<string, BranchModelCooldown>,
-  now: number,
-): BranchModelRef[] {
-  return chain.filter((ref) => {
-    const cooldown = cooldowns.get(branchModelLabel(ref));
-    return !cooldown || cooldown.retryNotBefore <= now;
-  });
-}
-
 /** True when some model other than `failed` is ready to take the next wake. */
 export function chainHasReadyAlternative(
   chain: readonly BranchModelRef[],

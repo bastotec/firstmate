@@ -34,7 +34,12 @@ cat > "$STUB" <<'SH'
 cat >/dev/null
 [ "${FM_TEST_ANSWERS:-}" = preflight ] && { printf 'error\tno-key\n'; exit 3; }
 [ "${FM_TEST_ANSWERS:-}" = error ] && { printf 'error\tcall-failed\n'; exit 5; }
-printf 'usage\t1\t1200\t0\t400\n'
+case "${FM_TEST_USAGE:-valid}" in
+  missing) ;;
+  malformed) printf 'usage\t1\t-1\t0\t400\n' ;;
+  duplicate) printf 'usage\t1\t1200\t0\t400\nusage\t1\t1200\t0\t400\n' ;;
+  *) printf 'usage\t1\t1200\t0\t400\n' ;;
+esac
 # shellcheck disable=SC2086 # the four answers are deliberately word-split
 printf 'answers\t%s\t%s\t%s\t%s\n' $FM_TEST_ANSWERS
 SH
@@ -168,6 +173,17 @@ printf '%s\tgarbage\n' "$(date +%s)" > "$s/wake-gate/t1.look"
 [ "$(last_decision "$s")" = "$(printf 'call\tsilence-backstop')" ] \
   || fail "malformed last-look flags were not treated as invalid"
 pass "future and malformed look records fail open"
+
+for usage_case in missing malformed duplicate; do
+  s=$(new_state "sv-$usage_case-usage")
+  mkdir -p "$s/wake-gate"
+  printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+  [ "$(FM_TEST_USAGE="$usage_case" raw_verdict "$s" enforce "$WORKING")" = escalate ] \
+    || fail "SAFETY: a $usage_case helper usage row allowed an absorb decision"
+  [ "$(tail -1 "$s/wake-gate/usage.log" | cut -f6)" = error ] \
+    || fail "a $usage_case helper usage row was not recorded as a protocol error"
+done
+pass "missing, malformed, and duplicate usage rows fail open"
 
 s=$(new_state sv-oversized-look)
 mkdir -p "$s/wake-gate"

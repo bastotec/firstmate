@@ -119,7 +119,6 @@ import {
   chainHasReadyAlternative,
   chainPrefersEarlierModel,
   nextBranchModelCooldown,
-  orderBranchModelChain,
   parseBranchModelChain,
 } from "./lib/fm-branch-model-chain.ts";
 import {
@@ -922,8 +921,10 @@ export default function (pi: ExtensionAPI) {
   // reports the earliest retry so the dispatch latch can pause and probe.
   async function chainBranchModelSelection(chain: readonly BranchModelRef[]): Promise<BranchModelSelection> {
     const reasons: string[] = [];
-    const now = Date.now();
-    for (const ref of orderBranchModelChain(chain, chainCooldowns, now)) {
+    for (const ref of chain) {
+      const label = branchModelLabel(ref);
+      const cooldown = chainCooldowns.get(label);
+      if (cooldown && cooldown.retryNotBefore > Date.now()) continue;
       let resolved: BranchModelResolution;
       try {
         resolved = await resolveBranchModel(ref.provider, ref.modelId);
@@ -933,7 +934,6 @@ export default function (pi: ExtensionAPI) {
       if (resolved.ok) {
         return { pinned: resolved.selection, chainModel: branchModelLabel(ref) };
       }
-      const label = branchModelLabel(ref);
       chainCooldowns.set(label, nextBranchModelCooldown(chainCooldowns.get(label), Date.now()));
       reasons.push(resolved.reason);
     }

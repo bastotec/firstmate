@@ -208,11 +208,24 @@ EOF_ANSWERS
       return 0
     fi
   done
-  usage_fields=$(printf '%s\n' "$hout" | awk -F'\t' '$1=="usage"{print $2"\t"$3"\t"$4"\t"$5; exit}')
+  if ! usage_fields=$(printf '%s\n' "$hout" | awk -F'\t' '
+    $1 == "usage" {
+      count++
+      if (NF != 5) invalid=1
+      for (i=2; i<=5; i++) if ($i !~ /^[0-9]+$/) invalid=1
+      if (count == 1) row=$2 "\t" $3 "\t" $4 "\t" $5
+    }
+    END { if (count != 1 || invalid) exit 1; print row }
+  '); then
+    log_usage 1 0 0 0 error
+    log_shadow "$task" "$mode" call jev-error - - - -
+    printf 'escalate\n'
+    return 0
+  fi
   IFS=$'\t' read -r u_calls u_in u_out u_ms <<EOF_USAGE
 $usage_fields
 EOF_USAGE
-  if ! log_usage "${u_calls:-1}" "${u_in:-0}" "${u_out:-0}" "${u_ms:-0}" ok; then
+  if ! log_usage "$u_calls" "$u_in" "$u_out" "$u_ms" ok; then
     printf 'escalate\n'
     return 0
   fi

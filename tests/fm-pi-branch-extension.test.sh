@@ -2207,9 +2207,17 @@ async function wake(label, expectFailure) {
   if (prompts !== before + 1) throw new Error(`${label}: expected exactly one branch prompt`);
 }
 
-// 1. The unknown first entry is skipped; the first usable model serves.
+// 1. The unknown first entry is skipped; its duplicate respects the cooldown
+// started by that attempt, and the first usable model serves. Five minutes
+// later the unknown model is eligible for one probe rather than a doubled wait.
 await wake("first wake", false);
 if (builtOn().at(-1) !== "openai/cheap-1") throw new Error(`the chain did not start on its first usable model: ${builtOn()}`);
+const sessionsBeforeDuplicateProbe = builtOn().length;
+now += 5 * 60 * 1000;
+await wake("duplicate entry cooldown probe", false);
+if (builtOn().length !== sessionsBeforeDuplicateProbe + 1 || builtOn().at(-1) !== "openai/cheap-1") {
+  throw new Error(`a duplicate chain entry doubled one failed attempt's cooldown: ${builtOn()}`);
+}
 
 // 2. That model runs out: the failed wake returns to the watcher-owned
 // fallback, ONE note says where supervision went, and nothing latches.
