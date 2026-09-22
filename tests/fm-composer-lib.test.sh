@@ -489,6 +489,8 @@ test_matrix_pi_separated_needs_identity() {
   # structural furniture signal that changes this one row to empty.
   pi085=$'transcript\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter'
   assert_screen "pi 0.85.1 idle reverse-video cursor on tmux" empty "$CAPS_TMUX" "$pi085" 2 "$pi_idle"
+  assert_screen "pi 0.85.1 blocked reverse-video cursor on tmux defers" unknown "$CAPS_TMUX" "$pi085" 2 "$pi_blocked"
+  assert_screen "pi 0.85.1 reverse-video cursor requests tmux identity" need-identity "$CAPS_TMUX" "$pi085" 2
   assert_screen "pi 0.85.1 idle reverse-video cursor on herdr" empty "$CAPS_STYLED" "$pi085" '' "$pi_idle"
   assert_screen "pi 0.85.1 idle reverse-video cursor on zellij" empty "$CAPS_STYLED_NOID" "$pi085"
   typed=$'transcript\n────────────────────────\n\033[39m ❯  \033[7m \033[0m\n────────────────────────\nfooter'
