@@ -2149,9 +2149,10 @@ test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldow
   PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
 const prelude = process.env.DRIVER_PRELUDE;
-await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatch, fire, settle, home, mainUserMessages, sentToMain }; })()`);
-const { pi, makeOffer, dispatch, fire, settle, home, mainUserMessages, sentToMain } = globalThis.__t;
-import { existsSync, writeFileSync } from "node:fs";
+await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatch, fire, settle, home, realRoot, mainUserMessages, sentToMain }; })()`);
+const { pi, makeOffer, dispatch, fire, settle, home, realRoot, mainUserMessages, sentToMain } = globalThis.__t;
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 let now = 1_000_000;
 Date.now = () => now;
@@ -2375,12 +2376,23 @@ if (fullFailure !== null) {
 if (existsSync(`${home}/state/.branch-eligible-rows`)) {
   throw new Error("fully reported grant left its handled row grant active");
 }
+if (readFileSync(`${home}/state/.wake-queue`, "utf8").trim() !== "") {
+  throw new Error("fully reported provider-error grant remained queued after settlement");
+}
+const nextDrain = spawnSync("bash", [`${realRoot}/bin/fm-wake-drain.sh`], {
+  encoding: "utf8",
+  env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: `${home}/state`, FM_ROOT_OVERRIDE: realRoot },
+});
+if (nextDrain.status !== 0) throw new Error(`next main drain failed: ${nextDrain.stderr}`);
+if (nextDrain.stdout.includes("\tsignal\tbranch-driver.")) {
+  throw new Error(`next drain re-presented a fully reported provider-error grant: ${nextDrain.stdout}`);
+}
 process.exit(0);
 EOF
   status=$?
   out=$(cat "$TMP_ROOT/node-output")
   expect_code 0 "$status" "provider errors must preserve distinctly covered grants, replay duplicate coverage, and retain health cooldowns: $out"
-  pass "provider errors settle only grants with one durable report per wake row"
+  pass "provider errors settle only after fully reported grants are acknowledged"
 }
 
 test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model() {

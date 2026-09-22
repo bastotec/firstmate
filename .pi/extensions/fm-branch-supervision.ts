@@ -97,6 +97,7 @@ import {
 } from "./lib/fm-calm-visibility.ts";
 import {
   activateEligibleRowsOwner,
+  BRANCH_ELIGIBLE_ROWS_FILE,
   deactivateEligibleRowsOwner,
   FM_BRANCH_DISPATCH_EVENT,
   releaseEligibleRowsSnapshot,
@@ -141,6 +142,7 @@ const promptScript = join(fmRoot, "bin", "fm-branch-prompt.sh");
 const outcomeScript = join(fmRoot, "bin", "fm-branch-outcome.sh");
 const leaseScript = join(fmRoot, "bin", "fm-lease.sh");
 const wakeGrantScript = join(fmRoot, "bin", "fm-wake-grant.sh");
+const wakeDrainScript = join(fmRoot, "bin", "fm-wake-drain.sh");
 const loadedMarker = join(state, ".pi-branch-extension-loaded");
 const modelPinFile = join(config, "supervision-branch-model");
 const effortPinFile = join(config, "supervision-branch-effort");
@@ -1592,6 +1594,29 @@ ${context.command}
     }
   }
 
+  async function acknowledgeReportedGrant(expectedGeneration: number): Promise<boolean> {
+    const eligibleRows = join(state, BRANCH_ELIGIBLE_ROWS_FILE);
+    if (!existsSync(eligibleRows)) return true;
+    if (!(await actingAsOwner(expectedGeneration))) return false;
+    const env = {
+      ...scriptEnv,
+      FM_SUPERVISION_ACTOR: "branch",
+      FM_LEASE_HOLDER_PID: ownedLockPid,
+    };
+    const presented = await runCommandAsync("bash", [wakeDrainScript], { cwd: fmRoot, env });
+    if (presented.status !== 0) return false;
+    const matches = [...presented.stderr.matchAll(
+      /^WAKE_ACK_REQUIRED: after handling completes run bin\/fm-wake-drain\.sh --ack-through ([0-9]+) --recovery-generation ([A-Za-z0-9._-]+)$/gm,
+    )];
+    if (matches.length !== 1 || !(await actingAsOwner(expectedGeneration))) return false;
+    const acknowledged = await runCommandAsync(
+      "bash",
+      [wakeDrainScript, "--ack-through", matches[0][1], "--recovery-generation", matches[0][2]],
+      { cwd: fmRoot, env },
+    );
+    return acknowledged.status === 0 && !existsSync(eligibleRows);
+  }
+
   function enqueueWake(message: string, acceptedGeneration: number, recoveryProbe = false): Promise<void> {
     const acceptedSelectionRevision = branchSelectionRevision;
     const delivery = branchChain
@@ -1659,21 +1684,24 @@ ${context.command}
         }
         const grantFullyReported = [...promptWakeScope.rows.keys()].every((seq) => promptWakeScope.reported.has(seq));
         const providerError = settledPromptProviderError(sessionManager, entryOffset);
-        if (providerError) {
-          const detail = `supervision branch provider failed after construction: ${providerError}`;
-          if (
-            branchForWake.generation === generation &&
-            branchForWake.selectionRevision === branchSelectionRevision
-          ) {
-            recordSettledProviderError(detail);
-          }
-          // The provider failure remains health evidence, but it cannot return
-          // an already durably reported wake to the watcher for redelivery.
-          if (!grantFullyReported) throw new Error(detail);
-        } else {
-          if (!grantFullyReported) {
-            throw new Error("supervision branch prompt settled but produced no durable outcome for every claimed wake row");
-          }
+        const grantAcknowledged = grantFullyReported && await acknowledgeReportedGrant(acceptedGeneration);
+        const providerDetail = providerError
+          ? `supervision branch provider failed after construction: ${providerError}`
+          : "";
+        if (
+          providerDetail &&
+          branchForWake.generation === generation &&
+          branchForWake.selectionRevision === branchSelectionRevision
+        ) {
+          recordSettledProviderError(providerDetail);
+        }
+        if (!grantFullyReported) {
+          throw new Error(providerDetail || "supervision branch prompt settled but produced no durable outcome for every claimed wake row");
+        }
+        if (!grantAcknowledged) {
+          throw new Error("supervision branch produced every durable outcome but could not acknowledge its wake-row grant");
+        }
+        if (!providerDetail) {
           recordDurableBranchReport(branchForWake.generation, branchForWake.selectionRevision);
         }
         if (!(await releaseEligibleRowsSnapshot(state, wakeGrantScript, String(acceptedGeneration)))) {
