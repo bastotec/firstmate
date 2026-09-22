@@ -277,19 +277,24 @@ fm_busy_record_read() {  # <state-dir> <id>
   printf '%s %s %s %s' "$r_state" "$r_source" "$r_event" "$r_seq"
 }
 
-fm_busy_delivery_seq() {
-  local record _state _source _event seq
+# A Deck submit can be correlated only from the wrapper's idle prompt state.
+# A busy baseline may belong to an older turn with input already queued behind
+# it, so its eventual next start cannot acknowledge the Enter being sent now.
+fm_busy_deck_delivery_baseline() {
+  local record state source _event seq
   record=$(fm_busy_record_read "$1" "$2") || return 1
-  read -r _state _source _event seq <<< "$record"
+  read -r state source _event seq <<< "$record"
+  [ "$state" = idle ] && [ "$source" = deck-wrapper ] || return 1
   printf '%s' "$seq"
 }
 
-fm_busy_deck_delivery_advanced() {
-  local record state source _event seq baseline=$3
+fm_busy_deck_delivery_started() {
+  local record state source event seq baseline=$3
   case "$baseline" in ''|*[!0-9]*) return 1 ;; esac
   record=$(fm_busy_record_read "$1" "$2") || return 1
-  read -r state source _event seq <<< "$record"
-  [ "$state" = busy ] && [ "$source" = deck-wrapper ] && [ "$seq" -gt "$baseline" ]
+  read -r state source event seq <<< "$record"
+  [ "$state" = busy ] && [ "$source" = deck-wrapper ] \
+    && [ "$event" = turn-start ] && [ "$seq" -eq $((baseline + 1)) ]
 }
 
 # ---------------------------------------------------------------------------

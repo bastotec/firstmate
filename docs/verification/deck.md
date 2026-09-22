@@ -48,7 +48,7 @@ fm-deck-harness: all cases passed
 The evidence gate snapshots the status log's byte offset at turn start and searches a bounded appended suffix for a complete `done`, `needs-decision`, `blocked`, `failed`, or `working` line.
 Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy the gate or the driver's postcondition.
 Those reads, the driver's fallback append, and turn-end publication use Python 3 descriptor-bound I/O, reject symlinks and non-regular or multiply linked files, and never touch an unsafe target.
-The terminal regression drives two real `fm-send.sh` steers through tmux and proves delivery from an advancing `deck-wrapper` busy sequence while each completed turn removes its transient rendered working row.
+The terminal regression drives two real `fm-send.sh` steers through tmux and proves delivery from the next `deck-wrapper` turn start after an idle baseline while each completed turn removes its transient rendered working row.
 
 ## Live check
 

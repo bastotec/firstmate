@@ -3272,7 +3272,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
   fm_backend_herdr_send_literal "$target" "$text" || { printf 'send-failed'; return 0; }
   sleep "$settle"
   if [ "$harness" = deck ] && [ -n "$state_dir" ] && [ -n "$task_id" ]; then
-    deck_seq=$(fm_busy_delivery_seq "$state_dir" "$task_id") || deck_seq=
+    deck_seq=$(fm_busy_deck_delivery_baseline "$state_dir" "$task_id") || deck_seq=
   fi
   raw_status=$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")
   baseline=$(fm_backend_herdr_classify_submit_agent_status "$raw_status")
@@ -3300,7 +3300,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
     fi
     if [ "$harness" = deck ] && [ -n "$deck_seq" ]; then
       sleep "$sleep_s"
-      if fm_busy_deck_delivery_advanced "$state_dir" "$task_id" "$deck_seq"; then
+      if fm_busy_deck_delivery_started "$state_dir" "$task_id" "$deck_seq"; then
         printf 'empty'
         return 0
       fi
@@ -3309,7 +3309,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
       verdict=$(fm_backend_herdr_wait_for_working "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" \
         "$confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS")
       if [ "$harness" = deck ]; then
-        if [ -n "$deck_seq" ] && fm_busy_deck_delivery_advanced "$state_dir" "$task_id" "$deck_seq"; then
+        if [ -n "$deck_seq" ] && fm_busy_deck_delivery_started "$state_dir" "$task_id" "$deck_seq"; then
           printf 'empty'
           return 0
         fi

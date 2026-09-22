@@ -2090,16 +2090,19 @@ const duringProbe = makeOffer("signal: main owns wakes during a branch probe");
 pi.events.emit("fm-branch-supervision:dispatch", duringProbe);
 if (duringProbe.accepted) throw new Error("a second wake entered the branch while its one cooldown probe was in flight");
 releaseFailedProbe();
-const failedProbeError = await failedProbe.settlement.then(() => null, (error) => error);
-if (!(failedProbeError instanceof Error) || !failedProbeError.message.includes("provider failed after construction")) {
-  throw new Error(`failed cooldown probe did not reject settlement: ${String(failedProbeError)}`);
+const reportedProbeError = await failedProbe.settlement.then(() => null, (error) => error);
+if (reportedProbeError !== null) {
+  throw new Error(`a provider error after the durable report returned the handled wake for redelivery: ${String(reportedProbeError)}`);
 }
-if (mainUserMessages.length !== 0) throw new Error("failed cooldown probe bypassed watcher-owned fallback delivery");
+if (mainUserMessages.length !== 0) throw new Error("reported provider-error probe bypassed watcher-owned delivery");
 if (existsSync(`${home}/state/.branch-eligible-rows`)) {
-  throw new Error("failed cooldown probe left the claimed row grant active");
+  throw new Error("reported provider-error probe left the handled row grant active");
+}
+if (sentToMain.some((sent) => sent.message.content.includes("Supervision branch recovered after a successful cooldown probe"))) {
+  throw new Error("a post-report provider error was mistaken for provider recovery");
 }
 
-// The failed probe doubles the cooldown from five to ten minutes. Five more
+// The provider failure still doubles the cooldown from five to ten minutes. Five more
 // minutes are not enough, but the next five admit exactly one recovery probe.
 now += 5 * 60 * 1000;
 if (dispatch("signal: inside extended cooldown").accepted) {
@@ -2138,8 +2141,8 @@ process.exit(0);
 EOF
   status=$?
   out=$(cat "$TMP_ROOT/node-output")
-  expect_code 0 "$status" "provider errors must latch, cool down, re-probe once, back off, and recover through a durable report: $out"
-  pass "provider-error latches cool down, re-probe once with backoff, and recover through a durable report"
+  expect_code 0 "$status" "provider errors must latch, cool down, preserve handled reports, back off, and recover: $out"
+  pass "provider errors preserve handled reports while health cooldowns still back off and recover"
 }
 
 test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model() {

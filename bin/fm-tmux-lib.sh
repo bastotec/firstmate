@@ -310,7 +310,7 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle
     tmux send-keys -t "$target" Enter 2>/dev/null || true
     sleep "$sleep_s"
     if [ "$harness" = deck ] && [ -n "$deck_seq" ] \
-      && fm_busy_deck_delivery_advanced "$state_dir" "$task_id" "$deck_seq"; then
+      && fm_busy_deck_delivery_started "$state_dir" "$task_id" "$deck_seq"; then
       printf 'empty'
       return 0
     fi
@@ -370,7 +370,7 @@ fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle> [har
   tmux send-keys -t "$target" -l "$text" 2>/dev/null || { printf 'send-failed'; return 0; }
   sleep "$settle"
   if [ "$harness" = deck ] && [ -n "$state_dir" ] && [ -n "$task_id" ]; then
-    deck_seq=$(fm_busy_delivery_seq "$state_dir" "$task_id") || deck_seq=
+    deck_seq=$(fm_busy_deck_delivery_baseline "$state_dir" "$task_id") || deck_seq=
   fi
   fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$baseline_idle" "$harness" "$state_dir" "$task_id" "$deck_seq"
 }
