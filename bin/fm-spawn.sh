@@ -140,7 +140,9 @@
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|deck)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
-#   new adapters. For pi and pi-signed, fm-spawn resolves the selected executable
+#   new adapters. Deck remains unverified live and is refused unless the verification-only
+#   FM_DECK_ALLOW_UNVERIFIED=1 environment opt-in is set. For pi and pi-signed,
+#   fm-spawn resolves the selected executable
 #   name from PATH once, probes that concrete path with --help, and launches the
 #   same path. It adds --tui-mode regular only when that help advertises the flag;
 #   a failed or inconclusive probe omits it so older Pi versions remain launchable.
@@ -298,8 +300,9 @@
 # plus a gitignored .fm-grok-turnend worktree pointer and a state token.
 # muse installs no hook at all - its plugin engine is off in the default build - so
 # it writes state/<id>.muse-session to bind the pane to muse's own session event
-# log; muse, gemini, agy, and deck are crewmate/scout only and are refused for --secondmate.
-# deck installs no hook file: bin/fm-deck-worker.sh passes Deck its per-run hooks
+# log; muse, gemini, and agy are verified crewmate/scout-only adapters.
+# deck remains unverified live, is available only through its explicit verification opt-in,
+# and installs no hook file: bin/fm-deck-worker.sh passes Deck its per-run hooks
 # (--hook) and writes the busy and turn-end events itself.
 # rovo installs no hook either - its eventHooks fire at tool granularity only,
 # never turn-end - so it carries no busy-source wiring at all and no turn-end
@@ -1557,7 +1560,7 @@ agy_model_validate() {  # <agy-bin> <model>
   return 1
 }
 
-# The verified launch command per adapter. The knowledge half of each adapter
+# The canonical launch command per adapter. The knowledge half of each adapter
 # (busy-state source, exit command, dialogs, quirks) lives in the harness-adapters skill.
 launch_template() {
   local harness=$1 kind=${2:-ship}
@@ -1831,6 +1834,11 @@ case "$ARG3" in
     ;;
 esac
 
+if [ "$HARNESS" = deck ] && [ "${FM_DECK_ALLOW_UNVERIFIED:-0}" != 1 ]; then
+  echo "error: deck is not yet live-verified; refusing worker dispatch. Set FM_DECK_ALLOW_UNVERIFIED=1 only for an adapter verification run." >&2
+  exit 1
+fi
+
 # Resolve the home-local account binding before any worktree, endpoint, trust,
 # hook, or task-record mutation. A direct relaunch follows the same precedence
 # as fm-control: explicit value, explicit default clear, same-harness preserve,
@@ -1858,7 +1866,8 @@ if [ -n "$ACCOUNT_SLOT_EFFECTIVE" ]; then
   }
 fi
 
-# muse, gemini, and agy are verified as CREWMATE/SCOUT adapters only. A secondmate is
+# muse, gemini, and agy are verified as CREWMATE/SCOUT adapters only. Deck's
+# verification-only path is also limited to those task kinds. A secondmate is
 # a firstmate instance, so it needs a primary supervision protocol.
 # gemini has none: docs/supervision-protocols/ carries no gemini wake protocol
 # and this task verified only crewmate-side launch, busy state, interrupt, and
@@ -1872,7 +1881,7 @@ fi
 # docs/supervision-protocols/ carries no agy wake protocol (agy 1.2.0).
 # deck has none either: its worker driver supervises one task, not a home.
 if [ "$KIND" = secondmate ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = agy ] || [ "$HARNESS" = deck ]; }; then
-  echo "error: $HARNESS is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
+  echo "error: $HARNESS is a crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
   exit 1
 fi
 
@@ -1933,7 +1942,7 @@ case "$HARNESS" in
     ;;
   deck)
     DECK_BIN=$(resolve_pi_executable deck) || {
-      echo "error: deck executable not found on PATH; build bastotec/deck (cargo build --release --locked) and put target/release/deck on PATH, or select a different verified harness" >&2
+      echo "error: deck executable not found on PATH; build bastotec/deck (cargo build --release --locked) and put target/release/deck on PATH for adapter verification" >&2
       exit 1
     }
     command -v jq >/dev/null 2>&1 || {
@@ -3609,7 +3618,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
 fi
 if [ "$KIND" != secondmate ]; then
   # Arm the semantic busy-state contract (bin/fm-busy-lib.sh) for every
-  # adapter with a verified semantic source. The launch brief sent below IS a
+  # selected adapter with an implemented semantic source. The launch brief sent below IS a
   # submitted turn, so the seed record is busy/fm-spawn. The minted gen is
   # embedded into each adapter's wiring so an event from a superseded
   # incarnation is rejected as stale. Grok and rovo stay on their isolated

@@ -8,7 +8,8 @@ The skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../../.age
 | Field | Value |
 |---|---|
 | Version | `deck 0.1.0` built from `bastotec/deck` main at `7308f21` (includes `run --hook` and the `pre_complete` hook) |
-| Verified | 2026-09-21 |
+| Checked | 2026-09-21 |
+| Status | Portable driver checks pass; live adapter verification failed |
 | Binary | `~/.local/bin/deck`, copied from `target/release/deck` after `cargo build --release --locked` |
 | Platform | macOS (Darwin 25.6.0, arm64), GNU bash 3.2.57, jq 1.7.1, tmux 3.6a |
 | Backend | tmux |
@@ -28,10 +29,12 @@ $ bash tests/fm-deck-harness.test.sh
 ok - fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model
 ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
 ok - fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported
-ok - fm-deck-worker: Ctrl+C cancels the running turn and keeps the worker at its prompt
+ok - fm-deck-worker: silent and failed turns gain status evidence before turn-end
+ok - fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt
 ok - liveness: the deck driver and binary are agents, unrelated names are not
-ok - control, busy-source, and delivery tables carry deck's verified mechanics
-ok - fm-spawn: deck launches the driver with the binary, busy gen, and model; effort recorded only
+ok - control, busy-source, and delivery tables carry deck's implemented mechanics
+ok - fm-spawn: Deck refuses ordinary dispatch until live verification
+ok - fm-spawn: the Deck verification opt-in launches the driver and records effort only
 ok - fm-spawn: a secondmate on deck is refused
 fm-deck-harness: all cases passed
 ```
@@ -40,6 +43,10 @@ The evidence gate compares the status log's size with its size at turn start rat
 
 ## Live check
 
-Pending: every model route was out of quota when the adapter landed (the proxai Codex accounts reset 2026-09-21 15:25Z and 2026-09-26 08:24Z).
-The live check runs the driver in a real tmux pane against the real `deck` binary and a live gateway route and must show: the brief turn refused once by the evidence gate and then finishing after the worker appends a status line; a typed steer answered in the same Deck session; `tmux display -p '#{pane_current_command}'` naming `fm-deck-worker`; `Ctrl+C` through `tmux send-keys` returning to the prompt with an `interrupted` busy event; and `/quit` recording `session-end`.
-Until that lands, treat the adapter as unverified live and dispatch real work on it only after this section records the result.
+The 2026-09-21 live attempt ran the real `deck` binary in a real tmux pane on macOS through proxai with route `codex/gpt-5.6-luna`.
+The first turn's second model request failed immediately, with no idle gap, when proxai returned HTTP 409 `conversation_conflict`: `assistant/tool history must belong to a live conversation owned by this caller`.
+The driver recorded `turn-failed` and touched the task's turn-end notification.
+Tmux's `#{pane_current_command}` reported `bash`, while `ps` reported the pane's foreground process as `fm-deck-worker`, so pane liveness through the real backend remains unproven.
+The attempt did not complete a first turn, same-session steer, interrupt, or clean exit, and therefore did not verify the adapter end to end.
+Normal `fm-spawn.sh --harness deck` dispatch is refused; `FM_DECK_ALLOW_UNVERIFIED=1` exists only to rerun adapter verification.
+A passing live check must show the brief turn completing after status evidence, a typed steer answered in the same Deck session, proven pane liveness, `Ctrl+C` returning to the prompt with an `interrupted` busy event, and `/quit` recording `session-end` before Deck may become dispatchable.

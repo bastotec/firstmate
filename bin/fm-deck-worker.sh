@@ -15,8 +15,9 @@
 #     finished turn touches the task's turn-end notification file;
 #   - Deck's own hooks are attached on every run: `post_tool_use` refreshes the
 #     task's progress marker, and `pre_complete` refuses to let a turn finish
-#     until the worker has appended a line to its status log during that turn
-#     (the evidence gate; Deck fails the run after its bounded refusals);
+#     until the worker has appended a line to its status log during that turn;
+#     the driver backstops failed, refused, and interrupted turns with a failure
+#     status when Deck exits without growing the log;
 #   - Ctrl+C cancels the running turn and returns to the prompt; `/quit` at the
 #     prompt ends the worker.
 #
@@ -83,6 +84,10 @@ busy_event() {  # <busy|idle> <event>
   "$BUSY_EVENT" apply "$STATE" "$ID" "$1" --gen "$GEN" --source deck-wrapper --event "$2" >/dev/null 2>&1 || true
 }
 
+status_size() {
+  { { wc -c < "$STATUS_FILE"; } 2>/dev/null || printf '0\n'; } | tr -d '[:space:]'
+}
+
 q() { printf '%q' "$1"; }
 
 # The evidence gate: the turn may finish only after it appended to the status
@@ -107,13 +112,13 @@ RENDER='
 
 SESSION=''
 run_turn() {  # <prompt>
-  local prompt=$1 rc
+  local prompt=$1 rc event status_before status_after
   local -a args=(run "$prompt" --max-turns "$MAX_TURNS" --deadline-secs "$DEADLINE" --hook "pre_complete=$EVIDENCE_HOOK")
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
   [ -z "$MODEL" ] || args+=(--model "$MODEL")
   [ -z "$SESSION" ] || args+=(--session "$SESSION")
   INTERRUPTED=0
-  { wc -c < "$STATUS_FILE" 2>/dev/null || echo 0; } | tr -d ' ' > "$TURN_MARK"
+  status_size > "$TURN_MARK"
   busy_event busy turn-start
   # The delivery acknowledgement token (bin/fm-composer-lib.sh) for a submitted line.
   printf '\n⛵ deck working - ctrl+c to stop\n'
@@ -124,12 +129,21 @@ run_turn() {  # <prompt>
   fi
   if [ "$INTERRUPTED" = 1 ]; then
     printf '\nInterrupted.\n'
-    busy_event idle interrupted
+    event=interrupted
   elif [ "$rc" -eq 0 ]; then
-    busy_event idle turn-end
+    event=turn-end
   else
-    busy_event idle turn-failed
+    event=turn-failed
   fi
+  status_before=$(cat "$TURN_MARK" 2>/dev/null || printf '0\n')
+  status_after=$(status_size)
+  if [ "$status_after" -le "$status_before" ]; then
+    printf 'failed: deck turn ended without a status line (%s)\n' "$event" >> "$STATUS_FILE" || {
+      printf 'fm-deck-worker: could not append required turn evidence to %s\n' "$STATUS_FILE" >&2
+      exit 1
+    }
+  fi
+  busy_event idle "$event"
   [ -z "$TURNEND" ] || touch "$TURNEND" 2>/dev/null || true
 }
 

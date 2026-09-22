@@ -12,22 +12,24 @@
 #      and closes idle, a finished turn touches the turn-end notification, and
 #      /quit records session-end.
 #   3. The evidence gate refuses a turn that appended nothing to the status log
-#      and lets one through that did.
+#      and lets one through that did, while the driver gives every completed,
+#      failed, or interrupted turn a status line before its turn-end signal.
 #   4. Ctrl+C cancels the running turn and returns to the prompt.
 #   5. Pane liveness reads the driver (argv[0] fm-deck-worker) and deck as an
 #      agent, never as an idle shell; unrelated names stay unclaimed.
 #   6. Control, busy-source, and delivery tables name deck, and a secondmate
 #      launch on deck is refused.
-#   7. The spawn launches the driver with the resolved deck binary, the task's
-#      busy gen, and the model, records effort without passing it, and arms
-#      the busy contract.
+#   7. Ordinary Deck dispatch is refused while the adapter is unverified; the
+#      verification opt-in launches the driver with the resolved deck binary,
+#      busy gen, and model, records effort without passing it, and arms the
+#      busy contract.
 set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_INVOKED_AS \
-  ATLASSIAN_AGENT_TYPE ROVODEV_CLI GEMINI_CLI AGENT FM_OMP_HARNESS
+  ATLASSIAN_AGENT_TYPE ROVODEV_CLI GEMINI_CLI AGENT FM_OMP_HARNESS FM_DECK_ALLOW_UNVERIFIED
 
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
@@ -71,20 +73,23 @@ esac
 if [ -n "$gate" ]; then
   if bash -c "$gate" </dev/null 2>>"$dir/gate.err"; then echo pass >> "$dir/gate.log"; else echo refused >> "$dir/gate.log"; fi
 fi
-printf '{"type":"run_finished","output":"x","turns":1}\n'
+case "$prompt" in
+  *fail-turn*) printf '{"type":"run_failed","error":"provider failed"}\n'; exit 9 ;;
+  *) printf '{"type":"run_finished","output":"x","turns":1}\n' ;;
+esac
 SH
   chmod +x "$dir/deck"
 }
 
-# run_worker <case-dir> <input-lines> -> runs the driver to completion
+# run_worker <case-dir> <input-lines> [first-prompt] -> runs the driver to completion
 run_worker() {
-  local dir=$1 input=$2 gen
+  local dir=$1 input=$2 prompt=${3:-the brief} gen
   mkdir -p "$dir/state"
   gen=$("$BUSY_EVENT" arm "$dir/state" t1)
   printf '%s' "$gen" > "$dir/gen"
   printf '%s' "$input" | FM_TEST_STATUS="$dir/state/t1.status" \
     "$WORKER" --id t1 --state "$dir/state" --gen "$gen" --turnend "$dir/state/t1.turn-ended" \
-      --deck "$dir/deck" --model codex/gpt-5.6-luna -- "the brief" > "$dir/pane.out" 2>&1
+      --deck "$dir/deck" --model codex/gpt-5.6-luna -- "$prompt" > "$dir/pane.out" 2>&1
 }
 
 test_turns_share_one_session_and_carry_the_hooks() {
@@ -132,6 +137,23 @@ test_evidence_gate_refuses_a_turn_without_a_status_line() {
   pass "fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported"
 }
 
+test_driver_backstops_silent_and_failed_turns() {
+  local silent="$TMP_ROOT/postcondition-silent" failed="$TMP_ROOT/postcondition-failed"
+  make_fake_deck "$silent"
+  run_worker "$silent" $'/quit\n' || fail "the silent-turn driver did not exit cleanly"
+  [ "$(cat "$silent/state/t1.status")" = 'failed: deck turn ended without a status line (turn-end)' ] \
+    || fail "a silently completed turn did not receive the exact fallback status: $(cat "$silent/state/t1.status")"
+  assert_not_contains "$(cat "$silent/pane.out")" "No such file or directory" "a missing status log leaked a turn-start read error into the pane"
+  [ -f "$silent/state/t1.turn-ended" ] || fail "the silent turn did not publish turn-ended after its fallback status"
+
+  make_fake_deck "$failed"
+  run_worker "$failed" $'/quit\n' 'fail-turn' || fail "the failed-turn driver did not remain available for /quit"
+  [ "$(cat "$failed/state/t1.status")" = 'failed: deck turn ended without a status line (turn-failed)' ] \
+    || fail "a provider-failed turn did not receive the exact fallback status: $(cat "$failed/state/t1.status")"
+  [ -f "$failed/state/t1.turn-ended" ] || fail "the provider-failed turn did not publish turn-ended after its fallback status"
+  pass "fm-deck-worker: silent and failed turns gain status evidence before turn-end"
+}
+
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
   local dir="$TMP_ROOT/interrupt" gen pid
   make_fake_deck "$dir"
@@ -151,10 +173,13 @@ test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
   kill -INT -- -"$pid" 2>/dev/null
   for _ in $(seq 50); do grep -q 'event=interrupted' "$dir/state/t1.busy-state" 2>/dev/null && break; sleep 0.1; done
   assert_grep 'event=interrupted' "$dir/state/t1.busy-state" "Ctrl+C did not close the turn as interrupted"
+  [ "$(cat "$dir/state/t1.status")" = 'failed: deck turn ended without a status line (interrupted)' ] \
+    || fail "an interrupted turn did not receive the exact fallback status: $(cat "$dir/state/t1.status")"
+  [ -f "$dir/state/t1.turn-ended" ] || fail "the interrupted turn did not publish turn-ended after its fallback status"
   kill -0 "$pid" 2>/dev/null || fail "the driver exited on Ctrl+C instead of returning to its prompt"
   assert_grep 'Interrupted.' "$dir/pane.out" "the pane did not show the cancelled turn"
   kill -TERM -- -"$pid" 2>/dev/null; wait "$pid" 2>/dev/null
-  pass "fm-deck-worker: Ctrl+C cancels the running turn and keeps the worker at its prompt"
+  pass "fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt"
 }
 
 test_liveness_reads_the_driver_as_an_agent() {
@@ -178,7 +203,7 @@ test_control_busy_and_delivery_tables_name_deck() {
   fm_busy_source_trusted claude deck-wrapper && fail "deck-wrapper must not be trusted for claude"
   printf '⛵ deck working - ctrl+c to stop\n' | fm_busy_lines_match deck || fail "the driver's working line must acknowledge delivery"
   printf 'echo: deck working on it\n' | fm_busy_lines_match deck && fail "free text must not acknowledge delivery"
-  pass "control, busy-source, and delivery tables carry deck's verified mechanics"
+  pass "control, busy-source, and delivery tables carry deck's implemented mechanics"
 }
 
 # --- spawn ------------------------------------------------------------------
@@ -233,9 +258,9 @@ test_spawn_launches_the_driver_with_binary_gen_and_model() {
   IFS='|' read -r case_dir home proj wt fakebin <<EOF
 $rec
 EOF
-  out=$(run_deck_spawn "$case_dir" "$home" "$proj" "$wt" "$fakebin" "$id" --model codex/gpt-5.6-luna --effort high)
+  out=$(FM_DECK_ALLOW_UNVERIFIED=1 run_deck_spawn "$case_dir" "$home" "$proj" "$wt" "$fakebin" "$id" --model codex/gpt-5.6-luna --effort high)
   rc=$?
-  expect_code 0 "$rc" "deck spawn should succeed: $out"
+  expect_code 0 "$rc" "Deck verification spawn should succeed: $out"
   launch=$(cat "$case_dir/launch.log")
   assert_contains "$launch" "exec -a fm-deck-worker bash" "the driver must run under its own argv[0]"
   assert_contains "$launch" "$ROOT/bin/fm-deck-worker.sh" "the launch did not run the deck driver"
@@ -249,13 +274,30 @@ EOF
   assert_grep 'effort=high' "$meta" "meta did not record the requested effort"
   [ -s "$home/state/$id.busy-gen" ] || fail "the spawn did not arm the busy contract"
   assert_contains "$launch" "--gen '$(cat "$home/state/$id.busy-gen")'" "the launch did not carry the armed busy gen"
-  pass "fm-spawn: deck launches the driver with the binary, busy gen, and model; effort recorded only"
+  pass "fm-spawn: the Deck verification opt-in launches the driver and records effort only"
+}
+
+test_spawn_refuses_unverified_deck_dispatch() {
+  local id rec out rc case_dir home proj wt fakebin
+  id="deck-refused-$$"
+  rec=$(make_deck_spawn_case refused "$id")
+  IFS='|' read -r case_dir home proj wt fakebin <<EOF
+$rec
+EOF
+  out=$(run_deck_spawn "$case_dir" "$home" "$proj" "$wt" "$fakebin" "$id")
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "ordinary Deck dispatch succeeded while the adapter is unverified"
+  assert_contains "$out" "deck is not yet live-verified" "the refusal did not explain Deck's verification state"
+  assert_contains "$out" "FM_DECK_ALLOW_UNVERIFIED=1" "the refusal did not name the verification-only path"
+  [ ! -e "$home/state/$id.meta" ] || fail "a refused Deck dispatch published task metadata"
+  [ ! -s "$case_dir/launch.log" ] || fail "a refused Deck dispatch sent a launch command"
+  pass "fm-spawn: Deck refuses ordinary dispatch until live verification"
 }
 
 test_spawn_refuses_a_deck_secondmate() {
   local out rc
   out=$(HOME="$TMP_ROOT" FM_HOME="$TMP_ROOT" FM_STATE_OVERRIDE="$TMP_ROOT/sm-state" FM_CONFIG_OVERRIDE="$TMP_ROOT/sm-config" \
-    "$SPAWN" deck-sm-$$ "$TMP_ROOT" --secondmate --harness deck 2>&1)
+    FM_DECK_ALLOW_UNVERIFIED=1 "$SPAWN" deck-sm-$$ "$TMP_ROOT" --secondmate --harness deck 2>&1)
   rc=$?
   [ "$rc" -ne 0 ] || fail "a deck secondmate launch must be refused"
   assert_contains "$out" "crewmate/scout adapter only" "the refusal must say why"
@@ -265,9 +307,11 @@ test_spawn_refuses_a_deck_secondmate() {
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_drive_the_busy_record_and_turn_end
 test_evidence_gate_refuses_a_turn_without_a_status_line
+test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
 test_liveness_reads_the_driver_as_an_agent
 test_control_busy_and_delivery_tables_name_deck
+test_spawn_refuses_unverified_deck_dispatch
 test_spawn_launches_the_driver_with_binary_gen_and_model
 test_spawn_refuses_a_deck_secondmate
 echo "fm-deck-harness: all cases passed"

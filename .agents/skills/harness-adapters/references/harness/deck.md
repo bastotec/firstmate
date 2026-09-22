@@ -2,7 +2,8 @@
 
 Deck (`bastotec/deck`) is a headless Rust coding agent: `deck run "<prompt>"` streams NDJSON events on stdout and exits when the model finishes.
 Firstmate runs it through its own pane driver, `../../../../../bin/fm-deck-worker.sh`, whose header owns the driver's behavior.
-Verified as a CREWMATE and SCOUT adapter only; `../../../../../bin/fm-spawn.sh` refuses a secondmate launch on it because the driver supervises one task, not a home.
+Deck is not live-verified and must not be dispatched for real work.
+`../../../../../bin/fm-spawn.sh` refuses Deck unless `FM_DECK_ALLOW_UNVERIFIED=1` explicitly marks an adapter-verification run, and still refuses a secondmate because the driver supervises one task rather than a home.
 `../../../../../docs/verification/deck.md` owns how every fact below was established and what is still unproven.
 
 ## Operating facts
@@ -18,8 +19,8 @@ Verified as a CREWMATE and SCOUT adapter only; `../../../../../bin/fm-spawn.sh` 
 | Per-turn bounds | `--max-turns` 200 and `--deadline-secs` 3600 by default (`FM_DECK_MAX_TURNS`, `FM_DECK_DEADLINE_SECS`); Deck's own defaults are sized for one question. |
 | Busy state | Semantic source `deck-wrapper`: the driver writes busy at turn start and idle at turn end, failure, interrupt, and `/quit` through `bin/fm-busy-event.sh`; the spawn arms the task's busy gen and passes it in. |
 | Progress | Deck's `post_tool_use` hook refreshes the task's progress marker on every tool call. |
-| Turn end | The driver touches the task's turn-end notification after every turn. |
-| Evidence gate | Deck's `pre_complete` hook refuses a turn that did not grow the task's status log, feeding the reason back to the model; after Deck's bounded refusals the turn fails instead of finishing. |
+| Turn end | Before touching the task's turn-end notification, the driver ensures the status log grew and appends `failed: deck turn ended without a status line (<event>)` when it did not. |
+| Evidence gate | Deck's `pre_complete` hook refuses a turn that did not grow the task's status log and feeds the reason back to the model; the driver's postcondition also covers provider failure, exhausted refusal, and interrupt paths that end outside that hook. |
 | Rendered tail | The driver prints `⛵ deck working - ctrl+c to stop` when a submitted line starts a turn (the delivery acknowledgement token), the turn's text and tool calls, then `── turn finished` or `✗ turn failed`, and the `❯` prompt. |
 | Interrupt | `Ctrl+C`: the whole pane group gets SIGINT, Deck stops, the driver prints `Interrupted.`, records idle, and returns to its prompt. No clear key. |
 | Exit | `/quit`, one Enter; the driver records session-end and exits, leaving the pane's shell. |
@@ -35,9 +36,9 @@ Pane liveness (`../../../../../bin/fm-agent-process-lib.sh`) reads both as an ag
 
 ## Credential precondition
 
-Deck needs a key its gateway accepts, and the route must have quota.
+A Deck verification run needs a key its gateway accepts, and the route must have quota.
 A missing key fails the first turn with Deck's own error in the pane; a quota refusal fails the turn with the gateway's error.
-Treat either as a credential or quota blocker under `../../../../../AGENTS.md` section 9 rather than steering the pane.
+Neither failure changes Deck's unverified status or authorizes real-work dispatch.
 
 ## Primary integration
 
