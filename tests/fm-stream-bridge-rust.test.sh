@@ -277,8 +277,13 @@ test_cli_surface_matches() {
   run_both /dev/null --version
   assert_equals "$PY_CODE" 0 "reference version succeeds"
   assert_equals "$RS_CODE" 0 "Rust version succeeds"
-  run_both /dev/null translate --fleet-id=example --epoch=7
-  assert_parity "accepted flags with inline values"
+  run_both /dev/null translate --fleet=example --epo=1_007
+  assert_parity "accepted unique flag prefixes and Python integer separators"
+  run_both /dev/null compare --h value
+  assert_parity "an ambiguous flag prefix"
+  run_both /dev/null translate --epoch=9223372036854775808
+  assert_equals "$PY_CODE" 0 "the reference accepts arbitrary-precision epochs"
+  assert_equals "$RS_CODE" 2 "the port documents and enforces its signed 64-bit epoch limit"
   for sub in '' bogus serve; do
     if [ -n "$sub" ]; then
       run_both /dev/null "$sub"
@@ -381,6 +386,125 @@ PY
   pass "bridge-rust: snapshots of a real hub match beyond the process-local clocks"
 }
 
+test_https_and_redirect_transport_parity() {
+  local transport_dir="$TMP_ROOT/transports" ready waited pid host port cert key ca_key csr ext
+  cleanup_helpers
+  mkdir -p "$transport_dir"
+  printf '%s\n' "$VIEW_TOKEN" > "$transport_dir/view-token"
+  cat > "$transport_dir/server.py" <<'PY'
+import http.server, json, ssl, sys
+
+TASK = {"endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "box-a",
+        "label": "transport", "closed_by": None, "exit_code": None}
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def answer(self, payload):
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if MODE == "redirect" and self.path == "/v1/health":
+            self.send_response(302)
+            self.send_header("Location", "/actual-health")
+            self.end_headers()
+        elif MODE == "redirect" and self.path == "/v1/tasks":
+            host, port = self.server.server_address
+            self.send_response(307)
+            self.send_header("Location", "http://%s:%d/actual-tasks" % (host, port))
+            self.end_headers()
+        elif self.path in ("/v1/health", "/actual-health"):
+            self.answer({"ok": True, "protocol": 2})
+        elif self.path in ("/v1/tasks", "/actual-tasks"):
+            self.answer({"ok": True, "tasks": [TASK]})
+        else:
+            self.send_error(404)
+
+MODE = sys.argv[2]
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+if MODE == "https":
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(sys.argv[3], sys.argv[4])
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+with open(sys.argv[1], "w") as ready:
+    ready.write("127.0.0.1 %d\n" % server.server_address[1])
+server.serve_forever()
+PY
+
+  ready="$transport_dir/redirect-ready"
+  python3 "$transport_dir/server.py" "$ready" redirect > "$transport_dir/redirect.log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  waited=0
+  while [ "$waited" -lt 50 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  read -r host port < "$ready"
+  run_both /dev/null snapshot --hub "http://$host:$port" \
+    --token-file "$transport_dir/view-token" --epoch 8
+  assert_parity_beyond_clocks "a snapshot through relative and absolute redirects"
+
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "skip: HTTPS bridge parity (openssl not found)"
+    return
+  fi
+  cleanup_helpers
+  cert="$transport_dir/ca.pem"
+  ca_key="$transport_dir/ca-key.pem"
+  key="$transport_dir/server-key.pem"
+  csr="$transport_dir/server.csr"
+  ext="$transport_dir/server.ext"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+    -keyout "$ca_key" -out "$cert" -subj '/CN=Bridge test CA' \
+    -addext 'basicConstraints=critical,CA:TRUE' \
+    -addext 'keyUsage=critical,keyCertSign' \
+    -addext 'subjectKeyIdentifier=hash' > "$transport_dir/openssl.log" 2>&1 \
+    || fail "could not create the disposable HTTPS CA"
+  openssl req -newkey rsa:2048 -nodes -keyout "$key" -out "$csr" \
+    -subj '/CN=localhost' >> "$transport_dir/openssl.log" 2>&1 \
+    || fail "could not create the disposable HTTPS server key"
+  printf '%s\n' \
+    'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+    'basicConstraints=critical,CA:FALSE' \
+    'keyUsage=critical,digitalSignature,keyEncipherment' \
+    'extendedKeyUsage=serverAuth' \
+    'subjectKeyIdentifier=hash' \
+    'authorityKeyIdentifier=keyid,issuer' > "$ext"
+  openssl x509 -req -in "$csr" -CA "$cert" -CAkey "$ca_key" -CAcreateserial \
+    -days 1 -out "$transport_dir/server.pem" -extfile "$ext" \
+    >> "$transport_dir/openssl.log" 2>&1 \
+    || fail "could not sign the disposable HTTPS server certificate"
+  ready="$transport_dir/https-ready"
+  python3 "$transport_dir/server.py" "$ready" https "$transport_dir/server.pem" "$key" > "$transport_dir/https.log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  waited=0
+  while [ "$waited" -lt 50 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  read -r host port < "$ready"
+  SSL_CERT_FILE="$cert" python3 "$BRIDGE" snapshot --hub "https://localhost:$port" \
+    --token-file "$transport_dir/view-token" --epoch 9 > "$TMP_ROOT/py.out" 2> "$TMP_ROOT/py.err"
+  PY_CODE=$?
+  SSL_CERT_FILE="$cert" "$RUST_BRIDGE" snapshot --hub "https://localhost:$port" \
+    --token-file "$transport_dir/view-token" --epoch 9 > "$TMP_ROOT/rs.out" 2> "$TMP_ROOT/rs.err"
+  RS_CODE=$?
+  assert_parity_beyond_clocks "a snapshot over HTTPS"
+  pass "bridge-rust: HTTPS and redirected hubs match the reference"
+}
+
 test_serve_streams_ticks_and_survives_a_hub_outage() {
   start_hub serve
   local endpoint py_out rs_out py_err rs_err waited=0 lines pid
@@ -460,7 +584,7 @@ test_a_closed_reader_ends_the_feed() {
 }
 
 test_compare_harness_parity() {
-  local home feed stub
+  local home feed stub pipe_home padding i
   home="$TMP_ROOT/compare-home"
   mkdir -p "$home/state"
   fm_write_meta "$home/state/t-live.meta" backend=stream \
@@ -496,6 +620,21 @@ SH
   assert_parity "compare without a feed source"
   run_both /dev/null compare --home "$home" --feed "$TMP_ROOT/no-such-feed" --crew-state "$stub"
   assert_parity "an unreadable feed"
+  pipe_home="$TMP_ROOT/compare-pipe-home"
+  mkdir -p "$pipe_home/state"
+  padding=$(printf '%0180d' 0 | tr '0' 'x')
+  i=0
+  while [ "$i" -lt 100 ]; do
+    fm_write_meta "$pipe_home/state/pipe-$i-$padding.meta" backend=stream \
+      stream_endpoint_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    i=$((i + 1))
+  done
+  bash -c 'python3 "$1" compare --home "$2" --feed "$3" --crew-state "$4" | head -1 >/dev/null; exit ${PIPESTATUS[0]}' \
+    _ "$BRIDGE" "$pipe_home" "$feed" "$stub"
+  assert_equals "$?" 0 "the reference compare should end cleanly when its reader leaves"
+  bash -c '"$1" compare --home "$2" --feed "$3" --crew-state "$4" | head -1 >/dev/null; exit ${PIPESTATUS[0]}' \
+    _ "$RUST_BRIDGE" "$pipe_home" "$feed" "$stub"
+  assert_equals "$?" 0 "the Rust compare should end cleanly when its reader leaves"
   rm -f "$home/state/t-conflict.meta" "$home/state/t-gone.meta"
   run_both /dev/null compare --home "$home" --feed "$feed" --crew-state "$stub"
   assert_parity "a passing comparison"
@@ -507,6 +646,7 @@ test_refusals_match_the_reference
 test_cli_surface_matches
 test_a_real_hubs_listing_replays_identically
 test_snapshot_parity_against_the_real_hub
+test_https_and_redirect_transport_parity
 test_serve_streams_ticks_and_survives_a_hub_outage
 test_a_closed_reader_ends_the_feed
 test_compare_harness_parity

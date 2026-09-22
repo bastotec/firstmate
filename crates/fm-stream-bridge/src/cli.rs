@@ -12,9 +12,8 @@
 //! fire first, then the subcommand's missing-required check, then the merged
 //! unrecognized-arguments refusal, which always reports the top-level usage.
 //!
-//! Known divergences, both obscure-input-only: argparse's unique-prefix
-//! abbreviations (`--fleet` for `--fleet-id`) are not accepted, and Python's
-//! `int()` accepts underscore separators while the i64 parse does not.
+//! Epochs and intervals are intentionally bounded to signed 64-bit integers,
+//! while accepted spellings and unique long-option prefixes match argparse.
 
 pub const BRIDGE_VERSION: &str = "1.0.0-rust.1";
 pub const DEFAULT_FLEET_ID: &str = "firstmate";
@@ -217,6 +216,14 @@ const CREW_STATE: OptSpec = OptSpec {
     name: "crew-state",
     is_int: false,
 };
+const PROTOCOL: OptSpec = OptSpec {
+    name: "protocol",
+    is_int: false,
+};
+const VERSION: OptSpec = OptSpec {
+    name: "version",
+    is_int: false,
+};
 
 /// Declaration order per subcommand, the order the reference adds arguments
 /// in, which drives usage layout and the missing-required message.
@@ -249,12 +256,84 @@ const COMPARE_SPEC: CommandSpec = CommandSpec {
 
 const COMMANDS: [&CommandSpec; 4] = [&SERVE_SPEC, &SNAPSHOT_SPEC, &TRANSLATE_SPEC, &COMPARE_SPEC];
 
-/// Python's int() tolerates surrounding whitespace; so does this trim.
-/// Underscore separators (`1_000`) are a documented divergence.
+/// Python's int() tolerates surrounding whitespace and digit separators.
 fn parse_int(flag: &str, raw: &str) -> Result<i64, Usage> {
-    raw.trim()
+    let trimmed = raw.trim();
+    let digits = trimmed
+        .strip_prefix('+')
+        .or_else(|| trimmed.strip_prefix('-'))
+        .unwrap_or(trimmed)
+        .as_bytes();
+    let valid = !digits.is_empty()
+        && digits.iter().enumerate().all(|(index, byte)| {
+            byte.is_ascii_digit()
+                || (*byte == b'_'
+                    && index > 0
+                    && index + 1 < digits.len()
+                    && digits[index - 1].is_ascii_digit()
+                    && digits[index + 1].is_ascii_digit())
+        });
+    if !valid {
+        return Err(Usage(format!(
+            "argument {flag}: invalid int value: '{raw}'"
+        )));
+    }
+    trimmed
+        .replace('_', "")
         .parse::<i64>()
         .map_err(|_| Usage(format!("argument {flag}: invalid int value: '{raw}'")))
+}
+
+enum LongMatch<'a> {
+    Help,
+    Known(&'a OptSpec),
+    Ambiguous(Vec<&'static str>),
+    Unknown,
+}
+
+fn match_long<'a>(name: &str, specs: &'a [&'a OptSpec]) -> LongMatch<'a> {
+    if name == "help" {
+        return LongMatch::Help;
+    }
+    if let Some(spec) = specs.iter().find(|spec| spec.name == name) {
+        return LongMatch::Known(spec);
+    }
+    let mut matches = Vec::new();
+    if "help".starts_with(name) {
+        matches.push("help");
+    }
+    matches.extend(
+        specs
+            .iter()
+            .filter(|spec| spec.name.starts_with(name))
+            .map(|spec| spec.name),
+    );
+    match matches.as_slice() {
+        ["help"] => LongMatch::Help,
+        [only] => LongMatch::Known(
+            specs
+                .iter()
+                .find(|spec| spec.name == *only)
+                .expect("the sole non-help match came from specs"),
+        ),
+        [] => LongMatch::Unknown,
+        _ => LongMatch::Ambiguous(matches),
+    }
+}
+
+fn ambiguous(flag: &str, matches: &[&str]) -> String {
+    format!(
+        "ambiguous option: --{flag} could match {}",
+        matches
+            .iter()
+            .map(|name| format!("--{name}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn ignored_value(name: &str, value: &str) -> String {
+    format!("argument --{name}: ignored explicit argument '{value}'")
 }
 
 /// Whether a token looks like an option rather than a value: a leading dash
@@ -309,24 +388,40 @@ pub fn parse(args: &[String]) -> Result<Cli, Usage> {
     while index < args.len() {
         let arg = args[index].as_str();
         if !positional_only {
-            match arg {
-                "--protocol" => {
-                    cli.protocol = true;
-                    index += 1;
-                    continue;
+            if arg == "-h" {
+                return Err(Usage::help(""));
+            }
+            if arg == "--" {
+                positional_only = true;
+                index += 1;
+                continue;
+            }
+            if let Some(stripped) = arg.strip_prefix("--") {
+                let (flag, inline) = match stripped.split_once('=') {
+                    Some((name, value)) => (name, Some(value)),
+                    None => (stripped, None),
+                };
+                match match_long(flag, &[&PROTOCOL, &VERSION]) {
+                    LongMatch::Help => {
+                        if let Some(value) = inline {
+                            return Err(Usage::top(ignored_value("help", value)));
+                        }
+                        return Err(Usage::help(""));
+                    }
+                    LongMatch::Known(known) => {
+                        if let Some(value) = inline {
+                            return Err(Usage::top(ignored_value(known.name, value)));
+                        }
+                        cli.protocol = known.name == "protocol" || cli.protocol;
+                        cli.version = known.name == "version" || cli.version;
+                        index += 1;
+                        continue;
+                    }
+                    LongMatch::Ambiguous(matches) => {
+                        return Err(Usage::top(ambiguous(flag, &matches)));
+                    }
+                    LongMatch::Unknown => {}
                 }
-                "--version" => {
-                    cli.version = true;
-                    index += 1;
-                    continue;
-                }
-                "-h" | "--help" => return Err(Usage::help("")),
-                "--" => {
-                    positional_only = true;
-                    index += 1;
-                    continue;
-                }
-                _ => {}
             }
             if looks_like_option(arg) {
                 extras.push(arg.to_string());
@@ -385,7 +480,7 @@ fn collect(spec: &CommandSpec, args: &[String]) -> Result<Collected, Usage> {
     while index < args.len() {
         let arg = args[index].as_str();
         if !positional_only {
-            if arg == "-h" || arg == "--help" {
+            if arg == "-h" {
                 return Err(Usage::help(spec.name));
             }
             if arg == "--" {
@@ -401,34 +496,44 @@ fn collect(spec: &CommandSpec, args: &[String]) -> Result<Collected, Usage> {
                     Some((name, value)) => (name, Some(value)),
                     None => (stripped, None),
                 };
-                if let Some(known) = spec.specs.iter().find(|s| s.name == flag) {
-                    let value = match inline {
-                        Some(value) => value.to_string(),
-                        None => match args.get(index + 1) {
-                            // A following option-looking token is not a value:
-                            // the flag is left hungry, exactly as argparse
-                            // leaves it.
-                            Some(next) if !looks_like_option(next) => {
-                                index += 1;
-                                next.clone()
-                            }
-                            _ => {
-                                return Err(Usage::sub(
-                                    spec.name,
-                                    format!("argument --{}: expected one argument", known.name),
-                                ))
-                            }
-                        },
-                    };
-                    if known.is_int {
-                        parse_int(&format!("--{}", known.name), &value)
-                            .map_err(|Usage(message)| Usage::sub(spec.name, message))?;
-                        values.insert(known.name, value);
-                    } else {
-                        values.insert(known.name, value);
+                match match_long(flag, spec.specs) {
+                    LongMatch::Help => {
+                        if let Some(value) = inline {
+                            return Err(Usage::sub(spec.name, ignored_value("help", value)));
+                        }
+                        return Err(Usage::help(spec.name));
                     }
-                    index += 1;
-                    continue;
+                    LongMatch::Known(known) => {
+                        let value = match inline {
+                            Some(value) => value.to_string(),
+                            None => match args.get(index + 1) {
+                                // A following option-looking token is not a value:
+                                // the flag is left hungry, exactly as argparse
+                                // leaves it.
+                                Some(next) if !looks_like_option(next) => {
+                                    index += 1;
+                                    next.clone()
+                                }
+                                _ => {
+                                    return Err(Usage::sub(
+                                        spec.name,
+                                        format!("argument --{}: expected one argument", known.name),
+                                    ))
+                                }
+                            },
+                        };
+                        if known.is_int {
+                            parse_int(&format!("--{}", known.name), &value)
+                                .map_err(|Usage(message)| Usage::sub(spec.name, message))?;
+                        }
+                        values.insert(known.name, value);
+                        index += 1;
+                        continue;
+                    }
+                    LongMatch::Ambiguous(matches) => {
+                        return Err(Usage::sub(spec.name, ambiguous(flag, &matches)));
+                    }
+                    LongMatch::Unknown => {}
                 }
             }
             if looks_like_option(arg) {
@@ -781,12 +886,30 @@ mod tests {
     }
 
     #[test]
-    fn int_coercion_tolerates_whitespace_and_signs_like_python() {
-        let cli = parse(&args(&["translate", "--epoch", " +7 "])).unwrap();
+    fn int_coercion_tolerates_whitespace_signs_and_separators_like_python() {
+        let cli = parse(&args(&["translate", "--epoch", " +1_007 "])).unwrap();
         match cli.command.unwrap() {
-            Command::Translate { epoch, .. } => assert_eq!(epoch, Some(7)),
+            Command::Translate { epoch, .. } => assert_eq!(epoch, Some(1007)),
             other => panic!("wrong command {other:?}"),
         }
+        assert!(parse(&args(&["translate", "--epoch", "1__007"])).is_err());
+    }
+
+    #[test]
+    fn unique_long_option_prefixes_match_argparse() {
+        let cli = parse(&args(&["--prot", "translate", "--fleet", "f", "--epo=7"])).unwrap();
+        assert!(cli.protocol);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Translate {
+                fleet_id,
+                epoch: Some(7),
+            }) if fleet_id == "f"
+        ));
+        let error = parse(&args(&["compare", "--h", "x"])).unwrap_err();
+        assert!(error
+            .0
+            .ends_with("ambiguous option: --h could match --help, --hub, --home"));
     }
 
     #[test]

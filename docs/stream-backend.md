@@ -89,12 +89,12 @@ Nothing runs it automatically.
 The opt-in Rust bridge builds with `cargo build --release --locked -p fm-stream-bridge` (Rust 1.96 or newer).
 Use `target/release/fm-stream-bridge` in place of `bin/fm-stream-bridge.py` with the same subcommands and explicit hub, token-file, and fleet-id flags; this does not replace or restart any deployed Python process.
 Install it beside the existing scripts in `bin/` if using `compare`'s executable-relative home default, or pass `--home` and `--crew-state` explicitly.
-The Cargo workspace shares the protocol handshake and heartbeat wire mapping in `crates/fm-stream-wire`; its hub and agent binaries are refusal-only skeletons, not deployable replacements.
-The bridge uses Tokio and Hyper for HTTP access and Serde JSON for parsing, without an LLM framework.
+The Cargo workspace shares the protocol handshake and heartbeat wire mapping in `crates/fm-stream-wire`.
+The bridge uses Tokio, Hyper, and rustls for HTTP and HTTPS access and Serde JSON for parsing, without an LLM framework.
+It follows HTTP redirects and accepts argparse-style unique long-option abbreviations.
+Epochs remain limited to signed 64-bit integers, unlike Python's arbitrary-precision values.
 `tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
 Live comparisons exclude process-local clocks; help presentation and transport-library error details are not byte contracts.
-The current Rust client supports direct HTTP hubs, not HTTPS or redirects; use the Python bridge for those transports.
-The Rust CLI accepts fully spelled options and signed 64-bit integers; Python's option abbreviations and arbitrary-precision integer syntax are not supported.
 
 ## Tail adapters
 

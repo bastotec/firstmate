@@ -180,7 +180,11 @@ pub(crate) enum EmitOutcome {
 }
 
 fn emit_records(records: &[fm_stream_wire::LeafHeartbeat]) -> Result<EmitOutcome, Failure> {
-    match emit(records) {
+    classify_stdout(emit(records))
+}
+
+pub(crate) fn classify_stdout(result: std::io::Result<()>) -> Result<EmitOutcome, Failure> {
+    match result {
         Ok(()) => Ok(EmitOutcome::Done),
         // Whoever was reading the feed going away ends the feed, not this
         // process: report it and let the caller exit success.

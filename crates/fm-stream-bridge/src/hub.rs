@@ -1,17 +1,13 @@
-//! Transport to the hub: one GET client whose outcomes are exactly the
-//! reference bridge's `BridgeError` (refusal, fatal) and `HubUnreachable`
+//! Transport to the hub: one HTTP/HTTPS GET client whose outcomes are exactly
+//! the reference bridge's `BridgeError` (refusal, fatal) and `HubUnreachable`
 //! (transport problem, retryable in serve, exit-1 in snapshot).
-//!
-//! Known divergence: the reference's stdlib client follows 3xx redirects; the
-//! hub never emits one, so this client treats a 3xx like any other unexpected
-//! status.  Everything a healthy or broken hub can actually answer is
-//! reproduced.
 
 use std::time::Duration;
 
 use http_body_util::{BodyExt, Empty};
 use hyper::body::Bytes;
 use hyper::Request;
+use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
@@ -49,15 +45,19 @@ pub enum GetOutcome {
 pub struct HubClient {
     url: String,
     token: String,
-    client: Client<HttpConnector, Empty<Bytes>>,
+    client: Client<HttpsConnector<HttpConnector>, Empty<Bytes>>,
 }
 
 impl HubClient {
     pub fn new(url: &str, token: &str) -> Self {
+        let builder = HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .unwrap_or_else(|_| HttpsConnectorBuilder::new().with_webpki_roots());
+        let connector = builder.https_or_http().enable_http1().build();
         HubClient {
             url: url.trim_end_matches('/').to_string(),
             token: token.to_string(),
-            client: Client::builder(TokioExecutor::new()).build_http(),
+            client: Client::builder(TokioExecutor::new()).build(connector),
         }
     }
 
@@ -70,94 +70,162 @@ impl HubClient {
     /// object back, 5-second budget end to end, mirroring the reference's
     /// urlopen-with-timeout behaviour including its refusal wording.
     pub async fn get(&self, path: &str) -> GetOutcome {
-        let uri = match format!("{}{}", self.url, path).parse::<hyper::Uri>() {
+        let mut uri = match format!("{}{}", self.url, path).parse::<hyper::Uri>() {
             Ok(uri) => uri,
-            Err(error) => {
-                return GetOutcome::Unreachable(HubUnreachable(format!(
-                    "cannot reach the hub at {}: {}",
-                    self.url, error
-                )))
-            }
+            Err(error) => return self.unreachable(error),
         };
-        let request = match Request::builder()
-            .uri(uri)
-            .header("authorization", format!("Bearer {}", self.token))
-            .body(Empty::<Bytes>::new())
-        {
-            Ok(request) => request,
-            Err(error) => {
-                return GetOutcome::Unreachable(HubUnreachable(format!(
-                    "cannot reach the hub at {}: {}",
-                    self.url, error
-                )))
+        for redirects in 0..=10 {
+            let request = match Request::builder()
+                .uri(uri.clone())
+                .header("authorization", format!("Bearer {}", self.token))
+                .body(Empty::<Bytes>::new())
+            {
+                Ok(request) => request,
+                Err(error) => return self.unreachable(error),
+            };
+            let sent =
+                tokio::time::timeout(Duration::from_secs(5), self.client.request(request)).await;
+            let response = match sent {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) => return self.unreachable(error),
+                Err(_) => return self.unreachable("timed out after 5s"),
+            };
+            let status = response.status();
+            if is_redirect(status) {
+                let Some(location) = response.headers().get(hyper::header::LOCATION) else {
+                    return self.http_failure(path, status);
+                };
+                if redirects == 10 {
+                    return self.unreachable("redirect limit exceeded");
+                }
+                let location = match location.to_str() {
+                    Ok(location) => location,
+                    Err(error) => return self.unreachable(error),
+                };
+                uri = match redirect_uri(&uri, location) {
+                    Ok(uri) => uri,
+                    Err(error) => return self.unreachable(error),
+                };
+                continue;
             }
-        };
-        let sent = tokio::time::timeout(Duration::from_secs(5), self.client.request(request)).await;
-        let response = match sent {
-            Ok(Ok(response)) => response,
-            Ok(Err(error)) => {
-                return GetOutcome::Unreachable(HubUnreachable(format!(
-                    "cannot reach the hub at {}: {}",
-                    self.url, error
-                )))
+            if status == hyper::StatusCode::UNAUTHORIZED || status == hyper::StatusCode::FORBIDDEN {
+                return GetOutcome::Refused(BridgeError(format!(
+                    "the hub at {} refused the credential for {} (HTTP {}): the bridge needs a token holding the subscribe class",
+                    self.url, path, status.as_u16()
+                )));
             }
-            Err(_) => {
-                return GetOutcome::Unreachable(HubUnreachable(format!(
-                    "cannot reach the hub at {}: timed out after 5s",
-                    self.url
-                )))
+            if !status.is_success() {
+                return self.http_failure(path, status);
             }
-        };
-        let status = response.status();
-        if status == hyper::StatusCode::UNAUTHORIZED || status == hyper::StatusCode::FORBIDDEN {
-            return GetOutcome::Refused(BridgeError(format!(
-                "the hub at {} refused the credential for {} (HTTP {}): the bridge needs a token holding the subscribe class",
-                self.url, path, status.as_u16()
-            )));
-        }
-        if !status.is_success() {
-            return GetOutcome::Unreachable(HubUnreachable(format!(
-                "the hub at {} answered {} with HTTP {}",
-                self.url,
-                path,
-                status.as_u16()
-            )));
-        }
-        let body = match tokio::time::timeout(
-            Duration::from_secs(5),
-            response.into_body().collect(),
-        )
-        .await
-        {
-            Ok(Ok(collected)) => collected.to_bytes(),
-            Ok(Err(error)) => {
+            let body =
+                match tokio::time::timeout(Duration::from_secs(5), response.into_body().collect())
+                    .await
+                {
+                    Ok(Ok(collected)) => collected.to_bytes(),
+                    Ok(Err(error)) => return self.unreachable(error),
+                    Err(_) => return self.unreachable("timed out after 5s"),
+                };
+            let answer: serde_json::Value = match serde_json::from_slice(&body) {
+                Ok(answer) => answer,
+                Err(_) => {
+                    return GetOutcome::Unreachable(HubUnreachable(format!(
+                        "the hub at {} answered {} with malformed JSON",
+                        self.url, path
+                    )))
+                }
+            };
+            if !answer.is_object() {
                 return GetOutcome::Unreachable(HubUnreachable(format!(
-                    "cannot reach the hub at {}: {}",
-                    self.url, error
-                )))
-            }
-            Err(_) => {
-                return GetOutcome::Unreachable(HubUnreachable(format!(
-                    "cannot reach the hub at {}: timed out after 5s",
-                    self.url
-                )))
-            }
-        };
-        let answer: serde_json::Value = match serde_json::from_slice(&body) {
-            Ok(answer) => answer,
-            Err(_) => {
-                return GetOutcome::Unreachable(HubUnreachable(format!(
-                    "the hub at {} answered {} with malformed JSON",
+                    "the hub at {} answered {} with a non-object",
                     self.url, path
-                )))
+                )));
             }
-        };
-        if !answer.is_object() {
-            return GetOutcome::Unreachable(HubUnreachable(format!(
-                "the hub at {} answered {} with a non-object",
-                self.url, path
-            )));
+            return GetOutcome::Answer(answer);
         }
-        GetOutcome::Answer(answer)
+        unreachable!("the redirect loop always returns at its limit")
     }
+
+    fn unreachable(&self, error: impl std::fmt::Display) -> GetOutcome {
+        GetOutcome::Unreachable(HubUnreachable(format!(
+            "cannot reach the hub at {}: {}",
+            self.url, error
+        )))
+    }
+
+    fn http_failure(&self, path: &str, status: hyper::StatusCode) -> GetOutcome {
+        GetOutcome::Unreachable(HubUnreachable(format!(
+            "the hub at {} answered {} with HTTP {}",
+            self.url,
+            path,
+            status.as_u16()
+        )))
+    }
+}
+
+fn is_redirect(status: hyper::StatusCode) -> bool {
+    matches!(
+        status,
+        hyper::StatusCode::MOVED_PERMANENTLY
+            | hyper::StatusCode::FOUND
+            | hyper::StatusCode::SEE_OTHER
+            | hyper::StatusCode::TEMPORARY_REDIRECT
+            | hyper::StatusCode::PERMANENT_REDIRECT
+    )
+}
+
+fn redirect_uri(current: &hyper::Uri, location: &str) -> Result<hyper::Uri, String> {
+    let location = location.split('#').next().unwrap_or("");
+    if location.starts_with("http://") || location.starts_with("https://") {
+        return location.parse().map_err(|error| format!("{error}"));
+    }
+    let scheme = current
+        .scheme_str()
+        .ok_or_else(|| "redirect source has no scheme".to_string())?;
+    if location.starts_with("//") {
+        return format!("{scheme}:{location}")
+            .parse()
+            .map_err(|error| format!("{error}"));
+    }
+    let authority = current
+        .authority()
+        .ok_or_else(|| "redirect source has no authority".to_string())?;
+    let target = if location.starts_with('/') {
+        location.to_string()
+    } else if location.starts_with('?') {
+        format!("{}{}", current.path(), location)
+    } else {
+        let base = current
+            .path()
+            .rsplit_once('/')
+            .map_or("/", |(base, _)| base);
+        normalize_path(&format!("{base}/{location}"))
+    };
+    format!("{scheme}://{authority}{target}")
+        .parse()
+        .map_err(|error| format!("{error}"))
+}
+
+fn normalize_path(path_and_query: &str) -> String {
+    let (path, query) = path_and_query
+        .split_once('?')
+        .map_or((path_and_query, None), |(path, query)| (path, Some(query)));
+    let mut parts = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            _ => parts.push(part),
+        }
+    }
+    let mut normalized = format!("/{}", parts.join("/"));
+    if path.ends_with('/') && !normalized.ends_with('/') {
+        normalized.push('/');
+    }
+    if let Some(query) = query {
+        normalized.push('?');
+        normalized.push_str(query);
+    }
+    normalized
 }

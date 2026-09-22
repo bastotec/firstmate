@@ -3,12 +3,13 @@
 //! per task, exit 1 when any row is a conflict or missing.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use fm_stream_wire::{is_endpoint_id, python_repr_value};
 
 use crate::bridge::{Bridge, Clock};
-use crate::commands::{health_checked, read_token, tick, Failure};
+use crate::commands::{classify_stdout, health_checked, read_token, tick, EmitOutcome, Failure};
 use crate::hub::HubClient;
 
 /// Read a `state/<task>.meta` file: first occurrence of each `key=value`
@@ -284,13 +285,22 @@ pub async fn compare(
     };
     let tasks = stream_tasks(&home)?;
     let mut failed = false;
-    println!("task\texecution_id\tbridge_state\tcrew_state\tcrew_source\tverdict");
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
+    if classify_stdout(writeln!(
+        stdout,
+        "task\texecution_id\tbridge_state\tcrew_state\tcrew_source\tverdict"
+    ))? == EmitOutcome::PipeClosed
+    {
+        return Ok(0);
+    }
     for (task, endpoint_id) in tasks {
         let bridge_state = states.get(&endpoint_id);
         let (crew, source) = crew_state(&command, &task, &home).await;
         let result = verdict(bridge_state, &crew, &source);
         failed = failed || matches!(result, "conflict" | "missing");
-        println!(
+        if classify_stdout(writeln!(
+            stdout,
             "{}\t{}\t{}\t{}\t{}\t{}",
             task,
             endpoint_id,
@@ -298,7 +308,13 @@ pub async fn compare(
             crew,
             source,
             result
-        );
+        ))? == EmitOutcome::PipeClosed
+        {
+            return Ok(0);
+        }
+    }
+    if classify_stdout(stdout.flush())? == EmitOutcome::PipeClosed {
+        return Ok(0);
     }
     Ok(if failed { 1 } else { 0 })
 }

@@ -80,8 +80,12 @@ impl Clock {
 
     /// Milliseconds since start, rounded to three decimal places.
     pub fn ms(&self) -> f64 {
-        (self.started.elapsed().as_secs_f64() * 1000.0 * 1000.0).round() / 1000.0
+        round_three_decimals(self.started.elapsed().as_secs_f64() * 1000.0)
     }
+}
+
+fn round_three_decimals(value: f64) -> f64 {
+    (value * 1000.0).round_ties_even() / 1000.0
 }
 
 impl Default for Clock {
@@ -130,5 +134,7 @@ mod tests {
         // The value is a multiple of 0.001 to rounding precision.
         let scaled = (b * 1000.0).round();
         assert!((scaled / 1000.0 - b).abs() < 1e-9);
+        assert_eq!(round_three_decimals(1.2345), 1.234);
+        assert_eq!(round_three_decimals(1.2355), 1.236);
     }
 }

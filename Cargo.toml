@@ -1,7 +1,7 @@
 [workspace]
-# The Rust port of the stream backend: one workspace, four crates, replacing
-# the Python pieces at bin/fm-stream-hub.py, bin/fm-stream-agent.py, and
-# bin/fm-stream-bridge.py one at a time.  The Python deployment stays up as
+# The Rust port of the stream backend, replacing the Python pieces at
+# bin/fm-stream-hub.py, bin/fm-stream-agent.py, and bin/fm-stream-bridge.py
+# one at a time.  The Python deployment stays up as
 # the reference while each Rust piece takes over; the reference's OBSERVED
 # BEHAVIOUR is the spec, and tests/fm-stream-bridge-rust.test.sh proves the
 # bridge port byte-for-byte against it.
@@ -11,8 +11,6 @@
 resolver = "2"
 members = [
     "crates/fm-stream-wire",
-    "crates/fm-stream-hub",
-    "crates/fm-stream-agent",
     "crates/fm-stream-bridge",
 ]
 
@@ -29,6 +27,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "net"] }
 hyper = { version = "1", features = ["http1", "client"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "native-tokio", "ring", "tls12", "webpki-tokio"] }
 http-body-util = "0.1"
 
 [profile.release]
