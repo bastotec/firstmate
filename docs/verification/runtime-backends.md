@@ -647,11 +647,11 @@ A plain `❯` in the older separated shape remains pending, as does `❯ 4;38;rg
 The concurrently reported `4;38;rgb:0000/afaf/d7d7` fragments are a separate terminal-input case, not the cursor-cell cause.
 Pi 0.85.1's terminal sequence buffer flushes an incomplete OSC sequence after 50 ms; when a palette response arrives in slower chunks, its `ESC ] 4 ; <index>` prefix is handled separately and the trailing `;rgb:...` bytes become ordinary editor text.
 The Firstmate Pi task extension starts a candidate from a callback containing `ESC ]` or any longer valid OSC 4 prefix, including a split immediately after `ESC ]`.
-Later callbacks are absorbed while the concatenated bytes remain valid palette-response grammar, without extending the original 500 ms deadline; a complete BEL/ST-terminated response or a timeout drops the whole candidate, while a grammar-breaking callback ends it and reaches the editor untouched.
+Later callbacks are absorbed byte by byte while the accumulated bytes remain a valid prefix of `ESC ] 4 ; <digits> ; rgb : <1-4 hex> / <1-4 hex> / <1-4 hex> BEL|ST`, without extending the original 500 ms deadline; a complete response or a timeout drops the whole candidate, while the first byte that cannot extend that grammar ends the candidate and reaches the editor with the rest of its callback untouched.
 A palette-grammar keystroke that arrives inside that window is an accepted loss because these are firstmate-launched worker panes with no concurrent human typing, and preserving fragmented terminal replies is the chosen priority.
 A literal RGB-looking draft outside an active control candidate bypasses the filter, and malformed control-leading candidates are discarded rather than replayed into the composer.
 As a second defensive layer, a byte-complete OSC control retained by a styled screen capture is removed by the shared composer control-sequence parser before structural and ghost-content classification.
-The portable matrix carries split-after-`ESC ]` and other fragmented replies, both OSC terminators, the accepted grammar-compatible-keystroke loss, the reverse-cell counterfactual, malformed fragments, and a literal RGB-like draft.
+The portable matrix carries split-after-`ESC ]` and other fragmented replies, both OSC terminators, `/quit` interleaved after a flushed candidate, the accepted grammar-compatible-keystroke loss, the reverse-cell counterfactual, malformed fragments, and a literal RGB-like draft.
 
 The token-free live guard now starts a local replacement session with `/new`, proves that replacement idle is empty without first clearing it, types the RGB-like draft and proves it pending, then sends C-u and proves the resulting idle composer empty again:
 
