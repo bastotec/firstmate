@@ -14,6 +14,10 @@ class UnsafeStatePath(Exception):
 
 
 MAX_READ_BYTES = 256
+MAX_STATUS_DELTA_BYTES = 65536
+WORKER_STATUS_RE = re.compile(
+    rb"^(?:done|needs-decision|blocked|failed|working)(?::|[ \t][^:\r\n]*:)"
+)
 
 
 def require_nofollow() -> int:
@@ -125,6 +129,33 @@ def record_size(dir_fd: int, name: str) -> int:
         os.close(fd)
 
 
+def has_worker_status_after(dir_fd: int, name: str, offset: int) -> bool:
+    flags = os.O_RDONLY | os.O_NONBLOCK | require_nofollow()
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return False
+    try:
+        require_regular_single_link(fd)
+        size = os.fstat(fd).st_size
+        if offset < 0 or offset > size:
+            raise UnsafeStatePath("invalid status offset")
+        delta_size = size - offset
+        if delta_size > MAX_STATUS_DELTA_BYTES:
+            return False
+        os.lseek(fd, offset, os.SEEK_SET)
+        payload = bytearray()
+        while len(payload) < delta_size:
+            chunk = os.read(fd, delta_size - len(payload))
+            if not chunk:
+                break
+            payload.extend(chunk)
+        return any(WORKER_STATUS_RE.match(line) for line in bytes(payload).split(b"\n")[:-1])
+    finally:
+        os.close(fd)
+
+
 def remove_record(dir_fd: int, name: str) -> None:
     try:
         os.unlink(name, dir_fd=dir_fd)
@@ -176,10 +207,20 @@ def replace_record(dir_fd: int, name: str, payload: bytes) -> None:
 
 
 def main() -> int:
-    operations = ("append", "read", "replace", "remove", "root-append", "root-size")
-    if len(sys.argv) != 4 or sys.argv[1] not in operations:
+    operations = (
+        "append",
+        "read",
+        "replace",
+        "remove",
+        "root-append",
+        "root-size",
+        "root-worker-status-after",
+    )
+    if len(sys.argv) not in (4, 5) or sys.argv[1] not in operations:
         return 2
-    operation, directory, name = sys.argv[1:]
+    operation, directory, name = sys.argv[1:4]
+    if (operation == "root-worker-status-after") != (len(sys.argv) == 5):
+        return 2
     validate_name(name)
     if operation.startswith("root-"):
         dir_fd = open_safe_directory(directory)
@@ -192,6 +233,12 @@ def main() -> int:
             sys.stdout.buffer.write(read_record(dir_fd, name))
         elif operation == "root-size":
             print(record_size(dir_fd, name))
+        elif operation == "root-worker-status-after":
+            try:
+                offset = int(sys.argv[4])
+            except ValueError:
+                return 2
+            return 0 if has_worker_status_after(dir_fd, name, offset) else 1
         elif operation == "remove":
             remove_record(dir_fd, name)
         else:

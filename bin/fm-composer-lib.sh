@@ -374,7 +374,7 @@ FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT='esc[[:space:]]+to[[:space:]]+cancel'
 # submitted line starts a Deck turn, and the prompt row `❯` returns when the
 # turn ends. Delivery guard only; recorded worker state comes from the
 # deck-wrapper source in bin/fm-busy-lib.sh.
-FM_DELIVERY_DECK_BUSY_REGEX_DEFAULT='deck working - ctrl\+c to stop'
+FM_DELIVERY_DECK_BUSY_REGEX_DEFAULT='^⛵ deck working - ctrl\+c to stop$'
 FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
 
 fm_busy_lines_match() {  # [harness]

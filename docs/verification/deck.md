@@ -29,6 +29,7 @@ $ bash tests/fm-deck-harness.test.sh
 ok - fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model
 ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
 ok - fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported
+ok - fm-deck-worker: Firstmate bookkeeping cannot satisfy worker evidence
 ok - fm-deck-worker: status evidence never follows symlinked or non-regular paths
 ok - fm-deck-worker: silent and failed turns gain status evidence before turn-end
 ok - fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt
@@ -41,8 +42,9 @@ ok - fm-spawn: a secondmate on deck is refused
 fm-deck-harness: all cases passed
 ```
 
-The evidence gate compares the status log's size with its size at turn start rather than modification times: bash 3.2's `-nt` compares whole seconds, and a gate built on it refused a status line written in the same second the turn began.
-Those size checks and the driver's fallback append use Python 3 descriptor-bound I/O, reject symlinks and non-regular or multiply linked files, and never touch an unsafe target.
+The evidence gate snapshots the status log's byte offset at turn start and searches a bounded appended suffix for a complete `done`, `needs-decision`, `blocked`, `failed`, or `working` line.
+Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy the gate or the driver's postcondition.
+Those reads and the driver's fallback append use Python 3 descriptor-bound I/O, reject symlinks and non-regular or multiply linked files, and never touch an unsafe target.
 The terminal regression drives two real `fm-send.sh` steers through tmux and proves each completed turn removes its transient busy acknowledgement before the next delivery baseline.
 
 ## Live check

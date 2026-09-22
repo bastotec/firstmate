@@ -729,6 +729,34 @@ test_wake_gate_retirement_refuses_a_symlinked_parent() {
   pass "teardown does not follow a symlinked wake-gate state directory"
 }
 
+test_wake_gate_retirement_requires_python_only_for_existing_state() {
+  local absent present path rc
+  absent=$(make_case wake-gate-no-python-absent)
+  write_meta "$absent" local-only ship
+  wt_commit "$absent" "fix the thing"
+  add_fork_with_pushed_branch "$absent"
+  path=$(make_path_without_lsof "$absent")
+  rc=0
+  FM_TEARDOWN_TEST_PATH="$path" run_teardown "$absent" > "$absent/stdout" 2> "$absent/stderr" || rc=$?
+  expect_code 0 "$rc" "wake-gate-no-python-absent: teardown should not require an optional runtime"
+
+  present=$(make_case wake-gate-no-python-present)
+  write_meta "$present" local-only ship
+  wt_commit "$present" "fix the thing"
+  add_fork_with_pushed_branch "$present"
+  mkdir -p "$present/state/wake-gate"
+  printf 'look\n' > "$present/state/wake-gate/task-x1.look"
+  path=$(make_path_without_lsof "$present")
+  rc=0
+  FM_TEARDOWN_TEST_PATH="$path" run_teardown "$present" > "$present/stdout" 2> "$present/stderr" || rc=$?
+  expect_code 1 "$rc" "wake-gate-no-python-present: teardown removed state without descriptor-bound I/O"
+  assert_present "$present/state/wake-gate/task-x1.look" \
+    "wake-gate-no-python-present: teardown removed the look state without Python"
+  assert_grep 'python3 is required to retire wake-gate state safely' "$present/stderr" \
+    "wake-gate-no-python-present: teardown did not explain the required runtime"
+  pass "teardown requires Python only when wake-gate state needs retirement"
+}
+
 test_teardown_closes_the_backlog_item_itself() {
   local case_dir out
   case_dir=$(make_case tasks-axi-close)
@@ -3693,6 +3721,7 @@ EOF
 
 test_local_only_fork_remote_allows
 test_wake_gate_retirement_refuses_a_symlinked_parent
+test_wake_gate_retirement_requires_python_only_for_existing_state
 test_teardown_closes_the_backlog_item_itself
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses

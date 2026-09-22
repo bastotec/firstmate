@@ -781,6 +781,15 @@ remote_recovery_paths_validate() {
 
 retire_wake_gate_task_state() {
   local state_dir=$1 task_id=$2 helper="$SCRIPT_DIR/fm-state-io.py"
+  local wake_dir="$state_dir/wake-gate" look
+  look="$wake_dir/$task_id.look"
+  if [ ! -e "$wake_dir" ] && [ ! -L "$wake_dir" ]; then
+    return 0
+  fi
+  if [ -d "$wake_dir" ] && [ ! -L "$wake_dir" ] \
+    && [ ! -e "$look" ] && [ ! -L "$look" ]; then
+    return 0
+  fi
   command -v python3 >/dev/null 2>&1 || {
     echo "REFUSED: python3 is required to retire wake-gate state safely." >&2
     return 1

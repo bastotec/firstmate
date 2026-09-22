@@ -11,8 +11,8 @@
 #   2. It is the task's semantic busy source (deck-wrapper): a turn opens busy
 #      and closes idle, a finished turn touches the turn-end notification, and
 #      /quit records session-end.
-#   3. The evidence gate refuses a turn that appended nothing to the status log
-#      and lets one through that did, while the driver gives every completed,
+#   3. The evidence gate refuses a turn without a worker-status line and lets
+#      one through that has one, while the driver gives every completed,
 #      failed, or interrupted turn a status line before its turn-end signal.
 #   4. Ctrl+C cancels the running turn and returns to the prompt.
 #   5. Pane liveness reads the driver (argv[0] fm-deck-worker) and deck as an
@@ -73,6 +73,7 @@ case "$prompt" in
     ln -s "$FM_TEST_EXTERNAL" "$FM_TEST_STATUS"
     ;;
   *write-status*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
+  *resolve-only*) printf 'resolved [key=choice]: answered: yes\n' >> "$FM_TEST_STATUS" ;;
   *sleep*) sleep 30 ;;
 esac
 if [ -n "$gate" ]; then
@@ -140,6 +141,18 @@ test_evidence_gate_refuses_a_turn_without_a_status_line() {
   [ "$(sed -n 2p "$dir/gate.log")" = pass ] || fail "a turn that appended a status line was refused"
   assert_grep 'append one line to' "$dir/gate.err" "the refusal did not tell the worker what evidence to write"
   pass "fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported"
+}
+
+test_bookkeeping_lines_do_not_satisfy_turn_evidence() {
+  local dir="$TMP_ROOT/bookkeeping-evidence"
+  make_fake_deck "$dir"
+  run_worker "$dir" $'/quit\n' resolve-only || fail "the bookkeeping-only turn did not return to /quit"
+  [ "$(cat "$dir/gate.log")" = refused ] || fail "a resolved line satisfied Deck's pre-complete evidence gate"
+  [ "$(sed -n 1p "$dir/state/t1.status")" = 'resolved [key=choice]: answered: yes' ] \
+    || fail "the fixture did not append its Firstmate-owned bookkeeping line"
+  [ "$(sed -n 2p "$dir/state/t1.status")" = 'failed: deck turn ended without a status line (turn-end)' ] \
+    || fail "the wrapper postcondition treated a resolved line as worker evidence"
+  pass "fm-deck-worker: Firstmate bookkeeping cannot satisfy worker evidence"
 }
 
 test_status_checks_and_fallbacks_refuse_unsafe_paths() {
@@ -220,7 +233,7 @@ test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
 }
 
 test_completed_turn_removes_busy_ack_before_the_next_steer() {
-  local dir="$TMP_ROOT/second-steer" session="fm-deck-second-$$" target command capture rc
+  local dir="$TMP_ROOT/second-steer" session="fm-deck-second-$$" target command capture last rc
   command -v tmux >/dev/null 2>&1 || { pass "fm-deck-worker: second-steer terminal regression skipped without tmux"; return; }
   make_fake_deck "$dir"
   mkdir -p "$dir/state"
@@ -230,10 +243,14 @@ test_completed_turn_removes_busy_ack_before_the_next_steer() {
   target="$session:deck"
   for _ in $(seq 80); do
     capture=$(tmux capture-pane -p -t "$target" -S -30 2>/dev/null || true)
-    case "$capture" in *'❯'*) break ;; esac
+    last=$(printf '%s\n' "$capture" | awk 'NF { line=$0 } END { print line }')
+    [ "$last" = '❯' ] && break
     sleep 0.05
   done
-  case "$capture" in *'❯'*) ;; *) tmux kill-session -t "$session" 2>/dev/null; fail "the Deck fixture never reached its first idle prompt" ;; esac
+  if [ "$last" != '❯' ]; then
+    tmux kill-session -t "$session" 2>/dev/null
+    fail "the Deck fixture never reached its first idle prompt"
+  fi
   assert_not_contains "$capture" 'deck working - ctrl+c to stop' "a completed Deck turn left a stale busy acknowledgement"
 
   rc=0
@@ -242,9 +259,14 @@ test_completed_turn_removes_busy_ack_before_the_next_steer() {
   expect_code 0 "$rc" "the first Deck steer was not confirmed: $(cat "$dir/first.err")"
   for _ in $(seq 80); do
     capture=$(tmux capture-pane -p -t "$target" -S -30 2>/dev/null || true)
-    [ "$(grep -c '^done: wrote evidence$' "$dir/state/t1.status" 2>/dev/null || true)" -ge 2 ] && case "$capture" in *'❯'*) break ;; esac
+    last=$(printf '%s\n' "$capture" | awk 'NF { line=$0 } END { print line }')
+    if [ "$(grep -c '^done: wrote evidence$' "$dir/state/t1.status" 2>/dev/null || true)" -ge 2 ] \
+      && [ "$last" = '❯' ]; then
+      break
+    fi
     sleep 0.05
   done
+  [ "$last" = '❯' ] || fail "the first Deck steer did not return to its idle prompt"
   assert_not_contains "$capture" 'deck working - ctrl+c to stop' "the first steer left its busy acknowledgement in the idle pane"
 
   rc=0
@@ -282,6 +304,8 @@ test_control_busy_and_delivery_tables_name_deck() {
   fm_busy_source_trusted claude deck-wrapper && fail "deck-wrapper must not be trusted for claude"
   printf '⛵ deck working - ctrl+c to stop\n' | fm_busy_lines_match deck || fail "the driver's working line must acknowledge delivery"
   printf 'echo: deck working on it\n' | fm_busy_lines_match deck && fail "free text must not acknowledge delivery"
+  printf 'echo: ⛵ deck working - ctrl+c to stop\n' | fm_busy_lines_match deck \
+    && fail "rendered agent text containing the acknowledgement row matched as busy"
   pass "control, busy-source, and delivery tables carry deck's implemented mechanics"
 }
 
@@ -386,6 +410,7 @@ test_spawn_refuses_a_deck_secondmate() {
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_drive_the_busy_record_and_turn_end
 test_evidence_gate_refuses_a_turn_without_a_status_line
+test_bookkeeping_lines_do_not_satisfy_turn_evidence
 test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt

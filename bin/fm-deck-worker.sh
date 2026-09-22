@@ -15,9 +15,9 @@
 #     finished turn touches the task's turn-end notification file;
 #   - Deck's own hooks are attached on every run: `post_tool_use` refreshes the
 #     task's progress marker, and `pre_complete` refuses to let a turn finish
-#     until the worker has appended a line to its status log during that turn;
+#     until the worker has appended a worker-status line during that turn;
 #     the driver backstops failed, refused, and interrupted turns with a failure
-#     status when Deck exits without growing the log;
+#     status when Deck exits without one;
 #   - Ctrl+C cancels the running turn and returns to the prompt; `/quit` at the
 #     prompt ends the worker.
 #
@@ -102,14 +102,16 @@ status_append() {
   python3 "$STATE_IO" root-append "$STATE" "$ID.status"
 }
 
+status_has_worker_evidence() {
+  python3 "$STATE_IO" root-worker-status-after "$STATE" "$ID.status" "$1"
+}
+
 q() { printf '%q' "$1"; }
 
-# The evidence gate: the turn may finish only after it appended to the status
-# log, proven by the log having grown past its size at turn start (a size, not
-# an mtime: bash 3.2's -nt compares whole seconds, so a fast turn would be
-# refused). Deck feeds this stderr back to the model and fails the run after
-# its own bounded number of refusals.
-EVIDENCE_HOOK="current=\$(python3 $(q "$STATE_IO") root-size $(q "$STATE") $(q "$ID.status") 2>/dev/null) && [ -n \"\$current\" ] && [ \"\$current\" -gt \"\$(cat $(q "$TURN_MARK") 2>/dev/null || echo 0)\" ] || { echo $(q "Before you finish, append one line to $STATUS_FILE as your instructions' status protocol describes (done:, needs-decision:, blocked:, failed:, or working:), stating what you did and the evidence. Then finish.") >&2; exit 2; }"
+# The evidence gate: the turn may finish only after it appended a worker status
+# line after the byte offset recorded at turn start. Deck feeds this stderr back
+# to the model and fails the run after its own bounded number of refusals.
+EVIDENCE_HOOK="python3 $(q "$STATE_IO") root-worker-status-after $(q "$STATE") $(q "$ID.status") \"\$(cat $(q "$TURN_MARK") 2>/dev/null || echo 0)\" 2>/dev/null || { echo $(q "Before you finish, append one line to $STATUS_FILE as your instructions' status protocol describes (done:, needs-decision:, blocked:, failed:, or working:), stating what you did and the evidence. Then finish.") >&2; exit 2; }"
 PROGRESS_HOOK=''
 [ -z "$GEN" ] || PROGRESS_HOOK="$(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID") --gen $(q "$GEN") >/dev/null 2>&1 || true"
 
@@ -126,7 +128,7 @@ RENDER='
 
 SESSION=''
 run_turn() {  # <prompt>
-  local prompt=$1 rc event status_before status_after
+  local prompt=$1 rc event status_before
   local -a args=(run "$prompt" --max-turns "$MAX_TURNS" --deadline-secs "$DEADLINE" --hook "pre_complete=$EVIDENCE_HOOK")
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
   [ -z "$MODEL" ] || args+=(--model "$MODEL")
@@ -164,13 +166,7 @@ run_turn() {  # <prompt>
     event=turn-failed
   fi
   status_before=$(cat "$TURN_MARK" 2>/dev/null || printf '0\n')
-  if ! status_after=$(status_size); then
-    printf 'fm-deck-worker: status path became unsafe during the turn: %s\n' "$STATUS_FILE" >&2
-    busy_event idle turn-failed
-    [ -z "$TURNEND" ] || touch "$TURNEND" 2>/dev/null || true
-    return 1
-  fi
-  if [ "$status_after" -le "$status_before" ]; then
+  if ! status_has_worker_evidence "$status_before"; then
     if ! printf 'failed: deck turn ended without a status line (%s)\n' "$event" | status_append; then
       printf 'fm-deck-worker: could not safely append required turn evidence to %s\n' "$STATUS_FILE" >&2
       busy_event idle turn-failed
