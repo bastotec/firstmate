@@ -636,10 +636,12 @@ A plain `❯` in the older separated shape remains pending, as does `❯ 4;38;rg
 
 The concurrently reported `4;38;rgb:0000/afaf/d7d7` fragments are a separate terminal-input case, not the cursor-cell cause.
 Pi 0.85.1's terminal sequence buffer flushes an incomplete OSC sequence after 50 ms; when a palette response arrives in slower chunks, its `ESC ] 4 ; <index>` prefix is handled separately and the trailing `;rgb:...` bytes become ordinary editor text.
-The Firstmate Pi task extension now holds only a structurally prefixed OSC 4 palette response for a bounded 500 ms and consumes it only after a complete BEL or ST terminator and valid palette-response grammar arrive.
-A literal RGB-looking draft bypasses that filter, while an incomplete or malformed control is replayed byte-for-byte after the bound rather than discarded.
+The Firstmate Pi task extension treats only bytes delivered together in one stdin callback beginning with `ESC ] 4` as a palette-response candidate.
+A complete candidate is consumed only with valid palette-response grammar and a BEL or ST terminator.
+An incomplete candidate is held for at most 500 ms and then discarded, while every later callback reaches the final editor unchanged even when its text fits the palette grammar.
+A literal RGB-looking draft bypasses the filter, and malformed control-leading candidates are discarded rather than replayed into the composer.
 As a second defensive layer, a byte-complete OSC control retained by a styled screen capture is removed by the shared composer control-sequence parser before structural and ghost-content classification.
-The portable matrix carries two consecutive complete replies to model recurrence after a session replacement, both OSC terminators, the reverse-cell counterfactual, malformed fragments, a literal RGB-like draft, and the bounded input-filter replay behavior.
+The portable matrix carries two consecutive complete replies to model recurrence after a session replacement, both OSC terminators, the reverse-cell counterfactual, malformed fragments, a literal RGB-like draft, bounded single-chunk discard, and separate-callback draft pass-through.
 
 The token-free live guard now starts a local replacement session with `/new`, proves that replacement idle is empty without first clearing it, types the RGB-like draft and proves it pending, then sends C-u and proves the resulting idle composer empty again:
 
@@ -647,11 +649,13 @@ The token-free live guard now starts a local replacement session with `/new`, pr
 FM_COMPOSER_MATRIX_LIVE=1 bin/fm-test-run.sh tests/fm-composer-matrix-live-e2e.test.sh
 ```
 
-The Pi arm's exact output was:
+The Pi arm's 2026-09-20 exact output under the then-current multi-callback policy was:
 
 ```text
 ok - pi (0.85.1): replacement idle is empty, RGB-like draft is pending, C-u clears, and a fragmented OSC reply is consumed
 ```
+
+The current live guard replaces that obsolete fragmented-response assertion with a complete single-callback OSC reply and still needs a live refresh under the stricter callback policy.
 
 The full matrix command also detected an unrelated OpenCode 1.18.31 idle-composer drift (`pending`), so that full invocation exited nonzero after the Pi arm passed rather than being recorded as an all-harness pass.
 The executable control-path coverage is `tests/fm-composer-lib.test.sh`, `tests/fm-send-inbox.test.sh`, and `tests/fm-control-relaunch.test.sh`; those drive the shared classifier, a steering doorbell, and guarded Pi relaunch respectively.
