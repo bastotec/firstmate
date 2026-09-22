@@ -31,7 +31,6 @@ set -u
 . "$ROOT/bin/fm-trace-context-lib.sh"
 
 CONTROL="$ROOT/bin/fm-control.sh"
-unset FM_DECK_ALLOW_UNVERIFIED
 
 TMP_ROOT=$(fm_test_tmproot fm-control-recover-missing)
 mkdir -p "$TMP_ROOT"
@@ -418,23 +417,23 @@ assert_nothing_changed() {
     || fail "a refused recovery must not launch an agent"
 }
 
-test_recover_missing_deck_requires_the_verification_opt_in_before_recreation() {
-  local dir out rc meta_before brief_before
-  dir=$(new_case deck-preflight rm22)
+test_recover_missing_verified_deck_recreates_the_endpoint() {
+  local dir out rc
+  dir=$(new_case deck-recovery rm22)
   add_ship_task "$dir" rm22
   sed -i.bak 's/^harness=.*/harness=deck/' "$dir/home/state/rm22.meta"
   rm -f "$dir/home/state/rm22.meta.bak"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/deck"
+  chmod +x "$dir/fakebin/deck"
+  printf deck > "$dir/fake/becomes"
   make_endpoint_missing "$dir"
-  meta_before=$(cat "$dir/home/state/rm22.meta")
-  brief_before=$(cat "$dir/home/data/rm22/brief.md")
 
-  out=$(run_control "$dir" rm22 recover-missing --note "verify Deck"); rc=$?
-  expect_code 1 "$rc" "Deck recovery without the verification opt-in should refuse"
-  assert_contains "$out" "deck is not yet live-verified" "the refusal should name Deck's verification state"
-  assert_contains "$out" "FM_DECK_ALLOW_UNVERIFIED=1" "the refusal should name the verification-only path"
-  assert_nothing_changed "$dir" rm22 "$meta_before" "$brief_before"
-  [ ! -e "$dir/home/state/rm22.control-relaunch" ] || fail "Deck preflight refusal opened a recovery transaction"
-  pass "fm-control recover-missing: unverified Deck refuses before recreating the endpoint"
+  out=$(run_control "$dir" rm22 recover-missing --note "recover Deck"); rc=$?
+  expect_code 0 "$rc" "verified Deck recovery should succeed: $out"
+  [ "$(meta_field "$dir" rm22 harness)" = deck ] || fail "Deck recovery changed the recorded harness"
+  [ "$(cat "$dir/fake/command")" = deck ] || fail "Deck recovery did not launch the replacement agent"
+  assert_grep "fm-rm22" "$dir/fake/created-windows" "Deck recovery did not recreate the endpoint"
+  pass "fm-control recover-missing: verified Deck recreates and relaunches its endpoint"
 }
 
 test_recover_missing_refuses_a_live_endpoint() {
@@ -991,7 +990,7 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate
 test_recover_missing_preserves_uncommitted_work
 test_recover_missing_records_the_dirty_state_it_found
 test_recover_missing_recreates_the_terminal_and_launches_the_replacement
-test_recover_missing_deck_requires_the_verification_opt_in_before_recreation
+test_recover_missing_verified_deck_recreates_the_endpoint
 test_recover_missing_waits_for_the_recreated_shell_to_settle
 test_recover_missing_refuses_a_terminal_that_never_settles
 test_recover_missing_refuses_a_live_endpoint

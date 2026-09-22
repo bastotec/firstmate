@@ -140,8 +140,7 @@
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|deck)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
-#   new adapters. Deck remains unverified live and is refused unless the verification-only
-#   FM_DECK_ALLOW_UNVERIFIED=1 environment opt-in is set. For pi and pi-signed,
+#   new adapters. For pi and pi-signed,
 #   fm-spawn resolves the selected executable
 #   name from PATH once, probes that concrete path with --help, and launches the
 #   same path. It adds --tui-mode regular only when that help advertises the flag;
@@ -301,8 +300,8 @@
 # muse installs no hook at all - its plugin engine is off in the default build - so
 # it writes state/<id>.muse-session to bind the pane to muse's own session event
 # log; muse, gemini, and agy are verified crewmate/scout-only adapters.
-# deck remains unverified live, is available only through its explicit verification opt-in,
-# and installs no hook file: bin/fm-deck-worker.sh passes Deck its per-run hooks
+# deck is a verified crewmate/scout adapter and installs no hook file:
+# bin/fm-deck-worker.sh passes Deck its per-run hooks
 # (--hook) and writes the busy and turn-end events itself.
 # rovo installs no hook either - its eventHooks fire at tool granularity only,
 # never turn-end - so it carries no busy-source wiring at all and no turn-end
@@ -1834,11 +1833,6 @@ case "$ARG3" in
     ;;
 esac
 
-if ! fm_control_harness_launch_allowed "$HARNESS" "${FM_DECK_ALLOW_UNVERIFIED:-0}"; then
-  echo "error: deck is not yet live-verified; refusing worker dispatch. Set FM_DECK_ALLOW_UNVERIFIED=1 only for an adapter verification run." >&2
-  exit 1
-fi
-
 # Resolve the home-local account binding before any worktree, endpoint, trust,
 # hook, or task-record mutation. A direct relaunch follows the same precedence
 # as fm-control: explicit value, explicit default clear, same-harness preserve,
@@ -1942,7 +1936,7 @@ case "$HARNESS" in
     ;;
   deck)
     DECK_BIN=$(resolve_pi_executable deck) || {
-      echo "error: deck executable not found on PATH; build bastotec/deck (cargo build --release --locked) and put target/release/deck on PATH for adapter verification" >&2
+      echo "error: deck executable not found on PATH; build bastotec/deck (cargo build --release --locked) and put target/release/deck on PATH" >&2
       exit 1
     }
     command -v jq >/dev/null 2>&1 || {

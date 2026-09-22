@@ -2,9 +2,8 @@
 
 Deck (`bastotec/deck`) is a headless Rust coding agent: `deck run "<prompt>"` streams NDJSON events on stdout and exits when the model finishes.
 Firstmate runs it through its own pane driver, `../../../../../bin/fm-deck-worker.sh`, whose header owns the driver's behavior.
-Deck is not live-verified and must not be dispatched for real work.
-`../../../../../bin/fm-spawn.sh` refuses Deck unless `FM_DECK_ALLOW_UNVERIFIED=1` explicitly marks an adapter-verification run, and still refuses a secondmate because the driver supervises one task rather than a home.
-`../../../../../docs/verification/deck.md` owns how every fact below was established and what is still unproven.
+Deck is verified for crewmates and scouts; `../../../../../bin/fm-spawn.sh` still refuses a secondmate because the driver supervises one task rather than a home.
+`../../../../../docs/verification/deck.md` owns how every fact below was established.
 
 ## Operating facts
 
@@ -36,9 +35,8 @@ Pane liveness (`../../../../../bin/fm-agent-process-lib.sh`) reads both as an ag
 
 ## Credential precondition
 
-A Deck verification run needs a key its gateway accepts, and the route must have quota.
+A Deck worker needs a key its gateway accepts, and the route must have quota.
 A missing key fails the first turn with Deck's own error in the pane; a quota refusal fails the turn with the gateway's error.
-Neither failure changes Deck's unverified status or authorizes real-work dispatch.
 
 ## Primary integration
 

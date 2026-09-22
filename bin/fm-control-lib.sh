@@ -60,18 +60,12 @@ fm_control_verb_allowed() {  # <verb>
   return 1
 }
 
-# The harnesses whose control mechanics are implemented. Deck remains here so
-# an adapter-verification run can be interrupted or exited; replacement launch
-# eligibility is the separate table below.
+# The harnesses whose control mechanics are implemented.
 fm_control_harness_supported() {  # <harness>
   case "${1-}" in
     claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|deck) return 0 ;;
   esac
   return 1
-}
-
-fm_control_harness_launch_allowed() {  # <harness> <deck-opt-in>
-  [ "${1-}" != deck ] || [ "${2-}" = 1 ]
 }
 
 # The recognized adapter a RECORDED harness value belongs to. Every table below
@@ -103,13 +97,10 @@ fm_control_harness_family() {  # <recorded-harness>
   esac
 }
 
-# Which task kinds an adapter can run. muse, gemini, rovo, and agy are
-# crewmate/scout adapters only, while Deck has only its verification launch path:
-# none has a primary supervision protocol, and bin/fm-spawn.sh refuses a
-# --secondmate launch on any of them. The control
-# plane asks this BEFORE it stops anything, so an incompatible relaunch target is
-# refused while the current agent is still running rather than after it has
-# been stopped.
+# Which task kinds an adapter can run.
+# muse, gemini, rovo, agy, and Deck are crewmate/scout adapters only.
+# None has a primary supervision protocol, and bin/fm-spawn.sh refuses a --secondmate launch on any of them.
+# The control plane asks this BEFORE it stops anything, so an incompatible relaunch target is refused while the current agent is still running rather than after it has been stopped.
 fm_control_harness_supports_kind() {  # <harness> <kind>
   local harness=${1-} kind=${2-}
   fm_control_harness_supported "$harness" || return 1

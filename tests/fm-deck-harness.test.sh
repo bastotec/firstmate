@@ -19,17 +19,16 @@
 #      agent, never as an idle shell; unrelated names stay unclaimed.
 #   6. Control, busy-source, and delivery tables name deck, and a secondmate
 #      launch on deck is refused.
-#   7. Ordinary Deck dispatch is refused while the adapter is unverified; the
-#      verification opt-in launches the driver with the resolved deck binary,
-#      busy gen, and model, records effort without passing it, and arms the
-#      busy contract.
+#   7. Ordinary Deck dispatch launches the driver with the resolved deck
+#      binary, busy gen, and model, records effort without passing it, and arms
+#      the busy contract.
 set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_INVOKED_AS \
-  ATLASSIAN_AGENT_TYPE ROVODEV_CLI GEMINI_CLI AGENT FM_OMP_HARNESS FM_DECK_ALLOW_UNVERIFIED
+  ATLASSIAN_AGENT_TYPE ROVODEV_CLI GEMINI_CLI AGENT FM_OMP_HARNESS
 
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
@@ -368,9 +367,6 @@ test_control_busy_and_delivery_tables_name_deck() {
   [ "$(fm_control_harness_family deck)" = deck ] || fail "deck family"
   fm_control_harness_supports_kind deck ship || fail "deck must run ship tasks"
   fm_control_harness_supports_kind deck secondmate && fail "deck must not run a secondmate"
-  fm_control_harness_launch_allowed deck 0 && fail "deck launch must require the verification opt-in"
-  fm_control_harness_launch_allowed deck 1 || fail "the Deck verification opt-in must permit launch"
-  fm_control_harness_launch_allowed claude 0 || fail "verified harness launch must not require Deck's opt-in"
   [ "$(fm_control_interrupt_key deck)" = C-c ] || fail "deck interrupts on Ctrl+C"
   [ "$(fm_control_interrupt_repeat deck)" = 1 ] || fail "deck interrupt repeat"
   [ "$(fm_control_exit_command deck)" = /quit ] || fail "deck exits with /quit"
@@ -435,9 +431,9 @@ test_spawn_launches_the_driver_with_binary_gen_and_model() {
   IFS='|' read -r case_dir home proj wt fakebin <<EOF
 $rec
 EOF
-  out=$(FM_DECK_ALLOW_UNVERIFIED=1 run_deck_spawn "$case_dir" "$home" "$proj" "$wt" "$fakebin" "$id" --model codex/gpt-5.6-luna --effort high)
+  out=$(run_deck_spawn "$case_dir" "$home" "$proj" "$wt" "$fakebin" "$id" --model codex/gpt-5.6-luna --effort high)
   rc=$?
-  expect_code 0 "$rc" "Deck verification spawn should succeed: $out"
+  expect_code 0 "$rc" "ordinary Deck spawn should succeed: $out"
   launch=$(cat "$case_dir/launch.log")
   assert_contains "$launch" "exec -a fm-deck-worker bash" "the driver must run under its own argv[0]"
   assert_contains "$launch" "$ROOT/bin/fm-deck-worker.sh" "the launch did not run the deck driver"
@@ -452,30 +448,13 @@ EOF
   assert_grep 'effort=high' "$meta" "meta did not record the requested effort"
   [ -s "$home/state/$id.busy-gen" ] || fail "the spawn did not arm the busy contract"
   assert_contains "$launch" "--gen '$(cat "$home/state/$id.busy-gen")'" "the launch did not carry the armed busy gen"
-  pass "fm-spawn: the Deck verification opt-in launches the driver and records effort only"
-}
-
-test_spawn_refuses_unverified_deck_dispatch() {
-  local id rec out rc case_dir home proj wt fakebin
-  id="deck-refused-$$"
-  rec=$(make_deck_spawn_case refused "$id")
-  IFS='|' read -r case_dir home proj wt fakebin <<EOF
-$rec
-EOF
-  out=$(run_deck_spawn "$case_dir" "$home" "$proj" "$wt" "$fakebin" "$id")
-  rc=$?
-  [ "$rc" -ne 0 ] || fail "ordinary Deck dispatch succeeded while the adapter is unverified"
-  assert_contains "$out" "deck is not yet live-verified" "the refusal did not explain Deck's verification state"
-  assert_contains "$out" "FM_DECK_ALLOW_UNVERIFIED=1" "the refusal did not name the verification-only path"
-  [ ! -e "$home/state/$id.meta" ] || fail "a refused Deck dispatch published task metadata"
-  [ ! -s "$case_dir/launch.log" ] || fail "a refused Deck dispatch sent a launch command"
-  pass "fm-spawn: Deck refuses ordinary dispatch until live verification"
+  pass "fm-spawn: ordinary Deck dispatch launches the driver and records effort only"
 }
 
 test_spawn_refuses_a_deck_secondmate() {
   local out rc
   out=$(HOME="$TMP_ROOT" FM_HOME="$TMP_ROOT" FM_STATE_OVERRIDE="$TMP_ROOT/sm-state" FM_CONFIG_OVERRIDE="$TMP_ROOT/sm-config" \
-    FM_DECK_ALLOW_UNVERIFIED=1 "$SPAWN" deck-sm-$$ "$TMP_ROOT" --secondmate --harness deck 2>&1)
+    "$SPAWN" deck-sm-$$ "$TMP_ROOT" --secondmate --harness deck 2>&1)
   rc=$?
   [ "$rc" -ne 0 ] || fail "a deck secondmate launch must be refused"
   assert_contains "$out" "crewmate/scout adapter only" "the refusal must say why"
@@ -495,7 +474,6 @@ test_completed_turn_removes_busy_ack_before_the_next_steer
 test_liveness_reads_the_driver_as_an_agent
 test_tmux_liveness_uses_the_deck_driver_argv0
 test_control_busy_and_delivery_tables_name_deck
-test_spawn_refuses_unverified_deck_dispatch
 test_spawn_launches_the_driver_with_binary_gen_and_model
 test_spawn_refuses_a_deck_secondmate
 echo "fm-deck-harness: all cases passed"
