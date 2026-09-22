@@ -1559,12 +1559,13 @@ fm_composer_queued_enter_verdict() {  # <composer-state> <busy|idle|unknown>
 # This also handles a complete OSC reply on the row because the shared terminal
 # parser removes that protocol control before the exact-content check.
 _fm_composer_pi_idle_prompt_row() {  # <raw-row> <classified-content> <styled>
-  local raw=$1 content=$2 styled=$3 esc
+  local raw=$1 content=$2 styled=$3 esc geometry
   [ "$styled" = 1 ] || return 1
   [ "$content" = '❯' ] || return 1
   esc=$(printf '\033')
-  case "$raw" in
-    *"${esc}[7m ${esc}[0m"*|*"${esc}[0;7m ${esc}[0m"*) return 0 ;;
+  geometry=$(printf '%s\n' "$raw" | fm_composer_strip_complete_osc)
+  case "$geometry" in
+    *"❯ ${esc}[7m ${esc}[0m"|*"❯ ${esc}[0;7m ${esc}[0m") return 0 ;;
   esac
   return 1
 }
