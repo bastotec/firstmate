@@ -217,8 +217,8 @@ class TailPublisher:
     def registration(self) -> dict:
         """This endpoint's identity, in the one spelling the hub is ever given.
 
-        Same shape as the agent's, so the hub, the fleet listing, and the
-        Bridge feed treat a tailed worker exactly like a pty-backed one.
+        Its identity fields match the agent's, so the hub, the fleet listing,
+        and the Bridge feed treat a tailed worker exactly like a pty-backed one.
         """
         return {
             "endpoint_id": self.endpoint_id,
