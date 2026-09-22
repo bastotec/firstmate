@@ -4302,11 +4302,7 @@ fi
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
-if [ "$KIND" = secondmate ]; then
-  sq_piguard=$(shell_quote "$PROJ_ABS/.pi/extensions/lib/fm-terminal-response-input.ts")
-else
-  sq_piguard=$(shell_quote "$FM_ROOT/.pi/extensions/lib/fm-terminal-response-input.ts")
-fi
+sq_piguard=$(shell_quote "$FM_ROOT/.pi/extensions/lib/fm-terminal-response-input.ts")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_ompext=$(shell_quote "$STATE/$ID.omp-ext.ts")

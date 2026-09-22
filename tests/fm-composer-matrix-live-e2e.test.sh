@@ -75,7 +75,7 @@ harness_version() {  # <binary>
 
 check_harness_idle_empty() {  # <name> <launch-cmd...>
   local name=$1 win="hx-$1" verdict='' i=0 budget=${FM_COMPOSER_MATRIX_LIVE_POLLS:-45} version dismissed=0 startup_screen
-  local pi_replacement='' pi_draft='' pi_cleared='' pi_palette=''
+  local pi_replacement='' pi_draft='' pi_cleared='' pi_palette='' pi_marker='' pane='' transitioned=0
   shift
   version=$(harness_version "$1")
   tmux -L "$SOCKET" new-window -d -t "$SESSION:" -n "$win" -c "$ROOT" -- "$@" \
@@ -116,12 +116,29 @@ check_harness_idle_empty() {  # <name> <launch-cmd...>
       # a local session replacement, then prove that C-u recovery returns to
       # empty without being the reason idle is classified correctly and that a
       # genuine RGB-looking draft is still protected.
+      pi_marker="FM_PI_REPLACEMENT_MARKER_$$"
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l "/name $pi_marker"
+      tmux -L "$SOCKET" send-keys -t "$SESSION:$win" Enter
+      i=0
+      while [ "$i" -lt 40 ]; do
+        pane=$(tmux -L "$SOCKET" capture-pane -p -t "$SESSION:$win" 2>/dev/null || true)
+        printf '%s\n' "$pane" | grep -Fq "$pi_marker" && break
+        i=$((i + 1))
+        sleep 0.25
+      done
+      printf '%s\n' "$pane" | grep -Fq "$pi_marker" \
+        || fail "$name ($version): pre-switch session marker never rendered"
       tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l '/new'
       tmux -L "$SOCKET" send-keys -t "$SESSION:$win" Enter
       i=0
       while [ "$i" -lt 40 ]; do
+        pane=$(tmux -L "$SOCKET" capture-pane -p -t "$SESSION:$win" 2>/dev/null || true)
         pi_replacement=$(fm_tmux_composer_state "$SESSION:$win")
-        [ "$pi_replacement" = empty ] && break
+        if [ "$pi_replacement" = empty ] \
+           && ! printf '%s\n' "$pane" | grep -Fq "$pi_marker"; then
+          transitioned=1
+          break
+        fi
         i=$((i + 1))
         sleep 0.25
       done
@@ -134,11 +151,11 @@ check_harness_idle_empty() {  # <name> <launch-cmd...>
       tmux -L "$SOCKET" send-keys -t "$SESSION:$win" -l $'\033]4;38;rgb:0000/afaf/d7d7\007'
       sleep 0.25
       pi_palette=$(fm_tmux_composer_state "$SESSION:$win")
-      if [ "$pi_replacement" != empty ] || [ "$pi_draft" != pending ] \
+      if [ "$transitioned" != 1 ] || [ "$pi_replacement" != empty ] || [ "$pi_draft" != pending ] \
          || [ "$pi_cleared" != empty ] || [ "$pi_palette" != empty ]; then
         FAILED=1
-        printf 'not ok - %s (%s): Pi replacement/draft/C-u/complete-OSC matrix was replacement=%s draft=%s cleared=%s palette=%s\n' \
-          "$name" "$version" "${pi_replacement:-unreadable}" "${pi_draft:-unreadable}" \
+        printf 'not ok - %s (%s): Pi replacement/draft/C-u/complete-OSC matrix was transitioned=%s replacement=%s draft=%s cleared=%s palette=%s\n' \
+          "$name" "$version" "$transitioned" "${pi_replacement:-unreadable}" "${pi_draft:-unreadable}" \
           "${pi_cleared:-unreadable}" "${pi_palette:-unreadable}" >&2
       else
         CHECKED=$((CHECKED + 1))
