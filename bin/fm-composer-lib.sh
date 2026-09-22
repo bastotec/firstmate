@@ -1591,17 +1591,38 @@ _fm_composer_classify_pi_rows() {  # <screen> <styled>
 }
 
 _fm_composer_classify_bare_pi_overlap() {  # <screen> <styled> <has-identity> <identity> <bare-row>
-  local screen=$1 styled=$2 has_identity=$3 identity=$4 row=$5 agent
-  if [ "$has_identity" != 1 ]; then
-    _fm_composer_classify_bare_row "$screen" "$styled" "$row"
+  local screen=$1 styled=$2 has_identity=$3 identity=$4 row=$5 agent raw content esc plain_geometry
+  raw=$(_fm_composer_screen_row "$row" "$screen")
+  content=$(_fm_composer_row_content "$raw" "$styled")
+  fm_composer_normalize_trim_var content
+  if _fm_composer_pi_idle_prompt_row "$raw" "$content" "$styled"; then
+    printf 'empty'
+    return 0
+  fi
+  if [ "$styled" = 1 ]; then
+    esc=$(printf '\033')
+    case "$raw" in
+      *"${esc}[7m ${esc}[0m"*|*"${esc}[0;7m ${esc}[0m"*)
+        printf 'pending'
+        return 0
+        ;;
+    esac
+  fi
+  if [ "$has_identity" != 1 ] || [ "$identity" = probe-absent ]; then
+    if [ "$styled" = 1 ]; then
+      _fm_composer_classify_bare_row "$screen" "$styled" "$row"
+    else
+      plain_geometry=$raw
+      fm_composer_normalize_spaces_var plain_geometry
+      case "$plain_geometry" in
+        *"❯  "*) printf 'unknown' ;;
+        *) _fm_composer_classify_bare_row "$screen" "$styled" "$row" ;;
+      esac
+    fi
     return 0
   fi
   if [ -z "$identity" ]; then
     printf 'need-identity'
-    return 0
-  fi
-  if [ "$identity" = probe-absent ]; then
-    _fm_composer_classify_bare_row "$screen" "$styled" "$row"
     return 0
   fi
   agent=${identity%%$'\t'*}
