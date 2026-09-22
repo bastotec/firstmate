@@ -633,6 +633,9 @@ ESC[39m ❯ ESC[7m SPACE ESC[0m
 
 The unchanged classifier read that prompt glyph as pending Pi input, both before and after C-u had cleared a genuine draft, so fresh idle sessions refused steering and guarded relaunch.
 The corrected classifier requires the identity-proven Pi separator pair, an idle or done Pi state, styled capture bytes, exact prompt-only content, and the complete reverse-video blank cell before treating this row as idle furniture.
+An accepted residual limitation remains for a whitespace-only draft after the user moves its cursor to the first space with Home or left navigation.
+Pi renders that first typed space as the same reverse-video blank cell and leaves the remaining spaces after `ESC[0m`; tmux omits those trailing spaces, so the captured row is byte-identical to idle furniture.
+Because the post-render capture cannot distinguish those states, the classifier deliberately keeps that exact capture `empty` to preserve ordinary idle-Pi reachability, and `tests/fm-composer-lib.test.sh` pins the accepted ambiguity.
 A plain `❯` in the older separated shape remains pending, as does `❯ 4;38;rgb:0000/afaf/d7d7 is a real draft`, so neither the glyph nor an RGB-looking payload is discarded by spelling.
 
 The concurrently reported `4;38;rgb:0000/afaf/d7d7` fragments are a separate terminal-input case, not the cursor-cell cause.

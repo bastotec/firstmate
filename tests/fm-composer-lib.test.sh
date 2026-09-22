@@ -451,7 +451,7 @@ test_matrix_pi_separated_needs_identity() {
   # added a normal `❯` prompt plus one reverse-video blank software-cursor
   # cell. The blank row alone is exactly what the strict rule refuses; only
   # structure PLUS a live idle/done Pi identity proves either idle shape.
-  local screen typed pi_idle pi_working pi_blocked none pi085 osc_bel osc_st malformed literal protected
+  local screen typed pi_idle pi_working pi_blocked none pi085 home_whitespace_capture osc_bel osc_st malformed literal protected
   local caps_plain_id=$'styled=0\ncursor=0\nidentity=1\nrows=20'
   screen=$'transcript\n────────────────────────\n\n────────────────────────\n footer'
   pi_idle=$(printf 'pi\tidle'); pi_working=$(printf 'pi\tworking'); none=$(printf 'zsh\t')
@@ -469,7 +469,7 @@ test_matrix_pi_separated_needs_identity() {
   # A pi parked on an interactive prompt reports `blocked`: it is waiting on a
   # human keystroke, so the blank region is a menu's, not a free composer's.
   # Typing there answers the prompt and the text is discarded (issue #2797).
-  assert_screen "blocked pi defers" unknown "$CAPS_STYLED" "$screen" '' "$pi_blocked"
+  assert_screen "blocked pi protects input" pending "$CAPS_STYLED" "$screen" '' "$pi_blocked"
   # The audit's live counterexample: a plain shell running sleep, cursor
   # parked on a blank line between two rules, NO pi process. The permissive
   # rule read this `empty`; identity+structure refuses it.
@@ -489,8 +489,10 @@ test_matrix_pi_separated_needs_identity() {
   # structural furniture signal that changes this one row to empty.
   pi085=$'transcript\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter'
   assert_screen "pi 0.85.1 idle reverse-video cursor on tmux" empty "$CAPS_TMUX" "$pi085" 2 "$pi_idle"
-  assert_screen "pi 0.85.1 blocked reverse-video cursor on tmux defers" unknown "$CAPS_TMUX" "$pi085" 2 "$pi_blocked"
+  assert_screen "pi 0.85.1 blocked reverse-video cursor on tmux protects input" pending "$CAPS_TMUX" "$pi085" 2 "$pi_blocked"
   assert_screen "pi 0.85.1 reverse-video cursor requests tmux identity" need-identity "$CAPS_TMUX" "$pi085" 2
+  home_whitespace_capture=$'transcript\n────────────────────────\n\033[39m ❯ \033[7m \033[0m\n────────────────────────\nfooter'
+  assert_screen "accepted Pi Home-position whitespace ambiguity stays reachable" empty "$CAPS_TMUX" "$home_whitespace_capture" 2 "$pi_idle"
   assert_screen "pi 0.85.1 idle reverse-video cursor on herdr" empty "$CAPS_STYLED" "$pi085" '' "$pi_idle"
   assert_screen "pi 0.85.1 idle reverse-video cursor on zellij" empty "$CAPS_STYLED_NOID" "$pi085"
   typed=$'transcript\n────────────────────────\n\033[39m ❯  \033[7m \033[0m\n────────────────────────\nfooter'
