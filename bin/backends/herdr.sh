@@ -77,6 +77,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # every backend so the decision cannot drift.
 # shellcheck source=bin/fm-composer-lib.sh
 . "$FM_BACKEND_HERDR_ROOT/bin/fm-composer-lib.sh"
+# shellcheck source=bin/fm-busy-lib.sh
+. "$FM_BACKEND_HERDR_ROOT/bin/fm-busy-lib.sh"
 
 # Shared, backend-neutral normalized-transition shape and the single-owner
 # status->action policy table (bin/fm-transition-lib.sh). This adapter's event
@@ -3251,6 +3253,7 @@ fm_backend_herdr_rendered_busy_state() {  # <target> [harness] -> busy|idle|unkn
 # through a whole turn.
 fm_backend_herdr_queued_enter_busy() {  # <target> <allow-rendered> [harness]
   local target=$1 allow_rendered=${2:-0} harness=${3:-} raw
+  [ "$harness" != deck ] || { printf 'idle'; return 0; }
   raw=$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")
   case "$raw" in
     working) printf 'busy'; return 0 ;;
@@ -3262,21 +3265,26 @@ fm_backend_herdr_queued_enter_busy() {  # <target> <allow-rendered> [harness]
   fi
 }
 
-fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle> [expected-label] [harness]
-  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${7:-} i=0 verdict baseline confirm_sleep
-  local raw_status footer_baseline='' allow_rendered=0 enter_sent=0
+fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle> [expected-label] [harness] [state-dir] [task-id]
+  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${7:-} state_dir=${8:-} task_id=${9:-}
+  local i=0 verdict baseline confirm_sleep raw_status footer_baseline='' allow_rendered=0 enter_sent=0 deck_seq=''
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   fm_backend_herdr_send_literal "$target" "$text" || { printf 'send-failed'; return 0; }
   sleep "$settle"
+  if [ "$harness" = deck ] && [ -n "$state_dir" ] && [ -n "$task_id" ]; then
+    deck_seq=$(fm_busy_delivery_seq "$state_dir" "$task_id") || deck_seq=
+  fi
   raw_status=$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")
   baseline=$(fm_backend_herdr_classify_submit_agent_status "$raw_status")
   confirm_sleep=$(fm_backend_herdr_submit_confirm_budget "$sleep_s")
   # Typing never starts a turn, so a footer read taken after the literal send
   # and before the first Enter is still a pre-submission baseline.
-  if [ "$baseline" = idle ]; then
-    allow_rendered=1
-  else
-    footer_baseline=$(fm_backend_herdr_rendered_busy_state "$target" "$harness")
+  if [ "$harness" != deck ]; then
+    if [ "$baseline" = idle ]; then
+      allow_rendered=1
+    else
+      footer_baseline=$(fm_backend_herdr_rendered_busy_state "$target" "$harness")
+    fi
   fi
   while :; do
     if fm_backend_herdr_send_key "$target" Enter; then
@@ -3290,9 +3298,23 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
       sleep "$sleep_s"
       continue
     fi
+    if [ "$harness" = deck ] && [ -n "$deck_seq" ]; then
+      sleep "$sleep_s"
+      if fm_busy_deck_delivery_advanced "$state_dir" "$task_id" "$deck_seq"; then
+        printf 'empty'
+        return 0
+      fi
+    fi
     if [ "$baseline" = idle ]; then
       verdict=$(fm_backend_herdr_wait_for_working "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" \
         "$confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS")
+      if [ "$harness" = deck ]; then
+        if [ -n "$deck_seq" ] && fm_busy_deck_delivery_advanced "$state_dir" "$task_id" "$deck_seq"; then
+          printf 'empty'
+          return 0
+        fi
+        verdict=idle
+      fi
       case "$verdict" in
         busy) printf 'empty'; return 0 ;;
         unknown) printf 'unknown'; return 0 ;;
@@ -3306,7 +3328,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
         *) printf '%s' "$verdict"; return 0 ;;
       esac
     else
-      sleep "$sleep_s"
+      [ "$harness" = deck ] && [ -n "$deck_seq" ] || sleep "$sleep_s"
       verdict=$(fm_backend_herdr_composer_state "$target")
       if [ "$verdict" = pending ] && [ "$raw_status" != working ] \
         && [ "$footer_baseline" = idle ] \

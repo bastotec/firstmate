@@ -288,12 +288,13 @@ test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
 }
 
 test_completed_turn_removes_busy_ack_before_the_next_steer() {
-  local dir="$TMP_ROOT/second-steer" session="fm-deck-second-$$" target command capture last rc
+  local dir="$TMP_ROOT/second-steer" session="fm-deck-second-$$" target command capture last rc gen
   command -v tmux >/dev/null 2>&1 || { pass "fm-deck-worker: second-steer terminal regression skipped without tmux"; return; }
   make_fake_deck "$dir"
   mkdir -p "$dir/state"
-  printf -v command 'exec env FM_TEST_STATUS=%q %q --id t1 --state %q --deck %q -- %q' \
-    "$dir/state/t1.status" "$WORKER" "$dir/state" "$dir/deck" 'write-status prior ctrl+c to stop'
+  gen=$("$BUSY_EVENT" arm "$dir/state" t1)
+  printf -v command 'exec env FM_TEST_STATUS=%q %q --id t1 --state %q --gen %q --deck %q -- %q' \
+    "$dir/state/t1.status" "$WORKER" "$dir/state" "$gen" "$dir/deck" 'write-status prior ctrl+c to stop'
   tmux new-session -d -s "$session" -n deck -x 100 -y 30 "$command" || fail "could not start the Deck terminal fixture"
   target="$session:deck"
   printf 'window=%s\nbackend=tmux\nharness=deck\nkind=ship\n' "$target" > "$dir/state/t1.meta"
@@ -372,11 +373,9 @@ test_control_busy_and_delivery_tables_name_deck() {
   [ "$(fm_control_exit_command deck)" = /quit ] || fail "deck exits with /quit"
   fm_busy_source_trusted deck deck-wrapper || fail "busy-lib must trust deck-wrapper for deck"
   fm_busy_source_trusted claude deck-wrapper && fail "deck-wrapper must not be trusted for claude"
-  printf '⛵ deck working - ctrl+c to stop\n' | fm_busy_lines_match deck || fail "the driver's working line must acknowledge delivery"
-  printf 'echo: deck working on it\n' | fm_busy_lines_match deck && fail "free text must not acknowledge delivery"
-  printf 'echo: ⛵ deck working - ctrl+c to stop\n' | fm_busy_lines_match deck \
-    && fail "rendered agent text containing the acknowledgement row matched as busy"
-  pass "control, busy-source, and delivery tables carry deck's implemented mechanics"
+  printf '⛵ deck working - ctrl+c to stop\n' | fm_busy_lines_match deck \
+    && fail "rendered Deck output was accepted as delivery evidence"
+  pass "control and busy-source tables carry Deck mechanics without rendered delivery evidence"
 }
 
 # --- spawn ------------------------------------------------------------------

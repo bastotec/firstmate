@@ -370,11 +370,6 @@ FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT='ctrl\+c to stop'
 # acknowledgement. Delivery guard only; recorded worker state comes from the
 # agy-regex fold in bin/fm-busy-lib.sh.
 FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT='esc[[:space:]]+to[[:space:]]+cancel'
-# bin/fm-deck-worker.sh prints `⛵ deck working - ctrl+c to stop` the moment a
-# submitted line starts a Deck turn, and the prompt row `❯` returns when the
-# turn ends. Delivery guard only; recorded worker state comes from the
-# deck-wrapper source in bin/fm-busy-lib.sh.
-FM_DELIVERY_DECK_BUSY_REGEX_DEFAULT='^⛵ deck working - ctrl\+c to stop$'
 FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
 
 fm_busy_lines_match() {  # [harness]
@@ -393,7 +388,7 @@ fm_busy_lines_match() {  # [harness]
       agy) regex=$FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT ;;
       kimi) regex=$FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT ;;
       cursor) regex=$FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT ;;
-      deck) regex=$FM_DELIVERY_DECK_BUSY_REGEX_DEFAULT ;;
+      deck) regex= ;;
       '') regex=$FM_DELIVERY_BUSY_REGEX_DEFAULT ;;
       *)
         # A supplied harness must never borrow another harness's signature.

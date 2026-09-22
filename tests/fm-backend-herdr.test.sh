@@ -66,6 +66,11 @@ if [ "${1:-}" = terminal ] && [ "${2:-}" = title ] && [ "${3:-}" = clear ]; then
   printf '{"result":{"reason":"%s"}}\n' "$reason"
   exit 0
 fi
+if [ -n "${FM_FAKE_DECK_BUSY_STATE:-}" ] && [ "${1:-}" = pane ] \
+  && [ "${2:-}" = send-keys ] && [ "${4:-}" = enter ]; then
+  "$FM_FAKE_BUSY_EVENT" apply "$FM_FAKE_DECK_BUSY_STATE" "$FM_FAKE_DECK_TASK" busy \
+    --gen "$FM_FAKE_DECK_GEN" --source deck-wrapper --event turn-start >/dev/null
+fi
 n=$next
 echo "$n" > "$COUNT_FILE"
 if [ -f "$RESP/$n.exit" ]; then
@@ -4608,32 +4613,29 @@ test_send_text_submit_never_idle_native_state_keeps_pending_without_a_transition
   pass "fm_backend_herdr_send_text_submit: an already-busy footer baseline is never accepted as proof that this Enter landed"
 }
 
-# Deck's acknowledgement is one anchored driver row. Ordinary model output can
-# mention Cursor's broader `ctrl+c to stop` token, so both rendered checks in
-# the Herdr submit path must use the recorded harness rather than the union.
-test_send_text_submit_scopes_rendered_busy_checks_to_deck() {
-  local dir log resp fb out
-  dir="$TMP_ROOT/submit-deck-scoped-transition"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+test_send_text_submit_uses_deck_wrapper_state_not_rendered_output() {
+  local dir log resp fb out state gen
+  dir="$TMP_ROOT/submit-deck-semantic"; mkdir -p "$dir/responses" "$dir/state"; log="$dir/log"; resp="$dir/responses"; state="$dir/state"; : > "$log"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" t1 --state idle --source deck-wrapper --event turn-end)
   printf '{"result":{"agent":{"agent_status":"blocked"}}}\n' > "$resp/2.out"
-  printf 'The documentation says ctrl+c to stop a command.\n' > "$resp/3.out"
-  printf '❯ hello captain\n' > "$resp/5.out"
-  printf '⛵ deck working - ctrl+c to stop\n' > "$resp/6.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
-    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_send_text_submit herdr default:w1:p2 "hello captain" 1 0.01 0.01 "" deck' "$ROOT" )
-  [ "$out" = empty ] || fail "ordinary output containing another harness token hid Deck's real idle-to-busy transition: '$out'"
+    FM_FAKE_DECK_BUSY_STATE="$state" FM_FAKE_DECK_TASK=t1 FM_FAKE_DECK_GEN="$gen" FM_FAKE_BUSY_EVENT="$ROOT/bin/fm-busy-event.sh" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_send_text_submit herdr default:w1:p2 "hello captain" 1 0.01 0.01 "" deck "$1" t1' "$ROOT" "$state" )
+  [ "$out" = empty ] || fail "an advancing deck-wrapper busy record did not confirm delivery: '$out'"
 
-  dir="$TMP_ROOT/submit-deck-scoped-queued"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  dir="$TMP_ROOT/submit-deck-stale-render"; mkdir -p "$dir/responses" "$dir/state"; log="$dir/log"; resp="$dir/responses"; state="$dir/state"; : > "$log"
+  "$ROOT/bin/fm-busy-event.sh" arm "$state" t1 --state idle --source deck-wrapper --event turn-end >/dev/null
   printf '{"result":{"agent":{"agent_status":"idle"}}}\n' > "$resp/2.out"
   printf '{"result":{"agent":{"agent_status":"idle"}}}\n' > "$resp/4.out"
-  printf '❯ hello captain\n' > "$resp/5.out"
+  printf '❯ hello captain\n⛵ deck working - ctrl+c to stop\n' > "$resp/5.out"
   printf '{"result":{"agent":{"agent_status":"idle"}}}\n' > "$resp/6.out"
-  printf 'The documentation says ctrl+c to stop a command.\n' > "$resp/7.out"
+  printf '⛵ deck working - ctrl+c to stop\n' > "$resp/7.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
-    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_send_text_submit herdr default:w1:p2 "hello captain" 1 0.01 0.01 "" deck' "$ROOT" )
-  [ "$out" = pending ] || fail "ordinary output containing ctrl+c to stop falsely confirmed a Deck queued Enter: '$out'"
-  pass "fm_backend_herdr_send_text_submit: Deck scopes transition and queued-Enter busy checks to its anchored token"
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_send_text_submit herdr default:w1:p2 "hello captain" 1 0.01 0.01 "" deck "$1" t1' "$ROOT" "$state" )
+  [ "$out" = pending ] || fail "stale rendered Deck output falsely confirmed a swallowed Enter: '$out'"
+  pass "fm_backend_herdr_send_text_submit: Deck delivery uses advancing wrapper state, never rendered output"
 }
 
 # Regression for the submit-confirmation side of the 2026-07-07 incident:
@@ -5531,7 +5533,7 @@ test_composer_state_cursor_midturn_row_reads_pending
 test_rendered_busy_state_reads_the_cursor_busy_token
 test_send_text_submit_confirms_never_idle_native_state_via_footer_transition
 test_send_text_submit_never_idle_native_state_keeps_pending_without_a_transition
-test_send_text_submit_scopes_rendered_busy_checks_to_deck
+test_send_text_submit_uses_deck_wrapper_state_not_rendered_output
 test_send_text_submit_confirms_despite_codex_idle_tip_composer
 test_composer_state_codex_dynamic_idle_tip_reads_empty_when_faint
 test_composer_state_guard_still_refuses_real_pending_text_after_submit_confirmation_change

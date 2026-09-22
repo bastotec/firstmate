@@ -147,9 +147,9 @@ run_turn() {  # <prompt>
     return 1
   fi
   busy_event busy turn-start
-  # The delivery acknowledgement token (bin/fm-composer-lib.sh) is transient:
-  # save its screen position so a completed turn can replace it with the final
-  # event rendering. A later steer therefore starts from a genuinely idle pane.
+  # The rendered working row is transient: save its screen position so a
+  # completed turn can replace it with the final event rendering. A later steer
+  # therefore starts from a genuinely idle pane.
   if [ -t 1 ]; then
     printf '\n\033[s⛵ deck working - ctrl+c to stop\n'
   else
