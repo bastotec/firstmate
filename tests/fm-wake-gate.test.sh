@@ -160,6 +160,17 @@ printf '%s\tgarbage\n' "$(date +%s)" > "$s/wake-gate/t1.look"
   || fail "malformed last-look flags were not treated as invalid"
 pass "future and malformed look records fail open"
 
+s=$(new_state sv-oversized-look)
+mkdir -p "$s/wake-gate"
+awk 'BEGIN { for (i = 0; i < 1024; i++) printf "1" }' > "$s/wake-gate/t1.look"
+if python3 "$ROOT/bin/wake-gate/state-io.py" read "$s" t1.look > "$s/read-output" 2>/dev/null; then
+  fail "SAFETY: the state helper accepted an oversized look record"
+fi
+[ ! -s "$s/read-output" ] || fail "the state helper emitted bytes from an oversized look record"
+[ "$(raw_verdict "$s" enforce "$WORKING")" = escalate ] \
+  || fail "SAFETY: an oversized look record did not force a model look"
+pass "oversized look records are rejected without unbounded reads"
+
 s=$(new_state sv-shadow)
 verdict "$s" shadow "$WORKING" >/dev/null
 [ "$(verdict "$s" shadow "$WORKING")" = escalate ] || fail "shadow mode must never absorb"
@@ -173,6 +184,14 @@ mkdir "$s/wake-gate/shadow.log"
 [ "$(verdict "$s" enforce "$WORKING")" = escalate ] \
   || fail "SAFETY: an unrecordable skip decision must escalate"
 pass "enforce mode fails open when its decision log cannot be written"
+
+s=$(new_state sv-usage-log-failure)
+mkdir -p "$s/wake-gate/usage.log"
+printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+[ "$(raw_verdict "$s" enforce "$WORKING")" = escalate ] \
+  || fail "SAFETY: an unrecordable usage row allowed an absorb decision"
+[ ! -e "$s/wake-gate/shadow.log" ] || fail "a decision was applied after its usage write failed"
+pass "enforce mode fails open when usage cannot be recorded"
 
 s=$(new_state sv-log-symlinks)
 mkdir -p "$s/wake-gate"

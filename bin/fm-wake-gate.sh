@@ -95,7 +95,7 @@ wake_gate_look_read() {  # <name>
 log_usage() {  # <calls> <in> <out> <ms> <outcome>
   local record
   record=$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$(date +%s)" "$1" "$2" "$3" "$4" "$5")
-  wake_gate_log_append usage.log "$record" || true
+  wake_gate_log_append usage.log "$record"
 }
 
 # bounded <secs> <cmd...>: run a command under a wall-clock bound, best effort.
@@ -156,7 +156,7 @@ gather_evidence() {
 
 cmd_stale_verdict() {
   local task=${1-} reason=${3-} with_look=${4-}  # $2 is the window, already named inside the reason
-  local keyvar mode evidence hout answers aw wt fl fn why='' decision cls conf look_record='' look_contents='' look_invalid=0 last_epoch='' last_flags='' terminal_flags='' flag now tmo helper_status=0 helper_error='' failure_calls=1
+  local keyvar mode evidence hout answers usage_fields aw wt fl fn u_calls u_in u_out u_ms why='' decision cls conf look_record='' look_contents='' look_invalid=0 last_epoch='' last_flags='' terminal_flags='' flag now tmo helper_status=0 helper_error='' failure_calls=1
   case "$task" in ''|*/*|*" "*) printf 'escalate\n'; return 0 ;; esac
   keyvar=$(gate_key_var)
   [ -n "$keyvar" ] || { printf 'escalate\n'; return 0; }
@@ -201,10 +201,14 @@ EOF_ANSWERS
   for p in "${aw:-}" "${wt:-}" "${fl:-}" "${fn:-}"; do
     case "$p" in ''|*[!0-9.]*) log_usage 1 0 0 0 error; log_shadow "$task" "$mode" call jev-error - - - -; printf 'escalate\n'; return 0 ;; esac
   done
-  printf '%s\n' "$hout" | awk -F'\t' '$1=="usage"{print $2"\t"$3"\t"$4"\t"$5}' | {
-    IFS=$'\t' read -r u_calls u_in u_out u_ms || true
-    log_usage "${u_calls:-1}" "${u_in:-0}" "${u_out:-0}" "${u_ms:-0}" ok
-  }
+  usage_fields=$(printf '%s\n' "$hout" | awk -F'\t' '$1=="usage"{print $2"\t"$3"\t"$4"\t"$5; exit}')
+  IFS=$'\t' read -r u_calls u_in u_out u_ms <<EOF_USAGE
+$usage_fields
+EOF_USAGE
+  if ! log_usage "${u_calls:-1}" "${u_in:-0}" "${u_out:-0}" "${u_ms:-0}" ok; then
+    printf 'escalate\n'
+    return 0
+  fi
 
   now=$(date +%s)
   if look_contents=$(wake_gate_look_read "$task.look"); then

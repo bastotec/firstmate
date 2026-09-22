@@ -11,6 +11,9 @@ class UnsafeStatePath(Exception):
     pass
 
 
+MAX_READ_BYTES = 256
+
+
 def require_nofollow() -> int:
     value = getattr(os, "O_NOFOLLOW", 0)
     if not value:
@@ -87,12 +90,15 @@ def read_record(dir_fd: int, name: str) -> bytes:
         return b""
     try:
         require_regular_single_link(fd)
-        chunks = []
-        while True:
-            chunk = os.read(fd, 65536)
+        if os.fstat(fd).st_size > MAX_READ_BYTES:
+            raise UnsafeStatePath("state record is too large")
+        payload = bytearray()
+        while len(payload) <= MAX_READ_BYTES:
+            chunk = os.read(fd, MAX_READ_BYTES + 1 - len(payload))
             if not chunk:
-                return b"".join(chunks)
-            chunks.append(chunk)
+                return bytes(payload)
+            payload.extend(chunk)
+        raise UnsafeStatePath("state record is too large")
     finally:
         os.close(fd)
 
