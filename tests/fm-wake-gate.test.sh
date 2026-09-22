@@ -185,6 +185,36 @@ ln -s ../protected "$s/wake-gate/usage.log"
 [ "$(cat "$s/protected")" = protected ] || fail "SAFETY: a wake-gate log append followed its symlink target"
 pass "wake-gate log appends refuse symlinked targets"
 
+s=$(new_state sv-log-hardlinks)
+mkdir -p "$s/wake-gate"
+printf 'protected\n' > "$s/protected"
+printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+ln "$s/protected" "$s/wake-gate/shadow.log"
+ln "$s/protected" "$s/wake-gate/usage.log"
+[ "$(raw_verdict "$s" enforce "$WORKING")" = escalate ] \
+  || fail "SAFETY: hard-linked wake-gate logs allowed an absorb decision"
+[ "$(cat "$s/protected")" = protected ] || fail "SAFETY: a wake-gate log append modified a hard-linked file"
+pass "wake-gate log appends refuse hard-linked targets"
+
+s=$(new_state sv-log-race)
+mkdir -p "$s/wake-gate"
+printf 'protected\n' > "$s/protected"
+printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+(
+  while :; do
+    rm -f "$s/wake-gate/shadow.log"
+    ln -s ../protected "$s/wake-gate/shadow.log" 2>/dev/null || true
+    rm -f "$s/wake-gate/shadow.log"
+    : > "$s/wake-gate/shadow.log"
+  done
+) &
+racer=$!
+for _ in {1..30}; do raw_verdict "$s" enforce "$WORKING" >/dev/null; done
+kill "$racer" 2>/dev/null || true
+wait "$racer" 2>/dev/null || true
+[ "$(cat "$s/protected")" = protected ] || fail "SAFETY: a raced wake-gate append followed a swapped symlink"
+pass "wake-gate log appends withstand target replacement races"
+
 s=$(new_state sv-log-parent-symlink)
 mkdir -p "$s/redirected"
 printf '%s\t\n' "$(date +%s)" > "$s/redirected/t1.look"
@@ -194,6 +224,17 @@ ln -s redirected "$s/wake-gate"
 [ ! -e "$s/redirected/shadow.log" ] && [ ! -e "$s/redirected/usage.log" ] \
   || fail "SAFETY: wake-gate logs were written through a symlinked parent"
 pass "wake-gate log appends refuse an unsafe parent"
+
+s=$(new_state sv-log-parent-mode)
+mkdir -p "$s/wake-gate"
+printf '%s\t\n' "$(date +%s)" > "$s/wake-gate/t1.look"
+chmod 777 "$s/wake-gate"
+[ "$(raw_verdict "$s" enforce "$WORKING")" = escalate ] \
+  || fail "SAFETY: a writable wake-gate state directory allowed an absorb decision"
+[ ! -e "$s/wake-gate/shadow.log" ] && [ ! -e "$s/wake-gate/usage.log" ] \
+  || fail "SAFETY: wake-gate logs were written beneath an unsafe directory"
+chmod 700 "$s/wake-gate"
+pass "wake-gate writes refuse an unsafe directory"
 
 s=$(new_state sv-look-symlink)
 mkdir -p "$s/wake-gate"
@@ -205,6 +246,17 @@ fi
 [ "$(cat "$s/protected")" = protected ] || fail "SAFETY: commit-look followed its symlink target"
 [ -L "$s/wake-gate/t1.look" ] || fail "a refused commit-look replaced the unsafe destination"
 pass "wake-gate look commits refuse symlinked targets"
+
+s=$(new_state sv-look-hardlink)
+mkdir -p "$s/wake-gate"
+printf 'protected\n' > "$s/protected"
+ln "$s/protected" "$s/wake-gate/t1.look"
+if FM_STATE_DIR="$s" "$GATE" commit-look t1 none 2>/dev/null; then
+  fail "SAFETY: commit-look accepted a hard-linked destination"
+fi
+[ "$(cat "$s/protected")" = protected ] || fail "SAFETY: commit-look modified a hard-linked file"
+[ "$s/protected" -ef "$s/wake-gate/t1.look" ] || fail "a refused commit-look replaced the hard-linked destination"
+pass "wake-gate look commits refuse hard-linked targets"
 
 s=$(new_state sv-waiting)
 verdict "$s" enforce "$WORKING" >/dev/null
@@ -246,8 +298,9 @@ verdict "$s" enforce "$WORKING" >/dev/null
   || fail "SAFETY: missing evidence must escalate"
 
 partial="$TMP_ROOT/partial-evidence"
-mkdir -p "$partial/bin" "$partial/state/wake-gate"
+mkdir -p "$partial/bin/wake-gate" "$partial/state/wake-gate"
 cp "$GATE" "$partial/bin/fm-wake-gate.sh"
+cp "$ROOT/bin/wake-gate/state-io.py" "$partial/bin/wake-gate/state-io.py"
 cat > "$partial/bin/fm-crew-state.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'state: stale cached state\n'

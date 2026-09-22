@@ -231,7 +231,7 @@ The flag is a home-local supervision-noise preference and is not inherited by se
 ## Wake gate (config/wake-gate-key-var / config/wake-gate-mode)
 
 The optional wake gate uses Jev (`typesafe-ai/jev`) to decide whether a possible-wedge alarm needs an expensive supervision-model turn; it never replaces that model and does not gate worker-update wakes.
-From the tracked Firstmate root, install its pinned runtime with `npm ci --prefix bin/wake-gate --omit=dev`; the resulting `bin/wake-gate/node_modules/` is local and gitignored.
+From the tracked Firstmate root, install its pinned runtime with `npm ci --prefix bin/wake-gate --omit=dev`; the resulting `bin/wake-gate/node_modules/` is local and gitignored, and `python3` provides the descriptor-bound state-file writes.
 Put the gateway key in `~/.secrets`, then put that variable's name on the first line of the local, gitignored `config/wake-gate-key-var`; for example, a secret named `AI_GATEWAY_API_KEY` requires `AI_GATEWAY_API_KEY` in that config file.
 Leading and trailing whitespace is ignored, but the remaining key variable must be a shell identifier (`[A-Za-z_][A-Za-z0-9_]*`) or the gate stays inert.
 With the key-variable file absent the gate is inert, while a missing key, runtime, evidence read, model response, or decision-log write escalates the alarm instead of absorbing it.

@@ -77,30 +77,19 @@ STATE=${FM_STATE_DIR:-${FM_STATE_OVERRIDE:-$HOME_ROOT/state}}
 # the real home's opt-in.
 CONFIG=${FM_CONFIG_OVERRIDE:-$STATE/../config}
 
-wake_gate_dir_prepare() {
-  local dir="$STATE/wake-gate"
-  [ -d "$STATE" ] && [ ! -L "$STATE" ] || return 1
-  if [ -e "$dir" ] || [ -L "$dir" ]; then
-    [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
-  else
-    (umask 077; mkdir "$dir") 2>/dev/null || return 1
-  fi
-}
-
-wake_gate_regular_or_absent() {  # <path>
-  if [ -e "$1" ] || [ -L "$1" ]; then
-    [ -f "$1" ] && [ ! -L "$1" ]
-  fi
+wake_gate_io() {  # <append|read|replace> <name>
+  command -v python3 >/dev/null 2>&1 || return 1
+  [ -f "$SCRIPT_DIR/wake-gate/state-io.py" ] && [ ! -L "$SCRIPT_DIR/wake-gate/state-io.py" ] || return 1
+  python3 "$SCRIPT_DIR/wake-gate/state-io.py" "$1" "$STATE" "$2"
 }
 
 wake_gate_log_append() {  # <name> <record>
-  local target
   case "$1" in shadow.log|usage.log) ;; *) return 1 ;; esac
-  wake_gate_dir_prepare || return 1
-  target="$STATE/wake-gate/$1"
-  wake_gate_regular_or_absent "$target" || return 1
-  (umask 077; printf '%s\n' "$2" >> "$target") 2>/dev/null || return 1
-  [ -f "$target" ] && [ ! -L "$target" ]
+  printf '%s\n' "$2" | wake_gate_io append "$1"
+}
+
+wake_gate_look_read() {  # <name>
+  wake_gate_io read "$1"
 }
 
 log_usage() {  # <calls> <in> <out> <ms> <outcome>
@@ -167,7 +156,7 @@ gather_evidence() {
 
 cmd_stale_verdict() {
   local task=${1-} reason=${3-} with_look=${4-}  # $2 is the window, already named inside the reason
-  local keyvar mode evidence hout answers aw wt fl fn why='' decision cls conf look_file look_record='' look_invalid=0 last_epoch='' last_flags='' terminal_flags='' flag now tmo helper_status=0 helper_error='' failure_calls=1
+  local keyvar mode evidence hout answers aw wt fl fn why='' decision cls conf look_record='' look_contents='' look_invalid=0 last_epoch='' last_flags='' terminal_flags='' flag now tmo helper_status=0 helper_error='' failure_calls=1
   case "$task" in ''|*/*|*" "*) printf 'escalate\n'; return 0 ;; esac
   keyvar=$(gate_key_var)
   [ -n "$keyvar" ] || { printf 'escalate\n'; return 0; }
@@ -175,6 +164,7 @@ cmd_stale_verdict() {
   # bookkeeping, or any other stale reason always reaches the model.
   case "$reason" in *'possible wedge'*) : ;; *) printf 'escalate\n'; return 0 ;; esac
   command -v jq >/dev/null 2>&1 || { printf 'escalate\n'; return 0; }
+  wake_gate_look_read "$task.look" >/dev/null 2>&1 || { printf 'escalate\n'; return 0; }
   mode=$(gate_mode)
   tmo=${FM_WAKE_GATE_TIMEOUT:-6}
   case "$tmo" in ''|*[!0-9]*) tmo=6 ;; esac
@@ -216,12 +206,12 @@ EOF_ANSWERS
     log_usage "${u_calls:-1}" "${u_in:-0}" "${u_out:-0}" "${u_ms:-0}" ok
   }
 
-  look_file="$STATE/wake-gate/$task.look"
   now=$(date +%s)
-  if [ -e "$look_file" ] || [ -L "$look_file" ]; then
-    if [ -f "$look_file" ] && [ ! -L "$look_file" ] \
-      && IFS= read -r look_record < "$look_file"; then
+  if look_contents=$(wake_gate_look_read "$task.look"); then
+    if [ -n "$look_contents" ]; then
+      look_record=$look_contents
       case "$look_record" in
+        *$'\n'*) look_invalid=1 ;;
         *$'\t'*)
           last_epoch=${look_record%%$'\t'*}
           last_flags=${look_record#*$'\t'}
@@ -234,13 +224,13 @@ EOF_ANSWERS
         && ! awk -v e="$last_epoch" -v n="$now" 'BEGIN { exit !(e + 0 <= n + 0) }'; then
         look_invalid=1
       fi
-    else
-      look_invalid=1
     fi
-    if [ "$look_invalid" -ne 0 ]; then
-      last_epoch=''
-      last_flags=''
-    fi
+  else
+    look_invalid=1
+  fi
+  if [ "$look_invalid" -ne 0 ]; then
+    last_epoch=''
+    last_flags=''
   fi
   read -r cls conf <<EOF_CLS
 $(awk -v a="$aw" -v w="$wt" -v f="$fl" -v n="$fn" 'BEGIN{c="working";m=a+0; if(w+0>m){c="waiting";m=w+0} if(f+0>m){c="failure";m=f+0} if(n+0>m){c="finished";m=n+0} print c, m}')
@@ -279,7 +269,7 @@ EOF_CLS
 }
 
 cmd_commit_look() {
-  local task=${1-} flags=${2-} now tmp look_file
+  local task=${1-} flags=${2-} now
   case "$task" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   case "$flags" in
     none) flags='' ;;
@@ -287,18 +277,7 @@ cmd_commit_look() {
     *) return 1 ;;
   esac
   now=$(date +%s) || return 1
-  wake_gate_dir_prepare || return 1
-  look_file="$STATE/wake-gate/$task.look"
-  wake_gate_regular_or_absent "$look_file" || return 1
-  tmp=$(mktemp "$STATE/wake-gate/.look.XXXXXX") || return 1
-  if ! (umask 077; printf '%s\t%s\n' "$now" "$flags" > "$tmp") \
-    || ! wake_gate_dir_prepare \
-    || ! wake_gate_regular_or_absent "$look_file" \
-    || ! mv -f -- "$tmp" "$look_file" \
-    || [ ! -f "$look_file" ] || [ -L "$look_file" ]; then
-    rm -f -- "$tmp"
-    return 1
-  fi
+  printf '%s\t%s\n' "$now" "$flags" | wake_gate_io replace "$task.look"
 }
 
 cmd_report() {
