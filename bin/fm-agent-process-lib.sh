@@ -26,7 +26,8 @@
 # about what a given name means.
 fm_agent_process_classify_name() {  # <path> [argv0] -> agent|shell|other
   local path=$1 argv0=${2:-} base
-  base=${path##*/}
+  base=${path:-$argv0}
+  base=${base##*/}
   base=${base#-}
   case "$base" in
     # muse is anchored rather than globbed like its neighbours: its installed

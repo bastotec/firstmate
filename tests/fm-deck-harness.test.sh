@@ -39,6 +39,9 @@ unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_IN
 . "$ROOT/bin/fm-composer-lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-agent-process-lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-backend.sh"
+fm_backend_source tmux || fail "could not load the tmux backend"
 
 WORKER="$ROOT/bin/fm-deck-worker.sh"
 BUSY_EVENT="$ROOT/bin/fm-busy-event.sh"
@@ -77,7 +80,19 @@ case "$prompt" in
   *sleep*) sleep 30 ;;
 esac
 if [ -n "$gate" ]; then
-  if bash -c "$gate" </dev/null 2>>"$dir/gate.err"; then echo pass >> "$dir/gate.log"; else echo refused >> "$dir/gate.log"; fi
+  if bash -c "$gate" </dev/null 2>>"$dir/gate.err"; then
+    echo pass >> "$dir/gate.log"
+  else
+    echo refused >> "$dir/gate.log"
+    printf 'pre_complete hook rejected completion\n' >&2
+    printf '{"type":"completion_blocked","attempt":1,"reason":"status evidence required"}\n'
+    case "$prompt" in
+      *recover-after-refusal*)
+        printf 'done: recovered after refusal\n' >> "$FM_TEST_STATUS"
+        if bash -c "$gate" </dev/null 2>>"$dir/gate.err"; then echo pass >> "$dir/gate.log"; fi
+        ;;
+    esac
+  fi
 fi
 case "$prompt" in
   *fail-turn*) printf '{"type":"run_failed","error":"provider failed"}\n'; exit 9 ;;
@@ -163,6 +178,20 @@ test_evidence_gate_refuses_a_turn_without_a_status_line() {
   [ "$(sed -n 2p "$dir/gate.log")" = pass ] || fail "a turn that appended a status line was refused"
   assert_grep 'append one line to' "$dir/gate.err" "the refusal did not tell the worker what evidence to write"
   pass "fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported"
+}
+
+test_stderr_before_completion_blocked_does_not_break_rendering() {
+  local dir="$TMP_ROOT/stderr-before-blocked"
+  make_fake_deck "$dir"
+  run_worker "$dir" $'/quit\n' recover-after-refusal || fail "the refused turn did not recover and finish"
+  [ "$(sed -n 1p "$dir/gate.log")" = refused ] || fail "the fixture did not refuse the first completion attempt"
+  [ "$(sed -n 2p "$dir/gate.log")" = pass ] || fail "the recovered completion attempt did not pass"
+  assert_grep 'pre_complete hook rejected completion' "$dir/pane.out" "Deck stderr was not preserved outside the event stream"
+  assert_grep 'finish refused (attempt 1)' "$dir/pane.out" "the completion_blocked event did not render after Deck wrote stderr"
+  assert_grep 'turn finished (1 model calls)' "$dir/pane.out" "the recovered turn did not render its completion"
+  [ "$(cat "$dir/state/t1.status")" = 'done: recovered after refusal' ] \
+    || fail "the recovered turn was replaced with failure evidence"
+  pass "fm-deck-worker: Deck stderr cannot break completion-blocked rendering"
 }
 
 test_bookkeeping_lines_do_not_satisfy_turn_evidence() {
@@ -319,6 +348,21 @@ test_liveness_reads_the_driver_as_an_agent() {
   pass "liveness: the deck driver and binary are agents, unrelated names are not"
 }
 
+test_tmux_liveness_uses_the_deck_driver_argv0() {
+  local state
+  state=$(
+    fm_backend_tmux_window_presence() { printf 'present'; }
+    fm_backend_tmux_foreground_comms() { printf 'bash\n'; }
+    fm_backend_tmux_foreground_argv0s() { printf 'fm-deck-worker\n'; }
+    fm_backend_tmux_foreground_pids() { :; }
+    fm_backend_tmux_foreground_args() { :; }
+    fm_backend_tmux_current_command() { printf 'bash\n'; }
+    fm_backend_tmux_agent_state session:deck
+  )
+  [ "$state" = alive ] || fail "tmux reported comm=bash with argv[0]=fm-deck-worker as $state"
+  pass "tmux liveness: Deck's Linux comm and argv0 classify alive"
+}
+
 test_control_busy_and_delivery_tables_name_deck() {
   fm_control_harness_supported deck || fail "deck is not a supported control harness"
   [ "$(fm_control_harness_family deck)" = deck ] || fail "deck family"
@@ -442,12 +486,14 @@ test_turns_share_one_session_and_carry_the_hooks
 test_turns_drive_the_busy_record_and_turn_end
 test_turnend_signal_refuses_unsafe_paths
 test_evidence_gate_refuses_a_turn_without_a_status_line
+test_stderr_before_completion_blocked_does_not_break_rendering
 test_bookkeeping_lines_do_not_satisfy_turn_evidence
 test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
 test_completed_turn_removes_busy_ack_before_the_next_steer
 test_liveness_reads_the_driver_as_an_agent
+test_tmux_liveness_uses_the_deck_driver_argv0
 test_control_busy_and_delivery_tables_name_deck
 test_spawn_refuses_unverified_deck_dispatch
 test_spawn_launches_the_driver_with_binary_gen_and_model

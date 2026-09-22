@@ -8,8 +8,8 @@ The skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../../.age
 | Field | Value |
 |---|---|
 | Version | `deck 0.1.0` built from `bastotec/deck` main at `7308f21` (includes `run --hook` and the `pre_complete` hook) |
-| Checked | 2026-09-21 |
-| Status | Portable driver checks pass; live adapter verification failed |
+| Checked | 2026-09-22 |
+| Status | Portable fixes pass; a passing live rerun is still required |
 | Binary | `~/.local/bin/deck`, copied from `target/release/deck` after `cargo build --release --locked` |
 | Platform | macOS (Darwin 25.6.0, arm64), GNU bash 3.2.57, jq 1.7.1, tmux 3.6a |
 | Backend | tmux |
@@ -30,12 +30,14 @@ ok - fm-deck-worker: the brief and later prompts are turns of one Deck session w
 ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
 ok - fm-deck-worker: turn-end publication refuses unsafe targets
 ok - fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported
+ok - fm-deck-worker: Deck stderr cannot break completion-blocked rendering
 ok - fm-deck-worker: Firstmate bookkeeping cannot satisfy worker evidence
 ok - fm-deck-worker: status evidence never follows symlinked or non-regular paths
 ok - fm-deck-worker: silent and failed turns gain status evidence before turn-end
 ok - fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt
 ok - fm-deck-worker: each completed turn leaves the next steer an idle baseline
 ok - liveness: the deck driver and binary are agents, unrelated names are not
+ok - tmux liveness: Deck's Linux comm and argv0 classify alive
 ok - control, busy-source, and delivery tables carry deck's implemented mechanics
 ok - fm-spawn: Deck refuses ordinary dispatch until live verification
 ok - fm-spawn: the Deck verification opt-in launches the driver and records effort only
@@ -50,10 +52,15 @@ The terminal regression drives two real `fm-send.sh` steers through tmux and pro
 
 ## Live check
 
-The 2026-09-21 live attempt ran the real `deck` binary in a real tmux pane on macOS through proxai with route `codex/gpt-5.6-luna`.
-The first turn's second model request failed immediately, with no idle gap, when proxai returned HTTP 409 `conversation_conflict`: `assistant/tool history must belong to a live conversation owned by this caller`.
-The driver recorded `turn-failed` and touched the task's turn-end notification.
-Tmux's `#{pane_current_command}` reported `bash`, while `ps` reported the pane's foreground process as `fm-deck-worker`, so pane liveness through the real backend remains unproven.
-The attempt did not complete a first turn, same-session steer, interrupt, or clean exit, and therefore did not verify the adapter end to end.
-Normal `fm-spawn.sh --harness deck` dispatch is refused; `FM_DECK_ALLOW_UNVERIFIED=1` exists only to rerun adapter verification.
-A passing live check must show the brief turn completing after status evidence, a typed steer answered in the same Deck session, proven pane liveness, `Ctrl+C` returning to the prompt with an `interrupted` busy event, and `/quit` recording `session-end` before Deck may become dispatchable.
+The 2026-09-22 live check ran `deck 0.1.0` at `7308f21` in a real tmux pane on macOS through proxai with route `codex/gpt-5.6-sol`.
+The brief turn answered and appended its worker-status line.
+A steer typed at the prompt was answered from the same Deck session and recalled the earlier word.
+The `pre_complete` gate refused completion once with `completion_blocked` attempt 1, after which the worker appended its status line and Deck finished.
+Deck wrote a stderr line immediately before that event, and the driver merged it into the NDJSON pipe, so the refusal did not render and the wrapper recorded `turn-failed` despite Deck finishing.
+`Ctrl+C` sent through tmux returned the driver to its prompt with busy event `interrupted`, and `/quit` recorded `session-end`.
+Tmux's `#{pane_current_command}` reported `bash` on macOS because it reads the kernel executable name, while `ps -o comm=` carried argv[0] `fm-deck-worker`.
+The liveness check therefore uses the foreground process identity from `ps`, not `#{pane_current_command}` alone.
+This round keeps Deck stderr outside the NDJSON event pipe and classifies a bare `fm-deck-worker` argv0 directly, with portable regressions for stderr before `completion_blocked` and Linux's `comm=bash` plus argv0 pair.
+Those driver defects are fixed, but the adapter remains unverified until a live rerun passes on the fixed driver.
+Normal `fm-spawn.sh --harness deck` dispatch and dispatch-profile selection remain refused; `FM_DECK_ALLOW_UNVERIFIED=1` exists only for that rerun.
+The follow-up round that records the passing rerun will lift the crewmate/scout dispatch gate; Deck secondmates remain unsupported.

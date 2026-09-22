@@ -155,7 +155,7 @@ run_turn() {  # <prompt>
   else
     printf '\n⛵ deck working - ctrl+c to stop\n'
   fi
-  "$DECK" "${args[@]}" 2>&1 </dev/null | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
+  "$DECK" "${args[@]}" </dev/null | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
   rc=${PIPESTATUS[0]}
   if [ -t 1 ]; then
     printf '\033[u\033[J'
