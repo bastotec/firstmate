@@ -871,6 +871,9 @@ resolve_relaunch_profile() {
   else
     TARGET_EFFORT=default
   fi
+  if [ "$TARGET_HARNESS" = deck ] && [ "$TARGET_EFFORT" != default ]; then
+    die "deck has no effort control; omit --effort or select a harness that supports it"
+  fi
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
   fi

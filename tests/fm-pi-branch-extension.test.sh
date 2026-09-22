@@ -67,6 +67,7 @@ install_pi_branch_extension_fixture() {
 {"name":"@earendil-works/pi-coding-agent","type":"module","exports":"./index.js"}
 JSON
   cat > "$repo/node_modules/@earendil-works/pi-coding-agent/index.js" <<'JS'
+import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
 export function getAgentDir() {
@@ -190,10 +191,19 @@ export function createBashToolDefinition(cwd, options) {
     __cwd: cwd,
     __options: options,
     execute: async (_toolCallId, params) => {
-      if (!globalThis.__fmExecuteBranchBash) return { content: [], details: undefined };
       const initial = { command: String(params.command ?? ""), cwd, env: { ...process.env } };
       const context = options.spawnHook ? options.spawnHook(initial) : initial;
-      return globalThis.__fmExecuteBranchBash(context);
+      if (globalThis.__fmExecuteBranchBash) return globalThis.__fmExecuteBranchBash(context);
+      const result = spawnSync("bash", ["-c", context.command], {
+        encoding: "utf8",
+        cwd: context.cwd,
+        env: context.env,
+      });
+      return {
+        content: [{ type: "text", text: `${result.stdout}${result.stderr}` }],
+        details: { stdout: result.stdout, stderr: result.stderr, exitCode: result.status },
+        isError: result.status !== 0,
+      };
     },
   };
 }
@@ -644,6 +654,13 @@ function outcomeScript(args) {
   if (result.status !== 0) throw new Error(`fm-branch-outcome.sh ${args.join(" ")} failed: ${result.stderr}`);
   return (result.stdout || "").trim();
 }
+globalThis.__fmObserveWakeAck = async (session) => {
+  const bash = session.options.customTools.find((tool) => tool.name === "bash");
+  const result = await bash.execute("observe-wake-ack", { command: "bin/fm-wake-drain.sh" }, undefined, undefined, {});
+  if (result.isError || !result.content.some((item) => item.text?.includes("WAKE_ACK_REQUIRED:"))) {
+    throw new Error(`branch drain did not expose an acknowledgement: ${JSON.stringify(result)}`);
+  }
+};
 const mod = await import(pathToFileURL(process.env.PLUGIN).href);
 mod.default(pi);
 JS
@@ -720,6 +737,7 @@ console.log(`CACHE_KEY=${rewriteA.prompt_cache_key}`);
 // captain-relevant persists a visible entry with no model turn. Store rows are
 // written before delivery and marked read only after it.
 const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(session);
 const r1 = await report.execute("call-1", { task: "branch-driver", verdict: "routine", summary: "worker healthy, no action needed", wake: "signal: working" }, undefined, undefined, {});
 if (r1.isError) throw new Error(`routine report failed: ${JSON.stringify(r1)}`);
 finishWakePrompt();
@@ -1275,6 +1293,7 @@ if (!routineOffer.accepted) throw new Error("branch refused the routine wake");
 await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "routine branch prompt");
 const session = globalThis.__fmSessions[0];
 const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(session);
 await report.execute("routine", { task: "branch-driver", verdict: "routine", summary: "worker healthy" }, undefined, undefined, {});
 finishRoutinePrompt();
 // The reports below are made outside any wake prompt: wait for the wake to
@@ -1382,7 +1401,9 @@ if (!replacementOffer.accepted) throw new Error("branch refused a wake after the
 // A real branch model can only reach the report tool from inside its own
 // prompt, which is the ordering this wait restores.
 await settle(() => (globalThis.__fmPrompts ?? []).length === 2, "replacement branch wake prompt");
-const report2 = globalThis.__fmSessions[1].options.customTools.find((tool) => tool.name === "fm_branch_report");
+const replacementSession = globalThis.__fmSessions[1];
+const report2 = replacementSession.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(replacementSession);
 const beforePair = requests().length;
 const second = await report2.execute("captain-2", { task: "branch-driver", verdict: "captain", summary: "PR https://example.com/pr/e is ready for review" }, undefined, undefined, {});
 if (second.isError) throw new Error(`second captain report failed: ${JSON.stringify(second)}`);
@@ -1717,6 +1738,7 @@ if (!dispatch("signal: task-local wake").accepted) throw new Error("branch refus
 await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "task-local branch prompt");
 const session = globalThis.__fmSessions[globalThis.__fmSessions.length - 1];
 const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(session);
 const ghost = await report.execute("ghost", { task: "other-task", verdict: "captain", summary: "PR ready to merge" }, undefined, undefined, {});
 if (!ghost.isError || !ghost.content[0].text.includes("names branch-driver, not other-task")) {
   throw new Error(`a report for a live task the wake never named was not refused: ${JSON.stringify(ghost)}`);
@@ -1740,6 +1762,7 @@ if (!heartbeatOffer.accepted) throw new Error("branch refused the heartbeat");
 await settle(() => (globalThis.__fmPrompts ?? []).length === 2, "heartbeat branch prompt");
 const heartbeatSession = globalThis.__fmSessions[globalThis.__fmSessions.length - 1];
 const heartbeatReport = heartbeatSession.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(heartbeatSession);
 const live = await heartbeatReport.execute("live", { task: "other-task", verdict: "routine", summary: "worker healthy" }, undefined, undefined, {});
 if (live.isError) throw new Error(`a heartbeat report for a live task was refused: ${JSON.stringify(live)}`);
 const goneInReview = await heartbeatReport.execute("gone-in-review", { task: "retired-task", verdict: "captain", summary: "PR merged and cleaned up" }, undefined, undefined, {});
@@ -1763,7 +1786,9 @@ const boundHeartbeat = makeOffer("heartbeat: task-bound queued rows", [approvedP
 pi.events.emit("fm-branch-supervision:dispatch", boundHeartbeat);
 if (!boundHeartbeat.accepted) throw new Error("branch refused the task-binding heartbeat");
 await settle(() => (globalThis.__fmPrompts ?? []).length === 3, "task-binding heartbeat prompt");
-const boundReport = globalThis.__fmSessions.at(-1).options.customTools.find((tool) => tool.name === "fm_branch_report");
+const boundSession = globalThis.__fmSessions.at(-1);
+const boundReport = boundSession.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(boundSession);
 const firstBound = await boundReport.execute(
   "bound-first",
   { task: "branch-driver", wakeSeq: "1", verdict: "routine", summary: "branch-driver handled" },
@@ -2140,10 +2165,10 @@ EOF
   pass "branch acknowledgement waits for coverage and deduplicated rows settle together"
 }
 
-test_reported_provider_error_requires_observed_ack_command() {
+test_reported_prompt_requires_observed_ack_command() {
   local repo home out status
-  repo="$TMP_ROOT/provider-error-no-ack-root"
-  home="$TMP_ROOT/provider-error-no-ack-home"
+  repo="$TMP_ROOT/reported-no-ack-root"
+  home="$TMP_ROOT/reported-no-ack-home"
   mkdir -p "$home/state" "$home/config"
   install_pi_branch_extension_fixture "$repo"
   PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
@@ -2164,32 +2189,98 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
     {},
   );
   if (recorded.isError) throw new Error(`durable report failed: ${JSON.stringify(recorded)}`);
-  session.messages.push({
-    role: "assistant",
-    content: [],
-    stopReason: "error",
-    errorMessage: "provider failed after report",
-  });
+  session.messages.push({ role: "assistant", content: [], stopReason: "stop" });
 };
 
-const offer = dispatch("signal: provider error without a drain");
-if (!offer.accepted) throw new Error("branch refused the provider-error fixture");
+const offer = dispatch("signal: ordinary report without a drain");
+if (!offer.accepted) throw new Error("branch refused the ordinary reported fixture");
 const failure = await offer.settlement.then(() => null, (error) => error);
 if (!(failure instanceof Error) || !failure.message.includes("could not acknowledge its wake-row grant")) {
-  throw new Error(`provider-error settlement did not reject its missing observed acknowledgement: ${String(failure)}`);
+  throw new Error(`ordinary settlement did not reject its missing observed acknowledgement: ${String(failure)}`);
 }
 if (existsSync(`${home}/state/.branch-eligible-rows`)) {
-  throw new Error("failed provider-error settlement left its grant active");
+  throw new Error("failed ordinary settlement left its grant active");
 }
-if (!readFileSync(`${home}/state/.wake-queue`, "utf8").includes("provider error without a drain")) {
+if (!readFileSync(`${home}/state/.wake-queue`, "utf8").includes("ordinary report without a drain")) {
   throw new Error("missing-ack settlement consumed the wake row");
 }
 process.exit(0);
 EOF
   status=$?
   out=$(cat "$TMP_ROOT/node-output")
-  expect_code 0 "$status" "reported provider errors must require the observed acknowledgement command: $out"
-  pass "reported provider errors refuse settlement without an observed acknowledgement"
+  expect_code 0 "$status" "every reported prompt must require the observed acknowledgement command: $out"
+  pass "reported prompts refuse settlement without an observed acknowledgement"
+}
+
+test_ordinary_fallback_reuses_observed_ack_command() {
+  local repo home out status
+  repo="$TMP_ROOT/ordinary-ack-root"
+  home="$TMP_ROOT/ordinary-ack-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { defaultSessionCtx, dispatch, fire, home, realRoot }; })()`);
+const { defaultSessionCtx, dispatch, fire, home, realRoot } = globalThis.__t;
+import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+
+globalThis.__fmExecuteBranchBash = async (context) => {
+  const result = spawnSync("bash", ["-c", context.command], {
+    encoding: "utf8",
+    cwd: context.cwd,
+    env: context.env,
+  });
+  return {
+    content: [{ type: "text", text: `${result.stdout}${result.stderr}` }],
+    details: { stdout: result.stdout, stderr: result.stderr, exitCode: result.status },
+    isError: result.status !== 0,
+  };
+};
+
+await fire("session_start", {}, defaultSessionCtx);
+globalThis.__fmOnBranchPrompt = async ({ session }) => {
+  const bash = session.options.customTools.find((tool) => tool.name === "bash");
+  const drained = await bash.execute("ordinary-drain", { command: "bin/fm-wake-drain.sh" }, undefined, undefined, {});
+  if (drained.isError || !drained.content.some((item) => item.text?.includes("WAKE_ACK_REQUIRED:"))) {
+    throw new Error(`branch drain did not expose an acknowledgement: ${JSON.stringify(drained)}`);
+  }
+  writeFileSync(
+    `${home}/state/.wake-queue`,
+    readFileSync(`${home}/state/.wake-queue`, "utf8") +
+      "2\t2\tsignal\tbranch-driver.turn-ended\tsignal: later ordinary status for main\n",
+  );
+  const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+  const recorded = await report.execute(
+    "ordinary-covered",
+    { task: "branch-driver", verdict: "routine", summary: "ordinary row durably covered" },
+    undefined,
+    undefined,
+    {},
+  );
+  if (recorded.isError) throw new Error(`ordinary report failed: ${JSON.stringify(recorded)}`);
+  session.messages.push({ role: "assistant", content: [], stopReason: "stop" });
+};
+
+const offer = dispatch("signal: ordinary fallback acknowledgement");
+if (!offer.accepted) throw new Error("branch refused the ordinary acknowledgement fixture");
+const failure = await offer.settlement.then(() => null, (error) => error);
+if (failure !== null) throw new Error(`ordinary covered grant did not settle: ${String(failure)}`);
+const laterDrain = spawnSync("bash", [`${realRoot}/bin/fm-wake-drain.sh`], {
+  encoding: "utf8",
+  cwd: realRoot,
+  env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: `${home}/state`, FM_ROOT_OVERRIDE: realRoot },
+});
+if (laterDrain.status !== 0 || !laterDrain.stdout.includes("signal: later ordinary status for main")) {
+  throw new Error(`ordinary fallback hid the row appended after its observed drain: ${laterDrain.stdout}${laterDrain.stderr}`);
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "ordinary fallback acknowledgement must reuse the observed command: $out"
+  pass "ordinary fallback reuses its observed acknowledgement without hiding later rows"
 }
 
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown() {
@@ -2252,6 +2343,7 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
     ];
   }
   if (attempt === 2 || attempt === 6 || attempt === 8) {
+    await runBranchDrain(session);
     const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
     const summary = attempt === 2
       ? "healthy branch turn reset the provider-error streak"
@@ -2546,6 +2638,7 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
     return;
   }
   const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+  await globalThis.__fmObserveWakeAck(session);
   const recorded = await report.execute(`ok-${prompts}`, { task: "branch-driver", verdict: "routine", summary: `handled on ${model}` }, undefined, undefined, {});
   if (recorded.isError) throw new Error(`report failed: ${JSON.stringify(recorded)}`);
   session.messages.push({ role: "assistant", content: [], stopReason: "stop" });
@@ -2799,6 +2892,7 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
   attempt += 1;
   if (attempt === 3) {
     const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+    await globalThis.__fmObserveWakeAck(session);
     const recorded = await report.execute(
       "healthy-after-selection",
       { task: "branch-driver", verdict: "routine", summary: "replacement branch remains available" },
@@ -5027,7 +5121,9 @@ globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finishWakePromp
 const offer = dispatch("heartbeat", [], true, true);
 if (!offer.accepted) throw new Error("branch did not accept the heartbeat offer");
 await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "heartbeat branch prompt");
-const report = globalThis.__fmSessions[0].options.customTools.find((tool) => tool.name === "fm_branch_report");
+const deliverySession = globalThis.__fmSessions[0];
+const report = deliverySession.options.customTools.find((tool) => tool.name === "fm_branch_report");
+await globalThis.__fmObserveWakeAck(deliverySession);
 
 // A repeating timer is the event loop's own liveness: it cannot tick while
 // the single JS thread is blocked, which is exactly what the TUI's repaint
@@ -5585,7 +5681,8 @@ test_branch_predrain_recheck_excludes_new_main_owned_row_without_deferring_eligi
 test_branch_predrain_needs_decision_keeps_routine_row_branch_eligible
 test_settled_branch_prompt_releases_unacknowledged_grant
 test_branch_ack_waits_for_complete_presented_coverage
-test_reported_provider_error_requires_observed_ack_command
+test_reported_prompt_requires_observed_ack_command
+test_ordinary_fallback_reuses_observed_ack_command
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown
 test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model
 test_model_chain_rejects_malformed_lines_and_reprobes_unresolvable_entries

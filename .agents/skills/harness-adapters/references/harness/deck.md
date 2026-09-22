@@ -14,7 +14,7 @@ Deck is verified for crewmates and scouts; `../../../../../bin/fm-spawn.sh` stil
 | Turns | Every line typed at the driver's `❯` prompt is the next turn of the SAME Deck session (`--session`), so a steer or the steering-inbox doorbell keeps the conversation's context. |
 | Endpoint | Deck's own settings (`PROXAI_BASE_URL`, `PROXAI_MODEL`, `PROXAI_API_KEY_FILE`); with no key variable set the driver uses `~/.config/proxai/client.key`. The default base URL is the local proxai gateway. |
 | Model | `--model <route>` with a gateway route such as `codex/gpt-5.6-luna`, passed to every turn. No local catalog check: the gateway answers an unknown route with an error on the first turn. |
-| Effort | Deck has no effort control. A non-default `--effort` is refused before launch and task metadata rather than being recorded as if Deck applied it. |
+| Effort | Deck has no effort control. Dispatch validation rejects Deck profiles with effort, spawn refuses a non-default `--effort` before launch and task metadata, and relaunch refuses it before stopping the current worker. |
 | Per-turn bounds | `--max-turns` 200 and `--deadline-secs` 3600 by default (`FM_DECK_MAX_TURNS`, `FM_DECK_DEADLINE_SECS`); Deck's own defaults are sized for one question. |
 | Busy state | Semantic source `deck-wrapper`: the driver writes busy at turn start and idle at turn end, failure, interrupt, and `/quit` through `bin/fm-busy-event.sh`; the spawn arms the task's busy gen and passes it in. |
 | Progress | Deck's `post_tool_use` hook refreshes the task's progress marker on every tool call. |

@@ -47,7 +47,8 @@ ok - fm-spawn: a secondmate on deck is refused
 fm-deck-harness: all cases passed
 ```
 
-The spawn refuses a non-default `--effort` before launch or task metadata because Deck has no effort control.
+The dispatch validator rejects Deck profiles with effort, spawn refuses a non-default `--effort` before launch or task metadata, and relaunch refuses it before stopping the current worker because Deck has no effort control.
+Those boundaries are pinned by `tests/fm-bootstrap.test.sh`, `tests/fm-deck-harness.test.sh`, and `tests/fm-control-relaunch.test.sh`.
 The driver refuses to run Deck when it cannot record `turn-start`, and a failed closing busy-state write publishes failure evidence and makes the turn fail.
 The evidence gate snapshots the status log's byte offset at turn start and searches a bounded appended suffix for a complete `done`, `needs-decision`, `blocked`, `failed`, or `working` line.
 Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy the gate or the driver's postcondition.

@@ -142,7 +142,6 @@ const promptScript = join(fmRoot, "bin", "fm-branch-prompt.sh");
 const outcomeScript = join(fmRoot, "bin", "fm-branch-outcome.sh");
 const leaseScript = join(fmRoot, "bin", "fm-lease.sh");
 const wakeGrantScript = join(fmRoot, "bin", "fm-wake-grant.sh");
-const wakeDrainScript = join(fmRoot, "bin", "fm-wake-drain.sh");
 const loadedMarker = join(state, ".pi-branch-extension-loaded");
 const modelPinFile = join(config, "supervision-branch-model");
 const effortPinFile = join(config, "supervision-branch-effort");
@@ -1617,44 +1616,22 @@ ${context.command}
   async function acknowledgeReportedGrant(
     expectedGeneration: number,
     scope: NonNullable<typeof wakeTaskScope>,
-    providerError: boolean,
   ): Promise<boolean> {
+    if (scope.acknowledgementCommands.size !== 1) return false;
     const eligibleRows = join(state, BRANCH_ELIGIBLE_ROWS_FILE);
-    if (providerError && scope.rows.size > 0) {
-      if (scope.acknowledgementCommands.size !== 1) return false;
-      if (!existsSync(eligibleRows)) return true;
-      if (!(await actingAsOwner(expectedGeneration))) return false;
-      const acknowledged = await runCommandAsync(
-        "bash",
-        ["-c", [...scope.acknowledgementCommands][0]],
-        {
-          cwd: fmRoot,
-          env: {
-            ...scriptEnv,
-            FM_SUPERVISION_ACTOR: "branch",
-            FM_LEASE_HOLDER_PID: ownedLockPid,
-          },
-        },
-      );
-      return acknowledged.status === 0 && !existsSync(eligibleRows);
-    }
     if (!existsSync(eligibleRows)) return true;
     if (!(await actingAsOwner(expectedGeneration))) return false;
-    const env = {
-      ...scriptEnv,
-      FM_SUPERVISION_ACTOR: "branch",
-      FM_LEASE_HOLDER_PID: ownedLockPid,
-    };
-    const presented = await runCommandAsync("bash", [wakeDrainScript], { cwd: fmRoot, env });
-    if (presented.status !== 0) return false;
-    const matches = [...presented.stderr.matchAll(
-      /^WAKE_ACK_REQUIRED: after handling completes run bin\/fm-wake-drain\.sh --ack-through ([0-9]+) --recovery-generation ([A-Za-z0-9._-]+)$/gm,
-    )];
-    if (matches.length !== 1 || !(await actingAsOwner(expectedGeneration))) return false;
     const acknowledged = await runCommandAsync(
       "bash",
-      [wakeDrainScript, "--ack-through", matches[0][1], "--recovery-generation", matches[0][2]],
-      { cwd: fmRoot, env },
+      ["-c", [...scope.acknowledgementCommands][0]],
+      {
+        cwd: fmRoot,
+        env: {
+          ...scriptEnv,
+          FM_SUPERVISION_ACTOR: "branch",
+          FM_LEASE_HOLDER_PID: ownedLockPid,
+        },
+      },
     );
     return acknowledged.status === 0 && !existsSync(eligibleRows);
   }
@@ -1730,7 +1707,6 @@ ${context.command}
         const grantAcknowledged = grantFullyReported && await acknowledgeReportedGrant(
           acceptedGeneration,
           promptWakeScope,
-          providerError !== null,
         );
         const providerDetail = providerError
           ? `supervision branch provider failed after construction: ${providerError}`

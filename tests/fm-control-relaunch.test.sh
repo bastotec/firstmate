@@ -835,6 +835,24 @@ test_relaunch_onto_verified_deck_replaces_the_agent() {
   pass "fm-control relaunch: verified Deck replaces an existing crewmate"
 }
 
+test_relaunch_onto_deck_with_effort_refuses_before_stop() {
+  local dir out rc
+  dir=$(new_case deck-effort-refusal rl54)
+  add_ship_task "$dir" rl54 claude
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/deck"
+  chmod +x "$dir/fakebin/deck"
+  printf deck > "$dir/fake/becomes"
+
+  out=$(run_control "$dir" rl54 relaunch --harness deck --effort high --note "move to Deck"); rc=$?
+  expect_code 1 "$rc" "Deck relaunch with effort should refuse"
+  assert_contains "$out" "deck has no effort control" "Deck relaunch refusal did not name its unsupported effort"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "unsupported Deck effort stopped the running agent"
+  [ ! -s "$dir/fake/literal" ] || fail "unsupported Deck effort sent lifecycle input"
+  [ "$(meta_field "$dir" rl54 harness)" = claude ] || fail "unsupported Deck effort changed task metadata"
+  [ ! -e "$dir/home/state/rl54.control-relaunch" ] || fail "unsupported Deck effort started a relaunch transaction"
+  pass "fm-control relaunch: Deck effort refuses before stopping the agent"
+}
+
 test_prior_harness_turnend_registry_entry_is_cleared() {
   local dir auth
   dir=$(new_case grokauth rl9)
@@ -1970,6 +1988,7 @@ test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
 test_relaunch_onto_verified_deck_replaces_the_agent
+test_relaunch_onto_deck_with_effort_refuses_before_stop
 test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
 test_turnend_auth_paths_are_owned_by_the_control_adapter
