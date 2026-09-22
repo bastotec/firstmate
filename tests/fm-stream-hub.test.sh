@@ -1668,7 +1668,8 @@ test_the_hub_accepts_a_retried_result_without_changing_its_verdict() {
   local endpoint command_id="" commands result request_pid waited=0 request_code
   endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
-    '{endpoint_id: $id, machine: "result-box", label: "result-worker", cwd: "/tmp"}')" >/dev/null
+    '{endpoint_id: $id, machine: "result-box", label: "result-worker", cwd: "/tmp",
+      capabilities: ["idempotent_command_results"]}')" >/dev/null
   assert_equals "$(api_code)" 201 "the result test endpoint should register"
   curl -sS -m 10 -X POST -H "Authorization: Bearer $VIEW_TOKEN" \
     -H 'Content-Type: application/json' --data-binary '{"text":"echo RESULT","submit":true}' \
@@ -1705,6 +1706,39 @@ order() {  # <leaf> <execution> <text> [order-id]
   view POST /v1/orders "$(jq -nc --arg leaf "$1" --arg ex "$2" --arg text "$3" \
     --arg id "$order_id" \
     '{leaf_worker_id: $leaf, execution_id: $ex, order_id: $id, text: $text, submit: true}')"
+}
+
+test_orderability_follows_the_endpoint_registration_capability() {
+  start_hub order-capability --command-ack-secs 1
+  local legacy capable out
+  legacy=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  capable=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$legacy" \
+    '{endpoint_id: $id, machine: "legacy", label: "recovering", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the legacy endpoint should register"
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$legacy" \
+    '{endpoint_id: $id, machine: "legacy", label: "recovering", cwd: "/tmp"}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the legacy client should recover its endpoint"
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$legacy" \
+    '{endpoint_id: $id, machine: "legacy", label: "recovering", cwd: "/tmp",
+      capabilities: ["idempotent_command_results"]}')" >/dev/null
+  assert_equals "$(api_code)" 409 \
+    "a different client contract must not take over an existing endpoint"
+  out=$(order legacy/recovering "$legacy" "echo NEVER" legacy-result-contract)
+  assert_equals "$(api_code)" 409 "a recovering client without result retries must not be orderable"
+  assert_equals "$(printf '%s' "$out" | jq -r '.reason')" endpoint_not_orderable \
+    "the refusal should name the missing endpoint capability"
+  assert_equals "$(printf '%s' "$out" | jq -r '.delivered')" false \
+    "an order refused before routing must be known undelivered"
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$capable" \
+    '{endpoint_id: $id, machine: "capable", label: "recovering", cwd: "/tmp",
+      capabilities: ["idempotent_command_results"]}')" >/dev/null
+  out=$(order capable/recovering "$capable" "echo STILL-NEVER" capable-result-contract)
+  assert_equals "$(api_code)" 504 \
+    "advertising result retries should make the endpoint eligible for routing"
+  assert_equals "$(printf '%s' "$out" | jq -r '.reason')" no_agent_ack \
+    "the capable endpoint should reach command routing rather than capability refusal"
+  pass "hub: endpoint registration controls Bridge orderability"
 }
 
 test_an_order_reaches_the_worker_its_leaf_names() {
@@ -1807,7 +1841,8 @@ test_an_order_no_agent_took_is_refused_rather_than_left_in_doubt() {
   local endpoint out
   endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
-    '{endpoint_id: $id, machine: "ghost", label: "unattended", cwd: "/tmp"}')" >/dev/null
+    '{endpoint_id: $id, machine: "ghost", label: "unattended", cwd: "/tmp",
+      capabilities: ["idempotent_command_results"]}')" >/dev/null
   assert_equals "$(api_code)" 201 "the unattended endpoint should register"
   out=$(order ghost/unattended "$endpoint" "echo NEVER")
   assert_equals "$(api_code)" 504 "an order no agent acknowledged must not be reported accepted"
@@ -2091,6 +2126,7 @@ test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
 test_a_steer_lands_as_soon_as_the_worker_is_listed_again
 test_an_accepted_registration_returns_the_pace_to_its_floor
 test_the_hub_accepts_a_retried_result_without_changing_its_verdict
+test_orderability_follows_the_endpoint_registration_capability
 test_an_order_reaches_the_worker_its_leaf_names
 test_an_order_aimed_at_a_replaced_execution_never_reaches_the_replacement
 test_an_order_to_a_worker_its_agent_reported_gone_is_refused

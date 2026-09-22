@@ -516,6 +516,15 @@ task=$(api "$VIEW_TOKEN" GET "/v1/tasks/$EP")
 [ "$(jq -r ".task.machine" <<<"$task")" = "tailhost" ] || fail "listing machine: $task"
 pass "lists on the fleet as an ordinary endpoint"
 
+order_answer=$(api "$VIEW_TOKEN" POST /v1/orders "$(jq -nc --arg id "$EP" \
+  '{leaf_worker_id: "tailhost/livework", execution_id: $id,
+    order_id: "tail-read-only", text: "echo MUST-NOT-RUN", submit: true}')")
+[ "$(jq -r '.reason' <<<"$order_answer")" = "endpoint_not_orderable" ] \
+  || fail "a read-only tail endpoint accepted an order: $order_answer"
+[ "$(jq -r '.delivered' <<<"$order_answer")" = "false" ] \
+  || fail "the refused tail order was not known undelivered: $order_answer"
+pass "keeps read-only tail publishers non-orderable"
+
 cwd_answer=$(api "$VIEW_TOKEN" GET "/v1/tasks/$EP/cwd")
 [ "$(jq -r ".cwd" <<<"$cwd_answer")" = "$PROJ" ] || fail "state cwd read: $cwd_answer"
 [ "$(jq -r ".alive" <<<"$cwd_answer")" = "true" ] || fail "state alive read: $cwd_answer"

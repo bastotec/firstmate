@@ -484,6 +484,7 @@ def registration(options: argparse.Namespace, endpoint_id: str) -> dict:
         "cwd": options.cwd,
         "rows": options.rows,
         "cols": options.cols,
+        "capabilities": [IDEMPOTENT_RESULT_CAPABILITY],
     }
 
 
