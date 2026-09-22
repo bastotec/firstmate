@@ -110,7 +110,6 @@ state/               runtime records and signals; gitignored
   <id>.cursor-session  cursor busy-source binding (projects root, task worktree, prior conversations) written by fm-spawn; removed by teardown
   <id>.reconcile-nudged  epoch second of the last inventory-reconcile nudge sent to this secondmate; bin/fm-secondmate-reconcile.sh owns its per-home cooldown window
   <id>.backlog-close  the exact backlog transition its publisher recorded before removing the task's record, so an interrupted cleanup can still be finished at the next session start; it carries its publisher's endpoint proof, and one recorded for a worker nothing proved stopped is held for a rerun rather than replayed; bin/fm-backlog-transition-lib.sh owns its format, its endpoint stamp, and replay, and a landed transition removes it
-  <id>.stooddown      marks a task the captain intentionally stopped (epoch, reason, then status-log byte size) so its idle stale and stall re-rings are provably noise; written by bin/fm-wake-gate.sh stand-down, cleared by resume or task teardown, and read by the fail-open wake gate
   <id>.inbox/          durable steering inbox: sequenced firstmate instruction records the worker acknowledges by moving them into its handled/ subdirectory; written by fm-send, with ordinary records re-rung and escalated by the watcher while explicit fire-and-forget records are excluded from that ladder, and removed by teardown (bin/fm-task-inbox-lib.sh)
   <id>.meta          task metadata; each producer script's header owns its exact fields and mutation contract, with docs/configuration.md routing operator-facing backend and trace-context details
   <id>.herdr-presentation  quarantinable attempt and restart-binding journal for Herdr's optional visual projection; never task or endpoint authority; see docs/herdr-backend.md "Presentation spaces"
@@ -433,7 +432,7 @@ For every actionable wake, follow the ordinary-wake continuation in the emitted 
 No turn ends blind while work is under way, including turns described as holding or waiting.
 
 At the start of every wake-handling turn, drain the durable wake queue before peeking, reading beyond the reason line, steering, or starting work.
-Before queueing or emitting a stale, signal, or secondmate wake-loop alarm, the watcher uses the fail-open wake gate (bin/fm-wake-gate.sh) to absorb mechanical re-rings of tasks the captain explicitly stood down and, when opted in and enforcing, possible-wedge alarms whose evidence shows nothing new, so they cost no model turn; it never absorbs a decision, blocker, unrelated check, or heartbeat, and escalates on any doubt.
+When opted in and enforcing, the watcher's fail-open wake gate (bin/fm-wake-gate.sh) absorbs a possible-wedge alarm whose evidence shows nothing new before it costs a model turn; it never absorbs any other alarm, and escalates on any doubt.
 Session start is the only exception because its one-shot digest already presented the queue while locked or deliberately left it untouched in lock-refused read-only mode.
 Treat any `OPEN DECISIONS` section from the drain as actionable reconciliation input even when no wake record was queued.
 Treat any `UNREAD STATUS` section as newly surfaced status that must be read this turn; those lines are not re-printed after this presentation.

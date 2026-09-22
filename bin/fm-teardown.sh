@@ -781,7 +781,7 @@ remote_recovery_paths_validate() {
 
 retire_wake_gate_task_state() {
   local state_dir=$1 task_id=$2
-  rm -f -- "$state_dir/$task_id.stooddown" "$state_dir/wake-gate/$task_id.look"
+  rm -f -- "$state_dir/wake-gate/$task_id.look"
 }
 
 remote_pending_replies_cleanup() {

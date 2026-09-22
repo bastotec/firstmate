@@ -385,60 +385,6 @@ window_label() {
   [ -n "$task" ] && printf 'fm-%s' "$task"
 }
 
-FM_WATCH_WAKE_APPENDED=0
-FM_WATCH_RERING_ABSORBED=0
-watcher_wake_gate_verdict() {  # <kind> <key> <payload> <epoch> <task>
-  local verdict
-  [ -x "$SCRIPT_DIR/fm-wake-gate.sh" ] || { printf 'escalate\n'; return 0; }
-  if verdict=$(FM_STATE_DIR="$STATE" "$SCRIPT_DIR/fm-wake-gate.sh" classify \
-    "$1" "$2" "$3" "$4" "$5" 2>/dev/null </dev/null); then
-    printf '%s\n' "$verdict"
-  else
-    printf 'escalate\n'
-  fi
-}
-
-watcher_wake_append() {  # <kind> <key> <payload>
-  FM_WATCH_WAKE_APPENDED=0
-  FM_WATCH_RERING_ABSORBED=0
-  fm_wake_append "$1" "$2" "$3" || return "$?"
-  FM_WATCH_WAKE_APPENDED=1
-}
-
-watcher_rering_append() {  # <kind> <key> <payload> <task>
-  local kind=$1 key=$2 payload=$3 task=$4 verdict epoch
-  FM_WATCH_WAKE_APPENDED=0
-  FM_WATCH_RERING_ABSORBED=0
-  epoch=$(date +%s 2>/dev/null || true)
-  verdict=$(watcher_wake_gate_verdict "$kind" "$key" "$payload" "$epoch" "$task")
-  case "$verdict" in
-    absorb:*)
-      FM_WATCH_RERING_ABSORBED=1
-      triage_log "absorbed stood-down mechanical re-ring: $kind $key"
-      return 0
-      ;;
-  esac
-  watcher_wake_append "$kind" "$key" "$payload"
-}
-
-watcher_signal_append() {  # <file> <payload> <task>
-  local file=$1 payload=$2 task=$3 key
-  key=${file##*/}
-  case "$key" in
-    *.status|*.turn-ended) watcher_rering_append signal "$key" "$payload" "$task" ;;
-    *) watcher_wake_append signal "$key" "$payload" ;;
-  esac
-}
-
-signal_file_task() {  # <file>
-  local key=${1##*/}
-  case "$key" in
-    *.status) printf '%s' "${key%.status}" ;;
-    *.turn-ended) printf '%s' "${key%.turn-ended}" ;;
-    *) return 1 ;;
-  esac
-}
-
 # The ONE derivation of a window's per-window marker key: `:`, `/` and `.` become
 # `_` so a window name is usable as a filename suffix. Every per-window file the
 # watcher keeps is named by it (.hash-, .count-, .stale-, .stale-since-,
@@ -460,12 +406,12 @@ inbox_steer_escalate_unavailable() {  # <window> <task> <record>
     fm_task_inbox_due_action "$STATE" "$task" >/dev/null || true
     return 0
   fi
-  watcher_wake_append stale "$w" "$reason" || exit 1
+  fm_wake_append stale "$w" "$reason" || exit 1
   if ! fm_task_inbox_record_escalated "$STATE" "$task" "$rec"; then
     echo "error: stale wake was queued for $task but its inbox escalation marker could not be written" >&2
     exit 1
   fi
-  [ "$FM_WATCH_WAKE_APPENDED" -eq 0 ] || wake "$reason"
+  wake "$reason"
 }
 
 # Steering-inbox loss detection, one cheap check per recorded window per poll.
@@ -524,8 +470,8 @@ inbox_steer_check() {  # <window> <task>
         fi
         if [ -d "${rec%/*}" ]; then
           reason="stale: $w (steering-inbox ladder bookkeeping unwritable: ${rec%/*}/.ring-state cannot be written while $rec stays unhandled; the doorbell cannot advance toward escalation - inspect the inbox directory)"
-          watcher_wake_append stale "$w" "$reason" || exit 1
-          [ "$FM_WATCH_WAKE_APPENDED" -eq 0 ] || wake "$reason"
+          fm_wake_append stale "$w" "$reason" || exit 1
+          wake "$reason"
         fi
       fi
       triage_log "steer-inbox delivery attempt: $task ${rec##*/} result=$ring_rc"
@@ -536,12 +482,12 @@ inbox_steer_check() {  # <window> <task>
         fm_task_inbox_due_action "$STATE" "$task" >/dev/null || true
         return 0
       fi
-      watcher_wake_append stale "$w" "$reason" || exit 1
+      fm_wake_append stale "$w" "$reason" || exit 1
       if ! fm_task_inbox_record_escalated "$STATE" "$task" "$rec"; then
         echo "error: stale wake was queued for $task but its inbox escalation marker could not be written" >&2
         exit 1
       fi
-      [ "$FM_WATCH_WAKE_APPENDED" -eq 0 ] || wake "$reason"
+      wake "$reason"
       ;;
   esac
 }
@@ -887,15 +833,11 @@ EOF
     reason="check: secondmate wake-loop stalled: mate=$task row=$seq idle=${idle}s"
     queued=$(fm_wake_queued_keys check)
     if ! printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1; then
-      watcher_rering_append check "$notify_key" "$reason" "$task" || return 1
-    else
-      FM_WATCH_WAKE_APPENDED=1
+      fm_wake_append check "$notify_key" "$reason" || return 1
     fi
-    if [ "$FM_WATCH_WAKE_APPENDED" -eq 1 ]; then
-      fm_wake_secondmate_stall_receipt_write "$task" "$row_key" || return 1
-      fm_wake_secondmate_stall_marker_write "$task" "$row_key" || return 1
-      wake "$reason"
-    fi
+    fm_wake_secondmate_stall_receipt_write "$task" "$row_key" || return 1
+    fm_wake_secondmate_stall_marker_write "$task" "$row_key" || return 1
+    wake "$reason"
   done
   return 0
 }
@@ -925,19 +867,16 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # <min-age> replaces the cadence as the absorb-age gate for one call (0 lets a
 # declared `until` time that has just passed re-surface at once), while the
 # throttle keeps the cadence between repeats.
-resurface_absorbed() {  # <window> <task> <throttle-marker> <age> <reason> [scope] [min-age]
-  local win=$1 task=$2 throttle=$3 age=$4 reason=$5 scope=${6-} min_age=${7:-$PAUSE_RESURFACE_SECS}
-  FM_WATCH_RERING_ABSORBED=0
+resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min-age]
+  local win=$1 throttle=$2 age=$3 reason=$4 scope=${5-} min_age=${6:-$PAUSE_RESURFACE_SECS}
   if [ -z "$scope" ] || [ ! -e "$throttle" ] \
     || [ "$(cat "$throttle" 2>/dev/null || true)" = "$scope" ]; then
     [ "$age" -ge "$min_age" ] || return 0
     [ "$(age_of "$throttle")" -ge "$PAUSE_RESURFACE_SECS" ] || return 0   # 999999 when no prior re-surface
   fi
-  watcher_rering_append stale "$win" "$reason" "$task" || exit 1
-  if [ "$FM_WATCH_WAKE_APPENDED" -eq 1 ]; then
-    if [ -n "$scope" ]; then printf '%s' "$scope" > "$throttle"; else date +%s > "$throttle"; fi
-    wake "$reason"
-  fi
+  fm_wake_append stale "$win" "$reason" || exit 1
+  if [ -n "$scope" ]; then printf '%s' "$scope" > "$throttle"; else date +%s > "$throttle"; fi
+  wake "$reason"
 }
 
 # Defer ONE wedge escalation for a pane that went quiet while its own task
@@ -954,15 +893,15 @@ resurface_absorbed() {  # <window> <task> <throttle-marker> <age> <reason> [scop
 # counter is left alone: it is neither advanced (this is not an escalation) nor
 # reset (a later genuine escalation must still carry the demand-deep-inspection
 # history it had already earned).
-wedge_defer_writing() {  # <window> <task> <since-file> <triage-label> <idle-age>
-  local win=$1 task=$2 since_file=$3 label=$4 age=$5 key wsf wage
+wedge_defer_writing() {  # <window> <since-file> <triage-label> <idle-age>
+  local win=$1 since_file=$2 label=$3 age=$4 key wsf wage
   key=$(window_key "$win")
   wsf="$STATE/.writing-since-$key"
   [ -e "$wsf" ] || date +%s > "$wsf"
   wage=$(age_of "$wsf")
-  resurface_absorbed "$win" "$task" "$STATE/.writing-resurfaced-$key" "$wage" \
+  date +%s > "$since_file"
+  resurface_absorbed "$win" "$STATE/.writing-resurfaced-$key" "$wage" \
     "stale: $win (idle ${age}s, writing its worktree for ${wage}s, rechecked on a long cadence not a wedge; confirm the writes are real progress)"
-  [ "$FM_WATCH_RERING_ABSORBED" -eq 1 ] || date +%s > "$since_file"
   triage_log "absorbed $label (worktree written since the idle window opened, idle ${age}s): $win"
 }
 
@@ -999,7 +938,7 @@ wedge_gate_verdict() {  # <task> <window> <idle-age>
 }
 
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason gate_result gate_reason look_flags=''
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason gate_result look_flags=''
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -1013,16 +952,9 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
-          wedge_defer_writing "$win" "$task" "$since_file" "$label" "$age"
+          wedge_defer_writing "$win" "$since_file" "$label" "$age"
           return 0
         fi
-        gate_reason="stale: $win (idle ${age}s, possible wedge)"
-        case "$(watcher_wake_gate_verdict stale "$win" "$gate_reason" "$(date +%s 2>/dev/null || true)" "$task")" in
-          absorb:*)
-            triage_log "absorbed $label (stood-down, idle ${age}s): $win"
-            return 0
-            ;;
-        esac
         # Fail-open wake gate (bin/fm-wake-gate.sh stale-verdict owns the rule):
         # it reads the worker's evidence before the alarm spends a model turn.
         # Anything but an explicit absorb, including a gate error, alarms as before.
@@ -1036,21 +968,21 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           escalate$'\t'*) look_flags=${gate_result#*$'\t'} ;;
         esac
         n=$(( $(cat "$escalation_file" 2>/dev/null || echo 0) + 1 ))
+        echo "$n" > "$escalation_file"
         reason="stale: $win (idle ${age}s, possible wedge, escalation $n)"
         if [ "$n" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
           reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
         fi
-        watcher_rering_append stale "$win" "$reason" "$task" || exit 1
-        if [ "$FM_WATCH_WAKE_APPENDED" -eq 1 ]; then
-          echo "$n" > "$escalation_file"
-          if [ -n "$look_flags" ]; then
-            FM_STATE_DIR="$STATE" "$SCRIPT_DIR/fm-wake-gate.sh" commit-look "$task" "$look_flags" \
-              2>/dev/null </dev/null || triage_log "wake-gate look commit failed after queueing: $task"
-          fi
-          rm -f "$since_file"
-          clear_write_tracking "$(window_key "$win")"
-          wake "$reason"
+        fm_wake_append stale "$win" "$reason" || exit 1
+        # The look is recorded only once the alarm is durably queued, so a crash
+        # before this point costs an extra model look, never a missed one.
+        if [ -n "$look_flags" ]; then
+          FM_STATE_DIR="$STATE" "$SCRIPT_DIR/fm-wake-gate.sh" commit-look "$task" "$look_flags" \
+            2>/dev/null </dev/null || triage_log "wake-gate look commit failed after queueing: $task"
         fi
+        rm -f "$since_file"
+        clear_write_tracking "$(window_key "$win")"
+        wake "$reason"
       fi
       ;;
   esac
@@ -1127,7 +1059,7 @@ handle_paused_stale() {  # <window> <task> <hash>
     detail="paused, awaiting external"
     reason="paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds"
   fi
-  resurface_absorbed "$win" "$task" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age"
+  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age"
   triage_log "absorbed stale ($detail, age ${age}s): $win"
 }
 
@@ -1180,11 +1112,9 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
         return 0
       fi
       if [ "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" != "$declared" ]; then
-        watcher_rering_append stale "$win" "stale: $win" "$task" || exit 1
-        if [ "$FM_WATCH_WAKE_APPENDED" -eq 1 ]; then
-          printf '%s' "$declared" > "$STATE/.stale-$key"
-          wake "stale: $win"
-        fi
+        fm_wake_append stale "$win" "stale: $win" || exit 1
+        printf '%s' "$declared" > "$STATE/.stale-$key"
+        wake "stale: $win"
       fi
       return 0
     fi
@@ -1429,8 +1359,7 @@ surface_nonterminal_stale() {  # <window> <hash>
     bounded=0
   fi
   if [ "$throttled" -ne 0 ]; then
-    watcher_rering_append stale "$win" "stale: $win" "$task" || exit 1
-    [ "$FM_WATCH_RERING_ABSORBED" -eq 0 ] || return 0
+    fm_wake_append stale "$win" "stale: $win" || exit 1
     stale_wait_record "$key"
   fi
   printf '%s' "$h" > "$STATE/.stale-$key"
@@ -1454,7 +1383,7 @@ surface_nonterminal_stale() {  # <window> <hash>
     triage_log "absorbed non-terminal stale (declared wait or open captain call already re-surfaced this window): $win"
     return 0
   fi
-  [ "$FM_WATCH_WAKE_APPENDED" -eq 0 ] || wake "stale: $win"
+  wake "stale: $win"
 }
 
 # Check and heartbeat cadence must survive actionable exits and restarts: the
@@ -1476,7 +1405,7 @@ age_of() {  # seconds since file mtime; "due immediately" if missing
 # Status signatures include observable file and readability state, while turn-end
 # markers retain their size-and-mtime signature.
 # Pure read: prints one "<seen-file>\t<sig>\t<file>" line per changed file.
-# The caller records reported state only after durable queuing or a benign no-wake classification,
+# The caller records reported state only after surfacing or intentional absorption,
 # and commits a status classification position only after a successful span read.
 scan_signals() {
   local f sig sf
@@ -2278,25 +2207,21 @@ EOF
     # shellcheck disable=SC2086  # same space-separated status-path list
     if afk_present || [ "$signal_actionable" -eq 0 ] \
       || { ! signal_crew_provably_working $files && ! signal_turnend_panes_churned $files; }; then
-      signal_rows_queued=0
-      signal_rows_absorbed_files=''
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
         file_reason="$reason"
         case " $FM_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$files" ;; esac
-        task=$(signal_file_task "$f") || task=
-        watcher_signal_append "$f" "$file_reason" "$task" || exit 1
-        if [ "$FM_WATCH_WAKE_APPENDED" -eq 1 ]; then
-          signal_rows_queued=1
-        else
-          signal_rows_absorbed_files="$signal_rows_absorbed_files $f"
-        fi
+        fm_wake_append signal "$(basename "$f")" "$file_reason" || exit 1
       done <<EOF
 $pending
 EOF
+      # The wake signature advances for every file in this batch, including one
+      # whose span could not be classified: it has now been reported, and this is
+      # what bounds an unreadable log to one report per distinct file state. Only
+      # a SUCCESSFULLY classified log commits a classification position below, so
+      # an unreadable log's content is still classified once it becomes readable.
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
-        case " $signal_rows_absorbed_files " in *" $f "*) continue ;; esac
         case "$f" in
           *.status)
             fm_wake_status_reported_commit "$STATE" "$f" "$sig" || true
@@ -2309,13 +2234,12 @@ $pending
 EOF
       while IFS=$(printf '\t') read -r f surface_end surface_ident; do
         [ -n "$f" ] || continue
-        case " $signal_rows_absorbed_files " in *" $f "*) continue ;; esac
         fm_wake_status_seen_commit "$STATE" "$f" "$surface_end" "$surface_ident" || true
         mark_surfaced "$f" "$surface_end" "$surface_ident"
       done <<EOF
 $FM_SIGNAL_SURFACE_ENDPOINTS
 EOF
-      [ "$signal_rows_queued" -eq 0 ] || wake "$reason"
+      wake "$reason"
     else
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
@@ -2332,16 +2256,13 @@ EOF
 $FM_SIGNAL_SURFACE_ENDPOINTS
 EOF
       if [ "$signal_commit_error" -ne 0 ]; then
-        signal_rows_queued=0
         while IFS=$(printf '\t') read -r sf sig f; do
           [ -n "$sf" ] || continue
-          task=$(signal_file_task "$f") || task=
-          watcher_signal_append "$f" "$reason" "$task" || exit 1
-          [ "$FM_WATCH_WAKE_APPENDED" -eq 0 ] || signal_rows_queued=1
+          fm_wake_append signal "$(basename "$f")" "$reason" || exit 1
         done <<EOF
 $pending
 EOF
-        [ "$signal_rows_queued" -eq 0 ] || wake "$reason"
+        wake "$reason"
       fi
       triage_log "absorbed benign $reason"
     fi
@@ -2407,11 +2328,9 @@ EOF
             printf '%s' "$h" > "$sf"
             triage_log "absorbed stale (captain-held, never rechecked while the away-posture record exists): $w"
           elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            watcher_rering_append stale "$w" "stale: $w" "$task" || exit 1
-            if [ "$FM_WATCH_WAKE_APPENDED" -eq 1 ]; then
-              printf '%s' "$h" > "$sf"
-              wake "stale: $w"
-            fi
+            fm_wake_append stale "$w" "stale: $w" || exit 1
+            printf '%s' "$h" > "$sf"
+            wake "stale: $w"
           fi
         elif stale_is_terminal "$w" "$STATE"; then
           # The log's last line is captain-relevant - but that alone is not
@@ -2447,21 +2366,19 @@ EOF
               clear_write_tracking "$key"
               triage_log "absorbed stale (open captain call already surfaced for this status): $w"
             else
-              watcher_rering_append stale "$w" "stale: $w" "$task" || exit 1
-              if [ "$FM_WATCH_WAKE_APPENDED" -eq 1 ]; then
-                stale_wait_record "$key"
-                printf '%s' "$h" > "$sf"
-                rm -f "$ssf"
-                clear_write_tracking "$key"
-                stale_status="$STATE/$(window_to_task "$w" "$STATE").status"
-                stale_record=$(status_span_first_actionable_record "$stale_status" 0)
-                case $? in
-                  0|1) stale_end=${stale_record%%$'\t'*}; stale_rest=${stale_record#*$'\t'}; stale_ident=${stale_rest%%$'\t'*} ;;
-                  *) stale_end=''; stale_ident='' ;;
-                esac
-                mark_surfaced "$stale_status" "$stale_end" "$stale_ident"
-                wake "stale: $w"
-              fi
+              fm_wake_append stale "$w" "stale: $w" || exit 1
+              stale_wait_record "$key"
+              printf '%s' "$h" > "$sf"
+              rm -f "$ssf"
+              clear_write_tracking "$key"
+              stale_status="$STATE/$(window_to_task "$w" "$STATE").status"
+              stale_record=$(status_span_first_actionable_record "$stale_status" 0)
+              case $? in
+                0|1) stale_end=${stale_record%%$'\t'*}; stale_rest=${stale_record#*$'\t'}; stale_ident=${stale_rest%%$'\t'*} ;;
+                *) stale_end=''; stale_ident='' ;;
+              esac
+              mark_surfaced "$stale_status" "$stale_end" "$stale_ident"
+              wake "stale: $w"
             fi
           elif [ -e "$ssf" ]; then
             # This exact hash was already overridden as provably-working (a

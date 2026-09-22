@@ -598,7 +598,6 @@ test_watcher_surfaces_unwritable_ladder() {
   rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
   age_path "$rec"
   mkdir "$state/t1.inbox/.ring-state"
-  printf '%s\ttest stand-down\t0\n' "$(( $(date +%s) - 1 ))" > "$state/t1.stooddown"
   watch_bg "$state" "$dir/fakebin" "$out" \
     FM_SEND_LOG="$log" FM_FAKE_TMUX_CAPTURE="$(idle_capture "$dir")" \
     FM_TASK_INBOX_RING_MAX=99
@@ -615,7 +614,7 @@ test_watcher_surfaces_unwritable_ladder() {
   [ -f "$rec" ] || fail "the unhandled record disappeared during bookkeeping failure"
   grep -qF 'stale:' "$out" \
     || fail "the watcher should exit through the ordinary stale wake:"$'\n'"$(cat "$out")"
-  pass "watcher: stood-down tasks still surface unwritable steering bookkeeping"
+  pass "watcher: unwritable ladder bookkeeping surfaces a stale wake after the doorbell"
 }
 
 test_watcher_escalates_once_after_budget() {
@@ -624,7 +623,6 @@ test_watcher_escalates_once_after_budget() {
   state="$dir/state"; out="$dir/watch.out"; log="$dir/send.log"; : > "$log"
   rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
   age_path "$rec"
-  printf '%s\ttest stand-down\t0\n' "$(( $(date +%s) - 1 ))" > "$state/t1.stooddown"
   watch_bg "$state" "$dir/fakebin" "$out" \
     FM_SEND_LOG="$log" FM_FAKE_TMUX_CAPTURE="$(idle_capture "$dir")" \
     FM_TASK_INBOX_RING_MAX=1
@@ -640,7 +638,7 @@ test_watcher_escalates_once_after_budget() {
   [ "$(grep -cF 'unread firstmate instruction' "$state/.wake-queue")" = 1 ] \
     || fail "the escalation must fire exactly once:"$'\n'"$(cat "$state/.wake-queue")"
   grep -qF 'stale:' "$out" || fail "the watcher should exit through the ordinary stale wake:"$'\n'"$(cat "$out")"
-  pass "watcher: stood-down tasks still surface unread instructions after the ring budget"
+  pass "watcher: a spent ring budget emits exactly one ordinary stale wake for recovery"
 }
 
 test_watcher_dead_pane_escalates_once_without_ringing() {

@@ -16,14 +16,6 @@
 #   escalation is the only unacceptable failure.
 #
 # USAGE
-#   fm-wake-gate.sh classify <kind> <key> <payload> <wake-epoch> <task-id>
-#       Watcher-side, deterministic, no model call. Print `escalate` or
-#       `absorb:stood-down-rering`. Absorbs only a stale, signal, or
-#       secondmate-wake-loop row of a task carrying a stood-down marker whose
-#       status log has not advanced since the marker and whose wake epoch is
-#       strictly newer than the marker. Never absorbs a heartbeat,
-#       any other check, or a row mentioning needs-decision, blocked, or a
-#       watcher failure.
 #   fm-wake-gate.sh stale-verdict <task-id> <window> <reason> [--with-look]
 #       Watcher-side, called before a possible-wedge alarm is queued. Print
 #       `escalate` or `absorb:jev-<class>`. With `--with-look`, an escalate
@@ -40,9 +32,6 @@
 #   fm-wake-gate.sh report
 #       Summarize shadow decisions, and when state/branch-outcomes.jsonl exists
 #       list every would-skip alarm whose supervision outcome went to the captain.
-#   fm-wake-gate.sh stand-down <task-id> [--reason <text>]
-#   fm-wake-gate.sh resume <task-id>
-#       Write or remove state/<task-id>.stooddown.
 #   fm-wake-gate.sh cost
 #       Print measured Jev usage so far.
 #
@@ -57,7 +46,6 @@
 #   a skip does not update the look.
 #
 # STATE (all under state/, private runtime state)
-#   <task-id>.stooddown      "<epoch>\t<reason>\t<status-size>" - the explicit stand-down marker, removed by resume or teardown
 #   wake-gate/<task-id>.look "<epoch>\t<failure,finished flags>" - the last model look the rule granted, removed by teardown
 #   wake-gate/shadow.log     "<epoch>\t<task>\t<mode>\t<call|skip>\t<why>\t<working>\t<waiting>\t<failure>\t<finished>"
 #   wake-gate/usage.log      "<epoch>\t<calls>\t<in-tok>\t<out-tok>\t<ms>\t<outcome>"
@@ -93,69 +81,6 @@ log_usage() {  # <calls> <in> <out> <ms> <outcome>
   mkdir -p "$STATE/wake-gate" 2>/dev/null || return 0
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$1" "$2" "$3" "$4" "$5" \
     >> "$STATE/wake-gate/usage.log" 2>/dev/null || true
-}
-cmd_classify() {
-  local kind=${1-} key=${2-} payload=${3-} wake_epoch=${4-} task=${5-}
-  # Fail-open on a malformed call.
-  [ -n "$kind" ] || { printf 'escalate\n'; return 0; }
-
-  # --- HARD EXCLUSIONS: never absorb these, regardless of any layer ---
-  case "$kind" in
-    heartbeat) printf 'escalate\n'; return 0 ;;
-    check)
-      # Only the secondmate wake-loop stall check is gate-able: it is the
-      # stood-down idle re-ring. Every other check (merge-confirmation poll,
-      # Relay mention, credential/auth failure, startup-network, process-event
-      # result, captain inbox note) always escalates.
-      case "$key" in
-        secondmate-wake-loop-*) : ;;
-        *) printf 'escalate\n'; return 0 ;;
-      esac ;;
-  esac
-  case "$payload" in
-    *needs-decision*|*blocked*|*watcher*fail*|*WATCHER*FAIL*|*unread\ firstmate\ instruction*|*steering-inbox*) printf 'escalate\n'; return 0 ;;
-  esac
-  case "$key" in
-    *watcher*fail*|*watcher-down*) printf 'escalate\n'; return 0 ;;
-  esac
-
-  # --- LAYER 1: deterministic stood-down absorber (free, no model) ---
-  local marker_file marker_epoch marker_reason marker_size status_file status_size
-  case "$wake_epoch" in ''|*[!0-9]*) printf 'escalate\n'; return 0 ;; esac
-  case "$task" in ''|*/*|*" "*) printf 'escalate\n'; return 0 ;; esac
-  if [ -n "$task" ]; then
-    marker_file="$STATE/$task.stooddown"
-    if [ -f "$marker_file" ]; then
-      IFS=$'\t' read -r marker_epoch marker_reason marker_size < "$marker_file" || true
-      case "$marker_epoch" in ''|*[!0-9]*) marker_epoch='' ;; esac
-      case "$marker_size" in ''|*[!0-9]*) marker_size='' ;; esac
-      status_file="$STATE/$task.status"
-      if [ -n "$marker_epoch" ] && [ -n "$marker_size" ]; then
-        if [ -f "$status_file" ]; then
-          status_size=$(wc -c < "$status_file" 2>/dev/null | tr -d '[:space:]')
-          case "$status_size" in ''|*[!0-9]*) status_size='' ;; esac
-        elif [ ! -e "$status_file" ] && [ ! -L "$status_file" ]; then
-          status_size=0
-        else
-          status_size=''
-        fi
-        # Absorb only when the status log has NOT advanced since the stand-down.
-        # An advanced log means the task did something new -> escalate (fail-open).
-        if [ -n "$status_size" ] && [ "$status_size" -eq "$marker_size" ] \
-          && awk -v w="$wake_epoch" -v m="$marker_epoch" 'BEGIN { exit !(w + 0 > m + 0) }'; then
-          case "$kind:$key" in
-            stale:*|signal:*|check:secondmate-wake-loop-*)
-              printf 'absorb:stood-down-rering\n'; return 0 ;;
-          esac
-        fi
-      fi
-      # marker present but status advanced/unreadable, or kind not stale/signal:
-      # fall through to escalate (fail-open)
-    fi
-  fi
-
-  printf 'escalate\n'
-  return 0
 }
 
 # bounded <secs> <cmd...>: run a command under a wall-clock bound, best effort.
@@ -350,68 +275,6 @@ cmd_report() {
   done
 }
 
-cmd_stand_down() {
-  local task=${1-}; shift || true
-  local reason='stood down' status_size marker tmp
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --reason) reason=${2-}; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-  case "$task" in ''|*/*|*" "*) echo "error: invalid task id" >&2; return 1 ;; esac
-  if [ -e "$STATE" ] || [ -L "$STATE" ]; then
-    [ -d "$STATE" ] && [ ! -L "$STATE" ] || {
-      echo "error: unsafe state directory" >&2
-      return 1
-    }
-  else
-    mkdir -p "$STATE" 2>/dev/null || { echo "error: could not create state directory" >&2; return 1; }
-    [ -d "$STATE" ] && [ ! -L "$STATE" ] || {
-      echo "error: unsafe state directory" >&2
-      return 1
-    }
-  fi
-  marker="$STATE/$task.stooddown"
-  if [ -e "$marker" ] || [ -L "$marker" ]; then
-    [ -f "$marker" ] && [ ! -L "$marker" ] || {
-      echo "error: unsafe stand-down marker for $task" >&2
-      return 1
-    }
-  fi
-  if [ -f "$STATE/$task.status" ]; then
-    status_size=$(wc -c < "$STATE/$task.status" 2>/dev/null | tr -d '[:space:]') || {
-      echo "error: could not read status size" >&2
-      return 1
-    }
-    case "$status_size" in ''|*[!0-9]*) echo "error: could not read status size" >&2; return 1 ;; esac
-  else
-    status_size=0
-  fi
-  tmp=$(umask 077; mktemp "$STATE/.$task.stooddown.XXXXXX" 2>/dev/null) || {
-    echo "error: could not stage stand-down marker" >&2
-    return 1
-  }
-  if ! printf '%s\t%s\t%s\n' "$(date +%s)" "$reason" "$status_size" > "$tmp" \
-    || ! chmod 0600 "$tmp" 2>/dev/null \
-    || ! perl -e 'rename $ARGV[0], $ARGV[1] or exit 1' "$tmp" "$marker"; then
-    rm -f -- "$tmp"
-    echo "error: could not write stand-down marker" >&2
-    return 1
-  fi
-  echo "stood-down: $task (state/$task.stooddown)"
-}
-
-cmd_resume() {
-  local task=${1-}
-  case "$task" in ''|*/*|*" "*) echo "error: invalid task id" >&2; return 1 ;; esac
-  if ! rm -f "$STATE/$task.stooddown" 2>/dev/null; then
-    echo "error: could not clear stand-down marker for $task" >&2
-    return 1
-  fi
-  echo "resumed: $task (stood-down marker cleared)"
-}
-
 cmd_cost() {
   local f="$STATE/wake-gate/usage.log"
   [ -f "$f" ] || { echo "no Jev usage recorded (layer inert)"; return 0; }
@@ -420,22 +283,16 @@ cmd_cost() {
 
 verb=${1-}; shift || true
 case "$verb" in
-  classify)   cmd_classify "$@" ;;
   stale-verdict) cmd_stale_verdict "$@" ;;
   commit-look) cmd_commit_look "$@" ;;
   report)     cmd_report "$@" ;;
-  stand-down) cmd_stand_down "$@" ;;
-  resume)     cmd_resume "$@" ;;
   cost)       cmd_cost "$@" ;;
   *) cat >&2 <<EOF
 fm-wake-gate.sh - fail-open worthiness gate for supervision wakes
 Usage:
-  fm-wake-gate.sh classify <kind> <key> <payload> <wake-epoch> <task-id>
   fm-wake-gate.sh stale-verdict <task-id> <window> <reason> [--with-look]
   fm-wake-gate.sh commit-look <task-id> <none|failure|finished|failure,finished>
   fm-wake-gate.sh report
-  fm-wake-gate.sh stand-down <task-id> [--reason <text>]
-  fm-wake-gate.sh resume <task-id>
   fm-wake-gate.sh cost
 Verdict is 'escalate' unless a narrow rule proves the wake needs no model turn; fail-open.
 EOF
