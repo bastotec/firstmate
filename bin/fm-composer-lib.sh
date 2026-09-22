@@ -1557,6 +1557,9 @@ fm_composer_queued_enter_verdict() {  # <composer-state> <busy|idle|unknown>
 # so a literal `❯` there was a genuine draft and stays pending. Require all
 # three independent facts - styled bytes, the exact prompt-only content, and a
 # complete reverse-video blank cell - before discarding the row as furniture.
+# A plain capture erases that evidence, so cmux and Orca keep the same idle row
+# `unknown`; their guarded lifecycle boundary remains the recovery-grade backend
+# contract in docs/agent-control.md, while steering can still ring on `unknown`.
 # This also handles a complete OSC reply on the row because the shared terminal
 # parser removes that protocol control before the exact-content check.
 # Accepted residual limitation: after a whitespace-only draft moves its cursor
