@@ -77,6 +77,13 @@
 #                two transcript rules is otherwise exactly the strict rule's
 #                unidentifiable blank row.
 #
+# KNOWN PI DIALOG BOUNDARY: the structurally bounded selector check is a tmux
+# identity primitive and does not run on stream, zellij, cmux, or Orca. A
+# blocked selector above idle cursor furniture therefore reads `empty` on
+# stream and zellij and `unknown` on cmux and Orca. Stream guarded exit can
+# submit `/quit`; steering rings on both verdicts and can submit Enter to the
+# selected option. This accepted limitation remains pending the move to Deck.
+#
 # THE SAFETY RULE for glyphs: a bare shell prompt glyph (`>` `$` `%` `#`) -
 # what a pane shows once its agent has exited to a plain login shell - is a
 # genuine empty agent composer ONLY inside a bordered container. On a bare row
