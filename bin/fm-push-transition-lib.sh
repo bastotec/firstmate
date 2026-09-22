@@ -140,7 +140,7 @@ mark_surface_reported() {  # <status-file> <reported-signature>
 
 # Act on a fresh actionable transition from a push-capable backend.
 handle_push_transition() {  # <backend> <session> <record>
-  local backend=$1 session=$2 record=$3 pane_id to window task reason span_record rest surface_end='' surface_ident='' wake_appended=1
+  local backend=$1 session=$2 record=$3 pane_id to window task reason span_record rest surface_end='' surface_ident=''
   pane_id=$(fm_transition_pane_id "$record")
   to=$(fm_transition_to_status "$record")
   [ -n "$pane_id" ] || { sleep 1; return; }
@@ -161,13 +161,8 @@ handle_push_transition() {  # <backend> <session> <record>
     0|1) surface_end=${span_record%%$'\t'*}; rest=${span_record#*$'\t'}; surface_ident=${rest%%$'\t'*} ;;
   esac
   reason="stale: $window (herdr: agent $to - waiting on human, escalated immediately, not via wedge timer)"
-  if declare -F watcher_wake_append >/dev/null 2>&1; then
-    watcher_wake_append stale "$window" "$reason" || exit 1
-    wake_appended=$FM_WATCH_WAKE_APPENDED
-  else
-    fm_wake_append stale "$window" "$reason" || exit 1
-  fi
+  fm_wake_append stale "$window" "$reason" || exit 1
   fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
   mark_surfaced "$STATE/$task.status" "$surface_end" "$surface_ident"
-  [ "$wake_appended" -eq 0 ] || wake "$reason"
+  wake "$reason"
 }
