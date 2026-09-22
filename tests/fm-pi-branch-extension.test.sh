@@ -1993,6 +1993,94 @@ EOF
   pass "a settled branch turn without a durable outcome falls back and releases its grant for main replay"
 }
 
+test_repeated_same_key_rows_share_one_presented_grant() {
+  local repo home out status
+  repo="$TMP_ROOT/deduped-grant-root"
+  home="$TMP_ROOT/deduped-grant-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, fire, home, realRoot, sentToMain, defaultSessionCtx }; })()`);
+const { pi, makeOffer, fire, home, realRoot, sentToMain, defaultSessionCtx } = globalThis.__t;
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+
+globalThis.__fmExecuteBranchBash = async (context) => {
+  const result = spawnSync("bash", ["-c", context.command], {
+    encoding: "utf8",
+    cwd: context.cwd,
+    env: context.env,
+  });
+  return {
+    content: [{ type: "text", text: `${result.stdout}${result.stderr}` }],
+    details: { stdout: result.stdout, stderr: result.stderr, exitCode: result.status },
+    isError: result.status !== 0,
+  };
+};
+
+async function runFleetCommand(session, args) {
+  const bash = session.options.customTools.find((tool) => tool.name === "bash");
+  const result = await bash.execute(
+    `deduped-grant-${args.length}`,
+    { command: ["bin/fm-wake-drain.sh", ...args].join(" ") },
+    undefined,
+    undefined,
+    {},
+  );
+  if (result.isError) throw new Error(`fleet command failed: ${JSON.stringify(result)}`);
+  return result.details;
+}
+
+await fire("session_start", {}, defaultSessionCtx);
+globalThis.__fmOnBranchPrompt = async ({ session }) => {
+  const drained = await runFleetCommand(session, []);
+  const presented = drained.stdout.split("\n").filter((line) => line.includes("\tsignal\tbranch-driver.status\t"));
+  if (presented.length !== 1 || !presented[0].includes("\t2\tsignal\tbranch-driver.status\tsignal: newest status")) {
+    throw new Error(`branch drain did not present only the latest repeated status row: ${drained.stdout}`);
+  }
+  const ack = drained.stderr.match(/--ack-through ([0-9]+) --recovery-generation ([A-Za-z0-9._-]+)/);
+  if (!ack || ack[1] !== "2") throw new Error(`branch drain returned the wrong acknowledgement: ${drained.stderr}`);
+  const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+  const recorded = await report.execute(
+    "deduped-status",
+    { task: "branch-driver", wakeSeq: "2", verdict: "routine", summary: "handled the newest repeated status" },
+    undefined,
+    undefined,
+    {},
+  );
+  if (recorded.isError) throw new Error(`deduped row report failed: ${JSON.stringify(recorded)}`);
+  await runFleetCommand(session, ["--ack-through", ack[1], "--recovery-generation", ack[2]]);
+};
+
+writeFileSync(
+  `${home}/state/.wake-queue`,
+  "1\t1\tsignal\tbranch-driver.status\tsignal: older status\n" +
+    "2\t2\tsignal\tbranch-driver.status\tsignal: newest status\n",
+);
+const offer = makeOffer("signal: repeated branch-driver status");
+pi.events.emit("fm-branch-supervision:dispatch", offer);
+if (!offer.accepted) throw new Error("branch refused repeated same-key rows");
+const failure = await offer.settlement.then(() => null, (error) => error);
+if (failure !== null) throw new Error(`one report did not settle the presented deduplicated grant: ${String(failure)}`);
+if (existsSync(`${home}/state/.branch-eligible-rows`)) throw new Error("settled deduplicated grant remained claimed");
+if (readFileSync(`${home}/state/.wake-queue`, "utf8").trim() !== "") {
+  throw new Error("acknowledging the latest presented row did not consume the folded queue rows");
+}
+const outcomes = readFileSync(`${home}/state/branch-outcomes.jsonl`, "utf8").trim().split("\n").filter(Boolean);
+if (outcomes.length !== 1 || JSON.parse(outcomes[0]).summary !== "handled the newest repeated status") {
+  throw new Error(`deduplicated grant did not produce exactly one durable outcome: ${outcomes}`);
+}
+if (sentToMain.length !== 1) throw new Error(`deduplicated grant delivered ${sentToMain.length} outcomes`);
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "same-key queue rows must align grant coverage with drain presentation: $out"
+  pass "same-key wake rows fold into one reported grant and acknowledge together"
+}
+
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown() {
   local repo home out status
   repo="$TMP_ROOT/provider-error-root"
@@ -2202,7 +2290,7 @@ function dispatchTwoRowGrant(label) {
   writeFileSync(
     `${home}/state/.wake-queue`,
     `1\t1\tsignal\tbranch-driver.status\t${label} first\n` +
-      `2\t2\tsignal\tbranch-driver.status\t${label} second\n`,
+      `2\t2\tsignal\tbranch-driver.turn-ended\t${label} second\n`,
   );
   const offer = makeOffer(`signal: ${label}`);
   pi.events.emit("fm-branch-supervision:dispatch", offer);
@@ -5329,6 +5417,7 @@ test_branch_report_refuses_a_task_the_wake_did_not_name
 test_branch_predrain_recheck_excludes_new_main_owned_row_without_deferring_eligible_work
 test_branch_predrain_needs_decision_keeps_routine_row_branch_eligible
 test_settled_branch_prompt_releases_unacknowledged_grant
+test_repeated_same_key_rows_share_one_presented_grant
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown
 test_model_chain_falls_back_on_provider_error_and_returns_to_the_preferred_model
 test_model_chain_rejects_malformed_lines_and_reprobes_unresolvable_entries

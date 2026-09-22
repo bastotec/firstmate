@@ -1638,7 +1638,7 @@ ${context.command}
         // the drain; that residual is accepted by the confused-agent-grade boundary.
         const entryOffset = sessionManager.getEntries().length;
         const promptWakeScope = {
-          rows: new Map(Object.entries(scope.eligibleTaskBySeq)),
+          rows: new Map(Object.entries(scope.presentedTaskBySeq)),
           reported: new Set<string>(),
           unscoped: heartbeat,
         };
