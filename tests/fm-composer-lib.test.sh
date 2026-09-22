@@ -503,7 +503,9 @@ test_matrix_pi_separated_needs_identity() {
   assert_screen "pi 0.85.1 multi-space draft before cursor on zellij" pending "$CAPS_STYLED_NOID" "$typed"
   assert_screen "pi 0.85.1 prompt without styled cursor proof" pending "$caps_plain_id" \
     $'transcript\n────────────────────────\n ❯  \n────────────────────────' '' "$pi_idle"
-  assert_screen "pi 0.85.1 plain cursor row without geometry defers" unknown "$CAPS_PLAIN" \
+  # Plain captures erase the reverse-video proof, so the exact cmux/Orca
+  # capability profile remains unknown rather than guessing from the glyph.
+  assert_screen "pi 0.85.1 plain idle row stays unknown with styled=0 identity=0" unknown "$CAPS_PLAIN" \
     $'transcript\n────────────────────────\n ❯  \n────────────────────────'
 
   # A complete OSC palette response is terminal protocol furniture. Both
