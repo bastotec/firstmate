@@ -3,7 +3,7 @@
 // It consumes only a complete OSC 4 response with a structural prefix, valid
 // palette grammar, and BEL or ST terminator; every malformed or timed-out
 // candidate is replayed byte-for-byte to the editor.
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { EditorComponent, TUI } from "@earendil-works/pi-tui";
 
 const ESC = "\x1b";
@@ -21,6 +21,7 @@ type InputForwarder = (data: string) => void;
 
 export class PiTerminalResponseInputFilter {
   private pending = "";
+  private pendingChunks: string[] = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly forward: InputForwarder;
   private readonly onDeferredForward: () => void;
@@ -39,12 +40,14 @@ export class PiTerminalResponseInputFilter {
   handleInput(data: string): void {
     if (this.pending) {
       this.pending += data;
+      this.pendingChunks.push(data);
       this.resolvePending();
       return;
     }
     if (OSC_PALETTE_RESPONSE.test(data)) return;
     if (this.isPaletteResponsePrefix(data)) {
       this.pending = data;
+      this.pendingChunks = [data];
       this.scheduleFlush();
       return;
     }
@@ -54,12 +57,14 @@ export class PiTerminalResponseInputFilter {
   dispose(): void {
     this.clearTimer();
     this.pending = "";
+    this.pendingChunks = [];
   }
 
   private resolvePending(): void {
     if (OSC_PALETTE_RESPONSE.test(this.pending)) {
       this.clearTimer();
       this.pending = "";
+      this.pendingChunks = [];
       return;
     }
     if (this.hasControlTerminator(this.pending) || !this.isPaletteResponsePrefix(this.pending)) {
@@ -70,6 +75,7 @@ export class PiTerminalResponseInputFilter {
   }
 
   private isPaletteResponsePrefix(data: string): boolean {
+    if (data.length >= 2 && OSC_PALETTE_PREFIX.startsWith(data)) return true;
     if (!data.startsWith(OSC_PALETTE_PREFIX)) return false;
     let body = data.slice(OSC_PALETTE_PREFIX.length);
     if (body.endsWith(ESC)) body = body.slice(0, -1);
@@ -94,9 +100,10 @@ export class PiTerminalResponseInputFilter {
   private flush(): void {
     this.clearTimer();
     if (!this.pending) return;
-    const pending = this.pending;
+    const chunks = this.pendingChunks;
     this.pending = "";
-    this.forward(pending);
+    this.pendingChunks = [];
+    for (const chunk of chunks) this.forward(chunk);
     this.onDeferredForward();
   }
 }
@@ -117,9 +124,8 @@ function guardEditor(editor: EditorComponent, tui: TUI): GuardedEditor {
   });
 }
 
-export async function installPiTerminalResponseInputGuard(ctx: ExtensionContext): Promise<() => void> {
+export function installPiTerminalResponseInputGuard(ctx: ExtensionContext): () => void {
   if (ctx.mode !== "tui") return () => {};
-  const { CustomEditor } = await import("@earendil-works/pi-coding-agent");
   const previous = ctx.ui.getEditorComponent();
   let current: GuardedEditor | undefined;
   ctx.ui.setEditorComponent((tui, theme, keybindings) => {
@@ -133,4 +139,13 @@ export async function installPiTerminalResponseInputGuard(ctx: ExtensionContext)
     current = undefined;
     ctx.ui.setEditorComponent(previous);
   };
+}
+
+export default function registerPiTerminalResponseInputGuard(pi: ExtensionAPI): void {
+  let dispose = () => {};
+  pi.on("session_start", (_event, ctx) => {
+    dispose();
+    dispose = installPiTerminalResponseInputGuard(ctx);
+  });
+  pi.on("session_shutdown", () => dispose());
 }
