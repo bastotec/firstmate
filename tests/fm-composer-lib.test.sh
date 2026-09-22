@@ -844,23 +844,6 @@ const makeFilter = (timeout = 30) => {
   filter.dispose();
 }
 {
-  const { filter, forwarded } = makeFilter(200);
-  filter.handleInput(`${ESC}]`);
-  await sleep(60);
-  filter.handleInput("4");
-  await sleep(60);
-  filter.handleInput(`;38;rgb:0000/afaf/d7d7${BEL}`);
-  assert.deepEqual(forwarded, []);
-  filter.dispose();
-}
-{
-  const { filter, forwarded } = makeFilter();
-  filter.handleInput(`${ESC}]4;38`);
-  for (const char of `;rgb:0000/afaf/d7d7${BEL}`) filter.handleInput(char);
-  assert.deepEqual(forwarded, []);
-  filter.dispose();
-}
-{
   const { filter, forwarded } = makeFilter();
   const literal = "4;38;rgb:0000/afaf/d7d7 is a real draft";
   filter.handleInput(literal);
@@ -879,10 +862,11 @@ const makeFilter = (timeout = 30) => {
   const incomplete = `${ESC}]4;38;rgb:0000/afaf`;
   filter.handleInput(incomplete);
   filter.handleInput("a");
+  filter.handleInput("deadbeef");
+  assert.deepEqual(forwarded, ["a", "deadbeef"]);
   await sleep(30);
-  assert.deepEqual(forwarded, []);
   filter.handleInput("z");
-  assert.deepEqual(forwarded, ["z"]);
+  assert.deepEqual(forwarded, ["a", "deadbeef", "z"]);
   filter.dispose();
 }
 {
@@ -946,14 +930,14 @@ const makeFilter = (timeout = 30) => {
   ctx.ui.setEditorComponent(laterFactory);
   activeEditor = factory({}, {}, {});
 
-  dispatch(`${ESC}]`);
-  await sleep(60);
-  dispatch("4");
-  await sleep(60);
-  dispatch(`;38;rgb:0000/afaf/d7d7${BEL}`);
+  dispatch(`${ESC}]4;38;rgb:0000/afaf/d7d7${BEL}`);
   assert.deepEqual(editor.events, []);
   assert.equal(editor.text, "");
   assert.equal(pasteCalls, 0);
+
+  dispatch(`${ESC}]4;38;not-a-color${BEL}`);
+  assert.deepEqual(editor.events, []);
+  assert.equal(editor.text, "");
 
   dispatch(`${ESC}]4;38`);
   dispatch("x");
@@ -961,21 +945,26 @@ const makeFilter = (timeout = 30) => {
   assert.equal(editor.text, "x");
   assert.equal(renders, 1);
   assert.equal(pasteCalls, 0);
+  await sleep(650);
 
   editor.events = [];
   editor.text = "";
   renders = 0;
   dispatch(`${ESC}]4;38;`);
   dispatch("a");
-  await sleep(650);
-  assert.deepEqual(editor.events, []);
-  assert.equal(editor.text, "");
-  assert.equal(renders, 0);
+  dispatch("deadbeef");
+  assert.deepEqual(editor.events, ["a", "deadbeef"]);
+  assert.equal(editor.text, "adeadbeef");
+  assert.equal(renders, 2);
   assert.equal(pasteCalls, 0);
+  await sleep(650);
+  assert.deepEqual(editor.events, ["a", "deadbeef"]);
+  assert.equal(editor.text, "adeadbeef");
+  assert.equal(renders, 2);
   dispatch("z");
-  assert.deepEqual(editor.events, ["z"]);
-  assert.equal(editor.text, "z");
-  assert.equal(renders, 1);
+  assert.deepEqual(editor.events, ["a", "deadbeef", "z"]);
+  assert.equal(editor.text, "adeadbeefz");
+  assert.equal(renders, 3);
 
   handlers.get("session_shutdown")();
   assert.equal(subscribed, false);
