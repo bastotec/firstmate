@@ -50,11 +50,12 @@
 #   wake-gate/shadow.log     "<epoch>\t<task>\t<mode>\t<call|skip>\t<why>\t<working>\t<waiting>\t<failure>\t<finished>"
 #   wake-gate/usage.log      "<epoch>\t<calls>\t<in-tok>\t<out-tok>\t<ms>\t<outcome>"
 #
+# CONFIGURATION
+#   config/wake-gate-key-var first line names the gateway-key variable (opt-in)
+#   config/wake-gate-mode    exact trimmed `enforce` enables absorption; every
+#                            other value selects shadow mode
+#
 # ENVIRONMENT
-#   FM_WAKE_GATE_KEY_VAR     secrets var naming the gateway key (opt-in); else the
-#                            first line of config/wake-gate-key-var
-#   FM_WAKE_GATE_MODE        shadow (default) or enforce; else the first line of
-#                            config/wake-gate-mode
 #   FM_WAKE_GATE_SECRETS     secrets file (default ~/.secrets)
 #   FM_WAKE_GATE_TIMEOUT     seconds bound on the Jev call (default 6)
 #   FM_WAKE_GATE_EVIDENCE_TIMEOUT  seconds bound on each evidence command (default 8)
@@ -112,8 +113,8 @@ first_line_trimmed() {  # <file>
 }
 
 gate_key_var() {
-  local v=${FM_WAKE_GATE_KEY_VAR:-}
-  if [ -z "$v" ] && [ -f "$CONFIG/wake-gate-key-var" ]; then
+  local v=
+  if [ -f "$CONFIG/wake-gate-key-var" ]; then
     v=$(first_line_trimmed "$CONFIG/wake-gate-key-var")
   fi
   case "$v" in
@@ -123,8 +124,8 @@ gate_key_var() {
 }
 
 gate_mode() {
-  local m=${FM_WAKE_GATE_MODE:-}
-  if [ -z "$m" ] && [ -f "$CONFIG/wake-gate-mode" ]; then
+  local m=
+  if [ -f "$CONFIG/wake-gate-mode" ]; then
     m=$(first_line_trimmed "$CONFIG/wake-gate-mode")
   fi
   case "$m" in enforce) printf 'enforce' ;; *) printf 'shadow' ;; esac

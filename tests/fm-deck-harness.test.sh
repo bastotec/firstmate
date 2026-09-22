@@ -265,9 +265,10 @@ test_completed_turn_removes_busy_ack_before_the_next_steer() {
   make_fake_deck "$dir"
   mkdir -p "$dir/state"
   printf -v command 'exec env FM_TEST_STATUS=%q %q --id t1 --state %q --deck %q -- %q' \
-    "$dir/state/t1.status" "$WORKER" "$dir/state" "$dir/deck" 'write-status initial'
+    "$dir/state/t1.status" "$WORKER" "$dir/state" "$dir/deck" 'write-status prior ctrl+c to stop'
   tmux new-session -d -s "$session" -n deck -x 100 -y 30 "$command" || fail "could not start the Deck terminal fixture"
   target="$session:deck"
+  printf 'window=%s\nbackend=tmux\nharness=deck\nkind=ship\n' "$target" > "$dir/state/t1.meta"
   for _ in $(seq 80); do
     capture=$(tmux capture-pane -p -t "$target" -S -30 2>/dev/null || true)
     last=$(printf '%s\n' "$capture" | awk 'NF { line=$0 } END { print line }')
@@ -278,7 +279,9 @@ test_completed_turn_removes_busy_ack_before_the_next_steer() {
     tmux kill-session -t "$session" 2>/dev/null
     fail "the Deck fixture never reached its first idle prompt"
   fi
-  assert_not_contains "$capture" 'deck working - ctrl+c to stop' "a completed Deck turn left a stale busy acknowledgement"
+  assert_not_contains "$capture" '⛵ deck working - ctrl+c to stop' "a completed Deck turn left a stale busy acknowledgement"
+  assert_contains "$capture" 'echo: write-status prior ctrl+c to stop' \
+    "the fixture did not retain rendered text containing the generic busy token"
 
   rc=0
   FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_SEND_SETTLE=0 FM_SEND_SLEEP=0.05 \

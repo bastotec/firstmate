@@ -236,7 +236,7 @@ Put the gateway key in `~/.secrets`, then put that variable's name on the first 
 Leading and trailing whitespace is ignored, but the remaining key variable must be a shell identifier (`[A-Za-z_][A-Za-z0-9_]*`) or the gate stays inert.
 With the key-variable file absent the gate is inert, while a missing key, runtime, evidence read, model response, or decision-log write escalates the alarm instead of absorbing it.
 An absent `config/wake-gate-mode`, or any first-line value other than exactly `enforce` after trimming outer whitespace, selects shadow mode and changes no wake; use `enforce` only after reviewing the shadow results to let proven skips be absorbed.
-Both config files are home-local, gitignored, and not inherited by secondmate homes.
+Both config files are home-local, gitignored, and not inherited by secondmate homes; environment variables cannot opt in or enable enforcement.
 `bin/fm-wake-gate.sh`'s header owns the exact evidence, thresholds, state files, reporting commands, and fail-open mechanics.
 
 ## Possible-ask ranking (config/ask-triage-key-var)

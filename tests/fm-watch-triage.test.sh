@@ -1901,7 +1901,9 @@ SH
   printf '%s' "$(hash_text "idle building output")" > "$state/.stale-$key"
   printf '1\n' > "$state/.count-$key"
   export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
-  mkdir -p "$state/wake-gate"
+  mkdir -p "$dir/config" "$state/wake-gate"
+  printf 'DUMMY_KEY\n' > "$dir/config/wake-gate-key-var"
+  printf 'enforce\n' > "$dir/config/wake-gate-mode"
   printf '%s\t\n' "$(date +%s)" > "$state/wake-gate/gated.look"
 
   # Working evidence, recently looked at: the alarm is absorbed, nothing is queued.
@@ -1909,9 +1911,9 @@ SH
   : > "$state/.writing-since-$key"
   : > "$state/.writing-resurfaced-$key"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
-    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
-    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE=enforce \
-    FM_WAKE_GATE_HELPER="$stub" FM_WAKE_GATE_EVIDENCE_CMD="$evid" FM_TEST_ANSWERS="$(printf '0.92\t0.05\t0.06\t0.04')" "$WATCH" > "$out" &
+    FM_STATE_OVERRIDE="$state" FM_CONFIG_OVERRIDE="$dir/config" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WAKE_GATE_HELPER="$stub" \
+    FM_WAKE_GATE_EVIDENCE_CMD="$evid" FM_TEST_ANSWERS="$(printf '0.92\t0.05\t0.06\t0.04')" "$WATCH" > "$out" &
   pid=$!
   if ! wait_poll_cycle "$state" "$pid"; then
     reap "$pid"; fail "watcher alarmed although the wake gate absorbed the wedge: $(cat "$out")"
@@ -1927,9 +1929,9 @@ SH
   # recorded only after the alarm was queued.
   echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"; : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
-    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
-    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE=enforce \
-    FM_WAKE_GATE_HELPER="$stub" FM_WAKE_GATE_EVIDENCE_CMD="$evid" FM_TEST_ANSWERS="$(printf '0.05\t0.05\t0.95\t0.10')" "$WATCH" > "$out" &
+    FM_STATE_OVERRIDE="$state" FM_CONFIG_OVERRIDE="$dir/config" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WAKE_GATE_HELPER="$stub" \
+    FM_WAKE_GATE_EVIDENCE_CMD="$evid" FM_TEST_ANSWERS="$(printf '0.05\t0.05\t0.95\t0.10')" "$WATCH" > "$out" &
   pid=$!
   wait_for_exit "$pid" 100 || fail "watcher did not alarm when the wake gate escalated"
   grep -F "possible wedge" "$out" >/dev/null || fail "the escalated alarm lost its possible-wedge reason"

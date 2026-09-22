@@ -457,7 +457,7 @@ EOF
 }
 
 cmd_send() {
-  local id=$1 message=$2 delivery_mode=${3:-} rec ring_rc=0 meta meta_lock
+  local id=$1 message=$2 delivery_mode=${3:-} rec ring_rc=0 meta meta_lock harness
   validate_id "$id"
   [ -z "$delivery_mode" ] || [ "$delivery_mode" = fire-and-forget ] || die "invalid send delivery mode"
   validate_home "$id"
@@ -482,6 +482,7 @@ cmd_send() {
     fm_lock_release "$meta_lock"
     die "steering-inbox record could not be written under $CONTROL_STATE/$id.inbox"
   fi
+  harness=$(fm_meta_get "$REMOTE_ENDPOINT_META" harness)
   fm_lock_release "$meta_lock"
   case "$rec" in
     */handled/*)
@@ -491,7 +492,7 @@ cmd_send() {
       return 0
       ;;
   esac
-  fm_task_inbox_ring "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" "$rec" "fm-$id" || ring_rc=$?
+  fm_task_inbox_ring "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" "$rec" "fm-$id" "$harness" || ring_rc=$?
   case "$ring_rc" in
     1) printf 'notice: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at %s\n' "$rec" >&2 ;;
     2) printf 'notice: doorbell did not reach %s; the steer is durably recorded at %s\n' "$REMOTE_ENDPOINT_TARGET" "$rec" >&2 ;;

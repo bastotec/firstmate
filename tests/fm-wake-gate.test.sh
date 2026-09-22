@@ -13,11 +13,16 @@ set -u
 
 GATE="$ROOT/bin/fm-wake-gate.sh"
 TMP_ROOT=$(fm_test_tmproot fm-wake-gate-tests)
-unset FM_WAKE_GATE_KEY_VAR FM_WAKE_GATE_MODE
 
 # new_state <name> -> echoes a fresh empty state dir
 new_state() {
   local d="$TMP_ROOT/$1"; mkdir -p "$d"; printf '%s' "$d"
+}
+
+configure_gate() {  # <state> <mode>
+  mkdir -p "$1/config"
+  printf 'DUMMY_KEY\n' > "$1/config/wake-gate-key-var"
+  printf '%s\n' "$2" > "$1/config/wake-gate-mode"
 }
 
 # --- stale-verdict: the evidence rule (stub helper and stub evidence; no network) ---
@@ -52,8 +57,9 @@ SH
 chmod +x "$TIMEOUT_BIN/timeout"
 WEDGE='stale: w:fm-t1 (idle 300s, possible wedge)'
 raw_verdict() {  # <state> <mode> <answers> [reason] -> verdict and optional look flags
-  FM_STATE_DIR="$1" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" \
-    FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE="$2" FM_TEST_ANSWERS="$3" \
+  configure_gate "$1" "$2"
+  FM_STATE_DIR="$1" FM_CONFIG_OVERRIDE="$1/config" \
+    FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" FM_TEST_ANSWERS="$3" \
     "$GATE" stale-verdict t1 w:fm-t1 "${4:-$WEDGE}" --with-look 2>/dev/null
 }
 config_verdict() {  # <state> <answers> -> verdict from that state's config files
@@ -78,11 +84,11 @@ last_decision() { tail -1 "$1/wake-gate/shadow.log" | cut -f4,5; }
 WORKING='0.92 0.05 0.06 0.04'
 
 s=$(new_state sv-zero-evidence-timeout)
+configure_gate "$s" shadow
 : > "$TIMEOUT_LOG"
 FM_TEST_TIMEOUT_LOG="$TIMEOUT_LOG" PATH="$TIMEOUT_BIN:$PATH" FM_STATE_DIR="$s" \
-  FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" \
-  FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE=shadow FM_TEST_ANSWERS="$WORKING" \
-  FM_WAKE_GATE_EVIDENCE_TIMEOUT=0 \
+  FM_CONFIG_OVERRIDE="$s/config" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" \
+  FM_TEST_ANSWERS="$WORKING" FM_WAKE_GATE_EVIDENCE_TIMEOUT=0 \
   "$GATE" stale-verdict t1 w:fm-t1 "$WEDGE" >/dev/null 2>&1
 [ "$(head -1 "$TIMEOUT_LOG")" = 8 ] \
   || fail "a zero evidence timeout did not fall back to the positive default"
@@ -96,10 +102,13 @@ s=$(new_state sv-preflight-cost)
 pass "preflight failures record zero Jev calls"
 
 s=$(new_state sv-inert)
-[ "$(FM_STATE_DIR="$s" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD="$EVID" FM_TEST_ANSWERS="$WORKING" \
-  "$GATE" stale-verdict t1 w:fm-t1 "$WEDGE" 2>/dev/null)" = escalate ] || fail "without a key variable the gate must escalate"
-[ ! -e "$s/wake-gate/shadow.log" ] || fail "an inert gate must not log a decision"
-pass "stale-verdict is inert without the opt-in key variable"
+[ "$(FM_STATE_DIR="$s" FM_CONFIG_OVERRIDE="$s/config" FM_WAKE_GATE_HELPER="$STUB" \
+  FM_WAKE_GATE_EVIDENCE_CMD="$EVID" FM_TEST_ANSWERS="$WORKING" \
+  FM_WAKE_GATE_KEY_VAR=DUMMY_KEY FM_WAKE_GATE_MODE=enforce \
+  "$GATE" stale-verdict t1 w:fm-t1 "$WEDGE" 2>/dev/null)" = escalate ] \
+  || fail "without the opt-in config file the gate must escalate"
+[ ! -e "$s/wake-gate/shadow.log" ] || fail "environment aliases activated the inert gate"
+pass "only the config files can opt in and enable enforcement"
 
 s=$(new_state sv-config-trim)
 mkdir -p "$s/config" "$s/wake-gate"
@@ -330,12 +339,15 @@ verdict "$s" enforce "$WORKING" >/dev/null
 [ "$(verdict "$s" enforce error)" = escalate ] || fail "SAFETY: a Jev failure must escalate"
 [ "$(verdict "$s" enforce "$WORKING" 'stale: w:fm-t1 (unread firstmate instruction: x.msg still unhandled)')" = escalate ] \
   || fail "SAFETY: an unread-instruction alarm is never gate-able"
-[ "$(FM_STATE_DIR="$s" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_EVIDENCE_CMD=/nonexistent FM_WAKE_GATE_KEY_VAR=DUMMY_KEY \
-  FM_WAKE_GATE_MODE=enforce FM_TEST_ANSWERS="$WORKING" "$GATE" stale-verdict t1 w:fm-t1 "$WEDGE" 2>/dev/null)" = escalate ] \
+[ "$(FM_STATE_DIR="$s" FM_CONFIG_OVERRIDE="$s/config" FM_WAKE_GATE_HELPER="$STUB" \
+  FM_WAKE_GATE_EVIDENCE_CMD=/nonexistent FM_TEST_ANSWERS="$WORKING" \
+  "$GATE" stale-verdict t1 w:fm-t1 "$WEDGE" 2>/dev/null)" = escalate ] \
   || fail "SAFETY: missing evidence must escalate"
 
 partial="$TMP_ROOT/partial-evidence"
-mkdir -p "$partial/bin" "$partial/state/wake-gate"
+mkdir -p "$partial/bin" "$partial/config" "$partial/state/wake-gate"
+printf 'DUMMY_KEY\n' > "$partial/config/wake-gate-key-var"
+printf 'enforce\n' > "$partial/config/wake-gate-mode"
 cp "$GATE" "$partial/bin/fm-wake-gate.sh"
 cp "$ROOT/bin/fm-state-io.py" "$partial/bin/fm-state-io.py"
 cat > "$partial/bin/fm-crew-state.sh" <<'SH'
@@ -349,10 +361,10 @@ printf 'pane: visibly working\n'
 SH
 chmod +x "$partial/bin/"*.sh
 printf '%s\t\n' "$(date +%s)" > "$partial/state/wake-gate/t1.look"
-[ "$(FM_STATE_DIR="$partial/state" FM_WAKE_GATE_HELPER="$STUB" FM_WAKE_GATE_KEY_VAR=DUMMY_KEY \
-  FM_WAKE_GATE_MODE=enforce FM_TEST_ANSWERS="$WORKING" "$partial/bin/fm-wake-gate.sh" stale-verdict t1 w:fm-t1 "$WEDGE" 2>/dev/null)" = escalate ] \
+[ "$(FM_STATE_DIR="$partial/state" FM_CONFIG_OVERRIDE="$partial/config" FM_WAKE_GATE_HELPER="$STUB" \
+  FM_TEST_ANSWERS="$WORKING" "$partial/bin/fm-wake-gate.sh" stale-verdict t1 w:fm-t1 "$WEDGE" 2>/dev/null)" = escalate ] \
   || fail "SAFETY: one failed evidence read must invalidate the other read"
-[ "$(FM_STATE_DIR="$s" FM_WAKE_GATE_KEY_VAR=DUMMY_KEY "$GATE" stale-verdict '../x' w "$WEDGE" 2>/dev/null)" = escalate ] \
+[ "$(FM_STATE_DIR="$s" FM_CONFIG_OVERRIDE="$s/config" "$GATE" stale-verdict '../x' w "$WEDGE" 2>/dev/null)" = escalate ] \
   || fail "SAFETY: an invalid task id must escalate"
 pass "helper errors, non-wedge alarms, missing evidence, and bad ids escalate (fail-open)"
 
