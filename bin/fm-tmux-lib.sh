@@ -113,13 +113,19 @@ fm_tmux_pi_prompt_is_blocked() {  # <target>
   fm_composer_normalize_trim_var line
   _fm_composer_pi_separator_row "$line" || return 1
   row=$((dialog_close - 1))
-  while [ "$row" -ge 0 ] && [ "$row" -ge $((dialog_close - 24)) ]; do
+  while [ "$row" -ge 0 ]; do
     line=$(_fm_composer_screen_row "$row" "$pane")
     fm_composer_normalize_trim_var line
     if _fm_composer_pi_separator_row "$line"; then
       dialog_open=$row
       break
     fi
+    case "$line" in
+      'Tool approval'|'Project trust'|'Select model')
+        dialog_open=$row
+        break
+        ;;
+    esac
     row=$((row - 1))
   done
   [ "$dialog_open" -ge 0 ] || return 1
