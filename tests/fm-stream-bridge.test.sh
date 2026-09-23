@@ -527,7 +527,7 @@ test_a_composer_command_reaches_the_worker_and_is_acknowledged() {
   pass "bridge: a composer command reaches the worker and is acknowledged"
 }
 
-test_a_duplicate_command_id_keeps_the_leaf_that_received_it() {
+test_a_duplicate_command_id_refuses_a_different_payload() {
   start_hub command-id-leaf
   local first second out command_id=c-reused
   first=$(start_real_agent first)
@@ -539,10 +539,12 @@ test_a_duplicate_command_id_keeps_the_leaf_that_received_it() {
   worker_ran "$first" FIRST-RECEIVED || fail "the first worker never received its order"
   out=$(commander "$(composer_command "$command_id" "box-a/second-$RUN" \
     "echo SECOND-MUST-NOT-RUN" "$second")")
-  assert_equals "$(printf '%s' "$out" | jq -r '.state')" accepted \
-    "reusing an accepted command id should report its recorded result"
-  assert_equals "$(printf '%s' "$out" | jq -r '.leaf_worker_id')" "box-a/first-$RUN" \
-    "the recorded acceptance must name the leaf that actually received it"
+  assert_equals "$(printf '%s' "$out" | jq -r '.state')" refused \
+    "reusing an accepted command id for another payload must be refused"
+  assert_contains "$(printf '%s' "$out" | jq -r '.reason')" order_id_conflict \
+    "the refusal should identify an idempotency conflict"
+  assert_equals "$(printf '%s' "$out" | jq -r '.leaf_worker_id')" "box-a/second-$RUN" \
+    "the refusal must not acknowledge the leaf from an earlier payload"
   assert_not_contains "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
     "$URL/v1/tasks/$second/capture?lines=40" 2>/dev/null)" SECOND-MUST-NOT-RUN \
     "a reused command id must not fabricate acceptance for another leaf"
@@ -556,13 +558,15 @@ test_a_duplicate_command_id_keeps_the_leaf_that_received_it() {
   out=$(commander "$(composer_command c-reused-refusal "box-a/second-$RUN" \
     "echo REFUSED-ID-MUST-NOT-RUN" "$second")")
   assert_equals "$(printf '%s' "$out" | jq -r '.state')" refused \
-    "reusing a refused command id should report its recorded result"
-  assert_equals "$(printf '%s' "$out" | jq -r '.leaf_worker_id')" "box-a/legacy-$RUN" \
-    "a recorded refusal must keep the leaf whose order was actually considered"
+    "reusing a refused command id for another payload must be refused"
+  assert_contains "$(printf '%s' "$out" | jq -r '.reason')" order_id_conflict \
+    "a refused order id must remain bound to its original payload"
+  assert_equals "$(printf '%s' "$out" | jq -r '.leaf_worker_id')" "box-a/second-$RUN" \
+    "the conflict must not report the earlier refusal as this payload's answer"
   assert_not_contains "$(curl -sS -m 30 -H "Authorization: Bearer $VIEW_TOKEN" \
     "$URL/v1/tasks/$second/capture?lines=40" 2>/dev/null)" REFUSED-ID-MUST-NOT-RUN \
     "a reused refused command id must not resolve another leaf's command"
-  pass "bridge: a reused command id keeps its recorded leaf"
+  pass "bridge: a reused command id refuses a different payload"
 }
 
 test_a_command_for_a_worker_its_agent_reported_gone_is_nacked() {
@@ -764,7 +768,7 @@ test_serve_streams_ticks_and_goes_silent_without_the_hub
 test_refusals_end_the_command
 test_command_rebinds_to_the_active_hub_generation
 test_a_composer_command_reaches_the_worker_and_is_acknowledged
-test_a_duplicate_command_id_keeps_the_leaf_that_received_it
+test_a_duplicate_command_id_refuses_a_different_payload
 test_a_command_for_a_worker_its_agent_reported_gone_is_nacked
 test_a_command_aimed_at_a_replaced_execution_is_refused_without_claiming_absence
 test_a_command_without_a_valid_execution_is_refused

@@ -143,7 +143,7 @@ The PTY agent advertises that capability back on every endpoint registration, an
 Each internal HTTP order carries the hub generation returned by compatibility negotiation; a replacement hub rejects a stale generation before placement, the adapter renegotiates before retrying, and the Bridge `command`, `command_ack`, and `command_nack` records do not change.
 
 Reconciliation state lives in the hub's memory, not on disk.
-The journal retains at most 512 order ids, and while an id remains there a resend is answered from the original order, including when it overtakes the original placement.
+The journal retains at most 512 order ids, and while an id remains there an identical resend is answered from the original order, including when it overtakes the original placement; reuse with a different leaf, execution, or text is refused as an idempotency conflict.
 A taken command remains eligible for a late agent acknowledgement and a completed result remains idempotently answerable for at least 15 minutes, and an endpoint whose worker exits while acknowledgement is retrying keeps its publisher alive through the same window; a definitive command-id rejection or expiry ends retrying so later commands can still be polled, while the caller's unresolved order remains unconfirmed.
 A hub restart empties the journal along with the registry, so a resend after restart is a new order and cannot reconcile delivery from before the restart.
 
@@ -163,9 +163,9 @@ Tokens are class-scoped, and there are three classes:
 A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, so an operator credential is written `subscribe,control:<token>` and a home's own client credential, which both publishes and steers, is `publish,subscribe,control:<token>`.
 A bare token line grants `subscribe` alone, so the unqualified line is the read-only one.
 A viewing token cannot register an endpoint, publish, or steer a worker: input, status, and close are all refused with 403.
-Command retrieval and result submission additionally require the endpoint's private `command_capability`, returned only by registration and carried in the `X-Endpoint-Capability` request header.
+Command retrieval and result submission additionally require the endpoint's private `command_capability`, established by registration and carried in the `X-Endpoint-Capability` request header.
 A poll must name that endpoint; machine-wide command retrieval is refused.
-Re-registering an existing endpoint requires its current capability and rotates it; closing the endpoint revokes it.
+A recovering agent presents its current capability when registering an endpoint, and the hub adopts or retains that same value so retrying after a lost registration response is idempotent; closing the endpoint revokes it.
 Agents and tail adapters retain the capability only in memory, and listings, state reads, logs, and status lines never expose it.
 The Bridge command direction requires the hub's `endpoint_command_auth` capability before placing orders; the Python command wire shapes are unchanged.
 The Rust bridge remains a read-only feed, not a command adapter.

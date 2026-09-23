@@ -532,7 +532,7 @@ class Commander:
             order["hub_generation"] = self.client.command_generation
             status, body = self.client.post("/v1/orders", order)
             error = body.get("error") if isinstance(body, dict) else ""
-            if error not in ("hub_generation_changed", "bad_order_fields"):
+            if error != "hub_generation_changed":
                 return self.answer(command_id, leaf, status, body)
             if attempt:
                 raise BridgeError("the hub generation changed again while placing command %s"

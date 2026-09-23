@@ -844,15 +844,16 @@ class Order:
     with nothing to keep in step.
     """
 
-    __slots__ = ("order_id", "leaf_worker_id", "requested_execution_id",
+    __slots__ = ("order_id", "leaf_worker_id", "requested_execution_id", "text",
                  "execution_id", "created_at", "endpoint", "command", "refusal",
                  "status", "answered")
 
     def __init__(self, order_id: str, leaf: str, requested_execution: str,
-                 execution: str, endpoint: "Endpoint") -> None:
+                 text: str, execution: str, endpoint: "Endpoint") -> None:
         self.order_id = order_id
         self.leaf_worker_id = leaf
         self.requested_execution_id = requested_execution
+        self.text = text
         self.execution_id = execution
         self.created_at = _now()
         # The addressed endpoint's own record, or None when the leaf resolved
@@ -952,7 +953,7 @@ class Endpoint:
 
     def __init__(self, endpoint_id: str, machine: str, label: str, cwd: str,
                  rows: int, cols: int, ring_bytes: int, scrollback: int,
-                 result_retry: bool = False) -> None:
+                 result_retry: bool = False, command_capability: str = "") -> None:
         self.endpoint_id = endpoint_id
         self.machine = machine
         self.label = label
@@ -960,7 +961,7 @@ class Endpoint:
         self.rows = rows
         self.cols = cols
         self.result_retry = result_retry
-        self.command_capability = secrets.token_urlsafe(32)
+        self.command_capability = command_capability or secrets.token_urlsafe(32)
         self.created_at = _now()
         self.closed_at = 0.0
         # Who ended this endpoint: "agent" when its own agent reported the
@@ -1281,7 +1282,6 @@ class Hub:
                                    % endpoint_id)
                 with existing.lock:
                     self.authorize_endpoint(existing, machine, capability)
-                    existing.command_capability = secrets.token_urlsafe(32)
                 self.touch_machine(machine)
                 return existing
             for other in self.endpoints.values():
@@ -1302,7 +1302,8 @@ class Hub:
                                    % (machine, label))
             endpoint = Endpoint(endpoint_id, machine, label, cwd, rows, cols,
                                 DEFAULT_RING_BYTES, DEFAULT_SCROLLBACK,
-                                result_retry=result_retry)
+                                result_retry=result_retry,
+                                command_capability=capability)
             self.endpoints[endpoint_id] = endpoint
             self.touch_machine(machine)
             return endpoint
@@ -1545,10 +1546,20 @@ class Hub:
         order's text is typed once however many times its id is sent.
         """
         with self.lock:
-            winner = self.orders.setdefault(order.order_id, order)
+            winner = self.orders.get(order.order_id)
+            if winner is not None:
+                if (winner.leaf_worker_id != order.leaf_worker_id
+                        or winner.requested_execution_id != order.requested_execution_id
+                        or winner.text != order.text):
+                    raise HubError(
+                        HTTPStatus.CONFLICT, "order_id_conflict",
+                        "order_id %s is already bound to a different order"
+                        % order.order_id)
+                return winner
+            self.orders[order.order_id] = order
             while len(self.orders) > ORDER_JOURNAL_MAX:
                 self.orders.popitem(last=False)
-            return winner
+            return order
 
     def place_order(self, leaf: str, requested_execution: str, text: str,
                     order_id: str) -> "Order":
@@ -1563,7 +1574,7 @@ class Hub:
         returned on a resend.  A placement still in flight is waited out, so
         the caller gets the first order's fate instead of a second delivery.
         """
-        order = Order(order_id, leaf, requested_execution, "", None)
+        order = Order(order_id, leaf, requested_execution, text, "", None)
         try:
             existing = self.record_order(order)
             if existing is not order:
