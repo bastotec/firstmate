@@ -4918,8 +4918,17 @@ async def exercise():
         def send(self, *args): pass
         def send_json(self, *args): pass
         def first_audio(self): return None
-    mode = "ok"
+    mode = "timeout"
     sink = Sink()
+    deadline = relay.make_session(options("--turn-timeout", "0.05"), sink)
+    await deadline.start()
+    await deadline.talk_start()
+    await deadline.talk_end()
+    await asyncio.wait_for(deadline.turn_done.wait(), 1)
+    check(deadline.turn.get("timeout") is True,
+          "hybrid production deadline did not mark the turn as timed out")
+    await deadline.close()
+    mode = "ok"
     opts = options()
     session = relay.make_session(opts, sink)
     await session.start()
