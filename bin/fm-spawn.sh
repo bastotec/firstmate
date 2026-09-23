@@ -3596,6 +3596,13 @@ mkdir -p "$TASK_TMP/gotmp"
 mkdir -p "$STATE"
 STATE_REAL=$(cd "$STATE" && pwd -P)
 TURNEND="$STATE_REAL/$ID.turn-ended"
+if [ "$RELAUNCH" -eq 1 ] && [ "$RELAUNCH_PRIOR_HARNESS" = deck ]; then
+  python3 "$FM_ROOT/bin/fm-deck-stop.py" "$STATE_REAL" "$ID" "${FM_CONTROL_EXIT_WAIT:-30}" \
+    || {
+      echo "error: the prior Deck driver has not been proved stopped; refusing replacement" >&2
+      exit 1
+    }
+fi
 exclude_path() {
   local rel=$1 EXCL
   EXCL=$(git -C "$WT" rev-parse --git-path info/exclude 2>/dev/null || true)

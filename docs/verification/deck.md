@@ -58,6 +58,26 @@ Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy
 Those reads, the driver's fallback append, and turn-end publication use Python 3 descriptor-bound I/O, reject symlinks and non-regular or multiply linked files, and never touch an unsafe target.
 The terminal regression drives two real `fm-send.sh` steers through tmux and proves delivery from the next `deck-wrapper` turn start after an idle baseline while each completed turn removes its transient rendered working row.
 
+## Driver lifecycle and deadline continuation
+
+`bin/fm-deck-stop.py` owns the task-bound local driver stop proof used by both control-plane exit and the shared spawn-relaunch boundary; endpoint classification remains required independently.
+`bin/fm-deck-worker.sh` owns native deadline continuation and the per-turn deadline setting.
+Verified on 2026-09-23 with Deck 0.1.0 on macOS using a loopback HTTP server, without gateway credentials or model tokens:
+
+```sh
+bin/fm-test-run.sh tests/fm-deck-deadline-live-e2e.test.sh
+```
+
+Observed output:
+
+```text
+ok - deck 0.1.0: native deadline emits resumable session and exact run_failed reason
+```
+
+The guard pins the installed binary's nonzero exit, session-bearing `run_started`, and exact `run_failed` deadline error used to distinguish continuation from unrelated failures.
+Portable driver, physical-state-path, and stale-generation relaunch regressions are in `tests/fm-deck-harness.test.sh` and `tests/fm-control-relaunch.test.sh`.
+Other harnesses retain their existing lifecycle and deadline behavior; this driver-only path does not alter backend transport or endpoint classifiers.
+
 ## Live check
 
 The passing 2026-09-22T08:31Z check ran Firstmate commit `641dc7fe` with `deck 0.1.0` in a real tmux pane on macOS through proxai using route `codex/gpt-5.6-sol`.
