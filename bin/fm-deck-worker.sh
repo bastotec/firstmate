@@ -44,10 +44,9 @@
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
-#   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600).
-#   FM_DECK_DEADLINE_ROLLOVERS
-#                           maximum validation/CI-wait deadline continuations
-#                           per task (default 3); unrelated deadlines never retry.
+#   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600). An
+#                           unfinished validation or CI wait continues at most
+#                           3 times during this driver lifetime.
 #   PROXAI_BASE_URL, PROXAI_MODEL, PROXAI_API_KEY_FILE, PROXAI_API_KEY
 #                           Deck's own endpoint settings, passed through. When
 #                           neither key variable is set and
@@ -91,11 +90,10 @@ STATUS_FILE="$STATE/$ID.status"
 TURNEND_FILE="$STATE/$ID.turn-ended"
 MAX_TURNS=${FM_DECK_MAX_TURNS:-200}
 DEADLINE=${FM_DECK_DEADLINE_SECS:-3600}
-DEADLINE_ROLLOVER_LIMIT=${FM_DECK_DEADLINE_ROLLOVERS:-3}
+DEADLINE_ROLLOVER_LIMIT=3
 DEADLINE_ROLLOVERS=0
 case "$MAX_TURNS" in ''|*[!0-9]*) MAX_TURNS=200 ;; esac
 case "$DEADLINE" in ''|*[!0-9]*) DEADLINE=3600 ;; esac
-case "$DEADLINE_ROLLOVER_LIMIT" in ''|*[!0-9]*) DEADLINE_ROLLOVER_LIMIT=3 ;; esac
 # A zero deadline would turn native continuation into an immediate retry loop.
 case "$DEADLINE" in *[1-9]*) ;; *) DEADLINE=3600 ;; esac
 if [ -z "${PROXAI_API_KEY_FILE:-}${PROXAI_API_KEY:-}" ] && [ -f "$HOME/.config/proxai/client.key" ]; then

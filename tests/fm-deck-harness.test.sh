@@ -273,15 +273,15 @@ test_deadline_provider_hangs_and_other_tools_do_not_resume() {
 test_deadline_rollover_cap_is_reported() {
   local dir="$TMP_ROOT/deadline-cap" rc=0
   make_fake_deck "$dir"
-  FM_DECK_DEADLINE_SECS=2 FM_DECK_DEADLINE_ROLLOVERS=2 \
-    run_worker "$dir" $'/quit\n' deadline-cap || rc=$?
+  FM_DECK_DEADLINE_SECS=2 run_worker "$dir" $'/quit\n' deadline-cap || rc=$?
   [ "$rc" -ne 0 ] || fail "deadline rollover cap left the worker retrying"
-  [ "$(wc -l < "$dir/argv.log" | tr -d ' ')" = 3 ] || fail "deadline rollover cap did not stop after two continuations"
-  assert_grep 'rollover 1/2' "$dir/state/t1.status" "first deadline rollover was not reported"
-  assert_grep 'rollover 2/2' "$dir/state/t1.status" "second deadline rollover was not reported"
-  assert_grep 'failed: Deck deadline rollover cap reached (2/2)' "$dir/state/t1.status" \
+  [ "$(wc -l < "$dir/argv.log" | tr -d ' ')" = 4 ] || fail "deadline rollover cap did not stop after three continuations"
+  assert_grep 'rollover 1/3' "$dir/state/t1.status" "first deadline rollover was not reported"
+  assert_grep 'rollover 2/3' "$dir/state/t1.status" "second deadline rollover was not reported"
+  assert_grep 'rollover 3/3' "$dir/state/t1.status" "third deadline rollover was not reported"
+  assert_grep 'failed: Deck deadline rollover cap reached (3/3)' "$dir/state/t1.status" \
     "deadline rollover cap was not reported"
-  pass "fm-deck-worker: deadline continuation has a reported per-task cap"
+  pass "fm-deck-worker: deadline continuation has a fixed reported cap"
 }
 
 test_turnend_signal_refuses_unsafe_paths() {
@@ -495,13 +495,19 @@ test_completed_turn_removes_busy_ack_before_the_next_steer() {
   pass "fm-deck-worker: each completed turn leaves the next steer an idle baseline"
 }
 
-test_driver_stop_ends_after_the_active_tool_and_resolves_state_alias() {
-  local dir="$TMP_ROOT/stop-graceful" physical alias pid gen
-  physical="$dir/physical-state"
-  alias="$dir/state-alias"
-  mkdir -p "$physical"
+test_driver_stop_ends_after_the_active_tool_and_resolves_spaced_paths() {
+  local dir="$TMP_ROOT/stop graceful with spaces" install physical alias deck worker stop pid gen
+  install="$dir/install with spaces/bin"
+  physical="$dir/physical state"
+  alias="$dir/state alias"
+  deck="$dir/deck binary"
+  worker="$install/fm-deck-worker.sh"
+  stop="$install/fm-deck-stop.py"
+  mkdir -p "$install" "$physical"
+  cp "$WORKER" "$BUSY_EVENT" "$ROOT/bin/fm-busy-lib.sh" \
+    "$ROOT/bin/fm-state-io.py" "$ROOT/bin/fm-deck-stop.py" "$install/"
   ln -s "$physical" "$alias"
-  cat > "$dir/deck" <<'PY'
+  cat > "$deck" <<'PY'
 #!/usr/bin/env python3
 import json
 import os
@@ -533,39 +539,48 @@ open(os.environ["FM_DECK_TOOL_B_STARTED"], "w").close()
 print(json.dumps({"type": "tool_call", "id": "b", "name": "shell", "arguments": {"command": "tool-b"}}), flush=True)
 time.sleep(10)
 PY
-  chmod +x "$dir/deck"
-  gen=$("$BUSY_EVENT" arm "$physical" owned)
+  chmod +x "$deck"
+  gen=$("$install/fm-busy-event.sh" arm "$physical" owned)
   FM_DECK_READY="$dir/ready" FM_DECK_SIGNALLED="$dir/signalled" \
     FM_DECK_TOOL_A_COMPLETED="$dir/tool-a-completed" FM_DECK_TOOL_B_STARTED="$dir/tool-b-started" \
     python3 -c \
       'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
-      "$WORKER" --id owned --state "$(cd "$physical" && pwd -P)" --gen "$gen" \
-      --deck "$dir/deck" -- old-brief </dev/null > "$dir/pane.out" 2>&1 &
+      "$worker" --id owned --state "$(cd "$physical" && pwd -P)" --gen "$gen" \
+      --deck "$deck" -- old-brief </dev/null > "$dir/pane.out" 2>&1 &
   pid=$!
   for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; sleep 0.05; done
   [ -e "$dir/ready" ] || fail "post-tool stop fixture did not start"
-  python3 "$ROOT/bin/fm-deck-stop.py" "$alias" owned 2 \
-    || fail "the aliased state path did not stop its physical driver"
+  python3 "$stop" "$alias" owned 2 \
+    || fail "spaced physical paths did not identify and stop the Deck driver"
   wait "$pid" 2>/dev/null || fail "the post-tool stopped driver failed"
   [ -e "$dir/signalled" ] || fail "Deck itself did not receive the stop request"
   [ -e "$dir/tool-a-completed" ] || fail "Deck stop interrupted the active tool"
   [ ! -e "$dir/tool-b-started" ] || fail "Deck started another tool after the stop request"
   assert_grep 'tool-a complete' "$dir/pane.out" "Deck exit was not observed after its active tool result"
-  pass "Deck stop: physical aliases stop exactly after the active tool"
+  pass "Deck stop: physical aliases and spaced paths stop after the active tool"
 }
 
 test_driver_stop_is_scoped_and_escalates_after_timeout() {
-  local dir="$TMP_ROOT/stop-escalation" pid
+  local dir="$TMP_ROOT/stop-escalation" pid gen
   mkdir -p "$dir/state"
-  cat > "$dir/fm-deck-worker.sh" <<'SH'
-#!/usr/bin/env bash
-trap '' TERM
-: > "$FM_DECK_READY"
-while :; do sleep 60; done
-SH
+  cat > "$dir/deck" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import time
+
+signal.signal(signal.SIGTERM, lambda *_: None)
+print(json.dumps({"type": "run_started", "session": "stuck-session"}), flush=True)
+open(os.environ["FM_DECK_READY"], "w").close()
+while True:
+    time.sleep(60)
+PY
+  chmod +x "$dir/deck"
+  gen=$("$BUSY_EVENT" arm "$dir/state" owned)
   FM_DECK_READY="$dir/ready" python3 -c \
     'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
-    "$dir/fm-deck-worker.sh" --id owned --state "$dir/state" --gen old --deck stub \
+    "$WORKER" --id owned --state "$dir/state" --gen "$gen" --deck "$dir/deck" -- old-brief \
     </dev/null > "$dir/pane.out" 2>&1 &
   pid=$!
   for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; sleep 0.1; done
@@ -957,7 +972,7 @@ test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
 test_completed_turn_removes_busy_ack_before_the_next_steer
-test_driver_stop_ends_after_the_active_tool_and_resolves_state_alias
+test_driver_stop_ends_after_the_active_tool_and_resolves_spaced_paths
 test_driver_stop_is_scoped_and_escalates_after_timeout
 test_liveness_reads_the_driver_as_an_agent
 test_tmux_liveness_uses_the_deck_driver_argv0
