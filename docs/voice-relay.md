@@ -5,22 +5,20 @@ about what is happening from the first mate's own records, and when you ask for
 real work it says so out loud and queues the request rather than pretending to
 do it.
 
-This is step one of three: a spoken round trip that works. Interrupting the agent
-mid-sentence and carrying context from one question to the next are step three,
-and [what this build does not do](#what-this-build-does-not-do) is explicit about
-where the edge is.
+This is a push-to-talk spoken round trip.
+The default Bedrock engine starts a fresh model session for every question, while the optional hybrid engine keeps conversational context as long as its local Realtime session remains healthy.
+Interrupting the agent mid-sentence remains unsupported, and [what this build does not do](#what-this-build-does-not-do) is explicit about the boundary.
 
 ## The shape
 
-Your laptop captures the audio and plays the reply. This desktop holds the
-conversation with the model. Nothing in between needs AWS credentials on the
-laptop, which is the whole reason for this shape.
+Your laptop captures the audio and plays the reply.
+This desktop holds the conversation through the selected engine, and no model or gateway credential is needed on the laptop.
 
 ```
-laptop                          this desktop                      AWS
-------                          ------------                      ---
-microphone --> fm-voice-client.py --(ssh)--> fm-voice-relay.py --> Nova Sonic 2
-speaker    <-------------------------------------------------      (your region)
+laptop                          this desktop                         selected engine
+------                          ------------                         ---------------
+microphone --> fm-voice-client.py --(ssh)--> fm-voice-relay.py ----> Bedrock Nova Sonic
+speaker    <---------------------------------------------------      or local speech --> text gateway
                                         |
                                         +--> the first mate's records (read)
                                         +--> fm-inbox.sh note (queue real work)
@@ -34,7 +32,7 @@ The relay reads records and queues work. It never changes a project, and the
 queueing half is `bin/fm-inbox.sh note`, the same surface the captain's own
 out-of-band capture already uses, rather than a second queue.
 
-## What it costs in time
+## Default Bedrock latency
 
 Measured on 2026-08-21 against the reviewed relay code, `amazon.nova-2-sonic-v1:0` in `eu-north-1`, on a spoken question that makes the agent read the records before it can answer, which is the slowest ordinary case.
 Six runs each, all six answered each way.
@@ -78,11 +76,10 @@ So your number is about 1.15 to 1.3 seconds plus your round trip time plus your 
 It is worth saying plainly that this came in under the bottom of the 1.5 to 2.5 second estimate the relay shape was given before it was built.
 The safer shape, with no credentials on the laptop, is not the slower one.
 
-## Setting up this desktop
+## Setting up the default Bedrock engine
 
-The model is only reachable over HTTP/2 bidirectional streaming, which the AWS
-CLI cannot drive and `boto3` cannot either. It needs the experimental SDK, in a
-virtual environment of its own:
+The Bedrock model is only reachable over HTTP/2 bidirectional streaming, which the AWS CLI cannot drive and `boto3` cannot either.
+It needs the experimental SDK in a virtual environment of its own:
 
 ```
 python3 -m venv ~/.fm-voice-venv
@@ -100,7 +97,7 @@ Each value is one line in your gitignored `config/` directory, and each has an e
 | `config/voice-profile` | `FM_VOICE_PROFILE` | The AWS profile to export credentials from, optional: with no profile the relay uses only credentials that are already in its environment. |
 | `config/voice-id` | `FM_VOICE_ID` | The output voice, optional and `matthew` when unset. |
 
-A missing required value refuses with the path to write, so an unconfigured home cannot start the relay by accident, and that configuration is the whole opt-in.
+A missing required value refuses with the path to write, so an unconfigured home cannot start the default Bedrock relay by accident, and that configuration is the whole Bedrock opt-in.
 `docs/configuration.md` is the registry for these files.
 
 Check it end to end without a microphone, using a recorded question:
@@ -117,6 +114,104 @@ broke when a turn broke rather than merely going unanswered, so an
 infrastructure failure is not read as a slow answer. Feed it a clip that
 already ends in silence and it will tell you the timings are measured from the
 wrong instant rather than printing a number that looks fast.
+
+## Optional hybrid engine: local hearing and speech
+
+The default engine remains Bedrock; an absent `config/voice-engine` preserves existing homes.
+To opt in, write the single line `hybrid` to `config/voice-engine`.
+This is **not fully local**: Parakeet TDT transcribes on the Mac, the configured OpenAI-compatible gateway thinks from text, and Qwen3-TTS speaks on the Mac.
+Conversation text and permitted tool results leave the machine; microphone audio does not go to the text gateway.
+The relay uses the external [hf-speech-to-speech](https://github.com/gkintu/hf-speech-to-speech) Realtime API, not its model imports.
+The laptop client, framing, record scope, deny list and `fm-inbox.sh note` handover are unchanged.
+
+### Install and opt in
+
+The measured configuration used Apple silicon with Metal, an M2 with 24 GB memory, Python 3.11.15, and speech-to-speech 0.2.12 at revision `99749e5db61e959315feff4dbf397ca01b7e891c`.
+It uses that stack's native macOS MLX handlers, not the CUDA-oriented launcher in its README.
+Keep its checkout, virtual environment, caches and weights outside the Firstmate repository.
+With `uv` installed, follow the stack's model-license requirements and install its base requirements using `uv sync --no-dev --python 3.11` in that external checkout.
+The measured versions were MLX/MLX-LM 0.31.1, MLX Audio 0.4.2 and PyTorch 2.11.0.
+The speech models are the upstream defaults, `mlx-community/parakeet-tdt-0.6b-v3` and `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit`.
+They download on first startup if missing; an existing cache is reused.
+No local thinking model is needed for hybrid operation.
+
+The complete file/environment registry and reading rules are in [configuration](configuration.md), under “Spoken interface and captain inbox”.
+Alongside `voice-engine`, configure `voice-local-url` with an unused loopback Realtime address and `voice-gateway-url` with the gateway base URL.
+The gateway URL must use HTTPS unless it names a loopback IP for a local tunnel.
+There is no default endpoint, port, executable path or cache directory.
+Set `voice-local-command` to the absolute `speech-to-speech` executable in the external virtual environment and `voice-local-cache` to an existing absolute directory for the engine's home and caches.
+Protect an optional `voice-gateway-key` file as a credential, for example with mode `0600`; it is passed in the engine environment, never on its command line.
+An unrelated ambient `OPENAI_API_KEY` is not reused.
+
+Start the external engine explicitly in a separate terminal, then start the relay using that virtual environment's Python:
+
+```sh
+python3 bin/fm-voice-relay.py --start-engine
+<stack-venv>/bin/python bin/fm-voice-relay.py --self-test <clip.pcm>
+```
+
+`--start-engine` runs the configured executable in the foreground; stop it with Ctrl+C.
+It scopes `HOME`, `HF_HOME`, `TORCH_HOME`, `XDG_CACHE_HOME` and `NLTK_DATA` beneath the configured cache directory.
+Ordinary relay startup never launches a server or installs dependencies.
+Only hybrid sessions import `websockets`, already installed in the external stack's virtual environment; Bedrock-only homes need no new dependency.
+Use the same virtual environment as the relay interpreter when invoking the unchanged laptop client.
+The gateway, key and model settings take effect at engine launch; restart the engine after changing them.
+
+The interim text route defaults to `codex/gpt-6-astra`, which was verified with a real completion and the voice turns below.
+The requested `codex/gpt-6-luna` route was absent from the measured gateway's catalog.
+`voice-gateway-model` makes the route explicit and configurable; there is no automatic model substitution.
+Before switching to the requested route, verify both catalog presence and a real completion on the chosen endpoint, then repeat the voice measurements.
+These results are not measurements of that unavailable route.
+
+The engine requests streaming chat completions and sets `stream_batch_sentences=1`, so the upstream sentence detector feeds speech without waiting for the complete answer.
+It retains context while the Realtime session is healthy; a failed session is replaced on the next talk turn and loses that context.
+This does not enable microphone interruption or open-microphone mode.
+The relay requests PCM16/24 kHz output to preserve the laptop wire and sends PCM16/16 kHz input.
+Hybrid turn endings append at least 1500 ms of silence without a corresponding sleep for the upstream VAD; `--self-test` reports that effective padding.
+An unavailable API, a response without audio, an incomplete response or a reply timeout reports a named `relay_error`, rather than silently counting a broken turn as a slow success.
+
+### Measured hybrid latency
+
+Measured on 2026-09-23 using the hardware and versions above, with warmed handlers, synthetic English and Portuguese input files ending on speech, two turns per language in one session, and the interim route through a configured loopback gateway tunnel.
+The first question stated a favourite colour and asked which colour was mentioned; the second asked for it again without naming it.
+All four answers were received without relay errors, and both follow-ups remembered the colour.
+Portuguese recognition and response text were correct for these clips; accent, pronunciation and intelligibility by ear were not assessed by this file-only run.
+
+| Language | End of speech to first audio, seconds | Final transcription total, seconds | Gateway generation, seconds | Synthesis to first chunk, seconds |
+| --- | --- | --- | --- | --- |
+| English, first turn | 4.232 | 0.442 | 2.299 | 1.587 |
+| English, follow-up | 4.478 | 0.212 | 2.445 | 1.756 |
+| Portuguese, first turn | 4.072 | 0.385 | 2.016 | 1.789 |
+| Portuguese, follow-up | 4.561 | 0.133 | 2.386 | 1.876 |
+
+The first-audio clock starts when file speech ends, before padding, and stops on the first decoded reply audio in the relay.
+Stage timings include generator and lock time, with revised final transcriptions summed; transcription can begin before speech ends, so do not add the columns to reconstruct the end-to-end figure.
+The file harness calls the relay's real session and shared tool dispatch with a file sink; it omits client framing, SSH, physical devices and record/tool round trips, and does not control other applications' load.
+A follow-up on 2026-09-23 drove `bin/fm-voice-client.py` against the relay as its local child, with the real bidirectional framing and file-backed capture and playback, and used the proxy's `gpt-6-luna` model.
+A file-selection shim supplied the four synthetic PCM clips to the client's `FileCapture` in one warmed session because the command-line `--in-file` repeats one clip; it did not replace the client transport, frame handling, clock, relay child or file playback.
+
+| Framed client turn | End of speech to first audio, seconds |
+| --- | --- |
+| English, first turn | 4.352 |
+| English, follow-up | 4.547 |
+| Portuguese, first turn | 6.420 |
+| Portuguese, follow-up | 5.853 |
+
+All four framed turns were answered without relay errors, both follow-ups remembered blue, and the English and Portuguese transcripts and response text were correct.
+These are the client's `first_audio_s` values, measured from file exhaustion to the first reply frame reaching its file playback, so they include the client threads, uplink queue, framing in both directions and relay process hop.
+Like the historical 1.15-1.3 second run, this local-child method omits only the `ssh -T <host>` prefix from the transport; it also omits physical audio devices and did not exercise a record or tool round trip.
+The framed run used the proxy model identifier `gpt-6-luna`; it does not establish that the fleet gateway's separately named `codex/gpt-6-luna` route has appeared.
+Gateway timings include transport and gateway queueing, not just remote model computation.
+These prompts are not the historical Bedrock record-reading prompt, so the documented **1.15-1.3 seconds** above is a reference bar, not a controlled A/B run.
+The hybrid remains slower than that reference.
+A separate text-only two-sentence streaming diagnostic measured the first sentence leaving the gateway handler at 1.858 seconds and entering synthesis at 1.860 seconds after generation began, before generation completed at 3.976 seconds.
+That diagnostic proves overlap; it is not an end-of-speech latency sample.
+Across server startup, the four voice turns and that diagnostic, the combined local speech process peaked at 1,075,920,896 resident bytes; macOS reported a separate peak memory footprint of 7,515,445,248 bytes.
+The file client peaked at 31,604,736 resident bytes.
+RSS alone is not a Metal/unified-memory capacity requirement, and remote gateway/model memory was not accessible to this measurement.
+The preserved lab occupied 10G by `du -sh`, including the earlier local thinking checkpoint; the hybrid does not need that checkpoint.
+The earlier fully local MLX text path on this Mac measured English at 16.600 and 5.760 seconds, and Portuguese at 9.296 and 8.680 seconds; that native text path disabled thinking and is not offered as an engine selection.
+Full stage evidence, commands, transcripts and playable replies belong to the private measurement report, not to installed runtime assets.
 
 ## Setting up the laptop
 
@@ -209,20 +304,18 @@ strength of a typo.
 
 ## Push to talk, and the setting that refuses
 
-Push to talk is the default: the microphone is closed until you ask for it. That
-is `$0.0101` per minute against `$0.0151` for an open microphone, and it is the
-setting nobody has decided yet, so this build does not choose the expensive one
-on the captain's behalf.
+Push to talk is the default: the microphone is closed until you ask for it.
+On the default Bedrock engine that is `$0.0101` per minute against `$0.0151` for an open microphone, and this build does not choose the expensive mode on the captain's behalf.
 
 `--listen open-mic` exists as a setting and refuses at startup today.
-An open microphone needs something to decide when you stopped speaking, and the client has no end-of-speech detection, so the mode would open a turn, stream audio forever and never mark a boundary, which leaves the relay appending to a session that has already answered.
-That detection belongs with carrying context across turns, which is step three, so the flag refuses before it opens an SSH connection or spends anything rather than half working.
+An open microphone needs something to decide when you stopped speaking, and the client has no supported end-of-speech boundary for that mode.
+That lifecycle is not implemented by either relay engine, so the flag refuses before it opens an SSH connection or spends anything rather than half working.
 The setting stays where it is so that turning it on later is a small change rather than a new flag.
 
-## One turn per session, and what that gives up
+## Default Bedrock: one turn per session
 
-The relay reconnects to the model at the start of each turn. That is not
-tidiness, it is a measured requirement.
+The default Bedrock engine reconnects to the model at the start of each turn.
+That is not tidiness, it is a measured requirement.
 
 A second question inside a session that has already answered one is treated as an
 interruption, unconditionally: the model raises it the instant the audio block
@@ -242,11 +335,11 @@ replacement. Either way the client hears about it at once rather than waiting ou
 the whole reply timeout in silence.
 A turn still waiting for its answer when either happens names why in its own `relay_error`, and [setting up the laptop](#setting-up-the-laptop) describes those reasons.
 
-**What it gives up is memory.** Every question starts fresh, so "and what about
-that one" will not work. Carrying context across turns means handling
-interruption properly, which is step three.
+**What it gives up is memory.**
+Every Bedrock question starts fresh, so "and what about that one" will not work.
+The hybrid engine instead retains context while its Realtime session is healthy, as described in [Optional hybrid engine](#optional-hybrid-engine-local-hearing-and-speech).
 
-## Two traps worth keeping
+## Two default Bedrock traps worth keeping
 
 Both cost real time to find the first time. The code comments own the detail;
 these are the shapes.
@@ -263,16 +356,13 @@ these are the shapes.
 
 ## What this build does not do
 
-- **Interrupting the agent mid-sentence.** Nova Sonic supports it, measured, on
-  both model versions, so the capability is there when it is wanted. The concrete
-  thing step three has to solve is the interruption finding above: today any
-  second question in a session is treated as an interruption, and an interrupted
-  turn that reads the records produces no answer at all.
-- **Remembering the last question.** See above.
+- **Interrupting the agent mid-sentence.** Neither engine exposes interruption through this relay today.
+  Nova Sonic supports it, measured, on both model versions, but the default Bedrock path starts a fresh session because a second question in one session is treated as an interruption and an interrupted turn that reads the records produces no answer at all.
+- **Remembering the last question on the default Bedrock engine.** See [Default Bedrock: one turn per session](#default-bedrock-one-turn-per-session); the hybrid engine remembers while its Realtime session remains healthy.
 - **Doing any project work.** Real work is queued for the first mate and the
   agent says so out loud. It has no tool that changes a project.
 
-## Cost
+## Default Bedrock cost
 
 `$0.00293` per exchange, derived from the first pass's token counts and session seconds, which is roughly a dollar for three hundred and forty questions.
 The re-measured exchange is about a quarter of a second shorter, worth about `$0.00004` at the session rate below, so the figure is unchanged at the precision it is quoted to.

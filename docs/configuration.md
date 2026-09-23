@@ -1031,15 +1031,23 @@ Never describe this path as at-least-once, no-loss, or lossless.
 
 ## Spoken interface and captain inbox (config/voice-*, config/inbox-*)
 
-The spoken interface in [`docs/voice-relay.md`](voice-relay.md) and the model-backed subcommands of `bin/fm-inbox.sh` reach a paid API in a named account, so no region, model id or AWS profile is shipped as a tracked default.
+The spoken interface in [`docs/voice-relay.md`](voice-relay.md) defaults to Bedrock; its optional hybrid engine uses local speech and a configured text gateway.
+The Bedrock engine and the model-backed subcommands of `bin/fm-inbox.sh` reach a paid API in a named account, so no region, speech model id or AWS profile is shipped as a tracked default.
 Each is one line in a local, gitignored `config/` file, with an environment variable that overrides it for a single run, and a missing required value refuses with the path to write rather than falling back to a value that belongs to another home.
 That configuration is the whole opt-in: an unconfigured home cannot start the relay and cannot run `fm-inbox.sh say` or `ask`, while `note`, `status`, `list` and `drain` need no configuration at all because they make no model call.
 The voice handover depends on `note`, so it keeps working in a home that has configured nothing.
 
 | File | Environment | Holds |
 | --- | --- | --- |
-| `config/voice-region` | `FM_VOICE_REGION` | Bedrock region for the relay's bidirectional session, required by `bin/fm-voice-relay.py`. |
-| `config/voice-model` | `FM_VOICE_MODEL` | Speech-to-speech model id, required by `bin/fm-voice-relay.py`. |
+| `config/voice-engine` | `FM_VOICE_ENGINE` | `bedrock` (default when absent) or `hybrid`; the hybrid keeps speech local and sends transcribed text and allowed tool results to a configured thinking gateway. |
+| `config/voice-local-url` | `FM_VOICE_LOCAL_URL` | Required for hybrid: `ws://<loopback-IP>:<port>/v1/realtime`, without credentials, query or fragment; no default endpoint. |
+| `config/voice-gateway-url` | `FM_VOICE_GATEWAY_URL` | Required for hybrid: the explicit OpenAI-compatible thinking gateway base URL, without credentials; HTTPS is required except for HTTP loopback-IP tunnel endpoints. |
+| `config/voice-gateway-model` | `FM_VOICE_GATEWAY_MODEL` | Hybrid text model route; interim default `codex/gpt-6-astra`, explicitly configurable without automatic fallback. |
+| `config/voice-gateway-key` | `FM_VOICE_GATEWAY_KEY` | Optional hybrid gateway key, passed to the external server environment, never its command line; protect this file as a credential. |
+| `config/voice-local-command` | `FM_VOICE_LOCAL_COMMAND` | Required only by `--start-engine`: absolute path to the external stack's executable in its own virtual environment. |
+| `config/voice-local-cache` | `FM_VOICE_LOCAL_CACHE` | Required only by `--start-engine`: existing absolute directory for the external engine's home and caches. |
+| `config/voice-region` | `FM_VOICE_REGION` | Bedrock region for the relay's bidirectional session, required when the engine is `bedrock`. |
+| `config/voice-model` | `FM_VOICE_MODEL` | Speech-to-speech model id, required when the engine is `bedrock`. |
 | `config/voice-profile` | `FM_VOICE_PROFILE` | AWS profile the relay exports credentials from; absent, or an explicitly empty variable, means it uses only credentials already in its environment. |
 | `config/voice-id` | `FM_VOICE_ID` | Output voice id, optional, `matthew` when unset. |
 | `config/voice-read-scope` | none | `counts` (the default, and what an absent file means) or `full`; see [`docs/voice-relay.md`](voice-relay.md) for what each scope may say. |
@@ -1049,7 +1057,9 @@ The voice handover depends on `note`, so it keeps working in a home that has con
 | `config/inbox-ask-model` | `FM_INBOX_ASK_MODEL` | Side-question model id, required by `fm-inbox.sh ask`. |
 | `config/inbox-profile` | `FM_INBOX_PROFILE` | AWS profile for those two calls; absent, or an explicitly empty variable, means whatever credentials are already in the environment. |
 
-Each account, model and voice file above is read as its first line that is not blank and not a `#` comment, so a comment above the value is fine.
+Each engine, endpoint, command, cache, account, model and voice file above is read as its first line that is not blank and not a `#` comment, so a comment above the value is fine.
+Gateway, model and key settings configure the external hybrid server at its explicit `--start-engine` launch; changing them requires restarting that server, not just reconnecting the relay.
+Ordinary relay startup never installs models or launches an engine.
 The two read files are parsed differently: `config/voice-read-scope` must hold the bare word and nothing but blank space around it, so a comment header there refuses instead of being skipped, while every line of `config/voice-read-deny` that is not blank and not a `#` comment is one more substring.
 `FM_VOICE_RELAY` and `FM_VOICE_PYTHON` belong to the laptop rather than to a home, so they have no config file: `bin/fm-voice-client.py` requires the relay path as a flag or that variable and carries no default path.
 
@@ -1214,8 +1224,15 @@ FM_CRASH_NORMAL_SLEEP=5            # seconds to wait after an isolated watcher c
 FM_LOG_MAX_BYTES=1048576           # daemon log size that triggers trimming
 FM_LOG_KEEP_LINES=2000             # daemon log lines kept when trimming
 # spoken interface and captain inbox; see "Spoken interface and captain inbox" above
-FM_VOICE_REGION=        # overrides config/voice-region for one relay run
-FM_VOICE_MODEL=         # overrides config/voice-model for one relay run
+FM_VOICE_ENGINE=        # overrides config/voice-engine; bedrock when neither is set
+FM_VOICE_LOCAL_URL=     # overrides config/voice-local-url for hybrid
+FM_VOICE_GATEWAY_URL=   # overrides config/voice-gateway-url for hybrid
+FM_VOICE_GATEWAY_MODEL= # overrides config/voice-gateway-model; interim default codex/gpt-6-astra
+FM_VOICE_GATEWAY_KEY=   # overrides config/voice-gateway-key; never place it in a URL or command line
+FM_VOICE_LOCAL_COMMAND= # overrides config/voice-local-command for --start-engine
+FM_VOICE_LOCAL_CACHE=   # overrides config/voice-local-cache for --start-engine
+FM_VOICE_REGION=        # overrides config/voice-region for one Bedrock relay run
+FM_VOICE_MODEL=         # overrides config/voice-model for one Bedrock relay run
 FM_VOICE_PROFILE=       # overrides config/voice-profile; explicitly empty forces ambient credentials
 FM_VOICE_ID=            # overrides config/voice-id; matthew when neither is set
 FM_VOICE_RELAY=         # laptop-side path to bin/fm-voice-relay.py on the desktop; required by fm-voice-client.py unless --relay is passed

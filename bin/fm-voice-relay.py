@@ -1,12 +1,29 @@
 #!/usr/bin/env python3
-"""fm-voice-relay.py - hold the Nova Sonic session on this desktop, on behalf of the laptop.
+"""fm-voice-relay.py - hold the selected voice session on behalf of the laptop.
+
+Bedrock remains the default. Set config/voice-engine (FM_VOICE_ENGINE) to hybrid
+for local Parakeet/Qwen3-TTS and gateway text generation via hf-speech-to-speech.
+Hybrid needs config/voice-local-url (FM_VOICE_LOCAL_URL), a loopback WebSocket
+URL, and config/voice-gateway-url (FM_VOICE_GATEWAY_URL), an explicit gateway
+base URL. config/voice-gateway-model (FM_VOICE_GATEWAY_MODEL) currently defaults
+to codex/gpt-6-astra; route changes are explicit, never automatic fallbacks.
+The optional config/voice-gateway-key (FM_VOICE_GATEWAY_KEY) is passed only in
+the external engine environment. Never put a key in a URL.
+--start-engine runs the absolute config/voice-local-command executable
+(FM_VOICE_LOCAL_COMMAND) with its caches under config/voice-local-cache
+(FM_VOICE_LOCAL_CACHE). Both are required for this separate launcher mode.
+The operator starts that server first; ordinary relay startup never installs
+models or starts a server. Run the hybrid relay with the stack virtualenv's
+Python for its existing websockets dependency; Bedrock imports are unchanged.
+Only transcribed text and permitted tool results reach the thinking gateway.
+The gateway and model settings take effect when the engine is restarted.
 
 The captain talks into their laptop. The laptop captures audio and streams it
 over the SSH connection it already has to this desktop. This relay holds the
-Bedrock bidirectional session, answers the model's tool calls from firstmate's
-records, and streams the spoken reply back down the same connection. AWS
-credentials therefore stay on this desktop and never go near the laptop, which
-is the whole reason for the shape.
+selected model session, answers tool calls from firstmate's records, and streams
+the spoken reply back down the same connection. Bedrock credentials or the
+hybrid gateway credential therefore stay on this desktop and never go near the
+laptop, which is the whole reason for the shape.
 
 The voice agent this relay runs is NOT firstmate. It stands in front of
 firstmate: it answers questions about the fleet from the records, and when the
@@ -21,9 +38,11 @@ Modes:
                      arrived from the client, print the timings as JSON, exit.
                      This is the control measurement for the relay path, and it
                      needs no client, no SSH and no microphone.
+  --start-engine     run the configured external hybrid speech server in the
+                     foreground. It cannot be combined with the relay modes.
 
-The two traps this code already avoids, both found the expensive way and both
-measured rather than assumed:
+The two traps the default Bedrock path avoids were both found the expensive way
+and measured rather than assumed:
 
   1. completionEnd does not arrive on its own. The model holds the session open
      waiting for more speech. The real "the reply is finished" signal is a
@@ -40,21 +59,30 @@ Read scope, deny list and the handover queue all belong to bin/fm_voice_records.
 bin/fm_voice_frame.py owns the wire contract between the two machines, and
 docs/voice-relay.md is the operator-facing guide.
 
-CONFIGURATION. The region, the model and the AWS profile name somebody's account
-and somebody's choices, so this file carries no default for them. Each is read
-from the home's gitignored config/ directory, or from the matching environment
-variable, and a missing one refuses with the path to write rather than reaching
-for a value that belongs to another home. That configuration is also the opt-in:
-an unconfigured home cannot start this relay at all.
+CONFIGURATION. config/voice-engine (FM_VOICE_ENGINE) selects bedrock or hybrid
+and defaults to bedrock when absent. Bedrock carries no region, model, or profile
+default; those values name somebody's account and choices. Each setting is read
+from the home's gitignored config/ directory or the matching environment
+variable, and a missing required value refuses with the path to write.
 
-  config/voice-region   FM_VOICE_REGION   Bedrock region.        required
-  config/voice-model    FM_VOICE_MODEL    Nova Sonic model id.   required
-  config/voice-profile  FM_VOICE_PROFILE  AWS profile.           optional
-  config/voice-id       FM_VOICE_ID       output voice.          default matthew
+  voice-region         FM_VOICE_REGION         Bedrock region.      required
+  voice-model          FM_VOICE_MODEL          Nova Sonic model.    required
+  voice-profile        FM_VOICE_PROFILE        AWS profile.         optional
+  voice-id             FM_VOICE_ID             output voice.        default matthew
+  voice-local-url      FM_VOICE_LOCAL_URL      local Realtime URL.  hybrid required
+  voice-gateway-url    FM_VOICE_GATEWAY_URL    text gateway URL.    hybrid required
+  voice-gateway-model  FM_VOICE_GATEWAY_MODEL  text model route.    default astra
+  voice-gateway-key    FM_VOICE_GATEWAY_KEY    text gateway key.    optional
+  voice-local-command  FM_VOICE_LOCAL_COMMAND  server executable.  launcher required
+  voice-local-cache    FM_VOICE_LOCAL_CACHE    cache directory.    launcher required
 
-An absent profile means the relay uses only credentials that are already in its
-environment. An empty FM_VOICE_PROFILE, or an empty `--profile ""`, forces that
-even when config/voice-profile exists.
+All names in that column are files beneath config/. The full interim text route
+is codex/gpt-6-astra.
+
+An absent profile means the Bedrock relay uses only credentials that are already
+in its environment. An empty FM_VOICE_PROFILE, or an empty `--profile ""`, forces
+that even when config/voice-profile exists. The hybrid launcher replaces any
+ambient OPENAI_API_KEY with the configured gateway key or the inert value none.
 
 On choosing the model: the first-generation Nova Sonic model is marked legacy by
 AWS and measured 25 percent slower on the tool-backed path, which is the path this
@@ -64,16 +92,19 @@ the second generation, which that document names.
 Usage:
   fm-voice-relay.py [--serve] [options]
   fm-voice-relay.py --self-test <file.pcm> [options]
+  fm-voice-relay.py --start-engine [options]
 
 Options:
+  --engine <name>       bedrock or hybrid.           default config or bedrock
+  --start-engine        run the configured hybrid server in the foreground
   --region <name>       Bedrock region.              default from config
   --model <id>          Nova Sonic model id.         default from config
   --profile <name>      AWS profile.                 default from config
   --voice <id>          output voice.                default matthew
   --home <dir>          firstmate home for records.  default $FM_HOME or this repo
   --scope <name>        override the read scope for this run.
-  --tail-ms <int>       silence appended on talk end. default 400
-  --turn-timeout <sec>  how long --self-test waits.   default 40
+  --tail-ms <int>       silence appended on talk end. default 400; hybrid min 1500
+  --turn-timeout <sec>  reply deadline.              default 40
   --verbose             log the session to stderr.
 """
 
@@ -90,14 +121,16 @@ import threading
 import time
 import traceback
 import uuid
+from urllib.parse import urlsplit
+import ipaddress
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import fm_voice_frame as frame              # noqa: E402
 import fm_voice_records as records          # noqa: E402
 
-# A voice id names nobody and costs nothing to inherit, so this one has a
-# default. The region, the model and the profile do not; see CONFIGURATION above.
+# A Bedrock voice id names nobody and costs nothing to inherit, so this one has a
+# default. The Bedrock region, model, and profile do not; see CONFIGURATION above.
 VOICE = "matthew"
 SETTINGS = {
     "region": ("voice-region", "FM_VOICE_REGION", "Bedrock region"),
@@ -113,9 +146,9 @@ OUT_RATE = 24000
 CHUNK = 3200
 BYTES_PER_MS_IN = IN_RATE * 2 // 1000
 
-# Push-to-talk supplies no trailing silence, and trap 2 above means a turn with
-# none is never answered. 400 ms is the measured floor plus one chunk of margin;
-# see docs/voice-relay.md for the runs behind it.
+# Push-to-talk supplies no trailing silence. For Bedrock, 400 ms is the measured
+# floor plus one chunk of margin; hybrid resolution raises this to 1500 ms for
+# the external VAD. See docs/voice-relay.md for the runs behind both values.
 TAIL_MS = 400
 
 SYSTEM_PROMPT = (
@@ -795,7 +828,7 @@ class Session:
                 log(self.verbose, "{}: {}".format(role.lower(), text[:120]))
                 if '"interrupted"' in text and "true" in text:
                     # Informational only. Stopping playback mid-sentence is
-                    # barge-in, which is step three of the design, not this build.
+                    # barge-in, which this relay does not support.
                     self.down.send_json(frame.NOTICE, {"event": "interrupted"})
 
         if "toolUse" in event:
@@ -825,8 +858,25 @@ class Session:
     # -------------------------------------------------------------------- tools
 
     async def _run_tool(self, call):
-        name = call.get("toolName", "")
+        result = await self._tool_result(call)
         use_id = call.get("toolUseId")
+        content = str(uuid.uuid4())
+        await self._send({"contentStart": {
+            "promptName": self.prompt, "contentName": content, "type": "TOOL",
+            "interactive": False, "role": "TOOL",
+            "toolResultInputConfiguration": {
+                "toolUseId": use_id, "type": "TEXT",
+                "textInputConfiguration": {"mediaType": "text/plain"}}}})
+        await self._send({"toolResult": {
+            "promptName": self.prompt, "contentName": content,
+            "content": json.dumps(result)}})
+        await self._send({"contentEnd": {
+            "promptName": self.prompt, "contentName": content}})
+        self._mark("tool_answered")
+
+    async def _tool_result(self, call):
+        """The same records and inbox boundary for either model transport."""
+        name = call.get("toolName", "")
         raw = call.get("content") or "{}"
         try:
             arguments = json.loads(raw) if isinstance(raw, str) else dict(raw)
@@ -854,20 +904,176 @@ class Session:
             result = {"error": str(exc)}
         except Exception as exc:                       # noqa: BLE001
             result = {"error": "{}: {}".format(type(exc).__name__, exc)}
+        return result
 
-        content = str(uuid.uuid4())
-        await self._send({"contentStart": {
-            "promptName": self.prompt, "contentName": content, "type": "TOOL",
-            "interactive": False, "role": "TOOL",
-            "toolResultInputConfiguration": {
-                "toolUseId": use_id, "type": "TEXT",
-                "textInputConfiguration": {"mediaType": "text/plain"}}}})
-        await self._send({"toolResult": {
-            "promptName": self.prompt, "contentName": content,
-            "content": json.dumps(result)}})
-        await self._send({"contentEnd": {
-            "promptName": self.prompt, "contentName": content}})
-        self._mark("tool_answered")
+
+class HybridSession(Session):
+    """Local speech over Realtime; the external engine streams gateway text to TTS."""
+
+    persistent = True
+
+    async def start(self):
+        self.connect_seconds = 0
+        self.timeout_task = None
+        self.pending_tools = False
+        began = time.monotonic()
+        try:
+            # Optional: installed by the speech stack in its own virtualenv.
+            # Bedrock-only homes never import it or any local model dependency.
+            from websockets.asyncio.client import connect
+            self.stream = await connect(self.options.local_url, open_timeout=10,
+                                        close_timeout=2, max_size=4 * 1024 * 1024,
+                                        proxy=None)
+            event = json.loads(await asyncio.wait_for(self.stream.recv(), 10))
+            if event.get("type") != "session.created":
+                raise RuntimeError("local engine did not create a session")
+            tools = []
+            for entry in TOOLS["tools"]:
+                spec = entry["toolSpec"]
+                tools.append({"type": "function", "name": spec["name"],
+                              "description": spec["description"],
+                              "parameters": json.loads(spec["inputSchema"]["json"])})
+            await self._send({"type": "session.update", "session": {
+                "type": "realtime", "instructions": SYSTEM_PROMPT,
+                "tools": tools,
+                # Input format omitted: upstream's native input is PCM16/16k.
+                # Output must match the existing laptop wire, PCM16/24k.
+                "audio": {"input": {"turn_detection": {
+                    "type": "server_vad", "interrupt_response": False}},
+                    "output": {"format": {"type": "audio/pcm", "rate": OUT_RATE}}}}})
+            event = json.loads(await asyncio.wait_for(self.stream.recv(), 10))
+            if event.get("type") != "session.updated":
+                raise RuntimeError("local engine did not accept session settings")
+            self.connect_seconds = round(time.monotonic() - began, 3)
+            self.reader_task = asyncio.create_task(self._read_realtime())
+        except Exception as exc:
+            fail_turn(self, self.down, RuntimeError(
+                "hybrid engine unavailable: {}: {}".format(type(exc).__name__, exc)))
+            self.ended.set()
+            self.turn_done.set()
+
+    async def _send(self, obj):
+        await asyncio.wait_for(self.stream.send(json.dumps(obj)), 10)
+
+    async def talk_start(self):
+        if self.failed:
+            return
+        if self.audio_content is not None:
+            return
+        if self.turn and not self.turn_done.is_set():
+            raise RuntimeError("hybrid engine is still answering the previous turn")
+        if self.timeout_task is not None:
+            self.timeout_task.cancel()
+            await asyncio.gather(self.timeout_task, return_exceptions=True)
+        self.turn = {"began": time.monotonic()}
+        self.audio_content = True
+        self.tool_calls = 0
+        self.tool_names = []
+        self.pending_tools = False
+        self.turn_done.clear()
+        self.down.arm_turn()
+
+    async def audio(self, pcm):
+        if self.failed or self.audio_content is None:
+            return
+        for at in range(0, len(pcm), CHUNK):
+            await self._send({"type": "input_audio_buffer.append",
+                              "audio": base64.b64encode(pcm[at:at + CHUNK]).decode()})
+
+    async def talk_end(self):
+        if self.failed or self.audio_content is None:
+            return
+        self.turn["talk_end"] = time.monotonic()
+        # Upstream owns VAD, not input_audio_buffer.commit. Feed sufficient
+        # silence for its endpoint detector; do not charge an artificial sleep.
+        await self.audio(bytes(self.options.tail_ms * BYTES_PER_MS_IN))
+        self.audio_content = None
+        self.timeout_task = asyncio.create_task(self._deadline())
+
+    async def _deadline(self):
+        try:
+            await asyncio.wait_for(self.turn_done.wait(), self.options.turn_timeout)
+        except asyncio.TimeoutError:
+            self.turn["timeout"] = True
+            fail_turn(self, self.down, TimeoutError("hybrid engine reply timed out"))
+            self.turn_done.set()
+            self.ended.set()
+
+    async def _read_realtime(self):
+        try:
+            async for raw in self.stream:
+                event = json.loads(raw)
+                kind = event.get("type")
+                if self.failed:
+                    break
+                if kind == "error":
+                    raise RuntimeError("local engine: {}".format(
+                        event.get("error", {}).get("message", "unknown error")))
+                if kind == "conversation.item.input_audio_transcription.completed":
+                    self._mark("transcribed")
+                    self.down.send_json(frame.TEXT, {
+                        "role": "USER", "text": event.get("transcript", "")})
+                elif kind == "response.output_audio_transcript.done":
+                    self.down.send_json(frame.TEXT, {
+                        "role": "ASSISTANT", "text": event.get("transcript", "")})
+                elif kind == "response.output_audio.delta":
+                    pcm = base64.b64decode(event.get("delta", ""), validate=True)
+                    if pcm:
+                        if "first_audio" not in self.turn:
+                            self._mark("first_audio")
+                        self.down.send(frame.AUDIO, pcm)
+                elif kind == "response.function_call_arguments.done":
+                    self.tool_calls += 1
+                    if self.tool_calls > 8:
+                        raise RuntimeError("hybrid engine exceeded the turn's tool limit")
+                    self.tool_names.append(event.get("name", ""))
+                    self._mark("tool_use")
+                    result = await self._tool_result({
+                        "toolName": event.get("name", ""),
+                        "content": event.get("arguments", "{}")})
+                    await self._send({"type": "conversation.item.create", "item": {
+                        "type": "function_call_output", "call_id": event["call_id"],
+                        "output": json.dumps(result)}})
+                    self._mark("tool_answered")
+                    self.pending_tools = True
+                elif kind == "response.done":
+                    if event.get("response", {}).get("status") != "completed":
+                        raise RuntimeError("hybrid engine response did not complete")
+                    if self.pending_tools:
+                        self.pending_tools = False
+                        await self._send({"type": "response.create"})
+                    else:
+                        if "first_audio" not in self.turn:
+                            raise RuntimeError("hybrid engine completed a turn without audio")
+                        self._mark("reply_end")
+                        wire = self.down.first_audio()
+                        if wire is not None:
+                            self._mark("first_audio_wire", wire)
+                        self.replies += 1
+                        self.turn_done.set()
+            if not self.closing and not self.failed:
+                raise RuntimeError("local engine connection ended")
+        except Exception as exc:
+            if not self.closing and not self.failed:
+                fail_turn(self, self.down, exc)
+        finally:
+            self.ended.set()
+            self.turn_done.set()
+
+    async def close(self):
+        self.closing = True
+        for task in (self.timeout_task, self.reader_task):
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        if self.stream is not None:
+            await self.stream.close()
+
+
+def make_session(options, down):
+    if getattr(options, "engine", "bedrock") == "hybrid":
+        return HybridSession(options, down, None)
+    return Session(options, down, Credentials(options.profile, options.verbose))
 
 
 def fail_turn(session, down, exc):
@@ -890,11 +1096,12 @@ def fail_turn(session, down, exc):
 
 
 async def renew(session, options, down):
-    """Replace a session that has already answered once, and return the new one.
+    """Replace a spent session and return the new one.
 
-    MEASURED, and the reason this exists: a second user audio block in a session
-    that has already spoken is treated as barge-in, unconditionally. The model
-    raises INTERRUPTED the instant the block opens, and waiting does not help.
+    MEASURED, and why Bedrock renews after every answer: a second user audio
+    block in a session that has already spoken is treated as barge-in,
+    unconditionally. The model raises INTERRUPTED the instant the block opens,
+    and waiting does not help.
     Six consecutive turns were tried with no wait, with a wait until the reply's
     audio had all arrived, and with a wait of the reply's full spoken duration
     after that; every one of those interrupted every second turn. Worse, an
@@ -903,15 +1110,16 @@ async def renew(session, options, down):
 
     Reconnecting instead costs 0.02 seconds, measured, and it happens when the
     captain presses the talk key rather than while they are waiting for a reply,
-    so it is invisible. What it gives up is conversational memory: each turn
-    starts fresh, so the captain cannot say "and what about that one". Carrying
-    context across turns means handling barge-in properly, which is step three of
-    the design, not this build. It also means the system prompt is sent once per
-    turn rather than once per session, which is the small cost of the trade.
+    so it is invisible. The Bedrock tradeoff is conversational memory: each turn
+    starts fresh, so the captain cannot say "and what about that one". The hybrid
+    engine instead retains context while its Realtime session remains healthy.
+    Bedrock also sends the system prompt once per turn rather than once per
+    session, which is the small cost of the trade.
     """
     log(options.verbose, "renewing the session for a new turn")
     await session.close()
-    fresh = Session(options, down, session.credentials)
+    session_type = HybridSession if getattr(options, "engine", "bedrock") == "hybrid" else Session
+    fresh = session_type(options, down, session.credentials)
     try:
         await fresh.start()
     except BaseException:
@@ -946,9 +1154,10 @@ async def handle_uplink_frame(kind, payload, session, options, down):
 
     Every branch below reaches the model, and the model side fails on its own:
     a reconnect can be throttled, a token can expire between turns, a stream can
-    drop. Because the relay rebuilds the session on every turn by design, one
-    such failure would otherwise leave the loop, end the relay with a traceback
-    on the stderr the client inherits, and cost the captain a whole session for
+    drop. Bedrock rebuilds after each reply, and hybrid rebuilds a failed or ended
+    session on the next turn. Without that recovery, one such failure would leave
+    the loop, end the relay with a traceback on the stderr the client inherits,
+    and cost the captain a whole session for
     a single bad reconnect. Instead it is named in a notice and the session is
     marked spent, so the next press of the talk key builds a new one and tries
     again. A failure the model cannot recover from is named once per turn, which
@@ -967,7 +1176,8 @@ async def handle_uplink_frame(kind, payload, session, options, down):
         return session, True
     try:
         if kind == frame.TALK_START:
-            if session.failed or session.replies or session.ended.is_set():
+            if (session.failed or session.ended.is_set()
+                    or (session.replies and not getattr(session, "persistent", False))):
                 session = await renew(session, options, down)
             await session.talk_start()
         elif kind == frame.AUDIO:
@@ -990,9 +1200,10 @@ async def serve(options):
     client closing the connection, and an uplink that has stopped being a frame
     stream. In particular a model session ending is not one of them. It happens
     on its own, mid-conversation, and the next talk key builds a replacement
-    through the same path every ordinary turn already uses, at a measured cost of
-    0.02 s. A renew that cannot be made is spoken to the captain by fail_turn, so
-    the loud failure is the one they get; ending the relay here would instead
+    through the same renewal path Bedrock uses for ordinary turns and hybrid uses
+    after a failed session. The measured Bedrock renewal cost is 0.02 s. A renew
+    that cannot be made is spoken to the captain by fail_turn, so the loud failure
+    is the one they get; ending the relay here would instead
     leave them speaking a whole question into nothing.
     """
     loop = asyncio.get_running_loop()
@@ -1004,8 +1215,13 @@ async def serve(options):
     sys.stdout.buffer.write(frame.MAGIC)
     sys.stdout.buffer.flush()
     down = Downlink(sys.stdout.buffer)
-    session = Session(options, down, Credentials(options.profile, options.verbose))
+    session = make_session(options, down)
     await session.start()
+    if session.failed:
+        await session.close()
+        down.send(frame.BYE)
+        down.close()
+        return 2
     down.send_json(frame.NOTICE, {
         "event": "ready", "model": options.model, "region": options.region,
         "read_scope": session.scope, "tail_ms": options.tail_ms,
@@ -1098,20 +1314,25 @@ async def self_test(options):
             return self.first
 
     sink = Sink()
-    session = Session(options, sink, Credentials(options.profile, options.verbose))
-    await session.start()
-    await session.talk_start()
-    # Paced at real time, because a file pushed as fast as the socket accepts it
-    # would measure the socket rather than the conversation.
-    for at in range(0, len(pcm), CHUNK):
-        await session.audio(pcm[at:at + CHUNK])
-        await asyncio.sleep(CHUNK / (IN_RATE * 2.0))
-    await session.talk_end()
+    session = make_session(options, sink)
+    try:
+        await session.start()
+        await session.talk_start()
+        # Paced at real time, as on the client uplink.
+        for at in range(0, len(pcm), CHUNK):
+            await session.audio(pcm[at:at + CHUNK])
+            await asyncio.sleep(CHUNK / (IN_RATE * 2.0))
+        await session.talk_end()
+    except Exception as exc:
+        fail_turn(session, sink, exc)
+        session.turn_done.set()
     try:
         await asyncio.wait_for(session.turn_done.wait(),
                                timeout=options.turn_timeout)
     except asyncio.TimeoutError:
         session.turn["timeout"] = True
+        if not session.failed:
+            fail_turn(session, sink, TimeoutError("voice engine reply timed out"))
     await session.close()
 
     base = session.turn.get("talk_end")
@@ -1147,7 +1368,7 @@ async def self_test(options):
         "read_scope": session.scope,
         "input_seconds": round(len(pcm) / float(IN_RATE * 2), 3),
         "tail_ms": options.tail_ms,
-        "connect_seconds": session.connect_seconds,
+        "connect_seconds": getattr(session, "connect_seconds", None),
         "tool_calls": session.tool_calls,
         "tool_names": session.tool_names,
         "tool_use_s": since("tool_use"),
@@ -1166,7 +1387,7 @@ async def self_test(options):
         "said": " ".join(sink.said),
         "notices": sink.notices,
     }))
-    return 0 if sink.bytes > 0 else 1
+    return 0 if sink.bytes > 0 and not session.failed and not session.turn.get("timeout") else 1
 
 
 def parse_args(argv):
@@ -1174,6 +1395,9 @@ def parse_args(argv):
         prog="fm-voice-relay.py", add_help=True,
         description=__doc__.splitlines()[0])
     parser.add_argument("--serve", action="store_true")
+    parser.add_argument("--engine", choices=("bedrock", "hybrid"))
+    parser.add_argument("--start-engine", action="store_true",
+                        help="run the configured external hybrid speech server, not the relay")
     parser.add_argument("--self-test", metavar="FILE")
     parser.add_argument("--region",
                         help="Bedrock region; required, from config/voice-region "
@@ -1197,6 +1421,10 @@ def parse_args(argv):
     options = parser.parse_args(argv)
     if options.tail_ms < 0:
         parser.error("--tail-ms cannot be negative")
+    if not 0 < options.turn_timeout <= 600:
+        parser.error("--turn-timeout must be greater than zero and at most 600")
+    if options.start_engine and (options.serve or options.self_test):
+        parser.error("--start-engine cannot be combined with --serve or --self-test")
     return options
 
 
@@ -1209,6 +1437,44 @@ def resolve_settings(options):
     """
     home = options.home or records.default_home()
     options.home = home
+    options.engine = options.engine or records.read_setting(
+        home, "voice-engine", "FM_VOICE_ENGINE") or "bedrock"
+    if options.engine not in ("bedrock", "hybrid"):
+        raise records.RecordError("config/voice-engine must be bedrock or hybrid")
+    if options.start_engine and options.engine != "hybrid":
+        raise records.RecordError("--start-engine requires config/voice-engine=hybrid")
+    if options.engine == "hybrid":
+        options.local_url = records.require_setting(
+            home, "voice-local-url", "FM_VOICE_LOCAL_URL", "local Realtime URL")
+        url = urlsplit(options.local_url)
+        try:
+            loopback = ipaddress.ip_address(url.hostname or "").is_loopback
+        except ValueError:
+            loopback = False
+        if (not loopback or url.scheme != "ws" or not url.port
+                or url.path != "/v1/realtime" or url.query or url.fragment
+                or url.username or url.password):
+            raise records.RecordError(
+                "config/voice-local-url must be ws://<loopback-IP>:<port>/v1/realtime")
+        options.gateway_url = records.require_setting(
+            home, "voice-gateway-url", "FM_VOICE_GATEWAY_URL", "thinking gateway base URL")
+        gateway = urlsplit(options.gateway_url)
+        try:
+            gateway_loopback = ipaddress.ip_address(gateway.hostname or "").is_loopback
+        except ValueError:
+            gateway_loopback = False
+        if (gateway.scheme not in ("http", "https") or not gateway.hostname
+                or gateway.username or gateway.password
+                or (gateway.scheme == "http" and not gateway_loopback)):
+            raise records.RecordError(
+                "config/voice-gateway-url must use HTTPS, or HTTP with a loopback IP, without credentials")
+        options.model = records.read_setting(
+            home, "voice-gateway-model", "FM_VOICE_GATEWAY_MODEL") or "codex/gpt-6-astra"
+        options.region = None
+        options.profile = None
+        options.voice = None
+        options.tail_ms = max(options.tail_ms, 1500)
+        return options
     if not options.region:
         options.region = records.require_setting(home, *SETTINGS["region"])
     if not options.model:
@@ -1229,10 +1495,43 @@ def resolve_settings(options):
     return options
 
 
+def start_engine(options):
+    """Run upstream in its own environment; the relay never imports model code."""
+    command = records.require_setting(options.home, "voice-local-command",
+                                      "FM_VOICE_LOCAL_COMMAND", "speech-to-speech executable")
+    cache = records.require_setting(options.home, "voice-local-cache",
+                                    "FM_VOICE_LOCAL_CACHE", "local speech cache directory")
+    if not os.path.isabs(command) or not os.path.isfile(command) or not os.access(command, os.X_OK):
+        raise records.RecordError("config/voice-local-command must name an absolute executable path")
+    if not os.path.isabs(cache) or not os.path.isdir(cache):
+        raise records.RecordError("config/voice-local-cache must name an existing absolute directory")
+    url = urlsplit(options.local_url)
+    env = os.environ.copy()
+    env.update(HOME=cache, HF_HOME=os.path.join(cache, "model-cache"),
+               TORCH_HOME=os.path.join(cache, "torch-cache"),
+               XDG_CACHE_HOME=os.path.join(cache, "cache"),
+               NLTK_DATA=os.path.join(cache, "nltk_data"))
+    key = records.read_setting(options.home, "voice-gateway-key", "FM_VOICE_GATEWAY_KEY")
+    # Explicitly avoid inheriting a key for some unrelated OpenAI account.
+    env["OPENAI_API_KEY"] = key or "none"
+    argv = [command, "serve", "--host", url.hostname, "--port", str(url.port),
+            "--stt", "parakeet-tdt", "--parakeet_tdt_device", "mps",
+            "--llm_backend", "chat-completions", "--model_name", options.model,
+            "--responses_api_base_url", options.gateway_url,
+            "--responses_api_stream", "True", "--responses_api_disable_thinking", "False",
+            "--stream_batch_sentences", "1", "--compact_history", "False",
+            "--tts", "qwen3", "--no_smart_turn"]
+    # The engine is intentionally foreground and externally supervised; it is
+    # never implicitly started by a client connection. Keys stay off argv.
+    os.execve(command, argv, env)
+
+
 def main(argv):
     options = parse_args(argv)
     try:
         resolve_settings(options)
+        if options.start_engine:
+            return start_engine(options)
         if options.self_test:
             return asyncio.run(self_test(options))
         return asyncio.run(serve(options)) or 0
