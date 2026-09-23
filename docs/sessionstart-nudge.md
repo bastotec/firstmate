@@ -17,6 +17,7 @@ Running the digest through the native adapter removes that discretion, so even a
 The nudge tier remains the floor for harnesses that cannot carry hook stdout into model context, and it is never a second contract: both tiers end in the same `bin/fm-session-start.sh`.
 
 Deck secondmates have a single fresh-session entry point owned by `bin/fm-deck-worker.sh --secondmate`; the driver runs the digest once and carries it into the first turn.
+That one digest run stays the entry point when the first turn dies before Deck opens a session: the driver then carries the same retained digest into the next turn once, and stops for the parent's guarded relaunch if that turn opens no session either.
 
 ## Source routing
 

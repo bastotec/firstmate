@@ -39,7 +39,16 @@
 # the durable wake queue is acknowledged only by the model after handling.
 # Exactly one Deck turn runs at a time, including stdin and watcher turns.
 # Supervision uses child processes and stdin, never backend-specific injection.
-# Startup, watcher, and turn failures publish failure status and stop the driver.
+# Startup, lock, watcher, and event-capture failures publish failure status and
+# stop the driver.
+# A failed turn is recorded and published the same way but does NOT stop the
+# driver: a persistent supervisor outlives a gateway, quota, or model failure and
+# returns to its prompt, keeping its Deck session where one exists, so the next
+# wake starts a new turn instead of leaving the home without a supervisor. The
+# first turn is covered too, so a mate launched into an outage waits rather than
+# dying. A driver that could not record or publish that failure still stops, and
+# so does a driver whose launch brief never reached a session even after one
+# repeat.
 #
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
@@ -177,10 +186,16 @@ publish_turnend() {
 
 q() { printf '%q' "$1"; }
 
+# Publishing is part of recording a failure, so a caller that would otherwise
+# continue can tell the two apart: HOST_FAILURE_UNPUBLISHED means the driver
+# could not write its own failure status and must stop. Callers that already
+# stop on any failure are unaffected.
+HOST_FAILURE_UNPUBLISHED=2
 host_failure() {
   printf 'fm-deck-worker: %s\n' "$1" >&2
   printf 'failed: Deck secondmate %s\n' "$1" | status_append || {
     printf 'fm-deck-worker: failed to publish secondmate failure\n' >&2
+    return "$HOST_FAILURE_UNPUBLISHED"
   }
   return 1
 }
@@ -354,8 +369,17 @@ $(cat "$WORK/startup")"
 fi
 
 SESSION=''
+# run_turn's code for a turn that failed in a way a persistent supervisor is
+# expected to outlive. Only the secondmate role returns it; a crewmate or scout
+# driver keeps its existing all-or-nothing turn contract.
+TURN_RECOVERABLE=3
+# 1 while the launch turn is still owed to a session: the brief and the startup
+# digest travel only in $PROMPT, and a session identity only arrives with Deck's
+# first event, so a turn that fails before that event leaves nothing behind for
+# the next turn to resume.
+LAUNCH_UNDELIVERED=0
 run_turn() {  # <prompt>
-  local prompt=$1 rc event status_before monitor_failed=0 deck_rc tee_rc jq_rc
+  local prompt=$1 rc event status_before monitor_failed=0 deck_rc tee_rc jq_rc published=0
   local -a turn_pipeline
   [ "$SECONDMATE" != 1 ] || host_lock_owned || return 1
   [ "$SECONDMATE" != 1 ] || watch_start || return 1
@@ -453,10 +477,14 @@ run_turn() {  # <prompt>
     if [ "$event" = interrupted ] && [ -n "$SESSION" ]; then
       host_failure 'turn interrupted; returning to supervised prompt' || true
     elif [ "$event" != turn-end ] || [ -z "$SESSION" ]; then
-      host_failure "turn failed ($event, exit $rc)" || true
+      host_failure "turn failed ($event, exit $rc)" || published=$?
       record_busy_event idle turn-failed || return 1
       publish_turnend || return 1
-      return 1
+      # The failure is recorded and published exactly as before, and a repeated
+      # failure keeps publishing, so a failing loop stays visible. Only a
+      # failure the driver could not record or publish is terminal.
+      [ "$published" != "$HOST_FAILURE_UNPUBLISHED" ] || return 1
+      return "$TURN_RECOVERABLE"
     fi
     host_lock_owned || return 1
   elif ! status_has_worker_evidence "$status_before"; then
@@ -471,7 +499,40 @@ run_turn() {  # <prompt>
   publish_turnend || return 1
 }
 
-run_turn "$PROMPT" || exit 1
+# Every turn, including the first, goes through this: a recoverable failure
+# returns to the prompt loop so the next wake becomes the next turn, and any
+# other failure stops the driver.
+# An owed launch turn is re-delivered once underneath the wake that follows it,
+# so a mate whose first turn died before Deck opened a session still takes the
+# helm. A second failure that opens no session stops the driver instead, which
+# is what returns the home to the parent's guarded relaunch path.
+drive_turn() {  # <prompt>
+  local rc=0 prompt=$1 relaunch=0
+  if [ "$LAUNCH_UNDELIVERED" = 1 ]; then
+    LAUNCH_UNDELIVERED=0
+    relaunch=1
+    prompt="$PROMPT
+
+The host repeated this launch brief because the previous turn failed before Deck opened a session. The digest above is this session's startup; handle the wake below as its first work.
+
+$1"
+  fi
+  run_turn "$prompt" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    return 0
+  fi
+  [ "$rc" -eq "$TURN_RECOVERABLE" ] || exit 1
+  if [ -z "$SESSION" ]; then
+    if [ "$relaunch" = 1 ]; then
+      host_failure 'opened no Deck session even after repeating the launch brief; stopping for a guarded relaunch' || true
+      exit 1
+    fi
+    LAUNCH_UNDELIVERED=1
+  fi
+  printf '\n⛵ turn failed; waiting at the prompt for the next wake.\n'
+}
+
+drive_turn "$PROMPT"
 input_seq=0
 show_prompt=1
 while :; do
@@ -493,7 +554,7 @@ while :; do
         host_failure 'could not publish watcher steering doorbell'; exit 1
       fi
       : > "$WATCH_PENDING"
-      run_turn "$doorbell" || exit 1
+      drive_turn "$doorbell"
       show_prompt=1
       continue
     fi
@@ -530,6 +591,6 @@ while :; do
       exit 0
       ;;
   esac
-  run_turn "$line" || exit 1
+  drive_turn "$line"
   show_prompt=1
 done
