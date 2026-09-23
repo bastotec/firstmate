@@ -473,7 +473,10 @@ case "$JOBS:$ADMISSION_BUDGET_MIB" in
 esac
 # Prevent overflow and accidental process storms; an explicit override can use
 # fewer CPUs but cannot request more than the detected host provides.
-[ "${#JOBS}" -le 6 ] && [ "${#ADMISSION_BUDGET_MIB}" -le 7 ] || exit 2
+if [ "${#JOBS}" -gt 6 ] || [ "${#ADMISSION_BUDGET_MIB}" -gt 7 ]; then
+  printf 'fm-lint.sh: jobs and FM_LINT_MEMORY_MIB are too large; use smaller values.\n' >&2
+  exit 2
+fi
 JOBS=$((10#$JOBS))
 ADMISSION_BUDGET_MIB=$((10#$ADMISSION_BUDGET_MIB))
 [ "$JOBS" -gt 0 ] && [ "$ADMISSION_BUDGET_MIB" -gt 0 ] || exit 2
@@ -659,9 +662,16 @@ mkdir -p "$OUTPUT_DIR"
 # One fresh ShellCheck process per root, rather than retaining a whole shard's
 # heap. Unknown/stale source graphs reserve the entire budget and run alone.
 SHARD_COUNT=$ROOT_COUNT
-if ! FM_LINT_PLAN_VERSION="$REQUIRED_SHELLCHECK" "$PERL_BIN" "$SELF_DIR/fm-lint-plan.pl" weights "$SELF_DIR/fm-lint-memory.tsv" "${ROOTS[@]}" > "$TMP_ROOT/measured" 2>/dev/null; then
+if ! FM_LINT_PLAN_VERSION="$REQUIRED_SHELLCHECK" "$PERL_BIN" "$SELF_DIR/fm-lint-plan.pl" weights "$SELF_DIR/fm-lint-memory.tsv" "${ROOTS[@]}" > "$TMP_ROOT/measured" 2>"$TMP_ROOT/plan.err"; then
+  printf 'fm-lint.sh: the weights planner failed; all %d roots run alone.\n' "$ROOT_COUNT" >&2
+  cat "$TMP_ROOT/plan.err" >&2 2>/dev/null || true
   : > "$TMP_ROOT/measured"
   for path in "${ROOTS[@]}"; do printf '0\t%s\n' "$path" >> "$TMP_ROOT/measured"; done
+fi
+unknown_count=$(awk -F "$TAB" '$1 == 0 {n++} END {print n+0}' "$TMP_ROOT/measured")
+if [ "$unknown_count" -gt 0 ]; then
+  printf 'fm-lint.sh: %d of %d roots have no measured reservation; each will run alone.\n' \
+    "$unknown_count" "$ROOT_COUNT" >&2
 fi
 worker=0
 : > "$WEIGHTS"
@@ -694,15 +704,16 @@ LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n "$WEIGHTS" > "$WEIGHTS.sorted"
 # An unknown or oversized reservation is not a size claim equal to the whole
 # budget: it means the root must run alone in its own wave regardless of how
 # large the configured budget is, so a light root is never packed beside it on
-# the strength of arithmetic that happens to fit.
+# the strength of arithmetic that happens to fit. The weight cap alone owns
+# that guarantee: an unknown root's weight equals the whole admission budget,
+# so no other reservation can fit beside it in the same wave.
 awk -F '\t' -v jobs="$JOBS" -v budget="$ADMISSION_BUDGET_MIB" '
   {
     wave=0
-    while (count[wave] >= jobs || memory[wave] + $1 > budget || (heavy[wave] && $4) || (occupied[wave] && $5)) wave++
+    while (count[wave] >= jobs || memory[wave] + $1 > budget || (heavy[wave] && $4)) wave++
     count[wave]++
     memory[wave]+=$1
     heavy[wave]+=$4
-    if ($5) occupied[wave]=1
     rows[wave]=rows[wave] wave "\t" $0 "\n"
     if (wave > last) last=wave
   }

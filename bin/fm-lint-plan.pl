@@ -54,21 +54,42 @@ for my $path (keys %text) {
 }
 my $alternatives = join '|', map { quotemeta($_) } sort keys %names;
 my $name_pattern = qr/(?<![\w.-])($alternatives)(?![\w.-])/;
-# Edge building matches basenames inside source references, so a literal
-# operand and a literal skeleton such as "$dir/name.sh" create an edge the
-# pinned ShellCheck (0.11.0) really does follow, and a literal annotation
-# resolves exactly as written. A fully variable operand matches no name and
-# adds no edge: the pinned ShellCheck never follows it (SC1090), so it cannot
-# hide a dependency of a changed file. No shell code is evaluated anywhere in
-# this analysis.
+# Edge building matches basenames inside source references. A literal skeleton
+# such as "$dir/name.sh" creates an edge the pinned ShellCheck (0.11.0) does
+# NOT follow - under --norc --external-sources it reports SC1091 and resolves
+# the literal skeleton relative to the script directory, dropping the variable
+# component - so such edges are deliberate over-inclusion for selection, wider
+# than what ShellCheck analyzes, and never narrower. A `# shellcheck source=`
+# directive on the line before a source call is authoritative where present:
+# source=/dev/null means the lint definition analyzes nothing there, so no
+# edge is built from that call; source=path resolves exactly as written. A
+# fully variable operand matches no name and adds no edge: the pinned
+# ShellCheck never follows it (SC1090), so it cannot hide a dependency of a
+# changed file. No shell code is evaluated anywhere in this analysis.
+my %directed;
 for my $path (keys %text) {
     my $body = $text{$path};
-    my $source_line = qr/(?:^\s*|[;&|{}()]\s*|\b(?:then|do|if|elif|while|until|command|builtin)\s+|!\s+)(?:source|\.)\s+/;
-    my $references = join "\n", grep {
-        /^\s*#\s*shellcheck\s+.*\bsource=/ || /(?:^|[;\s])(?:source|\.)\s+/
-    } split /\n/, $body;
-    while ($references =~ /$name_pattern/g) {
-        $edges{$path}{$_} = 1 for @{$names{$1}};
+    my @lines = split /\n/, $body;
+    for (my $i = 0; $i < @lines; $i++) {
+        next unless $lines[$i] =~ /(?:^|[;\s])(?:source|\.)\s+/;
+        # A shellcheck source directive on the line before a source call owns
+        # its resolution: /dev/null analyzes nothing, a literal path resolves
+        # as written.
+        my ($directive) = $i > 0 && $lines[$i - 1] =~ /^\s*#\s*shellcheck\s+source=(\S+)\s*$/
+            ? ($1) : ();
+        if (defined $directive) {
+            $directed{$path}{$directive} = 1 unless $directive eq '/dev/null';
+            next;
+        }
+        while ($lines[$i] =~ /$name_pattern/g) {
+            $edges{$path}{$_} = 1 for @{$names{$1}};
+        }
+    }
+}
+# Directive-resolved targets form an edge only when they are graph members.
+for my $path (keys %directed) {
+    for my $target (keys %{$directed{$path}}) {
+        $edges{$path}{$target} = 1 if exists $text{$target};
     }
 }
 sub closure {

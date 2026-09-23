@@ -1624,7 +1624,52 @@ SH
   pass "zero or unknown reservations run alone at any configured budget"
 }
 
+# A `# shellcheck source=/dev/null` directive bounds the analysis the lint
+# definition performs, so the planner must not build a dependency edge from
+# such an annotated call: changing the sourced module selects only its genuine
+# dependents, never a root that never analyzes it.
+test_devnull_directive_bounds_selection() {
+  local tmp repo base listed
+  tmp=$(fm_test_tmproot fm-lint-devnull)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/helper.sh"
+  printf '#!/bin/bash\n# shellcheck source=/dev/null\n. bin/helper.sh\n' > "$repo/bin/bounded.sh"
+  printf '#!/bin/bash\n. bin/helper.sh\n' > "$repo/bin/genuine.sh"
+  git -C "$repo" add . || fail "could not stage devnull fixture"
+  git -C "$repo" commit -qm devnull-fixture || fail "could not commit devnull fixture"
+  base=$(git -C "$repo" rev-parse HEAD)
+  printf '#!/bin/bash\nvalue=2\n' > "$repo/bin/helper.sh"
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files) || fail "devnull selection failed"
+  [ "$listed" = $'bin/genuine.sh\nbin/helper.sh' ] || fail "devnull boundary not honored: $listed"
+  pass "a source=/dev/null directive bounds dependency selection"
+}
+
+# A weights plan where every root reads as unmeasured must say so on stderr
+# rather than silently serializing the whole run: an operator hitting the CI
+# time tripwire needs the count in the log to explain it.
+test_all_unknown_plan_prints_diagnostic() {
+  local tmp repo out
+  tmp=$(fm_test_tmproot fm-lint-unknown-diag)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/plain-a.sh"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/plain-b.sh"
+  git -C "$repo" add . || fail "could not stage unknown-diag fixture"
+  git -C "$repo" commit -qm unknown-diag-fixture || fail "could not commit unknown-diag fixture"
+  rm -f "$repo/bin/fm-lint-memory.tsv"
+  fakebin=$(fm_fakebin "$tmp")
+  fm_lint_stub_shellcheck "$fakebin" "$tmp/roots.log"
+  out=$(PATH="$fakebin:$PATH" CI=true FM_LINT_MEMORY_MIB=2048 \
+    "$repo/bin/fm-lint.sh" --full 2>&1) || fail "all-unknown full lint failed: $out"
+  assert_contains "$out" "fm-lint.sh: 6 of 6 roots have no measured reservation" \
+    "an all-unknown plan did not print its count"
+  pass "an all-unknown weights plan prints a counted diagnostic"
+}
+
 test_affected_roots_follow_transitive_sources
+test_devnull_directive_bounds_selection
+test_all_unknown_plan_prints_diagnostic
 test_memory_schedule_isolates_heavy_and_stale_roots
 test_affected_mode_does_not_select_unrelated_uncertain_roots
 test_matching_digest_is_not_uncertain
