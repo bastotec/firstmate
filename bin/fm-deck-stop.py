@@ -3,11 +3,12 @@
 
 Usage: fm-deck-stop.py STATE TASK TIMEOUT
 Matches the driver's launch prefix, never brief text, generation, or pane output.
-Only a driver leading its own process group may be stopped. The driver receives
-TERM without its active tools, then a surviving group is killed after TIMEOUT.
-Replacement is refused until every member has exited; zombies cannot write.
-Legacy drivers need no PID registration, so older generations are covered.
-The backend's endpoint proof remains required by fm-control.sh.
+Only a driver leading its own process group may be stopped. TERM asks the driver
+and its active Deck child to stop, while active tools receive no signal. Deck's
+exit confirms the post-tool stop handshake. A surviving group is killed after
+TIMEOUT, and replacement is refused until every member has exited; zombies
+cannot write. Legacy drivers need no PID registration. The backend's endpoint
+proof remains required by fm-control.sh.
 """
 import os
 import re
@@ -19,15 +20,37 @@ import time
 
 def processes():
     output = subprocess.check_output(
-        ["ps", "-axww", "-o", "pid=,pgid=,stat=,args="], text=True
+        ["ps", "-axww", "-o", "pid=,ppid=,pgid=,stat=,comm=,args="], text=True
     )
     rows = []
     for line in output.splitlines():
-        fields = line.strip().split(None, 3)
-        if len(fields) == 4:
-            pid, group, stat, args = fields
-            rows.append((int(pid), int(group), stat, args))
+        fields = line.strip().split(None, 5)
+        if len(fields) == 6:
+            pid, parent, group, stat, command, args = fields
+            rows.append(
+                (int(pid), int(parent), int(group), stat, command, args)
+            )
     return rows
+
+
+def deck_processes(rows, group, executable):
+    executable_name = os.path.basename(executable)
+    matches = []
+    for pid, _, process_group, stat, command, args in rows:
+        if process_group != group or stat.startswith("Z"):
+            continue
+        words = args.split()
+        leading = words[:3]
+        command_name = os.path.basename(command)
+        executable_index = leading.index(executable) if executable in leading else -1
+        invoked_path = (
+            executable_index >= 0
+            and words[executable_index + 1 : executable_index + 2] == ["run"]
+        )
+        invoked_name = command_name == executable_name and words[1:2] == ["run"]
+        if invoked_path or invoked_name:
+            matches.append(pid)
+    return matches
 
 
 def stop(state, task, timeout):
@@ -37,37 +60,54 @@ def stop(state, task, timeout):
     prefix = re.compile(
         r"^(?:fm-deck-worker|(?:\S*/)?bash) (?:\S*/)?fm-deck-worker\.sh "
         + re.escape(f"--id {task} --state {state} --gen ")
-        + r"\S+ --deck "
+        + r"\S+ --deck (?P<deck>\S+)(?: |$)"
     )
     drivers = [
-        (pid, group)
-        for pid, group, stat, args in processes()
+        (pid, group, prefix.match(args).group("deck"))
+        for pid, _, group, stat, _, args in processes()
         if not stat.startswith("Z") and prefix.match(args)
     ]
-    for pid, group in drivers:
+    for pid, group, _ in drivers:
         if pid != group or group == os.getpgrp():
             raise RuntimeError(
                 f"Deck driver {pid} does not lead an isolated process group"
             )
-    groups = {group for _, group in drivers}
-    for pid, group in drivers:
+    groups = {group for _, group, _ in drivers}
+    deck_pids = set()
+    for pid, group, executable in drivers:
+        rows = processes()
+        if not any(
+            process == pid and process_group == group and prefix.match(args)
+            for process, _, process_group, _, _, args in rows
+        ):
+            continue
+        active_decks = deck_processes(rows, group, executable)
         try:
-            if any(
-                p == pid and g == group and prefix.match(args)
-                for p, g, _, args in processes()
-            ):
-                os.kill(pid, signal.SIGTERM)
+            os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
-            pass
+            continue
+        for deck_pid in active_decks:
+            try:
+                rows = processes()
+                if deck_pid in deck_processes(rows, group, executable):
+                    os.kill(deck_pid, signal.SIGTERM)
+                    deck_pids.add(deck_pid)
+            except ProcessLookupError:
+                pass
     deadline = time.monotonic() + timeout
     while True:
         rows = processes()
+        live_decks = {
+            pid
+            for pid, _, _, stat, _, _ in rows
+            if pid in deck_pids and not stat.startswith("Z")
+        }
         remaining = [
             pid
-            for pid, group, stat, args in rows
+            for pid, _, group, stat, _, args in rows
             if not stat.startswith("Z") and (group in groups or prefix.match(args))
         ]
-        if not remaining:
+        if not live_decks and not remaining:
             return
         if time.monotonic() >= deadline:
             break
@@ -82,7 +122,7 @@ def stop(state, task, timeout):
         rows = processes()
         remaining = [
             pid
-            for pid, group, stat, args in rows
+            for pid, _, group, stat, _, args in rows
             if not stat.startswith("Z") and (group in groups or prefix.match(args))
         ]
         if not remaining:

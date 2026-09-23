@@ -44,9 +44,10 @@
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
-#   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600). A native
-#                           deadline failure resumes the same session in a new
-#                           bounded turn; other failures never auto-retry.
+#   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600).
+#   FM_DECK_DEADLINE_ROLLOVERS
+#                           maximum validation/CI-wait deadline continuations
+#                           per task (default 3); unrelated deadlines never retry.
 #   PROXAI_BASE_URL, PROXAI_MODEL, PROXAI_API_KEY_FILE, PROXAI_API_KEY
 #                           Deck's own endpoint settings, passed through. When
 #                           neither key variable is set and
@@ -90,8 +91,11 @@ STATUS_FILE="$STATE/$ID.status"
 TURNEND_FILE="$STATE/$ID.turn-ended"
 MAX_TURNS=${FM_DECK_MAX_TURNS:-200}
 DEADLINE=${FM_DECK_DEADLINE_SECS:-3600}
+DEADLINE_ROLLOVER_LIMIT=${FM_DECK_DEADLINE_ROLLOVERS:-3}
+DEADLINE_ROLLOVERS=0
 case "$MAX_TURNS" in ''|*[!0-9]*) MAX_TURNS=200 ;; esac
 case "$DEADLINE" in ''|*[!0-9]*) DEADLINE=3600 ;; esac
+case "$DEADLINE_ROLLOVER_LIMIT" in ''|*[!0-9]*) DEADLINE_ROLLOVER_LIMIT=3 ;; esac
 # A zero deadline would turn native continuation into an immediate retry loop.
 case "$DEADLINE" in *[1-9]*) ;; *) DEADLINE=3600 ;; esac
 if [ -z "${PROXAI_API_KEY_FILE:-}${PROXAI_API_KEY:-}" ] && [ -f "$HOME/.config/proxai/client.key" ]; then
@@ -178,6 +182,19 @@ publish_turnend() {
     printf 'fm-deck-worker: could not safely publish turn-end signal %s\n' "$TURNEND_FILE" >&2
     return 1
   }
+}
+
+deadline_wait_is_resumable() {
+  jq -s -e '
+    (to_entries | map(select(.value.type == "tool_call")) | last) as $call
+    | (to_entries | map(select(.value.type == "tool_result")) | last) as $result
+    | select($call != null and ($result == null or $call.key > $result.key))
+    | select($call.value.name == "shell")
+    | ($call.value.arguments | if type == "string" then . else tostring end) as $args
+    | ($args | test("(^|[^[:alnum:]_-])no-mistakes[[:space:]]+axi[[:space:]]+run([^[:alnum:]_-]|$)"))
+      or ($args | test("(^|[^[:alnum:]_-])gh[[:space:]]+run[[:space:]]+watch([^[:alnum:]_-]|$)"))
+      or ($args | test("(^|[^[:alnum:]_-])gh[[:space:]]+pr[[:space:]]+checks[^\\n]*[[:space:]]--watch([^[:alnum:]_-]|$)"))
+  ' "$EVENTS" >/dev/null 2>&1
 }
 
 q() { printf '%q' "$1"; }
@@ -452,11 +469,18 @@ run_turn() {  # <prompt>
   fi
   if [ "$INTERRUPTED" = 0 ] && [ "$rc" -ne 0 ] && [ -n "$SESSION" ] \
     && jq -e --arg error "run exceeded ${DEADLINE}s deadline" \
-      'select(.type == "run_failed" and .error == $error)' "$EVENTS" >/dev/null 2>&1; then
-    # Deck persists the conversation before returning its native deadline error.
-    # Do not replay a tool or an old prompt: the resumed worker must reconcile
-    # any in-flight pipeline first. Busy writes remain fail-closed here too.
-    printf 'working: Deck turn deadline reached; resuming the existing session\n' | status_append || return 1
+      'select(.type == "run_failed" and .error == $error)' "$EVENTS" >/dev/null 2>&1 \
+    && deadline_wait_is_resumable; then
+    if [ "$DEADLINE_ROLLOVERS" -ge "$DEADLINE_ROLLOVER_LIMIT" ]; then
+      printf 'failed: Deck deadline rollover cap reached (%s/%s); validation or CI wait remains unfinished\n' \
+        "$DEADLINE_ROLLOVERS" "$DEADLINE_ROLLOVER_LIMIT" | status_append || return 1
+      record_busy_event idle turn-deadline-cap || return 1
+      publish_turnend || return 1
+      return 1
+    fi
+    DEADLINE_ROLLOVERS=$((DEADLINE_ROLLOVERS + 1))
+    printf 'working: Deck deadline reached during validation or CI wait; resuming session (rollover %s/%s)\n' \
+      "$DEADLINE_ROLLOVERS" "$DEADLINE_ROLLOVER_LIMIT" | status_append || return 1
     record_busy_event idle turn-deadline || return 1
     publish_turnend || return 1
     return 75
@@ -493,7 +517,7 @@ run_with_deadline_resume() {
     run_turn "$prompt"
     rc=$?
     [ "$rc" = 75 ] || return "$rc"
-    prompt='The previous bounded turn reached its wall-clock deadline. Continue this same task and session. First inspect the status of any pipeline or command already started; do not start a duplicate run or replay a state-changing command. Resume supervision of any external wait, and otherwise continue from the existing evidence.'
+    prompt='The previous bounded turn reached its wall-clock deadline during an in-flight no-mistakes validation or CI wait. Continue this same task and session. First inspect the existing run; do not start a duplicate pipeline or replay a state-changing command. Resume supervision from the existing evidence.'
   done
 }
 

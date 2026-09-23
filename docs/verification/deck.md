@@ -74,8 +74,10 @@ Observed output:
 ok - deck 0.1.0: native deadline emits resumable session and exact run_failed reason
 ```
 
-The guard pins the installed binary's nonzero exit, session-bearing `run_started`, and exact `run_failed` deadline error used to distinguish continuation from unrelated failures.
-Portable driver, physical-state-path, and stale-generation relaunch regressions are in `tests/fm-deck-harness.test.sh` and `tests/fm-control-relaunch.test.sh`.
+The guard pins the installed binary's nonzero exit, session-bearing `run_started`, and exact `run_failed` deadline error that enters the driver's deadline classifier.
+The portable driver regression proves that only an unfinished `no-mistakes axi run`, `gh run watch`, or `gh pr checks --watch` tool call resumes, while provider hangs and completed tools fail without continuation and the reported per-task rollover cap stops repeated eligible deadlines.
+The same regression signals a fake Deck during tool A and observes Deck's own signal receipt, tool A's result, Deck's exit, and the absence of tool B before the helper reports success.
+Physical-state-path and stale-generation relaunch regressions are in `tests/fm-deck-harness.test.sh` and `tests/fm-control-relaunch.test.sh`.
 Other harnesses retain their existing lifecycle and deadline behavior; this driver-only path does not alter backend transport or endpoint classifiers.
 
 ## Live check
