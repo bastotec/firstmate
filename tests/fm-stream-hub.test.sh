@@ -2228,6 +2228,49 @@ test_a_leaf_the_hub_cannot_resolve_stays_pending() {
   pass "hub: a leaf the hub cannot resolve stays pending"
 }
 
+test_an_unresolved_order_preserves_its_id_binding_for_retry() {
+  start_hub order-unresolved-retry
+  local endpoint agent leaf first conflict retried listed="" waited=0
+  local order_id=unresolved-binding
+  endpoint=$(start_agent box-a binding)
+  agent=$(agent_pid_for box-a binding)
+  [ -n "$agent" ] || fail "the agent should be running"
+  leaf="box-a/binding-$RUN"
+  kill -STOP "$agent" || fail "could not pause the agent"
+  restart_hub
+
+  first=$(order "$leaf" "$endpoint" "echo BINDING-ORIGINAL" "$order_id")
+  assert_equals "$(api_code)" 200 "unresolved membership should keep the order pending"
+  assert_equals "$(printf '%s' "$first" | jq -r '.outcome')" unconfirmed \
+    "the first placement should remain unresolved"
+  conflict=$(order "$leaf" "$endpoint" "echo BINDING-CONFLICT" "$order_id")
+  assert_equals "$(api_code)" 409 "an unresolved order id must reject different text"
+  assert_equals "$(printf '%s' "$conflict" | jq -r '.error')" order_id_conflict \
+    "the changed retry should remain an idempotency conflict"
+
+  kill -CONT "$agent" || fail "could not resume the agent"
+  while [ "$waited" -lt 300 ]; do
+    listed=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')
+    [ "$listed" = 1 ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$listed" 1 "the original execution should rejoin before the retry"
+  retried=$(order "$leaf" "$endpoint" "echo BINDING-ORIGINAL" "$order_id")
+  assert_equals "$(api_code)" 200 "an identical unresolved retry should be attempted again"
+  assert_equals "$(printf '%s' "$retried" | jq -r '.outcome')" accepted \
+    "the identical retry should reach the rejoined execution"
+  assert_equals "$(printf '%s' "$retried" | jq -r '.requested_at')" \
+    "$(printf '%s' "$first" | jq -r '.requested_at')" \
+    "retrying unresolved membership must preserve the original order record"
+  wait_for_capture "$endpoint" BINDING-ORIGINAL \
+    || fail "the identical retry never reached the rejoined worker"
+  assert_not_contains "$(view GET "/v1/tasks/$endpoint/capture?lines=40")" BINDING-CONFLICT \
+    "the conflicting retry must never reach the worker"
+  pass "hub: unresolved orders preserve id binding across retry"
+}
+
 test_an_order_no_agent_took_is_refused_rather_than_left_in_doubt() {
   # Nothing ever took it, so the hub is entitled to say it did not arrive.
   # That is a fact, and it is the only side of this the hub may state.
@@ -2565,6 +2608,7 @@ test_an_order_reaches_the_worker_its_leaf_names
 test_an_order_aimed_at_a_replaced_execution_never_reaches_the_replacement
 test_an_order_to_a_worker_its_agent_reported_gone_is_refused
 test_a_leaf_the_hub_cannot_resolve_stays_pending
+test_an_unresolved_order_preserves_its_id_binding_for_retry
 test_an_order_no_agent_took_is_refused_rather_than_left_in_doubt
 test_an_order_taken_without_an_answer_is_unconfirmed_and_reconciles_when_resent
 test_an_order_is_delivered_once_however_many_times_its_id_is_sent
