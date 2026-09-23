@@ -50,7 +50,8 @@
 #                           neither key variable is set and
 #                           ~/.config/proxai/client.key exists, that file is used.
 #
-# Exit: 0 on /quit or end of input; 2 on a usage error.
+# Exit: 0 on /quit or end of input; 1 on a runtime or host failure; 2 on a
+# usage error or unavailable launch prerequisite.
 set -u
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

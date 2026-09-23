@@ -302,7 +302,8 @@
 # log; muse, gemini, and agy are verified crewmate/scout-only adapters.
 # deck also hosts secondmates with --secondmate and installs no hook file:
 # bin/fm-deck-worker.sh passes Deck its per-run hooks
-# (--hook) and writes the busy and turn-end events itself.
+# (--hook), writes every busy event itself, and publishes turn-end only for
+# ordinary workers.
 # rovo installs no hook either - its eventHooks fire at tool granularity only,
 # never turn-end - so it carries no busy-source wiring at all and no turn-end
 # hook. A positional brief is dead-on-arrival (rovo loads, never works, and drops
@@ -4290,9 +4291,11 @@ if [ "$KIND" = secondmate ]; then
   # Keep this in step with fm_supervision_model (bin/fm-wake-lib.sh): Claude's
   # Stop auto-arm and Cursor's stop-hook park both run the watcher only BETWEEN
   # turns, so a fresh beacon with no live watcher is their healthy mid-turn state.
-  # Pi and pi-signed secondmates previously received persistent here and now
-  # receive extension to match fm_supervision_model's own table, so their pull
-  # guard tolerates the extension hand-off exactly as a Pi primary does.
+  # Deck gets the same verdict only through this scoped secondmate override: its
+  # persistent driver continuously replaces the watcher, while fresh-beacon
+  # tolerance covers the bounded child hand-off without changing Deck-primary
+  # detection. Pi, pi-signed, and omp receive extension so their pull guard
+  # tolerates the extension hand-off exactly as the matching primary does.
   case "$HARNESS" in
     claude|cursor|deck) supervision_model=autoarm ;;
     pi|pi-signed|omp) supervision_model=extension ;;
