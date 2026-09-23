@@ -68,7 +68,7 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd -P)}"
 # shellcheck source=bin/fm-remote-herdr-owner-lib.sh
 . "$SCRIPT_DIR/fm-remote-herdr-owner-lib.sh"
 REQUIRED_TOOLS=(git jq herdr tasks-axi treehouse)
-HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi)
+HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi deck)
 OPTIONAL_TOOLS=(tmux no-mistakes gh)
 LAUNCH_AGENT_LABEL=dev.firstmate.herdr.fm-remote
 # The dedicated remote-secondmate session. The user's interactive Herdr work
@@ -421,8 +421,20 @@ check_remote_job_worker() {
   fi
 }
 
+selected_harness_tool() {
+  local harness resolved
+  for harness in "${HARNESS_TOOLS[@]}"; do
+    resolved=$(command -v "$harness" 2>/dev/null || true)
+    if [ -n "$resolved" ] && [ -x "$resolved" ]; then
+      printf '%s\t%s\n' "$harness" "$resolved"
+      return 0
+    fi
+  done
+  return 1
+}
+
 report_required_tools() {
-  local tool resolved harness status
+  local tool resolved harness status selected
   MISSING=()
   VERSION_UNREADABLE=()
   for tool in "${REQUIRED_TOOLS[@]}"; do
@@ -449,20 +461,29 @@ report_required_tools() {
       MISSING+=("$tool")
     fi
   done
-  for harness in "${HARNESS_TOOLS[@]}"; do
-    resolved=$(command -v "$harness" 2>/dev/null || true)
-    if [ -n "$resolved" ] && [ -x "$resolved" ]; then
-      printf 'required harness=%s:%s\n' "$harness" "$resolved"
-      return 0
+  selected=$(selected_harness_tool 2>/dev/null || true)
+  if [ -n "$selected" ]; then
+    harness=${selected%%$'\t'*}
+    resolved=${selected#*$'\t'}
+    printf 'required harness=%s:%s\n' "$harness" "$resolved"
+    if [ "$harness" = deck ]; then
+      resolved=$(command -v python3 2>/dev/null || true)
+      if [ -n "$resolved" ] && [ -x "$resolved" ]; then
+        printf 'required python3=%s\n' "$resolved"
+      else
+        printf 'required python3=MISSING\n'
+        MISSING+=(python3)
+      fi
     fi
-  done
+    return 0
+  fi
   printf 'required harness=MISSING\n'
   MISSING+=(harness)
 }
 
 report_required_tools_from_worker() {
   local job_id probe_stdout probe_stderr probe_exit line fact name value problem_count
-  local expected=6 count=0 valid=1 seen=' '
+  local expected=6 count=0 valid=1 seen=' ' deck_harness=0 python_fact=0
   if ! job_id=$(fm_remote_job_stage "${HOME:-}" "$FM_ROOT" "${FM_HOME:-}" \
     fm-remote-doctor.sh --worker-tool-probe </dev/null); then
     set_check remote-job-probe "fixable: the remote job worker could not accept the required-tool probe" \
@@ -487,16 +508,24 @@ report_required_tools_from_worker() {
     fact=${line#required }
     name=${fact%%=*}
     value=${fact#*=}
-    case "$name" in git|jq|herdr|tasks-axi|treehouse|harness) ;; *) valid=0; continue ;; esac
+    case "$name" in git|jq|herdr|tasks-axi|treehouse|harness|python3) ;; *) valid=0; continue ;; esac
     case "$seen" in *" $name "*) valid=0; continue ;; esac
     seen="$seen$name "
     count=$((count + 1))
+    [ "$name" != harness ] || case "$value" in deck:*) deck_harness=1 ;; esac
+    [ "$name" != python3 ] || python_fact=1
     case "$value" in
       MISSING*) MISSING+=("$name") ;;
       VERSION_UNREADABLE*) VERSION_UNREADABLE+=("$name") ;;
       '') valid=0 ;;
     esac
   done < "$probe_stdout"
+  if [ "$deck_harness" -eq 1 ]; then
+    expected=7
+    [ "$python_fact" -eq 1 ] || valid=0
+  else
+    [ "$python_fact" -eq 0 ] || valid=0
+  fi
   [ "$count" -eq "$expected" ] || valid=0
   [ ! -s "$probe_stderr" ] || valid=0
   problem_count=$((${#MISSING[@]} + ${#VERSION_UNREADABLE[@]}))
@@ -554,17 +583,26 @@ repair_tool_wrapper() { # <tool>
 }
 
 repair_required_wrappers() {
-  local tool resolved
+  local tool selected harness
   for tool in "${REQUIRED_TOOLS[@]}"; do
     repair_tool_wrapper "$tool" || true
   done
-  for tool in "${HARNESS_TOOLS[@]}"; do
-    resolved=$(command -v "$tool" 2>/dev/null || true)
-    [ -z "$resolved" ] || [ ! -x "$resolved" ] || return 0
-  done
+  selected=$(selected_harness_tool 2>/dev/null || true)
+  if [ -n "$selected" ]; then
+    harness=${selected%%$'\t'*}
+    if [ "$harness" = deck ]; then
+      repair_tool_wrapper python3 || true
+    fi
+    return 0
+  fi
   for tool in "${HARNESS_TOOLS[@]}"; do
     fm_remote_job_manager_tool "${HOME:-}" "$tool" >/dev/null 2>&1 || continue
-    repair_tool_wrapper "$tool" && return 0
+    if repair_tool_wrapper "$tool"; then
+      if [ "$tool" = deck ]; then
+        repair_tool_wrapper python3 || true
+      fi
+      return 0
+    fi
   done
 }
 

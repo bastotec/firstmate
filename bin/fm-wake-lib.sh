@@ -209,17 +209,19 @@ fm_watcher_healthy() {
 # process, so a leftover beacon must never satisfy it. bin/fm-turnend-guard.sh
 # also keeps this strict check because it fires at the turn boundary where the
 # auto-arm brings a fresh watcher up. The pull warning (bin/fm-guard.sh) fires
-# mid-turn, where the auto-arm model runs no watcher at all, so it wants a
-# different, model-aware question:
+# mid-turn, where the selected supervision model may permit a verified hand-off
+# without a live watcher process, so it wants a different, model-aware question:
 
 # fm_supervision_model
 # Print the supervision model of this home's PRIMARY harness:
-#   autoarm     Claude's Stop-hook auto-arm and Cursor's stop-hook park: the
-#               watcher is armed at each turn end and exits on its wake, so it
-#               runs only BETWEEN turns. Mid-turn a fresh beacon with no live
-#               watcher process is healthy, and a stale beacon is still healthy
-#               while a Claude auto-arm generation explains the gap
-#               (fm_autoarm_midturn_healthy).
+#   autoarm     Claude's Stop-hook auto-arm and Cursor's stop-hook park run the
+#               watcher only BETWEEN turns. A Deck secondmate receives this
+#               model only as a launch-scoped override: its persistent driver
+#               continuously replaces exited watchers, with the same fresh-beacon
+#               tolerance covering a bounded child hand-off. A fresh beacon with
+#               no live watcher process is healthy in either shape; a stale beacon
+#               is healthy only while a Claude auto-arm generation explains the
+#               gap (fm_autoarm_midturn_healthy).
 #   extension   Pi (and pi-signed): .pi/extensions/fm-primary-pi-watch.ts owns
 #               continuity. It tears the watcher down on every actionable wake and
 #               spawns the replacement itself, so a genuinely unheld singleton lock
@@ -388,11 +390,12 @@ fm_afk_mode() {
 #                                             the lock (the beacon is still fresh)
 #                              stale-beacon - the beacon is stale beyond grace or
 #                                             absent (a genuine supervision lapse)
-# autoarm: a fresh beacon within grace is healthy even with no live watcher,
-# because the watcher only runs between turns. A stale beacon is still healthy
-# while fm_autoarm_midturn_healthy proves a Claude auto-arm generation
-# explains the gap (a rewake bound to the current recovery generation and
-# live session lock), because turn-end re-arms.
+# autoarm: a fresh beacon within grace is healthy even with no live watcher.
+# Claude and Cursor use that allowance between turns; a Deck secondmate's scoped
+# override uses it only across the persistent driver's bounded watcher hand-off.
+# A stale beacon is still healthy while fm_autoarm_midturn_healthy proves a
+# Claude auto-arm generation explains the gap (a rewake bound to the current
+# recovery generation and live session lock), because turn-end re-arms.
 # Without that proof a stale or absent beacon is a genuine lapse.
 # extension: a live identity-matched watcher is the ordinary healthy state, but a
 # genuinely unheld lock is also healthy while the beacon is fresh AND a live Pi

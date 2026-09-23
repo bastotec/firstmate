@@ -526,6 +526,42 @@ test_interrupted_handling_is_redrained_on_rearm() {
   pass "watch-arm: interrupted handling leaves its wake durable for successor re-drain"
 }
 
+test_acknowledged_generation_confirms_only_its_live_successor() {
+  local dir home state fakebin generation watcher_pid
+  dir=$(make_case acknowledged-handling-successor)
+  home="$dir/home"
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  generation=acknowledged-fixture
+  mkdir -p "$home/data"
+  printf 'pending:downtime:%s\n' "$generation" > "$state/.watcher-down"
+
+  start_rearm_arm "$home" "$state" "$fakebin" "$dir/handling-successor.out" 4242
+  is_live_non_zombie "$ARM_PID" || fail "acknowledgement-race successor did not remain live"
+  watcher_pid=$(sed -n 's/^watcher: started pid=\([0-9][0-9]*\).* recovery-generation=.*$/\1/p' "$dir/handling-successor.out")
+  [ -n "$watcher_pid" ] || fail "acknowledgement-race successor did not report its watcher pid"
+  printf 'acked:handling:%s\n' "$generation" > "$state/.watcher-down"
+
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state" "$WATCH_ARM" --handling-delivered "$generation" \
+    --watcher-pid "$watcher_pid" \
+    || fail "an acknowledged matching generation rejected its live successor"
+  [ "$(cat "$state/.watcher-down")" = "acked:handling:$generation" ] \
+    || fail "continuity confirmation reopened an acknowledged generation"
+  if FM_HOME="$home" FM_STATE_OVERRIDE="$state" "$WATCH_ARM" --handling-delivered unrelated-generation \
+      --watcher-pid "$watcher_pid"; then
+    fail "an unrelated acknowledged generation was accepted"
+  fi
+
+  kill -TERM "$ARM_PID" 2>/dev/null || fail "could not stop acknowledgement-race successor"
+  wait "$ARM_PID" 2>/dev/null || true
+  printf 'acked:handling:%s\n' "$generation" > "$state/.watcher-down"
+  if FM_HOME="$home" FM_STATE_OVERRIDE="$state" "$WATCH_ARM" --handling-delivered "$generation" \
+      --watcher-pid "$watcher_pid"; then
+    fail "an acknowledged generation accepted a dead successor"
+  fi
+  pass "watch-arm: acknowledged generations accept only their live matching successor"
+}
+
 test_malformed_marker_is_quarantined_once() {
   local dir home state fakebin invalid_count
   dir=$(make_case malformed-downtime-marker)
@@ -1074,6 +1110,7 @@ test_rearm_resurfaces_durable_queue_and_remote_open_decision
 test_marker_publish_failure_retains_recovery_evidence
 test_delivery_gap_wake_is_recovered_once
 test_interrupted_handling_is_redrained_on_rearm
+test_acknowledged_generation_confirms_only_its_live_successor
 test_malformed_marker_is_quarantined_once
 test_recovery_consumption_serializes_queue_publication
 test_restart_preserves_recovery_across_reused_pid_lock

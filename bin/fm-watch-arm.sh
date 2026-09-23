@@ -481,9 +481,20 @@ case "${1:-}" in
 esac
 
 if [ "$mode" = handling-delivered ]; then
+  if ! fm_pid_alive "$handling_watcher_pid" \
+      || ! fm_watcher_lock_matches_pid "$STATE" "$WATCH" "$handling_watcher_pid" "$FM_HOME"; then
+    exit 1
+  fi
+  if fm_recovery_marker_begin_handling "$STATE/.watcher-down" "$handling_generation"; then
+    exit 0
+  fi
+  fm_recovery_marker_snapshot "$STATE/.watcher-down" || exit 1
+  case "$FM_RECOVERY_MARKER_TOKEN" in
+    acked:handling:"$handling_generation"|acked:downtime:"$handling_generation") ;;
+    *) exit 1 ;;
+  esac
   fm_pid_alive "$handling_watcher_pid" \
-    && fm_watcher_lock_matches_pid "$STATE" "$WATCH" "$handling_watcher_pid" "$FM_HOME" \
-    && fm_recovery_marker_begin_handling "$STATE/.watcher-down" "$handling_generation"
+    && fm_watcher_lock_matches_pid "$STATE" "$WATCH" "$handling_watcher_pid" "$FM_HOME"
   exit $?
 fi
 

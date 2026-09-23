@@ -954,6 +954,48 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
   pass "fm-control relaunch: a secondmate relaunch re-resolves its durable configured harness pin"
 }
 
+test_secondmate_relaunch_onto_deck() {
+  local dir home out rc
+  dir=$(new_case deckpin smdeck)
+  home="$dir/home"
+  fm_fake_exit0 "$dir/fakebin" deck
+  mkdir -p "$home/config"
+  printf 'deck example/route\n' > "$home/config/secondmate-harness"
+  mkdir -p "$home/data/smdeck"
+  printf '# secondmate brief\n' > "$home/data/smdeck/brief.md"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
+  printf 'smdeck\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  {
+    echo "window=fmses:fm-smdeck"
+    echo "endpoint_task_id=smdeck"
+    echo "worktree=$dir/smhome"
+    echo "project=$dir/smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "model=default"
+    echo "effort=default"
+    echo "home=$dir/smhome"
+  } > "$home/state/smdeck.meta"
+  printf '%s\n' "fm-smdeck" > "$dir/fake/windows"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  printf 'deck' > "$dir/fake/becomes"
+  out=$(run_control "$dir" smdeck relaunch --harness deck --model example/route); rc=$?
+  expect_code 0 "$rc" "a configured secondmate harness should relaunch"$'\n'"$out"
+  [ "$(journal_field "$dir" smdeck to_harness)" = deck ] \
+    || fail "a secondmate relaunch should pick up the configured harness pin, got '$(journal_field "$dir" smdeck to_harness)'"
+  [ "$(journal_field "$dir" smdeck to_model)" = example/route ] \
+    || fail "the configured model token should come with the pin"
+  [ "$(journal_field "$dir" smdeck to_effort)" = default ] \
+    || fail "the configured effort token should come with the pin"
+  assert_not_contains "$out" "not a verified harness" "Deck is a verified harness"
+  assert_contains "$(cat "$dir/fake/literal")" "--secondmate --id" "Deck relaunch lost host mode"
+  pass "fm-control relaunch: an existing secondmate migrates onto Deck"
+}
+
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop() {
   local dir home out rc
   dir=$(new_case invalid-effort sm6)
@@ -1969,6 +2011,7 @@ test_direct_spawn_relaunch_refuses_secondmate_account_slot_after_metadata_load()
   pass "direct spawn relaunch rechecks the recorded secondmate kind before account selection"
 }
 
+test_secondmate_relaunch_onto_deck
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven

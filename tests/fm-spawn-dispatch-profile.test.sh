@@ -795,6 +795,31 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
   pass "pi-signed refuses safely and actionably when the selected executable is unavailable"
 }
 
+test_deck_secondmate_uses_home_driver_and_configured_pin() {
+  local rec id sm out status launch
+  id=profile-deck-host
+  rec=$(make_spawn_case profile-deck-host codex "$id")
+  read_case_record "$rec"
+  fm_fake_exit0 "$FAKEBIN_DIR" deck
+  printf '%s\n' 'deck example/route' > "$HOME_DIR/config/secondmate-harness"
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id"
+  sm=$(cd "$sm" && pwd -P)
+  cp "$sm/data/charter.md" "$CASE_DIR/charter-before"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
+  status=$?
+  expect_code 0 "$status" "Deck secondmate spawn should succeed: $out"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" deck example/route default
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--secondmate --id '$id'" "Deck launch omitted host mode"
+  assert_contains "$launch" "FM_HOME='$sm'" "Deck launch did not select the secondmate home"
+  assert_contains "$launch" "< '$sm/data/charter.md'" "Deck launch lost the charter"
+  assert_contains "$launch" "--model 'example/route'" "Deck pin lost the model"
+  assert_absent "$HOME_DIR/data/$id/launch-brief.md" "secondmate received worker overlay"
+  cmp -s "$CASE_DIR/charter-before" "$sm/data/charter.md" || fail "Deck spawn rewrote charter"
+  pass "Deck secondmate spawn resolves the configured pin and launches its home host"
+}
+
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   local rec id sm out status launch
   id=profile-pi-signed-secondmate-z8d
@@ -1244,6 +1269,7 @@ SH
   done
 }
 
+test_deck_secondmate_uses_home_driver_and_configured_pin
 test_launch_environment_allowlist
 test_launch_environment_invalid_config_refuses
 test_launch_environment_inaccessible_config_refuses

@@ -10,17 +10,17 @@
 # delimited banner so the agent cannot skim past
 # it in the tool output of whatever it was doing - the one channel every harness
 # has. Supervision health is MODEL-AWARE (fm_watcher_supervision_verdict in
-# bin/fm-wake-lib.sh): under the Claude Stop auto-arm model the watcher runs only
-# between turns, so mid-turn a fresh beacon with no live watcher is healthy, and
-# a stale beacon is still healthy while fm_autoarm_midturn_healthy proves a
-# Claude auto-arm generation explains the gap; only a stale beacon with no such
-# generation is a genuine lapse; under the Pi
-# extension model the extension tears the watcher down and respawns it on every
-# actionable wake, so a fresh beacon with a genuinely unheld lock is healthy
-# while that live Pi session provably owns continuity; any held but unhealthy
-# lock is down; under every
-# persistent-watcher harness a live identity-matched watcher with a fresh beacon
-# is required. The banner names the true failing condition (a missing live
+# bin/fm-wake-lib.sh): under the auto-arm model a fresh beacon with no live
+# watcher is healthy. Claude and Cursor use that allowance between turns; Deck
+# secondmates receive it only as a launch-scoped override for the persistent
+# driver's bounded watcher hand-off. A stale beacon is still healthy only while
+# fm_autoarm_midturn_healthy proves a Claude auto-arm generation explains the
+# gap; only a stale beacon with no such generation is a genuine lapse. Under the
+# Pi extension model the extension tears the watcher down and respawns it on
+# every actionable wake, so a fresh beacon with a genuinely unheld lock is
+# healthy while that live Pi session provably owns continuity; any held but
+# unhealthy lock is down. Under the persistent model a live identity-matched
+# watcher with a fresh beacon is required. The banner names the true failing condition (a missing live
 # watcher process vs a genuinely stale beacon). The full banner is emitted once
 # per distinct down-episode in this FM_HOME (keyed to the failing condition, not
 # the beacon mtime, which a healthy between-turns watcher advances every poll);

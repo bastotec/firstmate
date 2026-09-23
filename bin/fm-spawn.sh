@@ -300,9 +300,10 @@
 # muse installs no hook at all - its plugin engine is off in the default build - so
 # it writes state/<id>.muse-session to bind the pane to muse's own session event
 # log; muse, gemini, and agy are verified crewmate/scout-only adapters.
-# deck is a verified crewmate/scout adapter and installs no hook file:
+# deck also hosts secondmates with --secondmate and installs no hook file:
 # bin/fm-deck-worker.sh passes Deck its per-run hooks
-# (--hook) and writes the busy and turn-end events itself.
+# (--hook), writes every busy event itself, and publishes turn-end only for
+# ordinary workers.
 # rovo installs no hook either - its eventHooks fire at tool granularity only,
 # never turn-end - so it carries no busy-source wiring at all and no turn-end
 # hook. A positional brief is dead-on-arrival (rovo loads, never works, and drops
@@ -684,7 +685,7 @@ spawn_remote_secondmate() {
     harness=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
   fi
   case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi|cursor) ;;
+    claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|deck) ;;
     *)
       fm_lock_release "$registry_lock" || true
       fm_lock_release "$SPAWN_TASK_LOCK" || true
@@ -1860,7 +1861,7 @@ if [ -n "$ACCOUNT_SLOT_EFFECTIVE" ]; then
   }
 fi
 
-# muse, gemini, agy, and deck are verified as CREWMATE/SCOUT adapters only.
+# muse, gemini, and agy are verified as CREWMATE/SCOUT adapters only.
 # A secondmate is a firstmate instance, so it needs a primary supervision
 # protocol.
 # gemini has none: docs/supervision-protocols/ carries no gemini wake protocol
@@ -1873,8 +1874,7 @@ fi
 # secondmate whose supervision cycle could never be armed.
 # agy has none either: it exposes no hook surface for primary supervision and
 # docs/supervision-protocols/ carries no agy wake protocol (agy 1.2.0).
-# deck has none either: its worker driver supervises one task, not a home.
-if [ "$KIND" = secondmate ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = agy ] || [ "$HARNESS" = deck ]; }; then
+if [ "$KIND" = secondmate ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = agy ]; }; then
   echo "error: $HARNESS is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
   exit 1
 fi
@@ -3618,7 +3618,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_REPLACEMENT_STATE=$STATE_REAL
   RELAUNCH_REPLACEMENT_WT=$WT
 fi
-if [ "$KIND" != secondmate ]; then
+if [ "$KIND" != secondmate ] || [ "$HARNESS" = deck ]; then
   # Arm the semantic busy-state contract (bin/fm-busy-lib.sh) for every
   # selected adapter with an implemented semantic source. The launch brief sent below IS a
   # submitted turn, so the seed record is busy/fm-spawn. The minted gen is
@@ -4255,6 +4255,9 @@ case "$HARNESS" in
     LAUNCH=${LAUNCH//__DECKID__/"$(shell_quote "$ID")"}
     LAUNCH=${LAUNCH//__DECKSTATE__/"$(shell_quote "$STATE_REAL")"}
     LAUNCH=${LAUNCH//__DECKGEN__/"$(shell_quote "$BUSY_GEN")"}
+    if [ "$KIND" = secondmate ]; then
+      LAUNCH=${LAUNCH/--id /--secondmate --id }
+    fi
     ;;
 esac
 LAUNCH=${LAUNCH//__WORKTREE__/$sq_worktree}
@@ -4288,11 +4291,13 @@ if [ "$KIND" = secondmate ]; then
   # Keep this in step with fm_supervision_model (bin/fm-wake-lib.sh): Claude's
   # Stop auto-arm and Cursor's stop-hook park both run the watcher only BETWEEN
   # turns, so a fresh beacon with no live watcher is their healthy mid-turn state.
-  # Pi and pi-signed secondmates previously received persistent here and now
-  # receive extension to match fm_supervision_model's own table, so their pull
-  # guard tolerates the extension hand-off exactly as a Pi primary does.
+  # Deck gets the same verdict only through this scoped secondmate override: its
+  # persistent driver continuously replaces the watcher, while fresh-beacon
+  # tolerance covers the bounded child hand-off without changing Deck-primary
+  # detection. Pi, pi-signed, and omp receive extension so their pull guard
+  # tolerates the extension hand-off exactly as the matching primary does.
   case "$HARNESS" in
-    claude|cursor) supervision_model=autoarm ;;
+    claude|cursor|deck) supervision_model=autoarm ;;
     pi|pi-signed|omp) supervision_model=extension ;;
     *) supervision_model=persistent ;;
   esac
