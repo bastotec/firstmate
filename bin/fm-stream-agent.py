@@ -442,6 +442,7 @@ SUPERSEDING_REFUSALS = frozenset(("endpoint_superseded", "duplicate_label"))
 # derive its outage from the same ladder rather than assume one.
 POLL_BACKOFF_MIN = 2.0
 POLL_BACKOFF_MAX = 60.0
+RESULT_POST_TIMEOUT_SECS = 15.0
 RESULT_RETRY_SHUTDOWN_SECS = 900.0
 REREGISTER_BACKOFF_MIN = 2.0
 REREGISTER_BACKOFF_MAX = 60.0
@@ -593,6 +594,8 @@ class Agent:
         # exit between doing the work and reporting it - and the hub would then
         # tell the caller the kill was never delivered when in fact it was.
         self.command_busy = threading.Event()
+        self._result_retry_condition = threading.Condition()
+        self._result_retry_deadline = None
         # Set when this agent has lost its name to another endpoint. It goes on
         # draining the pty - a worker whose output nobody reads eventually
         # blocks - but publishes nothing and takes no commands.
@@ -892,12 +895,25 @@ class Agent:
         }
         retry_after = POLL_BACKOFF_MIN
         while True:
+            attempted_at = time.monotonic()
             try:
-                self.hub.call("POST", "/v1/agent/results", result, timeout=15.0)
+                self.hub.call("POST", "/v1/agent/results", result,
+                              timeout=RESULT_POST_TIMEOUT_SECS)
                 return
             except RuntimeError as exc:
                 sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
-                time.sleep(retry_after)
+                with self._result_retry_condition:
+                    deadline = self._result_retry_deadline
+                    if deadline is not None:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            if attempted_at < deadline:
+                                continue
+                            return
+                        wait = min(retry_after, remaining)
+                    else:
+                        wait = retry_after
+                    self._result_retry_condition.wait(wait)
                 retry_after = min(retry_after * 2, POLL_BACKOFF_MAX)
 
     def command_loop(self) -> None:
@@ -984,8 +1000,12 @@ class Agent:
         # A kill is applied by the command loop and ends the endpoint, so the
         # reader sees EOF and sets stop while that same command is still being
         # acknowledged. Let the acknowledgement land before tearing down.
-        deadline = _now() + RESULT_RETRY_SHUTDOWN_SECS
-        while self.command_busy.is_set() and _now() < deadline:
+        deadline = time.monotonic() + RESULT_RETRY_SHUTDOWN_SECS
+        with self._result_retry_condition:
+            self._result_retry_deadline = deadline
+            self._result_retry_condition.notify_all()
+        until = deadline + 2 * RESULT_POST_TIMEOUT_SECS + 1.0
+        while self.command_busy.is_set() and time.monotonic() < until:
             time.sleep(0.05)
         self.pty.close()
         # Join the reader before releasing the descriptor: see Pty.close.
