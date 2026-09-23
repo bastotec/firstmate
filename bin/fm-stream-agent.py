@@ -393,7 +393,7 @@ class Pty:
             pass
 
 
-# The two types below are refusals the hub STATED. A hub that could not be
+# The refusal types below are statements the hub made. A hub that could not be
 # reached is neither of them: it has said nothing, and silence is an ordinary
 # transient the retries already handle. The whole of what this agent is allowed
 # to act on - take an identity back, stand down, stop for good - turns on the
@@ -422,6 +422,10 @@ class Forgotten(RuntimeError):
     why it is read from the hub's own code rather than inferred from a failed
     connection, a state a returning hub passes through on its way back up.
     """
+
+
+class ResultRejected(RuntimeError):
+    """The hub definitively rejected a command result."""
 
 
 # The refusals that mean another live endpoint answers to this one's identity.
@@ -541,6 +545,8 @@ class HubClient:
                 raise Superseded(message)
             if code == "no_such_endpoint":
                 raise Forgotten(message)
+            if code in ("no_such_command", "result_conflict", "bad_command_id"):
+                raise ResultRejected(message)
             raise RuntimeError(message)
         except urllib.error.URLError as exc:
             raise RuntimeError("cannot reach the hub at %s: %s" % (self.base_url, exc.reason))
@@ -891,25 +897,28 @@ class Agent:
             "error": error,
         }
         retry_after = POLL_BACKOFF_MIN
+        retry_deadline = time.monotonic() + RESULT_RETRY_SHUTDOWN_SECS
         while True:
             attempted_at = time.monotonic()
             try:
                 self.hub.call("POST", "/v1/agent/results", result,
                               timeout=RESULT_POST_TIMEOUT_SECS)
                 return
+            except ResultRejected as exc:
+                sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
+                return
             except RuntimeError as exc:
                 sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
                 with self._result_retry_condition:
                     deadline = self._result_retry_deadline
-                    if deadline is not None:
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            if attempted_at < deadline:
-                                continue
-                            return
-                        wait = min(retry_after, remaining)
-                    else:
-                        wait = retry_after
+                    if deadline is None or deadline > retry_deadline:
+                        deadline = retry_deadline
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        if attempted_at < deadline:
+                            continue
+                        return
+                    wait = min(retry_after, remaining)
                     self._result_retry_condition.wait(wait)
                 retry_after = min(retry_after * 2, POLL_BACKOFF_MAX)
 

@@ -1081,7 +1081,7 @@ class Machine:
         self.last_seen = _now()
         self.queue: list = []
         self.pending: dict = {}
-        self.completed: "collections.OrderedDict" = collections.OrderedDict()
+        self.completed: dict = {}
 
     def describe(self, silent_after: float) -> dict:
         silent_for = max(0.0, _now() - self.last_seen)
@@ -1355,9 +1355,13 @@ class Hub:
                 for command_id, command in list(machine.pending.items()):
                     if not command.done.is_set() and command.taken_at < stale:
                         machine.pending.pop(command_id, None)
-                for command_id, completed in list(machine.completed.items()):
-                    if completed[2] < stale:
-                        machine.completed.pop(command_id, None)
+                self._prune_completed(machine, stale)
+
+    @staticmethod
+    def _prune_completed(machine: "Machine", before: float) -> None:
+        for command_id, completed in list(machine.completed.items()):
+            if completed[2] < before:
+                machine.completed.pop(command_id, None)
 
     # --- commands ---------------------------------------------------------
 
@@ -1454,6 +1458,9 @@ class Hub:
                          ok: bool, error: str) -> None:
         with self.command_wake:
             machine = self.machines.get(machine_name)
+            if machine is not None:
+                self._prune_completed(
+                    machine, _now() - UNACKNOWLEDGED_COMMAND_RETENTION)
             command = machine.pending.pop(command_id, None) if machine else None
             if command is None:
                 completed = machine.completed.get(command_id) if machine else None
@@ -1465,7 +1472,6 @@ class Hub:
                     raise HubError(HTTPStatus.CONFLICT, "result_conflict",
                                    "command %s already has a different result"
                                    % command_id)
-                machine.completed.move_to_end(command_id)
                 return
             command.ok = ok
             command.error = error

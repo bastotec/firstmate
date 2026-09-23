@@ -1483,6 +1483,39 @@ test_an_agent_retries_a_result_without_applying_the_command_twice() {
   pass "hub: an agent retains and retries a successful command result"
 }
 
+test_terminal_result_rejection_does_not_block_later_commands() {
+  local first=11111111111111111111111111111111 second=22222222222222222222222222222222
+  local status ready result log pid waited=0 attempts
+  status="$TMP_ROOT/rejected-result.status"
+  ready="$TMP_ROOT/rejected-result.ready"
+  result="$TMP_ROOT/rejected-result.json"
+  log="$TMP_ROOT/rejected-result.log"
+  start_stub rejected-result --frames-ok-first 1000 --command-id "$first" \
+    --second-command-id "$second" --reject-result-command "$first" \
+    --result-file "$result"
+  python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+    --machine box-a --label "rejected-result-$RUN" --cwd "$CASE_DIR/cwd" \
+    --status-path "$status" --ready-file "$ready" --state-interval 1 --poll-secs 1 \
+    > "$log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$result" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$result" ] || fail "a rejected old result blocked the next command poll"
+  assert_equals "$(jq -r '.command_id' "$result")" "$second" \
+    "the accepted result should belong to the command after the rejected one"
+  assert_equals "$(grep -c '^working: result retry$' "$status" 2>/dev/null || true)" 2 \
+    "both commands should be applied exactly once"
+  attempts=$(grep -c 'POST /v1/agent/results' "$STUB_JOURNAL" 2>/dev/null || true)
+  assert_equals "$attempts" 2 \
+    "a definitive command-id rejection should not be retried"
+  pass "hub: a terminal result rejection does not wedge command polling"
+}
+
 test_an_exiting_endpoint_keeps_retrying_its_applied_command_result() {
   local command_id=abcdef0123456789abcdef0123456789 status ready result log pid waited=0 attempts
   status="$TMP_ROOT/exit-result-retry.status"
@@ -1806,6 +1839,49 @@ test_completed_results_survive_machine_wide_command_volume() {
   assert_equals "$(printf '%s' "$out" | jq -r '.retry_status')" 200 \
     "an early completed result should remain idempotently answerable"
   pass "hub: completed results survive later machine command volume"
+}
+
+test_completed_results_are_pruned_by_command_traffic() {
+  start_hub result-journal-retention --command-ack-secs 5
+  local port=${URL##*:} waited=0 pid host bound out
+  kill "$HUB_PID" 2>/dev/null || fail "could not stop the retention test hub"
+  while [ "$waited" -lt 100 ]; do
+    [ -e "$HUB_READY" ] || break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ ! -e "$HUB_READY" ] || fail "the retention test hub did not stop"
+  python3 - "$HUB" 0.2 serve --bind 127.0.0.1 --port "$port" \
+    --token-file "$CASE_DIR/tokens" --ready-file "$HUB_READY" \
+    >> "$CASE_DIR/log" 2>&1 <<'PY' &
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("fm_stream_hub", sys.argv[1])
+hub = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hub)
+hub.UNACKNOWLEDGED_COMMAND_RETENTION = float(sys.argv[2])
+raise SystemExit(hub.main(sys.argv[3:]))
+PY
+  pid=$!
+  HUB_PID=$pid
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  waited=0
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$HUB_READY" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$HUB_READY" ] || fail "the short-retention hub did not report ready"
+  read -r host bound < "$HUB_READY"
+  URL="http://$host:$bound"
+  out=$(python3 "$ROOT/tests/assets/stream-result-journal.py" \
+    "$URL" "$PUBLISH_TOKEN" "$VIEW_TOKEN" 2 0.4) \
+    || fail "the retention driver failed: $out"
+  assert_equals "$(printf '%s' "$out" | jq -r '.retry_status')" 404 \
+    "new command results should prune expired completed results"
+  pass "hub: command traffic prunes expired completed results"
 }
 
 # order <leaf> <execution> <text> [order-id] -> the hub's answer, with api_code set.
@@ -2230,6 +2306,7 @@ test_a_closing_frame_outlives_the_pace_its_own_outage_set
 test_a_closing_frame_waits_out_a_recovery_already_in_flight
 test_an_agent_refuses_a_hub_without_idempotent_results
 test_an_agent_retries_a_result_without_applying_the_command_twice
+test_terminal_result_rejection_does_not_block_later_commands
 test_an_exiting_endpoint_keeps_retrying_its_applied_command_result
 test_shutdown_drains_a_command_returned_by_an_inflight_poll
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
@@ -2237,6 +2314,7 @@ test_a_steer_lands_as_soon_as_the_worker_is_listed_again
 test_an_accepted_registration_returns_the_pace_to_its_floor
 test_the_hub_accepts_a_retried_result_without_changing_its_verdict
 test_completed_results_survive_machine_wide_command_volume
+test_completed_results_are_pruned_by_command_traffic
 test_orderability_follows_the_endpoint_registration_capability
 test_an_order_reaches_the_worker_its_leaf_names
 test_an_order_aimed_at_a_replaced_execution_never_reaches_the_replacement
