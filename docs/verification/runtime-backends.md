@@ -928,7 +928,7 @@ The CLI matrix was checked directly:
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.
 
-### Deck secondmate recovery (shim-based)
+### Deck endpoint recovery (shim-based)
 
 Verified on 2026-09-23 on macOS with the repository's real Deck driver, busy-state writer, and OS processes, a shimmed Herdr protocol-14 CLI, and a shimmed model endpoint; this is not a local live-Herdr or live-model result.
 `bin/backends/herdr.sh` owns the Deck-only recovery classifier; `bin/fm-agent-process-lib.sh` remains the process-identity owner.
@@ -945,8 +945,8 @@ fm-deck-harness: all cases passed
 FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=200109
 ```
 
-The regression checks an absent driver before a live one, busy and idle evidence, replacement on the same pane, exact task attribution, unreadable process and pane inventories, and stale busy/progress records after exit.
-The non-Deck registry path and Deck ship/scout classification are deliberately unchanged.
+The regression checks an absent driver before a live one, busy and idle evidence, replacement on the same pane, exact task attribution, unreadable process and pane inventories, stale busy/progress records after exit, and a live crewmate endpoint beside an absent one of every kind.
+The non-Deck registry path is deliberately unchanged, while every Deck endpoint - ship, scout, or second mate - is classified from its own driver rather than from a registry that cannot know Deck.
 
 Parent-route creation was also verified on 2026-09-23 through the real remote-control script against shimmed Herdr, with an ambient `umask 002`:
 
@@ -958,9 +958,12 @@ Observed output:
 
 ```text
 ok - parent-route creation is private under umask 002 and accepted by Deck safe status I/O
+ok - a launch reconciles a pre-existing 0775 parent-route root to a mode Deck accepts
+ok - a symlinked or relocated parent-route data root still launches
 ```
 
 The test asserts mode `0700` and writes and reads a status record through `bin/fm-state-io.py`, the same descriptor-bound boundary used by the Deck driver.
+The reconcile is scoped to the state root the driver validates: the data root keeps its `umask 077` creation, and a launch over a relocated data root still succeeds without tightening it.
 
 ### fm-remote server birth and login-keychain access
 

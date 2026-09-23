@@ -692,17 +692,25 @@ SH
       *) fail "non-Deck registry behavior changed: $record -> $out" ;;
     esac
   done
+  # A Deck crewmate's driver carries the same identity arguments, so its
+  # liveness comes from the same evidence rather than the registry.
   printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=ship\n' > "$dir/state/t1.meta"
   printf 'missing\n' > "$dir/registry"
-  [ "$(herdr_deck_verdict)" = dead ] || fail "ship recovery path changed"
+  : > "$dir/registry.log"
+  [ "$(herdr_deck_verdict)" = alive ] || fail "a live Deck crewmate was not alive"
+  [ ! -s "$dir/registry.log" ] || fail "Deck crewmate recovery consulted the registry"
   printf '/quit\n' >&8
   wait "$driver" || fail "driver did not exit cleanly"
-  printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=secondmate\n' > "$dir/state/t1.meta"
   rm "$dir/driver"
-  for record in missing empty error; do
-    printf '%s\n' "$record" > "$dir/registry"
-    [ "$(herdr_deck_verdict)" = dead ] || fail "absent Deck driver became alive with registry $record"
+  for kind in secondmate ship scout; do
+    printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=%s\n' "$kind" > "$dir/state/t1.meta"
+    for record in missing empty error; do
+      printf '%s\n' "$record" > "$dir/registry"
+      out=$(herdr_deck_verdict)
+      [ "$out" = dead ] || fail "absent Deck $kind driver became $out with registry $record"
+    done
   done
+  printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=secondmate\n' > "$dir/state/t1.meta"
   # A supervised restart replaces the PID and generation, not the pane.
   gen=$("$BUSY_EVENT" arm "$dir/state" t1)
   FM_TEST_STATUS="$dir/state/t1.status" bash -c 'exec -a fm-deck-worker bash "$@"' _ \

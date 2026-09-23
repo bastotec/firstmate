@@ -404,3 +404,32 @@ else
   printf 'not run - foreign-owner refusal requires chown privilege\n'
 fi
 pass "the reconcile refuses a symlink, a foreign-owned root, and a non-directory, naming each"
+
+# --- 11. A relocated parent-route data root still launches ------------------
+# The data root is not the directory Deck's safe status I/O validates, so an
+# operator who relocates it (a symlink to storage elsewhere) keeps launching:
+# only the state root is reconciled, and a launch tightens nothing it does not
+# own. The relocated root is group-writable on purpose - the old data-root
+# reconcile refused and chmod-ed exactly this shape.
+relocated_data="$TMP_ROOT/relocated-route-data"
+mkdir -p "$relocated_data"
+chmod 0775 "$relocated_data"
+printf 'relocated\n' > "$relocated_data/relocation-marker"
+previous=$(pane_agent "$(route_pane)")
+if [ -n "$previous" ]; then kill -HUP "$previous" 2>/dev/null || true; fi
+reset_remote_herdr_fixture "$HERDR_STATE"
+rm -f "$ROUTE_META" "$IDENTITY"
+rm -rf "$SM_HOME/data/.parent-route"
+ln -s "$relocated_data" "$SM_HOME/data/.parent-route"
+out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) \
+  || fail "a launch over a relocated parent-route data root failed: $out"
+assert_contains "$out" "harness=deck" "the relocated-data launch did not report its runtime"
+[ -L "$SM_HOME/data/.parent-route" ] || fail "the launch replaced the relocated data root"
+[ "$(dir_mode "$relocated_data")" = 0o775 ] \
+  || fail "the launch tightened a data root it does not own: $(dir_mode "$relocated_data")"
+[ "$(cat "$SM_HOME/data/.parent-route/relocation-marker" 2>/dev/null)" = relocated ] \
+  || fail "the launch did not keep the relocated data root wired to the home"
+[ "$(dir_mode "$route_state")" = 0o700 ] || fail "the state root lost its reconciled private mode"
+printf 'working: relocated route\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
+  || fail "Deck safe status I/O rejected the state root beside a relocated data root"
+pass "a symlinked or relocated parent-route data root still launches"

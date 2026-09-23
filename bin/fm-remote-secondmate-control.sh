@@ -106,7 +106,7 @@ meta_path() { printf '%s/%s.meta\n' "$CONTROL_STATE" "$1"; }
 # group/world-writable state root, and a launch that predates the private-mode
 # creation above left exactly that behind, which forced a hand chmod on every
 # such home before a Deck mate could start. Repair is in-scope for the launch
-# that owns these roots, but only for a directory this code provably owns: a
+# that owns the state root, but only for a directory this code provably owns: a
 # symlink, a non-directory, or a directory owned by another user is refused
 # loudly rather than chmod-ed, because tightening permissions on something not
 # provably ours would be worse than leaving it alone.
@@ -336,11 +336,10 @@ cmd_launch() {
   # the GUI login session, so the endpoint survives every SSH disconnection that
   # a remote route depends on. bin/fm-remote-doctor.sh is the readiness owner.
   case "$selected_backend" in herdr) ;; *) die "a remote secondmate runs only on the herdr backend, not '$selected_backend'" ;; esac
-  # Deck's descriptor-bound status I/O rejects group/world-writable roots, so
-  # constrain creation even when the remote login has a permissive umask, and
-  # first reconcile a root an earlier launch left unsafe (below).
+  # Deck's descriptor-bound status I/O rejects a group/world-writable state
+  # root, so constrain creation even when the remote login has a permissive
+  # umask, and first reconcile the state root an earlier launch left unsafe.
   reconcile_route_state_mode "$CONTROL_STATE"
-  reconcile_route_state_mode "$CONTROL_DATA"
   (umask 077; mkdir -p "$CONTROL_STATE" "$CONTROL_DATA")
   meta=$(meta_path "$id")
   old=$(recorded_identities "$id")

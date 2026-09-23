@@ -2381,7 +2381,7 @@ fm_backend_herdr_server_running_state() {  # <session>
   ' 2>/dev/null || printf 'unknown'
 }
 
-# Deck secondmates are not registered with Herdr. Attribute the current driver
+# Deck endpoints are not registered with Herdr. Attribute the current driver
 # to this task and pane through the shared process owner, not a saved PID or a
 # busy/progress file that can survive its process. Busy generation binds the
 # driver's arguments to the same incarnation that owns progress publication.
@@ -2444,8 +2444,7 @@ fm_backend_herdr_agent_state() {  # <target>
   if declare -F fm_backend_meta_for_window >/dev/null; then
     meta=$(fm_backend_meta_for_window "$target" "$state" 2>/dev/null) || meta=
   fi
-  if [ -n "$meta" ] && [ "$(fm_meta_get "$meta" harness)" = deck ] \
-    && [ "$(fm_meta_get "$meta" kind)" = secondmate ]; then
+  if [ -n "$meta" ] && [ "$(fm_meta_get "$meta" harness)" = deck ]; then
     id=${meta##*/}; id=${id%.meta}
     verdict=$(fm_backend_herdr_deck_pane_agent_state "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" "$state" "$id")
   else
