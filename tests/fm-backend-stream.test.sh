@@ -1209,13 +1209,9 @@ print(json.dumps({'type': 'run_finished', 'output': 'ready', 'turns': 1}), flush
 PY
   chmod +x "$fakebin/deck"
   fm_fake_exit0 "$fakebin" gh gh-axi
-  # Spawn, rather than the fixture, must create both state directories safely
-  # even when the caller's umask normally grants group write.
-  rmdir "$CASE_DIR/home/state" "$home/state"
   # Use the isolated copied code root so Deck's startup cannot start an actual
   # supervisor; all dispatch/control/inbox implementations remain unchanged.
   host_command() (
-    umask 0002
     # shellcheck disable=SC2030,SC2031 # other cases deliberately isolate PATH changes
     with_stream_env env PATH="$fakebin:$PATH" SHELL=/bin/bash \
       FM_ROOT_OVERRIDE="$code" FM_SPAWN_NO_GUARD=1 \
@@ -1229,11 +1225,6 @@ PY
   target=$(sed -n 's/^window=//p' "$CASE_DIR/home/state/$id.meta")
   assert_grep 'kind=secondmate' "$CASE_DIR/home/state/$id.meta" "spawn lost the secondmate kind"
   assert_grep "home=$home" "$CASE_DIR/home/state/$id.meta" "spawn lost the isolated home"
-  python3 - "$CASE_DIR/home/state" "$home/state" <<'PY' || fail "spawn created an unsafe state directory"
-import os, stat, sys
-for path in sys.argv[1:]:
-    assert stat.S_IMODE(os.stat(path).st_mode) == 0o700, path
-PY
   wait_for_capture "$target" FIXTURE-TURN-DELIVERED || fail "spawn never ran the Deck charter turn"
   # Output can arrive before the next heartbeat publishes the new foreground
   # process. Wait for that protocol observation, not an arbitrary sleep.

@@ -213,8 +213,6 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-backend.sh disable=SC1091
 . "$SCRIPT_DIR/fm-backend.sh"
-# shellcheck source=bin/fm-control-lib.sh disable=SC1091
-. "$SCRIPT_DIR/fm-control-lib.sh"
 # shellcheck source=bin/fm-claude-permission-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-claude-permission-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh disable=SC1091
@@ -850,9 +848,12 @@ secondmate_liveness_one() {  # <meta> <id>
   target=$(fm_backend_target_of_meta "$meta")
   [ -n "$target" ] || target="$window"
   agent_state=$(fm_backend_agent_state "$backend" "$target" 2>/dev/null) || agent_state=unreadable
-  if ! fm_control_harness_supports_kind "$harness" secondmate; then
-    case "$agent_state" in dead|missing) agent_state=unverified-harness ;; esac
-  fi
+  case "$harness" in
+    claude|codex|opencode|pi|pi-signed|grok|kimi|omp|deck) ;;
+    *)
+      case "$agent_state" in dead|missing) agent_state=unverified-harness ;; esac
+      ;;
+  esac
   case "$agent_state" in
     alive)
       if [ "$harness" = claude ] && flag=$(fm_claude_permission_flag "$CONFIG" 2>/dev/null); then

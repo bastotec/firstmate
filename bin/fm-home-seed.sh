@@ -971,9 +971,7 @@ seed_home() {
       refuse_projectful_projectless_charter "$id" "$SEED_PARENT_BRIEF" || return 1
     fi
   fi
-  mkdir -p "$DATA" "$home/data" "$home/config" "$home/projects"
-  # shellcheck disable=SC2174 # deliberate: only the state root, not its ancestors, needs this mode
-  mkdir -p -m 700 "$home/state"
+  mkdir -p "$DATA" "$home/data" "$home/state" "$home/config" "$home/projects"
   if [ -f "$home/data/projects.md" ]; then
     SEED_SUB_REG_EXISTED=1
     cp "$home/data/projects.md" "$SEED_BACKUP_DIR/sub-projects.md"

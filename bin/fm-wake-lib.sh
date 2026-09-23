@@ -42,10 +42,7 @@ FM_LOCK_STALE_AFTER="${FM_LOCK_STALE_AFTER:-2}"
 # confirm and 0.5s attach polls, and forking uname per call is a measurable cost on
 # the platform (Git Bash/MSYS) that already pays the highest fork price.
 _FM_UNAME=$(uname 2>/dev/null || echo unknown)
-# New state roots must satisfy fm-state-io.py's directory trust check even
-# under a group-writable umask. Existing roots are never chmod'd implicitly.
-# shellcheck disable=SC2174 # deliberate: only the state root, not its ancestors, needs this mode
-mkdir -p -m 700 "$STATE"
+mkdir -p "$STATE"
 
 # Most wake-library consumers need only queue and lock primitives, including
 # deliberately minimal recovery fixtures and remote installations.
