@@ -27,6 +27,7 @@ Deck's own tests pin that contract (`cargo test --locked`, 85 tests at `7308f21`
 
 ```
 $ bash tests/fm-deck-harness.test.sh
+ok - Deck host preserves handling-successor supervision without parent turn-end wakes
 ok - fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model
 ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
 ok - fm-deck-worker: busy-state failures stop turns and publish status evidence
@@ -41,6 +42,7 @@ ok - fm-deck-worker: each completed turn leaves the next steer an idle baseline
 ok - liveness: the deck driver and binary are agents, unrelated names are not
 ok - tmux liveness: Deck's Linux comm and argv0 classify alive
 ok - control and busy-source tables carry Deck mechanics without rendered delivery evidence
+ok - Deck supervision autoarm remains scoped to secondmate launches
 ok - fm-spawn: ordinary Deck dispatch records only default effort
 ok - fm-spawn: Deck refuses unsupported effort before launch metadata
 fm-deck-harness: all cases passed
@@ -48,6 +50,7 @@ fm-deck-harness: all cases passed
 
 The dispatch validator rejects Deck profiles with effort, spawn refuses a non-default `--effort` before launch or task metadata, and relaunch refuses it before stopping the current worker because Deck has no effort control.
 Those boundaries are pinned by `tests/fm-bootstrap.test.sh`, `tests/fm-deck-harness.test.sh`, and `tests/fm-control-relaunch.test.sh`.
+The host regression forces two actionable watcher exits during one long handling turn and proves each successor starts while the Deck turn remains serialized, with the accumulated wakes delivered by the next turn.
 The driver refuses to run Deck when it cannot record `turn-start`, and a failed closing busy-state write publishes failure evidence and makes the turn fail.
 The evidence gate snapshots the status log's byte offset at turn start and searches a bounded appended suffix for a complete `done`, `needs-decision`, `blocked`, `failed`, or `working` line.
 Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy the gate or the driver's postcondition.

@@ -444,19 +444,38 @@ fi
 DOCTOR_WORKER_PID=
 pass "doctor preserves unreadable versions through the worker protocol"
 
+make_no_python_path() {
+  local target=$1 system_dir system_tool
+  mkdir -p "$target"
+  for system_dir in /usr/bin /bin /usr/sbin /sbin; do
+    for system_tool in "$system_dir"/*; do
+      [ -x "$system_tool" ] || continue
+      [ "${system_tool##*/}" != python3 ] || continue
+      [ -e "$target/${system_tool##*/}" ] || ln -s "$system_tool" "$target/${system_tool##*/}"
+    done
+  done
+}
+
+new_case Linux with-herdr no-gui
+printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_BIN/deck"
+chmod +x "$CASE_BIN/deck"
+NO_PYTHON_BIN="$CASE_DIR/no-python-bin"
+make_no_python_path "$NO_PYTHON_BIN"
+CASE_BASE_PATH=$NO_PYTHON_BIN
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "an alternate ready runtime inherited Deck's Python requirement"
+assert_contains "$DOCTOR_OUT" "required harness=claude:$CASE_BIN/claude" \
+  "the readiness inventory did not preserve its established runtime priority"
+assert_not_contains "$DOCTOR_OUT" 'required python3=' \
+  "the readiness inventory imposed Deck's dependency on the selected Claude runtime"
+pass "Deck's Python dependency does not constrain another selected runtime"
+
 new_case Linux with-herdr no-gui
 rm -f "$CASE_BIN/claude"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_BIN/deck"
 chmod +x "$CASE_BIN/deck"
 NO_PYTHON_BIN="$CASE_DIR/no-python-bin"
-mkdir -p "$NO_PYTHON_BIN"
-for system_dir in /usr/bin /bin /usr/sbin /sbin; do
-  for system_tool in "$system_dir"/*; do
-    [ -x "$system_tool" ] || continue
-    [ "${system_tool##*/}" != python3 ] || continue
-    [ -e "$NO_PYTHON_BIN/${system_tool##*/}" ] || ln -s "$system_tool" "$NO_PYTHON_BIN/${system_tool##*/}"
-  done
-done
+make_no_python_path "$NO_PYTHON_BIN"
 CASE_BASE_PATH=$NO_PYTHON_BIN
 doctor
 expect_code 1 "$DOCTOR_RC" "a Deck-only host without Python was reported ready"
@@ -490,7 +509,7 @@ for _ in $(seq 1 100); do
   sleep 0.05
 done
 assert_present "$CASE_HOME/.firstmate/remote-job/worker.ready" "the Deck probe fixture worker did not start"
-doctor
+doctor --fix
 expect_code 0 "$DOCTOR_RC" "the normalized worker probe rejected Deck with Python"
 assert_contains "$DOCTOR_OUT" 'required harness=deck:' \
   "the worker probe did not select Deck"

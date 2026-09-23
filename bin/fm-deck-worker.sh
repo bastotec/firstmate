@@ -26,9 +26,9 @@
 #       --deck <deck-binary> [--model <route>] [--secondmate] -- <first-prompt>
 # --secondmate requires FM_HOME and hosts that home, leaving --state pointed
 # at the parent task state for busy/progress and failure publication.
-# Startup runs once before the first turn. After every turn a tracked watcher
-# child is armed; its result becomes a next turn, with queued stdin serialized
-# alongside it. pre_complete checks lock ownership instead of worker evidence.
+# Startup runs once before the first turn. A tracked watcher stays armed through
+# every turn; its results become later turns, with queued stdin serialized
+# alongside them. pre_complete checks lock ownership instead of worker evidence.
 # The driver postcondition does not park without an owned watcher or a pending
 # result. A failed watcher exits loudly rather than leaving an idle host blind.
 #
@@ -58,7 +58,8 @@ BUSY_EVENT="$SCRIPT_DIR/fm-busy-event.sh"
 STATE_IO="$SCRIPT_DIR/fm-state-io.py"
 
 ID='' STATE='' GEN='' DECK='' MODEL=''
-SECONDMATE=0 WATCH_PID='' WATCH_PREDECESSOR_ARM_PID='' INPUT_PID=''
+SECONDMATE=0 WATCH_PID='' WATCH_PREDECESSOR_ARM_PID='' INPUT_PID='' TURN_PID='' TURN_RENDER_PID=''
+WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
 while [ $# -gt 0 ]; do
@@ -95,11 +96,23 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/fm-deck-worker.XXXXXX") || exit 2
 TURN_MARK="$WORK/turn-start"
 EVENTS="$WORK/events.ndjson"
+WATCH_PENDING="$WORK/watch.pending"
+TURN_STATUS="$WORK/turn-pipeline.status"
+TURN_PIPE="$WORK/turn-events.pipe"
+mkfifo "$TURN_PIPE" || exit 1
 TTY_SETTINGS=''
 [ ! -t 0 ] || TTY_SETTINGS=$(stty -g 2>/dev/null || true)
 tty_busy() { [ -z "$TTY_SETTINGS" ] || stty icanon 2>/dev/null || true; }
 tty_ready() { [ -z "$TTY_SETTINGS" ] || stty -icanon min 1 time 0 2>/dev/null || true; }
 cleanup() {
+  if [ -n "$TURN_PID" ]; then
+    kill -TERM "$TURN_PID" 2>/dev/null || true
+    wait "$TURN_PID" 2>/dev/null || true
+  fi
+  if [ -n "$TURN_RENDER_PID" ]; then
+    kill -TERM "$TURN_RENDER_PID" 2>/dev/null || true
+    wait "$TURN_RENDER_PID" 2>/dev/null || true
+  fi
   if [ -n "$INPUT_PID" ]; then
     kill -TERM "$INPUT_PID" 2>/dev/null || true
     wait "$INPUT_PID" 2>/dev/null || true
@@ -116,7 +129,11 @@ trap 'exit 1' HUP TERM
 # Ctrl+C reaches the whole foreground group: Deck and the renderer stop, this
 # driver survives, records the cancelled turn, and returns to the prompt.
 INTERRUPTED=0
-trap 'INTERRUPTED=1' INT
+interrupt_turn() {
+  INTERRUPTED=1
+  [ -z "$TURN_PID" ] || kill -TERM "$TURN_PID" 2>/dev/null || true
+}
+trap interrupt_turn INT
 
 busy_event() {  # <busy|idle> <event>
   "$BUSY_EVENT" apply "$STATE" "$ID" "$1" --gen "$GEN" --source deck-wrapper --event "$2" >/dev/null 2>&1
@@ -170,21 +187,16 @@ host_lock_owned() {
 # The arm is a tracked child of this persistent driver, never a background
 # tool call. Its output stays in WORK while a turn runs; its actionable reason
 # is merely a doorbell for the durable home queue, never an acknowledgement.
-watch_confirm_handling_successor() {
-  local deadline line watcher_pid generation
+watch_wait_handling_successor() {
+  local deadline line
   deadline=$(( $(date +%s) + 15 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
     line=$(sed -n 's/^watcher: started pid=\([0-9][0-9]*\).* recovery-generation=\([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1 \2/p' "$WORK/watch.out" 2>/dev/null | tail -1)
     if [ -n "$line" ]; then
-      watcher_pid=${line%% *}
-      generation=${line#* }
-      if "$SCRIPT_DIR/fm-watch-arm.sh" --handling-delivered "$generation" \
-          --watcher-pid "$watcher_pid" >/dev/null 2>&1; then
-        WATCH_PREDECESSOR_ARM_PID=''
-        return 0
-      fi
-      host_failure 'successor watcher refused handling delivery confirmation'
-      return 1
+      WATCH_HANDLING_WATCHER_PID=${line%% *}
+      WATCH_HANDLING_GENERATION=${line#* }
+      WATCH_PREDECESSOR_ARM_PID=''
+      return 0
     fi
     if ! kill -0 "$WATCH_PID" 2>/dev/null; then
       wait "$WATCH_PID" 2>/dev/null || true
@@ -196,6 +208,18 @@ watch_confirm_handling_successor() {
     sleep 0.05
   done
   host_failure 'successor watcher did not confirm its recovery generation'
+  return 1
+}
+
+watch_confirm_handling_delivery() {
+  [ -n "$WATCH_HANDLING_GENERATION" ] || return 0
+  if "$SCRIPT_DIR/fm-watch-arm.sh" --handling-delivered "$WATCH_HANDLING_GENERATION" \
+      --watcher-pid "$WATCH_HANDLING_WATCHER_PID" >/dev/null 2>&1; then
+    WATCH_HANDLING_GENERATION=''
+    WATCH_HANDLING_WATCHER_PID=''
+    return 0
+  fi
+  host_failure 'successor watcher refused handling delivery confirmation'
   return 1
 }
 
@@ -220,7 +244,7 @@ watch_start() {
     fi
   ) > "$WORK/watch.out" 2>&1 &
   WATCH_PID=$!
-  [ -z "$predecessor" ] || watch_confirm_handling_successor
+  [ -z "$predecessor" ] || watch_wait_handling_successor
 }
 
 # Use exactly the ordinary durable steering record and doorbell contract. The
@@ -231,7 +255,7 @@ watch_doorbell() (
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
   record=$(fm_task_inbox_write "$STATE" "$ID" "The home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, handle every emitted wake and open decision, and acknowledge only after handling. Watcher output:
-$(cat "$WORK/watch.out")") || exit 1
+$(cat "$WATCH_PENDING")") || exit 1
   fm_task_inbox_doorbell_line "$record"
 )
 
@@ -243,7 +267,18 @@ watch_result() {
   [ "$rc" -eq 0 ] || { host_failure "watcher failed (exit $rc)"; return 1; }
   [ -s "$WORK/watch.out" ] || { host_failure 'watcher ended without a result'; return 1; }
   host_lock_owned || return 1
+  {
+    cat "$WORK/watch.out"
+    printf '\n'
+  } >> "$WATCH_PENDING" || { host_failure 'could not retain watcher result for the next turn'; return 1; }
   WATCH_PREDECESSOR_ARM_PID=$predecessor
+}
+
+watch_maintain() {
+  while [ -n "$WATCH_PID" ] && ! kill -0 "$WATCH_PID" 2>/dev/null; do
+    watch_result || return 1
+    watch_start || return 1
+  done
 }
 
 # The evidence gate: the turn may finish only after it appended a worker status
@@ -304,10 +339,11 @@ fi
 
 SESSION=''
 run_turn() {  # <prompt>
-  local prompt=$1 rc event status_before
+  local prompt=$1 rc event status_before monitor_failed=0 deck_rc tee_rc jq_rc
   local -a turn_pipeline
   [ "$SECONDMATE" != 1 ] || host_lock_owned || return 1
   [ "$SECONDMATE" != 1 ] || watch_start || return 1
+  [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
   local -a args=(run "$prompt" --max-turns "$MAX_TURNS" --deadline-secs "$DEADLINE" --hook "pre_complete=$EVIDENCE_HOOK")
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
   [ -z "$MODEL" ] || args+=(--model "$MODEL")
@@ -327,8 +363,52 @@ run_turn() {  # <prompt>
   else
     printf '\n⛵ deck working - ctrl+c to stop\n'
   fi
-  "$DECK" "${args[@]}" </dev/null | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
-  turn_pipeline=("${PIPESTATUS[@]}")
+  if [ "$SECONDMATE" = 1 ]; then
+    rm -f "$TURN_STATUS" "$TURN_STATUS.tmp"
+    (
+      tee_rc=1
+      jq_rc=1
+      write_status() {
+        printf '%s %s\n' "$tee_rc" "$jq_rc" > "$TURN_STATUS.tmp" \
+          && mv -f "$TURN_STATUS.tmp" "$TURN_STATUS"
+      }
+      trap write_status EXIT
+      tee "$EVENTS" < "$TURN_PIPE" | jq --unbuffered -rj "$RENDER" 2>/dev/null
+      render_pipeline=("${PIPESTATUS[@]}")
+      tee_rc=${render_pipeline[0]}
+      jq_rc=${render_pipeline[1]}
+      write_status
+      trap - EXIT
+    ) &
+    TURN_RENDER_PID=$!
+    "$DECK" "${args[@]}" </dev/null > "$TURN_PIPE" &
+    TURN_PID=$!
+    while kill -0 "$TURN_PID" 2>/dev/null; do
+      if ! watch_maintain; then
+        monitor_failed=1
+        kill -TERM "$TURN_PID" 2>/dev/null || true
+        break
+      fi
+      sleep 0.1
+    done
+    wait "$TURN_PID" 2>/dev/null
+    deck_rc=$?
+    TURN_PID=''
+    wait "$TURN_RENDER_PID" 2>/dev/null || true
+    TURN_RENDER_PID=''
+    if [ "$monitor_failed" -eq 0 ]; then
+      watch_maintain || monitor_failed=1
+    fi
+    if ! IFS=' ' read -r tee_rc jq_rc < "$TURN_STATUS"; then
+      tee_rc=1
+      jq_rc=1
+    fi
+    turn_pipeline=("$deck_rc" "$tee_rc" "$jq_rc")
+    [ "$monitor_failed" -eq 0 ] || return 1
+  else
+    "$DECK" "${args[@]}" </dev/null | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
+    turn_pipeline=("${PIPESTATUS[@]}")
+  fi
   rc=${turn_pipeline[0]}
   if [ "$SECONDMATE" = 1 ] && [ "$INTERRUPTED" != 1 ] && { [ "${turn_pipeline[1]}" -ne 0 ] || [ "${turn_pipeline[2]}" -ne 0 ]; }; then
     host_failure 'event capture or rendering failed' || true
@@ -381,11 +461,12 @@ show_prompt=1
 while :; do
   if [ "$SECONDMATE" = 1 ]; then
     watch_start || exit 1
-    if ! kill -0 "$WATCH_PID" 2>/dev/null; then
-      watch_result || exit 1
+    watch_maintain || exit 1
+    if [ -s "$WATCH_PENDING" ]; then
       if ! doorbell=$(watch_doorbell); then
         host_failure 'could not publish watcher steering doorbell'; exit 1
       fi
+      : > "$WATCH_PENDING"
       run_turn "$doorbell" || exit 1
       show_prompt=1
       continue
