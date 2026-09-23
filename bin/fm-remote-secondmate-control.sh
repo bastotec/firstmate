@@ -102,6 +102,24 @@ validate_home() { # <id> [allow-absent]
 
 meta_path() { printf '%s/%s.meta\n' "$CONTROL_STATE" "$1"; }
 
+# Deck's descriptor-bound status I/O (bin/fm-state-io.py) refuses a
+# group/world-writable state root, and a launch that predates the private-mode
+# creation above left exactly that behind, which forced a hand chmod on every
+# such home before a Deck mate could start. Repair is in-scope for the launch
+# that owns these roots, but only for a directory this code provably owns: a
+# symlink, a non-directory, or a directory owned by another user is refused
+# loudly rather than chmod-ed, because tightening permissions on something not
+# provably ours would be worse than leaving it alone.
+reconcile_route_state_mode() { # <dir>
+  local dir=$1 owner
+  [ -e "$dir" ] || [ -L "$dir" ] || return 0
+  [ -d "$dir" ] && [ ! -L "$dir" ] || die "parent-route state path '$dir' is not a directory; refusing to touch it"
+  owner=$(stat -f '%u' "$dir" 2>/dev/null) || owner=$(stat -c '%u' "$dir" 2>/dev/null) \
+    || die "parent-route state directory '$dir' cannot be inspected; refusing to touch it"
+  [ "$owner" = "$(id -u)" ] || die "parent-route state directory '$dir' is owned by uid $owner, not $(id -u); refusing to touch it"
+  chmod 0700 "$dir" || die "parent-route state directory '$dir' could not be made private"
+}
+
 remote_endpoint_load() {
   local id=$1 herdr_session
   REMOTE_ENDPOINT_ERROR=
@@ -318,9 +336,11 @@ cmd_launch() {
   # the GUI login session, so the endpoint survives every SSH disconnection that
   # a remote route depends on. bin/fm-remote-doctor.sh is the readiness owner.
   case "$selected_backend" in herdr) ;; *) die "a remote secondmate runs only on the herdr backend, not '$selected_backend'" ;; esac
-  # Deck's descriptor-bound status I/O rejects group/world-writable roots.
-  # Constrain creation even when the remote login has a permissive umask;
-  # existing directory permissions are not silently rewritten.
+  # Deck's descriptor-bound status I/O rejects group/world-writable roots, so
+  # constrain creation even when the remote login has a permissive umask, and
+  # first reconcile a root an earlier launch left unsafe (below).
+  reconcile_route_state_mode "$CONTROL_STATE"
+  reconcile_route_state_mode "$CONTROL_DATA"
   (umask 077; mkdir -p "$CONTROL_STATE" "$CONTROL_DATA")
   meta=$(meta_path "$id")
   old=$(recorded_identities "$id")

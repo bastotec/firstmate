@@ -152,6 +152,10 @@ assert_contains "$out" "lacks the configured Claude permission flag '--permissio
   "the failure did not name the missing permission flag"
 assert_contains "$out" "not reporting it as relaunched" "the failure did not refuse the success report"
 assert_not_contains "$out" "backend=herdr" "a failed proof still printed a route"
+# The endpoint's removal HUPs the old agent asynchronously, so wait for its
+# death within the same bound section 6 uses rather than racing it.
+n=0
+while alive "$bare" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
 alive "$bare" && fail "the old agent survived its endpoint's removal in the fixture"
 pass "a relaunch whose new agent lacks the configured permission flag is reported as a failure"
 
@@ -323,3 +327,80 @@ replacement=$(pane_agent "$pane")
 grep -q "^$replacement " "$IDENTITY" || fail "Deck remote relaunch did not record the replacement identity"
 cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
 pass "Deck remote launch and relaunch preserve the Herdr host runtime"
+
+# --- 9. A launch reconciles a pre-existing unsafe parent-route mode ---------
+# A home that launched before private creation left state/parent-route as 0775,
+# which Deck's safe status I/O refuses; the launch that owns the root repairs
+# it rather than demanding a hand chmod. Refuse loudly on anything not
+# provably owned: a symlink, a non-owned directory, or a non-directory.
+dir_mode() { python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$1"; }
+kill -HUP "$replacement" 2>/dev/null || true
+reset_remote_herdr_fixture "$HERDR_STATE"
+rm -f "$ROUTE_META" "$IDENTITY"
+chmod 0775 "$route_state"
+if printf 'x' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status >/dev/null 2>&1; then
+  fail "fixture: Deck safe status I/O accepted a 0775 parent-route root"
+fi
+out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) || fail "launch over a 0775 parent-route failed: $out"
+[ "$(dir_mode "$route_state")" = 0o700 ] || fail "launch did not reconcile 0775 to private: $(dir_mode "$route_state")"
+printf 'working: reconciled\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
+  || fail "Deck safe status I/O still rejected the reconciled parent-route directory"
+pass "a launch reconciles a pre-existing 0775 parent-route root to a mode Deck accepts"
+
+# --- 10. The reconcile refuses anything it cannot provably own --------------
+# Drive the REAL control script with FM_HOME pointed at a fixture home whose
+# parent-route root is the artifact under test, so each refusal comes from the
+# production reconcile rather than a copy of it.
+refusal_launch() {  # <fixture-home>
+  env -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_PROJECTS_OVERRIDE \
+    -u FM_BACKEND -u HERDR_SESSION -u CLAUDECODE -u TMUX \
+    HOME="$USER_HOME" CLAUDE_CONFIG_DIR='' PATH="$FIXTURE/bin:$PATH" \
+    FM_HOME="$1" FM_ROOT_OVERRIDE="$CODE" \
+    FM_REMOTE_AGENT_IDENTITY_WAIT=3 FM_REMOTE_AGENT_IDENTITY_POLL=0.2 \
+    FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 \
+    "$CODE/bin/fm-remote-secondmate-control.sh" launch "$SM_ID" deck example/route - herdr 2>&1
+}
+
+make_refusal_home() {  # <home-path> - a seeded home skeleton for a refusal fixture
+  local home=$1
+  mkdir -p "$home/bin" "$home/data" "$home/state" "$home/config" "$home/projects"
+  printf '%s\n' "$SM_ID" > "$home/.fm-secondmate-home"
+  cp "$CODE/AGENTS.md" "$home/AGENTS.md"
+  printf '# Charter\nServe as a test second mate.\n' > "$home/data/charter.md"
+}
+
+link_home="$TMP_ROOT/refuse-home.symlink"
+make_refusal_home "$link_home"
+# A distinct 0775 target, so this case proves the refusal alone left it alone:
+# the real route root was already reconciled by section 9's successful launch.
+link_target="$TMP_ROOT/symlink-target"
+mkdir -p "$link_target"
+chmod 0775 "$link_target"
+ln -s "$link_target" "$link_home/state/parent-route"
+out=$(refusal_launch "$link_home") && fail "symlink: launch succeeded where it must refuse"
+assert_contains "$out" "not a directory" "symlink refusal did not name the path"
+assert_contains "$out" "$link_home/state/parent-route" "symlink refusal did not name the exact path"
+[ "$(dir_mode "$link_target")" = 0o775 ] || fail "symlink refusal chmod-ed the link target"
+
+nondir_home="$TMP_ROOT/refuse-home.nondir"
+make_refusal_home "$nondir_home"
+printf 'plain file\n' > "$nondir_home/state/parent-route"
+out=$(refusal_launch "$nondir_home") && fail "non-directory: launch succeeded where it must refuse"
+assert_contains "$out" "not a directory" "non-directory refusal did not name the path"
+
+foreign_uid=0
+[ "$(id -u)" -ne 0 ] || foreign_uid=1
+foreign_home="$TMP_ROOT/refuse-home.foreign"
+make_refusal_home "$foreign_home"
+mkdir -p "$foreign_home/state/parent-route"
+chmod 0775 "$foreign_home/state/parent-route"
+if chown "$foreign_uid" "$foreign_home/state/parent-route" 2>/dev/null; then
+  out=$(refusal_launch "$foreign_home") && fail "foreign-owned: launch succeeded where it must refuse"
+  assert_contains "$out" "owned by uid $foreign_uid" "foreign-owner refusal did not name the owner"
+  [ "$(dir_mode "$foreign_home/state/parent-route")" = 0o775 ] \
+    || fail "foreign-owner refusal chmod-ed a directory it does not own"
+  chown "$(id -u)" "$foreign_home/state/parent-route"
+else
+  printf 'not run - foreign-owner refusal requires chown privilege\n'
+fi
+pass "the reconcile refuses a symlink, a foreign-owned root, and a non-directory, naming each"

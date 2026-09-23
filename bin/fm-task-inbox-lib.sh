@@ -284,7 +284,17 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # positively identify (that classifier is advisory here by design).
 fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label] [harness] [state-dir] [task-id]
   local backend=$1 target=$2 rec=$3 label=${4:-} harness=${5:-} state=${6:-} task=${7:-} line cstate verdict
-  case "$(fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
+  # The liveness read must resolve task metadata in the SAME state directory
+  # the record was written under: a remote Deck mate's meta lives in the
+  # parent-route state directory, so falling back to the ambient home would
+  # miss it, hit a registry that cannot know Deck, and misread a live mate as
+  # dead. Scoped to this call; an absent state-dir keeps the ambient lookup.
+  if [ -n "$state" ]; then
+    verdict=$(FM_STATE_OVERRIDE="$state" fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)
+  else
+    verdict=$(fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)
+  fi
+  case "$verdict" in
     dead|missing) return 3 ;;
   esac
   if ! line=$(fm_task_inbox_doorbell_line "$rec"); then
