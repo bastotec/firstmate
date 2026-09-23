@@ -79,6 +79,20 @@ pub(crate) async fn health_checked(client: &HubClient) -> Result<serde_json::Val
                     HUB_PROTOCOL
                 )));
             }
+            let current = health
+                .get("capabilities")
+                .and_then(|v| v.as_array())
+                .is_some_and(|values| {
+                    values
+                        .iter()
+                        .any(|v| v.as_str() == Some("current_execution"))
+                });
+            if !current {
+                return Err(Failure::Refused(format!(
+                    "the hub at {} does not advertise the current_execution capability; restart or upgrade the hub before starting this bridge",
+                    client.url()
+                )));
+            }
             Ok(health)
         }
         GetOutcome::Refused(error) => Err(Failure::Refused(error.0)),

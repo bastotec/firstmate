@@ -39,8 +39,8 @@ impl Bridge {
         at_ms: f64,
         received_ms: f64,
     ) -> Result<Vec<LeafHeartbeat>, BridgeError> {
-        let leaves: Vec<LeafEndpoint> = resolve_listing(listing)
-            .map_err(|_| BridgeError("the hub listing carries no tasks array".to_string()))?;
+        let leaves: Vec<LeafEndpoint> =
+            resolve_listing(listing).map_err(|error| BridgeError(error.0))?;
         let mut records = Vec::with_capacity(leaves.len());
         for endpoint in leaves {
             let leaf = endpoint.leaf_id();
@@ -103,9 +103,9 @@ mod tests {
     fn translate_sequences_per_leaf_and_restarts_from_zero() {
         let listing = json!({"tasks": [
             {"endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "box-a",
-             "label": "t1", "closed_by": null, "exit_code": null},
+             "label": "t1", "closed_by": null, "exit_code": null, "current_execution": true},
             {"endpoint_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "machine": "box-a",
-             "label": "t2", "closed_by": null, "exit_code": null},
+             "label": "t2", "closed_by": null, "exit_code": null, "current_execution": true},
         ]});
         let mut bridge = Bridge::new("fleet-t", 0);
         let first = bridge.translate(&listing, 500.0, 501.0).unwrap();

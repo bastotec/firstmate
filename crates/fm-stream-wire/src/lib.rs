@@ -89,10 +89,9 @@ pub struct LeafEndpoint {
     pub exit_code: Option<i64>,
 }
 
-/// Why a listing could not be resolved at all.  A listing that is not an
-/// object, or whose `tasks` is not an array, is refused rather than read.
+/// A malformed listing or an absent/ambiguous authoritative execution verdict.
 #[derive(Debug, PartialEq)]
-pub struct NoTasksArray;
+pub struct ListingError(pub String);
 
 impl LeafEndpoint {
     /// The leaf worker id: "<machine>/<label>", the task as the publishing
@@ -120,21 +119,14 @@ impl LeafEndpoint {
     }
 }
 
-/// Resolve a hub `/v1/tasks` body into one entry per leaf, from its newest
-/// endpoint.
-///
-/// The hub lists a machine's endpoints oldest first, so a later record with
-/// the same machine and label supersedes the one it replaces, which may linger
-/// listed.  Superseding replaces the VALUE and keeps the leaf at its
-/// first-insertion position, which is the reference's dict semantics and what
-/// keeps the record order on the wire identical.  Records the hub itself would
-/// have refused to register are not leaves and are left out.
-pub fn resolve_listing(listing: &serde_json::Value) -> Result<Vec<LeafEndpoint>, NoTasksArray> {
+/// Resolve only executions explicitly selected by the hub, in listing order.
+/// Invalid identities are ignored; missing or duplicate verdicts fail closed.
+pub fn resolve_listing(listing: &serde_json::Value) -> Result<Vec<LeafEndpoint>, ListingError> {
     let tasks = listing
         .as_object()
         .and_then(|body| body.get("tasks"))
         .and_then(|tasks| tasks.as_array())
-        .ok_or(NoTasksArray)?;
+        .ok_or_else(|| ListingError("the hub listing carries no tasks array".into()))?;
     let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut leaves: Vec<LeafEndpoint> = Vec::new();
     for task in tasks {
@@ -157,6 +149,15 @@ pub fn resolve_listing(listing: &serde_json::Value) -> Result<Vec<LeafEndpoint>,
             // out.
             _ => continue,
         };
+        match object.get("current_execution").and_then(|v| v.as_bool()) {
+            Some(false) => continue,
+            Some(true) => (),
+            None => {
+                return Err(ListingError(
+                    "the hub listing carries no current-execution verdict".into(),
+                ))
+            }
+        }
         let endpoint = LeafEndpoint {
             machine: machine.to_owned(),
             label: label.to_owned(),
@@ -166,7 +167,11 @@ pub fn resolve_listing(listing: &serde_json::Value) -> Result<Vec<LeafEndpoint>,
         };
         let leaf = endpoint.leaf_id();
         match index.get(&leaf) {
-            Some(&slot) => leaves[slot] = endpoint,
+            Some(_) => {
+                return Err(ListingError(format!(
+                    "the hub listing marks more than one current execution for leaf {leaf}"
+                )))
+            }
             None => {
                 index.insert(leaf, leaves.len());
                 leaves.push(endpoint);
@@ -501,16 +506,16 @@ mod tests {
     }
 
     #[test]
-    fn resolve_keeps_first_insertion_order_and_last_value() {
+    fn resolve_uses_the_hubs_verdict_not_the_newest_endpoint() {
         let listing = json!({
             "ok": true,
             "tasks": [
                 {"endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "box-a",
-                 "label": "t1", "closed_by": "agent", "exit_code": 2},
+                 "label": "t1", "closed_by": "agent", "exit_code": 2, "current_execution": true},
                 {"endpoint_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "machine": "box-a",
-                 "label": "t2", "closed_by": null, "exit_code": null},
+                 "label": "t2", "closed_by": null, "exit_code": null, "current_execution": true},
                 {"endpoint_id": "cccccccccccccccccccccccccccccccc", "machine": "box-a",
-                 "label": "t1", "closed_by": null, "exit_code": null},
+                 "label": "t1", "closed_by": null, "exit_code": null, "current_execution": false},
                 {"endpoint_id": "not-an-id", "machine": "box-a", "label": "t3"},
                 {"endpoint_id": "dddddddddddddddddddddddddddddddd", "machine": "bad machine",
                  "label": "t4"},
@@ -519,8 +524,8 @@ mod tests {
         let leaves = resolve_listing(&listing).unwrap();
         assert_eq!(leaves.len(), 2);
         assert_eq!(leaves[0].leaf_id(), "box-a/t1");
-        assert_eq!(leaves[0].endpoint_id, "cccccccccccccccccccccccccccccccc");
-        assert_eq!(leaves[0].heartbeat_state(), STATE_UNKNOWN);
+        assert_eq!(leaves[0].endpoint_id, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(leaves[0].heartbeat_state(), STATE_FAILED);
         assert_eq!(leaves[1].leaf_id(), "box-a/t2");
         for bad in [
             json!({}),
@@ -528,7 +533,12 @@ mod tests {
             json!([]),
             serde_json::Value::Null,
         ] {
-            assert_eq!(resolve_listing(&bad), Err(NoTasksArray));
+            assert_eq!(
+                resolve_listing(&bad),
+                Err(ListingError(
+                    "the hub listing carries no tasks array".into()
+                ))
+            );
         }
     }
 
@@ -537,7 +547,7 @@ mod tests {
         let state = |closed_by: serde_json::Value, exit_code: serde_json::Value| {
             let listing = json!({"tasks": [
                 {"endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m",
-                 "label": "l", "closed_by": closed_by, "exit_code": exit_code}]});
+                 "label": "l", "closed_by": closed_by, "exit_code": exit_code, "current_execution": true}]});
             resolve_listing(&listing).unwrap()[0].heartbeat_state()
         };
         assert_eq!(state(json!(null), json!(null)), STATE_UNKNOWN);

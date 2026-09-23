@@ -316,7 +316,7 @@ test_refusals_end_the_command() {
   local out code fake_dir ready waited=0 host port pid
   out=$(python3 "$BRIDGE" snapshot --hub "$URL" --token-file "$CASE_DIR/publish-token" 2>&1)
   code=$?
-  assert_equals "$code" 2 "a credential without the subscribe class should be refused"
+  assert_equals "$code" 2 "a credential without the subscribe class should be refused: $out"
   assert_contains "$out" "subscribe class" "the refusal should name the missing class"
   out=$(python3 "$BRIDGE" serve --hub "$URL" --token-file "$CASE_DIR/view-token" --interval-ms 1500 2>&1)
   assert_equals "$?" 2 "a tick at the Bridge's stale threshold should be refused"
@@ -409,7 +409,7 @@ class H(http.server.BaseHTTPRequestHandler):
         self.reply(200, {"ok": True, "protocol": 2,
                          "capabilities": ["current_execution",
                                           "idempotent_command_results",
-                                          "result_retry_orderability"],
+                                          "result_retry_orderability", "endpoint_command_auth"],
                          "generation": H.generation})
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)

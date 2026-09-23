@@ -127,10 +127,10 @@ api() {  # <token> <method> <path> [body] -> body
   local token=$1 method=$2 path=$3 body=${4:-} raw
   if [ -n "$body" ]; then
     raw=$(printf '%s' "$body" | curl -sS -m 30 -X "$method" \
-      -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer $token" -H "X-Endpoint-Capability: ${API_CAPABILITY:-}" -H 'Content-Type: application/json' \
       --data-binary @- -w '\n%{http_code}' "$URL$path" 2>/dev/null)
   else
-    raw=$(curl -sS -m 30 -X "$method" -H "Authorization: Bearer $token" \
+    raw=$(curl -sS -m 30 -X "$method" -H "Authorization: Bearer $token" -H "X-Endpoint-Capability: ${API_CAPABILITY:-}" \
       -w '\n%{http_code}' "$URL$path" 2>/dev/null)
   fi
   printf '%s' "${raw##*$'\n'}" > "$API_CODE_FILE"
@@ -1791,13 +1791,98 @@ wait_for_close() {  # <endpoint>
   return 1
 }
 
+test_endpoint_command_capabilities_protect_delivery_and_results() {
+  start_hub endpoint-command-auth --command-ack-secs 10
+  python3 - "$ROOT/tests/assets/stream-result-journal.py" "$URL" "$PUBLISH_TOKEN" "$VIEW_TOKEN" "$CASE_DIR/log" <<'PYAUTH' || fail "endpoint command authentication regression failed"
+import importlib.util
+import json
+import sys
+import threading
+
+spec = importlib.util.spec_from_file_location("journal", sys.argv[1])
+journal = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(journal)
+url, publisher, controller, log = sys.argv[2:]
+
+def call(method, path, payload=None, capability="", token=publisher):
+    return journal.call(url, token, method, path, payload, capability)
+
+endpoint = "a" * 32
+registration = {"endpoint_id": endpoint, "machine": "secured", "label": "worker",
+                "capabilities": ["idempotent_command_results"]}
+status, registered = call("POST", "/v1/agent/endpoints", registration)
+assert status == 201
+capability = registered["command_capability"]
+assert len(capability) >= 32 and "command_capability" not in registered["endpoint"]
+status, sibling = call("POST", "/v1/agent/endpoints", dict(registration,
+                       endpoint_id="b" * 32, label="sibling"))
+assert status == 201
+other_capability = sibling["command_capability"]
+assert other_capability != capability
+assert call("POST", "/v1/agent/endpoints", registration)[0] == 403
+assert call("POST", "/v1/agent/endpoints", registration, other_capability)[0] == 403
+
+placed = {}
+def place():
+    placed["answer"] = call("POST", "/v1/tasks/%s/input" % endpoint,
+                            {"text": "PRIVATE-ORDER", "submit": True}, token=controller)
+thread = threading.Thread(target=place)
+thread.start()
+path = "/v1/agent/commands?machine=secured&endpoint=%s&wait=0" % endpoint
+for bad in ("", "invented", other_capability):
+    status, response = call("GET", path, capability=bad)
+    assert status == 403 and "PRIVATE-ORDER" not in json.dumps(response)
+assert call("GET", "/v1/agent/commands?machine=secured&wait=0", capability=capability)[0] == 400
+status, response = call("GET", path.replace("wait=0", "wait=2"), capability=capability)
+assert status == 200 and len(response["commands"]) == 1
+command = response["commands"][0]
+result = {"machine": "secured", "command_id": command["command_id"], "ok": True}
+for bad in ("", "invented", other_capability):
+    assert call("POST", "/v1/agent/results", result, bad)[0] == 403
+assert thread.is_alive(), "forged results must not settle the order"
+
+# Rotation cannot be obtained by the broad publisher, and invalidates both
+# polling and result access even for a previously taken command.
+status, registered = call("POST", "/v1/agent/endpoints", registration, capability)
+assert status == 201
+rotated = registered["command_capability"]
+assert rotated != capability
+assert call("GET", path, capability=capability)[0] == 403
+assert call("POST", "/v1/agent/results", result, capability)[0] == 403
+assert call("POST", "/v1/agent/results", result, rotated)[0] == 200
+thread.join(12)
+assert not thread.is_alive() and placed["answer"][0] == 200
+assert call("POST", "/v1/agent/results", result, rotated)[0] == 200
+assert call("POST", "/v1/agent/results", result)[0] == 403
+
+for route in ("/v1/tasks", "/v1/machines", "/v1/health", "/v1/tasks/" + endpoint,
+              "/v1/tasks/%s/processes" % endpoint, "/v1/tasks/%s/screen" % endpoint):
+    _, response = call("GET", route, token=controller)
+    serialized = json.dumps(response)
+    for secret in (capability, rotated, other_capability):
+        assert secret not in serialized, "capability leaked from " + route
+
+assert call("POST", "/v1/agent/frames", {"machine": "secured", "frames": [
+    {"endpoint_id": endpoint, "closed": True, "exit_code": 0}]})[0] == 200
+assert call("GET", path, capability=rotated)[0] == 403
+assert call("POST", "/v1/agent/results", result, rotated)[0] == 403
+assert call("POST", "/v1/agent/endpoints", registration, rotated)[0] == 403
+with open(log, encoding="utf-8") as handle:
+    logged = handle.read()
+for secret in (capability, rotated, other_capability):
+    assert secret not in logged, "capability leaked in hub log"
+PYAUTH
+  pass "hub: endpoint capabilities prevent command theft and fabricated results, rotate, and revoke"
+}
+
 test_the_hub_accepts_a_retried_result_without_changing_its_verdict() {
   start_hub result-idempotent --command-ack-secs 5
-  local endpoint command_id="" commands result request_pid waited=0 request_code
+  local API_CAPABILITY="" registration_reply endpoint command_id="" commands result request_pid waited=0 request_code
   endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
-  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
+  registration_reply=$(publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
     '{endpoint_id: $id, machine: "result-box", label: "result-worker", cwd: "/tmp",
-      capabilities: ["idempotent_command_results"]}')" >/dev/null
+      capabilities: ["idempotent_command_results"]}')")
+  API_CAPABILITY=$(printf '%s' "$registration_reply" | jq -r .command_capability)
   assert_equals "$(api_code)" 201 "the result test endpoint should register"
   curl -sS -m 10 -X POST -H "Authorization: Bearer $VIEW_TOKEN" \
     -H 'Content-Type: application/json' --data-binary '{"text":"echo RESULT","submit":true}' \
@@ -2295,6 +2380,7 @@ s.close()')
   pass "fm-stream.sh: a second hub for the same home is refused rather than started"
 }
 
+test_endpoint_command_capabilities_protect_delivery_and_results
 test_every_data_route_requires_a_token
 test_a_viewing_token_cannot_register_an_endpoint_or_publish
 test_a_viewing_token_cannot_steer_or_close_a_worker

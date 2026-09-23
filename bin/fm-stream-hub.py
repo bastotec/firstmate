@@ -103,6 +103,7 @@ import http.server
 import json
 import os
 import re
+import secrets
 import signal
 import socket
 import socketserver
@@ -122,7 +123,7 @@ HUB_PROTOCOL = 2
 RESULT_RETRY_CAPABILITY = "idempotent_command_results"
 ORDERABLE_ENDPOINT_CAPABILITY = "result_retry_orderability"
 HUB_CAPABILITIES = ("current_execution", RESULT_RETRY_CAPABILITY,
-                    ORDERABLE_ENDPOINT_CAPABILITY)
+                    ORDERABLE_ENDPOINT_CAPABILITY, "endpoint_command_auth")
 
 DEFAULT_PORT = 7717
 DEFAULT_RING_BYTES = 262144
@@ -959,6 +960,7 @@ class Endpoint:
         self.rows = rows
         self.cols = cols
         self.result_retry = result_retry
+        self.command_capability = secrets.token_urlsafe(32)
         self.created_at = _now()
         self.closed_at = 0.0
         # Who ended this endpoint: "agent" when its own agent reported the
@@ -1025,6 +1027,7 @@ class Endpoint:
         what keeps an unacknowledged kill from ever claiming confirmation.
         """
         with self.wake:
+            self.command_capability = ""
             if not self.closed_at:
                 self.closed_at = _now()
                 self.closed_by = closed_by
@@ -1236,7 +1239,7 @@ class Hub:
 
     # --- endpoints --------------------------------------------------------
 
-    def register_endpoint(self, payload: dict) -> "Endpoint":
+    def register_endpoint(self, payload: dict, capability: str = "") -> "Endpoint":
         endpoint_id = str(payload.get("endpoint_id") or "")
         if not ENDPOINT_ID_RE.match(endpoint_id):
             raise HubError(HTTPStatus.BAD_REQUEST, "bad_endpoint_id",
@@ -1276,6 +1279,9 @@ class Hub:
                     raise HubError(HTTPStatus.CONFLICT, "endpoint_capabilities_changed",
                                    "endpoint %s cannot change its registered capabilities"
                                    % endpoint_id)
+                with existing.lock:
+                    self.authorize_endpoint(existing, machine, capability)
+                    existing.command_capability = secrets.token_urlsafe(32)
                 self.touch_machine(machine)
                 return existing
             for other in self.endpoints.values():
@@ -1429,7 +1435,18 @@ class Hub:
                            {"taken": True})
         return command
 
-    def take_commands(self, machine_name: str, endpoint_id: str, wait: float) -> list:
+    @staticmethod
+    def authorize_endpoint(endpoint: "Endpoint", machine: str, capability: str) -> None:
+        # Called under the hub lock. Never include the presented or stored
+        # credential in diagnostics, public endpoint records, or request URLs.
+        if (endpoint.machine != machine or not capability
+                or not endpoint.command_capability
+                or not secrets.compare_digest(endpoint.command_capability, capability)):
+            raise HubError(HTTPStatus.FORBIDDEN, "endpoint_unauthorized",
+                           "a valid endpoint command capability is required")
+
+    def take_commands(self, machine_name: str, endpoint_id: str, wait: float,
+                      capability: str = "") -> list:
         """Long-poll: hand a polling agent the commands for ITS endpoint.
 
         The filter is not a convenience. One agent owns one endpoint, so several
@@ -1440,44 +1457,53 @@ class Hub:
         deadline = _now() + wait
         with self.command_wake:
             while True:
-                machine = self.machines.get(machine_name)
-                if machine is not None and machine.queue:
-                    command = next((candidate for candidate in machine.queue
-                                    if not endpoint_id
-                                    or candidate.endpoint_id == endpoint_id), None)
-                    if command is not None:
-                        machine.queue.remove(command)
-                        command.taken_at = _now()
-                        machine.pending[command.command_id] = command
-                        return [command]
+                endpoint = self.get(endpoint_id)
+                with endpoint.lock:
+                    self.authorize_endpoint(endpoint, machine_name, capability)
+                    machine = self.machines.get(machine_name)
+                    if machine is not None and machine.queue:
+                        command = next((candidate for candidate in machine.queue
+                                        if candidate.endpoint_id == endpoint_id), None)
+                        if command is not None:
+                            machine.queue.remove(command)
+                            command.taken_at = _now()
+                            machine.pending[command.command_id] = command
+                            return [command]
                 remaining = deadline - _now()
                 if remaining <= 0:
                     return []
                 self.command_wake.wait(remaining)
 
     def complete_command(self, machine_name: str, command_id: str,
-                         ok: bool, error: str) -> None:
+                         ok: bool, error: str, capability: str = "") -> None:
         with self.command_wake:
             machine = self.machines.get(machine_name)
             if machine is not None:
                 self._prune_completed(
                     machine, _now() - UNACKNOWLEDGED_COMMAND_RETENTION)
-            command = machine.pending.pop(command_id, None) if machine else None
+            command = machine.pending.get(command_id) if machine else None
             if command is None:
                 completed = machine.completed.get(command_id) if machine else None
                 if completed is None:
                     raise HubError(HTTPStatus.NOT_FOUND, "no_such_command",
                                    "machine %s holds no command %s"
                                    % (machine_name, command_id))
+                endpoint = self.get(completed[3])
+                with endpoint.lock:
+                    self.authorize_endpoint(endpoint, machine_name, capability)
                 if completed[:2] != (ok, error):
                     raise HubError(HTTPStatus.CONFLICT, "result_conflict",
                                    "command %s already has a different result"
                                    % command_id)
                 return
-            command.ok = ok
-            command.error = error
-            command.done.set()
-            machine.completed[command_id] = (ok, error, _now())
+            endpoint = self.get(command.endpoint_id)
+            with endpoint.lock:
+                self.authorize_endpoint(endpoint, machine_name, capability)
+                machine.pending.pop(command_id)
+                command.ok = ok
+                command.error = error
+                command.done.set()
+                machine.completed[command_id] = (ok, error, _now(), command.endpoint_id)
 
     # --- orders -----------------------------------------------------------
 
@@ -1969,8 +1995,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         tail = path[len("/v1/agent/"):]
 
         if tail == "endpoints" and method == "POST":
-            endpoint = hub.register_endpoint(self._body())
-            self._json(HTTPStatus.CREATED, {"ok": True, "endpoint": endpoint.describe()})
+            endpoint = hub.register_endpoint(
+                self._body(), self.headers.get("X-Endpoint-Capability", ""))
+            self._json(HTTPStatus.CREATED, {"ok": True, "endpoint": endpoint.describe(),
+                                            "command_capability": endpoint.command_capability})
             return
 
         if tail == "frames" and method == "POST":
@@ -2016,14 +2044,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not MACHINE_RE.match(machine):
                 raise HubError(HTTPStatus.BAD_REQUEST, "bad_machine", "malformed machine name")
             endpoint_id = _query_one(query, "endpoint")
-            if endpoint_id and not ENDPOINT_ID_RE.match(endpoint_id):
+            if not ENDPOINT_ID_RE.match(endpoint_id):
                 raise HubError(HTTPStatus.BAD_REQUEST, "bad_endpoint_id",
                                "malformed endpoint id")
-            hub.touch_machine(machine)
-            if endpoint_id:
-                hub.touch_endpoint(endpoint_id)
             wait = min(max(_query_int(query, "wait", 25), 0), 120)
-            commands = hub.take_commands(machine, endpoint_id, float(wait))
+            commands = hub.take_commands(machine, endpoint_id, float(wait),
+                                         self.headers.get("X-Endpoint-Capability", ""))
             hub.touch_machine(machine)
             if endpoint_id:
                 hub.touch_endpoint(endpoint_id)
@@ -2042,7 +2068,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             hub.touch_machine(machine)
             hub.complete_command(machine, command_id,
                                  bool(payload.get("ok")),
-                                 str(payload.get("error") or ""))
+                                 str(payload.get("error") or ""),
+                                 self.headers.get("X-Endpoint-Capability", ""))
             self._json(HTTPStatus.OK, {"ok": True})
             return
 

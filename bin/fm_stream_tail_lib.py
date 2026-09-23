@@ -139,11 +139,14 @@ class HubClient:
     def __init__(self, base_url: str, token: str, program: str) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.command_capability = ""
         self.program = program
 
     def call(self, method: str, path: str, payload=None, timeout: float = 30.0):
         data = None
         headers = {"Authorization": "Bearer " + self.token}
+        if self.command_capability:
+            headers["X-Endpoint-Capability"] = self.command_capability
         if payload is not None:
             data = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -175,7 +178,10 @@ class HubClient:
         if not body:
             return {}
         try:
-            return json.loads(body)
+            answer = json.loads(body)
+            if method == "POST" and path == "/v1/agent/endpoints":
+                self.command_capability = answer.get("command_capability", "")
+            return answer
         except json.JSONDecodeError as exc:
             raise RuntimeError("hub returned malformed JSON for %s %s: %s"
                                % (method, path, exc))
