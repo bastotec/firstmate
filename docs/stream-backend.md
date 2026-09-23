@@ -74,7 +74,7 @@ Run it on the host that runs the hub:
 
 1. Give it its own read-only credential: add a bare token line to `config/stream-hub-tokens` and put the same token alone in a 0600 file for `bin/fm-stream-bridge.py`.
    A home still on the single `config/stream-token` has no such file, and creating one replaces that token's every-class grant, so write the home's own `publish,subscribe,control:<token>` line into it as well.
-   The hub reads its token file only at start, and a hub restart strands every running worker, so make this change while no stream work is running.
+   The hub reads its token file only at start; restarting it clears terminal scrollback and Bridge-order reconciliation while running agents re-register automatically, so make this change only when no order is pending or may need a resend.
 2. Start it against the local hub:
 
    ```
@@ -103,8 +103,8 @@ Live comparisons exclude process-local clocks; help presentation and transport-l
 ## Tail adapters
 
 The agent owns a pseudoterminal, so it can only publish a worker whose harness firstmate runs through the runtime backend.
-A worker a harness runs itself - an opencode session or a Claude Code transcript - owns its own session storage, and to the hub it is invisible: no endpoint and no Bridge feed entry.
-A tail adapter closes that gap from the outside by reading the harness's on-disk session storage and publishing cumulative token usage to the hub as a real endpoint.
+A worker a harness runs itself - an opencode session, a Claude Code transcript - owns its own session storage, and to the hub it is invisible: no endpoint, no Bridge feed entry.
+A tail adapter closes that gap from the outside: it tails the harness's on-disk session storage and publishes that session's cumulative token usage to the hub as a real endpoint, using the PTY agent's identity fields and tail-specific state.
 
 `bin/fm-stream-claude-tail.py` follows the newest transcript in one `~/.claude/projects/` directory.
 It deduplicates streamed and resumed history by assistant message id, survives truncation and session rotation, and re-registers the same endpoint after a hub restart.

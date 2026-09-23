@@ -164,9 +164,11 @@ order to the generation returned by that negotiation.  An older running hub is
 refused with a diagnostic
 to restart or upgrade it; offline `translate` needs no hub negotiation.
 
-Exit status: 0 on success; 2 on a usage error, a refused credential, or an
-incompatible hub.  An unreachable hub is not an exit for serve: it says so on
-stderr once, emits nothing, and retries every tick.
+Exit status: 0 on success; 2 on a usage error, a credential refused while
+reading the hub, or an incompatible hub.  A valid credential without the
+control class gets the hub's per-order refusal instead of ending `command`.
+An unreachable hub is not an exit for serve: it says so on stderr once, emits
+nothing, and retries every tick.
 """
 
 from __future__ import annotations
