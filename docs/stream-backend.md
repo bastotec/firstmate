@@ -257,7 +257,8 @@ That is a narrow protection, and worth being exact about: a replacement publishe
 Past it, the recovering agent is the one refused - correctly, because by then two workers really do answer to one name and the one the hub has heard from is the one it can account for.
 Readers on this side wait one ordinary rejoin window before answering an unresolved order, but absence from the restarted hub is never evidence that the worker is gone.
 If no endpoint appears in that window, the order remains pending without a membership nack and an identical resend can try placement again after the agent's backoff.
-The cheap presence probe behind capture, current-path and input answers from the first reply and keeps paying nothing for the window, while the fleet listing takes its endpoint verdict from the classifier and reports a rejoin in flight as unknown rather than absent.
+The cheap presence probe behind capture, current-path and endpoint-addressed input answers from the first reply and pays no rejoin wait.
+The recovery-grade worker classifier waits its separate bounded six-second rejoin window, after which it can report `missing` while a live agent remains in a longer backoff; that classifier verdict does not produce a Bridge membership nack, which remains pending as described above.
 
 `no_such_endpoint` is the only thing an agent acts on here, and only the hub states it.
 A failed connection is not that, and is never treated as it: a hub on its way back up passes through exactly that state, and a returning hub that still holds the record must not be re-registered against.
