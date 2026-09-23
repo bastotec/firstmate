@@ -784,6 +784,7 @@ tests/fm-startup-network.test.sh 62274
 tests/fm-stow-cascade.test.sh 3101
 # Locally measured seed for the new Claude tail shim suite (three runs, worst
 # ~8s on the dev host); refresh from CI timing artifacts per the doc below.
+tests/fm-stream-bridge-rust.test.sh 31489
 tests/fm-stream-claude-tail.test.sh 9000
 tests/fm-stream-opencode-tail.test.sh 17476
 tests/fm-subagent-pretool-check.test.sh 1030
