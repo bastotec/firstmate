@@ -21,8 +21,10 @@
 #      launches use the same driver with home-host supervision. A persistent
 #      secondmate records a failed turn and returns to its prompt with its
 #      session and watcher intact, on the first turn as well as later ones,
-#      while a crewmate keeps its own behavior and a failure the driver cannot
-#      publish still stops it.
+#      repeats its launch brief once when a failure left it with no session at
+#      all, and stops when that repeat opens no session either, while a crewmate
+#      keeps its own behavior and a failure the driver cannot publish still
+#      stops it.
 #   7. Ordinary Deck dispatch launches the driver with the resolved deck
 #      binary, busy gen, and model, records effort without passing it, and arms
 #      the busy contract.
@@ -706,9 +708,10 @@ EOF
 # A secondmate host fixture: a stub home, a stub session start, a stub watcher
 # arm whose result is released by a trigger file, and a fake deck that records
 # each turn's prompt, session, resumption, and drained inbox. A `fail-turn` file
-# makes the next turn fail the way a gateway or quota refusal does, and an
-# `unsafe-status` file additionally makes the parent status unwritable so the
-# driver cannot record that failure.
+# makes the next turn fail the way a gateway or quota refusal does, a
+# `no-session` file makes it fail before Deck creates a session at all, the way
+# a missing gateway key does, and an `unsafe-status` file additionally makes the
+# parent status unwritable so the driver cannot record that failure.
 make_secondmate_host_fixture() {  # <dir>
   local dir=$1
   mkdir -p "$dir/home/state" "$dir/home/config" "$dir/parent" "$dir/bin"
@@ -778,7 +781,8 @@ with (home / 'turns').open('a') as f:
                         'resumed': '--session' in args, 'inbox': body}) + '\n')
 for record in records:
     record.rename(inbox / 'handled' / record.name)
-print(json.dumps({'type': 'run_started', 'session': session}), flush=True)
+if not (home / 'no-session').exists():
+    print(json.dumps({'type': 'run_started', 'session': session}), flush=True)
 if (home / 'fail-turn').exists():
     if (home / 'unsafe-status').exists():
         status = pathlib.Path(__file__).parent / 'parent/host.status'
@@ -995,6 +999,119 @@ PYTHON
   pass "fm-deck-worker: a secondmate records a failed turn and waits at its prompt for the next wake"
 }
 
+test_secondmate_repeats_its_launch_brief_after_a_session_less_failure() {
+  local dir="$TMP_ROOT/host-no-session"
+  make_secondmate_host_fixture "$dir"
+  python3 - "$dir" <<'PYTHON' || fail "a Deck secondmate lost its launch brief when a failure opened no session"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+status = root / 'parent/host.status'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def failures():
+    lines = status.read_text().splitlines() if status.exists() else []
+    return [x for x in lines if x.startswith('failed: Deck secondmate turn failed')]
+def wait_for(check, label):
+    for _ in range(200):
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+' - host exited: '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+# Deck fails before it creates a session, the way a missing gateway key does, so
+# nothing carries the launch brief into a conversation.
+(home/'no-session').touch()
+(home/'fail-turn').touch()
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: len(rows()) == 1, 'failed first turn with no session')
+        wait_for(lambda: len(failures()) == 1, 'session-less failure record')
+        wait_for(lambda: 'event=turn-failed' in (root/'parent/host.busy-state').read_text(), 'session-less busy record')
+        assert 'complete startup digest marker' in rows()[0]['prompt'], rows()[0]['prompt']
+        assert not rows()[0]['resumed']
+        time.sleep(.5)
+        assert p.poll() is None, 'the driver exited on a session-less first turn: '+(root/'pane').read_text()
+        (home/'fail-turn').unlink()
+        (home/'no-session').unlink()
+        p.stdin.write('first-wake\n'); p.stdin.flush()
+        wait_for(lambda: len(rows()) == 2, 'turn after a session-less failure')
+        # The parked mate still takes the helm: the retained launch brief travels
+        # with the wake, and the session that turn opens is the one kept.
+        assert 'complete startup digest marker' in rows()[1]['prompt'], rows()[1]['prompt']
+        assert 'first-wake' in rows()[1]['prompt'], rows()[1]['prompt']
+        assert not rows()[1]['resumed'], 'the driver resumed a session Deck never opened'
+        assert rows()[1]['session'] == 'host-session', rows()[1]
+        p.stdin.write('second-wake\n'); p.stdin.flush()
+        wait_for(lambda: len(rows()) == 3, 'turn after the repeated launch brief')
+        assert rows()[2]['resumed'], 'the session opened by the repeated launch brief was not kept'
+        assert rows()[2]['session'] == rows()[1]['session'], rows()[2]
+        assert rows()[2]['prompt'] == 'second-wake', 'the launch brief was repeated after it reached a session'
+        assert len(failures()) == 1, status.read_text()
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=20) == 0, 'the surviving driver did not stop on /quit'
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGTERM)
+            try:
+                p.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  pass "fm-deck-worker: a secondmate with no session repeats its launch brief on the next wake"
+}
+
+test_secondmate_stops_when_a_repeated_launch_brief_opens_no_session() {
+  local dir="$TMP_ROOT/host-no-session-twice"
+  make_secondmate_host_fixture "$dir"
+  python3 - "$dir" <<'PYTHON' || fail "a Deck secondmate parked forever without ever opening a session"
+import json, os, pathlib, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+status = root / 'parent/host.status'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def wait_for(check, label):
+    for _ in range(200):
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+' - host exited: '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+(home/'no-session').touch()
+(home/'fail-turn').touch()
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=env, text=True)
+    try:
+        wait_for(lambda: len(rows()) == 1, 'failed first turn with no session')
+        time.sleep(.5)
+        assert p.poll() is None, 'the driver exited before repeating its launch brief: '+(root/'pane').read_text()
+        p.stdin.write('next-wake\n'); p.stdin.flush()
+        assert p.wait(timeout=30) != 0, 'the driver kept parking with no session at all'
+    finally:
+        if p.poll() is None:
+            p.terminate(); p.wait(timeout=15)
+pane = (root/'pane').read_text()
+turns = rows()
+assert len(turns) == 2, turns
+assert 'next-wake' in turns[1]['prompt'], turns[1]['prompt']
+assert 'complete startup digest marker' in turns[1]['prompt'], 'the repeated turn lost the launch digest'
+lines = status.read_text().splitlines()
+assert len([x for x in lines if x.startswith('failed: Deck secondmate turn failed')]) == 2, lines
+assert any(x.startswith('failed: Deck secondmate opened no Deck session') for x in lines), lines
+assert 'event=turn-failed' in (root/'parent/host.busy-state').read_text(), 'the stopping failure skipped its busy record'
+assert 'stopping for a guarded relaunch' in pane, pane
+PYTHON
+  pass "fm-deck-worker: a secondmate that cannot open a session stops for the guarded relaunch"
+}
+
 test_secondmate_stops_when_a_failed_turn_cannot_be_recorded() {
   local dir="$TMP_ROOT/host-unrecordable-failure"
   make_secondmate_host_fixture "$dir"
@@ -1024,6 +1141,8 @@ PYTHON
 
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_survives_a_failed_turn
+test_secondmate_repeats_its_launch_brief_after_a_session_less_failure
+test_secondmate_stops_when_a_repeated_launch_brief_opens_no_session
 test_secondmate_stops_when_a_failed_turn_cannot_be_recorded
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_drive_the_busy_record_and_turn_end

@@ -45,7 +45,8 @@
 # returns to its prompt, keeping its Deck session where one exists, so the next
 # wake starts a new turn instead of leaving the home without a supervisor. The
 # first turn is covered too, so a mate launched into an outage waits rather than
-# dying. A driver that could not publish that failure still stops.
+# dying. A driver that could not publish that failure still stops, and so does a
+# driver whose launch brief never reached a session even after one repeat.
 #
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
@@ -370,6 +371,11 @@ SESSION=''
 # expected to outlive. Only the secondmate role returns it; a crewmate or scout
 # driver keeps its existing all-or-nothing turn contract.
 TURN_RECOVERABLE=3
+# 1 while the launch turn is still owed to a session: the brief and the startup
+# digest travel only in $PROMPT, and a session identity only arrives with Deck's
+# first event, so a turn that fails before that event leaves nothing behind for
+# the next turn to resume.
+LAUNCH_UNDELIVERED=0
 run_turn() {  # <prompt>
   local prompt=$1 rc event status_before monitor_failed=0 deck_rc tee_rc jq_rc published=0
   local -a turn_pipeline
@@ -494,13 +500,33 @@ run_turn() {  # <prompt>
 # Every turn, including the first, goes through this: a recoverable failure
 # returns to the prompt loop so the next wake becomes the next turn, and any
 # other failure stops the driver.
+# An owed launch turn is re-delivered once underneath the wake that follows it,
+# so a mate whose first turn died before Deck opened a session still takes the
+# helm. A second failure that opens no session stops the driver instead, which
+# is what returns the home to the parent's guarded relaunch path.
 drive_turn() {  # <prompt>
-  local rc=0
-  run_turn "$1" || rc=$?
+  local rc=0 prompt=$1 relaunch=0
+  if [ "$LAUNCH_UNDELIVERED" = 1 ]; then
+    LAUNCH_UNDELIVERED=0
+    relaunch=1
+    prompt="$PROMPT
+
+The host repeated this launch brief because the previous turn failed before Deck opened a session. The digest above is this session's startup; handle the wake below as its first work.
+
+$1"
+  fi
+  run_turn "$prompt" || rc=$?
   if [ "$rc" -eq 0 ]; then
     return 0
   fi
   [ "$rc" -eq "$TURN_RECOVERABLE" ] || exit 1
+  if [ -z "$SESSION" ]; then
+    if [ "$relaunch" = 1 ]; then
+      host_failure 'opened no Deck session even after repeating the launch brief; stopping for a guarded relaunch' || true
+      exit 1
+    fi
+    LAUNCH_UNDELIVERED=1
+  fi
   printf '\n⛵ turn failed; waiting at the prompt for the next wake.\n'
 }
 
