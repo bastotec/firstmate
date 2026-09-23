@@ -39,7 +39,7 @@
 
 # The wire protocol this adapter implements. A hub announcing anything else is
 # refused loudly rather than driven on guessed routes.
-FM_BACKEND_STREAM_PROTOCOL=2
+FM_BACKEND_STREAM_PROTOCOL=3
 FM_BACKEND_STREAM_DEFAULT_URL="http://127.0.0.1:7717"
 FM_BACKEND_STREAM_AGENT_BIN="$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agent.py"
 

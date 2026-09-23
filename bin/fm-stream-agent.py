@@ -73,7 +73,8 @@ import urllib.parse
 import urllib.request
 
 AGENT_VERSION = "2.1.0"
-AGENT_PROTOCOL = 2
+AGENT_PROTOCOL = 3
+IDEMPOTENT_RESULT_CAPABILITY = "idempotent_command_results"
 
 STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
                  "failed", "resolved")
@@ -246,7 +247,18 @@ class Pty:
                 return b""
 
     def write(self, data: bytes) -> int:
-        return os.write(self.master_fd, data)
+        total = 0
+        while total < len(data):
+            try:
+                written = os.write(self.master_fd, data[total:])
+            except OSError as exc:
+                if exc.errno == errno.EINTR:
+                    continue
+                raise
+            if written <= 0:
+                raise OSError(errno.EIO, "pseudoterminal write made no progress")
+            total += written
+        return total
 
     def alive(self) -> bool:
         # poll() REAPS an exited child, which releases its pid for reuse, so it
@@ -381,7 +393,7 @@ class Pty:
             pass
 
 
-# The two types below are refusals the hub STATED. A hub that could not be
+# The refusal types below are statements the hub made. A hub that could not be
 # reached is neither of them: it has said nothing, and silence is an ordinary
 # transient the retries already handle. The whole of what this agent is allowed
 # to act on - take an identity back, stand down, stop for good - turns on the
@@ -412,6 +424,10 @@ class Forgotten(RuntimeError):
     """
 
 
+class ResultRejected(RuntimeError):
+    """The hub definitively rejected a command result."""
+
+
 # The refusals that mean another live endpoint answers to this one's identity.
 # duplicate_label reaches an agent only on a registration, and it says exactly
 # what endpoint_superseded says on a publish: the name is taken.
@@ -430,6 +446,8 @@ SUPERSEDING_REFUSALS = frozenset(("endpoint_superseded", "duplicate_label"))
 # derive its outage from the same ladder rather than assume one.
 POLL_BACKOFF_MIN = 2.0
 POLL_BACKOFF_MAX = 60.0
+RESULT_POST_TIMEOUT_SECS = 15.0
+RESULT_RETRY_SHUTDOWN_SECS = 900.0
 REREGISTER_BACKOFF_MIN = 2.0
 REREGISTER_BACKOFF_MAX = 60.0
 REREGISTER_JITTER = 0.25
@@ -446,10 +464,10 @@ REREGISTER_JITTER = 0.25
 #     attempt being waited for is talking to a live hub: connect, request, the
 #     hub's registry lock, reply - well under a second, and a few times that
 #     while a just-restarted hub absorbs the fleet's reconnect burst.
-#   - It has to keep teardown prompt. run() has already spent up to 15s waiting
-#     out a command acknowledgement, 5s for the reader's EOF and 5s joining it
-#     before this frame is posted at all, and the post itself allows 30s. Three
-#     seconds is a small addition to that, and it is paid once, not per attempt.
+#   - It has to keep teardown prompt after the result reconciliation wait,
+#     5s for the reader's EOF and 5s joining it before this frame is posted at
+#     all, and the post itself allows 30s. Three seconds is a small addition to
+#     that, and it is paid once, not per attempt.
 # It also deliberately falls short of the 15s timeout on the call being waited
 # for: a registration still running at three seconds is a hub that is hanging,
 # and its answer would not have carried this frame either.
@@ -472,6 +490,8 @@ def registration(options: argparse.Namespace, endpoint_id: str) -> dict:
         "cwd": options.cwd,
         "rows": options.rows,
         "cols": options.cols,
+        "capabilities": [IDEMPOTENT_RESULT_CAPABILITY],
+        "protocol": AGENT_PROTOCOL,
     }
 
 
@@ -486,6 +506,7 @@ class HubClient:
     def __init__(self, base_url: str, token: str) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.command_capability = ""
         self.deadline = None
 
     def begin_startup(self) -> None:
@@ -505,6 +526,8 @@ class HubClient:
             timeout = min(timeout, remaining)
         data = None
         headers = {"Authorization": "Bearer " + self.token}
+        if self.command_capability:
+            headers["X-Endpoint-Capability"] = self.command_capability
         if payload is not None:
             data = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -526,6 +549,9 @@ class HubClient:
                 raise Superseded(message)
             if code == "no_such_endpoint":
                 raise Forgotten(message)
+            if code in ("no_such_command", "result_conflict", "bad_command_id",
+                        "endpoint_unauthorized"):
+                raise ResultRejected(message)
             raise RuntimeError(message)
         except urllib.error.URLError as exc:
             raise RuntimeError("cannot reach the hub at %s: %s" % (self.base_url, exc.reason))
@@ -539,7 +565,10 @@ class HubClient:
         if not body:
             return {}
         try:
-            return json.loads(body)
+            answer = json.loads(body)
+            if method == "POST" and path == "/v1/agent/endpoints":
+                self.command_capability = answer.get("command_capability", "")
+            return answer
         except json.JSONDecodeError as exc:
             raise RuntimeError("hub returned malformed JSON for %s %s: %s" % (method, path, exc))
 
@@ -574,11 +603,10 @@ class Agent:
         self.status_path = options.status_path
         self.stop = threading.Event()
         self.reader_done = threading.Event()
-        # Set while a command is being applied or acknowledged. A kill ends the
-        # endpoint, which ends this process, so without this the agent could
-        # exit between doing the work and reporting it - and the hub would then
-        # tell the caller the kill was never delivered when in fact it was.
-        self.command_busy = threading.Event()
+        # Coordinates the result retry with shutdown so an applied command gets
+        # its last bounded attempt before the publisher exits.
+        self._result_retry_condition = threading.Condition()
+        self._result_retry_deadline = None
         # Set when this agent has lost its name to another endpoint. It goes on
         # draining the pty - a worker whose output nobody reads eventually
         # blocks - but publishes nothing and takes no commands.
@@ -869,6 +897,39 @@ class Agent:
         sys.stderr.write("fm-stream-agent: %s\n" % reason)
         sys.stderr.flush()
 
+    def acknowledge_command(self, command: dict, ok: bool, error: str) -> None:
+        result = {
+            "machine": self.machine,
+            "command_id": command.get("command_id"),
+            "ok": ok,
+            "error": error,
+        }
+        retry_after = POLL_BACKOFF_MIN
+        retry_deadline = time.monotonic() + RESULT_RETRY_SHUTDOWN_SECS
+        while True:
+            attempted_at = time.monotonic()
+            try:
+                self.hub.call("POST", "/v1/agent/results", result,
+                              timeout=RESULT_POST_TIMEOUT_SECS)
+                return
+            except ResultRejected as exc:
+                sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
+                return
+            except RuntimeError as exc:
+                sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
+                with self._result_retry_condition:
+                    deadline = self._result_retry_deadline
+                    if deadline is None or deadline > retry_deadline:
+                        deadline = retry_deadline
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        if attempted_at < deadline:
+                            continue
+                        return
+                    wait = min(retry_after, remaining)
+                    self._result_retry_condition.wait(wait)
+                retry_after = min(retry_after * 2, POLL_BACKOFF_MAX)
+
     def command_loop(self) -> None:
         """Long-poll the hub for this endpoint's commands and acknowledge each.
 
@@ -921,24 +982,12 @@ class Agent:
                 continue
             self._backoff = POLL_BACKOFF_MIN
             for command in answer.get("commands") or []:
-                self.command_busy.set()
+                ok, error = False, "the agent could not apply the command"
                 try:
-                    ok, error = False, "the agent could not apply the command"
-                    try:
-                        ok, error = self.apply_command(command)
-                    except Exception as exc:  # noqa: BLE001 - always answer the hub
-                        ok, error = False, str(exc)
-                    try:
-                        self.hub.call("POST", "/v1/agent/results", {
-                            "machine": self.machine,
-                            "command_id": command.get("command_id"),
-                            "ok": ok,
-                            "error": error,
-                        }, timeout=15.0)
-                    except RuntimeError as exc:
-                        sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
-                finally:
-                    self.command_busy.clear()
+                    ok, error = self.apply_command(command)
+                except Exception as exc:  # noqa: BLE001 - always answer the hub
+                    ok, error = False, str(exc)
+                self.acknowledge_command(command, ok, error)
 
     # --- lifecycle --------------------------------------------------------
 
@@ -958,12 +1007,14 @@ class Agent:
         signal.signal(signal.SIGINT, _signalled)
 
         self.stop.wait()
-        # A kill is applied by the command loop and ends the endpoint, so the
-        # reader sees EOF and sets stop while that same command is still being
-        # acknowledged. Let the acknowledgement land before tearing down.
-        deadline = _now() + 15.0
-        while self.command_busy.is_set() and _now() < deadline:
-            time.sleep(0.05)
+        # A command poll already in flight can return one command after stop is
+        # set, so shutdown joins its thread rather than sampling transient work.
+        deadline = time.monotonic() + RESULT_RETRY_SHUTDOWN_SECS
+        with self._result_retry_condition:
+            self._result_retry_deadline = deadline
+            self._result_retry_condition.notify_all()
+        until = deadline + 2 * RESULT_POST_TIMEOUT_SECS + 1.0
+        commands.join(timeout=max(0.0, until - time.monotonic()))
         self.pty.close()
         # Join the reader before releasing the descriptor: see Pty.close.
         self.reader_done.wait(5.0)
@@ -1100,6 +1151,13 @@ def main(argv: list) -> int:
         raise SystemExit("fm-stream-agent: the hub at %s speaks protocol %r but this agent "
                          "implements %d; update both ends"
                          % (options.hub, protocol, AGENT_PROTOCOL))
+    capabilities = health.get("capabilities")
+    if (not isinstance(capabilities, list)
+            or IDEMPOTENT_RESULT_CAPABILITY not in capabilities):
+        raise SystemExit(
+            "fm-stream-agent: the hub at %s does not advertise the %s capability; "
+            "restart or upgrade the hub before starting this agent"
+            % (options.hub, IDEMPOTENT_RESULT_CAPABILITY))
 
     # The heartbeat is what keeps this endpoint readable, so it is derived from
     # the hub's own staleness window rather than configured separately. Two

@@ -56,8 +56,12 @@ A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoi
 
 ## Bridge feed
 
-`bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from that worker's newest endpoint.
-It only reads the hub, holds a `subscribe` credential, opens no listening socket, and sends nothing to any worker.
+`bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from the execution the hub marks current using the same decision as its order path.
+The feed direction only reads the hub: `serve`, `snapshot`, and `compare` in live mode hold a `subscribe` credential, open no listening socket, and send nothing to any worker.
+`translate` is offline and needs no hub credential.
+Writing is the adapter's other direction, a separate command with its own credential, which [Command path](#command-path) owns.
+Before any live feed or command does work, the adapter negotiates both the hub protocol and the advertised `current_execution` capability, and the command direction additionally requires `idempotent_command_results` plus the endpoint-gate generation `result_retry_orderability`.
+It rejects an older running hub before processing records and directs the operator to restart or upgrade it rather than guessing which execution is current or placing an order without reliable acknowledgement.
 Its header owns the record mapping and every field the hub cannot supply; the short version is that the `/v1/tasks` listing this bridge consumes carries no token counters, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
 When the hub cannot be read it emits nothing.
 The Bridge's clock only moves when a record arrives, so during an outage, or after a hub restart that lists no endpoints, the Bridge keeps showing each worker's last state rather than aging it out as stale.
@@ -70,7 +74,8 @@ Run it on the host that runs the hub:
 
 1. Give it its own read-only credential: add a bare token line to `config/stream-hub-tokens` and put the same token alone in a 0600 file for `bin/fm-stream-bridge.py`.
    A home still on the single `config/stream-token` has no such file, and creating one replaces that token's every-class grant, so write the home's own `publish,subscribe,control:<token>` line into it as well.
-   The hub reads its token file only at start, and a hub restart strands every running worker, so make this change while no stream work is running.
+   The hub reads its token file only at start; restarting it clears terminal scrollback and Bridge-order reconciliation, so make this change only when no order is pending or may need a resend.
+   Running endpoints re-register automatically after an ordinary same-protocol restart, but a wire-protocol upgrade requires restarting every endpoint with matching software.
 2. Start it against the local hub:
 
    ```
@@ -87,20 +92,20 @@ Nothing runs it automatically.
 ### Rust bridge
 
 The opt-in Rust bridge builds with `cargo build --release --locked -p fm-stream-bridge` (Rust 1.96 or newer).
-Use `target/release/fm-stream-bridge` in place of `bin/fm-stream-bridge.py` with the same subcommands and explicit hub, token-file, and fleet-id flags; this does not replace or restart any deployed Python process.
+Use `target/release/fm-stream-bridge` in place of `bin/fm-stream-bridge.py` for the read-only `serve`, `snapshot`, `translate`, and `compare` subcommands with explicit hub, token-file, and fleet-id flags; this does not replace or restart any deployed Python process.
 Install it beside the existing scripts in `bin/` if using `compare`'s executable-relative home default, or pass `--home` and `--crew-state` explicitly.
 The Cargo workspace shares the protocol handshake and heartbeat wire mapping in `crates/fm-stream-wire`.
 The bridge uses Tokio, Hyper, and rustls for HTTP and HTTPS access and Serde JSON for parsing, without an LLM framework.
 It follows HTTP redirects and accepts argparse-style unique long-option abbreviations.
 Epochs remain limited to signed 64-bit integers, unlike Python's arbitrary-precision values.
 `tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
-Live comparisons exclude process-local clocks; help presentation and transport-library error details are not byte contracts.
+Live comparisons exclude process-local clocks; help presentation, top-level command choices, and transport-library error details are not byte contracts.
 
 ## Tail adapters
 
 The agent owns a pseudoterminal, so it can only publish a worker whose harness firstmate runs through the runtime backend.
-A worker a harness runs itself - an opencode session or a Claude Code transcript - owns its own session storage, and to the hub it is invisible: no endpoint and no Bridge feed entry.
-A tail adapter closes that gap from the outside by reading the harness's on-disk session storage and publishing cumulative token usage to the hub as a real endpoint.
+A worker a harness runs itself - an opencode session, a Claude Code transcript - owns its own session storage, and to the hub it is invisible: no endpoint, no Bridge feed entry.
+A tail adapter closes that gap from the outside: it tails the harness's on-disk session storage and publishes that session's cumulative token usage to the hub as a real endpoint, using the PTY agent's identity fields and tail-specific state.
 
 `bin/fm-stream-claude-tail.py` follows the newest transcript in one `~/.claude/projects/` directory.
 It deduplicates streamed and resumed history by assistant message id, survives truncation and session rotation, and re-registers the same endpoint after a hub restart.
@@ -125,6 +130,32 @@ What a tail adapter publishes is bounded by what the harness itself recorded:
 Both adapters are publishers, not supervisors.
 Watch them with `bin/fm-stream.sh tasks`; the opencode adapter exits when its session is archived or it accepts a kill, while the Claude adapter follows its selected transcript until its own process is stopped.
 
+## Command path
+
+The reading half of the Bridge chain is the feed above; the writing half is `bin/fm-stream-bridge.py command`.
+It reads one `command` record per line on stdin - the composer's order - places valid orders with the hub, and writes each resulting `command_ack` or `command_nack` to stdout in the feed's NDJSON framing.
+The adapter's header owns the three record shapes, required identity and payload fields, and the rule that decides whether an input is acknowledged, refused, nacked, or left pending.
+
+At operator level, every order names both a worker by `leaf_worker_id` - `<machine>/<label>`, from the same machine and label the feed emits and `fm-stream.sh tasks` lists - and the exact execution the feed showed.
+That binding prevents an order composed for one run from being typed into its replacement.
+Acceptance means the owning agent wrote the complete order, including its submit byte, to that execution's pseudoterminal and acknowledged it; the owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership produces no record and remains pending.
+Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
+The PTY agent advertises that capability back on every endpoint registration, and the hub places Bridge orders only for endpoints that do.
+Protocol-2 agents cannot register, while protocol-3 tail publishers remain visible but non-orderable.
+Each internal HTTP order carries the hub generation returned by compatibility negotiation; a replacement hub rejects a stale generation before placement, the adapter renegotiates before retrying, and the Bridge `command`, `command_ack`, and `command_nack` records do not change.
+
+Reconciliation state lives in the hub's memory, not on disk.
+The journal retains bindings for the most recent 512 orders.
+While an id remains there, an identical resend is answered from the original order, including when it overtakes the original placement; reuse with a different leaf, execution, or text is refused as an idempotency conflict.
+A retry after more than 512 newer orders is not guaranteed to be deduplicated.
+An order whose membership remains unresolved keeps that binding, while an identical resend may retry placement because no command was created.
+A taken command remains eligible for a late agent acknowledgement and a completed result remains idempotently answerable for at least 15 minutes, and an endpoint whose worker exits while acknowledgement is retrying keeps its publisher alive while the result can still settle.
+A definitive result rejection - including capability revocation after the hub closes the endpoint - or retry expiry ends retrying so the closing frame can publish and later commands can still be polled, while the caller's unresolved order remains unconfirmed.
+A hub restart empties the journal along with the registry, so a resend after restart is a new order and cannot reconcile delivery from before the restart.
+
+The credentials are separate on purpose: `command` needs a `control`-class token, the class that can type into workers, while the feed holds `subscribe` alone, so a host running only the feed cannot order anything with the credential the feed uses.
+Run `command` on the host that runs the hub, reading its stdin from wherever the composer's records come from over SSH or an equivalent encrypted transport - the same open exposure decision the feed names, with a sharper edge, because this direction carries the credential that steers the fleet.
+
 ## Security
 
 The hub binds `127.0.0.1` by default and every data route requires a bearer token; the static viewer page is the one exception.
@@ -133,11 +164,17 @@ Tokens are class-scoped, and there are three classes:
 
 - `publish` registers endpoints and publishes frames. Agents and tail adapters hold it; nobody else needs it.
 - `subscribe` reads only: list, stream, capture, screen, and state.
-- `control` steers: sending input to a worker, appending a status line, and closing an endpoint.
+- `control` steers: sending input to a worker, appending a status line, closing an endpoint, and placing a leaf-addressed order.
 
 A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, so an operator credential is written `subscribe,control:<token>` and a home's own client credential, which both publishes and steers, is `publish,subscribe,control:<token>`.
 A bare token line grants `subscribe` alone, so the unqualified line is the read-only one.
 A viewing token cannot register an endpoint, publish, or steer a worker: input, status, and close are all refused with 403.
+Command retrieval and result submission additionally require the endpoint's private `command_capability`, established by registration and carried in the `X-Endpoint-Capability` request header.
+A poll must name that endpoint; machine-wide command retrieval is refused.
+A recovering agent presents its current capability when registering an endpoint, and the hub adopts or retains that same value so retrying after a lost registration response is idempotent; closing the endpoint revokes it.
+Agents and tail adapters retain the capability only in memory, and listings, state reads, logs, and status lines never expose it.
+The Bridge command direction requires the hub's `endpoint_command_auth` capability before placing orders; the Python command wire shapes are unchanged.
+The Rust bridge remains a read-only feed, not a command adapter.
 The bundled viewer page is served without a credential - it is static, and the token it reads out of the URL fragment is what its own requests carry - but every data route behind it is authenticated, and opening it with a viewing token gives a read-only view whose send box is refused.
 
 ### The hub speaks plain HTTP
@@ -200,7 +237,8 @@ The hub refuses that agent, and it stops rather than let two workers answer to o
 ## When the hub restarts
 
 Endpoints live in the hub's memory only, so a restarted hub has never heard of any of them and refuses a running agent's next publish with `no_such_endpoint`.
-That refusal is what an agent registers itself again on, under the endpoint id it already held, so a worker returns to the fleet listing and to steering without anyone touching the machine it runs on.
+For an ordinary same-protocol restart, that refusal is what an agent registers itself again on, under the endpoint id it already held, so a worker returns to the fleet listing and to steering without anyone touching the machine it runs on.
+Every registration names protocol 3; an older running endpoint is refused with `protocol_mismatch` and must be restarted from matching software rather than being listed without authenticated command delivery.
 Listed and steerable arrive together rather than one after the other, because the thread that receives steers is told the endpoint is back at the moment it comes back rather than finding out on its own schedule.
 The residual is small and worth stating: the two are separate calls, so a steer aimed at the instant between a worker being listed again and its next command poll reaching the hub can still be reported undelivered, and is delivered on the retry.
 
@@ -217,10 +255,10 @@ Inside the restart window every stream endpoint reads unknown to the hub, so som
 A record the hub has never heard from stands for no worker, so it takes no name from the agent that is publishing under it - the rule the hub already applied to publishing, applied to registering too, so the contest is decided by which agent speaks rather than by which one registered first.
 That is a narrow protection, and worth being exact about: a replacement publishes its own first state frame immediately after registering, so the interval in which it stands for nothing at all is the gap between those two calls.
 Past it, the recovering agent is the one refused - correctly, because by then two workers really do answer to one name and the one the hub has heard from is the one it can account for.
-Readers on this side wait that window out rather than call the worker gone: a hub 404 has to keep being the answer for longer than a re-registration takes before it is reported as `missing`, because inside it the endpoint is about to exist again and a steer dropped there is a steer dropped on a healthy worker.
-The cheap presence probe behind capture, current-path and input answers from the first reply and keeps paying nothing for the window, so it is the steering paths that ask again; the fleet listing, which an operator reads once, takes its endpoint verdict from the classifier instead, and reports a rejoin in flight as unknown rather than absent.
-What that window covers is one rejoin attempt, not the whole recovery: it is sized against the first attempt an agent makes after a restart, because the read is itself bounded by the caller that asks for it and there is no room to sit through the backoff ladder as well.
-An agent whose first attempt met a hub that was not ready yet waits out its own backoff, and for that stretch a healthy worker on its way back is reported `missing` - supervision treats that like a dead worker and escalates the pending steer, which takes that steer off the delivery ladder rather than ringing it again.
+Readers on this side wait one ordinary rejoin window before answering an unresolved order, but absence from the restarted hub is never evidence that the worker is gone.
+If no endpoint appears in that window, the order remains pending without a membership nack and an identical resend can try placement again after the agent's backoff.
+The cheap presence probe behind capture, current-path and endpoint-addressed input answers from the first reply and pays no rejoin wait.
+The recovery-grade worker classifier waits its separate bounded six-second rejoin window, after which it can report `missing` while a live agent remains in a longer backoff; that classifier verdict does not produce a Bridge membership nack, which remains pending as described above.
 
 `no_such_endpoint` is the only thing an agent acts on here, and only the hub states it.
 A failed connection is not that, and is never treated as it: a hub on its way back up passes through exactly that state, and a returning hub that still holds the record must not be re-registered against.

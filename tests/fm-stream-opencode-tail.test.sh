@@ -79,7 +79,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/v1/health":
-            self._reply(200, {"ok": True, "protocol": 2, "state_max_age_secs": 30})
+            self._reply(200, {"ok": True, "protocol": 3,
+                              "capabilities": ["idempotent_command_results"],
+                              "state_max_age_secs": 30})
             return
         if self.path.startswith("/v1/agent/commands"):
             # Hold the poll briefly so a caller with nothing queued does not
@@ -513,6 +515,18 @@ task=$(api "$VIEW_TOKEN" GET "/v1/tasks/$EP")
 [ "$(jq -r ".task.label" <<<"$task")" = "livework" ] || fail "listing label: $task"
 [ "$(jq -r ".task.machine" <<<"$task")" = "tailhost" ] || fail "listing machine: $task"
 pass "lists on the fleet as an ordinary endpoint"
+
+generation=$(api "$VIEW_TOKEN" GET /v1/health | jq -r '.generation')
+order_answer=$(api "$VIEW_TOKEN" POST /v1/orders "$(jq -nc --arg id "$EP" \
+  --arg generation "$generation" \
+  '{leaf_worker_id: "tailhost/livework", execution_id: $id,
+    order_id: "tail-read-only", text: "echo MUST-NOT-RUN", submit: true,
+    hub_generation: $generation}')")
+[ "$(jq -r '.reason' <<<"$order_answer")" = "endpoint_not_orderable" ] \
+  || fail "a read-only tail endpoint accepted an order: $order_answer"
+[ "$(jq -r '.delivered' <<<"$order_answer")" = "false" ] \
+  || fail "the refused tail order was not known undelivered: $order_answer"
+pass "keeps read-only tail publishers non-orderable"
 
 cwd_answer=$(api "$VIEW_TOKEN" GET "/v1/tasks/$EP/cwd")
 [ "$(jq -r ".cwd" <<<"$cwd_answer")" = "$PROJ" ] || fail "state cwd read: $cwd_answer"

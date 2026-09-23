@@ -101,6 +101,7 @@ assert_parity_status_and_stdout() {
 # polls.
 assert_parity_beyond_clocks() {
   local label=$1
+  assert_equals "$PY_CODE" 0 "$label: the reference must produce a successful feed: $(cat "$TMP_ROOT/py.err")"
   assert_equals "$PY_CODE" "$RS_CODE" "$label: exit status should match the reference"
   assert_equals "$(wc -l <"$TMP_ROOT/py.out" | tr -d ' ')" "$(wc -l <"$TMP_ROOT/rs.out" | tr -d ' ')" \
     "$label: the record count should match the reference"
@@ -148,14 +149,14 @@ new_id() {
 register() {  # <endpoint-id> <machine> <label>
   local code
   code=$(publish POST /v1/agent/endpoints "$(jq -nc --arg id "$1" --arg m "$2" --arg l "$3" \
-    '{endpoint_id: $id, machine: $m, label: $l, cwd: "/tmp"}')")
+    '{current_execution: true, endpoint_id: $id, machine: $m, label: $l, cwd: "/tmp", protocol: 3}')")
   assert_equals "$code" 201 "endpoint $3 should register"
 }
 
 close_endpoint() {  # <endpoint-id> <machine> <exit-code-json>
   local code
   code=$(publish POST /v1/agent/frames "$(jq -nc --arg id "$1" --arg m "$2" --argjson c "$3" \
-    '{machine: $m, frames: [{endpoint_id: $id, closed: true, exit_code: $c}]}')")
+    '{machine: $m, frames: [{current_execution: true, endpoint_id: $id, closed: true, exit_code: $c}]}')")
   assert_equals "$code" 200 "the owning agent should close its record"
 }
 
@@ -171,41 +172,40 @@ test_recorded_traffic_is_byte_identical() {
     # A fleet at one instant: open, hub-forced, agent-reported exits of every
     # shape the hub can carry, one label on two machines.
     jq -nc '{at_ms: 0, received_ms: 0, listing: {ok: true, tasks: [
-      {endpoint_id: "0123456789abcdef0123456789abcdef", machine: "box-a", label: "task-open", closed_by: null, exit_code: null},
-      {endpoint_id: "11111111111111111111111111111111", machine: "box-a", label: "task-forced", closed_by: "hub", exit_code: null},
-      {endpoint_id: "22222222222222222222222222222222", machine: "box-b", label: "task-open", closed_by: "agent", exit_code: 0}]}}'
+      {current_execution: true, endpoint_id: "0123456789abcdef0123456789abcdef", machine: "box-a", label: "task-open", closed_by: null, exit_code: null},
+      {current_execution: true, endpoint_id: "11111111111111111111111111111111", machine: "box-a", label: "task-forced", closed_by: "hub", exit_code: null},
+      {current_execution: true, endpoint_id: "22222222222222222222222222222222", machine: "box-b", label: "task-open", closed_by: "agent", exit_code: 0}]}}'
     # The same fleet later: a signal exit, a close with no code, a failing
     # exit, and float clocks that render differently across encoders.
     jq -nc '{at_ms: 500.5, received_ms: 499, listing: {ok: true, tasks: [
-      {endpoint_id: "0123456789abcdef0123456789abcdef", machine: "box-a", label: "task-open", closed_by: null, exit_code: null},
-      {endpoint_id: "33333333333333333333333333333333", machine: "box-a", label: "task-signal", closed_by: "agent", exit_code: -15},
-      {endpoint_id: "44444444444444444444444444444444", machine: "box-c", label: "task-nocode", closed_by: "agent", exit_code: null},
-      {endpoint_id: "55555555555555555555555555555555", machine: "box-c", label: "task-failing", closed_by: "agent", exit_code: 3}]}}'
-    # A relaunch: the new endpoint supersedes the old one for the same leaf,
-    # keeping the leaf's first-insertion position and one rising sequence.
+      {current_execution: true, endpoint_id: "0123456789abcdef0123456789abcdef", machine: "box-a", label: "task-open", closed_by: null, exit_code: null},
+      {current_execution: true, endpoint_id: "33333333333333333333333333333333", machine: "box-a", label: "task-signal", closed_by: "agent", exit_code: -15},
+      {current_execution: true, endpoint_id: "44444444444444444444444444444444", machine: "box-c", label: "task-nocode", closed_by: "agent", exit_code: null},
+      {current_execution: true, endpoint_id: "55555555555555555555555555555555", machine: "box-c", label: "task-failing", closed_by: "agent", exit_code: 3}]}}'
+    # A newer registration is not authoritative until the hub selects it.
     jq -nc '{at_ms: 1000, listing: {tasks: [
-      {endpoint_id: "66666666666666666666666666666666", machine: "box-a", label: "task-open", closed_by: "agent", exit_code: 2},
-      {endpoint_id: "77777777777777777777777777777777", machine: "box-a", label: "task-open", closed_by: null, exit_code: null}]}}'
+      {current_execution: true, endpoint_id: "66666666666666666666666666666666", machine: "box-a", label: "task-open", closed_by: "agent", exit_code: 2},
+      {current_execution: false, endpoint_id: "77777777777777777777777777777777", machine: "box-a", label: "task-open", closed_by: null, exit_code: null}]}}'
     # The hub dropped a leaf entirely: it is simply not emitted again.
     jq -nc '{at_ms: 1500, listing: {tasks: [
-      {endpoint_id: "77777777777777777777777777777777", machine: "box-a", label: "task-open", closed_by: null, exit_code: null}]}}'
+      {current_execution: true, endpoint_id: "77777777777777777777777777777777", machine: "box-a", label: "task-open", closed_by: null, exit_code: null}]}}'
     # Records the hub itself would have refused to register are not leaves,
     # and unknown fields on real ones are ignored, not copied.
     jq -nc '{at_ms: 2000, listing: {tasks: [
-      {endpoint_id: "not-an-id", machine: "m", label: "bad"},
-      {endpoint_id: "88888888888888888888888888888888", machine: "bad machine", label: "x"},
-      {endpoint_id: "99999999999999999999999999999999", machine: "m", label: "ok", extra: "ignored", cols: 200}]}}'
+      {current_execution: true, endpoint_id: "not-an-id", machine: "m", label: "bad"},
+      {current_execution: true, endpoint_id: "88888888888888888888888888888888", machine: "bad machine", label: "x"},
+      {current_execution: true, endpoint_id: "99999999999999999999999999999999", machine: "m", label: "ok", extra: "ignored", cols: 200}]}}'
     # An empty fleet still ticks, emitting nothing.
     jq -nc '{at_ms: 2500, listing: {tasks: []}}'
     # Clock renderings that separate JSON encoders: scientific notation
     # thresholds, integer-valued floats, and a negative zero (hand-written,
     # because jq normalizes -0.0 away).
     printf '%s\n' \
-      '{"at_ms": 0.00001, "received_ms": 0.000009, "listing": {"tasks": [{"endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m", "label": "t", "closed_by": null}]}}' \
-      '{"at_ms": 1e16, "listing": {"tasks": [{"endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m", "label": "t", "closed_by": null}]}}' \
-      '{"at_ms": 5, "listing": {"tasks": [{"endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m", "label": "t", "closed_by": null}]}}' \
-      '{"at_ms": -0.0, "listing": {"tasks": [{"endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m", "label": "t", "closed_by": null}]}}' \
-      '{"at_ms": 1789829165998.0, "received_ms": 1789829165997.25, "listing": {"tasks": [{"endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m", "label": "t", "closed_by": null}]}}'
+      '{"at_ms": 0.00001, "received_ms": 0.000009, "listing": {"tasks": [{"current_execution": true, "endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m", "label": "t", "closed_by": null}]}}' \
+      '{"at_ms": 1e16, "listing": {"tasks": [{"current_execution": true, "endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m", "label": "t", "closed_by": null}]}}' \
+      '{"at_ms": 5, "listing": {"tasks": [{"current_execution": true, "endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m", "label": "t", "closed_by": null}]}}' \
+      '{"at_ms": -0.0, "listing": {"tasks": [{"current_execution": true, "endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m", "label": "t", "closed_by": null}]}}' \
+      '{"at_ms": 1789829165998.0, "received_ms": 1789829165997.25, "listing": {"tasks": [{"current_execution": true, "endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m", "label": "t", "closed_by": null}]}}'
   } > "$feed"
   run_both "$feed" translate --fleet-id fleet-t --epoch 7
   assert_parity "recorded traffic"
@@ -243,6 +243,14 @@ test_refusals_match_the_reference() {
   printf '%s\n' '[1, 2]' > "$one"
   run_both "$one" translate
   assert_parity "a recording that is not an object"
+  printf '%s\n' '{"at_ms": 1, "listing": {"tasks": [{"endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "m", "label": "t"}]}}' > "$one"
+  run_both "$one" translate
+  assert_parity "a missing authoritative execution verdict"
+  assert_equals "$PY_CODE" 2 "a missing verdict must refuse the recording"
+  jq '.listing.tasks[0].current_execution = true | .listing.tasks += .listing.tasks' "$one" | jq -c . > "$one.duplicate"
+  run_both "$one.duplicate" translate
+  assert_parity "duplicate authoritative execution verdicts"
+  assert_equals "$PY_CODE" 2 "duplicate current executions must be refused"
   run_both /dev/null translate --epoch -1
   assert_parity "a negative epoch"
   run_both /dev/null translate --fleet-id ""
@@ -302,7 +310,8 @@ test_cli_surface_matches() {
   run_both /dev/null translate --epoch --fleet-id f
   assert_parity "an option-looking value is not a value"
   run_both /dev/null translate -- extra
-  assert_parity "the option terminator inside a subcommand"
+  # Top-level usage differs because only Python exposes the command path.
+  assert_parity_status_and_stdout "the option terminator inside a subcommand"
   pass "bridge-rust: CLI flags, choices, defaults and exit statuses match"
 }
 
@@ -356,7 +365,7 @@ import http.server, json, sys
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
-        body = json.dumps({"ok": True, "protocol": 99}).encode()
+        body = json.dumps({"ok": True, "protocol": 3 if self.path.startswith("/old/") else 99}).encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -376,6 +385,9 @@ PY
   read -r host port < "$ready"
   run_both /dev/null snapshot --hub "http://$host:$port" --token-file "$CASE_DIR/view-token"
   assert_parity "a hub speaking another protocol"
+  run_both /dev/null snapshot --hub "http://$host:$port/old" --token-file "$CASE_DIR/view-token"
+  assert_parity "a hub without authoritative execution selection"
+  assert_equals "$PY_CODE" 2 "both feeds must reject a hub without current_execution"
   # An unreachable hub ends a snapshot with exit 1 on both sides; the exact
   # transport wording is each client's own.
   run_both /dev/null snapshot --hub "http://127.0.0.1:1" --token-file "$CASE_DIR/view-token"
@@ -393,7 +405,7 @@ test_https_and_redirect_transport_parity() {
   cat > "$transport_dir/server.py" <<'PY'
 import http.server, json, ssl, sys
 
-TASK = {"endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "box-a",
+TASK = {"current_execution": True, "endpoint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "machine": "box-a",
         "label": "transport", "closed_by": None, "exit_code": None}
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -419,7 +431,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Location", "http://%s:%d/actual-tasks" % (host, port))
             self.end_headers()
         elif self.path in ("/v1/health", "/actual-health"):
-            self.answer({"ok": True, "protocol": 2})
+            self.answer({"ok": True, "protocol": 3, "capabilities": ["current_execution"]})
         elif self.path in ("/v1/tasks", "/actual-tasks"):
             self.answer({"ok": True, "tasks": [TASK]})
         else:
@@ -566,8 +578,8 @@ test_a_closed_reader_ends_the_feed() {
   : > "$feed"
   for i in 1 2 3 4 5; do
     jq -nc --argjson n "$i" '{at_ms: ($n * 100), listing: {tasks: [
-      {endpoint_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", machine: "m", label: "t1", closed_by: null, exit_code: null},
-      {endpoint_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", machine: "m", label: "t2", closed_by: null, exit_code: null}]}}' >> "$feed"
+      {current_execution: true, endpoint_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", machine: "m", label: "t1", closed_by: null, exit_code: null},
+      {current_execution: true, endpoint_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", machine: "m", label: "t2", closed_by: null, exit_code: null}]}}' >> "$feed"
   done
   # A reader that leaves after the first record must end the feed with exit 0,
   # not a partial record or a traceback.
@@ -609,9 +621,9 @@ SH
   chmod +x "$stub"
   feed="$TMP_ROOT/compare-feed.ndjson"
   jq -nc '{at_ms: 1, listing: {tasks: [
-      {endpoint_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", machine: "m", label: "t-live", closed_by: null, exit_code: null},
-      {endpoint_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", machine: "m", label: "t-exited", closed_by: "agent", exit_code: 0},
-      {endpoint_id: "cccccccccccccccccccccccccccccccc", machine: "m", label: "t-conflict", closed_by: "agent", exit_code: 1}]}}' \
+      {current_execution: true, endpoint_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", machine: "m", label: "t-live", closed_by: null, exit_code: null},
+      {current_execution: true, endpoint_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", machine: "m", label: "t-exited", closed_by: "agent", exit_code: 0},
+      {current_execution: true, endpoint_id: "cccccccccccccccccccccccccccccccc", machine: "m", label: "t-conflict", closed_by: "agent", exit_code: 1}]}}' \
     | python3 "$BRIDGE" translate > "$feed"
   run_both /dev/null compare --home "$home" --feed "$feed" --crew-state "$stub"
   assert_parity "the comparison table"

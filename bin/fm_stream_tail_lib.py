@@ -46,6 +46,7 @@ import urllib.error
 import urllib.request
 
 TAIL_LIB_VERSION = "1.0.0"
+WIRE_PROTOCOL = 3
 
 # The tail record's token block. Every source fills the same keys so the
 # consumer never branches on the source, and cache tokens stay separate from
@@ -139,11 +140,14 @@ class HubClient:
     def __init__(self, base_url: str, token: str, program: str) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.command_capability = ""
         self.program = program
 
     def call(self, method: str, path: str, payload=None, timeout: float = 30.0):
         data = None
         headers = {"Authorization": "Bearer " + self.token}
+        if self.command_capability:
+            headers["X-Endpoint-Capability"] = self.command_capability
         if payload is not None:
             data = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -175,7 +179,10 @@ class HubClient:
         if not body:
             return {}
         try:
-            return json.loads(body)
+            answer = json.loads(body)
+            if method == "POST" and path == "/v1/agent/endpoints":
+                self.command_capability = answer.get("command_capability", "")
+            return answer
         except json.JSONDecodeError as exc:
             raise RuntimeError("hub returned malformed JSON for %s %s: %s"
                                % (method, path, exc))
@@ -217,8 +224,8 @@ class TailPublisher:
     def registration(self) -> dict:
         """This endpoint's identity, in the one spelling the hub is ever given.
 
-        Same shape as the agent's, so the hub, the fleet listing, and the
-        Bridge feed treat a tailed worker exactly like a pty-backed one.
+        Its identity fields match the agent's, so the hub, the fleet listing,
+        and the Bridge feed treat a tailed worker exactly like a pty-backed one.
         """
         return {
             "endpoint_id": self.endpoint_id,
@@ -227,6 +234,7 @@ class TailPublisher:
             "cwd": self.cwd,
             "rows": self.rows,
             "cols": self.cols,
+            "protocol": WIRE_PROTOCOL,
         }
 
     def check_protocol(self, expect: int) -> dict:

@@ -393,7 +393,8 @@ Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that 
   A target that is not an endpoint address at all is unsupported rather than unconfirmed: no worker was ever named and no hub was reached, so there is no answer about one to report.
   An answer that cannot be read is unconfirmed too: a label mismatch needs a label the hub actually returned, and a kill needs an explicit `delivered: true`, because a body that does not parse is not either of those values.
   An endpoint the hub has no record of is unconfirmed too, and is reported with its own reason: the task table is rebuilt by the agents that register into it, so a restarted hub serves that answer for every live endpoint until its agents re-register.
-  Nothing automatic ever upgrades that answer - on this branch an agent registers once and has no way back, so a listing-based rule would read every live worker as gone after a hub restart. A record no backend can ever answer for is retired only by `bin/fm-retire-endpoint.sh`, which a human runs against named task ids and which records that assertion - who made it and when - before anything is removed.
+  Automatic re-registration may later restore the endpoint, but until it does absence remains unconfirmed; [When the hub restarts](../stream-backend.md#when-the-hub-restarts) owns the recovery behavior.
+  A record no backend can ever answer for is retired only by `bin/fm-retire-endpoint.sh`, which a human runs against named task ids and which records that assertion - who made it and when - before anything is removed.
 
 Verified on 2026-09-17 with tmux 3.6 on Linux 7.0.0.
 The tmux verdict comes from tmux's own output, so it is proven against a real server rather than a stub: the unconfirmed case makes the real socket unreadable, which fails both the close and the follow-up inventory the one way that cannot tell a removed window from an unreachable server, and then asserts the window is still there.
@@ -1730,7 +1731,8 @@ The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
 
 ## stream
 
-Hub 2.0.0 (protocol 2), verified on 2026-09-17 on Linux with Python 3.14.4, curl 8.18.0, and jq 1.8.1.
+The live evidence below was captured with Hub 2.0.0 (protocol 2) on 2026-09-17 on Linux with Python 3.14.4, curl 8.18.0, and jq 1.8.1.
+The current hub uses the newer wire protocol documented in [`stream-backend.md`](../stream-backend.md#when-the-hub-restarts), so rerun the guard before treating this as current evidence.
 
 The stream backend reads a different table by a different route than tmux does: the owning agent reads its own pseudoterminal's foreground process group, publishes it to the hub over HTTP, and the classifier sees a flattened command line rather than tmux's `comm` list.
 A defect in that reading, in the publish path, or in the freshness gate surfaces only here, which is why this guard exists beside the tmux one.
