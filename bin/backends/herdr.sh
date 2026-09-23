@@ -2381,6 +2381,41 @@ fm_backend_herdr_server_running_state() {  # <session>
   ' 2>/dev/null || printf 'unknown'
 }
 
+# Deck secondmates are not registered with Herdr. Attribute the current driver
+# to this task and pane through the shared process owner, not a saved PID or a
+# busy/progress file that can survive its process. Busy generation binds the
+# driver's arguments to the same incarnation that owns progress publication.
+fm_backend_herdr_deck_pane_agent_state() {  # <session> <pane> <state-dir> <id>
+  local session=$1 pane=$2 state=$3 id=$4 presence pids pid gen record busy source rest
+  presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane")
+  case "$presence" in
+    present) ;;
+    dead) printf 'dead'; return 0 ;;
+    *) printf 'unknown'; return 0 ;;
+  esac
+  pids=$(fm_backend_herdr_pane_agent_pids "$session" "$pane") || { printf 'unknown'; return 0; }
+  state=$(cd "$state" 2>/dev/null && pwd -P) || { printf 'unknown'; return 0; }
+  gen=$(fm_busy_current_gen "$state" "$id") || gen=
+  for pid in $pids; do
+    [ -n "$gen" ] || continue
+    fm_agent_process_has_args "$pid" "$FM_ROOT/bin/fm-deck-worker.sh" || continue
+    fm_agent_process_has_args "$pid" --id "$id" --state "$state" --gen "$gen" || continue
+    record=$(fm_busy_record_read "$state" "$id") || { printf 'unknown'; return 0; }
+    read -r busy source rest <<< "$record"
+    fm_busy_source_trusted deck "$source" || { printf 'unknown'; return 0; }
+    case "$busy" in
+      busy|idle) printf 'live'; return 0 ;;
+    esac
+  done
+  # An unmatched or unreadable process is not permission to recover. Only the
+  # existing shell-only proof may establish absence; stale busy/progress cannot.
+  case "$(fm_backend_herdr_pane_process_state "$session" "$pane")" in
+    shell) printf 'no-agent' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+
 # fm_backend_herdr_agent_state: recovery-grade state for the same session-start
 # sweep as the tmux classifier. It reuses the husk classifier rather than
 # creating a second Herdr state machine: a structurally gone pane is `missing`,
@@ -2402,10 +2437,21 @@ fm_backend_herdr_server_running_state() {  # <session>
 # on exactly the reads they refused on before. A server that is running, or
 # whose state cannot itself be read, still yields `unreadable` here too: absence
 # is claimed only from positive evidence of it.
+
 fm_backend_herdr_agent_state() {  # <target>
-  local target=$1
+  local target=$1 state=${FM_STATE_OVERRIDE:-$FM_HOME/state} meta='' id verdict
   fm_backend_herdr_parse_target "$target" || { printf 'unreadable'; return 0; }
-  case "$(fm_backend_herdr_pane_agent_state "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")" in
+  if declare -F fm_backend_meta_for_window >/dev/null; then
+    meta=$(fm_backend_meta_for_window "$target" "$state" 2>/dev/null) || meta=
+  fi
+  if [ -n "$meta" ] && [ "$(fm_meta_get "$meta" harness)" = deck ] \
+    && [ "$(fm_meta_get "$meta" kind)" = secondmate ]; then
+    id=${meta##*/}; id=${id%.meta}
+    verdict=$(fm_backend_herdr_deck_pane_agent_state "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" "$state" "$id")
+  else
+    verdict=$(fm_backend_herdr_pane_agent_state "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")
+  fi
+  case "$verdict" in
     dead) printf 'missing' ;;
     no-agent|stale-agent) printf 'dead' ;;
     live) printf 'alive' ;;

@@ -928,6 +928,26 @@ The CLI matrix was checked directly:
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.
 
+### Deck secondmate recovery (shim-based)
+
+Verified on 2026-09-23 on macOS with the repository's real Deck driver, busy-state writer, and OS processes, a shimmed Herdr protocol-14 CLI, and a shimmed model endpoint; this is not a local live-Herdr or live-model result.
+`bin/backends/herdr.sh` owns the Deck-only recovery classifier; `bin/fm-agent-process-lib.sh` remains the process-identity owner.
+
+```sh
+bin/fm-test-run.sh tests/fm-deck-harness.test.sh tests/fm-backend-herdr.test.sh
+```
+
+Observed output:
+
+```text
+ok - Herdr Deck recovery proves driver identity; dead and non-Deck paths remain conservative
+fm-deck-harness: all cases passed
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=200109
+```
+
+The regression checks an absent driver before a live one, busy and idle evidence, replacement on the same pane, exact task attribution, unreadable process and pane inventories, and stale busy/progress records after exit.
+The non-Deck registry path and Deck ship/scout classification are deliberately unchanged.
+
 ### fm-remote server birth and login-keychain access
 
 Measured 2026-09-09 on macOS 26 (Darwin 25.6.0) aarch64 with Claude Code 2.1.266 and Herdr 0.9.0, the guarantee behind `bin/fm-remote-herdr-guard.sh` and the doctor's `herdr-server` check: login-keychain access follows the audit session a process was born into, never the launch shape or the shell.

@@ -143,7 +143,7 @@ state_value() { # <id>; prints recovery-grade state
     printf 'unverified\n'
     return 0
   fi
-  fm_backend_agent_state "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" 2>/dev/null || printf 'unreadable\n'
+  FM_STATE_OVERRIDE="$CONTROL_STATE" fm_backend_agent_state "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" 2>/dev/null || printf 'unreadable\n'
 }
 
 print_route() { # <id>
@@ -323,7 +323,7 @@ cmd_launch() {
   old=$(recorded_identities "$id")
   if [ -f "$meta" ]; then
     remote_endpoint_require "$id"
-    current=$(fm_backend_agent_state "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" 2>/dev/null || printf 'unreadable\n')
+    current=$(FM_STATE_OVERRIDE="$CONTROL_STATE" fm_backend_agent_state "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" 2>/dev/null || printf 'unreadable\n')
     case "$current" in
       alive)
         recorded_harness=$(fm_meta_get "$REMOTE_ENDPOINT_META" harness)
@@ -419,7 +419,7 @@ cmd_relaunch() {
   # Only a positively agent-free endpoint may relaunch without readable
   # identities: there, the recorded identity is the only previous agent there
   # is, and the delegated control plane owns the agent-free recovery itself.
-  current=$(fm_backend_agent_state "$old_backend" "$old_target" 2>/dev/null || printf 'unreadable\n')
+  current=$(FM_STATE_OVERRIDE="$CONTROL_STATE" fm_backend_agent_state "$old_backend" "$old_target" 2>/dev/null || printf 'unreadable\n')
   case "$current" in
     dead|missing) old= ;;
     *)
