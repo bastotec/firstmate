@@ -8,9 +8,11 @@ import urllib.parse
 import urllib.request
 
 
-def call(url, token, method, path, payload=None):
+def call(url, token, method, path, payload=None, capability=""):
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Authorization": "Bearer " + token}
+    if capability:
+        headers["X-Endpoint-Capability"] = capability
     if data is not None:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url + path, data=data, headers=headers, method=method)
@@ -38,6 +40,7 @@ def main():
     if status != 201:
         raise SystemExit("registration failed: %s %r" % (status, body))
 
+    capability = body["command_capability"]
     first_result = None
     for number in range(count):
         if number == 1 and pause_before_second > 0:
@@ -54,7 +57,7 @@ def main():
         query = urllib.parse.urlencode({
             "machine": "result-journal", "endpoint": endpoint, "wait": 2})
         command_status, commands = call(
-            url, publish_token, "GET", "/v1/agent/commands?" + query)
+            url, publish_token, "GET", "/v1/agent/commands?" + query, capability=capability)
         rows = commands.get("commands") or []
         if command_status != 200 or len(rows) != 1:
             raise SystemExit("command %d was not delivered: %s %r"
@@ -66,7 +69,7 @@ def main():
             "error": "",
         }
         result_status, result_body = call(
-            url, publish_token, "POST", "/v1/agent/results", result)
+            url, publish_token, "POST", "/v1/agent/results", result, capability)
         if result_status != 200:
             raise SystemExit("result %d failed: %s %r"
                              % (number, result_status, result_body))
@@ -78,7 +81,7 @@ def main():
             first_result = result
 
     retry_status, retry_body = call(
-        url, publish_token, "POST", "/v1/agent/results", first_result)
+        url, publish_token, "POST", "/v1/agent/results", first_result, capability)
     print(json.dumps({"retry_status": retry_status, "retry_body": retry_body,
                       "completed": count}, separators=(",", ":")))
 

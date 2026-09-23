@@ -159,7 +159,8 @@ CMD (default the fm-crew-state.sh beside this script), --fleet-id.
 
 Live subcommands negotiate protocol 2 and the hub's `current_execution`
 capability before doing work; `command` additionally requires
-`idempotent_command_results` and `result_retry_orderability`, and binds each
+`idempotent_command_results`, `result_retry_orderability`, and
+`endpoint_command_auth`, and binds each
 order to the generation returned by that negotiation.  An older running hub is
 refused with a diagnostic
 to restart or upgrade it; offline `translate` needs no hub negotiation.
@@ -414,7 +415,7 @@ class HubClient:
         required = [CURRENT_EXECUTION_CAPABILITY]
         if require_result_retry:
             required.extend((IDEMPOTENT_RESULT_CAPABILITY,
-                             ORDERABLE_ENDPOINT_CAPABILITY))
+                             ORDERABLE_ENDPOINT_CAPABILITY, "endpoint_command_auth"))
         missing = [name for name in required
                    if not isinstance(capabilities, list) or name not in capabilities]
         if missing:
@@ -846,14 +847,17 @@ def main(argv: list) -> int:
         print("fm-stream-bridge: --epoch must not be negative", file=sys.stderr)
         return 2
     try:
-        return handler(options)
+        result = handler(options)
+        sys.stdout.flush()
+        return result
     except BridgeError as exc:
         print("fm-stream-bridge: %s" % exc, file=sys.stderr)
         return 2
     except BrokenPipeError:
         # Whoever was reading the feed went away; that ends the feed.
         try:
-            sys.stdout = open(os.devnull, "w")
+            with open(os.devnull, "w") as sink:
+                os.dup2(sink.fileno(), sys.stdout.fileno())
         except OSError:
             pass
         return 0

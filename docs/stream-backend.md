@@ -91,14 +91,14 @@ Nothing runs it automatically.
 ### Rust bridge
 
 The opt-in Rust bridge builds with `cargo build --release --locked -p fm-stream-bridge` (Rust 1.96 or newer).
-Use `target/release/fm-stream-bridge` in place of `bin/fm-stream-bridge.py` with the same subcommands and explicit hub, token-file, and fleet-id flags; this does not replace or restart any deployed Python process.
+Use `target/release/fm-stream-bridge` in place of `bin/fm-stream-bridge.py` for the read-only `serve`, `snapshot`, `translate`, and `compare` subcommands with explicit hub, token-file, and fleet-id flags; this does not replace or restart any deployed Python process.
 Install it beside the existing scripts in `bin/` if using `compare`'s executable-relative home default, or pass `--home` and `--crew-state` explicitly.
 The Cargo workspace shares the protocol handshake and heartbeat wire mapping in `crates/fm-stream-wire`.
 The bridge uses Tokio, Hyper, and rustls for HTTP and HTTPS access and Serde JSON for parsing, without an LLM framework.
 It follows HTTP redirects and accepts argparse-style unique long-option abbreviations.
 Epochs remain limited to signed 64-bit integers, unlike Python's arbitrary-precision values.
 `tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
-Live comparisons exclude process-local clocks; help presentation and transport-library error details are not byte contracts.
+Live comparisons exclude process-local clocks; help presentation, top-level command choices, and transport-library error details are not byte contracts.
 
 ## Tail adapters
 
@@ -163,6 +163,12 @@ Tokens are class-scoped, and there are three classes:
 A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, so an operator credential is written `subscribe,control:<token>` and a home's own client credential, which both publishes and steers, is `publish,subscribe,control:<token>`.
 A bare token line grants `subscribe` alone, so the unqualified line is the read-only one.
 A viewing token cannot register an endpoint, publish, or steer a worker: input, status, and close are all refused with 403.
+Command retrieval and result submission additionally require the endpoint's private `command_capability`, returned only by registration and carried in the `X-Endpoint-Capability` request header.
+A poll must name that endpoint; machine-wide command retrieval is refused.
+Re-registering an existing endpoint requires its current capability and rotates it; closing the endpoint revokes it.
+Agents and tail adapters retain the capability only in memory, and listings, state reads, logs, and status lines never expose it.
+The Bridge command direction requires the hub's `endpoint_command_auth` capability before placing orders; the Python command wire shapes are unchanged.
+The Rust bridge remains a read-only feed, not a command adapter.
 The bundled viewer page is served without a credential - it is static, and the token it reads out of the URL fragment is what its own requests carry - but every data route behind it is authenticated, and opening it with a viewing token gives a read-only view whose send box is refused.
 
 ### The hub speaks plain HTTP
