@@ -118,6 +118,89 @@ infrastructure failure is not read as a slow answer. Feed it a clip that
 already ends in silence and it will tell you the timings are measured from the
 wrong instant rather than printing a number that looks fast.
 
+## Optional hybrid engine: local hearing and speech
+
+The default engine remains Bedrock; an absent `config/voice-engine` preserves existing homes.
+To opt in, write the single line `hybrid` to `config/voice-engine`.
+This is **not fully local**: Parakeet TDT transcribes on the Mac, the configured OpenAI-compatible gateway thinks from text, and Qwen3-TTS speaks on the Mac.
+Conversation text and permitted tool results leave the machine; microphone audio does not go to the text gateway.
+The relay uses the external [hf-speech-to-speech](https://github.com/gkintu/hf-speech-to-speech) Realtime API, not its model imports.
+The laptop client, framing, record scope, deny list and `fm-inbox.sh note` handover are unchanged.
+
+### Install and opt in
+
+The measured configuration used Apple silicon with Metal, an M2 with 24 GB memory, Python 3.11.15, and speech-to-speech 0.2.12 at revision `99749e5db61e959315feff4dbf397ca01b7e891c`.
+It uses that stack's native macOS MLX handlers, not the CUDA-oriented launcher in its README.
+Keep its checkout, virtual environment, caches and weights outside the Firstmate repository.
+With `uv` installed, follow the stack's model-license requirements and install its base requirements using `uv sync --no-dev --python 3.11` in that external checkout.
+The measured versions were MLX/MLX-LM 0.31.1, MLX Audio 0.4.2 and PyTorch 2.11.0.
+The speech models are the upstream defaults, `mlx-community/parakeet-tdt-0.6b-v3` and `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit`.
+They download on first startup if missing; an existing cache is reused.
+No local thinking model is needed for hybrid operation.
+
+The complete file/environment registry and reading rules are in [configuration](configuration.md), under “Spoken interface and captain inbox”.
+Alongside `voice-engine`, configure `voice-local-url` with an unused loopback Realtime address and `voice-gateway-url` with the gateway base URL.
+There is no default endpoint, port, executable path or cache directory.
+Set `voice-local-command` to the absolute `speech-to-speech` executable in the external virtual environment and `voice-local-cache` to an existing absolute directory for the engine's home and caches.
+Protect an optional `voice-gateway-key` file as a credential, for example with mode `0600`; it is passed in the engine environment, never on its command line.
+An unrelated ambient `OPENAI_API_KEY` is not reused.
+
+Start the external engine explicitly in a separate terminal, then start the relay using that virtual environment's Python:
+
+```sh
+python3 bin/fm-voice-relay.py --start-engine
+<stack-venv>/bin/python bin/fm-voice-relay.py --self-test <clip.pcm>
+```
+
+`--start-engine` runs the configured executable in the foreground; stop it with Ctrl+C.
+It scopes `HOME`, `HF_HOME`, `TORCH_HOME`, `XDG_CACHE_HOME` and `NLTK_DATA` beneath the configured cache directory.
+Ordinary relay startup never launches a server or installs dependencies.
+Only hybrid sessions import `websockets`, already installed in the external stack's virtual environment; Bedrock-only homes need no new dependency.
+Use the same virtual environment as the relay interpreter when invoking the unchanged laptop client.
+The gateway, key and model settings take effect at engine launch; restart the engine after changing them.
+
+The interim text route defaults to `codex/gpt-6-astra`, which was verified with a real completion and the voice turns below.
+The requested `codex/gpt-6-luna` route was absent from the measured gateway's catalog.
+`voice-gateway-model` makes the route explicit and configurable; there is no automatic model substitution.
+Before switching to the requested route, verify both catalog presence and a real completion on the chosen endpoint, then repeat the voice measurements.
+These results are not measurements of that unavailable route.
+
+The engine requests streaming chat completions and sets `stream_batch_sentences=1`, so the upstream sentence detector feeds speech without waiting for the complete answer.
+It retains context while the Realtime session is healthy; a failed session is replaced on the next talk turn and loses that context.
+This does not enable microphone interruption or open-microphone mode.
+The relay requests PCM16/24 kHz output to preserve the laptop wire and sends PCM16/16 kHz input.
+Hybrid turn endings append at least 1500 ms of silence without a corresponding sleep for the upstream VAD; `--self-test` reports that effective padding.
+An unavailable API, a response without audio, an incomplete response or a reply timeout reports a named `relay_error`, rather than silently counting a broken turn as a slow success.
+
+### Measured hybrid latency
+
+Measured on 2026-09-23 using the hardware and versions above, with warmed handlers, synthetic English and Portuguese input files ending on speech, two turns per language in one session, and the interim route through a configured loopback gateway tunnel.
+The first question stated a favourite colour and asked which colour was mentioned; the second asked for it again without naming it.
+All four answers were received without relay errors, and both follow-ups remembered the colour.
+Portuguese recognition and response text were correct for these clips; accent, pronunciation and intelligibility by ear were not assessed by this file-only run.
+
+| Language | End of speech to first audio, seconds | Final transcription total, seconds | Gateway generation, seconds | Synthesis to first chunk, seconds |
+| --- | --- | --- | --- | --- |
+| English, first turn | 4.232 | 0.442 | 2.299 | 1.587 |
+| English, follow-up | 4.478 | 0.212 | 2.445 | 1.756 |
+| Portuguese, first turn | 4.072 | 0.385 | 2.016 | 1.789 |
+| Portuguese, follow-up | 4.561 | 0.133 | 2.386 | 1.876 |
+
+The first-audio clock starts when file speech ends, before padding, and stops on the first decoded reply audio in the relay.
+Stage timings include generator and lock time, with revised final transcriptions summed; transcription can begin before speech ends, so do not add the columns to reconstruct the end-to-end figure.
+The file harness calls the relay's real session and shared tool dispatch with a file sink; it omits client framing, SSH, physical devices and record/tool round trips, and does not control other applications' load.
+Gateway timings include transport and gateway queueing, not just remote model computation.
+These prompts are not the historical Bedrock record-reading prompt, so the documented **1.15-1.3 seconds** above is a reference bar, not a controlled A/B run.
+The hybrid remains slower than that reference.
+A separate text-only two-sentence streaming diagnostic measured the first sentence leaving the gateway handler at 1.858 seconds and entering synthesis at 1.860 seconds after generation began, before generation completed at 3.976 seconds.
+That diagnostic proves overlap; it is not an end-of-speech latency sample.
+Across server startup, the four voice turns and that diagnostic, the combined local speech process peaked at 1,075,920,896 resident bytes; macOS reported a separate peak memory footprint of 7,515,445,248 bytes.
+The file client peaked at 31,604,736 resident bytes.
+RSS alone is not a Metal/unified-memory capacity requirement, and remote gateway/model memory was not accessible to this measurement.
+The preserved lab occupied 10G by `du -sh`, including the earlier local thinking checkpoint; the hybrid does not need that checkpoint.
+The earlier fully local MLX text path on this Mac measured English at 16.600 and 5.760 seconds, and Portuguese at 9.296 and 8.680 seconds; that native text path disabled thinking and is not offered as an engine selection.
+Full stage evidence, commands, transcripts and playable replies belong to the private measurement report, not to installed runtime assets.
+
 ## Setting up the laptop
 
 **The audio devices are not verified.** No worker can reach the captain's laptop, so neither the microphone nor the speaker has ever been opened.
