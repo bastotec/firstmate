@@ -60,8 +60,8 @@ A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoi
 The feed direction only reads the hub: `serve`, `snapshot`, and `compare` in live mode hold a `subscribe` credential, open no listening socket, and send nothing to any worker.
 `translate` is offline and needs no hub credential.
 Writing is the adapter's other direction, a separate command with its own credential, which [Command path](#command-path) owns.
-Before any live feed or command does work, the adapter negotiates both the hub protocol and the advertised `current_execution` capability.
-It rejects an older running hub before processing records and directs the operator to restart or upgrade it rather than guessing which execution is current.
+Before any live feed or command does work, the adapter negotiates both the hub protocol and the advertised `current_execution` capability, and the command direction additionally requires `idempotent_command_results`.
+It rejects an older running hub before processing records and directs the operator to restart or upgrade it rather than guessing which execution is current or placing an order without reliable acknowledgement.
 Its header owns the record mapping and every field the hub cannot supply; the short version is that the hub carries no token counter, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
 When the hub cannot be read it emits nothing.
 The Bridge's clock only moves when a record arrives, so during an outage, or after a hub restart that lists no endpoints, the Bridge keeps showing each worker's last state rather than aging it out as stale.
