@@ -960,10 +960,12 @@ Observed output:
 ok - parent-route creation is private under umask 002 and accepted by Deck safe status I/O
 ok - a launch reconciles a pre-existing 0775 parent-route root to a mode Deck accepts
 ok - a symlinked or relocated parent-route data root still launches
+ok - a GNU-shaped stat on PATH cannot poison the parent-route owner read
 ```
 
 The test asserts mode `0700` and writes and reads a status record through `bin/fm-state-io.py`, the same descriptor-bound boundary used by the Deck driver.
 The reconcile is scoped to the state root the driver validates: the data root keeps its `umask 077` creation, and a launch over a relocated data root still succeeds without tightening it.
+The owner read uses the repository's `uname` stat dispatch rather than a collapsed `stat -f || stat -c` fallback, and a GNU-shaped `stat` shadowing `PATH` - which answers `-f` with a filesystem dump and exit 0, the shape recorded in issue #2837 - still reconciles the root to `0700`.
 
 ### fm-remote server birth and login-keychain access
 

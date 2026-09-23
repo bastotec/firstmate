@@ -114,8 +114,14 @@ reconcile_route_state_mode() { # <dir>
   local dir=$1 owner
   [ -e "$dir" ] || [ -L "$dir" ] || return 0
   [ -d "$dir" ] && [ ! -L "$dir" ] || die "parent-route state path '$dir' is not a directory; refusing to touch it"
-  owner=$(stat -f '%u' "$dir" 2>/dev/null) || owner=$(stat -c '%u' "$dir" 2>/dev/null) \
-    || die "parent-route state directory '$dir' cannot be inspected; refusing to touch it"
+  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+    owner=$(/usr/bin/stat -f '%u' "$dir" 2>/dev/null) || owner=
+  else
+    owner=$(stat -c '%u' "$dir" 2>/dev/null) || owner=
+  fi
+  case "$owner" in
+    ''|*[!0-9]*) die "parent-route state directory '$dir' cannot be inspected; refusing to touch it" ;;
+  esac
   [ "$owner" = "$(id -u)" ] || die "parent-route state directory '$dir' is owned by uid $owner, not $(id -u); refusing to touch it"
   chmod 0700 "$dir" || die "parent-route state directory '$dir' could not be made private"
 }

@@ -433,3 +433,37 @@ assert_contains "$out" "harness=deck" "the relocated-data launch did not report 
 printf 'working: relocated route\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
   || fail "Deck safe status I/O rejected the state root beside a relocated data root"
 pass "a symlinked or relocated parent-route data root still launches"
+
+# --- 12. A GNU-shaped stat on PATH cannot poison the owner read -------------
+# The shape this repository recorded in production: GNU `stat -f` is FILESYSTEM
+# stat, so it prints a dump on stdout and still exits 0. A collapsed
+# `stat -f '%u' || stat -c '%u'` fallback never reaches its second form, the
+# owner variable holds the dump, and the launch dies naming a bogus foreign
+# owner - for every harness, on every launch. Drive the real control script with
+# that stat shadowing PATH and assert the reconcile still repairs the root.
+previous=$(pane_agent "$(route_pane)")
+if [ -n "$previous" ]; then kill -HUP "$previous" 2>/dev/null || true; fi
+reset_remote_herdr_fixture "$HERDR_STATE"
+rm -f "$ROUTE_META" "$IDENTITY"
+chmod 0775 "$route_state"
+cat > "$FIXTURE/bin/stat" <<'FAKE'
+#!/usr/bin/env bash
+if [ "${1:-}" = -f ]; then
+  printf '  File: "%s"\n    ID: 0 Namelen: 255 Type: ext2/ext3\n' "${3:-}"
+  exit 0
+fi
+for real in /usr/bin/stat /bin/stat; do
+  [ -x "$real" ] && exec "$real" "$@"
+done
+exit 1
+FAKE
+chmod +x "$FIXTURE/bin/stat"
+out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) \
+  || fail "a GNU-shaped stat on PATH blocked the launch: $out"
+assert_contains "$out" "harness=deck" "the shadowed-stat launch did not report its runtime"
+[ "$(dir_mode "$route_state")" = 0o700 ] \
+  || fail "the owner read did not survive a GNU-shaped stat: $(dir_mode "$route_state")"
+printf 'working: shadowed stat\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
+  || fail "Deck safe status I/O rejected the root reconciled under a shadowed stat"
+rm -f "$FIXTURE/bin/stat"
+pass "a GNU-shaped stat on PATH cannot poison the parent-route owner read"
