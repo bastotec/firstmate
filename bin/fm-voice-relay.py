@@ -980,6 +980,7 @@ class HybridSession(Session):
         try:
             await asyncio.wait_for(self.turn_done.wait(), self.options.turn_timeout)
         except asyncio.TimeoutError:
+            self.turn["timeout"] = True
             fail_turn(self, self.down, TimeoutError("hybrid engine reply timed out"))
             self.turn_done.set()
             self.ended.set()

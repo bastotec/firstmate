@@ -4894,7 +4894,8 @@ async def exercise():
     await run_self_test("ok", None)
     await run_self_test("refused", "API is not listening")
     await run_self_test("no-audio", "without audio")
-    await run_self_test("timeout", "timed out")
+    report = await run_self_test("timeout", "timed out")
+    check(report["timed_out"], "hybrid deadline must mark the turn as timed out")
     report = await run_self_test("partial-failure", "did not complete")
     check(report["answered"], "audio before failure must not disappear from evidence")
     # Shared tool dispatch calls the existing records handover, never a second queue.
