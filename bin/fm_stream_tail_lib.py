@@ -46,6 +46,7 @@ import urllib.error
 import urllib.request
 
 TAIL_LIB_VERSION = "1.0.0"
+WIRE_PROTOCOL = 3
 
 # The tail record's token block. Every source fills the same keys so the
 # consumer never branches on the source, and cache tokens stay separate from
@@ -233,6 +234,7 @@ class TailPublisher:
             "cwd": self.cwd,
             "rows": self.rows,
             "cols": self.cols,
+            "protocol": WIRE_PROTOCOL,
         }
 
     def check_protocol(self, expect: int) -> dict:

@@ -125,6 +125,9 @@ restart_hub() {
 # substitution, and a status left in a shell variable never leaves that subshell.
 api() {  # <token> <method> <path> [body] -> body
   local token=$1 method=$2 path=$3 body=${4:-} raw
+  if [ "$path" = /v1/agent/endpoints ] && [ -n "$body" ]; then
+    body=$(printf '%s' "$body" | jq 'if has("protocol") then . else . + {protocol: 3} end')
+  fi
   if [ -n "$body" ]; then
     raw=$(printf '%s' "$body" | curl -sS -m 30 -X "$method" \
       -H "Authorization: Bearer $token" -H "X-Endpoint-Capability: ${API_CAPABILITY:-}" -H 'Content-Type: application/json' \
@@ -1574,6 +1577,54 @@ test_terminal_result_rejection_does_not_block_later_commands() {
   pass "hub: a terminal result rejection does not wedge command polling"
 }
 
+test_revoked_result_capability_does_not_delay_the_closing_frame() {
+  local command_id=33333333333333333333333333333333 status ready closed log pid waited=0 attempts
+  status="$TMP_ROOT/revoked-result.status"
+  ready="$TMP_ROOT/revoked-result.ready"
+  closed="$TMP_ROOT/revoked-result-closed.json"
+  log="$TMP_ROOT/revoked-result.log"
+  start_stub revoked-result --frames-ok-first 1000 --command-id "$command_id" \
+    --reject-result-command "$command_id" --reject-result-error endpoint_unauthorized \
+    --closed-file "$closed"
+  python3 - "$AGENT" 20 serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+    --machine box-a --label "revoked-result-$RUN" --cwd "$CASE_DIR/cwd" \
+    --status-path "$status" --ready-file "$ready" --state-interval 1 --poll-secs 1 \
+    > "$log" 2>&1 <<'PY' &
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("fm_stream_agent", sys.argv[1])
+agent = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(agent)
+agent.RESULT_RETRY_SHUTDOWN_SECS = float(sys.argv[2])
+raise SystemExit(agent.main(sys.argv[3:]))
+PY
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    if [ -s "$status" ] && grep -q 'POST /v1/agent/results' "$STUB_JOURNAL" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ "$waited" -lt 150 ] || fail "the agent never reached the revoked result path"
+  pkill -KILL -P "$pid" 2>/dev/null || fail "could not end the worker after result revocation"
+  waited=0
+  while [ "$waited" -lt 80 ]; do
+    [ -s "$closed" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$closed" ] || fail "a revoked result capability delayed the closing frame"
+  assert_equals "$(jq -r '.closed' "$closed")" true \
+    "the prompt final frame should report the worker closed"
+  attempts=$(grep -c 'POST /v1/agent/results' "$STUB_JOURNAL" 2>/dev/null || true)
+  assert_equals "$attempts" 1 "a revoked endpoint capability is a terminal result refusal"
+  pass "hub: result capability revocation does not delay the closing frame"
+}
+
 test_an_exiting_endpoint_keeps_retrying_its_applied_command_result() {
   local command_id=abcdef0123456789abcdef0123456789 status ready result log pid waited=0 attempts
   status="$TMP_ROOT/exit-result-retry.status"
@@ -1867,7 +1918,7 @@ def call(method, path, payload=None, capability="", token=publisher):
 
 endpoint = "a" * 32
 registration = {"endpoint_id": endpoint, "machine": "secured", "label": "worker",
-                "capabilities": ["idempotent_command_results"]}
+                "capabilities": ["idempotent_command_results"], "protocol": 3}
 capability = "client-capability-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 status, registered = call("POST", "/v1/agent/endpoints", registration, capability)
 assert status == 201
@@ -1880,6 +1931,14 @@ assert status == 201
 assert sibling["command_capability"] == other_capability
 assert call("POST", "/v1/agent/endpoints", registration)[0] == 403
 assert call("POST", "/v1/agent/endpoints", registration, other_capability)[0] == 403
+old_registration = dict(registration, endpoint_id="c" * 32, label="old")
+old_registration.pop("protocol")
+status, refused = call("POST", "/v1/agent/endpoints", old_registration,
+                       "old-capability-cccccccccccccccccccccccccccccccc")
+assert status == 426 and refused["error"] == "protocol_mismatch"
+assert "restart" in refused["message"]
+tasks = call("GET", "/v1/tasks", token=controller)[1]["tasks"]
+assert all(task["endpoint_id"] != old_registration["endpoint_id"] for task in tasks)
 
 placed = {}
 def place():
@@ -2142,20 +2201,22 @@ test_an_order_to_a_worker_its_agent_reported_gone_is_refused() {
   pass "hub: an order to a worker its own agent reported gone is refused as gone"
 }
 
-test_a_leaf_the_hub_cannot_resolve_is_refused_without_calling_the_worker_gone() {
+test_a_leaf_the_hub_cannot_resolve_stays_pending() {
   # The hub's registry is in memory, so a hub that restarted holds no leaf at
   # all until each agent registers again. Reading that as death would condemn
   # every live worker in the fleet at once, so a leaf this hub cannot resolve
-  # is refused WITHOUT claiming anything about the worker.
+  # stays pending without claiming anything about the worker.
   start_hub order-unknown-leaf
   local endpoint out
   endpoint=$(start_agent box-a present)
   out=$(order "box-a/absent-$RUN" "$(python3 -c 'import os; print(os.urandom(16).hex())')" "echo NEVER")
-  assert_equals "$(api_code)" 404 "an order for a leaf the hub does not hold should be refused"
-  assert_equals "$(printf '%s' "$out" | jq -r '.reason')" unknown_leaf \
-    "the refusal should say the leaf could not be resolved"
-  assert_equals "$(printf '%s' "$out" | jq -r '.not_registered')" true \
-    "an absence that outlasted the rejoin window is a membership verdict"
+  assert_equals "$(api_code)" 200 "unresolved membership should leave the order pending"
+  assert_equals "$(printf '%s' "$out" | jq -r '.outcome')" unconfirmed \
+    "the hub must not turn an absent registration into a membership verdict"
+  assert_equals "$(printf '%s' "$out" | jq -r '.reason')" membership_unresolved \
+    "the pending answer should name unresolved membership"
+  assert_equals "$(printf '%s' "$out" | jq -r '.delivered')" null \
+    "the hub cannot claim delivery or non-delivery without membership evidence"
   assert_equals "$(printf '%s' "$out" | jq -r '.worker_gone')" false \
     "a leaf the hub cannot resolve is never evidence that its worker is gone"
   # And the same question asked across a real restart, while the agents are
@@ -2164,7 +2225,7 @@ test_a_leaf_the_hub_cannot_resolve_is_refused_without_calling_the_worker_gone() 
   out=$(order "box-a/present-$RUN" "$endpoint" "echo AFTER-RESTART")
   assert_equals "$(printf '%s' "$out" | jq -r '.worker_gone')" false \
     "a worker rejoining a restarted hub must never be reported gone"
-  pass "hub: a leaf the hub cannot resolve is refused without being called gone"
+  pass "hub: a leaf the hub cannot resolve stays pending"
 }
 
 test_an_order_no_agent_took_is_refused_rather_than_left_in_doubt() {
@@ -2312,8 +2373,8 @@ test_a_leaf_that_is_still_rejoining_is_waited_for_rather_than_called_absent() {
   answer=$(printf '%s' "$out" | jq -r '.outcome')
   assert_equals "$answer" accepted \
     "an order for a leaf still rejoining must wait for it, not be refused as absent"
-  assert_equals "$(printf '%s' "$out" | jq -r '.not_registered')" false \
-    "a leaf that turned up inside the window was never absent"
+  assert_equals "$(printf '%s' "$out" | jq -r '.delivered')" true \
+    "a leaf that rejoined inside the window should receive the order"
   wait_for_capture "$endpoint" WAITED-FOR-ME || fail "the order never reached the rejoined worker"
   pass "hub: a leaf still rejoining is waited for rather than reported absent"
 }
@@ -2410,7 +2471,7 @@ s.close()')
   assert_contains "$out" "hub listening" "starting the hub should report where it listens"
   out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_CONFIG_OVERRIDE="$home/config" \
     FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-stream.sh" status 2>&1)
-  assert_contains "$out" "protocol 2" "status should report the reachable hub's protocol"
+  assert_contains "$out" "protocol 3" "status should report the reachable hub's protocol"
   out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_CONFIG_OVERRIDE="$home/config" \
     FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-stream.sh" web 2>&1)
   assert_contains "$out" "/ui#" "the web URL should carry the token in the fragment"
@@ -2490,6 +2551,7 @@ test_a_closing_frame_waits_out_a_recovery_already_in_flight
 test_an_agent_refuses_a_hub_without_idempotent_results
 test_an_agent_retries_a_result_without_applying_the_command_twice
 test_terminal_result_rejection_does_not_block_later_commands
+test_revoked_result_capability_does_not_delay_the_closing_frame
 test_an_exiting_endpoint_keeps_retrying_its_applied_command_result
 test_shutdown_drains_a_command_returned_by_an_inflight_poll
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
@@ -2502,7 +2564,7 @@ test_orderability_follows_the_endpoint_registration_capability
 test_an_order_reaches_the_worker_its_leaf_names
 test_an_order_aimed_at_a_replaced_execution_never_reaches_the_replacement
 test_an_order_to_a_worker_its_agent_reported_gone_is_refused
-test_a_leaf_the_hub_cannot_resolve_is_refused_without_calling_the_worker_gone
+test_a_leaf_the_hub_cannot_resolve_stays_pending
 test_an_order_no_agent_took_is_refused_rather_than_left_in_doubt
 test_an_order_taken_without_an_answer_is_unconfirmed_and_reconciles_when_resent
 test_an_order_is_delivered_once_however_many_times_its_id_is_sent

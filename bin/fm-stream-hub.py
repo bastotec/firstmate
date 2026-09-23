@@ -119,7 +119,7 @@ HUB_VERSION = "2.0.0"
 
 # The wire protocol the agent and the shell adapter implement.  A peer
 # announcing anything else is refused rather than driven on guessed routes.
-HUB_PROTOCOL = 2
+HUB_PROTOCOL = 3
 RESULT_RETRY_CAPABILITY = "idempotent_command_results"
 ORDERABLE_ENDPOINT_CAPABILITY = "result_retry_orderability"
 HUB_CAPABILITIES = ("current_execution", RESULT_RETRY_CAPABILITY,
@@ -846,7 +846,7 @@ class Order:
 
     __slots__ = ("order_id", "leaf_worker_id", "requested_execution_id", "text",
                  "execution_id", "created_at", "endpoint", "command", "refusal",
-                 "status", "answered")
+                 "uncertainty", "status", "answered")
 
     def __init__(self, order_id: str, leaf: str, requested_execution: str,
                  text: str, execution: str, endpoint: "Endpoint") -> None:
@@ -866,6 +866,7 @@ class Order:
         # (code, message) for an order no command was ever made for. The
         # refusal IS the whole record in that case.
         self.refusal = None
+        self.uncertainty = None
         # The status this order was first answered with, so a caller that
         # resends its id is told the same thing rather than a second opinion.
         self.status = HTTPStatus.OK
@@ -896,6 +897,9 @@ class Order:
         if self.refusal is not None:
             code, message = self.refusal
             return (ORDER_REFUSED, code, message, False)
+        if self.uncertainty is not None:
+            code, message = self.uncertainty
+            return (ORDER_UNCONFIRMED, code, message, None)
         command = self.command
         if command is None:
             if self.refusal is None and not self.answered.is_set():
@@ -931,9 +935,6 @@ class Order:
             "outcome": outcome,
             "delivered": delivered,
             "worker_gone": self.worker_gone(),
-            # The other authoritative absence: the hub kept holding no
-            # registration for this leaf for longer than a rejoin takes.
-            "not_registered": self.refusal is not None and self.refusal[0] == "unknown_leaf",
             "requested_at": self.created_at,
         }
         if code:
@@ -1241,6 +1242,13 @@ class Hub:
     # --- endpoints --------------------------------------------------------
 
     def register_endpoint(self, payload: dict, capability: str = "") -> "Endpoint":
+        protocol = payload.get("protocol")
+        if (not isinstance(protocol, int) or isinstance(protocol, bool)
+                or protocol != HUB_PROTOCOL):
+            raise HubError(
+                HTTPStatus.UPGRADE_REQUIRED, "protocol_mismatch",
+                "endpoint speaks protocol %r but this hub implements %d; restart the "
+                "endpoint with matching software" % (protocol, HUB_PROTOCOL))
         endpoint_id = str(payload.get("endpoint_id") or "")
         if not ENDPOINT_ID_RE.match(endpoint_id):
             raise HubError(HTTPStatus.BAD_REQUEST, "bad_endpoint_id",
@@ -1591,9 +1599,9 @@ class Hub:
                 return existing
             self.reap()
             members = self.leaf_members(leaf)
-            # A leaf that resolves to nothing is not absent yet. Rejoining agents
-            # take seconds, and only an absence that outlasts that window is a
-            # membership verdict rather than a reading.
+            # A leaf that resolves to nothing may still be rejoining. The wait
+            # gives an ordinary restart time to recover, but silence after it is
+            # still not evidence that the worker is gone.
             if not members:
                 deadline = _now() + MEMBERSHIP_GRACE_SECS
                 while _now() < deadline:
@@ -1607,10 +1615,14 @@ class Hub:
             order.endpoint = current
 
             if current is None:
-                self._refuse_order(order, HTTPStatus.NOT_FOUND, "unknown_leaf",
-                                   "this hub held no endpoint for leaf %s for %gs, longer "
-                                   "than a rejoin takes, so it is not registered here"
-                                   % (leaf, MEMBERSHIP_GRACE_SECS))
+                order.uncertainty = (
+                    "membership_unresolved",
+                    "this hub holds no endpoint for leaf %s, which is not evidence that "
+                    "its worker is gone" % leaf)
+                with self.lock:
+                    if self.orders.get(order.order_id) is order:
+                        self.orders.pop(order.order_id, None)
+                return order
 
             if current.endpoint_id != requested_execution:
                 if any(e.endpoint_id == requested_execution for e in members):

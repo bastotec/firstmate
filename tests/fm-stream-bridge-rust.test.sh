@@ -149,7 +149,7 @@ new_id() {
 register() {  # <endpoint-id> <machine> <label>
   local code
   code=$(publish POST /v1/agent/endpoints "$(jq -nc --arg id "$1" --arg m "$2" --arg l "$3" \
-    '{current_execution: true, endpoint_id: $id, machine: $m, label: $l, cwd: "/tmp"}')")
+    '{current_execution: true, endpoint_id: $id, machine: $m, label: $l, cwd: "/tmp", protocol: 3}')")
   assert_equals "$code" 201 "endpoint $3 should register"
 }
 
@@ -365,7 +365,7 @@ import http.server, json, sys
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
-        body = json.dumps({"ok": True, "protocol": 2 if self.path.startswith("/old/") else 99}).encode()
+        body = json.dumps({"ok": True, "protocol": 3 if self.path.startswith("/old/") else 99}).encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -431,7 +431,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Location", "http://%s:%d/actual-tasks" % (host, port))
             self.end_headers()
         elif self.path in ("/v1/health", "/actual-health"):
-            self.answer({"ok": True, "protocol": 2, "capabilities": ["current_execution"]})
+            self.answer({"ok": True, "protocol": 3, "capabilities": ["current_execution"]})
         elif self.path in ("/v1/tasks", "/actual-tasks"):
             self.answer({"ok": True, "tasks": [TASK]})
         else:

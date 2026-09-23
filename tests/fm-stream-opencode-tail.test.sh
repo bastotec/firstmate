@@ -79,7 +79,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/v1/health":
-            self._reply(200, {"ok": True, "protocol": 2,
+            self._reply(200, {"ok": True, "protocol": 3,
                               "capabilities": ["idempotent_command_results"],
                               "state_max_age_secs": 30})
             return

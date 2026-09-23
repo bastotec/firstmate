@@ -311,7 +311,7 @@ test_state_routes_preserve_the_opencode_response_shape() {
   local endpoint registration frame processes cwd_state
   endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
   registration=$(jq -nc --arg id "$endpoint" \
-    '{endpoint_id: $id, machine: "tailmachine", label: "opencode-shape", cwd: "/tmp/opencode"}')
+    '{endpoint_id: $id, machine: "tailmachine", label: "opencode-shape", cwd: "/tmp/opencode", protocol: 3}')
   publish_json POST /v1/agent/endpoints "$registration" >/dev/null
   frame=$(jq -nc --arg id "$endpoint" \
     '{machine: "tailmachine", frames: [{endpoint_id: $id, state: {

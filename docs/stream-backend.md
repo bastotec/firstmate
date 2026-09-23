@@ -74,7 +74,8 @@ Run it on the host that runs the hub:
 
 1. Give it its own read-only credential: add a bare token line to `config/stream-hub-tokens` and put the same token alone in a 0600 file for `bin/fm-stream-bridge.py`.
    A home still on the single `config/stream-token` has no such file, and creating one replaces that token's every-class grant, so write the home's own `publish,subscribe,control:<token>` line into it as well.
-   The hub reads its token file only at start; restarting it clears terminal scrollback and Bridge-order reconciliation while running agents re-register automatically, so make this change only when no order is pending or may need a resend.
+   The hub reads its token file only at start; restarting it clears terminal scrollback and Bridge-order reconciliation, so make this change only when no order is pending or may need a resend.
+   Running endpoints re-register automatically after an ordinary same-protocol restart, but a wire-protocol upgrade requires restarting every endpoint with matching software.
 2. Start it against the local hub:
 
    ```
@@ -137,7 +138,7 @@ The adapter's header owns the three record shapes, required identity and payload
 
 At operator level, every order names both a worker by `leaf_worker_id` - `<machine>/<label>`, from the same machine and label the feed emits and `fm-stream.sh tasks` lists - and the exact execution the feed showed.
 That binding prevents an order composed for one run from being typed into its replacement.
-Acceptance means the owning agent wrote the complete order, including its submit byte, to that execution's pseudoterminal and acknowledged it; an authoritative membership refusal produces a nack, while an indeterminate order produces no record and remains pending.
+Acceptance means the owning agent wrote the complete order, including its submit byte, to that execution's pseudoterminal and acknowledged it; the owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership produces no record and remains pending.
 Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
 The PTY agent advertises that capability back on every endpoint registration, and the hub places Bridge orders only for endpoints that do, leaving legacy agents and read-only tail publishers visible but non-orderable.
 Each internal HTTP order carries the hub generation returned by compatibility negotiation; a replacement hub rejects a stale generation before placement, the adapter renegotiates before retrying, and the Bridge `command`, `command_ack`, and `command_nack` records do not change.
@@ -231,7 +232,8 @@ The hub refuses that agent, and it stops rather than let two workers answer to o
 ## When the hub restarts
 
 Endpoints live in the hub's memory only, so a restarted hub has never heard of any of them and refuses a running agent's next publish with `no_such_endpoint`.
-That refusal is what an agent registers itself again on, under the endpoint id it already held, so a worker returns to the fleet listing and to steering without anyone touching the machine it runs on.
+For an ordinary same-protocol restart, that refusal is what an agent registers itself again on, under the endpoint id it already held, so a worker returns to the fleet listing and to steering without anyone touching the machine it runs on.
+Every registration names protocol 3; an older running endpoint is refused with `protocol_mismatch` and must be restarted from matching software rather than being listed without authenticated command delivery.
 Listed and steerable arrive together rather than one after the other, because the thread that receives steers is told the endpoint is back at the moment it comes back rather than finding out on its own schedule.
 The residual is small and worth stating: the two are separate calls, so a steer aimed at the instant between a worker being listed again and its next command poll reaching the hub can still be reported undelivered, and is delivered on the retry.
 
@@ -248,10 +250,9 @@ Inside the restart window every stream endpoint reads unknown to the hub, so som
 A record the hub has never heard from stands for no worker, so it takes no name from the agent that is publishing under it - the rule the hub already applied to publishing, applied to registering too, so the contest is decided by which agent speaks rather than by which one registered first.
 That is a narrow protection, and worth being exact about: a replacement publishes its own first state frame immediately after registering, so the interval in which it stands for nothing at all is the gap between those two calls.
 Past it, the recovering agent is the one refused - correctly, because by then two workers really do answer to one name and the one the hub has heard from is the one it can account for.
-Readers on this side wait that window out rather than call the worker gone: a hub 404 has to keep being the answer for longer than a re-registration takes before it is reported as `missing`, because inside it the endpoint is about to exist again and a steer dropped there is a steer dropped on a healthy worker.
-The cheap presence probe behind capture, current-path and input answers from the first reply and keeps paying nothing for the window, so it is the steering paths that ask again; the fleet listing, which an operator reads once, takes its endpoint verdict from the classifier instead, and reports a rejoin in flight as unknown rather than absent.
-What that window covers is one rejoin attempt, not the whole recovery: it is sized against the first attempt an agent makes after a restart, because the read is itself bounded by the caller that asks for it and there is no room to sit through the backoff ladder as well.
-An agent whose first attempt met a hub that was not ready yet waits out its own backoff, and for that stretch a healthy worker on its way back is reported `missing` - supervision treats that like a dead worker and escalates the pending steer, which takes that steer off the delivery ladder rather than ringing it again.
+Readers on this side wait one ordinary rejoin window before answering an unresolved order, but absence from the restarted hub is never evidence that the worker is gone.
+If no endpoint appears in that window, the order remains pending without a membership nack and an identical resend can try placement again after the agent's backoff.
+The cheap presence probe behind capture, current-path and input answers from the first reply and keeps paying nothing for the window, while the fleet listing takes its endpoint verdict from the classifier and reports a rejoin in flight as unknown rather than absent.
 
 `no_such_endpoint` is the only thing an agent acts on here, and only the hub states it.
 A failed connection is not that, and is never treated as it: a hub on its way back up passes through exactly that state, and a returning hub that still holds the record must not be re-registered against.

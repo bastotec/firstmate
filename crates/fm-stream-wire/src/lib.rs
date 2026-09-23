@@ -21,7 +21,7 @@ pub mod python_json;
 /// The hub wire protocol this generation speaks.  A peer announcing anything
 /// else is refused rather than driven on guessed routes; this is the same
 /// number `bin/fm-stream-hub.py --protocol` prints.
-pub const HUB_PROTOCOL: i64 = 2;
+pub const HUB_PROTOCOL: i64 = 3;
 
 /// Longest a machine name or task label may be, mirroring the hub's registry
 /// limits (it refuses to register anything longer, so the bridge never sees
@@ -591,7 +591,7 @@ mod tests {
 
     #[test]
     fn protocol_check_renders_the_found_value_like_python() {
-        assert!(protocol_of_health(&json!({"protocol": 2, "ok": true})).is_ok());
+        assert!(protocol_of_health(&json!({"protocol": 3, "ok": true})).is_ok());
         assert_eq!(
             protocol_of_health(&json!({"protocol": 99})),
             Err("99".to_string())

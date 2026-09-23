@@ -124,11 +124,9 @@ FIVE PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
 
   Membership.  A `command_nack` is an authoritative answer and nothing else
   produces one: `no_such_worker` is the owning agent's own report that its
-  worker ended, `worker_not_registered` is the hub still holding no
-  registration for the leaf after waiting out the fixed rejoin window it
-  needs, and `fleet_unknown` means fleet_id is missing or disagrees with this
-  adapter's own fleet id.  A refusal the hub reached no membership verdict on
-  is a `command_ack` with
+  worker ended, and `fleet_unknown` means fleet_id is missing or disagrees
+  with this adapter's own fleet id.  A refusal the hub reached no membership
+  verdict on is a `command_ack` with
   `state: refused`, which says the order did not arrive without claiming the
   worker is gone.
 
@@ -157,7 +155,7 @@ parked, and `consistent` otherwise.  It exits 1 when any row is a conflict or
 missing, 0 otherwise.  Options: --home DIR (default FM_HOME), --crew-state
 CMD (default the fm-crew-state.sh beside this script), --fleet-id.
 
-Live subcommands negotiate protocol 2 and the hub's `current_execution`
+Live subcommands negotiate protocol 3 and the hub's `current_execution`
 capability before doing work; `command` additionally requires
 `idempotent_command_results`, `result_retry_orderability`, and
 `endpoint_command_auth`, and binds each
@@ -190,7 +188,7 @@ BRIDGE_VERSION = "1.0.0"
 
 # The hub wire protocol this adapter reads.  Anything else is refused rather
 # than read on guessed routes.
-HUB_PROTOCOL = 2
+HUB_PROTOCOL = 3
 CURRENT_EXECUTION_CAPABILITY = "current_execution"
 IDEMPOTENT_RESULT_CAPABILITY = "idempotent_command_results"
 ORDERABLE_ENDPOINT_CAPABILITY = "result_retry_orderability"
@@ -218,7 +216,6 @@ RECORD_NACK = "command_nack"
 # ever produces one.  Everything else refuses through command_ack, which is a
 # refusal WITHOUT a claim about membership.
 NACK_NO_SUCH_WORKER = "no_such_worker"
-NACK_NOT_REGISTERED = "worker_not_registered"
 NACK_FLEET_UNKNOWN = "fleet_unknown"
 
 ENDPOINT_ID_RE = re.compile(r"\A[0-9a-f]{32}\Z")
@@ -561,8 +558,6 @@ class Commander:
         # hub reaching no verdict is not the same as a verdict of absence.
         if body.get("worker_gone"):
             return [self.nack(command_id, NACK_NO_SUCH_WORKER)]
-        if body.get("not_registered"):
-            return [self.nack(command_id, NACK_NOT_REGISTERED)]
         reason = body.get("reason") or body.get("error") or ("HTTP %d" % status)
         message = body.get("reason_message") or body.get("message") or ""
         return [self.ack(command_id, recorded_leaf, "refused",

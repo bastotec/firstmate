@@ -36,6 +36,7 @@ def main():
         "label": "worker",
         "cwd": "/tmp",
         "capabilities": ["idempotent_command_results"],
+        "protocol": 3,
     })
     if status != 201:
         raise SystemExit("registration failed: %s %r" % (status, body))
