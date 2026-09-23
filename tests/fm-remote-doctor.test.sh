@@ -77,6 +77,7 @@ new_case() {
   unset CASE_SECOND_LOGIN_SHELL
   unset CASE_ENV_SHELL
   unset CASE_RESOLVE_DSCL
+  unset CASE_BASE_PATH
   CASE_N=$((CASE_N + 1))
   CASE_LOGIN_SHELL=${4:-/bin/sh}
   CASE_DIR="$TMP_ROOT/case$CASE_N"
@@ -298,11 +299,12 @@ SH
 # doctor [args...] -> runs the real doctor against the current fixture,
 # capturing merged output in DOCTOR_OUT and its status in DOCTOR_RC.
 doctor() {
+  local doctor_base_path=${CASE_BASE_PATH:-$BASE_PATH}
   set +e
   DOCTOR_OUT=$(
     HOME="$CASE_HOME" \
     FM_HOME="$CASE_PROJECT_HOME" \
-    PATH="$CASE_HOME/.local/bin:$CASE_BIN:$BASE_PATH" \
+    PATH="$CASE_HOME/.local/bin:$CASE_BIN:$doctor_base_path" \
     FM_FAKE_STATE="$CASE_STATE" \
     FM_FAKE_LAUNCHCTL_LOG="$CASE_LAUNCHCTL_LOG" \
     FM_FAKE_FORBIDDEN_LOG="$CASE_FORBIDDEN_LOG" \
@@ -446,11 +448,68 @@ new_case Linux with-herdr no-gui
 rm -f "$CASE_BIN/claude"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_BIN/deck"
 chmod +x "$CASE_BIN/deck"
-doctor --fix
-expect_code 0 "$DOCTOR_RC" "a host whose only coding runtime is Deck was not ready"
+NO_PYTHON_BIN="$CASE_DIR/no-python-bin"
+mkdir -p "$NO_PYTHON_BIN"
+for system_dir in /usr/bin /bin /usr/sbin /sbin; do
+  for system_tool in "$system_dir"/*; do
+    [ -x "$system_tool" ] || continue
+    [ "${system_tool##*/}" != python3 ] || continue
+    [ -e "$NO_PYTHON_BIN/${system_tool##*/}" ] || ln -s "$system_tool" "$NO_PYTHON_BIN/${system_tool##*/}"
+  done
+done
+CASE_BASE_PATH=$NO_PYTHON_BIN
+doctor
+expect_code 1 "$DOCTOR_RC" "a Deck-only host without Python was reported ready"
 assert_contains "$DOCTOR_OUT" "required harness=deck:$CASE_BIN/deck" \
   "the readiness inventory did not select Deck"
-pass "Deck satisfies the remote secondmate runtime readiness inventory"
+assert_contains "$DOCTOR_OUT" "required python3=MISSING" \
+  "Deck readiness did not report its missing Python dependency"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_BIN/python3"
+chmod +x "$CASE_BIN/python3"
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "a Deck host with Python was not ready"
+assert_contains "$DOCTOR_OUT" "required python3=$CASE_BIN/python3" \
+  "Deck readiness did not report its Python dependency"
+pass "Deck readiness requires Python only when Deck is selected"
+
+new_case Linux with-herdr no-gui
+CASE_REMOTE_JOB_ACTIVE=
+CASE_PLATFORM_OVERRIDE=Linux
+rm -f "$CASE_BIN/claude" "$CASE_BIN/sleep" "$CASE_BIN/uname"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_BIN/deck"
+chmod +x "$CASE_BIN/deck"
+mkdir -p "$CASE_HOME/.local/bin"
+for tool in herdr tasks-axi treehouse deck; do
+  ln -s "$CASE_BIN/$tool" "$CASE_HOME/.local/bin/$tool"
+done
+HOME="$CASE_HOME" FM_ROOT_OVERRIDE="$ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  "$ROOT/bin/fm-remote-job-worker.sh" > "$CASE_STATE/worker.out" 2> "$CASE_STATE/worker.err" &
+DOCTOR_WORKER_PID=$!
+for _ in $(seq 1 100); do
+  [ -f "$CASE_HOME/.firstmate/remote-job/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$CASE_HOME/.firstmate/remote-job/worker.ready" "the Deck probe fixture worker did not start"
+doctor
+expect_code 0 "$DOCTOR_RC" "the normalized worker probe rejected Deck with Python"
+assert_contains "$DOCTOR_OUT" 'required harness=deck:' \
+  "the worker probe did not select Deck"
+assert_contains "$DOCTOR_OUT" 'required python3=' \
+  "the worker probe omitted Deck's Python dependency"
+assert_not_contains "$DOCTOR_OUT" 'required python3=MISSING' \
+  "the worker probe lost its Python runtime"
+assert_contains "$DOCTOR_OUT" 'check remote-job-probe=ok: the remote job worker completed the required-tool probe' \
+  "the parent rejected the Deck probe's conditional fact count"
+kill -TERM "$DOCTOR_WORKER_PID"
+for _ in $(seq 1 100); do
+  kill -0 "$DOCTOR_WORKER_PID" 2>/dev/null || break
+  sleep 0.05
+done
+if kill -0 "$DOCTOR_WORKER_PID" 2>/dev/null; then
+  kill -KILL "$DOCTOR_WORKER_PID" 2>/dev/null || true
+fi
+DOCTOR_WORKER_PID=
+pass "Deck's Python dependency survives the normalized worker probe"
 
 # --- a host with no herdr is never ready, and --fix cannot install one -------
 

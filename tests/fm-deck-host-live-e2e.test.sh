@@ -39,9 +39,17 @@ with (lab/'pane.log').open('w') as out:
    raise RuntimeError('timeout '+str(path))
   wait(home/'ready.txt')
   time.sleep(3)
+  assert not (parent/'host-check.turn-ended').exists(), 'silent startup emitted a parent turn-end wake'
   print('startup completed; stable driver owns home lock',flush=True)
-  note=subprocess.check_output([str(root/'bin/fm-inbox.sh'),'note','Live verification only: write exactly WAKE_HANDLED to wake-handled.txt in this isolated home, then acknowledge this inbox note and the handled wake queue. Do not do any production work.'],env=env,text=True)
+  note=subprocess.check_output([str(root/'bin/fm-inbox.sh'),'note','Live verification only: write exactly STARTED to wake-started.txt, then run sleep 5 in the shell, then write exactly WAKE_HANDLED to wake-handled.txt in this isolated home, then acknowledge this inbox note and the handled wake queue. Do not do any production work.'],env=env,text=True)
   assert note.startswith('queued ')
+  wait(home/'wake-started.txt')
+  busy=parent/'host-check.busy-state'
+  assert 'state=busy source=deck-wrapper event=turn-start' in busy.read_text(), 'wake handling was not busy after its start marker'
+  watcher_pid=int((home/'state/.watch.lock/pid').read_text().strip())
+  time.sleep(2)
+  os.kill(watcher_pid,0)
+  assert 'state=busy source=deck-wrapper event=turn-start' in busy.read_text(), 'wake handling did not remain active for the continuity check'
   wait(home/'wake-handled.txt')
   for _ in range(600):
    if not (home/'state/.wake-queue').exists() or not (home/'state/.wake-queue').read_text().strip():break
@@ -52,10 +60,12 @@ with (lab/'pane.log').open('w') as out:
   assert (home/'state/.lock').read_text().strip()==str(p.pid)
   assert list((parent/'host-check.inbox/handled').glob('*.msg')), 'wake did not use durable steering inbox'
   assert not list((parent/'host-check.inbox').glob('*.msg')), 'steering wake was not acknowledged'
+  assert 'successor=started:' in (home/'state/.watch-cycle-exits.log').read_text(), 'actionable watcher cycle did not record its successor'
+  assert not (parent/'host-check.turn-ended').exists(), 'wake handling emitted a parent turn-end wake'
   assert not (parent/'host-check.status').exists() or 'failed:' not in (parent/'host-check.status').read_text()
   p.stdin.write('/quit\n');p.stdin.flush()
   assert p.wait(timeout=30)==0
-  print('PASS real Deck startup, stable driver lock, watcher wake-as-next-turn, acknowledgement, and clean exit',flush=True)
+  print('PASS real Deck startup, handling-successor continuity, no parent turn-end wake, acknowledgement, and clean exit',flush=True)
  except Exception:
   print((lab/'pane.log').read_text(), file=sys.stderr)
   raise

@@ -12,7 +12,7 @@
 #   - each turn's events render as readable text in the pane (fm-peek reads it);
 #   - it is the semantic busy source for the task: turn start and turn end are
 #     written through bin/fm-busy-event.sh with source `deck-wrapper`, and each
-#     finished turn touches the task's turn-end notification file;
+#     finished worker turn touches the task's turn-end notification file;
 #   - Deck's own hooks are attached on every run: `post_tool_use` refreshes the
 #     task's progress marker, and `pre_complete` refuses to let a turn finish
 #     until the worker has appended a worker-status line during that turn;
@@ -25,7 +25,7 @@
 #   fm-deck-worker.sh --id <task-id> --state <state-dir> --gen <busy-gen>
 #       --deck <deck-binary> [--model <route>] [--secondmate] -- <first-prompt>
 # --secondmate requires FM_HOME and hosts that home, leaving --state pointed
-# at the parent task state for busy/progress, failure, and turn-end publication.
+# at the parent task state for busy/progress and failure publication.
 # Startup runs once before the first turn. After every turn a tracked watcher
 # child is armed; its result becomes a next turn, with queued stdin serialized
 # alongside it. pre_complete checks lock ownership instead of worker evidence.
@@ -58,7 +58,7 @@ BUSY_EVENT="$SCRIPT_DIR/fm-busy-event.sh"
 STATE_IO="$SCRIPT_DIR/fm-state-io.py"
 
 ID='' STATE='' GEN='' DECK='' MODEL=''
-SECONDMATE=0 WATCH_PID='' INPUT_PID=''
+SECONDMATE=0 WATCH_PID='' WATCH_PREDECESSOR_ARM_PID='' INPUT_PID=''
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
 while [ $# -gt 0 ]; do
@@ -146,6 +146,7 @@ status_has_worker_evidence() {
 }
 
 publish_turnend() {
+  [ "$SECONDMATE" != 1 ] || return 0
   python3 "$STATE_IO" root-touch "$STATE" "$ID.turn-ended" || {
     printf 'fm-deck-worker: could not safely publish turn-end signal %s\n' "$TURNEND_FILE" >&2
     return 1
@@ -169,7 +170,37 @@ host_lock_owned() {
 # The arm is a tracked child of this persistent driver, never a background
 # tool call. Its output stays in WORK while a turn runs; its actionable reason
 # is merely a doorbell for the durable home queue, never an acknowledgement.
+watch_confirm_handling_successor() {
+  local deadline line watcher_pid generation
+  deadline=$(( $(date +%s) + 15 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    line=$(sed -n 's/^watcher: started pid=\([0-9][0-9]*\).* recovery-generation=\([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1 \2/p' "$WORK/watch.out" 2>/dev/null | tail -1)
+    if [ -n "$line" ]; then
+      watcher_pid=${line%% *}
+      generation=${line#* }
+      if "$SCRIPT_DIR/fm-watch-arm.sh" --handling-delivered "$generation" \
+          --watcher-pid "$watcher_pid" >/dev/null 2>&1; then
+        WATCH_PREDECESSOR_ARM_PID=''
+        return 0
+      fi
+      host_failure 'successor watcher refused handling delivery confirmation'
+      return 1
+    fi
+    if ! kill -0 "$WATCH_PID" 2>/dev/null; then
+      wait "$WATCH_PID" 2>/dev/null || true
+      WATCH_PID=''
+      cat "$WORK/watch.out"
+      host_failure 'successor watcher exited before confirming recovery generation'
+      return 1
+    fi
+    sleep 0.05
+  done
+  host_failure 'successor watcher did not confirm its recovery generation'
+  return 1
+}
+
 watch_start() {
+  local predecessor=$WATCH_PREDECESSOR_ARM_PID
   [ -z "$WATCH_PID" ] || return 0
   host_lock_owned || return 1
   if [ -e "$FM_HOME/state/.afk" ]; then
@@ -182,9 +213,14 @@ watch_start() {
       # shellcheck source=/dev/null
       . "$FM_HOME/config/x-mode.env" || exit 1
     fi
-    exec "$SCRIPT_DIR/fm-watch-arm.sh"
+    if [ -n "$predecessor" ]; then
+      FM_WATCH_PREDECESSOR_ARM_PID=$predecessor exec "$SCRIPT_DIR/fm-watch-arm.sh" --restart
+    else
+      exec "$SCRIPT_DIR/fm-watch-arm.sh"
+    fi
   ) > "$WORK/watch.out" 2>&1 &
   WATCH_PID=$!
+  [ -z "$predecessor" ] || watch_confirm_handling_successor
 }
 
 # Use exactly the ordinary durable steering record and doorbell contract. The
@@ -200,13 +236,14 @@ $(cat "$WORK/watch.out")") || exit 1
 )
 
 watch_result() {
-  local rc
+  local rc predecessor=$WATCH_PID
   wait "$WATCH_PID"; rc=$?
   WATCH_PID=''
   cat "$WORK/watch.out"
   [ "$rc" -eq 0 ] || { host_failure "watcher failed (exit $rc)"; return 1; }
   [ -s "$WORK/watch.out" ] || { host_failure 'watcher ended without a result'; return 1; }
   host_lock_owned || return 1
+  WATCH_PREDECESSOR_ARM_PID=$predecessor
 }
 
 # The evidence gate: the turn may finish only after it appended a worker status

@@ -81,13 +81,13 @@ Observed output:
 ```text
 deck 0.1.0
 startup completed; stable driver owns home lock
-PASS real Deck startup, stable driver lock, watcher wake-as-next-turn, acknowledgement, and clean exit
+PASS real Deck startup, handling-successor continuity, no parent turn-end wake, acknowledgement, and clean exit
 ```
 
 The initial turn received the complete startup digest and wrote the requested readiness marker without rerunning startup.
-The watcher wake became a durable steering record; the same Deck conversation read it, handled the isolated note, acknowledged the wake queue and inbox record, and returned to the host.
+The watcher wake became a durable steering record; before its long handling turn began, the driver established and confirmed the generation-bound handling successor, and the same Deck conversation read the record, handled the isolated note, acknowledged the wake queue and inbox record, and returned to the host.
 The home lock still named the persistent driver after both turns, rather than the exited `deck run` process.
-The parent received no manufactured worker status for normal supervisor turns.
+The parent received neither manufactured worker status nor a turn-end wake for normal supervisor turns.
 
 Portable checks:
 

@@ -563,9 +563,18 @@ printf 'complete startup digest marker\n'
 SH
   cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then
+  printf 'generation=%s watcher=%s\n' "$2" "$4" >> "$FM_HOME/handling-delivered"
+  exit 0
+fi
 trap 'exit 143' TERM INT
 printf '%s\n' "$$" >> "$FM_HOME/watch-starts"
-printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+printf 'arm=%s predecessor=%s\n' "$$" "${FM_WATCH_PREDECESSOR_ARM_PID:-none}" >> "$FM_HOME/watch-arms"
+if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
+  printf 'watcher: started pid=%s (beacon fresh) recovery-generation=deck-%s\n' "$$" "$FM_WATCH_PREDECESSOR_ARM_PID"
+else
+  printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+fi
 while [ ! -f "$FM_HOME/trigger" ]; do sleep 0.1; done
 rm "$FM_HOME/trigger"
 printf 'check: example\n'
@@ -585,10 +594,16 @@ if records:
     deadline = time.time() + 2
     while time.time() < deadline:
         starts = (home / 'watch-starts').read_text().splitlines() if (home / 'watch-starts').exists() else []
-        if len(starts) >= 2:
+        delivered = (home / 'handling-delivered').read_text().splitlines() if (home / 'handling-delivered').exists() else []
+        if len(starts) >= 2 and delivered:
             break
         time.sleep(.05)
     assert len(starts) >= 2, 'next watcher cycle did not start before wake handling'
+    assert delivered, 'successor watcher handling was not confirmed before wake handling'
+    successor = int(delivered[-1].split(' watcher=', 1)[1])
+    (home / 'wake-turn-active').touch()
+    time.sleep(2)
+    os.kill(successor, 0)
 with (home / 'turns').open('a') as f:
     f.write(json.dumps({'prompt': prompt, 'session': session, 'inbox': body}) + '\n')
 for record in records:
@@ -630,6 +645,7 @@ with (root/'pane').open('w') as output:
     try:
         wait_for(lambda: len(rows()) == 1, 'first turn')
         assert 'complete startup digest marker' in rows()[0]['prompt']
+        assert not (root/'parent/host.turn-ended').exists(), 'silent startup emitted a parent turn-end wake'
         p.stdin.write('slow-steer\n'); p.stdin.flush()
         wait_for(lambda: (home/'in-turn').exists(), 'steer start')
         (home/'trigger').touch()
@@ -640,6 +656,8 @@ with (root/'pane').open('w') as output:
         assert 'Firstmate instruction waiting:' in rows()[2]['prompt']
         assert 'actionable wake' in rows()[2]['inbox']
         assert list((root/'parent/host.inbox/handled').glob('*.msg'))
+        assert 'predecessor=none' not in (home/'watch-arms').read_text().splitlines()[1], 'successor lost its predecessor arm'
+        assert not (root/'parent/host.turn-ended').exists(), 'watch handling emitted a parent turn-end wake'
         p.stdin.write('split-'); p.stdin.flush()
         time.sleep(1.3)
         p.stdin.write('steer\n'); p.stdin.flush()
@@ -684,7 +702,7 @@ for key in ['FM_TEST_START_FAIL', 'FM_TEST_TURN_FAIL', 'FM_TEST_WATCH_FAIL']:
             if p.poll() is None:
                 p.terminate(); p.wait(timeout=15)
 PYTHON
-  pass "Deck host serializes startup, lock, durable inbox wakes, rearm, and split steering; failures reach parent"
+  pass "Deck host preserves handling-successor supervision without parent turn-end wakes"
 }
 
 test_secondmate_host_serializes_wakes_and_steering
