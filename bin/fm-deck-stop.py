@@ -3,12 +3,12 @@
 
 Usage: fm-deck-stop.py STATE TASK TIMEOUT
 Matches the driver's launch arguments, never brief text, generation, or pane
-output. Only a driver leading its own process group may be stopped. TERM asks
-the driver and its active Deck child to stop, while active tools receive no
-signal. Deck's exit confirms the post-tool stop handshake. A surviving group is
-killed after TIMEOUT, and replacement is refused until every member has exited;
-zombies cannot write. Legacy drivers need no PID registration. The backend's
-endpoint proof remains required by fm-control.sh.
+output. Only a driver leading its own process group may be stopped. TERM stops
+the driver and its active Deck child; Deck 0.1.0 exits immediately and may
+interrupt an in-process tool. A surviving group is killed after TIMEOUT, and
+replacement is refused until every member has exited; zombies cannot write.
+Legacy drivers need no PID registration. The backend's endpoint proof remains
+required by fm-control.sh.
 """
 import ctypes
 import errno

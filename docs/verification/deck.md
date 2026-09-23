@@ -55,27 +55,14 @@ Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy
 Those reads, the driver's fallback append, and turn-end publication use Python 3 descriptor-bound I/O, reject symlinks and non-regular or multiply linked files, and never touch an unsafe target.
 The terminal regression drives two real `fm-send.sh` steers through tmux and proves delivery from the next `deck-wrapper` turn start after an idle baseline while each completed turn removes its transient rendered working row.
 
-## Driver lifecycle and deadline continuation
+## Driver lifecycle
 
 `bin/fm-deck-stop.py` owns the task-bound local driver stop proof used by both control-plane exit and the shared spawn-relaunch boundary; endpoint classification remains required independently.
-`bin/fm-deck-worker.sh` owns native deadline continuation and the per-turn deadline setting.
-Verified on 2026-09-23 with Deck 0.1.0 on macOS using a loopback HTTP server, without gateway credentials or model tokens:
-
-```sh
-bin/fm-test-run.sh tests/fm-deck-deadline-live-e2e.test.sh
-```
-
-Observed output:
-
-```text
-ok - deck 0.1.0: native deadline emits resumable session and exact run_failed reason
-```
-
-The guard pins the installed binary's nonzero exit, session-bearing `run_started`, and exact `run_failed` deadline error that enters the driver's deadline classifier.
-The portable driver regression proves that only an unfinished `no-mistakes axi run`, `gh run watch`, or `gh pr checks --watch` tool call resumes, while provider hangs and completed tools fail without continuation and a fixed cap of three rollovers during one driver lifetime stops repeated eligible deadlines.
-The same regression runs the driver, Deck executable, and state beneath paths containing spaces, signals fake Deck during tool A, and observes Deck's own signal receipt, tool A's result, Deck's exit, and the absence of tool B before the helper reports success.
+The portable regression runs the driver, Deck executable, and state beneath paths containing spaces and proves that TERM removes the active Deck process before replacement.
+Its fake Deck uses the binary's default TERM behavior: an active in-process tool is interrupted rather than allowed to complete, and no later tool starts.
+A second fixture ignores TERM and proves the bounded wait escalates the surviving isolated process group to KILL.
 Physical-state-alias and stale-generation relaunch regressions are in `tests/fm-deck-harness.test.sh` and `tests/fm-control-relaunch.test.sh`.
-Other harnesses retain their existing lifecycle and deadline behavior; this driver-only path does not alter backend transport or endpoint classifiers.
+Other harnesses retain their existing lifecycle behavior; this driver-only path does not alter backend transport or endpoint classifiers.
 
 ## Live check
 
