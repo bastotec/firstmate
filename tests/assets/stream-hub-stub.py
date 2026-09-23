@@ -20,6 +20,7 @@ test can measure rather than infer.
                            endpoint on every frame after those
   --accept-registrations N how many registrations to accept (-1 for all)
   --command-id ID          deliver one successful status command with this id
+  --delay-command-secs N   delay the first command response
   --fail-results-first N   refuse the first N result posts
   --result-file PATH       write the accepted result payload there
   --omit-result-capability omit result retry support from health
@@ -92,10 +93,13 @@ class Stub(http.server.BaseHTTPRequestHandler):
         if path == "/v1/agent/commands":
             with self.server.state["lock"]:
                 command_id = self.server.state["command_id"]
+                delay_command = self.server.state["delay_command_secs"]
                 send_command = bool(command_id and not self.server.state["command_sent"])
                 if send_command:
                     self.server.state["command_sent"] = True
             if send_command:
+                if delay_command > 0:
+                    time.sleep(delay_command)
                 self._json(200, {"ok": True, "commands": [{
                     "command_id": command_id,
                     "kind": "status",
@@ -170,6 +174,7 @@ def main() -> int:
     parser.add_argument("--frames-ok-first", type=int, default=1)
     parser.add_argument("--accept-registrations", type=int, default=-1)
     parser.add_argument("--command-id", default="")
+    parser.add_argument("--delay-command-secs", type=float, default=0.0)
     parser.add_argument("--fail-results-first", type=int, default=0)
     parser.add_argument("--result-file", default="")
     parser.add_argument("--omit-result-capability", action="store_true")
@@ -185,6 +190,7 @@ def main() -> int:
         "registrations": 0,
         "frames": 0,
         "command_id": options.command_id,
+        "delay_command_secs": options.delay_command_secs,
         "command_sent": False,
         "fail_results_first": options.fail_results_first,
         "result_attempts": 0,

@@ -589,11 +589,8 @@ class Agent:
         self.status_path = options.status_path
         self.stop = threading.Event()
         self.reader_done = threading.Event()
-        # Set while a command is being applied or acknowledged. A kill ends the
-        # endpoint, which ends this process, so without this the agent could
-        # exit between doing the work and reporting it - and the hub would then
-        # tell the caller the kill was never delivered when in fact it was.
-        self.command_busy = threading.Event()
+        # Coordinates the result retry with shutdown so an applied command gets
+        # its last bounded attempt before the publisher exits.
         self._result_retry_condition = threading.Condition()
         self._result_retry_deadline = None
         # Set when this agent has lost its name to another endpoint. It goes on
@@ -968,16 +965,12 @@ class Agent:
                 continue
             self._backoff = POLL_BACKOFF_MIN
             for command in answer.get("commands") or []:
-                self.command_busy.set()
+                ok, error = False, "the agent could not apply the command"
                 try:
-                    ok, error = False, "the agent could not apply the command"
-                    try:
-                        ok, error = self.apply_command(command)
-                    except Exception as exc:  # noqa: BLE001 - always answer the hub
-                        ok, error = False, str(exc)
-                    self.acknowledge_command(command, ok, error)
-                finally:
-                    self.command_busy.clear()
+                    ok, error = self.apply_command(command)
+                except Exception as exc:  # noqa: BLE001 - always answer the hub
+                    ok, error = False, str(exc)
+                self.acknowledge_command(command, ok, error)
 
     # --- lifecycle --------------------------------------------------------
 
@@ -997,16 +990,14 @@ class Agent:
         signal.signal(signal.SIGINT, _signalled)
 
         self.stop.wait()
-        # A kill is applied by the command loop and ends the endpoint, so the
-        # reader sees EOF and sets stop while that same command is still being
-        # acknowledged. Let the acknowledgement land before tearing down.
+        # A command poll already in flight can return one command after stop is
+        # set, so shutdown joins its thread rather than sampling transient work.
         deadline = time.monotonic() + RESULT_RETRY_SHUTDOWN_SECS
         with self._result_retry_condition:
             self._result_retry_deadline = deadline
             self._result_retry_condition.notify_all()
         until = deadline + 2 * RESULT_POST_TIMEOUT_SECS + 1.0
-        while self.command_busy.is_set() and time.monotonic() < until:
-            time.sleep(0.05)
+        commands.join(timeout=max(0.0, until - time.monotonic()))
         self.pty.close()
         # Join the reader before releasing the descriptor: see Pty.close.
         self.reader_done.wait(5.0)
