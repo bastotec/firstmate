@@ -844,11 +844,14 @@ test_relaunch_stops_stale_deck_driver_before_rotating_generation() {
 printf '{"type":"run_started","session":"old-session"}\n'
 printf 'working: stub waiting\n' >> "$FM_DECK_TEST_STATUS"
 touch "$FM_DECK_TEST_READY"
-sleep 60
+sleep 4
+touch "$FM_DECK_TEST_COMPLETED"
+printf '{"type":"run_finished","output":"x","turns":1}\n'
 SH
   chmod +x "$dir/fakebin/deck"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-stale)
   FM_DECK_TEST_STATUS="$dir/home/state/rl-deck-stale.status" FM_DECK_TEST_READY="$dir/ready" \
+    FM_DECK_TEST_COMPLETED="$dir/completed" \
     python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
     "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-stale --state "$dir/home/state" \
     --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
@@ -868,9 +871,55 @@ SH
   fi
   wait "$pid" 2>/dev/null || true
   expect_code 0 "$rc" "stale Deck driver relaunch should succeed: $out"
+  [ -e "$dir/completed" ] || fail "stale driver shutdown interrupted its active work"
   [ "$(cat "$dir/fake/command")" = deck ] || fail "replacement did not launch"
   assert_not_contains "$(cat "$dir/home/state/rl-deck-stale.status")" 'failed:' "old driver wrote a stale failure"
   pass "fm-control relaunch: stale Deck driver is gone before replacement launch"
+}
+
+test_live_deck_relaunch_uses_control_protocol_before_residual_stop() {
+  local dir out rc gen pid
+  dir=$(new_case live-deck-stop rl-deck-live)
+  add_ship_task "$dir" rl-deck-live deck
+  cat > "$dir/fakebin/deck" <<'SH'
+#!/usr/bin/env bash
+printf '{"type":"run_started","session":"live-session"}\n'
+touch "$FM_DECK_TEST_READY"
+i=0
+while [ "$i" -lt 400 ]; do
+  if grep -Fqx /quit "$FM_FAKE_DIR/literal"; then
+    touch "$FM_DECK_PROTOCOL_FIRST"
+    break
+  fi
+  sleep 0.05
+  i=$((i + 1))
+done
+printf '{"type":"run_finished","output":"x","turns":1}\n'
+SH
+  chmod +x "$dir/fakebin/deck"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-live)
+  FM_DECK_TEST_READY="$dir/ready" FM_DECK_PROTOCOL_FIRST="$dir/protocol-first" \
+    FM_FAKE_DIR="$dir/fake" \
+    python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
+    "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-live --state "$dir/home/state" \
+    --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; /bin/sleep 0.05; done
+  [ -e "$dir/ready" ] || fail "live Deck driver never started"
+  printf deck > "$dir/fake/command"
+  printf deck > "$dir/fake/becomes"
+  out=$(FM_TEST_EXIT_WAIT=5 run_control "$dir" rl-deck-live relaunch --note 'replace live driver'); rc=$?
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL -- -"$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "relaunch left the live Deck driver alive: $out"
+  fi
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$rc" "live Deck relaunch should succeed: $out"
+  assert_grep 'C-c' "$dir/fake/keys" "live Deck relaunch did not interrupt through control"
+  assert_grep '/quit' "$dir/fake/literal" "live Deck relaunch did not submit /quit"
+  [ -e "$dir/protocol-first" ] || fail "residual stop ran before the normal Deck control protocol"
+  pass "fm-control relaunch: Deck control protocol precedes residual process cleanup"
 }
 
 test_relaunch_onto_deck_with_effort_refuses_before_stop() {
@@ -2027,6 +2076,7 @@ test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
 test_relaunch_onto_verified_deck_replaces_the_agent
 test_relaunch_stops_stale_deck_driver_before_rotating_generation
+test_live_deck_relaunch_uses_control_protocol_before_residual_stop
 test_relaunch_onto_deck_with_effort_refuses_before_stop
 test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
