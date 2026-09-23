@@ -1,0 +1,8 @@
+FM_TEST_BEGIN 2026-09-23T14:05:37Z tests/fm-deck-host-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+deck 0.1.0
+startup completed; stable driver owns home lock
+PASS real Deck startup, handling-successor continuity, no parent turn-end wake, acknowledgement, and clean exit
+FM_TEST_END 2026-09-23T14:07:37Z tests/fm-deck-host-live-e2e.test.sh exit=0 duration_ms=119778 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=120064
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=1 duration_ms=119778 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-host-live-e2e.test.sh duration_ms=119778

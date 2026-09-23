@@ -1,0 +1,4 @@
+ok - Deck host preserves handling-successor supervision without parent turn-end wakes
+ok - fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model
+ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
+not ok - the underlying busy-event stderr was discarded from status
