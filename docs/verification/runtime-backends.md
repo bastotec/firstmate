@@ -1782,8 +1782,33 @@ The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
 
 ## stream
 
+### Deck home-host lifecycle
+
+Measured 2026-09-23 on macOS with Bash 3.2.57 and Python 3.9.6 using the portable fixtures, not live model calls.
+`FM_LIVE=0 bin/fm-test-run.sh tests/fm-deck-harness.test.sh` exercises the real Deck driver against a shimmed Deck binary; its native PTY regression reports:
+
+```text
+ok - Deck idle Ctrl+C stays a signal, not fake input, while partial input remains visible
+```
+
+`PATH="<setsid-shim-dir>:$PATH" SHELL=/bin/bash FM_LIVE=0 bin/fm-test-run.sh tests/fm-backend-stream.test.sh` exercises the shared driver, lifecycle control, and durable inbox through the real Python hub and agent.
+This host lacks a native `setsid` executable, so the shim performs Python `os.setsid()` followed by `os.execvp()`; native `setsid` and live Deck model calls are not proven by this run.
+The lifecycle case reports:
+
+```text
+ok - stream: idle Deck exits; genuine pending text refuses without stopping the host
+ok - stream: Deck launch, alive classification, durable steering, exit, relaunch and recovery
+ok - stream: Deck interrupt preserves a usable idle composer for exit
+```
+
+This is targeted lifecycle evidence, not a claim that the complete stream suite passes: the existing shell-died-at-birth refusal case also fails on the unchanged default branch in this environment.
+`tests/fm-stream-agent-kill-safety.test.sh` additionally exercises child SIGINT handling under default and ignored parent dispositions, proving that the child normalization leaves the parent unchanged.
+
+### Live harness identity
+
 The live evidence below was captured with Hub 2.0.0 (protocol 2) on 2026-09-17 on Linux with Python 3.14.4, curl 8.18.0, and jq 1.8.1.
 The current hub uses the newer wire protocol documented in [`stream-backend.md`](../stream-backend.md#when-the-hub-restarts), so rerun the guard before treating this as current evidence.
+
 
 The stream backend reads a different table by a different route than tmux does: the owning agent reads its own pseudoterminal's foreground process group, publishes it to the hub over HTTP, and the classifier sees a flattened command line rather than tmux's `comm` list.
 A defect in that reading, in the publish path, or in the freshness gate surfaces only here, which is why this guard exists beside the tmux one.

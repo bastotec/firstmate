@@ -113,7 +113,10 @@ mkfifo "$TURN_PIPE" || exit 1
 TTY_SETTINGS=''
 [ ! -t 0 ] || TTY_SETTINGS=$(stty -g 2>/dev/null || true)
 tty_busy() { [ -z "$TTY_SETTINGS" ] || stty icanon 2>/dev/null || true; }
-tty_ready() { [ -z "$TTY_SETTINGS" ] || stty -icanon min 1 time 0 2>/dev/null || true; }
+# Keep signal delivery and ordinary input echo enabled, but do not render
+# control-key furniture (^C) as if it were pending input on an idle prompt.
+# Unlike repainting, this leaves genuinely buffered partial input visible.
+tty_ready() { [ -z "$TTY_SETTINGS" ] || stty -icanon -echoctl min 1 time 0 2>/dev/null || true; }
 cleanup() {
   if [ -n "$TURN_PID" ]; then
     kill -TERM "$TURN_PID" 2>/dev/null || true

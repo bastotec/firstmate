@@ -1252,6 +1252,8 @@ PY
   assert_equals "$(with_stream_env fm_backend_composer_state stream "$target")" empty "idle Deck composer must be empty"
   with_stream_env fm_backend_stream_send_literal "$target" 'fixture pending input' || fail "could not type pending input"
   wait_for_capture "$target" 'fixture pending input' || fail "pending input was not rendered"
+  out=$(host_command fm-control.sh "$id" interrupt 2>&1) || fail "pending-input interrupt failed: $out"
+  assert_equals "$(with_stream_env fm_backend_composer_state stream "$target")" pending "interrupt concealed partial input"
   out=$(host_command fm-control.sh "$id" exit 2>&1) && fail "exit accepted genuine pending input"
   assert_contains "$out" 'composer visibly holds pending text' "exit did not preserve its pending-input guard"
   assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" alive "refused exit stopped the host"
@@ -1287,9 +1289,8 @@ PY
   wait_for_capture "$recovered" FIXTURE-TURN-DELIVERED || fail "recovered host never ran its charter"
   assert_present "$CASE_DIR/home/state/$id.inbox/001.msg" "recovery discarded an unacknowledged steer"
   pass "stream: Deck launch, alive classification, durable steering, exit, relaunch and recovery"
-  # Dependency: common PTY startup currently inherits ignored SIGINT. Keep the
-  # required post-interrupt exit assertion red until its owning fix lands;
-  # never relax the composer's pending-input guard to hide a literal ^C.
+  # An idle interrupt must not leave control-key echo masquerading as input.
+  # The earlier partial-input case proves this is not a blanket composer clear.
   wait_for_agent_state "$recovered" alive
   out=$(host_command fm-control.sh "$id" interrupt 2>&1) || fail "interrupt failed: $out"
   assert_contains "$out" interrupt-delivered "interrupt did not report its postcondition"
