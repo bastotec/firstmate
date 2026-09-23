@@ -145,7 +145,9 @@ Protocol-2 agents cannot register, while protocol-3 tail publishers remain visib
 Each internal HTTP order carries the hub generation returned by compatibility negotiation; a replacement hub rejects a stale generation before placement, the adapter renegotiates before retrying, and the Bridge `command`, `command_ack`, and `command_nack` records do not change.
 
 Reconciliation state lives in the hub's memory, not on disk.
-The journal retains at most 512 order ids, and while an id remains there an identical resend is answered from the original order, including when it overtakes the original placement; reuse with a different leaf, execution, or text is refused as an idempotency conflict.
+The journal retains bindings for the most recent 512 orders.
+While an id remains there, an identical resend is answered from the original order, including when it overtakes the original placement; reuse with a different leaf, execution, or text is refused as an idempotency conflict.
+A retry after more than 512 newer orders is not guaranteed to be deduplicated.
 An order whose membership remains unresolved keeps that binding, while an identical resend may retry placement because no command was created.
 A taken command remains eligible for a late agent acknowledgement and a completed result remains idempotently answerable for at least 15 minutes, and an endpoint whose worker exits while acknowledgement is retrying keeps its publisher alive while the result can still settle.
 A definitive result rejection - including capability revocation after the hub closes the endpoint - or retry expiry ends retrying so the closing frame can publish and later commands can still be polled, while the caller's unresolved order remains unconfirmed.
