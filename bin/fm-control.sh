@@ -562,21 +562,20 @@ retire_busy_incarnation() {
   fi
 }
 
+stop_deck_residual_drivers() {
+  [ "$HARNESS" != deck ] || python3 "$SCRIPT_DIR/fm-deck-stop.py" "$STATE" "$ID" "$EXIT_WAIT" \
+    || die "the prior Deck driver has not been proved stopped; refusing replacement"
+}
+
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped` or `stopped`.
 do_exit() {
   local state cmd verdict composer_state cancel interrupt_result=not-needed
   require_state_verified_backend exit "the agent actually stopped"
-  if [ "$HARNESS" = deck ]; then
-    # A stale driver can outlive the foreground turn the backend observes.
-    # Stop and prove its exact task-bound process group gone before trusting
-    # the endpoint's dead verdict or allowing spawn to rotate the generation.
-    python3 "$SCRIPT_DIR/fm-deck-stop.py" "$STATE" "$ID" "$EXIT_WAIT" \
-      || die "the prior Deck driver has not been proved stopped; refusing replacement"
-  fi
   state=$(agent_state)
   case "$state" in
     dead)
+      stop_deck_residual_drivers
       printf 'already-stopped'
       return 0
       ;;
@@ -591,6 +590,7 @@ do_exit() {
       state=$(agent_state)
       case "$state" in
         dead)
+          stop_deck_residual_drivers
           retire_busy_incarnation
           printf 'stopped'
           return 0
@@ -628,6 +628,7 @@ do_exit() {
   }
   # The incarnation is over: retire its busy wiring so no stale record or
   # orphaned generation survives the agent that produced it.
+  stop_deck_residual_drivers
   retire_busy_incarnation
   printf 'stopped'
 }

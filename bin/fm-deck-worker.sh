@@ -139,6 +139,7 @@ interrupt_turn() {
   [ -z "$TURN_PID" ] || kill -TERM "$TURN_PID" 2>/dev/null || true
 }
 trap interrupt_turn INT
+trap 'exit 0' TERM
 
 busy_event() {  # <busy|idle> <event>
   "$BUSY_EVENT" apply "$STATE" "$ID" "$1" --gen "$GEN" --source deck-wrapper --event "$2" >/dev/null

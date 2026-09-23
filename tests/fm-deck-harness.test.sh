@@ -426,10 +426,41 @@ test_completed_turn_removes_busy_ack_before_the_next_steer() {
   pass "fm-deck-worker: each completed turn leaves the next steer an idle baseline"
 }
 
-test_driver_stop_is_scoped_and_refuses_surviving_groups() {
-  local dir="$TMP_ROOT/stop-refusal" pid rc
+test_driver_stop_waits_for_active_work_and_resolves_state_alias() {
+  local dir="$TMP_ROOT/stop-graceful" physical alias pid
+  physical="$dir/physical-state"
+  alias="$dir/state-alias"
+  mkdir -p "$physical"
+  ln -s "$physical" "$alias"
+  cat > "$dir/deck" <<'SH'
+#!/usr/bin/env bash
+printf '{"type":"run_started","session":"stop-session"}\n'
+: > "$FM_DECK_READY"
+sleep 0.4
+: > "$FM_DECK_COMPLETED"
+printf '{"type":"run_finished","output":"x","turns":1}\n'
+SH
+  chmod +x "$dir/deck"
+  local gen
+  gen=$("$BUSY_EVENT" arm "$physical" owned)
+  FM_DECK_READY="$dir/ready" FM_DECK_COMPLETED="$dir/completed" \
+    python3 -c \
+      'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
+      "$WORKER" --id owned --state "$(cd "$physical" && pwd -P)" --gen "$gen" \
+      --deck "$dir/deck" -- old-brief </dev/null > "$dir/pane.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; sleep 0.05; done
+  [ -e "$dir/ready" ] || fail "graceful stop fixture did not start"
+  python3 "$ROOT/bin/fm-deck-stop.py" "$alias" owned 2 \
+    || fail "the aliased state path did not stop its physical driver"
+  wait "$pid" 2>/dev/null || fail "the gracefully stopped driver failed"
+  [ -e "$dir/completed" ] || fail "Deck stop interrupted active work"
+  pass "Deck stop: state aliases match and active work finishes before exit"
+}
+
+test_driver_stop_is_scoped_and_escalates_after_timeout() {
+  local dir="$TMP_ROOT/stop-escalation" pid
   mkdir -p "$dir/state"
-  # Keep the driver's launch identity while it refuses TERM.
   cat > "$dir/fm-deck-worker.sh" <<'SH'
 #!/usr/bin/env bash
 trap '' TERM
@@ -442,16 +473,14 @@ SH
     </dev/null > "$dir/pane.out" 2>&1 &
   pid=$!
   for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; sleep 0.1; done
-  [ -e "$dir/ready" ] || fail "stop refusal fixture did not start"
+  [ -e "$dir/ready" ] || fail "stop escalation fixture did not start"
   python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" other 1 || fail "unrelated task stop refused"
   kill -0 "$pid" 2>/dev/null || fail "stopping another task killed this driver"
-  rc=0
-  python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned 0.3 > "$dir/stop.out" 2>&1 || rc=$?
-  kill -KILL -- -"$pid" 2>/dev/null || true
+  python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned 0.3 \
+    || fail "the timed-out driver group was not escalated"
   wait "$pid" 2>/dev/null || true
-  [ "$rc" -ne 0 ] || fail "a surviving driver was accepted as stopped"
-  assert_grep 'has not stopped' "$dir/stop.out" "surviving group refusal lost its diagnostic"
-  pass "Deck stop: exact task scope and surviving process groups fail closed"
+  kill -0 "$pid" 2>/dev/null && fail "the timed-out driver survived escalation"
+  pass "Deck stop: exact task scope and bounded escalation remove survivors"
 }
 
 test_liveness_reads_the_driver_as_an_agent() {
@@ -830,7 +859,8 @@ test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
 test_completed_turn_removes_busy_ack_before_the_next_steer
-test_driver_stop_is_scoped_and_refuses_surviving_groups
+test_driver_stop_waits_for_active_work_and_resolves_state_alias
+test_driver_stop_is_scoped_and_escalates_after_timeout
 test_liveness_reads_the_driver_as_an_agent
 test_tmux_liveness_uses_the_deck_driver_argv0
 test_control_busy_and_delivery_tables_name_deck
