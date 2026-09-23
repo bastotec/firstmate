@@ -145,6 +145,7 @@ Each internal HTTP order carries the hub generation returned by compatibility ne
 
 Reconciliation state lives in the hub's memory, not on disk.
 The journal retains at most 512 order ids, and while an id remains there an identical resend is answered from the original order, including when it overtakes the original placement; reuse with a different leaf, execution, or text is refused as an idempotency conflict.
+An order whose membership remains unresolved keeps that binding, while an identical resend may retry placement because no command was created.
 A taken command remains eligible for a late agent acknowledgement and a completed result remains idempotently answerable for at least 15 minutes, and an endpoint whose worker exits while acknowledgement is retrying keeps its publisher alive through the same window; a definitive command-id rejection or expiry ends retrying so later commands can still be polled, while the caller's unresolved order remains unconfirmed.
 A hub restart empties the journal along with the registry, so a resend after restart is a new order and cannot reconcile delivery from before the restart.
 

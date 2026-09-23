@@ -1551,7 +1551,9 @@ class Hub:
         from the instant its placement begins. A resend arriving while that
         call is still working - resolving a rejoining leaf, waiting out an
         acknowledgement - finds this record and is answered from it, so the
-        order's text is typed once however many times its id is sent.
+        order's text is typed once however many times its id is sent. An
+        identical resend may retry a placement that reached no membership
+        verdict and therefore created no command.
         """
         with self.lock:
             winner = self.orders.get(order.order_id)
@@ -1563,6 +1565,10 @@ class Hub:
                         HTTPStatus.CONFLICT, "order_id_conflict",
                         "order_id %s is already bound to a different order"
                         % order.order_id)
+                if winner.uncertainty is not None:
+                    order.created_at = winner.created_at
+                    self.orders[order.order_id] = order
+                    return order
                 return winner
             self.orders[order.order_id] = order
             while len(self.orders) > ORDER_JOURNAL_MAX:
@@ -1619,9 +1625,6 @@ class Hub:
                     "membership_unresolved",
                     "this hub holds no endpoint for leaf %s, which is not evidence that "
                     "its worker is gone" % leaf)
-                with self.lock:
-                    if self.orders.get(order.order_id) is order:
-                        self.orders.pop(order.order_id, None)
                 return order
 
             if current.endpoint_id != requested_execution:
