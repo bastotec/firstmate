@@ -157,8 +157,9 @@ CMD (default the fm-crew-state.sh beside this script), --fleet-id.
 
 Live subcommands negotiate protocol 2 and the hub's `current_execution`
 capability before doing work; `command` additionally requires
-`idempotent_command_results` and `result_retry_orderability`.  An older running
-hub is refused with a diagnostic
+`idempotent_command_results` and `result_retry_orderability`, and binds each
+order to the generation returned by that negotiation.  An older running hub is
+refused with a diagnostic
 to restart or upgrade it; offline `translate` needs no hub negotiation.
 
 Exit status: 0 on success; 2 on a usage error, a refused credential, or an
@@ -342,6 +343,7 @@ class HubClient:
     def __init__(self, url: str, token: str) -> None:
         self.url = url.rstrip("/")
         self.token = token
+        self.command_generation = None
 
     def post(self, path: str, payload: dict) -> tuple:
         """(status, body) for a write, where a REFUSAL is an answer, not a failure.
@@ -416,6 +418,13 @@ class HubClient:
                 "the hub at %s does not advertise the %s capability; restart or "
                 "upgrade the hub before starting this bridge"
                 % (self.url, missing[0]))
+        if require_result_retry:
+            generation = health.get("generation")
+            if not isinstance(generation, str) or not generation:
+                raise BridgeError(
+                    "the hub at %s does not advertise an order generation; restart or "
+                    "upgrade the hub before starting this bridge" % self.url)
+            self.command_generation = generation
 
 
 class Clock:
@@ -507,14 +516,25 @@ class Commander:
         if not isinstance(execution, str) or not ENDPOINT_ID_RE.match(execution):
             return [self.ack(command_id, leaf, "refused",
                              "a steer needs a valid execution_id")]
-        status, body = self.client.post("/v1/orders", {
+        order = {
             "leaf_worker_id": leaf,
             "execution_id": execution,
             "order_id": command_id,
             "text": text,
             "submit": True,
-        })
-        return self.answer(command_id, leaf, status, body)
+        }
+        for attempt in range(2):
+            order["hub_generation"] = self.client.command_generation
+            status, body = self.client.post("/v1/orders", order)
+            error = body.get("error") if isinstance(body, dict) else ""
+            if error not in ("hub_generation_changed", "bad_order_fields"):
+                return self.answer(command_id, leaf, status, body)
+            if attempt:
+                raise BridgeError("the hub generation changed again while placing command %s"
+                                  % command_id)
+            self.client.check_compatibility(require_result_retry=True)
+        raise BridgeError("the hub generation could not be established for command %s"
+                          % command_id)
 
     def answer(self, command_id: str, leaf: str, status: int, body: dict) -> list:
         outcome = body.get("outcome")
