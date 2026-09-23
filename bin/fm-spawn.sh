@@ -42,7 +42,9 @@
 #   ordinary relaunch. It refuses unless the recorded endpoint is positively
 #   agent-free on a backend with a recovery-grade agent-state classifier (tmux
 #   or herdr), and clears the previous harness's per-task wiring before arming
-#   the new incarnation. The replacement still never starts outside the copy
+#   the new incarnation. A relaunch whose recorded prior harness is Deck also
+#   proves every task-bound residual Deck driver stopped before that new
+#   incarnation is armed. The replacement still never starts outside the copy
 #   holding the work: a Herdr shell that has drifted out of the recorded
 #   worktree is told once to return, and only a shell that will not go refuses.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old

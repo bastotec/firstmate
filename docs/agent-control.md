@@ -31,7 +31,7 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | Verb | Effect | Postcondition |
 | --- | --- | --- |
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
-| `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. |
+| `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Deck additionally requires the task-bound residual-driver proof owned by its [adapter reference](../.agents/skills/harness-adapters/references/harness/deck.md). Already-stopped is idempotent success. |
 | `relaunch` | Replace the running agent with a new one in the same endpoint and worktree, on the exact recorded adapter or an explicitly chosen harness, model, effort, and account slot. | The new agent is alive on the recorded endpoint, and the durable record names the harness that is actually running. |
 | `recover-missing` | Recreate the exact recorded terminal for a task whose tmux endpoint is missing - the window alone, or the whole session it lived in - then hand the launch to the existing owner (`fm-spawn.sh --relaunch`) on the recorded harness, model, effort, and account slot. | The backend's recovery-grade classifier proves the agent was missing, an unavailable or otherwise-owned local copy refuses rather than repairing, and the new agent is alive on the exact recreated terminal. |
 
@@ -155,6 +155,7 @@ There are two ways out:
   Only a positively classified state acts.
 - `exit`'s composer-empty check, above, is itself a fail-closed boundary that `relaunch` inherits by stopping the old agent through `exit`.
 - `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free, so a replacement can never join a live agent.
+  When the recorded prior harness is Deck, it also requires the adapter's residual-driver proof before arming the new incarnation, including when an operator invokes the already-stopped relaunch boundary directly.
   It also requires the shell to be in the recorded worktree: tmux refuses immediately when it is not, while Herdr sends one `cd` to the recorded path and refuses unless a subsequent path read confirms the move.
 
 ## Capability matrix
