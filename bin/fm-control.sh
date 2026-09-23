@@ -33,7 +33,8 @@
 #              every uncommitted change. Interrupts first when the task reads
 #              busy, then submits the harness's exit command. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
-#              Already-stopped is success (idempotent).
+#              For Deck, it also proves any task-bound residual driver process
+#              group stopped. Already-stopped is success (idempotent).
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME endpoint and SAME worktree, on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
@@ -562,6 +563,11 @@ retire_busy_incarnation() {
   fi
 }
 
+stop_deck_residual_drivers() {
+  [ "$HARNESS" != deck ] || python3 "$SCRIPT_DIR/fm-deck-stop.py" "$STATE" "$ID" "$EXIT_WAIT" \
+    || die "the prior Deck driver has not been proved stopped; refusing replacement"
+}
+
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped` or `stopped`.
 do_exit() {
@@ -570,6 +576,7 @@ do_exit() {
   state=$(agent_state)
   case "$state" in
     dead)
+      stop_deck_residual_drivers
       printf 'already-stopped'
       return 0
       ;;
@@ -584,6 +591,7 @@ do_exit() {
       state=$(agent_state)
       case "$state" in
         dead)
+          stop_deck_residual_drivers
           retire_busy_incarnation
           printf 'stopped'
           return 0
@@ -621,6 +629,7 @@ do_exit() {
   }
   # The incarnation is over: retire its busy wiring so no stale record or
   # orphaned generation survives the agent that produced it.
+  stop_deck_residual_drivers
   retire_busy_incarnation
   printf 'stopped'
 }

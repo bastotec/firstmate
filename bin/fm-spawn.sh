@@ -42,7 +42,9 @@
 #   ordinary relaunch. It refuses unless the recorded endpoint is positively
 #   agent-free on a backend with a recovery-grade agent-state classifier (tmux
 #   or herdr), and clears the previous harness's per-task wiring before arming
-#   the new incarnation. The replacement still never starts outside the copy
+#   the new incarnation. A relaunch whose recorded prior harness is Deck also
+#   proves every task-bound residual Deck driver stopped before that new
+#   incarnation is armed. The replacement still never starts outside the copy
 #   holding the work: a Herdr shell that has drifted out of the recorded
 #   worktree is told once to return, and only a shell that will not go refuses.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
@@ -3596,6 +3598,13 @@ mkdir -p "$TASK_TMP/gotmp"
 mkdir -p "$STATE"
 STATE_REAL=$(cd "$STATE" && pwd -P)
 TURNEND="$STATE_REAL/$ID.turn-ended"
+if [ "$RELAUNCH" -eq 1 ] && [ "$RELAUNCH_PRIOR_HARNESS" = deck ]; then
+  python3 "$FM_ROOT/bin/fm-deck-stop.py" "$STATE_REAL" "$ID" "${FM_CONTROL_EXIT_WAIT:-30}" \
+    || {
+      echo "error: the prior Deck driver has not been proved stopped; refusing replacement" >&2
+      exit 1
+    }
+fi
 exclude_path() {
   local rel=$1 EXCL
   EXCL=$(git -C "$WT" rev-parse --git-path info/exclude 2>/dev/null || true)

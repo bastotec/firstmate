@@ -57,11 +57,11 @@ make_fake_deck() {  # <dir>
 #!/usr/bin/env bash
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/argv.log"
-prompt=$2; session=''; gate=''
+prompt=$2; session=''; gate=''; progress=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --session) session=$2; shift 2 ;;
-    --hook) case "$2" in pre_complete=*) gate=${2#pre_complete=} ;; esac; shift 2 ;;
+    --hook) case "$2" in pre_complete=*) gate=${2#pre_complete=} ;; post_tool_use=*) progress=${2#post_tool_use=} ;; esac; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -84,6 +84,7 @@ case "$prompt" in
     bash -c 'printf "%s\n" "$$" > "$1/interrupt-ready"; exec sleep 30' _ "$dir"
     ;;
 esac
+[ -z "$progress" ] || bash -c "$progress" </dev/null || true
 if [ -n "$gate" ]; then
   if bash -c "$gate" </dev/null 2>>"$dir/gate.err"; then
     echo pass >> "$dir/gate.log"
@@ -170,6 +171,10 @@ test_busy_state_failures_stop_turns_and_publish_status() {
   assert_grep 'failed: deck wrapper could not record busy-state event (turn-start)' "$start/state/t1.status" \
     "a refused turn-start did not publish a failure status"
 
+  assert_grep 'stale busy-state gen for t1' "$start/state/t1.status" \
+    "the underlying busy-event stderr was discarded from status"
+  assert_grep 'stale busy-state gen for t1' "$start/pane.out" \
+    "the underlying busy-event stderr was discarded from the pane"
   make_fake_deck "$close"
   rc=0
   run_worker "$close" $'/quit\n' 'write-status replace-busy-gen' || rc=$?
@@ -178,6 +183,10 @@ test_busy_state_failures_stop_turns_and_publish_status() {
     "the close-event fixture did not publish its normal turn evidence"
   assert_grep 'failed: deck wrapper could not record busy-state event (turn-end)' "$close/state/t1.status" \
     "a refused turn-end did not publish a failure status"
+  assert_grep 'failed: deck wrapper could not refresh progress: error: stale busy-state gen' "$close/state/t1.status" \
+    "the progress hook discarded its failure diagnostic"
+  assert_grep 'stale busy-state gen for t1' "$close/pane.out" \
+    "the progress hook discarded stderr from the pane"
   assert_grep 'could not record busy-state event turn-end' "$close/pane.out" \
     "a refused turn-end was not surfaced in the worker pane"
   pass "fm-deck-worker: busy-state failures stop turns and publish status evidence"
@@ -392,6 +401,145 @@ test_completed_turn_removes_busy_ack_before_the_next_steer() {
   tmux kill-session -t "$session" 2>/dev/null || true
   expect_code 0 "$rc" "the second Deck steer was not confirmed from an idle baseline: $(cat "$dir/second.err")"
   pass "fm-deck-worker: each completed turn leaves the next steer an idle baseline"
+}
+
+test_driver_stop_terminates_active_deck_and_resolves_spaced_paths() {
+  local dir="$TMP_ROOT/stop graceful with spaces" install physical alias deck worker stop pid gen rc
+  install="$dir/install with spaces/bin"
+  physical="$dir/physical state"
+  alias="$dir/state alias"
+  deck="$dir/deck binary"
+  worker="$install/fm-deck-worker.sh"
+  stop="$install/fm-deck-stop.py"
+  mkdir -p "$install" "$physical"
+  cp "$WORKER" "$BUSY_EVENT" "$ROOT/bin/fm-busy-lib.sh" \
+    "$ROOT/bin/fm-state-io.py" "$ROOT/bin/fm-deck-stop.py" "$install/"
+  ln -s "$physical" "$alias"
+  cat > "$deck" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import time
+
+print(json.dumps({"type": "run_started", "session": "stop-session"}), flush=True)
+print(json.dumps({"type": "tool_call", "id": "a", "name": "run_command", "arguments": {"command": "tool-a"}}), flush=True)
+open(os.environ["FM_DECK_READY"], "w").close()
+time.sleep(10)
+open(os.environ["FM_DECK_TOOL_A_COMPLETED"], "w").close()
+print(json.dumps({"type": "tool_result", "id": "a", "name": "run_command", "duration_ms": 10000, "output": "tool-a complete"}), flush=True)
+open(os.environ["FM_DECK_TOOL_B_STARTED"], "w").close()
+print(json.dumps({"type": "tool_call", "id": "b", "name": "run_command", "arguments": {"command": "tool-b"}}), flush=True)
+time.sleep(10)
+PY
+  chmod +x "$deck"
+  gen=$("$install/fm-busy-event.sh" arm "$physical" owned)
+  FM_DECK_READY="$dir/ready" FM_DECK_TOOL_A_COMPLETED="$dir/tool-a-completed" \
+    FM_DECK_TOOL_B_STARTED="$dir/tool-b-started" \
+    python3 -c \
+      'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
+      "$worker" --id owned --state "$(cd "$physical" && pwd -P)" --gen "$gen" \
+      --deck "$deck" -- old-brief </dev/null > "$dir/pane.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; sleep 0.05; done
+  [ -e "$dir/ready" ] || fail "post-tool stop fixture did not start"
+  python3 "$stop" "$alias" owned 2 \
+    || fail "spaced physical paths did not identify and stop the Deck driver"
+  rc=0
+  wait "$pid" 2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ] || fail "the abruptly TERM-stopped driver reported success"
+  [ ! -e "$dir/tool-a-completed" ] || fail "Deck TERM unexpectedly let the active in-process tool complete"
+  [ ! -e "$dir/tool-b-started" ] || fail "Deck started another tool after TERM"
+  pass "Deck stop: physical aliases and spaced paths stop the active Deck process"
+}
+
+test_stale_secondmate_driver_is_stopped_at_relaunch_boundary() {
+  local dir="$TMP_ROOT/stop-secondmate" install state worker stop pid
+  install="$dir/install/bin"
+  state="$dir/state"
+  worker="$install/fm-deck-worker.sh"
+  stop="$install/fm-deck-stop.py"
+  mkdir -p "$install" "$state"
+  cp "$ROOT/bin/fm-deck-stop.py" "$stop"
+  cat > "$worker" <<'SH'
+#!/usr/bin/env bash
+trap 'exit 0' TERM
+: > "$FM_DECK_READY"
+while :; do :; done
+SH
+  chmod +x "$worker"
+  FM_DECK_READY="$dir/ready" python3 -c \
+    'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
+    "$worker" --secondmate --id stale-host --state "$state" --gen stale-generation \
+    --deck "$dir/deck" -- old-charter </dev/null > "$dir/pane.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; sleep 0.05; done
+  [ -e "$dir/ready" ] || fail "stale secondmate driver fixture did not start"
+  python3 "$stop" "$state" stale-host 1 \
+    || fail "the relaunch boundary refused to stop a stale secondmate driver"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL -- -"$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "the relaunch boundary skipped a stale secondmate driver"
+  fi
+  wait "$pid" 2>/dev/null || true
+  : > "$dir/replacement-armed"
+  [ -e "$dir/replacement-armed" ] || fail "replacement was not armed after the secondmate stop proof"
+  pass "Deck stop: stale secondmate drivers stop before replacement arming"
+}
+
+test_driver_stop_is_scoped_and_escalates_after_timeout() {
+  local dir="$TMP_ROOT/stop-escalation" pid gen
+  mkdir -p "$dir/state"
+  cat > "$dir/deck" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import time
+
+def term(*_):
+    open(os.environ["FM_DECK_SIGNALLED"], "a").close()
+
+
+signal.signal(signal.SIGTERM, term)
+print(json.dumps({"type": "run_started", "session": "stuck-session"}), flush=True)
+open(os.environ["FM_DECK_READY"], "w").close()
+while True:
+    time.sleep(60)
+PY
+  chmod +x "$dir/deck"
+  gen=$("$BUSY_EVENT" arm "$dir/state" owned)
+  FM_DECK_READY="$dir/ready" FM_DECK_SIGNALLED="$dir/signalled" python3 -c \
+    'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
+    "$WORKER" --id owned --state "$dir/state" --gen "$gen" --deck "$dir/deck" -- old-brief \
+    </dev/null > "$dir/pane.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; sleep 0.1; done
+  [ -e "$dir/ready" ] || fail "stop escalation fixture did not start"
+  python3 - "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned <<'PY' \
+    || fail "non-finite stop timeouts were not rejected promptly"
+import subprocess
+import sys
+
+helper, state, task = sys.argv[1:]
+for timeout in ("nan", "inf", "-inf"):
+    result = subprocess.run(
+        [sys.executable, helper, state, task, timeout],
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    assert result.returncode != 0, timeout
+    assert "timeout must be finite" in result.stderr, (timeout, result.stderr)
+PY
+  [ ! -e "$dir/signalled" ] || fail "a non-finite timeout signalled the Deck process before refusal"
+  python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" other 1 || fail "unrelated task stop refused"
+  kill -0 "$pid" 2>/dev/null || fail "stopping another task killed this driver"
+  python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned 0.3 \
+    || fail "the timed-out driver group was not escalated"
+  wait "$pid" 2>/dev/null || true
+  kill -0 "$pid" 2>/dev/null && fail "the timed-out driver survived escalation"
+  pass "Deck stop: exact task scope and bounded escalation remove survivors"
 }
 
 test_liveness_reads_the_driver_as_an_agent() {
@@ -769,6 +917,9 @@ test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
 test_completed_turn_removes_busy_ack_before_the_next_steer
+test_driver_stop_terminates_active_deck_and_resolves_spaced_paths
+test_stale_secondmate_driver_is_stopped_at_relaunch_boundary
+test_driver_stop_is_scoped_and_escalates_after_timeout
 test_liveness_reads_the_driver_as_an_agent
 test_tmux_liveness_uses_the_deck_driver_argv0
 test_control_busy_and_delivery_tables_name_deck

@@ -137,13 +137,17 @@ interrupt_turn() {
 trap interrupt_turn INT
 
 busy_event() {  # <busy|idle> <event>
-  "$BUSY_EVENT" apply "$STATE" "$ID" "$1" --gen "$GEN" --source deck-wrapper --event "$2" >/dev/null 2>&1
+  "$BUSY_EVENT" apply "$STATE" "$ID" "$1" --gen "$GEN" --source deck-wrapper --event "$2" >/dev/null
 }
 
 record_busy_event() {  # <busy|idle> <event>
-  local state=$1 event=$2
-  busy_event "$state" "$event" && return 0
-  if ! printf 'failed: deck wrapper could not record busy-state event (%s)\n' "$event" | status_append; then
+  local state=$1 event=$2 diagnostic
+  diagnostic=$(busy_event "$state" "$event" 2>&1) && return 0
+  printf '%s\n' "$diagnostic" >&2
+  # A diagnostic is one status event even when the helper writes several lines.
+  diagnostic=${diagnostic//$'\n'/; }
+  diagnostic=${diagnostic//$'\r'/ }
+  if ! printf 'failed: deck wrapper could not record busy-state event (%s): %s\n' "$event" "$diagnostic" | status_append; then
     printf 'fm-deck-worker: busy-state event %s failed and its status could not be published to %s\n' "$event" "$STATUS_FILE" >&2
     return 1
   fi
@@ -297,7 +301,7 @@ watch_maintain() {
 # line after the byte offset recorded at turn start. Deck feeds this stderr back
 # to the model and fails the run after its own bounded number of refusals.
 EVIDENCE_HOOK="python3 $(q "$STATE_IO") root-worker-status-after $(q "$STATE") $(q "$ID.status") \"\$(cat $(q "$TURN_MARK") 2>/dev/null || echo 0)\" 2>/dev/null || { echo $(q "Before you finish, append one line to $STATUS_FILE as your instructions' status protocol describes (done:, needs-decision:, blocked:, failed:, or working:), stating what you did and the evidence. Then finish.") >&2; exit 2; }"
-PROGRESS_HOOK="$(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID") --gen $(q "$GEN") >/dev/null 2>&1 || { echo $(q "fm-deck-worker: could not refresh Deck progress state") >&2; exit 1; }"
+PROGRESS_HOOK="diagnostic=\$($(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID") --gen $(q "$GEN") 2>&1 >/dev/null) || { printf '%s\\n' \"\$diagnostic\" >&2; diagnostic=\$(printf '%s' \"\$diagnostic\" | tr '\\n\\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\\n' \"\$diagnostic\" | python3 $(q "$STATE_IO") root-append $(q "$STATE") $(q "$ID.status"); exit 1; }"
 
 # Readable pane rendering of Deck's event stream. Reasoning and usage events
 # are bookkeeping and stay out of the pane.
