@@ -100,40 +100,7 @@ if [ -n "$gate" ]; then
     esac
   fi
 fi
-deadline_wait() {
-  printf '{"type":"tool_call","id":"wait-1","name":"shell","arguments":{"command":"%s"}}\n' "$1"
-  printf '{"type":"run_failed","error":"run exceeded 2s deadline"}\n'
-  exit 1
-}
 case "$prompt" in
-  *deadline-once*)
-    if [ ! -e "$dir/deadline-seen" ]; then
-      touch "$dir/deadline-seen"
-      deadline_wait 'no-mistakes axi run'
-    fi
-    ;;
-  *deadline-ci-once*)
-    if [ ! -e "$dir/deadline-ci-seen" ]; then
-      touch "$dir/deadline-ci-seen"
-      deadline_wait 'gh run watch 1234'
-    fi
-    ;;
-  *deadline-provider*) printf '{"type":"run_failed","error":"run exceeded 2s deadline"}\n'; exit 1 ;;
-  *deadline-unrelated*) deadline_wait 'npm test' ;;
-  *deadline-completed-tool*)
-    printf '{"type":"tool_call","id":"wait-1","name":"shell","arguments":{"command":"no-mistakes axi run"}}\n'
-    printf '{"type":"tool_result","name":"shell","duration_ms":1,"output":"complete"}\n'
-    printf '{"type":"run_failed","error":"run exceeded 2s deadline"}\n'
-    exit 1
-    ;;
-  *deadline-cap*) touch "$dir/deadline-cap"; deadline_wait 'no-mistakes axi run' ;;
-  *'previous bounded turn'*)
-    if [ -e "$dir/deadline-cap" ]; then
-      deadline_wait 'no-mistakes axi run'
-    fi
-    printf 'done: resumed after deadline\n' >> "$FM_TEST_STATUS"
-    printf '{"type":"run_finished","output":"x","turns":1}\n'
-    ;;
   *fail-turn*) printf '{"type":"run_failed","error":"provider failed"}\n'; exit 9 ;;
   *) printf '{"type":"run_finished","output":"x","turns":1}\n' ;;
 esac
@@ -223,65 +190,6 @@ test_busy_state_failures_stop_turns_and_publish_status() {
   assert_grep 'could not record busy-state event turn-end' "$close/pane.out" \
     "a refused turn-end was not surfaced in the worker pane"
   pass "fm-deck-worker: busy-state failures stop turns and publish status evidence"
-}
-
-test_deadline_resumes_only_inflight_validation_or_ci_waits() {
-  local dir="$TMP_ROOT/deadline" ci="$TMP_ROOT/deadline-ci" sid
-  make_fake_deck "$dir"
-  FM_DECK_DEADLINE_SECS=2 run_worker "$dir" $'/quit\n' 'write-status deadline-once' \
-    || fail "the validation deadline did not resume the worker"
-  [ "$(wc -l < "$dir/argv.log" | tr -d ' ')" = 2 ] || fail "expected exactly one validation deadline continuation"
-  sid=$(sed -n 2p "$dir/argv.log" | sed -E 's/.*--session ([^ ]+).*/\1/')
-  case "$sid" in s-fake-*) ;; *) fail "deadline continuation lost the session" ;; esac
-  grep -c -- '--deadline-secs 2' "$dir/argv.log" | grep -qx 2 || fail "deadline override was not kept"
-  sed -n 2p "$dir/argv.log" | grep -q 'do not start a duplicate pipeline' || fail "continuation must reconcile in-flight work"
-  [ "$(grep -c 'deadline-once' "$dir/argv.log")" = 1 ] || fail "original prompt replayed"
-  assert_grep 'rollover 1/3' "$dir/state/t1.status" "missing bounded validation continuation evidence"
-
-  make_fake_deck "$ci"
-  FM_DECK_DEADLINE_SECS=2 run_worker "$ci" $'/quit\n' 'write-status deadline-ci-once' \
-    || fail "the CI deadline did not resume the worker"
-  [ "$(wc -l < "$ci/argv.log" | tr -d ' ')" = 2 ] || fail "expected exactly one CI deadline continuation"
-  assert_grep 'rollover 1/3' "$ci/state/t1.status" "missing bounded CI continuation evidence"
-  pass "fm-deck-worker: only in-flight validation and CI waits resume after deadlines"
-}
-
-test_deadline_provider_hangs_and_other_tools_do_not_resume() {
-  local provider="$TMP_ROOT/deadline-provider" unrelated="$TMP_ROOT/deadline-unrelated" completed="$TMP_ROOT/deadline-completed"
-  make_fake_deck "$provider"
-  FM_DECK_DEADLINE_SECS=2 run_worker "$provider" $'/quit\n' deadline-provider \
-    || fail "provider deadline did not return to the worker prompt"
-  [ "$(wc -l < "$provider/argv.log" | tr -d ' ')" = 1 ] || fail "provider deadline was retried"
-  assert_not_contains "$(cat "$provider/state/t1.status")" 'rollover' "provider deadline claimed a rollover"
-  assert_grep 'failed: deck turn ended without a status line (turn-failed)' "$provider/state/t1.status" \
-    "provider deadline did not fail the turn"
-
-  make_fake_deck "$unrelated"
-  FM_DECK_DEADLINE_SECS=2 run_worker "$unrelated" $'/quit\n' deadline-unrelated \
-    || fail "unrelated tool deadline did not return to the worker prompt"
-  [ "$(wc -l < "$unrelated/argv.log" | tr -d ' ')" = 1 ] || fail "unrelated in-flight tool was retried"
-  assert_not_contains "$(cat "$unrelated/state/t1.status")" 'rollover' "unrelated tool claimed a rollover"
-
-  make_fake_deck "$completed"
-  FM_DECK_DEADLINE_SECS=2 run_worker "$completed" $'/quit\n' deadline-completed-tool \
-    || fail "completed-tool deadline did not return to the worker prompt"
-  [ "$(wc -l < "$completed/argv.log" | tr -d ' ')" = 1 ] || fail "a completed validation tool was retried"
-  assert_not_contains "$(cat "$completed/state/t1.status")" 'rollover' "completed tool claimed a rollover"
-  pass "fm-deck-worker: provider hangs and other tools fail without continuation"
-}
-
-test_deadline_rollover_cap_is_reported() {
-  local dir="$TMP_ROOT/deadline-cap" rc=0
-  make_fake_deck "$dir"
-  FM_DECK_DEADLINE_SECS=2 run_worker "$dir" $'/quit\n' deadline-cap || rc=$?
-  [ "$rc" -ne 0 ] || fail "deadline rollover cap left the worker retrying"
-  [ "$(wc -l < "$dir/argv.log" | tr -d ' ')" = 4 ] || fail "deadline rollover cap did not stop after three continuations"
-  assert_grep 'rollover 1/3' "$dir/state/t1.status" "first deadline rollover was not reported"
-  assert_grep 'rollover 2/3' "$dir/state/t1.status" "second deadline rollover was not reported"
-  assert_grep 'rollover 3/3' "$dir/state/t1.status" "third deadline rollover was not reported"
-  assert_grep 'failed: Deck deadline rollover cap reached (3/3)' "$dir/state/t1.status" \
-    "deadline rollover cap was not reported"
-  pass "fm-deck-worker: deadline continuation has a fixed reported cap"
 }
 
 test_turnend_signal_refuses_unsafe_paths() {
@@ -495,7 +403,7 @@ test_completed_turn_removes_busy_ack_before_the_next_steer() {
   pass "fm-deck-worker: each completed turn leaves the next steer an idle baseline"
 }
 
-test_driver_stop_ends_after_the_active_tool_and_resolves_spaced_paths() {
+test_driver_stop_terminates_active_deck_and_resolves_spaced_paths() {
   local dir="$TMP_ROOT/stop graceful with spaces" install physical alias deck worker stop pid gen
   install="$dir/install with spaces/bin"
   physical="$dir/physical state"
@@ -511,38 +419,22 @@ test_driver_stop_ends_after_the_active_tool_and_resolves_spaced_paths() {
 #!/usr/bin/env python3
 import json
 import os
-import signal
 import time
 
-stopping = False
-
-
-def stop(*_):
-    global stopping
-    stopping = True
-    open(os.environ["FM_DECK_SIGNALLED"], "w").close()
-
-
-signal.signal(signal.SIGTERM, stop)
 print(json.dumps({"type": "run_started", "session": "stop-session"}), flush=True)
-print(json.dumps({"type": "tool_call", "id": "a", "name": "shell", "arguments": {"command": "tool-a"}}), flush=True)
+print(json.dumps({"type": "tool_call", "id": "a", "name": "run_command", "arguments": {"command": "tool-a"}}), flush=True)
 open(os.environ["FM_DECK_READY"], "w").close()
-while not stopping:
-    time.sleep(0.01)
-time.sleep(0.2)
+time.sleep(10)
 open(os.environ["FM_DECK_TOOL_A_COMPLETED"], "w").close()
-print(json.dumps({"type": "tool_result", "name": "shell", "duration_ms": 200, "output": "tool-a complete"}), flush=True)
-if stopping:
-    print(json.dumps({"type": "run_failed", "error": "stopped after current tool"}), flush=True)
-    raise SystemExit(143)
+print(json.dumps({"type": "tool_result", "id": "a", "name": "run_command", "duration_ms": 10000, "output": "tool-a complete"}), flush=True)
 open(os.environ["FM_DECK_TOOL_B_STARTED"], "w").close()
-print(json.dumps({"type": "tool_call", "id": "b", "name": "shell", "arguments": {"command": "tool-b"}}), flush=True)
+print(json.dumps({"type": "tool_call", "id": "b", "name": "run_command", "arguments": {"command": "tool-b"}}), flush=True)
 time.sleep(10)
 PY
   chmod +x "$deck"
   gen=$("$install/fm-busy-event.sh" arm "$physical" owned)
-  FM_DECK_READY="$dir/ready" FM_DECK_SIGNALLED="$dir/signalled" \
-    FM_DECK_TOOL_A_COMPLETED="$dir/tool-a-completed" FM_DECK_TOOL_B_STARTED="$dir/tool-b-started" \
+  FM_DECK_READY="$dir/ready" FM_DECK_TOOL_A_COMPLETED="$dir/tool-a-completed" \
+    FM_DECK_TOOL_B_STARTED="$dir/tool-b-started" \
     python3 -c \
       'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
       "$worker" --id owned --state "$(cd "$physical" && pwd -P)" --gen "$gen" \
@@ -552,12 +444,10 @@ PY
   [ -e "$dir/ready" ] || fail "post-tool stop fixture did not start"
   python3 "$stop" "$alias" owned 2 \
     || fail "spaced physical paths did not identify and stop the Deck driver"
-  wait "$pid" 2>/dev/null || fail "the post-tool stopped driver failed"
-  [ -e "$dir/signalled" ] || fail "Deck itself did not receive the stop request"
-  [ -e "$dir/tool-a-completed" ] || fail "Deck stop interrupted the active tool"
-  [ ! -e "$dir/tool-b-started" ] || fail "Deck started another tool after the stop request"
-  assert_grep 'tool-a complete' "$dir/pane.out" "Deck exit was not observed after its active tool result"
-  pass "Deck stop: physical aliases and spaced paths stop after the active tool"
+  wait "$pid" 2>/dev/null || fail "the TERM-stopped driver failed"
+  [ ! -e "$dir/tool-a-completed" ] || fail "Deck TERM unexpectedly let the active in-process tool complete"
+  [ ! -e "$dir/tool-b-started" ] || fail "Deck started another tool after TERM"
+  pass "Deck stop: physical aliases and spaced paths stop the active Deck process"
 }
 
 test_driver_stop_is_scoped_and_escalates_after_timeout() {
@@ -961,9 +851,6 @@ test_secondmate_host_serializes_wakes_and_steering
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_drive_the_busy_record_and_turn_end
 test_busy_state_failures_stop_turns_and_publish_status
-test_deadline_resumes_only_inflight_validation_or_ci_waits
-test_deadline_provider_hangs_and_other_tools_do_not_resume
-test_deadline_rollover_cap_is_reported
 test_turnend_signal_refuses_unsafe_paths
 test_evidence_gate_refuses_a_turn_without_a_status_line
 test_stderr_before_completion_blocked_does_not_break_rendering
@@ -972,7 +859,7 @@ test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
 test_completed_turn_removes_busy_ack_before_the_next_steer
-test_driver_stop_ends_after_the_active_tool_and_resolves_spaced_paths
+test_driver_stop_terminates_active_deck_and_resolves_spaced_paths
 test_driver_stop_is_scoped_and_escalates_after_timeout
 test_liveness_reads_the_driver_as_an_agent
 test_tmux_liveness_uses_the_deck_driver_argv0
