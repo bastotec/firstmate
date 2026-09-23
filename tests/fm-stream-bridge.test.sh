@@ -384,6 +384,78 @@ PY
   pass "bridge: wrong credentials and incompatible hubs are refused during negotiation"
 }
 
+test_command_rebinds_to_the_active_hub_generation() {
+  local fake_dir ready journal waited=0 host port pid out endpoint
+  fake_dir="$TMP_ROOT/generation-rebind"
+  mkdir -p "$fake_dir"
+  ready="$fake_dir/ready"
+  journal="$fake_dir/orders"
+  python3 - "$ready" "$journal" > "$fake_dir/log" 2>&1 <<'PY' &
+import http.server
+import json
+import sys
+
+class H(http.server.BaseHTTPRequestHandler):
+    generation = "generation-a"
+    def log_message(self, *args):
+        pass
+    def reply(self, status, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_GET(self):
+        self.reply(200, {"ok": True, "protocol": 2,
+                         "capabilities": ["current_execution",
+                                          "idempotent_command_results",
+                                          "result_retry_orderability"],
+                         "generation": H.generation})
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        payload = json.loads(self.rfile.read(length))
+        with open(sys.argv[2], "a", encoding="utf-8") as handle:
+            handle.write(payload.get("hub_generation", "") + "\n")
+        if payload.get("hub_generation") == "generation-a":
+            H.generation = "generation-b"
+            self.reply(409, {"ok": False, "error": "hub_generation_changed",
+                             "message": "hub restarted"})
+            return
+        self.reply(200, {"ok": True, "order_id": payload["order_id"],
+                         "leaf_worker_id": payload["leaf_worker_id"],
+                         "requested_execution_id": payload["execution_id"],
+                         "execution_id": payload["execution_id"],
+                         "outcome": "accepted", "delivered": True,
+                         "worker_gone": False, "not_registered": False,
+                         "requested_at": 1})
+server = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(sys.argv[1], "w").write("%s %d\n" % server.server_address)
+server.serve_forever()
+PY
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 50 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$ready" ] || fail "the generation stand-in did not start"
+  read -r host port < "$ready"
+  endpoint=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  out=$(printf '%s\n' "$(composer_command c-generation box-a/worker \
+    'echo GENERATION' "$endpoint")" | python3 "$BRIDGE" command \
+    --hub "http://$host:$port" --token-file "$CASE_DIR/control-token" \
+    --fleet-id test-fleet 2>/dev/null)
+  assert_equals "$(printf '%s' "$out" | jq -r '.state')" accepted \
+    "the command should be accepted after renegotiating the replacement hub"
+  assert_equals "$(tr '\n' ' ' < "$journal")" "generation-a generation-b " \
+    "the retry should bind to the newly negotiated hub generation"
+  assert_equals "$(printf '%s' "$out" | jq -r 'has("hub_generation")')" false \
+    "internal hub generation must not change the Bridge acknowledgement shape"
+  pass "bridge: commands rebind atomically to the active hub generation"
+}
+
 # start_real_agent <label> -> endpoint id. A real agent owning a real pty, so
 # the command cases drive the same chain a composer would.
 start_real_agent() {  # <label>
@@ -690,6 +762,7 @@ test_a_snapshot_reads_the_real_hub
 test_a_real_agents_worker_exit_reaches_the_bridge
 test_serve_streams_ticks_and_goes_silent_without_the_hub
 test_refusals_end_the_command
+test_command_rebinds_to_the_active_hub_generation
 test_a_composer_command_reaches_the_worker_and_is_acknowledged
 test_a_duplicate_command_id_keeps_the_leaf_that_received_it
 test_a_command_for_a_worker_its_agent_reported_gone_is_nacked

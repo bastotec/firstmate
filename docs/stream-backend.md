@@ -140,6 +140,7 @@ That binding prevents an order composed for one run from being typed into its re
 Acceptance means the owning agent wrote the complete order, including its submit byte, to that execution's pseudoterminal and acknowledged it; an authoritative membership refusal produces a nack, while an indeterminate order produces no record and remains pending.
 Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
 The PTY agent advertises that capability back on every endpoint registration, and the hub places Bridge orders only for endpoints that do, leaving legacy agents and read-only tail publishers visible but non-orderable.
+Each internal HTTP order carries the hub generation returned by compatibility negotiation; a replacement hub rejects a stale generation before placement, the adapter renegotiates before retrying, and the Bridge `command`, `command_ack`, and `command_nack` records do not change.
 
 Reconciliation state lives in the hub's memory, not on disk.
 The journal retains at most 512 order ids, and while an id remains there a resend is answered from the original order, including when it overtakes the original placement.
