@@ -258,6 +258,7 @@ run_spawn() {  # <case-dir> <args...>
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
+    FM_CONTROL_EXIT_WAIT="${FM_TEST_EXIT_WAIT:-0.05}" \
     "$SPAWN" "$@" 2>&1
 }
 
@@ -1184,6 +1185,47 @@ test_spawn_relaunch_without_a_harness_reuses_the_recorded_one() {
   pass "fm-spawn --relaunch: with no explicit harness it reuses the task's recorded one, never the crew default"
 }
 
+test_direct_spawn_relaunch_stops_stale_deck_driver_before_arming() {
+  local dir out rc gen pid
+  dir=$(new_case direct-stale-deck rl-deck-direct)
+  add_ship_task "$dir" rl-deck-direct deck
+  cat > "$dir/fakebin/deck" <<'SH'
+#!/usr/bin/env bash
+printf '{"type":"run_started","session":"direct-old-session"}\n'
+printf 'working: direct stub waiting\n' >> "$FM_DECK_TEST_STATUS"
+touch "$FM_DECK_TEST_READY"
+sleep 8
+touch "$FM_DECK_TEST_COMPLETED"
+printf '{"type":"run_finished","output":"x","turns":1}\n'
+SH
+  chmod +x "$dir/fakebin/deck"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-direct)
+  FM_DECK_TEST_STATUS="$dir/home/state/rl-deck-direct.status" \
+    FM_DECK_TEST_READY="$dir/ready" FM_DECK_TEST_COMPLETED="$dir/completed" \
+    python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
+    "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-direct --state "$dir/home/state" \
+    --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; /bin/sleep 0.05; done
+  [ -e "$dir/ready" ] || fail "direct relaunch Deck driver never started"
+  "$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-direct >/dev/null
+  printf zsh > "$dir/fake/command"
+  printf deck > "$dir/fake/becomes"
+  out=$(FM_TEST_EXIT_WAIT=12 run_spawn "$dir" rl-deck-direct --relaunch --harness deck); rc=$?
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL -- -"$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "direct relaunch left the old Deck driver alive: $out"
+  fi
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$rc" "direct stale Deck relaunch should succeed: $out"
+  [ -e "$dir/completed" ] || fail "direct relaunch interrupted the old driver's active work"
+  assert_not_contains "$(cat "$dir/home/state/rl-deck-direct.status")" 'failed:' \
+    "direct relaunch let the old driver publish a stale-generation failure"
+  [ "$(cat "$dir/fake/command")" = deck ] || fail "direct relaunch did not launch the replacement"
+  pass "fm-spawn --relaunch: stale Deck driver stops before replacement arming"
+}
+
 test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
   local dir home id brief launch out mode rule
   for mode in no-mistakes direct-PR local-only; do
@@ -2087,6 +2129,7 @@ test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop
 test_explicit_secondmate_harness_ignores_configured_profile_axes
 test_ship_relaunch_ignores_the_crew_harness_config
 test_spawn_relaunch_without_a_harness_reuses_the_recorded_one
+test_direct_spawn_relaunch_stops_stale_deck_driver_before_arming
 test_promoted_scout_relaunch_receives_the_current_delivery_contract
 test_prefixed_prior_harness_wiring_is_still_retired
 test_muse_session_binding_is_retired_on_a_harness_switch
