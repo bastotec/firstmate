@@ -334,7 +334,7 @@ class H(http.server.BaseHTTPRequestHandler):
             body = json.dumps({"ok": True, "tasks": []}).encode()
         else:
             H.health_calls += 1
-            protocol = 99 if H.health_calls == 5 else 2
+            protocol = 99 if H.health_calls == 5 else 3
             if H.health_calls == 1:
                 capabilities = []
             elif H.health_calls == 2:
