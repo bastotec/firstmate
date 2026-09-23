@@ -65,7 +65,7 @@ The terminal regression drives two real `fm-send.sh` steers through tmux and pro
 ## Driver lifecycle
 
 `bin/fm-deck-stop.py` owns the task-bound local driver stop proof used by both control-plane exit and the shared spawn-relaunch boundary; endpoint classification remains required independently.
-The portable regression runs the driver, Deck executable, and state beneath paths containing spaces and proves that TERM removes the active Deck process before replacement.
+The portable regression runs the driver, Deck executable, and state beneath paths containing spaces and proves that TERM removes the active Deck process before the stop boundary returns.
 Its fake Deck uses the binary's default TERM behavior: an active in-process tool is interrupted rather than allowed to complete, and no later tool starts.
 A second fixture ignores TERM and proves the bounded wait escalates the surviving isolated process group to KILL.
 Physical-state-alias and stale-generation relaunch regressions, including the valueless `--secondmate` driver flag, are in `tests/fm-deck-harness.test.sh` and `tests/fm-control-relaunch.test.sh`.
