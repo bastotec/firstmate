@@ -25,15 +25,21 @@
 # Backend purity rejects direct Beads CLI use in core bin/ and bin/backends/.
 #
 # Scheduling: one fresh process per root. Default concurrency is detected CPUs;
-# --jobs / FM_LINT_JOBS can lower it. FM_LINT_MEMORY_MIB defaults to a 6144 MiB
-# scheduling budget (not a kernel-enforced cap). bin/fm-lint-memory.tsv holds
-# measured per-root RSS in KiB, bound to a conservative source-closure SHA-256.
-# Reservations pad measured RSS by 50 percent plus 64 MiB. Unknown/stale graphs,
-# unresolved sources, and reservations above the budget run alone. Reservations
-# above 3072 MiB are heavy: at most one heavy root is admitted per wave, alongside
-# light roots only if the CPU and memory reservations fit. This remains true on
-# machines with many CPUs or a larger configured budget. A single root can
-# still exceed a measured estimate/budget: this policy does not bound its heap.
+# --jobs / FM_LINT_JOBS can lower it. FM_LINT_MEMORY_MIB defaults to 6144 MiB
+# and is an ADMISSION BUDGET for scheduling waves, not a process memory limit
+# and not a claim that any root's heap is bounded: no kernel or RTS cap is
+# applied to ShellCheck, and a root whose real RSS exceeds its reservation or
+# the whole budget still runs, alone, and can still be killed by an external
+# memory watchdog. bin/fm-lint-memory.tsv holds measured per-root RSS in KiB,
+# bound to a conservative source-closure SHA-256. Reservations pad measured RSS
+# by 50 percent plus 64 MiB. Roots with no usable measurement (zero
+# reservation), stale source graphs, or reservations above the budget are
+# UNKNOWN to the planner: an unknown reservation never silently means "the
+# whole budget is available" - it means the root runs alone in its own wave,
+# whatever the configured budget. Reservations above 3072 MiB are heavy: at
+# most one heavy root is admitted per wave, alongside light roots only if the
+# CPU and memory reservations fit. This remains true on machines with many CPUs
+# or a larger configured budget.
 # Refresh by timing each --full --list-files root separately with
 # Command: shellcheck --norc --external-sources -- "$root" (clear SHELLCHECK_OPTS).
 # Use /usr/bin/time -lp on macOS or -v on Linux, converting RSS to KiB, and join
@@ -401,7 +407,7 @@ elif [ "$(uname)" = Darwin ]; then
   HOST_MEMORY_MIB=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0f", $1 / 1048576}')
 fi
 JOBS=${FM_LINT_JOBS:-$CPU_COUNT}
-MEMORY_MIB=${FM_LINT_MEMORY_MIB:-6144}
+ADMISSION_BUDGET_MIB=${FM_LINT_MEMORY_MIB:-6144}
 TELEMETRY=${FM_LINT_TELEMETRY:-}
 SELECTION=auto
 CHANGE_BASE=
@@ -459,7 +465,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-case "$JOBS:$MEMORY_MIB" in
+case "$JOBS:$ADMISSION_BUDGET_MIB" in
   *[!0-9:]*|:*|*:|0:*|*:0)
     printf 'fm-lint.sh: jobs and FM_LINT_MEMORY_MIB must be positive integers.\n' >&2
     exit 2
@@ -467,10 +473,10 @@ case "$JOBS:$MEMORY_MIB" in
 esac
 # Prevent overflow and accidental process storms; an explicit override can use
 # fewer CPUs but cannot request more than the detected host provides.
-[ "${#JOBS}" -le 6 ] && [ "${#MEMORY_MIB}" -le 7 ] || exit 2
+[ "${#JOBS}" -le 6 ] && [ "${#ADMISSION_BUDGET_MIB}" -le 7 ] || exit 2
 JOBS=$((10#$JOBS))
-MEMORY_MIB=$((10#$MEMORY_MIB))
-[ "$JOBS" -gt 0 ] && [ "$MEMORY_MIB" -gt 0 ] || exit 2
+ADMISSION_BUDGET_MIB=$((10#$ADMISSION_BUDGET_MIB))
+[ "$JOBS" -gt 0 ] && [ "$ADMISSION_BUDGET_MIB" -gt 0 ] || exit 2
 [ "$JOBS" -le "$CPU_COUNT" ] || JOBS=$CPU_COUNT
 
 if [ "$FAST" -eq 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; }; then
@@ -670,12 +676,14 @@ while IFS="$TAB" read -r rss path; do
   # whole budget; known heavy roots can share only with fitting light roots.
   weight=$(((rss * 3 + 2047) / 2048 + 64))
   heavy=0
+  unknown=0
   [ "$weight" -le 3072 ] || heavy=1
-  if [ "$rss" -eq 0 ] || [ "$weight" -gt "$MEMORY_MIB" ]; then
-    weight=$MEMORY_MIB
+  if [ "$rss" -eq 0 ] || [ "$weight" -gt "$ADMISSION_BUDGET_MIB" ]; then
+    weight=$ADMISSION_BUDGET_MIB
     heavy=1
+    unknown=1
   fi
-  printf '%s\t%s\t%s\t%s\n' "$weight" "$worker" "$path" "$heavy" >> "$WEIGHTS"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$weight" "$worker" "$path" "$heavy" "$unknown" >> "$WEIGHTS"
   printf '%s\t%s\n' "$worker" "$path" > "$TMP_ROOT/manifest.$worker"
   worker=$((worker + 1))
 done < "$TMP_ROOT/measured"
@@ -683,13 +691,18 @@ done < "$TMP_ROOT/measured"
 # First-fit decreasing fills spare capacity around long heavy roots without
 # ever pairing two heavy roots. Plan waves before launch, independent of timing.
 LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n "$WEIGHTS" > "$WEIGHTS.sorted"
-awk -F '\t' -v jobs="$JOBS" -v budget="$MEMORY_MIB" '
+# An unknown or oversized reservation is not a size claim equal to the whole
+# budget: it means the root must run alone in its own wave regardless of how
+# large the configured budget is, so a light root is never packed beside it on
+# the strength of arithmetic that happens to fit.
+awk -F '\t' -v jobs="$JOBS" -v budget="$ADMISSION_BUDGET_MIB" '
   {
     wave=0
-    while (count[wave] >= jobs || memory[wave] + $1 > budget || (heavy[wave] && $4)) wave++
+    while (count[wave] >= jobs || memory[wave] + $1 > budget || (heavy[wave] && $4) || (occupied[wave] && $5)) wave++
     count[wave]++
     memory[wave]+=$1
     heavy[wave]+=$4
+    if ($5) occupied[wave]=1
     rows[wave]=rows[wave] wave "\t" $0 "\n"
     if (wave > last) last=wave
   }
@@ -777,7 +790,7 @@ reserved=0
 peak_reserved=0
 peak_parallel=0
 current_wave=0
-while IFS="$TAB" read -r wave weight worker path heavy; do
+while IFS="$TAB" read -r wave weight worker path heavy unknown; do
   if [ "$wave" -ne "$current_wave" ]; then
     fm_lint_wait_workers
     reserved=0
@@ -901,7 +914,7 @@ EOF
     printf 'source_target_count\t%s\n' "$source_targets"
     printf 'detected_cpus\t%s\n' "$CPU_COUNT"
     printf 'host_memory_mib\t%s\n' "$HOST_MEMORY_MIB"
-    printf 'memory_budget_mib\t%s\n' "$MEMORY_MIB"
+    printf 'admission_budget_mib\t%s\n' "$ADMISSION_BUDGET_MIB"
     printf 'peak_reserved_mib\t%s\n' "$peak_reserved"
     printf 'peak_parallel_roots\t%s\n' "$peak_parallel"
     printf 'wall_seconds\t%s\n' "$((TELEMETRY_END_EPOCH - TELEMETRY_START_EPOCH))"

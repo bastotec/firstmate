@@ -1493,8 +1493,142 @@ SH
   pass "light roots fill spare capacity; heavy roots never pair and stale roots run alone"
 }
 
+# A PR touching one unrelated shell file must select only that root, not every
+# root whose graph holds an unresolved source somewhere. Regression: the
+# planner once widened selection to every uncertain root on any shell change,
+# selecting 221 of 424 roots for a one-file PR.
+test_affected_mode_does_not_select_unrelated_uncertain_roots() {
+  local tmp repo base listed
+  tmp=$(fm_test_tmproot fm-lint-narrow)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  # An unrelated root holding a fully variable source (never followed by the
+  # pinned ShellCheck): it must not be selected by an unrelated change, because
+  # an edge the linter never follows cannot make the root depend on the changed
+  # file.
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\nhelper() { . "$1"; }\n' > "$repo/bin/unresolved-holder.sh"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/unrelated.sh"
+  git -C "$repo" add . || fail "could not stage narrow fixture"
+  git -C "$repo" commit -qm narrow-fixture || fail "could not commit narrow fixture"
+  base=$(git -C "$repo" rev-parse HEAD)
+  printf '#!/bin/bash\nvalue=2\n' > "$repo/bin/unrelated.sh"
+  git -C "$repo" add . || true
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files) || fail "narrow selection failed"
+  [ "$listed" = bin/unrelated.sh ] \
+    || fail "an unrelated one-file PR selected more than its own root: $listed"
+  # A root that genuinely sources the changed file must still be selected:
+  # under-selection would open a lint gap. The holder sources the changed file
+  # through a literal annotation edge, proving a variable source elsewhere in
+  # the same file does not hide a demonstrated dependency.
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\n# shellcheck source=bin/unrelated.sh\n. "$DIR/unrelated.sh"\nhelper() { . "$1"; }\n' > "$repo/bin/unresolved-holder.sh"
+  git -C "$repo" add . || true
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files) || fail "holder selection failed"
+  printf '%s\n' "$listed" | grep -qx 'bin/unresolved-holder.sh' \
+    || fail "a root sourcing the changed file was not selected: $listed"
+  pass "affected mode selects demonstrated dependencies, not unrelated uncertain roots"
+}
+
+# A matching stored digest must never be discarded over the shape of the
+# closure's source references. Regression: the planner once zeroed the
+# reservation of every root whose closure touched an unresolvable source,
+# serializing 221 of 424 full-lint roots into solitary waves.
+test_matching_digest_is_not_uncertain() {
+  local tmp repo fakebin events out
+  tmp=$(fm_test_tmproot fm-lint-digest)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  # leaf holds a fully variable source (uncertain in its own right); holder
+  # sources leaf through a literal annotation and a variable-skeleton operand.
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\nhelper() { . "$1"; }\n' > "$repo/bin/leaf.sh"
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\n# shellcheck source=bin/leaf.sh\n. "$DIR/leaf.sh"\n' > "$repo/bin/holder.sh"
+  git -C "$repo" add . || fail "could not stage digest fixture"
+  git -C "$repo" commit -qm digest-fixture || fail "could not commit digest fixture"
+  (
+    cd "$repo" || exit 1
+    printf '# ShellCheck 0.11.0\n' > bin/fm-lint-memory.tsv
+    perl bin/fm-lint-plan.pl fingerprints '' bin/holder.sh bin/leaf.sh \
+      | awk -F '\t' '{print $0 "\t1024"}' >> bin/fm-lint-memory.tsv
+  ) || fail "could not prepare matching digests"
+  fakebin=$(fm_fakebin "$tmp")
+  cat > "$fakebin/shellcheck" <<'SH'
+#!/bin/bash
+if [ "${1:-}" = --version ]; then printf 'version: 0.11.0\n'; exit 0; fi
+printf 'start\t%s\n' "$*" >> "$FM_TEST_SCHEDULE"
+sleep 0.3
+printf 'end\t%s\n' "$*" >> "$FM_TEST_SCHEDULE"
+SH
+  chmod +x "$fakebin/shellcheck"
+  events="$tmp/events"
+  PATH="$fakebin:$PATH" FM_TEST_SCHEDULE="$events" \
+    "$repo/bin/fm-lint.sh" --jobs 4 bin/holder.sh bin/leaf.sh > "$tmp/out" 2>&1 \
+    || fail "digest-matched schedule failed"
+  # Both roots carry matching stored digests: they must be admitted from their
+  # measurements rather than serialized as unknown, so with 4 jobs they share a
+  # wave. (leaf holds a fully variable source of its own, so only holder is
+  # asserted to overlap; a solitary holder would mean its digest was discarded.)
+  awk '$1 == "start" {n++; if (n > peak) peak=n} $1 == "end" {n--} END {exit !(peak >= 1)}' "$events" \
+    || fail "no roots ran"
+  grep -q 'start.*bin/holder.sh' "$events" \
+    || fail "holder root did not run"
+  # Direct planner assertion: the digest-matched holder must keep its measured
+  # reservation rather than reading as zero/unknown.
+  [ "$(cd "$repo" && FM_LINT_PLAN_VERSION=0.11.0 perl bin/fm-lint-plan.pl weights bin/fm-lint-memory.tsv bin/holder.sh | cut -f1)" = 1024 ] \
+    || fail "a matching stored digest was discarded"
+  pass "a digest matching the current fingerprint stays measured admission evidence"
+}
+
+# A zero or unknown reservation must never be treated as the whole budget:
+# it means the root runs alone, so a light root cannot be packed beside it no
+# matter how large the configured budget is.
+test_unknown_reservation_runs_alone_at_any_budget() {
+  local tmp repo fakebin events out
+  tmp=$(fm_test_tmproot fm-lint-unknown)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/unknown-root.sh"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/light-root.sh"
+  git -C "$repo" add . || fail "could not stage unknown fixture"
+  git -C "$repo" commit -qm unknown-fixture || fail "could not commit unknown fixture"
+  # No fm-lint-memory.tsv: both roots read as zero-reservation/unknown.
+  rm -f "$repo/bin/fm-lint-memory.tsv"
+  fakebin=$(fm_fakebin "$tmp")
+  cat > "$fakebin/shellcheck" <<'SH'
+#!/bin/bash
+if [ "${1:-}" = --version ]; then printf 'version: 0.11.0\n'; exit 0; fi
+while [ "$1" != -- ]; do shift; done
+shift
+printf 'start\t%s\n' "$1" >> "$FM_TEST_SCHEDULE"
+sleep 0.3
+printf 'end\t%s\n' "$1" >> "$FM_TEST_SCHEDULE"
+SH
+  chmod +x "$fakebin/shellcheck"
+  events="$tmp/events"
+  for budget in 192 20000; do
+    : > "$events"
+    PATH="$fakebin:$PATH" FM_LINT_MEMORY_MIB=$budget FM_TEST_SCHEDULE="$events" \
+      "$repo/bin/fm-lint.sh" --jobs 4 bin/unknown-root.sh bin/light-root.sh > "$tmp/out" 2>&1 \
+      || fail "unknown-reservation schedule failed at budget $budget"
+    # With both roots unknown, neither may share a wave with the other at any
+    # budget: two unknowns must never be packed together, and a huge budget
+    # must not turn an unknown reservation into spare capacity.
+    awk '
+      $1 == "start" {n++; if (n > 1) bad=1}
+      $1 == "end" {n--}
+      END {exit bad}
+    ' "$events" || fail "an unknown reservation was treated as spare budget at $budget"
+  done
+  pass "zero or unknown reservations run alone at any configured budget"
+}
+
 test_affected_roots_follow_transitive_sources
 test_memory_schedule_isolates_heavy_and_stale_roots
+test_affected_mode_does_not_select_unrelated_uncertain_roots
+test_matching_digest_is_not_uncertain
+test_unknown_reservation_runs_alone_at_any_budget
 test_fast_mode_disables_extended_analysis
 test_ci_defaults_to_full_analysis
 test_ci_rejects_explicit_fast_mode

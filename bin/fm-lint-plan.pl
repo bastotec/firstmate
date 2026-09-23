@@ -39,7 +39,7 @@ my @changed = $mode eq 'changed'
 my %paths = map { $_ => 1 } (@roots, @changed,
     split(/\0/, git_output('ls-files', '-z', '--', '*.sh')));
 # Keep noncanonical imported shells in the graph, not in the root inventory.
-my (%text, %edges, %uncertain);
+my (%text, %edges);
 for my $path (sort keys %paths) {
     next unless $path =~ /\.sh\z/;
     my $body = '';
@@ -54,6 +54,13 @@ for my $path (keys %text) {
 }
 my $alternatives = join '|', map { quotemeta($_) } sort keys %names;
 my $name_pattern = qr/(?<![\w.-])($alternatives)(?![\w.-])/;
+# Edge building matches basenames inside source references, so a literal
+# operand and a literal skeleton such as "$dir/name.sh" create an edge the
+# pinned ShellCheck (0.11.0) really does follow, and a literal annotation
+# resolves exactly as written. A fully variable operand matches no name and
+# adds no edge: the pinned ShellCheck never follows it (SC1090), so it cannot
+# hide a dependency of a changed file. No shell code is evaluated anywhere in
+# this analysis.
 for my $path (keys %text) {
     my $body = $text{$path};
     my $source_line = qr/(?:^\s*|[;&|{}()]\s*|\b(?:then|do|if|elif|while|until|command|builtin)\s+|!\s+)(?:source|\.)\s+/;
@@ -62,31 +69,6 @@ for my $path (keys %text) {
     } split /\n/, $body;
     while ($references =~ /$name_pattern/g) {
         $edges{$path}{$_} = 1 for @{$names{$1}};
-    }
-    # A variable-only source without an explicit ShellCheck boundary cannot be
-    # resolved statically. Admit it conservatively for every shell change, and
-    # never allow it to use a measured light-root reservation.
-    my $annotation = 0;
-    for my $line (split /\n/, $body) {
-        if ($line =~ /^\s*#\s*shellcheck\s+.*\bsource=([^\s]+)/) {
-            my $target = $1;
-            $annotation = 1;
-            # Unsupported/wildcard annotations must widen, never silently drop
-            # dependencies that ShellCheck may follow.
-            $uncertain{$path} = 1 if $target ne '/dev/null' && !exists $text{$target};
-            next;
-        }
-        next if $line =~ /^\s*(?:#.*)?$/;
-        if ($line =~ /$source_line([^;\n]+)/) {
-            my $operand = $1;
-            my $known = $operand =~ /$name_pattern/;
-            # A missing literal import has no readable dependency. Dynamic
-            # operands may name any shell; do not mistake jq's `. as $value`
-            # expressions inside quoted programs for dynamic shell imports.
-            my $dynamic = $operand =~ /^(?:["']|[^\s]*[\$`])/;
-            $uncertain{$path} = 1 if !$annotation && !$known && $dynamic;
-        }
-        $annotation = 0;
     }
 }
 sub closure {
@@ -102,12 +84,16 @@ sub closure {
 }
 if ($mode eq 'changed') {
     my %changed = map { $_ => 1 } @changed;
-    my $shell_change = grep { /\.sh\z/ } @changed;
     my $owner_change = grep { m{^bin/fm-lint(?:[./-]|$)} } @changed;
     for my $root (@roots) {
         my @deps = closure($root);
+        # Selection is a demonstrated dependency only: the root itself
+        # changed, a graph member it transitively sources changed, or the lint
+        # owner changed and the full canonical set applies. An unrelated root
+        # is never admitted on uncertainty elsewhere, matching the required
+        # changed-files-plus-sourcing-roots scope.
         print "$root\n" if $owner_change || $changed{$root}
-            || grep { $changed{$_} || ($shell_change && $uncertain{$_}) } @deps;
+            || grep { $changed{$_} } @deps;
     }
 } elsif ($mode eq 'weights' || $mode eq 'fingerprints') {
     for my $root (@roots) {
@@ -115,8 +101,12 @@ if ($mode eq 'changed') {
         my $digest = sha256_hex(join '', map { $_ . "\0" . ($text{$_} // '') . "\0" } @deps);
         if ($mode eq 'fingerprints') { print "$root\t$digest\n"; next; }
         my $entry = $measurements{$root};
-        my $rss = $entry && $entry->[0] eq $digest && !(grep { $uncertain{$_} } @deps)
-            ? $entry->[1] : 0;
+        # A stored digest that matches the root's current closure fingerprint is
+        # determined evidence about that closure's measured cost, whatever the
+        # closure's sources look like: the measurement was taken over the same
+        # content, so it stays valid admission data and full-lint parallelism
+        # stays durable.
+        my $rss = $entry && $entry->[0] eq $digest ? $entry->[1] : 0;
         print "$rss\t$root\n";
     }
 } else { die "private lint plan: invalid mode\n"; }
