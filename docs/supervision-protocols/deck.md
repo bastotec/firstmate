@@ -7,5 +7,6 @@ Handle every emitted wake, open decision, and unread status, then run the exact 
 Never acknowledge unhandled work.
 Return after handling: the driver publishes watcher results through the task steering inbox and submits its ordinary doorbell as the next turn of the same conversation.
 Do not arm a watcher manually or keep a tool call open to wait; the persistent driver owns the child process, including cleanup.
-A startup, lock, watcher, or Deck failure is reported to the parent and stops this driver; recovery belongs to the parent's guarded relaunch path.
+A startup, lock, or watcher failure is reported to the parent and stops this driver; recovery belongs to the parent's guarded relaunch path.
+A failed turn is reported to the parent the same way but does not stop this driver: it returns to its prompt keeping its Deck session, so the next wake is simply the next turn, and only a failure it could not report stops it.
 This protocol is for persistent secondmates, not an authorization to migrate the main primary session.
