@@ -83,9 +83,14 @@ case "${1:-}" in
       case "$payload" in
         /exit|/quit)
           printf 'zsh' > "$D/command"
+          [ -z "${FM_FAKE_PROTOCOL_FIRST:-}" ] || : > "$FM_FAKE_PROTOCOL_FIRST"
           [ -z "${FM_FAKE_EXIT_TRANSPORT_FAIL_AFTER_STOP:-}" ] || exit 1
           ;;
         *'encode launch-brief'*)
+          if [ -n "${FM_FAKE_PRIOR_PID:-}" ] && [ -n "${FM_FAKE_PRIOR_LIVE_MARKER:-}" ]; then
+            prior_stat=$(ps -o stat= -p "$FM_FAKE_PRIOR_PID" 2>/dev/null | tr -d '[:space:]')
+            case "$prior_stat" in ''|Z*) ;; *) : > "$FM_FAKE_PRIOR_LIVE_MARKER" ;; esac
+          fi
           cat "$D/becomes" > "$D/command"
           [ -z "${FM_FAKE_LAUNCH_TRANSPORT_FAIL_AFTER_START:-}" ] || exit 1
           ;;
@@ -245,6 +250,9 @@ run_control() {  # <case-dir> <args...>
     FM_FAKE_TRACE_RELEASE="${FM_FAKE_TRACE_RELEASE:-}" \
     FM_FAKE_META_WRITER_READY="${FM_FAKE_META_WRITER_READY:-}" \
     FM_FAKE_TRACE_EXPORTED="${FM_FAKE_TRACE_EXPORTED:-}" \
+    FM_FAKE_PROTOCOL_FIRST="${FM_FAKE_PROTOCOL_FIRST:-}" \
+    FM_FAKE_PRIOR_PID="${FM_FAKE_PRIOR_PID:-}" \
+    FM_FAKE_PRIOR_LIVE_MARKER="${FM_FAKE_PRIOR_LIVE_MARKER:-}" \
     FM_FAKE_QUOTA_CALLS="$dir/fake/quota-calls" FM_FAKE_QUOTA_ID="${FM_FAKE_QUOTA_ID:-test-account}" \
     "$CONTROL" "$@" 2>&1
 }
@@ -259,6 +267,8 @@ run_spawn() {  # <case-dir> <args...>
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
     FM_CONTROL_EXIT_WAIT="${FM_TEST_EXIT_WAIT:-0.05}" \
+    FM_FAKE_PRIOR_PID="${FM_FAKE_PRIOR_PID:-}" \
+    FM_FAKE_PRIOR_LIVE_MARKER="${FM_FAKE_PRIOR_LIVE_MARKER:-}" \
     "$SPAWN" "$@" 2>&1
 }
 
@@ -836,53 +846,43 @@ test_relaunch_onto_verified_deck_replaces_the_agent() {
   pass "fm-control relaunch: verified Deck replaces an existing crewmate"
 }
 
-test_relaunch_stops_stale_deck_driver_before_rotating_generation() {
-  local dir out rc gen pid
+test_relaunch_stops_stale_deck_driver_before_replacement_launch() {
+  local dir out rc gen pid deck_pid
   dir=$(new_case stale-deck rl-deck-stale)
   add_ship_task "$dir" rl-deck-stale deck
   cat > "$dir/fakebin/deck" <<'PY'
 #!/usr/bin/env python3
 import json
 import os
-import signal
 import time
 
-stopping = False
-
-
-def stop(*_):
-    global stopping
-    stopping = True
-
-
-signal.signal(signal.SIGTERM, stop)
 print(json.dumps({"type": "run_started", "session": "old-session"}), flush=True)
 with open(os.environ["FM_DECK_TEST_STATUS"], "a") as stream:
     stream.write("working: stub waiting\n")
+with open(os.environ["FM_DECK_TEST_PID"], "w") as stream:
+    stream.write(str(os.getpid()))
 open(os.environ["FM_DECK_TEST_READY"], "w").close()
-while not stopping:
-    time.sleep(0.01)
-time.sleep(0.2)
-open(os.environ["FM_DECK_TEST_COMPLETED"], "w").close()
-print(json.dumps({"type": "run_failed", "error": "stopped after current tool"}), flush=True)
-raise SystemExit(143)
+time.sleep(60)
 PY
   chmod +x "$dir/fakebin/deck"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-stale)
   FM_DECK_TEST_STATUS="$dir/home/state/rl-deck-stale.status" FM_DECK_TEST_READY="$dir/ready" \
-    FM_DECK_TEST_COMPLETED="$dir/completed" \
+    FM_DECK_TEST_PID="$dir/deck-pid" \
     python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
     "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-stale --state "$dir/home/state" \
     --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
   pid=$!
   for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; /bin/sleep 0.1; done
   [ -e "$dir/ready" ] || fail "old Deck driver never started"
+  deck_pid=$(cat "$dir/deck-pid")
   # Model the reported failure: the endpoint says shell, yet a prior driver
   # still runs against a generation that a previous replacement rotated.
   "$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-stale >/dev/null
   printf zsh > "$dir/fake/command"
   printf deck > "$dir/fake/becomes"
-  out=$(FM_TEST_EXIT_WAIT=5 run_control "$dir" rl-deck-stale relaunch --note 'replace stale driver'); rc=$?
+  out=$(FM_TEST_EXIT_WAIT=5 FM_FAKE_PRIOR_PID="$deck_pid" \
+    FM_FAKE_PRIOR_LIVE_MARKER="$dir/prior-live-at-launch" \
+    run_control "$dir" rl-deck-stale relaunch --note 'replace stale driver'); rc=$?
   if kill -0 "$pid" 2>/dev/null; then
     kill -TERM -- -"$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
@@ -890,7 +890,7 @@ PY
   fi
   wait "$pid" 2>/dev/null || true
   expect_code 0 "$rc" "stale Deck driver relaunch should succeed: $out"
-  [ -e "$dir/completed" ] || fail "stale driver shutdown interrupted its active work"
+  [ ! -e "$dir/prior-live-at-launch" ] || fail "replacement launched before the stale Deck process stopped"
   [ "$(cat "$dir/fake/command")" = deck ] || fail "replacement did not launch"
   assert_not_contains "$(cat "$dir/home/state/rl-deck-stale.status")" 'failed:' "old driver wrote a stale failure"
   pass "fm-control relaunch: stale Deck driver is gone before replacement launch"
@@ -902,24 +902,13 @@ test_live_deck_relaunch_uses_control_protocol_before_residual_stop() {
   add_ship_task "$dir" rl-deck-live deck
   cat > "$dir/fakebin/deck" <<'SH'
 #!/usr/bin/env bash
-trap 'stop_requested=1' TERM
 printf '{"type":"run_started","session":"live-session"}\n'
 touch "$FM_DECK_TEST_READY"
-i=0
-while [ "$i" -lt 400 ]; do
-  if grep -Fqx /quit "$FM_FAKE_DIR/literal"; then
-    touch "$FM_DECK_PROTOCOL_FIRST"
-    break
-  fi
-  sleep 0.05
-  i=$((i + 1))
-done
-printf '{"type":"run_finished","output":"x","turns":1}\n'
+/bin/sleep 60
 SH
   chmod +x "$dir/fakebin/deck"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-live)
-  FM_DECK_TEST_READY="$dir/ready" FM_DECK_PROTOCOL_FIRST="$dir/protocol-first" \
-    FM_FAKE_DIR="$dir/fake" \
+  FM_DECK_TEST_READY="$dir/ready" \
     python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
     "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-live --state "$dir/home/state" \
     --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
@@ -928,7 +917,8 @@ SH
   [ -e "$dir/ready" ] || fail "live Deck driver never started"
   printf deck > "$dir/fake/command"
   printf deck > "$dir/fake/becomes"
-  out=$(FM_TEST_EXIT_WAIT=5 run_control "$dir" rl-deck-live relaunch --note 'replace live driver'); rc=$?
+  out=$(FM_TEST_EXIT_WAIT=5 FM_FAKE_PROTOCOL_FIRST="$dir/protocol-first" \
+    run_control "$dir" rl-deck-live relaunch --note 'replace live driver'); rc=$?
   if kill -0 "$pid" 2>/dev/null; then
     kill -KILL -- -"$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
@@ -1246,51 +1236,41 @@ test_spawn_relaunch_without_a_harness_reuses_the_recorded_one() {
   pass "fm-spawn --relaunch: with no explicit harness it reuses the task's recorded one, never the crew default"
 }
 
-test_direct_spawn_relaunch_stops_stale_deck_driver_before_arming() {
-  local dir out rc gen pid
+test_direct_spawn_relaunch_stops_stale_deck_before_replacement_launch() {
+  local dir out rc gen pid deck_pid
   dir=$(new_case direct-stale-deck rl-deck-direct)
   add_ship_task "$dir" rl-deck-direct deck
   cat > "$dir/fakebin/deck" <<'PY'
 #!/usr/bin/env python3
 import json
 import os
-import signal
 import time
 
-stopping = False
-
-
-def stop(*_):
-    global stopping
-    stopping = True
-
-
-signal.signal(signal.SIGTERM, stop)
 print(json.dumps({"type": "run_started", "session": "direct-old-session"}), flush=True)
 with open(os.environ["FM_DECK_TEST_STATUS"], "a") as stream:
     stream.write("working: direct stub waiting\n")
+with open(os.environ["FM_DECK_TEST_PID"], "w") as stream:
+    stream.write(str(os.getpid()))
 open(os.environ["FM_DECK_TEST_READY"], "w").close()
-while not stopping:
-    time.sleep(0.01)
-time.sleep(0.2)
-open(os.environ["FM_DECK_TEST_COMPLETED"], "w").close()
-print(json.dumps({"type": "run_failed", "error": "stopped after current tool"}), flush=True)
-raise SystemExit(143)
+time.sleep(60)
 PY
   chmod +x "$dir/fakebin/deck"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-direct)
   FM_DECK_TEST_STATUS="$dir/home/state/rl-deck-direct.status" \
-    FM_DECK_TEST_READY="$dir/ready" FM_DECK_TEST_COMPLETED="$dir/completed" \
+    FM_DECK_TEST_READY="$dir/ready" FM_DECK_TEST_PID="$dir/deck-pid" \
     python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
     "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-direct --state "$dir/home/state" \
     --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
   pid=$!
   for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; /bin/sleep 0.05; done
   [ -e "$dir/ready" ] || fail "direct relaunch Deck driver never started"
+  deck_pid=$(cat "$dir/deck-pid")
   "$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-direct >/dev/null
   printf zsh > "$dir/fake/command"
   printf deck > "$dir/fake/becomes"
-  out=$(FM_TEST_EXIT_WAIT=12 run_spawn "$dir" rl-deck-direct --relaunch --harness deck); rc=$?
+  out=$(FM_TEST_EXIT_WAIT=12 FM_FAKE_PRIOR_PID="$deck_pid" \
+    FM_FAKE_PRIOR_LIVE_MARKER="$dir/prior-live-at-launch" \
+    run_spawn "$dir" rl-deck-direct --relaunch --harness deck); rc=$?
   if kill -0 "$pid" 2>/dev/null; then
     kill -KILL -- -"$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
@@ -1298,11 +1278,11 @@ PY
   fi
   wait "$pid" 2>/dev/null || true
   expect_code 0 "$rc" "direct stale Deck relaunch should succeed: $out"
-  [ -e "$dir/completed" ] || fail "direct relaunch interrupted the old driver's active work"
+  [ ! -e "$dir/prior-live-at-launch" ] || fail "direct replacement launched before the stale Deck process stopped"
   assert_not_contains "$(cat "$dir/home/state/rl-deck-direct.status")" 'failed:' \
     "direct relaunch let the old driver publish a stale-generation failure"
   [ "$(cat "$dir/fake/command")" = deck ] || fail "direct relaunch did not launch the replacement"
-  pass "fm-spawn --relaunch: stale Deck driver stops before replacement arming"
+  pass "fm-spawn --relaunch: stale Deck process stops before replacement launch"
 }
 
 test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
@@ -2197,7 +2177,7 @@ test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
 test_relaunch_onto_verified_deck_replaces_the_agent
-test_relaunch_stops_stale_deck_driver_before_rotating_generation
+test_relaunch_stops_stale_deck_driver_before_replacement_launch
 test_live_deck_relaunch_uses_control_protocol_before_residual_stop
 test_relaunch_onto_deck_with_effort_refuses_before_stop
 test_prior_harness_turnend_registry_entry_is_cleared
@@ -2209,7 +2189,7 @@ test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop
 test_explicit_secondmate_harness_ignores_configured_profile_axes
 test_ship_relaunch_ignores_the_crew_harness_config
 test_spawn_relaunch_without_a_harness_reuses_the_recorded_one
-test_direct_spawn_relaunch_stops_stale_deck_driver_before_arming
+test_direct_spawn_relaunch_stops_stale_deck_before_replacement_launch
 test_promoted_scout_relaunch_receives_the_current_delivery_contract
 test_prefixed_prior_harness_wiring_is_still_retired
 test_muse_session_binding_is_retired_on_a_harness_switch
