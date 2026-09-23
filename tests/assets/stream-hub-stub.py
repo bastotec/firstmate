@@ -20,7 +20,9 @@ test can measure rather than infer.
                            endpoint on every frame after those
   --accept-registrations N how many registrations to accept (-1 for all)
   --command-id ID          deliver one successful status command with this id
+  --second-command-id ID   deliver another command after the first
   --delay-command-secs N   delay the first command response
+  --reject-result-command ID reject results for this command id
   --fail-results-first N   refuse the first N result posts
   --result-file PATH       write the accepted result payload there
   --omit-result-capability omit result retry support from health
@@ -92,11 +94,14 @@ class Stub(http.server.BaseHTTPRequestHandler):
             return
         if path == "/v1/agent/commands":
             with self.server.state["lock"]:
-                command_id = self.server.state["command_id"]
-                delay_command = self.server.state["delay_command_secs"]
-                send_command = bool(command_id and not self.server.state["command_sent"])
+                index = self.server.state["command_index"]
+                command_ids = self.server.state["command_ids"]
+                send_command = index < len(command_ids)
+                command_id = command_ids[index] if send_command else ""
+                delay_command = (self.server.state["delay_command_secs"]
+                                 if index == 0 else 0.0)
                 if send_command:
-                    self.server.state["command_sent"] = True
+                    self.server.state["command_index"] += 1
             if send_command:
                 if delay_command > 0:
                     time.sleep(delay_command)
@@ -150,6 +155,11 @@ class Stub(http.server.BaseHTTPRequestHandler):
             with state["lock"]:
                 state["result_attempts"] += 1
                 refuse = state["result_attempts"] <= state["fail_results_first"]
+                reject = (payload.get("command_id")
+                          == state["reject_result_command"])
+            if reject:
+                self._refuse(404, "no_such_command", "the result was rejected by design")
+                return
             if refuse:
                 self._refuse(503, "result_unavailable", "the result route is unavailable")
                 return
@@ -174,7 +184,9 @@ def main() -> int:
     parser.add_argument("--frames-ok-first", type=int, default=1)
     parser.add_argument("--accept-registrations", type=int, default=-1)
     parser.add_argument("--command-id", default="")
+    parser.add_argument("--second-command-id", default="")
     parser.add_argument("--delay-command-secs", type=float, default=0.0)
+    parser.add_argument("--reject-result-command", default="")
     parser.add_argument("--fail-results-first", type=int, default=0)
     parser.add_argument("--result-file", default="")
     parser.add_argument("--omit-result-capability", action="store_true")
@@ -189,9 +201,11 @@ def main() -> int:
         "accept_registrations": options.accept_registrations,
         "registrations": 0,
         "frames": 0,
-        "command_id": options.command_id,
+        "command_ids": [value for value in
+                        (options.command_id, options.second_command_id) if value],
+        "command_index": 0,
         "delay_command_secs": options.delay_command_secs,
-        "command_sent": False,
+        "reject_result_command": options.reject_result_command,
         "fail_results_first": options.fail_results_first,
         "result_attempts": 0,
         "result_file": options.result_file,

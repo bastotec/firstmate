@@ -2,6 +2,7 @@
 import json
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,6 +25,8 @@ def call(url, token, method, path, payload=None):
 
 def main():
     url, publish_token, control_token = sys.argv[1:4]
+    count = int(sys.argv[4]) if len(sys.argv) > 4 else 513
+    pause_before_second = float(sys.argv[5]) if len(sys.argv) > 5 else 0.0
     endpoint = "d" * 32
     status, body = call(url, publish_token, "POST", "/v1/agent/endpoints", {
         "endpoint_id": endpoint,
@@ -36,7 +39,9 @@ def main():
         raise SystemExit("registration failed: %s %r" % (status, body))
 
     first_result = None
-    for number in range(513):
+    for number in range(count):
+        if number == 1 and pause_before_second > 0:
+            time.sleep(pause_before_second)
         placed = {}
 
         def place():
@@ -75,7 +80,7 @@ def main():
     retry_status, retry_body = call(
         url, publish_token, "POST", "/v1/agent/results", first_result)
     print(json.dumps({"retry_status": retry_status, "retry_body": retry_body,
-                      "completed": 513}, separators=(",", ":")))
+                      "completed": count}, separators=(",", ":")))
 
 
 if __name__ == "__main__":
