@@ -110,9 +110,16 @@ def driver_deck(arguments, worker, state, task):
     if os.path.realpath(arguments[1]) != worker:
         return None
     options = {}
+    flags = set()
     position = 2
     while position < len(arguments) and arguments[position] != "--":
         option = arguments[position]
+        if option == "--secondmate":
+            if option in flags:
+                return None
+            flags.add(option)
+            position += 1
+            continue
         if option not in ("--id", "--state", "--gen", "--deck", "--model"):
             return None
         if option in options or position + 1 >= len(arguments):

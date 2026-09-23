@@ -450,6 +450,41 @@ PY
   pass "Deck stop: physical aliases and spaced paths stop the active Deck process"
 }
 
+test_stale_secondmate_driver_is_stopped_at_relaunch_boundary() {
+  local dir="$TMP_ROOT/stop-secondmate" install state worker stop pid
+  install="$dir/install/bin"
+  state="$dir/state"
+  worker="$install/fm-deck-worker.sh"
+  stop="$install/fm-deck-stop.py"
+  mkdir -p "$install" "$state"
+  cp "$ROOT/bin/fm-deck-stop.py" "$stop"
+  cat > "$worker" <<'SH'
+#!/usr/bin/env bash
+trap 'exit 0' TERM
+: > "$FM_DECK_READY"
+while :; do :; done
+SH
+  chmod +x "$worker"
+  FM_DECK_READY="$dir/ready" python3 -c \
+    'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
+    "$worker" --secondmate --id stale-host --state "$state" --gen stale-generation \
+    --deck "$dir/deck" -- old-charter </dev/null > "$dir/pane.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; sleep 0.05; done
+  [ -e "$dir/ready" ] || fail "stale secondmate driver fixture did not start"
+  python3 "$stop" "$state" stale-host 1 \
+    || fail "the relaunch boundary refused to stop a stale secondmate driver"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL -- -"$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "the relaunch boundary skipped a stale secondmate driver"
+  fi
+  wait "$pid" 2>/dev/null || true
+  : > "$dir/replacement-armed"
+  [ -e "$dir/replacement-armed" ] || fail "replacement was not armed after the secondmate stop proof"
+  pass "Deck stop: stale secondmate drivers stop before replacement arming"
+}
+
 test_driver_stop_is_scoped_and_escalates_after_timeout() {
   local dir="$TMP_ROOT/stop-escalation" pid gen
   mkdir -p "$dir/state"
@@ -860,6 +895,7 @@ test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
 test_completed_turn_removes_busy_ack_before_the_next_steer
 test_driver_stop_terminates_active_deck_and_resolves_spaced_paths
+test_stale_secondmate_driver_is_stopped_at_relaunch_boundary
 test_driver_stop_is_scoped_and_escalates_after_timeout
 test_liveness_reads_the_driver_as_an_agent
 test_tmux_liveness_uses_the_deck_driver_argv0

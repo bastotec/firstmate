@@ -67,7 +67,7 @@ The terminal regression drives two real `fm-send.sh` steers through tmux and pro
 The portable regression runs the driver, Deck executable, and state beneath paths containing spaces and proves that TERM removes the active Deck process before replacement.
 Its fake Deck uses the binary's default TERM behavior: an active in-process tool is interrupted rather than allowed to complete, and no later tool starts.
 A second fixture ignores TERM and proves the bounded wait escalates the surviving isolated process group to KILL.
-Physical-state-alias and stale-generation relaunch regressions are in `tests/fm-deck-harness.test.sh` and `tests/fm-control-relaunch.test.sh`.
+Physical-state-alias and stale-generation relaunch regressions, including the valueless `--secondmate` driver flag, are in `tests/fm-deck-harness.test.sh` and `tests/fm-control-relaunch.test.sh`.
 Other harnesses retain their existing lifecycle behavior; this driver-only path does not alter backend transport or endpoint classifiers.
 
 ## Live check
