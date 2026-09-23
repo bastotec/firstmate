@@ -1,22 +1,20 @@
 //! Shared wire contract for the Rust stream-backend port.
 //!
-//! One compiled definition of what crosses the wire, so the hub, agent, and
-//! bridge crates cannot drift apart.  The Python deployment at
-//! `bin/fm-stream-hub.py`, `bin/fm-stream-agent.py`, and
-//! `bin/fm-stream-bridge.py` is the reference implementation while the port
-//! proceeds; its OBSERVED BEHAVIOUR, not its source, is the spec.  The
-//! byte-level encoders here reproduce the Python toolchain's observable
-//! output exactly - `json.dumps` with default `ensure_ascii` and the
-//! interpreter's `repr` for floats - because the bridge's NDJSON feed is
-//! diffed byte-for-byte against the reference in
+//! One compiled definition of what crosses the wire for the Rust pieces as
+//! they replace the Python backend one at a time.  The bridge uses it today;
+//! later hub and agent ports should reuse it rather than restating the
+//! protocol.  The Python deployment at `bin/fm-stream-hub.py`,
+//! `bin/fm-stream-agent.py`, and `bin/fm-stream-bridge.py` remains the
+//! reference implementation while the port proceeds; its OBSERVED BEHAVIOUR,
+//! not its source, is the spec.  The byte-level encoders here reproduce the
+//! Python toolchain's observable output exactly - `json.dumps` with default
+//! `ensure_ascii` and the interpreter's `repr` for floats - because the
+//! bridge's NDJSON feed is diffed byte-for-byte against the reference in
 //! `tests/fm-stream-bridge-rust.test.sh`.
 //!
-//! Known divergences, each outside anything the hub can produce:
-//! - JSON integers wider than 64 bits (`as_i64` covers every OS exit status
-//!   and every clock the hub carries; Python's arbitrary-precision ints are
-//!   matched everywhere the domain reaches).
-//! - The reference's HTTP client follows 3xx redirects; the hub never emits
-//!   one.  See the bridge crate's hub client.
+//! JSON integers wider than 64 bits remain outside the Rust bridge's accepted
+//! domain.  Signed 64-bit values cover every OS exit status and hub clock the
+//! deployed backend produces.
 
 pub mod python_json;
 

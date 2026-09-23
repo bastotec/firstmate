@@ -1,10 +1,7 @@
 [workspace]
-# The Rust port of the stream backend, replacing the Python pieces at
-# bin/fm-stream-hub.py, bin/fm-stream-agent.py, and bin/fm-stream-bridge.py
-# one at a time.  The Python deployment stays up as
-# the reference while each Rust piece takes over; the reference's OBSERVED
-# BEHAVIOUR is the spec, and tests/fm-stream-bridge-rust.test.sh proves the
-# bridge port byte-for-byte against it.
+# The stream backend is moving from Python to Rust one piece at a time.
+# This workspace currently contains the shared wire crate and bridge port;
+# docs/stream-backend.md owns its operator-facing status and limits.
 #
 # Cargo.lock is committed so binary builds are reproducible from a clean
 # checkout (every member is a binary or backs one).

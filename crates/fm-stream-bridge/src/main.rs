@@ -1,13 +1,13 @@
 //! fm-stream-bridge - translate the stream hub into the Bridge UI's live
 //! wire format.  Rust port of `bin/fm-stream-bridge.py`; the Python adapter
-//! remains the deployed reference until the port's parity is proven, and
-//! `tests/fm-stream-bridge-rust.test.sh` diffs the two byte-for-byte.
+//! remains the deployed reference until the port's parity is proven.
+//! `tests/fm-stream-bridge-rust.test.sh` owns the parity comparison, including
+//! byte-exact checks of recorded NDJSON.
 //!
-//! The port contract, kept throughout: same CLI surface (drop-in), same
-//! exit statuses (0 ok; 2 usage, refused credential, wrong protocol, bad
-//! input; 1 unreachable hub from snapshot; 130 interrupted), same stdout
-//! bytes, same refusal classes.  See the crate-level docs of `fm_stream_wire`
-//! for the byte-level encoder contract.
+//! Operator-facing compatibility and supported limits are owned by
+//! `docs/stream-backend.md`.  Within those limits the port preserves the
+//! reference's exit-status classes, feed bytes, and refusal classes.  See the
+//! crate-level docs of `fm_stream_wire` for the byte-level encoder contract.
 
 mod bridge;
 mod cli;
