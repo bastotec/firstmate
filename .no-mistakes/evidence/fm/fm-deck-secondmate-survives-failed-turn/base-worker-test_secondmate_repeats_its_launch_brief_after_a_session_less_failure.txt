@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "<stdin>", line 33, in <module>
+AssertionError: the driver exited on a session-less first turn: 
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: injected
+fm-deck-worker: turn failed (turn-failed, exit 9)
+
+not ok - a Deck secondmate lost its launch brief when a failure opened no session

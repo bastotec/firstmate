@@ -1,0 +1,13 @@
+real deck, missing gateway key: turn 1 produced no run_started -> ''
+published failure: failed: Deck secondmate turn failed (turn-failed, exit 1)
+BASE worker exited rc=1 on the session-less first turn; turns run=1
+--- driver pane transcript (real deck, missing gateway key) ---
+
+⛵ deck working - ctrl+c to stop
+error: resolve gateway client key: read key file /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.kDxJxJ/proxai-client.key: No such file or directory (os error 2)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+
+--- parent/host.status ---
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+
+real-vendor no-session run (base) exit=0

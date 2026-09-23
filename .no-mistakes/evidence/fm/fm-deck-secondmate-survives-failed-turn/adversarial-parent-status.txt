@@ -1,0 +1,6 @@
+failed: Deck secondmate turn failed (turn-failed, exit 9)
+failed: Deck secondmate turn failed (turn-failed, exit 9)
+failed: Deck secondmate turn failed (turn-failed, exit 9)
+failed: Deck secondmate turn failed (turn-failed, exit 9)
+failed: Deck secondmate turn failed (turn-failed, exit 9)
+failed: Deck secondmate turn failed (turn-failed, exit 9)

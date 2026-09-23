@@ -1,0 +1,28 @@
+real deck, missing gateway key: turn 1 produced no run_started -> ''
+published failure: failed: Deck secondmate turn failed (turn-failed, exit 1)
+driver parked at its prompt after the session-less first turn (alive=True)
+driver exited rc=1 after the repeated launch brief also opened no session
+repeated launch brief carried the digest and the wake: run charter: live missing-gateway-key check
+
+The task steering inbox is /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/parent/host.inbox. It belongs to this secondmate 
+published terminal reason: failed: Deck secondmate opened no Deck session even after repeating the launch brief; stopping for a guarded relaunch
+--- driver pane transcript (real deck, missing gateway key) ---
+
+⛵ deck working - ctrl+c to stop
+error: resolve gateway client key: read key file /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/proxai-client.key: No such file or directory (os error 2)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+⛵ deck working - ctrl+c to stop
+error: resolve gateway client key: read key file /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/proxai-client.key: No such file or directory (os error 2)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+fm-deck-worker: opened no Deck session even after repeating the launch brief; stopping for a guarded relaunch
+
+--- parent/host.status ---
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+failed: Deck secondmate opened no Deck session even after repeating the launch brief; stopping for a guarded relaunch
+
+real-vendor no-session run (stop) exit=0

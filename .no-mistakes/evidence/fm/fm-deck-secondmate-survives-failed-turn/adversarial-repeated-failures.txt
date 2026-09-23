@@ -1,0 +1,11 @@
+ADVERSARIAL PASS: 6 consecutive failed turns, 6 published failures, one session (host-session), watcher delivered wake 7, /quit rc=0
+--- parent/host.status (every failure stayed published) ---
+failed: Deck secondmate turn failed (turn-failed, exit 9)
+failed: Deck secondmate turn failed (turn-failed, exit 9)
+failed: Deck secondmate turn failed (turn-failed, exit 9)
+failed: Deck secondmate turn failed (turn-failed, exit 9)
+failed: Deck secondmate turn failed (turn-failed, exit 9)
+failed: Deck secondmate turn failed (turn-failed, exit 9)
+
+--- busy-state tail ---
+v1 gen=g1790197822.42514.32530 seq=16 state=idle source=deck-wrapper event=session-end ts=1790197844

@@ -1,0 +1,68 @@
+real deck, missing gateway key: turn 1 produced no run_started -> ''
+published failure: failed: Deck secondmate turn failed (turn-failed, exit 1)
+driver parked at its prompt after the session-less first turn (alive=True)
+re-delivered launch brief + wake reached a real Deck session: s-1790197556-fe615b0e
+next turn resumed that session and did not repeat the brief again
+/quit exit code: 0
+--- pane ---
+
+⛵ deck working - ctrl+c to stop
+error: resolve gateway client key: read key file /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/proxai-client.key: No such file or directory (os error 2)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: model gateway request failed (HTTP 401)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: model gateway request failed (HTTP 401)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+--- parent/host.status ---
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+
+--- deck invocations (argv heads) ---
+turn=1 exit=pending argv=run charter: live missing-gateway-key check
+
+The task steering inbox is /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/parent/host.inbox. It belongs to this secondmate even outside its home. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
+The Deck host already ran bin/fm-session-start.sh exactly once for this session.
+Read the complete digest below; do not run session start again.
+lock acquired: harness pid 89744
+complete startup digest marker --max-turns 200 --deadline-secs 3600 --hook pre_complete=bash -c .\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/bin/fm-session-lock-lib.sh\;\ fm_session_lock_owned_by_self\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/home/state\ \|\|\ \{\ echo\ \'Home\ session\ lock\ lost\;\ report\ the\ failure\ and\ stop.\'\ \>\&2\;\ exit\ 2\;\ \} --hook post_tool_use=diagnostic=$(/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/bin/fm-busy-event.sh progress /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/parent host --gen g1790197550.89085.13020 2>&1 >/dev/null) || { printf '%s\n' "$diagnostic" >&2; diagnostic=$(printf '%s' "$diagnostic" | tr '\n\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\n' "$diagnostic" | python3 /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/bin/fm-state-io.py root-append /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/parent host.status; exit 1; } --model codex/gpt-5.6-luna
+turn=1 exit=1
+turn=2 exit=pending argv=run charter: live missing-gateway-key check
+
+The task steering inbox is /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/parent/host.inbox. It belongs to this secondmate even outside its home. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
+The Deck host already ran bin/fm-session-start.sh exactly once for this session.
+Read the complete digest below; do not run session start again.
+lock acquired: harness pid 89744
+complete startup digest marker
+
+The host repeated this launch brief because the previous turn failed before Deck opened a session. The digest above is this session's startup; handle the wake below as its first work.
+
+first-wake-after-outage --max-turns 200 --deadline-secs 3600 --hook pre_complete=bash -c .\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/bin/fm-session-lock-lib.sh\;\ fm_session_lock_owned_by_self\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/home/state\ \|\|\ \{\ echo\ \'Home\ session\ lock\ lost\;\ report\ the\ failure\ and\ stop.\'\ \>\&2\;\ exit\ 2\;\ \} --hook post_tool_use=diagnostic=$(/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/bin/fm-busy-event.sh progress /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/parent host --gen g1790197550.89085.13020 2>&1 >/dev/null) || { printf '%s\n' "$diagnostic" >&2; diagnostic=$(printf '%s' "$diagnostic" | tr '\n\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\n' "$diagnostic" | python3 /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/bin/fm-state-io.py root-append /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/parent host.status; exit 1; } --model codex/gpt-5.6-luna
+turn=2 exit=1
+turn=3 exit=pending argv=run second-wake --max-turns 200 --deadline-secs 3600 --hook pre_complete=bash -c .\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/bin/fm-session-lock-lib.sh\;\ fm_session_lock_owned_by_self\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/home/state\ \|\|\ \{\ echo\ \'Home\ session\ lock\ lost\;\ report\ the\ failure\ and\ stop.\'\ \>\&2\;\ exit\ 2\;\ \} --hook post_tool_use=diagnostic=$(/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/bin/fm-busy-event.sh progress /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/parent host --gen g1790197550.89085.13020 2>&1 >/dev/null) || { printf '%s\n' "$diagnostic" >&2; diagnostic=$(printf '%s' "$diagnostic" | tr '\n\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\n' "$diagnostic" | python3 /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/bin/fm-state-io.py root-append /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/real/parent host.status; exit 1; } --model codex/gpt-5.6-luna --session s-1790197556-fe615b0e
+turn=3 exit=1
+--- deck stdout turn 1 ---
+
+--- deck stdout turn 2 ---
+{"type":"run_started","session":"s-1790197556-fe615b0e","model":"codex/gpt-5.6-luna"}
+{"type":"run_failed","error":"model gateway request failed (HTTP 401)"}
+
+--- deck stdout turn 3 ---
+{"type":"run_started","session":"s-1790197556-fe615b0e","model":"codex/gpt-5.6-luna"}
+{"type":"run_failed","error":"model gateway request failed (HTTP 401)"}

@@ -1,0 +1,2 @@
+ok - fm-deck-worker: a secondmate that cannot publish a failed turn stops instead of looping
+single case finished

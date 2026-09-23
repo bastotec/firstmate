@@ -1,0 +1,37 @@
+real deck, missing gateway key: turn 1 produced no run_started -> ''
+published failure: failed: Deck secondmate turn failed (turn-failed, exit 1)
+driver parked at its prompt after the session-less first turn (alive=True)
+re-delivered launch brief + wake reached a real Deck session: s-1790197556-fe615b0e
+next turn resumed that session and did not repeat the brief again
+/quit exit code: 0
+--- driver pane transcript (real deck, missing gateway key) ---
+
+⛵ deck working - ctrl+c to stop
+error: resolve gateway client key: read key file /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.ZZnAaa/proxai-client.key: No such file or directory (os error 2)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: model gateway request failed (HTTP 401)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: model gateway request failed (HTTP 401)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+--- parent/host.status ---
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+
+real-vendor no-session run (recover) exit=0

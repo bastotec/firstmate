@@ -1,0 +1,5 @@
+
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: model gateway request failed (HTTP 404)
+fm-deck-worker: turn failed (turn-failed, exit 1)

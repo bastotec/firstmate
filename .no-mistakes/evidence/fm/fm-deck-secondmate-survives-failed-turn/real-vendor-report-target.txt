@@ -1,0 +1,27 @@
+first real turn failed and was published; driver alive=True
+real deck session opened by the failed turn: s-1790197171-150e9b55
+real deck failure event: {"type":"run_failed","error":"model gateway request failed (HTTP 404)"}
+second turn resumed the same real session: turn=2 argv=run second-real-turn after the outage --max-turns 200 --deadline-secs 3600 --hook pre_complete=bash -c .\ /var/folders/zk/8g327wwn58x475n0vfwjlkph00
+/quit exit code: 0
+--- parent/host.status ---
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+
+--- real deck invocations ---
+turn=1 argv=run charter: live gateway refusal check
+
+The task steering inbox is /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/parent/host.inbox. It belongs to this secondmate even outside its home. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
+The Deck host already ran bin/fm-session-start.sh exactly once for this session.
+Read the complete digest below; do not run session start again.
+lock acquired: harness pid 21617
+complete startup digest marker --max-turns 200 --deadline-secs 3600 --hook pre_complete=bash -c .\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/bin/fm-session-lock-lib.sh\;\ fm_session_lock_owned_by_self\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/home/state\ \|\|\ \{\ echo\ \'Home\ session\ lock\ lost\;\ report\ the\ failure\ and\ stop.\'\ \>\&2\;\ exit\ 2\;\ \} --hook post_tool_use=diagnostic=$(/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/bin/fm-busy-event.sh progress /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/parent host --gen g1790197166.21053.11190 2>&1 >/dev/null) || { printf '%s\n' "$diagnostic" >&2; diagnostic=$(printf '%s' "$diagnostic" | tr '\n\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\n' "$diagnostic" | python3 /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/bin/fm-state-io.py root-append /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/parent host.status; exit 1; } --model firstmate-livecheck/definitely-not-a-route
+turn=1 exit=1
+turn=2 argv=run second-real-turn after the outage --max-turns 200 --deadline-secs 3600 --hook pre_complete=bash -c .\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/bin/fm-session-lock-lib.sh\;\ fm_session_lock_owned_by_self\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/home/state\ \|\|\ \{\ echo\ \'Home\ session\ lock\ lost\;\ report\ the\ failure\ and\ stop.\'\ \>\&2\;\ exit\ 2\;\ \} --hook post_tool_use=diagnostic=$(/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/bin/fm-busy-event.sh progress /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/parent host --gen g1790197166.21053.11190 2>&1 >/dev/null) || { printf '%s\n' "$diagnostic" >&2; diagnostic=$(printf '%s' "$diagnostic" | tr '\n\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\n' "$diagnostic" | python3 /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/bin/fm-state-io.py root-append /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-realvendor.CIBbBh/real/parent host.status; exit 1; } --model firstmate-livecheck/definitely-not-a-route --session s-1790197171-150e9b55
+turn=2 exit=1
+--- real deck stdout turn 1 ---
+{"type":"run_started","session":"s-1790197171-150e9b55","model":"firstmate-livecheck/definitely-not-a-route"}
+{"type":"run_failed","error":"model gateway request failed (HTTP 404)"}
+
+--- real deck stdout turn 2 ---
+{"type":"run_started","session":"s-1790197171-150e9b55","model":"firstmate-livecheck/definitely-not-a-route"}
+{"type":"run_failed","error":"model gateway request failed (HTTP 404)"}

@@ -1,0 +1,3 @@
+{"type":"run_started","session":"s-1790197060-917939af","model":"firstmate-livecheck/definitely-not-a-route"}
+{"type":"run_failed","error":"model gateway request failed (HTTP 404)"}
+real deck exit=1

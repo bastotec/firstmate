@@ -1,0 +1,22 @@
+real deck, missing gateway key: turn 1 produced no run_started -> ''
+published failure: failed: Deck secondmate turn failed (turn-failed, exit 1)
+BASE worker exited rc=1 on the session-less first turn; turns run=1
+--- pane ---
+
+⛵ deck working - ctrl+c to stop
+error: resolve gateway client key: read key file /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.kDxJxJ/proxai-client.key: No such file or directory (os error 2)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+
+--- parent/host.status ---
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+
+--- deck invocations (argv heads) ---
+turn=1 exit=pending argv=run charter: live missing-gateway-key check
+
+The task steering inbox is /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.kDxJxJ/real/parent/host.inbox. It belongs to this secondmate even outside its home. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
+The Deck host already ran bin/fm-session-start.sh exactly once for this session.
+Read the complete digest below; do not run session start again.
+lock acquired: harness pid 41304
+complete startup digest marker --max-turns 200 --deadline-secs 3600 --hook pre_complete=bash -c .\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.kDxJxJ/real/bin/fm-session-lock-lib.sh\;\ fm_session_lock_owned_by_self\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.kDxJxJ/real/home/state\ \|\|\ \{\ echo\ \'Home\ session\ lock\ lost\;\ report\ the\ failure\ and\ stop.\'\ \>\&2\;\ exit\ 2\;\ \} --hook post_tool_use=diagnostic=$(/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.kDxJxJ/real/bin/fm-busy-event.sh progress /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.kDxJxJ/real/parent host --gen g1790197604.41130.25627 2>&1 >/dev/null) || { printf '%s\n' "$diagnostic" >&2; diagnostic=$(printf '%s' "$diagnostic" | tr '\n\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\n' "$diagnostic" | python3 /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.kDxJxJ/real/bin/fm-state-io.py root-append /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.kDxJxJ/real/parent host.status; exit 1; } --model codex/gpt-5.6-luna
+turn=1 exit=1
+--- deck stdout turn 1 ---

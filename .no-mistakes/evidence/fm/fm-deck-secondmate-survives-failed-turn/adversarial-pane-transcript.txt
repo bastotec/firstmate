@@ -1,0 +1,54 @@
+
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: injected
+fm-deck-worker: turn failed (turn-failed, exit 9)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: injected
+fm-deck-worker: turn failed (turn-failed, exit 9)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: injected
+fm-deck-worker: turn failed (turn-failed, exit 9)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: injected
+fm-deck-worker: turn failed (turn-failed, exit 9)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: injected
+fm-deck-worker: turn failed (turn-failed, exit 9)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+⛵ deck working - ctrl+c to stop
+
+✗ turn failed: injected
+fm-deck-worker: turn failed (turn-failed, exit 9)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ watcher: started pid=45070 (beacon fresh)
+check: example
+
+⛵ deck working - ctrl+c to stop
+
+── turn finished (1 model calls)

@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "<stdin>", line 32, in <module>
+AssertionError: [{'prompt': 'charter\n\nThe task steering inbox is /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-harness.6Boiht/host-no-session-twice/parent/host.inbox. It belongs to this secondmate even outside its home. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.\nThe Deck host already ran bin/fm-session-start.sh exactly once for this session.\nRead the complete digest below; do not run session start again.\nlock acquired: harness pid 27184\ncomplete startup digest marker', 'session': 'host-session', 'resumed': False, 'inbox': ''}]
+not ok - a Deck secondmate parked forever without ever opening a session

@@ -1,0 +1,49 @@
+real deck, missing gateway key: turn 1 produced no run_started -> ''
+published failure: failed: Deck secondmate turn failed (turn-failed, exit 1)
+driver parked at its prompt after the session-less first turn (alive=True)
+driver exited rc=1 after the repeated launch brief also opened no session
+repeated launch brief carried the digest and the wake: run charter: live missing-gateway-key check
+
+The task steering inbox is /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/parent/host.inbox. It belongs to this secondmate 
+published terminal reason: failed: Deck secondmate opened no Deck session even after repeating the launch brief; stopping for a guarded relaunch
+--- pane ---
+
+⛵ deck working - ctrl+c to stop
+error: resolve gateway client key: read key file /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/proxai-client.key: No such file or directory (os error 2)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+
+⛵ turn failed; waiting at the prompt for the next wake.
+
+❯ 
+⛵ deck working - ctrl+c to stop
+error: resolve gateway client key: read key file /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/proxai-client.key: No such file or directory (os error 2)
+fm-deck-worker: turn failed (turn-failed, exit 1)
+fm-deck-worker: opened no Deck session even after repeating the launch brief; stopping for a guarded relaunch
+
+--- parent/host.status ---
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+failed: Deck secondmate turn failed (turn-failed, exit 1)
+failed: Deck secondmate opened no Deck session even after repeating the launch brief; stopping for a guarded relaunch
+
+--- deck invocations (argv heads) ---
+turn=1 exit=pending argv=run charter: live missing-gateway-key check
+
+The task steering inbox is /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/parent/host.inbox. It belongs to this secondmate even outside its home. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
+The Deck host already ran bin/fm-session-start.sh exactly once for this session.
+Read the complete digest below; do not run session start again.
+lock acquired: harness pid 20782
+complete startup digest marker --max-turns 200 --deadline-secs 3600 --hook pre_complete=bash -c .\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/bin/fm-session-lock-lib.sh\;\ fm_session_lock_owned_by_self\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/home/state\ \|\|\ \{\ echo\ \'Home\ session\ lock\ lost\;\ report\ the\ failure\ and\ stop.\'\ \>\&2\;\ exit\ 2\;\ \} --hook post_tool_use=diagnostic=$(/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/bin/fm-busy-event.sh progress /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/parent host --gen g1790197581.20399.1369 2>&1 >/dev/null) || { printf '%s\n' "$diagnostic" >&2; diagnostic=$(printf '%s' "$diagnostic" | tr '\n\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\n' "$diagnostic" | python3 /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/bin/fm-state-io.py root-append /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/parent host.status; exit 1; } --model codex/gpt-5.6-luna
+turn=1 exit=1
+turn=2 exit=pending argv=run charter: live missing-gateway-key check
+
+The task steering inbox is /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/parent/host.inbox. It belongs to this secondmate even outside its home. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
+The Deck host already ran bin/fm-session-start.sh exactly once for this session.
+Read the complete digest below; do not run session start again.
+lock acquired: harness pid 20782
+complete startup digest marker
+
+The host repeated this launch brief because the previous turn failed before Deck opened a session. The digest above is this session's startup; handle the wake below as its first work.
+
+next-wake --max-turns 200 --deadline-secs 3600 --hook pre_complete=bash -c .\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/bin/fm-session-lock-lib.sh\;\ fm_session_lock_owned_by_self\ /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/home/state\ \|\|\ \{\ echo\ \'Home\ session\ lock\ lost\;\ report\ the\ failure\ and\ stop.\'\ \>\&2\;\ exit\ 2\;\ \} --hook post_tool_use=diagnostic=$(/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/bin/fm-busy-event.sh progress /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/parent host --gen g1790197581.20399.1369 2>&1 >/dev/null) || { printf '%s\n' "$diagnostic" >&2; diagnostic=$(printf '%s' "$diagnostic" | tr '\n\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\n' "$diagnostic" | python3 /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/bin/fm-state-io.py root-append /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-deck-nosession.n1nD0d/real/parent host.status; exit 1; } --model codex/gpt-5.6-luna
+turn=2 exit=1
+--- deck stdout turn 1 ---
