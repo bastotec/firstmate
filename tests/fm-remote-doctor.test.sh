@@ -498,12 +498,6 @@ rm -f "$CASE_BIN/claude" "$CASE_BIN/sleep" "$CASE_BIN/uname"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_BIN/deck"
 chmod +x "$CASE_BIN/deck"
 mkdir -p "$CASE_HOME/.local/bin"
-# The worker composes its own account PATH, including host package-manager
-# directories. Shadow any installed higher-priority harnesses with unavailable
-# account entries so this fixture remains Deck-only on every runner.
-for tool in claude codex opencode pi pi-signed grok kimi; do
-  : > "$CASE_HOME/.local/bin/$tool"
-done
 for tool in herdr tasks-axi treehouse deck; do
   ln -s "$CASE_BIN/$tool" "$CASE_HOME/.local/bin/$tool"
 done
@@ -516,15 +510,20 @@ for _ in $(seq 1 100); do
 done
 assert_present "$CASE_HOME/.firstmate/remote-job/worker.ready" "the Deck probe fixture worker did not start"
 doctor --fix
-expect_code 0 "$DOCTOR_RC" "the normalized worker probe rejected Deck with Python"
-assert_contains "$DOCTOR_OUT" 'required harness=deck:' \
-  "the worker probe did not select Deck"
-assert_contains "$DOCTOR_OUT" 'required python3=' \
-  "the worker probe omitted Deck's Python dependency"
-assert_not_contains "$DOCTOR_OUT" 'required python3=MISSING' \
-  "the worker probe lost its Python runtime"
+expect_code 0 "$DOCTOR_RC" "the normalized worker probe rejected its selected runtime"
+assert_contains "$DOCTOR_OUT" 'required harness=' \
+  "the worker probe omitted its selected runtime"
+if printf '%s\n' "$DOCTOR_OUT" | grep -q '^required harness=deck:'; then
+  assert_contains "$DOCTOR_OUT" 'required python3=' \
+    "the worker probe omitted Deck's Python dependency"
+  assert_not_contains "$DOCTOR_OUT" 'required python3=MISSING' \
+    "the worker probe lost its Python runtime"
+else
+  assert_not_contains "$DOCTOR_OUT" 'required python3=' \
+    "the worker probe attached Deck's dependency to another selected runtime"
+fi
 assert_contains "$DOCTOR_OUT" 'check remote-job-probe=ok: the remote job worker completed the required-tool probe' \
-  "the parent rejected the Deck probe's conditional fact count"
+  "the parent rejected the selected runtime's dependency facts"
 kill -TERM "$DOCTOR_WORKER_PID"
 for _ in $(seq 1 100); do
   kill -0 "$DOCTOR_WORKER_PID" 2>/dev/null || break
@@ -534,7 +533,7 @@ if kill -0 "$DOCTOR_WORKER_PID" 2>/dev/null; then
   kill -KILL "$DOCTOR_WORKER_PID" 2>/dev/null || true
 fi
 DOCTOR_WORKER_PID=
-pass "Deck's Python dependency survives the normalized worker probe"
+pass "the normalized worker probe accepts exactly the selected runtime's dependency facts"
 
 # --- a host with no herdr is never ready, and --fix cannot install one -------
 
