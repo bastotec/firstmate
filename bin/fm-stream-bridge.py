@@ -202,9 +202,9 @@ BRIDGE_STALE_MS = 1500
 MIN_INTERVAL_MS = 50
 HTTP_TIMEOUT_SECS = 5.0
 # An order waits on the owning agent's acknowledgement and, when a leaf does
-# not resolve, on the hub's rejoin window before it will call that absence a
-# membership verdict.  Both are far longer than a read, so orders get their own
-# bound rather than the feed's.
+# not resolve, on the hub's rejoin window before returning the still-unconfirmed
+# placement.  Both are far longer than a read, so orders get their own bound
+# rather than the feed's.
 ORDER_TIMEOUT_SECS = 60.0
 
 # The three records point 7 of the Bridge UI's ingest contract defines, spelled

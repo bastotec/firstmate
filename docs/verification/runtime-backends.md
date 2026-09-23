@@ -1730,7 +1730,8 @@ The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
 
 ## stream
 
-Hub 2.0.0 (protocol 2), verified on 2026-09-17 on Linux with Python 3.14.4, curl 8.18.0, and jq 1.8.1.
+The live evidence below was captured with Hub 2.0.0 (protocol 2) on 2026-09-17 on Linux with Python 3.14.4, curl 8.18.0, and jq 1.8.1.
+The current hub uses the newer wire protocol documented in [`stream-backend.md`](../stream-backend.md#when-the-hub-restarts), so rerun the guard before treating this as current evidence.
 
 The stream backend reads a different table by a different route than tmux does: the owning agent reads its own pseudoterminal's foreground process group, publishes it to the hub over HTTP, and the classifier sees a flattened command line rather than tmux's `comm` list.
 A defect in that reading, in the publish path, or in the freshness gate surfaces only here, which is why this guard exists beside the tmux one.
