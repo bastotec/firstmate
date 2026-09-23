@@ -1,6 +1,0 @@
-$ non-loopback cleartext gateway
-fm-voice-relay: config/voice-gateway-url must use HTTPS, or HTTP with a loopback IP, without credentials
-exit=2
-$ loopback cleartext gateway
-{"mode": "self-test", "model": "codex/gpt-6-astra", "region": null, "read_scope": "counts", "input_seconds": 0.0, "tail_ms": 1500, "connect_seconds": 0, "tool_calls": 0, "tool_names": [], "tool_use_s": null, "first_audio_s": null, "reply_end_s": null, "reply_audio_seconds": 0.0, "answered": false, "timed_out": false, "relay_error": "RuntimeError: hybrid engine unavailable: ConnectionRefusedError: [Errno 61] Connect call failed ('127.0.0.1', 45678)", "clock_unusable": [], "heard": "", "said": "", "notices": ["turn-failed"]}
-exit=1
