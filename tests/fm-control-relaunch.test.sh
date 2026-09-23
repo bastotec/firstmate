@@ -237,7 +237,7 @@ run_control() {  # <case-dir> <args...>
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
-    FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
+    FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT="${FM_TEST_EXIT_WAIT:-0.05}" FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_REAL_GIT="${FM_REAL_GIT:-}" FM_FAKE_GIT_FAILURE="${FM_FAKE_GIT_FAILURE:-}" \
     FM_REAL_MV="${FM_REAL_MV:-}" FM_FAKE_COMPLETE_JOURNAL_MV_FAIL="${FM_FAKE_COMPLETE_JOURNAL_MV_FAIL:-}" \
     FM_FAKE_META_PUBLISH_MV_FAIL="${FM_FAKE_META_PUBLISH_MV_FAIL:-}" \
@@ -833,6 +833,44 @@ test_relaunch_onto_verified_deck_replaces_the_agent() {
   [ "$(cat "$dir/fake/command")" = deck ] || fail "Deck relaunch did not start the replacement agent"
   assert_grep "move to Deck" "$dir/home/data/rl53/brief.md" "Deck relaunch did not preserve its note"
   pass "fm-control relaunch: verified Deck replaces an existing crewmate"
+}
+
+test_relaunch_stops_stale_deck_driver_before_rotating_generation() {
+  local dir out rc gen pid
+  dir=$(new_case stale-deck rl-deck-stale)
+  add_ship_task "$dir" rl-deck-stale deck
+  cat > "$dir/fakebin/deck" <<'SH'
+#!/usr/bin/env bash
+printf '{"type":"run_started","session":"old-session"}\n'
+printf 'working: stub waiting\n' >> "$FM_DECK_TEST_STATUS"
+touch "$FM_DECK_TEST_READY"
+sleep 60
+SH
+  chmod +x "$dir/fakebin/deck"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-stale)
+  FM_DECK_TEST_STATUS="$dir/home/state/rl-deck-stale.status" FM_DECK_TEST_READY="$dir/ready" \
+    python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
+    "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-stale --state "$dir/home/state" \
+    --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; /bin/sleep 0.1; done
+  [ -e "$dir/ready" ] || fail "old Deck driver never started"
+  # Model the reported failure: the endpoint says shell, yet a prior driver
+  # still runs against a generation that a previous replacement rotated.
+  "$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-stale >/dev/null
+  printf zsh > "$dir/fake/command"
+  printf deck > "$dir/fake/becomes"
+  out=$(FM_TEST_EXIT_WAIT=5 run_control "$dir" rl-deck-stale relaunch --note 'replace stale driver'); rc=$?
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM -- -"$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "relaunch left the old Deck driver alive: $out"
+  fi
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$rc" "stale Deck driver relaunch should succeed: $out"
+  [ "$(cat "$dir/fake/command")" = deck ] || fail "replacement did not launch"
+  assert_not_contains "$(cat "$dir/home/state/rl-deck-stale.status")" 'failed:' "old driver wrote a stale failure"
+  pass "fm-control relaunch: stale Deck driver is gone before replacement launch"
 }
 
 test_relaunch_onto_deck_with_effort_refuses_before_stop() {
@@ -1988,6 +2026,7 @@ test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
 test_relaunch_onto_verified_deck_replaces_the_agent
+test_relaunch_stops_stale_deck_driver_before_rotating_generation
 test_relaunch_onto_deck_with_effort_refuses_before_stop
 test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm

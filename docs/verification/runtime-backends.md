@@ -6,6 +6,26 @@ This record contains reusable version-scoped evidence for active runtime guarant
 The backend guides own current setup, safety boundaries, and limitations.
 Exact task chronology, branch names, temporary homes, local paths, process ids, thread ids, and delivery transcripts remain in private reports or PR evidence.
 
+## Deck driver lifecycle and deadline protocol
+
+`bin/fm-deck-stop.py` owns the task-bound local driver stop proof used by `bin/fm-control.sh`; endpoint classification remains required independently.
+`bin/fm-deck-worker.sh` owns native deadline continuation and the per-turn deadline setting.
+Verified on 2026-09-23 with Deck 0.1.0 on macOS using a loopback HTTP server, without gateway credentials or model tokens:
+
+```sh
+bin/fm-test-run.sh tests/fm-deck-deadline-live-e2e.test.sh
+```
+
+Observed output:
+
+```text
+ok - deck 0.1.0: native deadline emits resumable session and exact run_failed reason
+```
+
+The guard pins the installed binary's nonzero exit, session-bearing `run_started`, and exact `run_failed` deadline error used to distinguish continuation from unrelated failures.
+Portable driver and stale-generation relaunch regressions are in `tests/fm-deck-harness.test.sh` and `tests/fm-control-relaunch.test.sh`.
+Other harnesses retain their existing lifecycle and deadline behavior; this driver-only path does not alter backend transport or endpoint classifiers.
+
 ## Harness detection precedence
 
 Firstmate's own harness comes from two kinds of evidence, and `bin/fm-harness.sh` owns how they combine: an environment marker names its harness, and the nearest harness process in the parent chain proves who owns the process tree.
