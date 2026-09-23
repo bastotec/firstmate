@@ -345,7 +345,7 @@ family_for_basename() {
     fm-composer-codex-idle-live-e2e.test.sh|\
     fm-codex-continuity-live-e2e.test.sh|fm-grok-continuity-live-e2e.test.sh|\
     fm-cursor-primary-live-e2e.test.sh|\
-    fm-deck-host-live-e2e.test.sh|\
+    fm-deck-deadline-live-e2e.test.sh|fm-deck-host-live-e2e.test.sh|\
     fm-grok-stop-live-e2e.test.sh|fm-harness-adapter-instructions-live-e2e.test.sh|\
     fm-harness-liveness-drift-live-e2e.test.sh|\
     fm-muse-signals-live-e2e.test.sh|fm-rovo-signals-live-e2e.test.sh|fm-agy-signals-live-e2e.test.sh|\
@@ -661,6 +661,7 @@ portable_serial_weight_hints() {
 tests/fm-agy-harness.test.sh 11000
 tests/fm-agy-signals-live-e2e.test.sh 23
 tests/fm-deck-harness.test.sh 29898
+tests/fm-deck-deadline-live-e2e.test.sh 2733
 tests/fm-deck-host-live-e2e.test.sh 140
 tests/fm-afk-contract.test.sh 3000
 tests/fm-afk-inject-e2e.test.sh 35792

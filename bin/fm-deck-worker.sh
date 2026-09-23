@@ -44,7 +44,9 @@
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
-#   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600)
+#   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600). A native
+#                           deadline failure resumes the same session in a new
+#                           bounded turn; other failures never auto-retry.
 #   PROXAI_BASE_URL, PROXAI_MODEL, PROXAI_API_KEY_FILE, PROXAI_API_KEY
 #                           Deck's own endpoint settings, passed through. When
 #                           neither key variable is set and
@@ -90,6 +92,8 @@ MAX_TURNS=${FM_DECK_MAX_TURNS:-200}
 DEADLINE=${FM_DECK_DEADLINE_SECS:-3600}
 case "$MAX_TURNS" in ''|*[!0-9]*) MAX_TURNS=200 ;; esac
 case "$DEADLINE" in ''|*[!0-9]*) DEADLINE=3600 ;; esac
+# A zero deadline would turn native continuation into an immediate retry loop.
+case "$DEADLINE" in *[1-9]*) ;; *) DEADLINE=3600 ;; esac
 if [ -z "${PROXAI_API_KEY_FILE:-}${PROXAI_API_KEY:-}" ] && [ -f "$HOME/.config/proxai/client.key" ]; then
   export PROXAI_API_KEY_FILE="$HOME/.config/proxai/client.key"
 fi
@@ -137,13 +141,17 @@ interrupt_turn() {
 trap interrupt_turn INT
 
 busy_event() {  # <busy|idle> <event>
-  "$BUSY_EVENT" apply "$STATE" "$ID" "$1" --gen "$GEN" --source deck-wrapper --event "$2" >/dev/null 2>&1
+  "$BUSY_EVENT" apply "$STATE" "$ID" "$1" --gen "$GEN" --source deck-wrapper --event "$2" >/dev/null
 }
 
 record_busy_event() {  # <busy|idle> <event>
-  local state=$1 event=$2
-  busy_event "$state" "$event" && return 0
-  if ! printf 'failed: deck wrapper could not record busy-state event (%s)\n' "$event" | status_append; then
+  local state=$1 event=$2 diagnostic
+  diagnostic=$(busy_event "$state" "$event" 2>&1) && return 0
+  printf '%s\n' "$diagnostic" >&2
+  # A diagnostic is one status event even when the helper writes several lines.
+  diagnostic=${diagnostic//$'\n'/; }
+  diagnostic=${diagnostic//$'\r'/ }
+  if ! printf 'failed: deck wrapper could not record busy-state event (%s): %s\n' "$event" "$diagnostic" | status_append; then
     printf 'fm-deck-worker: busy-state event %s failed and its status could not be published to %s\n' "$event" "$STATUS_FILE" >&2
     return 1
   fi
@@ -297,7 +305,7 @@ watch_maintain() {
 # line after the byte offset recorded at turn start. Deck feeds this stderr back
 # to the model and fails the run after its own bounded number of refusals.
 EVIDENCE_HOOK="python3 $(q "$STATE_IO") root-worker-status-after $(q "$STATE") $(q "$ID.status") \"\$(cat $(q "$TURN_MARK") 2>/dev/null || echo 0)\" 2>/dev/null || { echo $(q "Before you finish, append one line to $STATUS_FILE as your instructions' status protocol describes (done:, needs-decision:, blocked:, failed:, or working:), stating what you did and the evidence. Then finish.") >&2; exit 2; }"
-PROGRESS_HOOK="$(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID") --gen $(q "$GEN") >/dev/null 2>&1 || { echo $(q "fm-deck-worker: could not refresh Deck progress state") >&2; exit 1; }"
+PROGRESS_HOOK="diagnostic=\$($(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID") --gen $(q "$GEN") 2>&1 >/dev/null) || { printf '%s\\n' \"\$diagnostic\" >&2; diagnostic=\$(printf '%s' \"\$diagnostic\" | tr '\\n\\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\\n' \"\$diagnostic\" | python3 $(q "$STATE_IO") root-append $(q "$STATE") $(q "$ID.status"); exit 1; }"
 
 # Readable pane rendering of Deck's event stream. Reasoning and usage events
 # are bookkeeping and stay out of the pane.
@@ -441,6 +449,17 @@ run_turn() {  # <prompt>
   else
     event=turn-failed
   fi
+  if [ "$INTERRUPTED" = 0 ] && [ "$rc" -ne 0 ] && [ -n "$SESSION" ] \
+    && jq -e --arg error "run exceeded ${DEADLINE}s deadline" \
+      'select(.type == "run_failed" and .error == $error)' "$EVENTS" >/dev/null 2>&1; then
+    # Deck persists the conversation before returning its native deadline error.
+    # Do not replay a tool or an old prompt: the resumed worker must reconcile
+    # any in-flight pipeline first. Busy writes remain fail-closed here too.
+    printf 'working: Deck turn deadline reached; resuming the existing session\n' | status_append || return 1
+    record_busy_event idle turn-deadline || return 1
+    publish_turnend || return 1
+    return 75
+  fi
   status_before=$(cat "$TURN_MARK" 2>/dev/null || printf '0\n')
   if [ "$SECONDMATE" = 1 ]; then
     if [ "$event" = turn-end ] && ! jq -es 'any(.[]; .type == "run_finished") and (all(.[]; .type != "run_failed"))' "$EVENTS" >/dev/null; then
@@ -467,7 +486,17 @@ run_turn() {  # <prompt>
   publish_turnend || return 1
 }
 
-run_turn "$PROMPT" || exit 1
+run_with_deadline_resume() {
+  local prompt=$1 rc
+  while :; do
+    run_turn "$prompt"
+    rc=$?
+    [ "$rc" = 75 ] || return "$rc"
+    prompt='The previous bounded turn reached its wall-clock deadline. Continue this same task and session. First inspect the status of any pipeline or command already started; do not start a duplicate run or replay a state-changing command. Resume supervision of any external wait, and otherwise continue from the existing evidence.'
+  done
+}
+
+run_with_deadline_resume "$PROMPT" || exit 1
 input_seq=0
 show_prompt=1
 while :; do
@@ -489,7 +518,7 @@ while :; do
         host_failure 'could not publish watcher steering doorbell'; exit 1
       fi
       : > "$WATCH_PENDING"
-      run_turn "$doorbell" || exit 1
+      run_with_deadline_resume "$doorbell" || exit 1
       show_prompt=1
       continue
     fi
@@ -526,6 +555,6 @@ while :; do
       exit 0
       ;;
   esac
-  run_turn "$line" || exit 1
+  run_with_deadline_resume "$line" || exit 1
   show_prompt=1
 done

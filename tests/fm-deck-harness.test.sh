@@ -57,11 +57,11 @@ make_fake_deck() {  # <dir>
 #!/usr/bin/env bash
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/argv.log"
-prompt=$2; session=''; gate=''
+prompt=$2; session=''; gate=''; progress=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --session) session=$2; shift 2 ;;
-    --hook) case "$2" in pre_complete=*) gate=${2#pre_complete=} ;; esac; shift 2 ;;
+    --hook) case "$2" in pre_complete=*) gate=${2#pre_complete=} ;; post_tool_use=*) progress=${2#post_tool_use=} ;; esac; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -78,12 +78,14 @@ case "$prompt" in
     printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS"
     "$FM_TEST_BUSY_EVENT" arm "$(dirname "$FM_TEST_STATUS")" t1 >/dev/null
     ;;
+  *'previous bounded turn'*) printf 'done: resumed after deadline\n' >> "$FM_TEST_STATUS" ;;
   *write-status*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
   *resolve-only*) printf 'resolved [key=choice]: answered: yes\n' >> "$FM_TEST_STATUS" ;;
   *sleep*)
     bash -c 'printf "%s\n" "$$" > "$1/interrupt-ready"; exec sleep 30' _ "$dir"
     ;;
 esac
+[ -z "$progress" ] || bash -c "$progress" </dev/null || true
 if [ -n "$gate" ]; then
   if bash -c "$gate" </dev/null 2>>"$dir/gate.err"; then
     echo pass >> "$dir/gate.log"
@@ -100,6 +102,13 @@ if [ -n "$gate" ]; then
   fi
 fi
 case "$prompt" in
+  *deadline-once*)
+    if [ ! -e "$dir/deadline-seen" ]; then
+      touch "$dir/deadline-seen"
+      printf '{"type":"run_failed","error":"run exceeded 2s deadline"}\n'
+      exit 1
+    fi
+    ;;
   *fail-turn*) printf '{"type":"run_failed","error":"provider failed"}\n'; exit 9 ;;
   *) printf '{"type":"run_finished","output":"x","turns":1}\n' ;;
 esac
@@ -170,6 +179,10 @@ test_busy_state_failures_stop_turns_and_publish_status() {
   assert_grep 'failed: deck wrapper could not record busy-state event (turn-start)' "$start/state/t1.status" \
     "a refused turn-start did not publish a failure status"
 
+  assert_grep 'stale busy-state gen for t1' "$start/state/t1.status" \
+    "the underlying busy-event stderr was discarded from status"
+  assert_grep 'stale busy-state gen for t1' "$start/pane.out" \
+    "the underlying busy-event stderr was discarded from the pane"
   make_fake_deck "$close"
   rc=0
   run_worker "$close" $'/quit\n' 'write-status replace-busy-gen' || rc=$?
@@ -178,9 +191,28 @@ test_busy_state_failures_stop_turns_and_publish_status() {
     "the close-event fixture did not publish its normal turn evidence"
   assert_grep 'failed: deck wrapper could not record busy-state event (turn-end)' "$close/state/t1.status" \
     "a refused turn-end did not publish a failure status"
+  assert_grep 'failed: deck wrapper could not refresh progress: error: stale busy-state gen' "$close/state/t1.status" \
+    "the progress hook discarded its failure diagnostic"
+  assert_grep 'stale busy-state gen for t1' "$close/pane.out" \
+    "the progress hook discarded stderr from the pane"
   assert_grep 'could not record busy-state event turn-end' "$close/pane.out" \
     "a refused turn-end was not surfaced in the worker pane"
   pass "fm-deck-worker: busy-state failures stop turns and publish status evidence"
+}
+
+test_deadline_resumes_without_replaying_the_original_prompt() {
+  local dir="$TMP_ROOT/deadline" sid
+  make_fake_deck "$dir"
+  FM_DECK_DEADLINE_SECS=2 run_worker "$dir" $'/quit\n' 'write-status deadline-once' \
+    || fail "the deadline did not resume the worker"
+  [ "$(wc -l < "$dir/argv.log" | tr -d ' ')" = 2 ] || fail "expected exactly one deadline continuation"
+  sid=$(sed -n 2p "$dir/argv.log" | sed -E 's/.*--session ([^ ]+).*/\1/')
+  case "$sid" in s-fake-*) ;; *) fail "deadline continuation lost the session" ;; esac
+  grep -c -- '--deadline-secs 2' "$dir/argv.log" | grep -qx 2 || fail "deadline override was not kept"
+  sed -n 2p "$dir/argv.log" | grep -q 'do not start a duplicate run' || fail "continuation must reconcile in-flight work"
+  [ "$(grep -c 'deadline-once' "$dir/argv.log")" = 1 ] || fail "original prompt replayed"
+  assert_grep 'working: Deck turn deadline reached' "$dir/state/t1.status" "missing deadline continuation evidence"
+  pass "fm-deck-worker: native deadlines resume the same session in a new bounded turn"
 }
 
 test_turnend_signal_refuses_unsafe_paths() {
@@ -392,6 +424,34 @@ test_completed_turn_removes_busy_ack_before_the_next_steer() {
   tmux kill-session -t "$session" 2>/dev/null || true
   expect_code 0 "$rc" "the second Deck steer was not confirmed from an idle baseline: $(cat "$dir/second.err")"
   pass "fm-deck-worker: each completed turn leaves the next steer an idle baseline"
+}
+
+test_driver_stop_is_scoped_and_refuses_surviving_groups() {
+  local dir="$TMP_ROOT/stop-refusal" pid rc
+  mkdir -p "$dir/state"
+  # Keep the driver's launch identity while it refuses TERM.
+  cat > "$dir/fm-deck-worker.sh" <<'SH'
+#!/usr/bin/env bash
+trap '' TERM
+: > "$FM_DECK_READY"
+while :; do sleep 60; done
+SH
+  FM_DECK_READY="$dir/ready" python3 -c \
+    'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
+    "$dir/fm-deck-worker.sh" --id owned --state "$dir/state" --gen old --deck stub \
+    </dev/null > "$dir/pane.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; sleep 0.1; done
+  [ -e "$dir/ready" ] || fail "stop refusal fixture did not start"
+  python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" other 1 || fail "unrelated task stop refused"
+  kill -0 "$pid" 2>/dev/null || fail "stopping another task killed this driver"
+  rc=0
+  python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned 0.3 > "$dir/stop.out" 2>&1 || rc=$?
+  kill -KILL -- -"$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [ "$rc" -ne 0 ] || fail "a surviving driver was accepted as stopped"
+  assert_grep 'has not stopped' "$dir/stop.out" "surviving group refusal lost its diagnostic"
+  pass "Deck stop: exact task scope and surviving process groups fail closed"
 }
 
 test_liveness_reads_the_driver_as_an_agent() {
@@ -761,6 +821,7 @@ test_secondmate_host_serializes_wakes_and_steering
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_drive_the_busy_record_and_turn_end
 test_busy_state_failures_stop_turns_and_publish_status
+test_deadline_resumes_without_replaying_the_original_prompt
 test_turnend_signal_refuses_unsafe_paths
 test_evidence_gate_refuses_a_turn_without_a_status_line
 test_stderr_before_completion_blocked_does_not_break_rendering
@@ -769,6 +830,7 @@ test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
 test_completed_turn_removes_busy_ack_before_the_next_steer
+test_driver_stop_is_scoped_and_refuses_surviving_groups
 test_liveness_reads_the_driver_as_an_agent
 test_tmux_liveness_uses_the_deck_driver_argv0
 test_control_busy_and_delivery_tables_name_deck
