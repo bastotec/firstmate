@@ -140,13 +140,15 @@ At operator level, every order names both a worker by `leaf_worker_id` - `<machi
 That binding prevents an order composed for one run from being typed into its replacement.
 Acceptance means the owning agent wrote the complete order, including its submit byte, to that execution's pseudoterminal and acknowledged it; the owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership produces no record and remains pending.
 Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
-The PTY agent advertises that capability back on every endpoint registration, and the hub places Bridge orders only for endpoints that do, leaving legacy agents and read-only tail publishers visible but non-orderable.
+The PTY agent advertises that capability back on every endpoint registration, and the hub places Bridge orders only for endpoints that do.
+Protocol-2 agents cannot register, while protocol-3 tail publishers remain visible but non-orderable.
 Each internal HTTP order carries the hub generation returned by compatibility negotiation; a replacement hub rejects a stale generation before placement, the adapter renegotiates before retrying, and the Bridge `command`, `command_ack`, and `command_nack` records do not change.
 
 Reconciliation state lives in the hub's memory, not on disk.
 The journal retains at most 512 order ids, and while an id remains there an identical resend is answered from the original order, including when it overtakes the original placement; reuse with a different leaf, execution, or text is refused as an idempotency conflict.
 An order whose membership remains unresolved keeps that binding, while an identical resend may retry placement because no command was created.
-A taken command remains eligible for a late agent acknowledgement and a completed result remains idempotently answerable for at least 15 minutes, and an endpoint whose worker exits while acknowledgement is retrying keeps its publisher alive through the same window; a definitive command-id rejection or expiry ends retrying so later commands can still be polled, while the caller's unresolved order remains unconfirmed.
+A taken command remains eligible for a late agent acknowledgement and a completed result remains idempotently answerable for at least 15 minutes, and an endpoint whose worker exits while acknowledgement is retrying keeps its publisher alive while the result can still settle.
+A definitive result rejection - including capability revocation after the hub closes the endpoint - or retry expiry ends retrying so the closing frame can publish and later commands can still be polled, while the caller's unresolved order remains unconfirmed.
 A hub restart empties the journal along with the registry, so a resend after restart is a new order and cannot reconcile delivery from before the restart.
 
 The credentials are separate on purpose: `command` needs a `control`-class token, the class that can type into workers, while the feed holds `subscribe` alone, so a host running only the feed cannot order anything with the credential the feed uses.

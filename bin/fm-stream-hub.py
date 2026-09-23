@@ -165,13 +165,11 @@ ORDER_ANSWER_SLACK_SECS = 5.0
 # been taken by another live endpoint, and two workers must never answer to one
 # identity.
 AGENT_SILENCE_PRESUMED_SECS = 10.0
-# How long a leaf must keep failing to resolve before the hub will call it
-# absent. The registry is in memory, so a hub that restarted holds nothing
-# until each agent registers again - and a first-reply miss during that window
-# would report every live worker in the fleet as gone at once. Waiting it out
-# is what makes the answer a membership verdict instead of a reading, and it
-# matches the window bin/backends/stream.sh's recovery-grade classifier waits
-# before it will say `missing`.
+# How long a leaf that does not resolve gets one placement attempt to rejoin.
+# The registry is in memory, so a hub that restarted holds nothing until each
+# agent registers again. A miss after this window is still not evidence the
+# worker is gone: the order remains unconfirmed, keeps its id binding, and an
+# identical resend may retry placement after the agent's backoff.
 MEMBERSHIP_GRACE_SECS = 6.0
 MAX_BODY = 4 * 1024 * 1024
 MAX_LABEL_LEN = 128
@@ -867,8 +865,8 @@ class Order:
         # refusal IS the whole record in that case.
         self.refusal = None
         self.uncertainty = None
-        # The status this order was first answered with, so a caller that
-        # resends its id is told the same thing rather than a second opinion.
+        # The HTTP status from placement. The outcome itself is read live, so
+        # a late acknowledgement can supersede this refusal with acceptance.
         self.status = HTTPStatus.OK
         # Set once the placement call that owns this order has answered, in
         # success or refusal. A resend of this order's id that arrives before
