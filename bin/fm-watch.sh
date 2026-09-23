@@ -951,6 +951,26 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
     *)
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
+        # Reuse the stale path's durable hold bound only when an alarm is due,
+        # not on busy_turn_bound_check's ordinary over-age polls. Reset the
+        # timer even on absorption so this read runs at most once per window.
+        # A backlog hold is not a status-declared pause: keep only its throttle.
+        local key
+        key=$(window_key "$win")
+        if captain_call_stale_bound "$key" "$task"; then
+          date +%s > "$since_file"
+          rm -f "$escalation_file"
+          clear_write_tracking "$key"
+          triage_log "absorbed $label (open captain call): $win"
+          return 0
+        elif [ -n "$STALE_WAIT_DECLARATION" ]; then
+          fm_wake_append stale "$win" "stale: $win" || exit 1
+          stale_wait_record "$key"
+          date +%s > "$since_file"
+          rm -f "$escalation_file"
+          clear_write_tracking "$key"
+          wake "stale: $win"
+        fi
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
           wedge_defer_writing "$win" "$since_file" "$label" "$age"
           return 0
