@@ -1285,6 +1285,64 @@ test_a_restarted_hub_gets_its_workers_back() {
   pass "hub: a worker whose hub restarted comes back under its own endpoint id and steers again"
 }
 
+test_a_lost_reregistration_response_keeps_the_worker_orderable() {
+  start_hub lost-registration-response --command-ack-secs 8
+  local proxy_ready="$CASE_DIR/proxy.ready" dropped="$CASE_DIR/dropped" proxy_pid waited=0
+  local proxy_host proxy_port proxy_url ready="$CASE_DIR/agent.ready" agent_pid endpoint listed="" out
+  python3 "$ROOT/tests/assets/stream-drop-response-proxy.py" --target "$URL" \
+    --drop-path /v1/agent/endpoints --drop-number 2 --dropped-file "$dropped" \
+    --ready-file "$proxy_ready" > "$CASE_DIR/proxy.log" 2>&1 &
+  proxy_pid=$!
+  disown "$proxy_pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$proxy_pid"
+  while [ "$waited" -lt 100 ]; do
+    [ -s "$proxy_ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$proxy_ready" ] || fail "the response-dropping proxy did not become ready"
+  read -r proxy_host proxy_port < "$proxy_ready"
+  proxy_url="http://$proxy_host:$proxy_port"
+
+  python3 "$AGENT" serve --hub "$proxy_url" --token-file "$CASE_DIR/publish-token" \
+    --machine box-a --label "lost-response-$RUN" --cwd "$CASE_DIR/cwd" \
+    --ready-file "$ready" --state-interval 0.5 --poll-secs 1 \
+    > "$CASE_DIR/agent.log" 2>&1 &
+  agent_pid=$!
+  disown "$agent_pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$agent_pid"
+  waited=0
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$ready" ] || fail "the proxied agent did not register: $(cat "$CASE_DIR/agent.log" 2>/dev/null)"
+  read -r _ endpoint < "$ready"
+
+  restart_hub
+
+  waited=0
+  while [ "$waited" -lt 300 ]; do
+    listed=$(printf '%s' "$(view GET /v1/tasks)" | jq -r --arg id "$endpoint" \
+      '[.tasks[] | select(.endpoint_id==$id and (.closed_at | not))] | length')
+    [ -s "$dropped" ] && [ "$listed" = 1 ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$dropped" ] || fail "the proxy never dropped the accepted recovery response"
+  assert_equals "$listed" 1 "the worker should remain listed after losing its registration response"
+  sleep 3
+  out=$(order "box-a/lost-response-$RUN" "$endpoint" "echo CAPABILITY-STAYED")
+  assert_equals "$(api_code)" 200 \
+    "a lost registration response must not strand command authentication: $out"
+  assert_equals "$(printf '%s' "$out" | jq -r '.outcome')" accepted \
+    "the recovered worker should acknowledge a real order"
+  wait_for_capture "$endpoint" CAPABILITY-STAYED \
+    || fail "the worker did not execute the order after its registration response was lost"
+  pass "hub: a lost re-registration response keeps the worker orderable"
+}
+
 # worker_ended <agent-pid> - true once nothing under that agent is still
 # running. A child that has exited but not been reaped is a zombie, and a
 # PAUSED agent cannot reap anything, so "the process is still listed" is not
@@ -1810,15 +1868,16 @@ def call(method, path, payload=None, capability="", token=publisher):
 endpoint = "a" * 32
 registration = {"endpoint_id": endpoint, "machine": "secured", "label": "worker",
                 "capabilities": ["idempotent_command_results"]}
-status, registered = call("POST", "/v1/agent/endpoints", registration)
+capability = "client-capability-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+status, registered = call("POST", "/v1/agent/endpoints", registration, capability)
 assert status == 201
-capability = registered["command_capability"]
-assert len(capability) >= 32 and "command_capability" not in registered["endpoint"]
+assert registered["command_capability"] == capability
+assert "command_capability" not in registered["endpoint"]
+other_capability = "client-capability-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 status, sibling = call("POST", "/v1/agent/endpoints", dict(registration,
-                       endpoint_id="b" * 32, label="sibling"))
+                       endpoint_id="b" * 32, label="sibling"), other_capability)
 assert status == 201
-other_capability = sibling["command_capability"]
-assert other_capability != capability
+assert sibling["command_capability"] == other_capability
 assert call("POST", "/v1/agent/endpoints", registration)[0] == 403
 assert call("POST", "/v1/agent/endpoints", registration, other_capability)[0] == 403
 
@@ -1841,38 +1900,35 @@ for bad in ("", "invented", other_capability):
     assert call("POST", "/v1/agent/results", result, bad)[0] == 403
 assert thread.is_alive(), "forged results must not settle the order"
 
-# Rotation cannot be obtained by the broad publisher, and invalidates both
-# polling and result access even for a previously taken command.
+# Re-registration proves possession without changing the capability, so losing
+# its response cannot leave the endpoint and agent with different credentials.
 status, registered = call("POST", "/v1/agent/endpoints", registration, capability)
 assert status == 201
-rotated = registered["command_capability"]
-assert rotated != capability
-assert call("GET", path, capability=capability)[0] == 403
-assert call("POST", "/v1/agent/results", result, capability)[0] == 403
-assert call("POST", "/v1/agent/results", result, rotated)[0] == 200
+assert registered["command_capability"] == capability
+assert call("POST", "/v1/agent/results", result, capability)[0] == 200
 thread.join(12)
 assert not thread.is_alive() and placed["answer"][0] == 200
-assert call("POST", "/v1/agent/results", result, rotated)[0] == 200
+assert call("POST", "/v1/agent/results", result, capability)[0] == 200
 assert call("POST", "/v1/agent/results", result)[0] == 403
 
 for route in ("/v1/tasks", "/v1/machines", "/v1/health", "/v1/tasks/" + endpoint,
               "/v1/tasks/%s/processes" % endpoint, "/v1/tasks/%s/screen" % endpoint):
     _, response = call("GET", route, token=controller)
     serialized = json.dumps(response)
-    for secret in (capability, rotated, other_capability):
+    for secret in (capability, other_capability):
         assert secret not in serialized, "capability leaked from " + route
 
 assert call("POST", "/v1/agent/frames", {"machine": "secured", "frames": [
     {"endpoint_id": endpoint, "closed": True, "exit_code": 0}]})[0] == 200
-assert call("GET", path, capability=rotated)[0] == 403
-assert call("POST", "/v1/agent/results", result, rotated)[0] == 403
-assert call("POST", "/v1/agent/endpoints", registration, rotated)[0] == 403
+assert call("GET", path, capability=capability)[0] == 403
+assert call("POST", "/v1/agent/results", result, capability)[0] == 403
+assert call("POST", "/v1/agent/endpoints", registration, capability)[0] == 403
 with open(log, encoding="utf-8") as handle:
     logged = handle.read()
-for secret in (capability, rotated, other_capability):
+for secret in (capability, other_capability):
     assert secret not in logged, "capability leaked in hub log"
 PYAUTH
-  pass "hub: endpoint capabilities prevent command theft and fabricated results, rotate, and revoke"
+  pass "hub: endpoint capabilities prevent command theft, remain idempotent, and revoke"
 }
 
 test_the_hub_accepts_a_retried_result_without_changing_its_verdict() {
@@ -1985,12 +2041,13 @@ order() {  # <leaf> <execution> <text> [order-id]
 
 test_orderability_follows_the_endpoint_registration_capability() {
   start_hub order-capability --command-ack-secs 1
-  local legacy capable out
+  local legacy capable out registration_reply API_CAPABILITY=""
   legacy=$(python3 -c 'import os; print(os.urandom(16).hex())')
   capable=$(python3 -c 'import os; print(os.urandom(16).hex())')
-  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$legacy" \
-    '{endpoint_id: $id, machine: "legacy", label: "recovering", cwd: "/tmp"}')" >/dev/null
+  registration_reply=$(publish POST /v1/agent/endpoints "$(jq -nc --arg id "$legacy" \
+    '{endpoint_id: $id, machine: "legacy", label: "recovering", cwd: "/tmp"}')")
   assert_equals "$(api_code)" 201 "the legacy endpoint should register"
+  API_CAPABILITY=$(printf '%s' "$registration_reply" | jq -r .command_capability)
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$legacy" \
     '{endpoint_id: $id, machine: "legacy", label: "recovering", cwd: "/tmp"}')" >/dev/null
   assert_equals "$(api_code)" 201 "the legacy client should recover its endpoint"
@@ -2005,6 +2062,7 @@ test_orderability_follows_the_endpoint_registration_capability() {
     "the refusal should name the missing endpoint capability"
   assert_equals "$(printf '%s' "$out" | jq -r '.delivered')" false \
     "an order refused before routing must be known undelivered"
+  API_CAPABILITY=""
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$capable" \
     '{endpoint_id: $id, machine: "capable", label: "recovering", cwd: "/tmp",
       capabilities: ["idempotent_command_results"]}')" >/dev/null
@@ -2176,15 +2234,18 @@ test_an_order_is_delivered_once_however_many_times_its_id_is_sent() {
   first=$(order "$leaf" "$endpoint" "echo TYPED-ONCE" issued-once)
   assert_equals "$(api_code)" 200 "the first order should be accepted"
   wait_for_capture "$endpoint" TYPED-ONCE || fail "the worker never ran the order"
-  # The same id again, carrying different text: neither may be typed.
-  second=$(order "$leaf" "$endpoint" "echo TYPED-TWICE" issued-once)
-  assert_equals "$(api_code)" 200 "resending an id already answered should report that answer"
+  second=$(order "$leaf" "$endpoint" "echo TYPED-ONCE" issued-once)
+  assert_equals "$(api_code)" 200 "an identical resend should report the recorded answer"
   assert_equals "$(printf '%s' "$second" | jq -r '.requested_at')" \
     "$(printf '%s' "$first" | jq -r '.requested_at')" \
-    "the repeat must be answered from the original order, not a new one"
+    "the identical resend must be answered from the original order"
+  second=$(order "$leaf" "$endpoint" "echo TYPED-TWICE" issued-once)
+  assert_equals "$(api_code)" 409 "reusing an order id for different text must be refused"
+  assert_equals "$(printf '%s' "$second" | jq -r '.error')" order_id_conflict \
+    "the refusal should identify an idempotency conflict"
   assert_not_contains "$(view GET "/v1/tasks/$endpoint/capture?lines=40")" TYPED-TWICE \
-    "a resent order id must never type a second time"
-  pass "hub: an order id already answered for is reported, never delivered again"
+    "conflicting order text must never be typed"
+  pass "hub: an order id deduplicates identical payloads and refuses conflicts"
 }
 
 test_a_resend_that_overtakes_a_placement_in_flight_is_answered_not_retyped() {
@@ -2193,12 +2254,13 @@ test_a_resend_that_overtakes_a_placement_in_flight_is_answered_not_retyped() {
   # reconnects and sends the same command id again, and both sends typing the
   # text once each is exactly the double delivery the journal exists to stop.
   start_hub order-raced --command-ack-secs 5
-  local leaf="box-a/racing-$RUN" first second first_pid endpoint agent resume_pid
+  local leaf="box-a/racing-$RUN" first second first_pid endpoint agent resume_pid command
   endpoint=$(start_agent box-a racing)
   agent=$(agent_pid_for box-a racing)
   [ -n "$agent" ] || fail "the agent should be running"
   kill -STOP "$agent" || fail "could not pause the agent"
-  ( order "$leaf" "$endpoint" "echo RACED-FIRST" sent-while-placing \
+  command="printf 'landed\\n' >> '$CASE_DIR/raced-count'"
+  ( order "$leaf" "$endpoint" "$command" sent-while-placing \
       > "$CASE_DIR/raced-first.out" 2>/dev/null ) &
   first_pid=$!
   fm_test_track_helper_pid "$first_pid"
@@ -2206,7 +2268,7 @@ test_a_resend_that_overtakes_a_placement_in_flight_is_answered_not_retyped() {
   ( sleep 1; kill -CONT "$agent" ) &
   resume_pid=$!
   fm_test_track_helper_pid "$resume_pid"
-  second=$(order "$leaf" "$endpoint" "echo RACED-SECOND" sent-while-placing)
+  second=$(order "$leaf" "$endpoint" "$command" sent-while-placing)
   wait "$first_pid" 2>/dev/null || true
   first=$(cat "$CASE_DIR/raced-first.out")
   assert_equals "$(printf '%s' "$first" | jq -r '.outcome')" accepted \
@@ -2216,9 +2278,15 @@ test_a_resend_that_overtakes_a_placement_in_flight_is_answered_not_retyped() {
   assert_equals "$(printf '%s' "$second" | jq -r '.requested_at')" \
     "$(printf '%s' "$first" | jq -r '.requested_at')" \
     "an overtaking resend must be answered from the same order, not a new one"
-  wait_for_capture "$endpoint" RACED-FIRST || fail "the worker never ran the first order"
-  assert_not_contains "$(view GET "/v1/tasks/$endpoint/capture?lines=80")" RACED-SECOND \
-    "a resend that overtook its own placement must never type a second time"
+  local waited=0
+  while [ "$waited" -lt 100 ]; do
+    [ -s "$CASE_DIR/raced-count" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$CASE_DIR/raced-count" ] || fail "the worker never ran the first order"
+  assert_equals "$(wc -l < "$CASE_DIR/raced-count" | tr -d '[:space:]')" 1 \
+    "an identical resend that overtook placement must not execute twice"
   pass "hub: a resend overtaking a placement in flight is answered, not retyped"
 }
 
@@ -2415,6 +2483,7 @@ test_the_viewer_renders_a_character_split_across_two_frames
 test_the_viewer_reports_a_refused_transcript_rather_than_painting_it
 test_the_viewer_keeps_the_send_box_disabled_for_a_closed_worker
 test_a_restarted_hub_gets_its_workers_back
+test_a_lost_reregistration_response_keeps_the_worker_orderable
 test_a_worker_that_exited_while_the_hub_was_down_is_still_accounted_for
 test_a_closing_frame_outlives_the_pace_its_own_outage_set
 test_a_closing_frame_waits_out_a_recovery_already_in_flight
