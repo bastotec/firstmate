@@ -143,7 +143,7 @@ The PTY agent advertises that capability back on every endpoint registration, an
 
 Reconciliation state lives in the hub's memory, not on disk.
 The journal retains at most 512 order ids, and while an id remains there a resend is answered from the original order, including when it overtakes the original placement.
-A taken command remains eligible for a late agent acknowledgement until it is reaped after at least 15 minutes; after that, its journaled answer remains unconfirmed.
+A taken command remains eligible for a late agent acknowledgement until it is reaped after at least 15 minutes, and an endpoint whose worker exits while that acknowledgement is retrying keeps its publisher alive through the same window; after that, its journaled answer remains unconfirmed.
 A hub restart empties the journal along with the registry, so a resend after restart is a new order and cannot reconcile delivery from before the restart.
 
 The credentials are separate on purpose: `command` needs a `control`-class token, the class that can type into workers, while the feed holds `subscribe` alone, so a host running only the feed cannot order anything with the credential the feed uses.
