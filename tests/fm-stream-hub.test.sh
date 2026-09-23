@@ -1483,6 +1483,53 @@ test_an_agent_retries_a_result_without_applying_the_command_twice() {
   pass "hub: an agent retains and retries a successful command result"
 }
 
+test_an_exiting_endpoint_keeps_retrying_its_applied_command_result() {
+  local command_id=abcdef0123456789abcdef0123456789 status ready result log pid waited=0
+  status="$TMP_ROOT/exit-result-retry.status"
+  ready="$TMP_ROOT/exit-result-retry.ready"
+  result="$TMP_ROOT/exit-result-retry.json"
+  log="$TMP_ROOT/exit-result-retry.log"
+  start_stub exit-result-retry --frames-ok-first 1000 --command-id "$command_id" \
+    --delay-first-result 17 --result-file "$result"
+  python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+    --machine box-a --label "exit-result-retry-$RUN" --cwd "$CASE_DIR/cwd" \
+    --status-path "$status" --ready-file "$ready" --state-interval 1 --poll-secs 1 \
+    > "$log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    if [ -s "$status" ] && grep -q 'POST /v1/agent/results' "$STUB_JOURNAL" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ "$waited" -lt 150 ] || fail "the agent never applied the command and posted its result"
+  pkill -KILL -P "$pid" 2>/dev/null || fail "could not end the worker during result retry"
+  waited=0
+  while [ "$waited" -lt 50 ] && ! worker_ended "$pid"; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  worker_ended "$pid" || fail "the worker did not exit during result retry"
+  sleep 16
+  kill -0 "$pid" 2>/dev/null \
+    || fail "the endpoint publisher exited before its applied result could retry"
+  waited=0
+  while [ "$waited" -lt 100 ]; do
+    [ -s "$result" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$result" ] || fail "the exiting endpoint discarded its applied command result"
+  assert_equals "$(jq -r '.command_id' "$result")" "$command_id" \
+    "the retry after worker exit should acknowledge the applied command"
+  assert_equals "$(jq -r '.ok' "$result")" true \
+    "the retry after worker exit should preserve the successful result"
+  pass "hub: an exiting endpoint preserves its in-flight result retry"
+}
+
 # registrations - the journal's RE-registration attempts, one timestamp a line.
 # The first registration in the journal is the agent's startup, which nothing
 # here is about: counting it would read the gap between coming up and the first
@@ -2122,6 +2169,7 @@ test_a_closing_frame_outlives_the_pace_its_own_outage_set
 test_a_closing_frame_waits_out_a_recovery_already_in_flight
 test_an_agent_refuses_a_hub_without_idempotent_results
 test_an_agent_retries_a_result_without_applying_the_command_twice
+test_an_exiting_endpoint_keeps_retrying_its_applied_command_result
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
 test_a_steer_lands_as_soon_as_the_worker_is_listed_again
 test_an_accepted_registration_returns_the_pace_to_its_floor

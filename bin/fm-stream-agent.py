@@ -442,6 +442,7 @@ SUPERSEDING_REFUSALS = frozenset(("endpoint_superseded", "duplicate_label"))
 # derive its outage from the same ladder rather than assume one.
 POLL_BACKOFF_MIN = 2.0
 POLL_BACKOFF_MAX = 60.0
+RESULT_RETRY_SHUTDOWN_SECS = 900.0
 REREGISTER_BACKOFF_MIN = 2.0
 REREGISTER_BACKOFF_MAX = 60.0
 REREGISTER_JITTER = 0.25
@@ -458,10 +459,10 @@ REREGISTER_JITTER = 0.25
 #     attempt being waited for is talking to a live hub: connect, request, the
 #     hub's registry lock, reply - well under a second, and a few times that
 #     while a just-restarted hub absorbs the fleet's reconnect burst.
-#   - It has to keep teardown prompt. run() has already spent up to 15s waiting
-#     out a command acknowledgement, 5s for the reader's EOF and 5s joining it
-#     before this frame is posted at all, and the post itself allows 30s. Three
-#     seconds is a small addition to that, and it is paid once, not per attempt.
+#   - It has to keep teardown prompt after the result reconciliation wait,
+#     5s for the reader's EOF and 5s joining it before this frame is posted at
+#     all, and the post itself allows 30s. Three seconds is a small addition to
+#     that, and it is paid once, not per attempt.
 # It also deliberately falls short of the 15s timeout on the call being waited
 # for: a registration still running at three seconds is a hub that is hanging,
 # and its answer would not have carried this frame either.
@@ -983,7 +984,7 @@ class Agent:
         # A kill is applied by the command loop and ends the endpoint, so the
         # reader sees EOF and sets stop while that same command is still being
         # acknowledged. Let the acknowledgement land before tearing down.
-        deadline = _now() + 15.0
+        deadline = _now() + RESULT_RETRY_SHUTDOWN_SECS
         while self.command_busy.is_set() and _now() < deadline:
             time.sleep(0.05)
         self.pty.close()
