@@ -40,6 +40,7 @@ ok - fm-deck-worker: silent and failed turns gain status evidence before turn-en
 ok - fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt
 ok - fm-deck-worker: each completed turn leaves the next steer an idle baseline
 ok - Deck stop: physical aliases and spaced paths stop the active Deck process
+ok - Deck stop: stale secondmate drivers stop before replacement arming
 ok - Deck stop: exact task scope and bounded escalation remove survivors
 ok - liveness: the deck driver and binary are agents, unrelated names are not
 ok - tmux liveness: Deck's Linux comm and argv0 classify alive
