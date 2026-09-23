@@ -1,0 +1,8 @@
+client: relay ready, gpt-6-luna in None, read scope counts, connected in 0.038s
+  you: Please add over to the first mate this request.
+  you: Please hand over to the first mate this request. Investigate the voice relay timeout regression.
+  you: Please hand over to the first mate this request. Investigate the voice relay timeout regression. Use the handover tool now.
+  handed to the first mate: Investigate the voice relay timeout regression.
+  assistant: I'm handing that investigation to the first mate now.
+  assistant: It's queued for the first mate to pick up at its next check.
+client: the relay signed off

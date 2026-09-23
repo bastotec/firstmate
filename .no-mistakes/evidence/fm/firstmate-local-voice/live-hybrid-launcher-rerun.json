@@ -1,0 +1,15 @@
+{
+  "pid": 47750,
+  "process_alive": true,
+  "checks": {
+    "stream_first_sentence": true,
+    "gateway_streaming": true,
+    "compact_history_disabled": true,
+    "parakeet_on_mps": true,
+    "qwen3_tts": true,
+    "expected_model": true,
+    "expected_gateway": true,
+    "key_absent_from_argv": true
+  },
+  "argv": "/opt/homebrew/Cellar/python@3.11/3.11.15/Frameworks/Python.framework/Versions/3.11/Resources/Python.app/Contents/MacOS/Python /Users/bastotecnologia/voice-lab/hf-speech-to-speech/.venv/bin/speech-to-speech serve --host 127.0.0.1 --port 49601 --stt parakeet-tdt --parakeet_tdt_device mps --llm_backend chat-completions --model_name gpt-6-luna --responses_api_base_url http://127.0.0.1:8317/v1 --responses_api_stream True --responses_api_disable_thinking False --stream_batch_sentences 1 --compact_history False --tts qwen3 --no_smart_turn"
+}

@@ -1,0 +1,20 @@
+client: relay ready, gpt-6-luna in None, read scope counts, connected in 0.056s
+  you: My favorite color is blue.
+  you: My favorite color is blue, reply in two sentences.
+  you: My favorite color is blue, reply in two sentences, first name the color.
+  you: My favorite color is blue, reply in two sentences. First name the color, then describe the sky in about 20 words.
+  assistant: Your favorite color is blue. The sky stretches overhead in a brilliant blue, with soft white clouds drifting across it in the warm morning light.
+  you: What color did I mention?
+  you: What colour did I mention? reply in two sentences.
+  you: What colour did I mention? reply in two sentences, first name that colour,
+  you: What color did I mention? Reply in two sentences, first name that color, then describe the C in about twenty words.
+  assistant: Blue. C is the third letter of the alphabet, often used in music to name a note and in language to begin countless words.
+  you: A minha cor favorita é azul.
+  you: A minha cor favorita é azul. Responda duas frases.
+  you: A minha cor favorita é azul. Responda duas frases. Primeiro, diga a correto, depois descreva o céu, e cerca de vinte palavras.
+  assistant: A cor correta é azul. O céu se estende amplo e luminoso, com nuvens brancas deslizando suavemente sob a luz dourada do sol.
+  you: Qual era a minha cor favorita?
+  you: Qual era a minha cor favorita? Responda duas frases.
+  you: Qual era a minha cor favorita? Responda duas frases. Primeiro diga isso correto, depois, descreva o mar, e cerca de vinte palavras.
+  assistant: Sua cor favorita era azul. O mar se espalha até o horizonte, com ondas cintilantes sob o sol e brisas suaves carregando o aroma salgado.
+client: the relay signed off

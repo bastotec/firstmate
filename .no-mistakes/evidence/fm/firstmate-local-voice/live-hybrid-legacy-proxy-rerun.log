@@ -1,0 +1,2 @@
+{"listening": "ws://127.0.0.1:49602/v1/realtime", "upstream": "ws://127.0.0.1:49601/v1/realtime"}
+{"response.output_audio.delta_seen": 66, "response.audio.delta_sent": 66}
