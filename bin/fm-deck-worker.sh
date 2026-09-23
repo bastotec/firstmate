@@ -231,6 +231,10 @@ watch_start() {
     host_failure 'daemon-owned away/quiet mode is unsupported; clear it through the owning supervisor before relaunch'
     return 1
   fi
+  if ! : > "$WORK/watch.out"; then
+    host_failure 'could not prepare watcher result capture'
+    return 1
+  fi
   (
     trap '' INT
     if [ -f "$FM_HOME/config/x-mode.env" ]; then
@@ -242,7 +246,7 @@ watch_start() {
     else
       exec "$SCRIPT_DIR/fm-watch-arm.sh"
     fi
-  ) > "$WORK/watch.out" 2>&1 &
+  ) >> "$WORK/watch.out" 2>&1 &
   WATCH_PID=$!
   [ -z "$predecessor" ] || watch_wait_handling_successor
 }

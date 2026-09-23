@@ -551,7 +551,7 @@ EOF
 
 test_secondmate_host_serializes_wakes_and_steering() {
   local dir="$TMP_ROOT/host"
-  mkdir -p "$dir/home/state" "$dir/parent" "$dir/bin"
+  mkdir -p "$dir/home/state" "$dir/home/config" "$dir/parent" "$dir/bin"
   cp -R "$ROOT/bin/." "$dir/bin/"
   cat > "$dir/bin/fm-session-start.sh" <<'SH'
 #!/usr/bin/env bash
@@ -580,6 +580,13 @@ rm "$FM_HOME/trigger"
 printf 'check: example\n'
 [ "${FM_TEST_WATCH_FAIL:-0}" = 0 ]
 SH
+  cat > "$dir/home/config/x-mode.env" <<'SH'
+if [ -f "$FM_HOME/block-next-watch" ]; then
+  : > "$FM_HOME/watch-start-blocked"
+  while [ ! -f "$FM_HOME/release-watch-start" ]; do sleep 0.05; done
+  rm -f "$FM_HOME/block-next-watch" "$FM_HOME/release-watch-start" "$FM_HOME/watch-start-blocked"
+fi
+SH
   cat > "$dir/deck" <<'PYTHON'
 #!/usr/bin/env python3
 import json, os, pathlib, subprocess, sys, time
@@ -603,7 +610,8 @@ if records:
     (home / 'wake-turn-active').touch()
     time.sleep(2)
     successor = int((home / 'watch-starts').read_text().splitlines()[-1])
-    os.kill(successor, 0)
+    if not (home / 'watch-start-blocked').exists():
+        os.kill(successor, 0)
 with (home / 'turns').open('a') as f:
     f.write(json.dumps({'prompt': prompt, 'session': session, 'inbox': body}) + '\n')
 for record in records:
@@ -656,27 +664,40 @@ with (root/'pane').open('w') as output:
         assert len(rows()) == 2, 'watcher ran a concurrent turn'
         (home/'release').touch()
         wait_for(lambda: (home/'wake-turn-active').exists(), 'deferred wake turn start')
+        deliveries_before_block = (home/'handling-delivered').read_text().splitlines()
+        (home/'block-next-watch').touch()
         (home/'trigger').touch()
-        wait_for(lambda: len(watcher_starts()) >= 3, 'first mid-turn watcher successor')
+        wait_for(lambda: (home/'watch-start-blocked').exists(), 'blocked mid-turn watcher successor')
+        wait_for(lambda: len(rows()) == 3, 'long handling turn completion')
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            assert (home/'handling-delivered').read_text().splitlines() == deliveries_before_block, 'predecessor handoff was accepted as the blocked successor'
+            time.sleep(.05)
+        (home/'wake-turn-active').unlink()
+        (home/'release-watch-start').touch()
+        wait_for(lambda: len(watcher_starts()) >= 3, 'blocked mid-turn watcher successor release')
+        wait_for(lambda: (home/'wake-turn-active').exists(), 'queued wake turn start')
         (home/'trigger').touch()
-        wait_for(lambda: len(watcher_starts()) >= 4, 'second mid-turn watcher successor')
-        assert len(rows()) == 2, 'mid-turn watcher wake ran a concurrent Deck turn'
-        wait_for(lambda: len(rows()) == 3, 'deferred wake')
+        wait_for(lambda: len(watcher_starts()) >= 4, 'queued-turn watcher successor')
+        assert len(rows()) == 3, 'mid-turn watcher wake ran a concurrent Deck turn'
         assert 'Firstmate instruction waiting:' in rows()[2]['prompt']
         assert 'actionable wake' in rows()[2]['inbox']
         assert list((root/'parent/host.inbox/handled').glob('*.msg'))
         assert 'predecessor=none' not in (home/'watch-arms').read_text().splitlines()[1], 'successor lost its predecessor arm'
-        wait_for(lambda: len(rows()) == 4, 'queued mid-turn wakes')
+        wait_for(lambda: len(rows()) == 5, 'queued mid-turn wakes')
         assert 'Firstmate instruction waiting:' in rows()[3]['prompt']
-        assert len((home/'handling-delivered').read_text().splitlines()) >= 2, 'latest handling successor was not confirmed'
+        assert 'Firstmate instruction waiting:' in rows()[4]['prompt']
+        deliveries = (home/'handling-delivered').read_text().splitlines()
+        assert len(deliveries) >= 3, 'latest handling successor was not confirmed'
+        assert deliveries[-1].split(' watcher=', 1)[1] == watcher_starts()[-1], 'predecessor handoff was accepted instead of the current successor'
         assert not (root/'parent/host.turn-ended').exists(), 'watch handling emitted a parent turn-end wake'
         p.stdin.write('split-'); p.stdin.flush()
         time.sleep(1.3)
         p.stdin.write('steer\n'); p.stdin.flush()
-        wait_for(lambda: len(rows()) == 5, 'partial input retained')
-        assert rows()[4]['prompt'] == 'split-steer'
+        wait_for(lambda: len(rows()) == 6, 'partial input retained')
+        assert rows()[5]['prompt'] == 'split-steer'
         (home/'trigger').touch()
-        wait_for(lambda: len(rows()) == 6, 'watcher rearmed')
+        wait_for(lambda: len(rows()) == 7, 'watcher rearmed')
         assert all(x['session'] == 'host-session' for x in rows())
         assert (home/'startups').read_text() == 'startup\n'
         assert (home/'state/.lock').read_text().strip() == str(p.pid), 'lock is not driver-owned'
@@ -687,11 +708,11 @@ with (root/'pane').open('w') as output:
         wait_for(lambda: (home/'in-turn').exists(), 'interruptible steer')
         os.killpg(p.pid, signal.SIGINT)
         p.stdin.write('after-interrupt\n'); p.stdin.flush()
-        wait_for(lambda: len(rows()) == 8, 'driver survived interrupt')
-        assert rows()[7]['prompt'] == 'after-interrupt'
+        wait_for(lambda: len(rows()) == 9, 'driver survived interrupt')
+        assert rows()[8]['prompt'] == 'after-interrupt'
         assert 'turn interrupted' in (root/'parent/host.status').read_text()
         (home/'trigger').touch()
-        wait_for(lambda: len(rows()) == 9, 'watcher survived interrupt')
+        wait_for(lambda: len(rows()) == 10, 'watcher survived interrupt')
         p.stdin.write('/quit\n'); p.stdin.flush()
         assert p.wait(timeout=15) == 0
     finally:
