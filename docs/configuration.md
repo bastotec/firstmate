@@ -1224,8 +1224,15 @@ FM_CRASH_NORMAL_SLEEP=5            # seconds to wait after an isolated watcher c
 FM_LOG_MAX_BYTES=1048576           # daemon log size that triggers trimming
 FM_LOG_KEEP_LINES=2000             # daemon log lines kept when trimming
 # spoken interface and captain inbox; see "Spoken interface and captain inbox" above
-FM_VOICE_REGION=        # overrides config/voice-region for one relay run
-FM_VOICE_MODEL=         # overrides config/voice-model for one relay run
+FM_VOICE_ENGINE=        # overrides config/voice-engine; bedrock when neither is set
+FM_VOICE_LOCAL_URL=     # overrides config/voice-local-url for hybrid
+FM_VOICE_GATEWAY_URL=   # overrides config/voice-gateway-url for hybrid
+FM_VOICE_GATEWAY_MODEL= # overrides config/voice-gateway-model; interim default codex/gpt-6-astra
+FM_VOICE_GATEWAY_KEY=   # overrides config/voice-gateway-key; never place it in a URL or command line
+FM_VOICE_LOCAL_COMMAND= # overrides config/voice-local-command for --start-engine
+FM_VOICE_LOCAL_CACHE=   # overrides config/voice-local-cache for --start-engine
+FM_VOICE_REGION=        # overrides config/voice-region for one Bedrock relay run
+FM_VOICE_MODEL=         # overrides config/voice-model for one Bedrock relay run
 FM_VOICE_PROFILE=       # overrides config/voice-profile; explicitly empty forces ambient credentials
 FM_VOICE_ID=            # overrides config/voice-id; matthew when neither is set
 FM_VOICE_RELAY=         # laptop-side path to bin/fm-voice-relay.py on the desktop; required by fm-voice-client.py unless --relay is passed

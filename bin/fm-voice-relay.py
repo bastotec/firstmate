@@ -20,10 +20,10 @@ The gateway and model settings take effect when the engine is restarted.
 
 The captain talks into their laptop. The laptop captures audio and streams it
 over the SSH connection it already has to this desktop. This relay holds the
-Bedrock bidirectional session, answers the model's tool calls from firstmate's
-records, and streams the spoken reply back down the same connection. AWS
-credentials therefore stay on this desktop and never go near the laptop, which
-is the whole reason for the shape.
+selected model session, answers tool calls from firstmate's records, and streams
+the spoken reply back down the same connection. Bedrock credentials or the
+hybrid gateway credential therefore stay on this desktop and never go near the
+laptop, which is the whole reason for the shape.
 
 The voice agent this relay runs is NOT firstmate. It stands in front of
 firstmate: it answers questions about the fleet from the records, and when the
@@ -38,9 +38,11 @@ Modes:
                      arrived from the client, print the timings as JSON, exit.
                      This is the control measurement for the relay path, and it
                      needs no client, no SSH and no microphone.
+  --start-engine     run the configured external hybrid speech server in the
+                     foreground. It cannot be combined with the relay modes.
 
-The two traps this code already avoids, both found the expensive way and both
-measured rather than assumed:
+The two traps the default Bedrock path avoids were both found the expensive way
+and measured rather than assumed:
 
   1. completionEnd does not arrive on its own. The model holds the session open
      waiting for more speech. The real "the reply is finished" signal is a
@@ -57,21 +59,30 @@ Read scope, deny list and the handover queue all belong to bin/fm_voice_records.
 bin/fm_voice_frame.py owns the wire contract between the two machines, and
 docs/voice-relay.md is the operator-facing guide.
 
-CONFIGURATION. The region, the model and the AWS profile name somebody's account
-and somebody's choices, so this file carries no default for them. Each is read
-from the home's gitignored config/ directory, or from the matching environment
-variable, and a missing one refuses with the path to write rather than reaching
-for a value that belongs to another home. That configuration is also the opt-in:
-an unconfigured home cannot start this relay at all.
+CONFIGURATION. config/voice-engine (FM_VOICE_ENGINE) selects bedrock or hybrid
+and defaults to bedrock when absent. Bedrock carries no region, model, or profile
+default; those values name somebody's account and choices. Each setting is read
+from the home's gitignored config/ directory or the matching environment
+variable, and a missing required value refuses with the path to write.
 
-  config/voice-region   FM_VOICE_REGION   Bedrock region.        required
-  config/voice-model    FM_VOICE_MODEL    Nova Sonic model id.   required
-  config/voice-profile  FM_VOICE_PROFILE  AWS profile.           optional
-  config/voice-id       FM_VOICE_ID       output voice.          default matthew
+  voice-region         FM_VOICE_REGION         Bedrock region.      required
+  voice-model          FM_VOICE_MODEL          Nova Sonic model.    required
+  voice-profile        FM_VOICE_PROFILE        AWS profile.         optional
+  voice-id             FM_VOICE_ID             output voice.        default matthew
+  voice-local-url      FM_VOICE_LOCAL_URL      local Realtime URL.  hybrid required
+  voice-gateway-url    FM_VOICE_GATEWAY_URL    text gateway URL.    hybrid required
+  voice-gateway-model  FM_VOICE_GATEWAY_MODEL  text model route.    default astra
+  voice-gateway-key    FM_VOICE_GATEWAY_KEY    text gateway key.    optional
+  voice-local-command  FM_VOICE_LOCAL_COMMAND  server executable.  launcher required
+  voice-local-cache    FM_VOICE_LOCAL_CACHE    cache directory.    launcher required
 
-An absent profile means the relay uses only credentials that are already in its
-environment. An empty FM_VOICE_PROFILE, or an empty `--profile ""`, forces that
-even when config/voice-profile exists.
+All names in that column are files beneath config/. The full interim text route
+is codex/gpt-6-astra.
+
+An absent profile means the Bedrock relay uses only credentials that are already
+in its environment. An empty FM_VOICE_PROFILE, or an empty `--profile ""`, forces
+that even when config/voice-profile exists. The hybrid launcher replaces any
+ambient OPENAI_API_KEY with the configured gateway key or the inert value none.
 
 On choosing the model: the first-generation Nova Sonic model is marked legacy by
 AWS and measured 25 percent slower on the tool-backed path, which is the path this
@@ -81,16 +92,19 @@ the second generation, which that document names.
 Usage:
   fm-voice-relay.py [--serve] [options]
   fm-voice-relay.py --self-test <file.pcm> [options]
+  fm-voice-relay.py --start-engine [options]
 
 Options:
+  --engine <name>       bedrock or hybrid.           default config or bedrock
+  --start-engine        run the configured hybrid server in the foreground
   --region <name>       Bedrock region.              default from config
   --model <id>          Nova Sonic model id.         default from config
   --profile <name>      AWS profile.                 default from config
   --voice <id>          output voice.                default matthew
   --home <dir>          firstmate home for records.  default $FM_HOME or this repo
   --scope <name>        override the read scope for this run.
-  --tail-ms <int>       silence appended on talk end. default 400
-  --turn-timeout <sec>  how long --self-test waits.   default 40
+  --tail-ms <int>       silence appended on talk end. default 400; hybrid min 1500
+  --turn-timeout <sec>  reply deadline.              default 40
   --verbose             log the session to stderr.
 """
 
@@ -115,8 +129,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fm_voice_frame as frame              # noqa: E402
 import fm_voice_records as records          # noqa: E402
 
-# A voice id names nobody and costs nothing to inherit, so this one has a
-# default. The region, the model and the profile do not; see CONFIGURATION above.
+# A Bedrock voice id names nobody and costs nothing to inherit, so this one has a
+# default. The Bedrock region, model, and profile do not; see CONFIGURATION above.
 VOICE = "matthew"
 SETTINGS = {
     "region": ("voice-region", "FM_VOICE_REGION", "Bedrock region"),
@@ -132,9 +146,9 @@ OUT_RATE = 24000
 CHUNK = 3200
 BYTES_PER_MS_IN = IN_RATE * 2 // 1000
 
-# Push-to-talk supplies no trailing silence, and trap 2 above means a turn with
-# none is never answered. 400 ms is the measured floor plus one chunk of margin;
-# see docs/voice-relay.md for the runs behind it.
+# Push-to-talk supplies no trailing silence. For Bedrock, 400 ms is the measured
+# floor plus one chunk of margin; hybrid resolution raises this to 1500 ms for
+# the external VAD. See docs/voice-relay.md for the runs behind both values.
 TAIL_MS = 400
 
 SYSTEM_PROMPT = (
@@ -814,7 +828,7 @@ class Session:
                 log(self.verbose, "{}: {}".format(role.lower(), text[:120]))
                 if '"interrupted"' in text and "true" in text:
                     # Informational only. Stopping playback mid-sentence is
-                    # barge-in, which is step three of the design, not this build.
+                    # barge-in, which this relay does not support.
                     self.down.send_json(frame.NOTICE, {"event": "interrupted"})
 
         if "toolUse" in event:
@@ -1082,11 +1096,12 @@ def fail_turn(session, down, exc):
 
 
 async def renew(session, options, down):
-    """Replace a session that has already answered once, and return the new one.
+    """Replace a spent session and return the new one.
 
-    MEASURED, and the reason this exists: a second user audio block in a session
-    that has already spoken is treated as barge-in, unconditionally. The model
-    raises INTERRUPTED the instant the block opens, and waiting does not help.
+    MEASURED, and why Bedrock renews after every answer: a second user audio
+    block in a session that has already spoken is treated as barge-in,
+    unconditionally. The model raises INTERRUPTED the instant the block opens,
+    and waiting does not help.
     Six consecutive turns were tried with no wait, with a wait until the reply's
     audio had all arrived, and with a wait of the reply's full spoken duration
     after that; every one of those interrupted every second turn. Worse, an
@@ -1095,11 +1110,11 @@ async def renew(session, options, down):
 
     Reconnecting instead costs 0.02 seconds, measured, and it happens when the
     captain presses the talk key rather than while they are waiting for a reply,
-    so it is invisible. What it gives up is conversational memory: each turn
-    starts fresh, so the captain cannot say "and what about that one". Carrying
-    context across turns means handling barge-in properly, which is step three of
-    the design, not this build. It also means the system prompt is sent once per
-    turn rather than once per session, which is the small cost of the trade.
+    so it is invisible. The Bedrock tradeoff is conversational memory: each turn
+    starts fresh, so the captain cannot say "and what about that one". The hybrid
+    engine instead retains context while its Realtime session remains healthy.
+    Bedrock also sends the system prompt once per turn rather than once per
+    session, which is the small cost of the trade.
     """
     log(options.verbose, "renewing the session for a new turn")
     await session.close()
@@ -1139,9 +1154,10 @@ async def handle_uplink_frame(kind, payload, session, options, down):
 
     Every branch below reaches the model, and the model side fails on its own:
     a reconnect can be throttled, a token can expire between turns, a stream can
-    drop. Because the relay rebuilds the session on every turn by design, one
-    such failure would otherwise leave the loop, end the relay with a traceback
-    on the stderr the client inherits, and cost the captain a whole session for
+    drop. Bedrock rebuilds after each reply, and hybrid rebuilds a failed or ended
+    session on the next turn. Without that recovery, one such failure would leave
+    the loop, end the relay with a traceback on the stderr the client inherits,
+    and cost the captain a whole session for
     a single bad reconnect. Instead it is named in a notice and the session is
     marked spent, so the next press of the talk key builds a new one and tries
     again. A failure the model cannot recover from is named once per turn, which
@@ -1184,9 +1200,10 @@ async def serve(options):
     client closing the connection, and an uplink that has stopped being a frame
     stream. In particular a model session ending is not one of them. It happens
     on its own, mid-conversation, and the next talk key builds a replacement
-    through the same path every ordinary turn already uses, at a measured cost of
-    0.02 s. A renew that cannot be made is spoken to the captain by fail_turn, so
-    the loud failure is the one they get; ending the relay here would instead
+    through the same renewal path Bedrock uses for ordinary turns and hybrid uses
+    after a failed session. The measured Bedrock renewal cost is 0.02 s. A renew
+    that cannot be made is spoken to the captain by fail_turn, so the loud failure
+    is the one they get; ending the relay here would instead
     leave them speaking a whole question into nothing.
     """
     loop = asyncio.get_running_loop()

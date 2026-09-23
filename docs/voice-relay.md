@@ -5,22 +5,20 @@ about what is happening from the first mate's own records, and when you ask for
 real work it says so out loud and queues the request rather than pretending to
 do it.
 
-This is step one of three: a spoken round trip that works. Interrupting the agent
-mid-sentence and carrying context from one question to the next are step three,
-and [what this build does not do](#what-this-build-does-not-do) is explicit about
-where the edge is.
+This is a push-to-talk spoken round trip.
+The default Bedrock engine starts a fresh model session for every question, while the optional hybrid engine keeps conversational context as long as its local Realtime session remains healthy.
+Interrupting the agent mid-sentence remains unsupported, and [what this build does not do](#what-this-build-does-not-do) is explicit about the boundary.
 
 ## The shape
 
-Your laptop captures the audio and plays the reply. This desktop holds the
-conversation with the model. Nothing in between needs AWS credentials on the
-laptop, which is the whole reason for this shape.
+Your laptop captures the audio and plays the reply.
+This desktop holds the conversation through the selected engine, and no model or gateway credential is needed on the laptop.
 
 ```
-laptop                          this desktop                      AWS
-------                          ------------                      ---
-microphone --> fm-voice-client.py --(ssh)--> fm-voice-relay.py --> Nova Sonic 2
-speaker    <-------------------------------------------------      (your region)
+laptop                          this desktop                         selected engine
+------                          ------------                         ---------------
+microphone --> fm-voice-client.py --(ssh)--> fm-voice-relay.py ----> Bedrock Nova Sonic
+speaker    <---------------------------------------------------      or local speech --> text gateway
                                         |
                                         +--> the first mate's records (read)
                                         +--> fm-inbox.sh note (queue real work)
@@ -34,7 +32,7 @@ The relay reads records and queues work. It never changes a project, and the
 queueing half is `bin/fm-inbox.sh note`, the same surface the captain's own
 out-of-band capture already uses, rather than a second queue.
 
-## What it costs in time
+## Default Bedrock latency
 
 Measured on 2026-08-21 against the reviewed relay code, `amazon.nova-2-sonic-v1:0` in `eu-north-1`, on a spoken question that makes the agent read the records before it can answer, which is the slowest ordinary case.
 Six runs each, all six answered each way.
@@ -78,11 +76,10 @@ So your number is about 1.15 to 1.3 seconds plus your round trip time plus your 
 It is worth saying plainly that this came in under the bottom of the 1.5 to 2.5 second estimate the relay shape was given before it was built.
 The safer shape, with no credentials on the laptop, is not the slower one.
 
-## Setting up this desktop
+## Setting up the default Bedrock engine
 
-The model is only reachable over HTTP/2 bidirectional streaming, which the AWS
-CLI cannot drive and `boto3` cannot either. It needs the experimental SDK, in a
-virtual environment of its own:
+The Bedrock model is only reachable over HTTP/2 bidirectional streaming, which the AWS CLI cannot drive and `boto3` cannot either.
+It needs the experimental SDK in a virtual environment of its own:
 
 ```
 python3 -m venv ~/.fm-voice-venv
@@ -100,7 +97,7 @@ Each value is one line in your gitignored `config/` directory, and each has an e
 | `config/voice-profile` | `FM_VOICE_PROFILE` | The AWS profile to export credentials from, optional: with no profile the relay uses only credentials that are already in its environment. |
 | `config/voice-id` | `FM_VOICE_ID` | The output voice, optional and `matthew` when unset. |
 
-A missing required value refuses with the path to write, so an unconfigured home cannot start the relay by accident, and that configuration is the whole opt-in.
+A missing required value refuses with the path to write, so an unconfigured home cannot start the default Bedrock relay by accident, and that configuration is the whole Bedrock opt-in.
 `docs/configuration.md` is the registry for these files.
 
 Check it end to end without a microphone, using a recorded question:
@@ -307,20 +304,18 @@ strength of a typo.
 
 ## Push to talk, and the setting that refuses
 
-Push to talk is the default: the microphone is closed until you ask for it. That
-is `$0.0101` per minute against `$0.0151` for an open microphone, and it is the
-setting nobody has decided yet, so this build does not choose the expensive one
-on the captain's behalf.
+Push to talk is the default: the microphone is closed until you ask for it.
+On the default Bedrock engine that is `$0.0101` per minute against `$0.0151` for an open microphone, and this build does not choose the expensive mode on the captain's behalf.
 
 `--listen open-mic` exists as a setting and refuses at startup today.
-An open microphone needs something to decide when you stopped speaking, and the client has no end-of-speech detection, so the mode would open a turn, stream audio forever and never mark a boundary, which leaves the relay appending to a session that has already answered.
-That detection belongs with carrying context across turns, which is step three, so the flag refuses before it opens an SSH connection or spends anything rather than half working.
+An open microphone needs something to decide when you stopped speaking, and the client has no supported end-of-speech boundary for that mode.
+That lifecycle is not implemented by either relay engine, so the flag refuses before it opens an SSH connection or spends anything rather than half working.
 The setting stays where it is so that turning it on later is a small change rather than a new flag.
 
-## One turn per session, and what that gives up
+## Default Bedrock: one turn per session
 
-The relay reconnects to the model at the start of each turn. That is not
-tidiness, it is a measured requirement.
+The default Bedrock engine reconnects to the model at the start of each turn.
+That is not tidiness, it is a measured requirement.
 
 A second question inside a session that has already answered one is treated as an
 interruption, unconditionally: the model raises it the instant the audio block
@@ -340,11 +335,11 @@ replacement. Either way the client hears about it at once rather than waiting ou
 the whole reply timeout in silence.
 A turn still waiting for its answer when either happens names why in its own `relay_error`, and [setting up the laptop](#setting-up-the-laptop) describes those reasons.
 
-**What it gives up is memory.** Every question starts fresh, so "and what about
-that one" will not work. Carrying context across turns means handling
-interruption properly, which is step three.
+**What it gives up is memory.**
+Every Bedrock question starts fresh, so "and what about that one" will not work.
+The hybrid engine instead retains context while its Realtime session is healthy, as described in [Optional hybrid engine](#optional-hybrid-engine-local-hearing-and-speech).
 
-## Two traps worth keeping
+## Two default Bedrock traps worth keeping
 
 Both cost real time to find the first time. The code comments own the detail;
 these are the shapes.
@@ -361,16 +356,13 @@ these are the shapes.
 
 ## What this build does not do
 
-- **Interrupting the agent mid-sentence.** Nova Sonic supports it, measured, on
-  both model versions, so the capability is there when it is wanted. The concrete
-  thing step three has to solve is the interruption finding above: today any
-  second question in a session is treated as an interruption, and an interrupted
-  turn that reads the records produces no answer at all.
-- **Remembering the last question.** See above.
+- **Interrupting the agent mid-sentence.** Neither engine exposes interruption through this relay today.
+  Nova Sonic supports it, measured, on both model versions, but the default Bedrock path starts a fresh session because a second question in one session is treated as an interruption and an interrupted turn that reads the records produces no answer at all.
+- **Remembering the last question on the default Bedrock engine.** See [Default Bedrock: one turn per session](#default-bedrock-one-turn-per-session); the hybrid engine remembers while its Realtime session remains healthy.
 - **Doing any project work.** Real work is queued for the first mate and the
   agent says so out loud. It has no tool that changes a project.
 
-## Cost
+## Default Bedrock cost
 
 `$0.00293` per exchange, derived from the first pass's token counts and session seconds, which is roughly a dollar for three hundred and forty questions.
 The re-measured exchange is about a quarter of a second shorter, worth about `$0.00004` at the session rate below, so the figure is unchanged at the precision it is quoted to.
