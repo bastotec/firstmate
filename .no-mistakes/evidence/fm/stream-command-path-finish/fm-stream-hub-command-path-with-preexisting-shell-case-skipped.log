@@ -1,0 +1,68 @@
+FM_TEST_BEGIN 2026-09-23T05:13:37Z tests/fm-stream-hub.test.sh family=unclassified expected_gate_skip=none
+ok - hub: endpoint capabilities prevent command theft, remain idempotent, and revoke
+ok - hub: every data route requires a bearer token, and only the viewer page does not
+ok - hub: registering an endpoint needs the publish class, reading needs subscribe
+ok - hub: steering needs the control class, and a viewing token holds none of it
+ok - hub: the screen read answers with the live screen and its cursor row
+ok - hub: capture answers a well-formed screen while frames are still arriving
+ok - hub: one listing carries every machine's endpoints
+ok - hub: the fleet listing answers while new machines are joining
+ok - hub: input reaches the endpoint's pseudoterminal and capture reads it back
+ok - hub: an input no agent acknowledged is refused rather than reported delivered
+ok - hub: a fresh state read carries its age and its verdict
+ok - hub: a silent agent reads unreadable and is never reported dead
+ok - hub: the event stream replays the ring, delivers live frames, and is the only route taking a query credential
+ok - hub: the status return channel is written locally by the owning agent
+ok - hub: kill closes the exact endpoint and leaves its sibling running
+ok - hub: a kill the agent never answers closes the record and says so
+ok - hub: a worker the hub has not heard from keeps its stream, its listing and its steering
+ok - hub: an agent that speaks again takes the presumption back
+ok - hub: a returning agent whose name was taken is refused rather than revived
+ok - hub: a registration nothing stands behind takes no name from the agent recovering it
+ok - hub: a name contest is settled by which agent the hub has heard from
+ok - hub: a publishing worker keeps its name against a record nothing stands behind
+ok - hub: the agent that loses a name contest stands down and keeps its worker
+ok - hub: a record silent long enough to lose its name is contested whether or not anything reaped
+ok - hub: an agent that lost its name can still close out the record it holds
+ok - hub: a stood-down agent still closes the record it holds
+ok - hub: a forced close cannot erase the exit code the owning agent reported
+ok - hub: terminal content is never persisted outside the in-memory ring
+ok - hub: malformed bodies and unknown routes are refused without acting
+ok - hub: the subscriber view is static and carries no terminal content
+ok - hub: the viewer renders a character split across two frames
+ok - hub: the viewer reports a refused transcript instead of painting it as output
+ok - hub: a resolved send never re-enables the box for a closed worker
+ok - hub: a worker whose hub restarted comes back under its own endpoint id and steers again
+ok - hub: a lost re-registration response keeps the worker orderable
+ok - hub: a worker that exited while the hub was down still reports its end to the hub that returns
+ok - hub: a closing frame is delivered even when the agent's re-registration pace is spent
+ok - hub: a closing frame survives a re-registration already in flight on another thread
+ok - hub: an agent negotiates idempotent command results before startup
+ok - hub: an agent retains and retries a successful command result
+ok - hub: a terminal result rejection does not wedge command polling
+ok - hub: result capability revocation does not delay the closing frame
+ok - hub: shutdown wakes result backoff for a final attempt
+ok - hub: shutdown drains the command poll already in flight
+ok - hub: an agent the hub cannot take back paces its attempts instead of hammering it
+ok - hub: a worker listed again after a long outage takes a steer straight away
+ok - hub: a registration the hub accepts returns the agent's pace to its floor
+ok - hub: command result acknowledgements are idempotent
+ok - hub: completed results survive later machine command volume
+ok - hub: command traffic prunes expired completed results
+ok - hub: endpoint registration controls Bridge orderability
+ok - hub: an order addressed by leaf reaches that leaf's worker
+ok - hub: an order aimed at a replaced execution is refused and never lands in its replacement
+ok - hub: an order to a worker its own agent reported gone is refused as gone
+ok - hub: a leaf the hub cannot resolve stays pending
+ok - hub: unresolved orders preserve id binding across retry
+ok - hub: an order no agent took is refused as undelivered
+ok - hub: an unconfirmed order reconciles through a resend after its acknowledgement lands
+ok - hub: an order id deduplicates identical payloads and refuses conflicts
+ok - hub: a resend overtaking a placement in flight is answered, not retyped
+ok - hub: a leaf still rejoining is waited for rather than reported absent
+ok - hub: ordering needs control, generation, and the narrow Bridge request shape
+not ok - fm-stream.sh hub start failed: fm-stream.sh: the hub did not report ready; see /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-stream-hub-tests.wWH3ff/operator/state/.stream-hub.log
+FM_TEST_END 2026-09-23T05:20:59Z tests/fm-stream-hub.test.sh exit=1 duration_ms=441296 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=442035
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=441296 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-hub.test.sh duration_ms=441296

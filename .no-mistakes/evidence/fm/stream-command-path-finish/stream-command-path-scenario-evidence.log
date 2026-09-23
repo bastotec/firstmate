@@ -1,0 +1,23 @@
+Target production binaries were exercised over real loopback sockets with real fm-stream-agent PTYs.
+The existing repository suites emitted these scenario-level outcomes:
+
+ok - hub: endpoint capabilities prevent command theft, remain idempotent, and revoke
+ok - bridge: a composer command reaches the worker and is acknowledged
+ok - bridge: a reused command id refuses a different payload
+ok - bridge: a command for a worker its agent reported gone is nacked
+ok - bridge: a command aimed at a replaced execution is refused without claiming absence
+ok - bridge: commands require the execution they were composed against
+ok - bridge: an order the hub cannot settle is left pending rather than answered
+ok - hub: a lost re-registration response keeps the worker orderable
+ok - hub: result capability revocation does not delay the closing frame
+ok - hub: an order addressed by leaf reaches that leaf's worker
+ok - hub: an order aimed at a replaced execution is refused and never lands in its replacement
+ok - hub: an order to a worker its own agent reported gone is refused as gone
+ok - hub: a leaf the hub cannot resolve stays pending
+ok - hub: unresolved orders preserve id binding across retry
+ok - hub: an order no agent took is refused as undelivered
+ok - hub: an unconfirmed order reconciles through a resend after its acknowledgement lands
+ok - hub: an order id deduplicates identical payloads and refuses conflicts
+ok - hub: a resend overtaking a placement in flight is answered, not retyped
+ok - hub: a leaf still rejoining is waited for rather than reported absent
+ok - hub: ordering needs control, generation, and the narrow Bridge request shape

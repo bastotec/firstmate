@@ -1,0 +1,108 @@
+FM_TEST_BEGIN 2026-09-23T05:01:04Z tests/fm-stream-hub.test.sh family=unclassified expected_gate_skip=none
+ok - hub: endpoint capabilities prevent command theft, remain idempotent, and revoke
+ok - hub: every data route requires a bearer token, and only the viewer page does not
+ok - hub: registering an endpoint needs the publish class, reading needs subscribe
+ok - hub: steering needs the control class, and a viewing token holds none of it
+ok - hub: the screen read answers with the live screen and its cursor row
+ok - hub: capture answers a well-formed screen while frames are still arriving
+ok - hub: one listing carries every machine's endpoints
+ok - hub: the fleet listing answers while new machines are joining
+ok - hub: input reaches the endpoint's pseudoterminal and capture reads it back
+ok - hub: an input no agent acknowledged is refused rather than reported delivered
+ok - hub: a fresh state read carries its age and its verdict
+ok - hub: a silent agent reads unreadable and is never reported dead
+ok - hub: the event stream replays the ring, delivers live frames, and is the only route taking a query credential
+not ok - an endpoint whose shell died at birth should not report success
+FM_TEST_END 2026-09-23T05:02:48Z tests/fm-stream-hub.test.sh exit=1 duration_ms=102944 gate_skip=false
+FM_TEST_BEGIN 2026-09-23T05:02:48Z tests/fm-stream-bridge.test.sh family=unclassified expected_gate_skip=none
+ok - bridge: recorded hub traffic replays into the Bridge UI's record shape
+ok - bridge: only an exit the owning agent reported becomes Stopped or Failed
+ok - bridge: malformed recordings are refused and malformed endpoints left out
+ok - bridge: a leaf is emitted once from the hub's current execution
+ok - bridge: a snapshot reads a real hub's registrations and closes
+ok - bridge: a real agent's reported worker exit reaches the Bridge
+ok - bridge: serve streams every tick and goes silent while the hub is gone
+ok - bridge: wrong credentials and incompatible hubs are refused during negotiation
+ok - bridge: commands rebind atomically to the active hub generation
+ok - bridge: a composer command reaches the worker and is acknowledged
+ok - bridge: a reused command id refuses a different payload
+ok - bridge: a command for a worker its agent reported gone is nacked
+ok - bridge: a command aimed at a replaced execution is refused without claiming absence
+ok - bridge: commands require the execution they were composed against
+ok - bridge: commands for another or missing fleet are nacked
+ok - bridge: an order the hub cannot settle is left pending rather than answered
+ok - bridge: a command that names no worker stays pending rather than nacked
+ok - bridge: the comparison harness sets rendered states against crew state
+FM_TEST_END 2026-09-23T05:04:21Z tests/fm-stream-bridge.test.sh exit=0 duration_ms=92968 gate_skip=false
+FM_TEST_BEGIN 2026-09-23T05:04:21Z tests/fm-stream-bridge-rust.test.sh family=unclassified expected_gate_skip=none
+ok - bridge-rust: recorded hub traffic replays byte-identically
+ok - bridge-rust: refusals match the reference's words and exit statuses
+ok - bridge-rust: CLI flags, choices, defaults and exit statuses match
+ok - bridge-rust: a real hub's listing replays byte-identically
+ok - bridge-rust: snapshots of a real hub match beyond the process-local clocks
+ok - bridge-rust: HTTPS and redirected hubs match the reference
+ok - bridge-rust: serve streams like the reference and survives a hub outage
+ok - bridge-rust: a closed reader ends the feed cleanly on both sides
+ok - bridge-rust: the comparison harness answers identically
+FM_TEST_END 2026-09-23T05:06:25Z tests/fm-stream-bridge-rust.test.sh exit=0 duration_ms=123701 gate_skip=false
+FM_TEST_BEGIN 2026-09-23T05:06:25Z tests/fm-stream-agent-kill-safety.test.sh family=unclassified expected_gate_skip=none
+ok - stream agent kill safety: partial-write-completes
+ok - stream agent kill safety: endpoint-is-session-leader
+ok - stream agent kill safety: recorded-pgid-matches-kernel
+ok - stream agent kill safety: live-endpoint-is-killed
+ok - stream agent kill safety: reaped-endpoint-is-not-signalled
+ok - stream agent kill safety: concurrent-reap-never-escapes
+ok - stream agent kill safety: refuses-own-process-group
+ok - stream agent kill safety: refuses-own-session
+ok - stream agent kill safety: the refusal names the group it would not signal
+ok - stream agent kill safety: the suite's kill guard refuses itself
+ok - stream agent kill safety: the suite's kill guard refuses an ancestor
+ok - stream agent kill safety: the suite's kill guard refuses pid 1
+ok - stream agent kill safety: the suite's kill guard still signals a helper it started
+FM_TEST_END 2026-09-23T05:06:40Z tests/fm-stream-agent-kill-safety.test.sh exit=0 duration_ms=14929 gate_skip=false
+FM_TEST_BEGIN 2026-09-23T05:06:41Z tests/fm-backend-stream.test.sh family=unclassified expected_gate_skip=none
+error: the stream agent refused to start an endpoint for 'fm-create-30227': /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M364STKNXNVFP7Q4WGD8RDC5/bin/backends/stream.sh: line 332: setsid: command not found
+not ok - creating endpoint fm-create-30227 failed
+not ok - the created target should carry the tag of the hub it was created on (expected '', got '127.0.0.1-52195')
+FM_TEST_END 2026-09-23T05:07:11Z tests/fm-backend-stream.test.sh exit=1 duration_ms=29024 gate_skip=false
+FM_TEST_BEGIN 2026-09-23T05:07:11Z tests/fm-stream-claude-tail.test.sh family=unclassified expected_gate_skip=none
+ok - the Claude Code transcript tail shim holds its contracts
+FM_TEST_END 2026-09-23T05:07:54Z tests/fm-stream-claude-tail.test.sh exit=0 duration_ms=42620 gate_skip=false
+FM_TEST_BEGIN 2026-09-23T05:07:54Z tests/fm-stream-opencode-tail.test.sh family=unclassified expected_gate_skip=none
+ok - refuses to guess the tailed session
+ok - refuses a missing storage file without creating one
+ok - refuses non-SQLite storage in the refusal voice, not a traceback
+ok - refuses an unknown session id
+ok - registers the fleet/leaf identity in the agent's shape
+ok - publishes zero counters as a fact, never a fabricated estimate
+ok - publishes cumulative counters from real usage records
+ok - accumulates cumulatively with a strictly increasing sequence
+ok - heartbeats on a fixed idle cadence with unchanged counters
+ok - refuses input because a tail adapter owns no terminal
+ok - resumes with full cumulative totals after a restart
+tests/lib.sh: line 162:  6664 Killed: 9               python3 "$STUB" "$CASE_DIR/stub-out" "$STUB_PORT" >> "$CASE_DIR/stub-addr" 2>&1
+ok - lists on the fleet as an ordinary endpoint
+ok - keeps read-only tail publishers non-orderable
+ok - answers state reads fresh, through the agent's own route
+ok - rejoins a restarted hub under the same endpoint id
+ok - appends status lines through the hub, on the machine that owns the record
+ok - acknowledges a kill and closes its own record
+ok - resolves a directory to its newest MAIN session, never a subagent
+ok - closes its endpoint out when opencode archives the session
+ok - exits in the refusal voice when the hub refuses registration
+ok - publishes the session alone while storage has never answered
+ok - heartbeats the session alone while storage stays unreadable
+ok - converges on the real counters as soon as storage answers
+tests/lib.sh: line 162: 45105 Killed: 9               STUB_REFUSE_ENDPOINTS=1 python3 "$STUB" "$CASE_DIR/stub-out" "$STUB_PORT" >> "$CASE_DIR/stub-addr" 2>&1
+tests/lib.sh: line 162: 47971 Killed: 9               STUB_REGISTER_DELAY=2 python3 "$STUB" "$CASE_DIR/stub-out" "$STUB_PORT" >> "$CASE_DIR/stub-addr" 2>&1
+all opencode tail adapter tests passed
+FM_TEST_END 2026-09-23T05:08:54Z tests/fm-stream-opencode-tail.test.sh exit=0 duration_ms=59740 gate_skip=false
+FM_TEST_SUMMARY total=7 failed=2 skipped_gate=0 duration_ms=471334
+FM_TEST_SUMMARY_FAMILY family=unclassified count=7 duration_ms=465926 failed=2
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-bridge-rust.test.sh duration_ms=123701
+FM_TEST_SLOWEST rank=2 script=tests/fm-stream-hub.test.sh duration_ms=102944
+FM_TEST_SLOWEST rank=3 script=tests/fm-stream-bridge.test.sh duration_ms=92968
+FM_TEST_SLOWEST rank=4 script=tests/fm-stream-opencode-tail.test.sh duration_ms=59740
+FM_TEST_SLOWEST rank=5 script=tests/fm-stream-claude-tail.test.sh duration_ms=42620
+FM_TEST_SLOWEST rank=6 script=tests/fm-backend-stream.test.sh duration_ms=29024
+FM_TEST_SLOWEST rank=7 script=tests/fm-stream-agent-kill-safety.test.sh duration_ms=14929

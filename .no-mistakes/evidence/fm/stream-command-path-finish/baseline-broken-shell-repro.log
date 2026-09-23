@@ -1,0 +1,3 @@
+baseline_exited_within_0.4=False elapsed=0.404 exit_code=None
+baseline_output=b'cannot start here\r\n'
+baseline_poll_after_read=None
