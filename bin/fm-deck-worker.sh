@@ -473,6 +473,16 @@ while :; do
   if [ "$SECONDMATE" = 1 ]; then
     watch_start || exit 1
     watch_maintain || exit 1
+    if [ -f "$WORK/input.$input_seq" ]; then
+      if ! line=$(cat "$WORK/input.$input_seq"); then
+        host_failure 'could not read queued input'; exit 1
+      fi
+      if [ "$line" = /quit ]; then
+        rm "$WORK/input.$input_seq" || { host_failure 'could not consume queued exit'; exit 1; }
+        record_busy_event idle session-end || exit 1
+        exit 0
+      fi
+    fi
     if [ -s "$WATCH_PENDING" ]; then
       if ! doorbell=$(watch_doorbell); then
         host_failure 'could not publish watcher steering doorbell'; exit 1

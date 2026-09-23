@@ -721,8 +721,19 @@ with (root/'pane').open('w') as output:
         assert 'turn interrupted' in (root/'parent/host.status').read_text()
         (home/'trigger').touch()
         wait_for(lambda: len(rows()) == 11, 'watcher survived interrupt')
+        rows_before_exit = len(rows())
+        starts_before_exit = len(watcher_starts())
+        (home/'in-turn').unlink()
+        p.stdin.write('slow-steer\n'); p.stdin.flush()
+        wait_for(lambda: (home/'in-turn').exists(), 'exit-race turn start')
+        assert len(rows()) == rows_before_exit + 1
+        (home/'trigger').touch()
+        wait_for(lambda: len(watcher_starts()) > starts_before_exit, 'exit-race watcher successor')
         p.stdin.write('/quit\n'); p.stdin.flush()
+        time.sleep(.3)
+        (home/'release').touch()
         assert p.wait(timeout=15) == 0
+        assert len(rows()) == rows_before_exit + 1, 'queued exit ran a watcher turn before stopping the host'
     finally:
         if p.poll() is None:
             os.killpg(p.pid, signal.SIGTERM)
