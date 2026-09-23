@@ -1132,6 +1132,7 @@ class Hub:
         self.command_wake = threading.Condition(self.lock)
         self.orders: "collections.OrderedDict" = collections.OrderedDict()
         self.started_at = _now()
+        self.generation = uuid.uuid4().hex
 
     # --- authentication ---------------------------------------------------
 
@@ -1861,6 +1862,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "protocol": HUB_PROTOCOL,
                 "version": HUB_VERSION,
                 "capabilities": list(HUB_CAPABILITIES),
+                "generation": hub.generation,
                 "started_at": hub.started_at,
                 "endpoints": len(hub.list_endpoints()),
                 "state_max_age_secs": hub.options.state_max_age_secs,
@@ -1916,6 +1918,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         alone would be the endpoint-addressed steer this already has.
         """
         payload = self._body()
+        generation = payload.get("hub_generation")
+        if generation != self.server.hub.generation:
+            raise HubError(HTTPStatus.CONFLICT, "hub_generation_changed",
+                           "the order was negotiated for another hub generation")
         leaf = payload.get("leaf_worker_id")
         if not isinstance(leaf, str):
             raise HubError(HTTPStatus.BAD_REQUEST, "bad_leaf",
@@ -1935,7 +1941,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if payload.get("submit") is not True:
             raise HubError(HTTPStatus.BAD_REQUEST, "bad_submit",
                            "an order must set 'submit' to true")
-        allowed = {"leaf_worker_id", "execution_id", "order_id", "text", "submit"}
+        allowed = {"leaf_worker_id", "execution_id", "order_id", "text", "submit",
+                   "hub_generation"}
         unexpected = sorted(set(payload) - allowed)
         if unexpected:
             raise HubError(HTTPStatus.BAD_REQUEST, "bad_order_fields",

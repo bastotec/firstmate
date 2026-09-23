@@ -1884,12 +1884,18 @@ PY
   pass "hub: command traffic prunes expired completed results"
 }
 
+hub_generation() {
+  view GET /v1/health | jq -r '.generation'
+}
+
 # order <leaf> <execution> <text> [order-id] -> the hub's answer, with api_code set.
 order() {  # <leaf> <execution> <text> [order-id]
-  local order_id=${4:-order-$(python3 -c 'import os; print(os.urandom(16).hex())')}
+  local order_id=${4:-order-$(python3 -c 'import os; print(os.urandom(16).hex())')} generation
+  generation=$(hub_generation)
   view POST /v1/orders "$(jq -nc --arg leaf "$1" --arg ex "$2" --arg text "$3" \
-    --arg id "$order_id" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: $id, text: $text, submit: true}')"
+    --arg id "$order_id" --arg generation "$generation" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: $id, text: $text,
+      submit: true, hub_generation: $generation}')"
 }
 
 test_orderability_follows_the_endpoint_registration_capability() {
@@ -2082,13 +2088,11 @@ test_an_order_is_delivered_once_however_many_times_its_id_is_sent() {
   local endpoint leaf first second
   endpoint=$(start_agent box-a repeated)
   leaf="box-a/repeated-$RUN"
-  first=$(view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "issued-once", text: "echo TYPED-ONCE", submit: true}')")
+  first=$(order "$leaf" "$endpoint" "echo TYPED-ONCE" issued-once)
   assert_equals "$(api_code)" 200 "the first order should be accepted"
   wait_for_capture "$endpoint" TYPED-ONCE || fail "the worker never ran the order"
   # The same id again, carrying different text: neither may be typed.
-  second=$(view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "issued-once", text: "echo TYPED-TWICE", submit: true}')")
+  second=$(order "$leaf" "$endpoint" "echo TYPED-TWICE" issued-once)
   assert_equals "$(api_code)" 200 "resending an id already answered should report that answer"
   assert_equals "$(printf '%s' "$second" | jq -r '.requested_at')" \
     "$(printf '%s' "$first" | jq -r '.requested_at')" \
@@ -2163,47 +2167,71 @@ test_a_leaf_that_is_still_rejoining_is_waited_for_rather_than_called_absent() {
 
 test_ordering_needs_the_control_class_and_the_bridge_request_shape() {
   start_hub order-guards
-  local endpoint leaf
+  local endpoint leaf generation out
   endpoint=$(start_agent box-a guarded)
   leaf="box-a/guarded-$RUN"
+  generation=$(hub_generation)
   view_only POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "viewer", text: "echo VIEWER-TYPED", submit: true}')" >/dev/null
+    --arg generation "$generation" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "viewer",
+      text: "echo VIEWER-TYPED", submit: true, hub_generation: $generation}')" >/dev/null
   assert_equals "$(api_code)" 403 "a viewing token must not be able to order a worker"
-  view POST /v1/orders "$(jq -nc --arg leaf "$leaf" \
-    '{leaf_worker_id: $leaf, order_id: "unbound", text: "echo UNBOUND", submit: true}')" >/dev/null
+  out=$(view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "stale-generation",
+      text: "echo STALE-GENERATION", submit: true, hub_generation: "old"}')")
+  assert_equals "$(api_code)" 409 "an order negotiated for another hub must be refused"
+  assert_equals "$(printf '%s' "$out" | jq -r '.error')" hub_generation_changed \
+    "the refusal should name the changed hub generation"
+  view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg generation "$generation" \
+    '{leaf_worker_id: $leaf, order_id: "unbound", text: "echo UNBOUND",
+      submit: true, hub_generation: $generation}')" >/dev/null
   assert_equals "$(api_code)" 400 "an order naming no execution must be refused"
-  view POST /v1/orders "$(jq -nc --arg leaf "$leaf" \
-    '{leaf_worker_id: $leaf, execution_id: "not-an-execution", order_id: "bad-execution", text: "echo UNBOUND", submit: true}')" >/dev/null
+  view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg generation "$generation" \
+    '{leaf_worker_id: $leaf, execution_id: "not-an-execution", order_id: "bad-execution",
+      text: "echo UNBOUND", submit: true, hub_generation: $generation}')" >/dev/null
   assert_equals "$(api_code)" 400 "a malformed execution id must be refused rather than ignored"
-  view POST /v1/orders "$(jq -nc --arg ex "$endpoint" \
-    '{leaf_worker_id: "no-slash-here", execution_id: $ex, order_id: "bad-leaf", text: "echo BADLEAF", submit: true}')" >/dev/null
+  view POST /v1/orders "$(jq -nc --arg ex "$endpoint" --arg generation "$generation" \
+    '{leaf_worker_id: "no-slash-here", execution_id: $ex, order_id: "bad-leaf",
+      text: "echo BADLEAF", submit: true, hub_generation: $generation}')" >/dev/null
   assert_equals "$(api_code)" 400 "a leaf id that is not '<machine>/<label>' must be refused"
   view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "no-text", submit: true}')" >/dev/null
+    --arg generation "$generation" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "no-text",
+      submit: true, hub_generation: $generation}')" >/dev/null
   assert_equals "$(api_code)" 400 "an order carrying no string text must be refused"
   view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "bad-text", text: 7, submit: true}')" >/dev/null
+    --arg generation "$generation" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "bad-text", text: 7,
+      submit: true, hub_generation: $generation}')" >/dev/null
   assert_equals "$(api_code)" 400 "an order carrying non-string text must be refused"
   view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "keys", text: "echo KEYS", keys: ["Enter"], submit: true}')" >/dev/null
+    --arg generation "$generation" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "keys", text: "echo KEYS",
+      keys: ["Enter"], submit: true, hub_generation: $generation}')" >/dev/null
   assert_equals "$(api_code)" 400 "an order carrying generalized key input must be refused"
   view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "no-submit", text: "echo NO-SUBMIT"}')" >/dev/null
+    --arg generation "$generation" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, order_id: "no-submit",
+      text: "echo NO-SUBMIT", hub_generation: $generation}')" >/dev/null
   assert_equals "$(api_code)" 400 "an order omitting submit=true must be refused"
   view POST /v1/orders "$(jq -nc --arg leaf "$leaf" --arg ex "$endpoint" \
-    '{leaf_worker_id: $leaf, execution_id: $ex, text: "echo NO-ID", submit: true}')" >/dev/null
+    --arg generation "$generation" \
+    '{leaf_worker_id: $leaf, execution_id: $ex, text: "echo NO-ID", submit: true,
+      hub_generation: $generation}')" >/dev/null
   assert_equals "$(api_code)" 400 "an order without a caller-supplied id must be refused"
   order "$leaf" "$endpoint" "echo GUARDS-DONE" >/dev/null
   wait_for_capture "$endpoint" GUARDS-DONE || fail "the worker should still take a proper order"
   local seen
   seen=$(view GET "/v1/tasks/$endpoint/capture?lines=40")
   assert_not_contains "$seen" VIEWER-TYPED "a refused credential must not have typed anything"
+  assert_not_contains "$seen" STALE-GENERATION \
+    "an order negotiated for another hub generation must not type anything"
   assert_not_contains "$seen" UNBOUND "an unbound order must not have typed anything"
   assert_not_contains "$seen" BADLEAF "an order refused for its leaf must not have typed anything"
   assert_not_contains "$seen" KEYS "an order carrying key input must not have typed anything"
   assert_not_contains "$seen" NO-SUBMIT "an order without submit=true must not have typed anything"
   assert_not_contains "$seen" NO-ID "an order without an id must not have typed anything"
-  pass "hub: ordering needs control and the narrow Bridge request shape"
+  pass "hub: ordering needs control, generation, and the narrow Bridge request shape"
 }
 
 test_fm_stream_start_status_stop_round_trip() {
