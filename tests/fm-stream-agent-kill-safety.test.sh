@@ -97,6 +97,35 @@ report("partial-write-completes",
        count == len(b"composer-order\r") and b"".join(chunks) == b"composer-order\r",
        "count=%r bytes=%r" % (count, b"".join(chunks)))
 
+# --- ignored launcher SIGINT must not disable the PTY child's trap ---------
+# Each case execs a real shell, installs its own interrupt handler, and receives
+# Ctrl+C through the terminal rather than by directly signalling the child.
+for disposition in (int(signal.SIG_DFL), int(signal.SIG_IGN)):
+    previous = signal.signal(signal.SIGINT, disposition)
+    pty = None
+    try:
+        pty = make_pty(["/bin/sh", "-c",
+                        "trap 'echo INTERRUPT_HANDLED; exit 0' INT; "
+                        "echo CHILD_READY; while :; do sleep 0.1; done"])
+        output = b""
+        deadline = time.monotonic() + 5
+        while b"CHILD_READY" not in output and time.monotonic() < deadline:
+            output += pty.read()
+        report("child-ready-with-parent-sigint-%s" % disposition,
+               b"CHILD_READY" in output, repr(output))
+        pty.write(b"\x03")
+        deadline = time.monotonic() + 5
+        while b"INTERRUPT_HANDLED" not in output and time.monotonic() < deadline:
+            output += pty.read()
+        report("child-handles-sigint-with-parent-%s" % disposition,
+               b"INTERRUPT_HANDLED" in output, repr(output))
+        report("parent-sigint-disposition-unchanged-%s" % disposition,
+               signal.getsignal(signal.SIGINT) == disposition)
+    finally:
+        if pty is not None:
+            pty.close("KILL")
+            pty.release()
+        signal.signal(signal.SIGINT, previous)
 
 # --- the endpoint really is isolated in its own session ---------------------
 pty = make_pty(["sleep", "300"])
@@ -205,7 +234,11 @@ out=$(python3 "$CASE_DIR/drive.py" "$ROOT/bin/fm-stream-agent.py" 2>"$CASE_DIR/d
 rc=$?
 [ "$rc" -eq 0 ] || fail "the kill-safety driver did not finish: $(head -5 "$CASE_DIR/drive.err" 2>/dev/null)"
 
-for case_name in partial-write-completes endpoint-is-session-leader recorded-pgid-matches-kernel \
+for case_name in partial-write-completes \
+  child-ready-with-parent-sigint-0 child-ready-with-parent-sigint-1 \
+  child-handles-sigint-with-parent-0 child-handles-sigint-with-parent-1 \
+  parent-sigint-disposition-unchanged-0 parent-sigint-disposition-unchanged-1 \
+  endpoint-is-session-leader recorded-pgid-matches-kernel \
   live-endpoint-is-killed reaped-endpoint-is-not-signalled \
   concurrent-reap-never-escapes refuses-own-process-group refuses-own-session; do
   line=$(printf '%s\n' "$out" | grep -E "^(OK|FAIL) $case_name( |$)") \
