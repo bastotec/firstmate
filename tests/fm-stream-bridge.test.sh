@@ -327,12 +327,17 @@ test_refusals_end_the_command() {
   python3 - "$ready" > "$fake_dir/log" 2>&1 <<'PY' &
 import http.server, json, sys
 class H(http.server.BaseHTTPRequestHandler):
-    calls = 0
+    health_calls = 0
     def log_message(self, *a): pass
     def do_GET(self):
-        H.calls += 1
-        protocol = 2 if H.calls == 1 else 99
-        body = json.dumps({"ok": True, "protocol": protocol}).encode()
+        if self.path == "/v1/tasks":
+            body = json.dumps({"ok": True, "tasks": []}).encode()
+        else:
+            H.health_calls += 1
+            protocol = 99 if H.health_calls == 4 else 2
+            capabilities = ([] if H.health_calls == 1 else ["current_execution"])
+            body = json.dumps({"ok": True, "protocol": protocol,
+                               "capabilities": capabilities}).encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -355,6 +360,14 @@ PY
   assert_contains "$out" "current_execution" "the refusal should name the missing capability"
   assert_contains "$out" "restart or upgrade the hub" \
     "the refusal should tell the operator how to replace the stale running hub"
+  out=$(printf '' | python3 "$BRIDGE" command --hub "http://$host:$port" \
+    --token-file "$CASE_DIR/view-token" --fleet-id test-fleet 2>&1)
+  assert_equals "$?" 2 "the command adapter should reject a hub without result retries"
+  assert_contains "$out" "idempotent_command_results" \
+    "the command refusal should name the missing acknowledgement capability"
+  out=$(python3 "$BRIDGE" snapshot --hub "http://$host:$port" \
+    --token-file "$CASE_DIR/view-token" 2>&1)
+  assert_equals "$?" 0 "a read-only feed should accept the narrower current-execution capability"
   out=$(python3 "$BRIDGE" snapshot --hub "http://$host:$port" --token-file "$CASE_DIR/view-token" 2>&1)
   assert_equals "$?" 2 "a hub speaking another protocol should be refused"
   assert_contains "$out" "protocol 99" "the refusal should name the protocol it found"
