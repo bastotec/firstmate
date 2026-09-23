@@ -23,7 +23,7 @@ Deck's own tests pin that contract (`cargo test --locked`, 85 tests at `7308f21`
 
 ## Portable regression
 
-`tests/fm-deck-harness.test.sh` drives the real driver against a fake `deck` that logs its arguments, honours `--session`, and runs the `pre_complete` hook the way Deck does:
+`tests/fm-deck-harness.test.sh` drives the real driver against a fake `deck` that logs its arguments, honours `--session`, and runs the `pre_complete` and `post_tool_use` hooks the way Deck does:
 
 ```
 $ bash tests/fm-deck-harness.test.sh
@@ -38,6 +38,8 @@ ok - fm-deck-worker: status evidence never follows symlinked or non-regular path
 ok - fm-deck-worker: silent and failed turns gain status evidence before turn-end
 ok - fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt
 ok - fm-deck-worker: each completed turn leaves the next steer an idle baseline
+ok - Deck stop: physical aliases and spaced paths stop the active Deck process
+ok - Deck stop: exact task scope and bounded escalation remove survivors
 ok - liveness: the deck driver and binary are agents, unrelated names are not
 ok - tmux liveness: Deck's Linux comm and argv0 classify alive
 ok - control and busy-source tables carry Deck mechanics without rendered delivery evidence
@@ -50,6 +52,7 @@ fm-deck-harness: all cases passed
 The dispatch validator rejects Deck profiles with effort, spawn refuses a non-default `--effort` before launch or task metadata, and relaunch refuses it before stopping the current worker because Deck has no effort control.
 Those boundaries are pinned by `tests/fm-bootstrap.test.sh`, `tests/fm-deck-harness.test.sh`, and `tests/fm-control-relaunch.test.sh`.
 The driver refuses to run Deck when it cannot record `turn-start`, and a failed closing busy-state write publishes failure evidence and makes the turn fail.
+Turn-lifecycle and progress-refresh failures retain `fm-busy-event.sh`'s underlying stderr in both the pane and the appended `failed:` status, including stale-generation diagnostics.
 The evidence gate snapshots the status log's byte offset at turn start and searches a bounded appended suffix for a complete `done`, `needs-decision`, `blocked`, `failed`, or `working` line.
 Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy the gate or the driver's postcondition.
 Those reads, the driver's fallback append, and turn-end publication use Python 3 descriptor-bound I/O, reject symlinks and non-regular or multiply linked files, and never touch an unsafe target.
