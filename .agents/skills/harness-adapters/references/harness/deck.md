@@ -41,5 +41,6 @@ A missing key fails the first turn with Deck's own error in the pane; a quota re
 ## Primary integration
 
 Persistent secondmates use `../../../../../docs/supervision-protocols/deck.md`; the main primary session remains outside this adapter's supported scope.
+Local tmux and remote Herdr secondmates use the same persistent driver and durable inbox wake path.
 The driver header owns startup, lock lifetime, watcher wake turns, and the supervisor-specific completion postcondition.
 Daemon-owned away/quiet mode (`state/.afk`) is refused rather than competing with a daemon; clear that posture through the owning supervisor before relaunch.

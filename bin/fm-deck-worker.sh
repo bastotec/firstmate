@@ -270,6 +270,7 @@ run_turn() {  # <prompt>
   local prompt=$1 rc event status_before
   local -a turn_pipeline
   [ "$SECONDMATE" != 1 ] || host_lock_owned || return 1
+  [ "$SECONDMATE" != 1 ] || watch_start || return 1
   local -a args=(run "$prompt" --max-turns "$MAX_TURNS" --deadline-secs "$DEADLINE" --hook "pre_complete=$EVIDENCE_HOOK")
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
   [ -z "$MODEL" ] || args+=(--model "$MODEL")

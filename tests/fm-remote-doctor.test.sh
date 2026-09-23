@@ -442,6 +442,16 @@ fi
 DOCTOR_WORKER_PID=
 pass "doctor preserves unreadable versions through the worker protocol"
 
+new_case Linux with-herdr no-gui
+rm -f "$CASE_BIN/claude"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_BIN/deck"
+chmod +x "$CASE_BIN/deck"
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "a host whose only coding runtime is Deck was not ready"
+assert_contains "$DOCTOR_OUT" "required harness=deck:$CASE_BIN/deck" \
+  "the readiness inventory did not select Deck"
+pass "Deck satisfies the remote secondmate runtime readiness inventory"
+
 # --- a host with no herdr is never ready, and --fix cannot install one -------
 
 new_case Darwin no-herdr gui

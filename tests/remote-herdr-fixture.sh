@@ -68,7 +68,7 @@ start_agent() {
   read -r -d '' -a words <<< "$text" || true
   for word in ${words[@]+"${words[@]}"}; do
     case "${word##*/}" in
-      claude|codex|opencode|pi|pi-signed|grok|kimi|cursor-agent) [ -n "$harness" ] || harness=${word##*/} ;;
+      claude|codex|opencode|pi|pi-signed|grok|kimi|cursor-agent|fm-deck-worker) [ -n "$harness" ] || harness=${word##*/} ;;
     esac
     if [ ! -f "$BARE_AGENT" ]; then
       case "$word" in --dangerously-skip-permissions) flags+=("$word") ;; esac

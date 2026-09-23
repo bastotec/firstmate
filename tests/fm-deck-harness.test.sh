@@ -564,6 +564,7 @@ SH
   cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
 trap 'exit 143' TERM INT
+printf '%s\n' "$$" >> "$FM_HOME/watch-starts"
 printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
 while [ ! -f "$FM_HOME/trigger" ]; do sleep 0.1; done
 rm "$FM_HOME/trigger"
@@ -580,6 +581,14 @@ session = args[args.index('--session') + 1] if '--session' in args else 'host-se
 inbox = pathlib.Path(__file__).parent / 'parent/host.inbox'
 records = list(sorted(inbox.glob('*.msg'))) if 'Firstmate instruction waiting:' in prompt else []
 body = ''.join(record.read_text() for record in records)
+if records:
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        starts = (home / 'watch-starts').read_text().splitlines() if (home / 'watch-starts').exists() else []
+        if len(starts) >= 2:
+            break
+        time.sleep(.05)
+    assert len(starts) >= 2, 'next watcher cycle did not start before wake handling'
 with (home / 'turns').open('a') as f:
     f.write(json.dumps({'prompt': prompt, 'session': session, 'inbox': body}) + '\n')
 for record in records:

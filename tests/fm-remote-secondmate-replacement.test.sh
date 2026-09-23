@@ -283,3 +283,34 @@ cmp -s "$TMP_ROOT/meta.before-survivor" "$ROUTE_META" || fail "the refused relau
 [ "$(jq '.tabs | length' "$HERDR_STATE")" = "$tabs_before" ] || fail "the refused relaunch created a new endpoint"
 cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
 pass "a recorded agent still running outside its endpoint blocks the relaunch before anything is touched"
+
+kill -HUP "$survivor" 2>/dev/null || true
+reset_remote_herdr_fixture "$HERDR_STATE"
+rm -f "$ROUTE_META" "$IDENTITY"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/bin/deck"
+chmod +x "$FIXTURE/bin/deck"
+out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) || fail "Deck remote launch failed: $out"
+pane=$(route_pane)
+current=$(pane_agent "$pane")
+{ [ -n "$current" ] && alive "$current"; } || fail "Deck remote launch left no live host process"
+assert_contains "$out" "harness=deck" "Deck remote launch did not report its runtime"
+assert_grep 'fm-deck-worker' "$HERDR_LOG" "Deck remote launch did not submit its persistent host to Herdr"
+cat > "$CODE/bin/fm-control.sh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" > '$TMP_ROOT/deck-relaunch-args'
+pid=\$(jq -r --arg p '$pane' '.agents[\$p] // empty' '$HERDR_STATE')
+kill -HUP "\$pid"
+while kill -0 "\$pid" 2>/dev/null; do sleep 0.1; done
+herdr pane send-text '$pane' 'FM_SUPERVISION_MODEL=autoarm exec -a fm-deck-worker bash host' --session fm-remote
+herdr pane send-keys '$pane' enter --session fm-remote
+echo "relaunched \$1 harness=deck from=deck model=default effort=default backend=herdr"
+SH
+chmod +x "$CODE/bin/fm-control.sh"
+out=$(control relaunch "$SM_ID" deck default default 2>&1) || fail "Deck remote relaunch failed: $out"
+replacement=$(pane_agent "$pane")
+{ [ "$replacement" != "$current" ] && alive "$replacement"; } || fail "Deck remote relaunch left no replacement host"
+[ "$(cat "$TMP_ROOT/deck-relaunch-args")" = "$SM_ID relaunch --harness deck --model default --effort default" ] \
+  || fail "Deck remote relaunch did not preserve its profile: $(cat "$TMP_ROOT/deck-relaunch-args")"
+grep -q "^$replacement " "$IDENTITY" || fail "Deck remote relaunch did not record the replacement identity"
+cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
+pass "Deck remote launch and relaunch preserve the Herdr host runtime"
