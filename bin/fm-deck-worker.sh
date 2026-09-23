@@ -39,14 +39,16 @@
 # the durable wake queue is acknowledged only by the model after handling.
 # Exactly one Deck turn runs at a time, including stdin and watcher turns.
 # Supervision uses child processes and stdin, never backend-specific injection.
-# Startup, lock, and watcher failures publish failure status and stop the driver.
+# Startup, lock, watcher, and event-capture failures publish failure status and
+# stop the driver.
 # A failed turn is recorded and published the same way but does NOT stop the
 # driver: a persistent supervisor outlives a gateway, quota, or model failure and
 # returns to its prompt, keeping its Deck session where one exists, so the next
 # wake starts a new turn instead of leaving the home without a supervisor. The
 # first turn is covered too, so a mate launched into an outage waits rather than
-# dying. A driver that could not publish that failure still stops, and so does a
-# driver whose launch brief never reached a session even after one repeat.
+# dying. A driver that could not record or publish that failure still stops, and
+# so does a driver whose launch brief never reached a session even after one
+# repeat.
 #
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
@@ -480,7 +482,7 @@ run_turn() {  # <prompt>
       publish_turnend || return 1
       # The failure is recorded and published exactly as before, and a repeated
       # failure keeps publishing, so a failing loop stays visible. Only a
-      # failure the driver could not publish is terminal.
+      # failure the driver could not record or publish is terminal.
       [ "$published" != "$HOST_FAILURE_UNPUBLISHED" ] || return 1
       return "$TURN_RECOVERABLE"
     fi
