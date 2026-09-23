@@ -1,0 +1,3 @@
+usage: fm-stream-bridge.py [-h] [--protocol] [--version]
+                           {serve,snapshot,translate,compare} ...
+fm-stream-bridge.py: error: argument command: invalid choice: 'command' (choose from serve, snapshot, translate, compare)

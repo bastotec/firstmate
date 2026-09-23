@@ -1,0 +1,18 @@
+FM_TEST_BEGIN 2026-09-23T02:14:57Z tests/fm-stream-agent-kill-safety.test.sh family=unclassified expected_gate_skip=none
+ok - stream agent kill safety: partial-write-completes
+ok - stream agent kill safety: endpoint-is-session-leader
+ok - stream agent kill safety: recorded-pgid-matches-kernel
+ok - stream agent kill safety: live-endpoint-is-killed
+ok - stream agent kill safety: reaped-endpoint-is-not-signalled
+ok - stream agent kill safety: concurrent-reap-never-escapes
+ok - stream agent kill safety: refuses-own-process-group
+ok - stream agent kill safety: refuses-own-session
+ok - stream agent kill safety: the refusal names the group it would not signal
+ok - stream agent kill safety: the suite's kill guard refuses itself
+ok - stream agent kill safety: the suite's kill guard refuses an ancestor
+ok - stream agent kill safety: the suite's kill guard refuses pid 1
+ok - stream agent kill safety: the suite's kill guard still signals a helper it started
+FM_TEST_END 2026-09-23T02:15:05Z tests/fm-stream-agent-kill-safety.test.sh exit=0 duration_ms=7395 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=7462
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=7395 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-agent-kill-safety.test.sh duration_ms=7395
