@@ -12,6 +12,7 @@ required by fm-control.sh.
 """
 import ctypes
 import errno
+import math
 import os
 import signal
 import subprocess
@@ -166,6 +167,8 @@ def deck_processes(rows, driver, group, executable):
 
 
 def stop(state, task, timeout):
+    if not math.isfinite(timeout):
+        raise ValueError("timeout must be finite")
     state = os.path.realpath(state)
     worker = os.path.realpath(
         os.path.join(os.path.dirname(__file__), "fm-deck-worker.sh")

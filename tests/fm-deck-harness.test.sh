@@ -404,7 +404,7 @@ test_completed_turn_removes_busy_ack_before_the_next_steer() {
 }
 
 test_driver_stop_terminates_active_deck_and_resolves_spaced_paths() {
-  local dir="$TMP_ROOT/stop graceful with spaces" install physical alias deck worker stop pid gen
+  local dir="$TMP_ROOT/stop graceful with spaces" install physical alias deck worker stop pid gen rc
   install="$dir/install with spaces/bin"
   physical="$dir/physical state"
   alias="$dir/state alias"
@@ -444,7 +444,9 @@ PY
   [ -e "$dir/ready" ] || fail "post-tool stop fixture did not start"
   python3 "$stop" "$alias" owned 2 \
     || fail "spaced physical paths did not identify and stop the Deck driver"
-  wait "$pid" 2>/dev/null || fail "the TERM-stopped driver failed"
+  rc=0
+  wait "$pid" 2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ] || fail "the abruptly TERM-stopped driver reported success"
   [ ! -e "$dir/tool-a-completed" ] || fail "Deck TERM unexpectedly let the active in-process tool complete"
   [ ! -e "$dir/tool-b-started" ] || fail "Deck started another tool after TERM"
   pass "Deck stop: physical aliases and spaced paths stop the active Deck process"
@@ -495,7 +497,11 @@ import os
 import signal
 import time
 
-signal.signal(signal.SIGTERM, lambda *_: None)
+def term(*_):
+    open(os.environ["FM_DECK_SIGNALLED"], "a").close()
+
+
+signal.signal(signal.SIGTERM, term)
 print(json.dumps({"type": "run_started", "session": "stuck-session"}), flush=True)
 open(os.environ["FM_DECK_READY"], "w").close()
 while True:
@@ -503,13 +509,30 @@ while True:
 PY
   chmod +x "$dir/deck"
   gen=$("$BUSY_EVENT" arm "$dir/state" owned)
-  FM_DECK_READY="$dir/ready" python3 -c \
+  FM_DECK_READY="$dir/ready" FM_DECK_SIGNALLED="$dir/signalled" python3 -c \
     'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
     "$WORKER" --id owned --state "$dir/state" --gen "$gen" --deck "$dir/deck" -- old-brief \
     </dev/null > "$dir/pane.out" 2>&1 &
   pid=$!
   for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; sleep 0.1; done
   [ -e "$dir/ready" ] || fail "stop escalation fixture did not start"
+  python3 - "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned <<'PY' \
+    || fail "non-finite stop timeouts were not rejected promptly"
+import subprocess
+import sys
+
+helper, state, task = sys.argv[1:]
+for timeout in ("nan", "inf", "-inf"):
+    result = subprocess.run(
+        [sys.executable, helper, state, task, timeout],
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    assert result.returncode != 0, timeout
+    assert "timeout must be finite" in result.stderr, (timeout, result.stderr)
+PY
+  [ ! -e "$dir/signalled" ] || fail "a non-finite timeout signalled the Deck process before refusal"
   python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" other 1 || fail "unrelated task stop refused"
   kill -0 "$pid" 2>/dev/null || fail "stopping another task killed this driver"
   python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned 0.3 \
