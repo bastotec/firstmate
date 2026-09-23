@@ -1538,6 +1538,46 @@ PY
   pass "hub: shutdown wakes result backoff for a final attempt"
 }
 
+test_shutdown_drains_a_command_returned_by_an_inflight_poll() {
+  local command_id=1234567890abcdef1234567890abcdef status ready result log pid waited=0
+  status="$TMP_ROOT/late-command.status"
+  ready="$TMP_ROOT/late-command.ready"
+  result="$TMP_ROOT/late-command.json"
+  log="$TMP_ROOT/late-command.log"
+  start_stub late-command --frames-ok-first 1000 --command-id "$command_id" \
+    --delay-command-secs 2 --fail-results-first 1 --result-file "$result"
+  python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+    --machine box-a --label "late-command-$RUN" --cwd "$CASE_DIR/cwd" \
+    --status-path "$status" --ready-file "$ready" --state-interval 1 --poll-secs 1 \
+    > "$log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 150 ]; do
+    if [ -s "$ready" ] && grep -q 'GET /v1/agent/commands' "$STUB_JOURNAL" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ "$waited" -lt 150 ] || fail "the agent never entered its command poll"
+  pkill -KILL -P "$pid" 2>/dev/null || fail "could not end the worker during its command poll"
+  waited=0
+  while [ "$waited" -lt 100 ]; do
+    [ -s "$result" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$result" ] || fail "shutdown abandoned the command returned by its in-flight poll"
+  assert_equals "$(grep -c '^working: result retry$' "$status" 2>/dev/null || true)" 1 \
+    "the late command should be applied exactly once"
+  assert_equals "$(jq -r '.command_id' "$result")" "$command_id" \
+    "the late command result should identify the command the hub marked taken"
+  assert_equals "$(jq -r '.ok' "$result")" true \
+    "the late command should be acknowledged before teardown"
+  pass "hub: shutdown drains the command poll already in flight"
+}
+
 # registrations - the journal's RE-registration attempts, one timestamp a line.
 # The first registration in the journal is the agent's startup, which nothing
 # here is about: counting it would read the gap between coming up and the first
@@ -2191,6 +2231,7 @@ test_a_closing_frame_waits_out_a_recovery_already_in_flight
 test_an_agent_refuses_a_hub_without_idempotent_results
 test_an_agent_retries_a_result_without_applying_the_command_twice
 test_an_exiting_endpoint_keeps_retrying_its_applied_command_result
+test_shutdown_drains_a_command_returned_by_an_inflight_poll
 test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
 test_a_steer_lands_as_soon_as_the_worker_is_listed_again
 test_an_accepted_registration_returns_the_pace_to_its_floor

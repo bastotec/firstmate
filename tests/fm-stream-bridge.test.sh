@@ -334,8 +334,13 @@ class H(http.server.BaseHTTPRequestHandler):
             body = json.dumps({"ok": True, "tasks": []}).encode()
         else:
             H.health_calls += 1
-            protocol = 99 if H.health_calls == 4 else 2
-            capabilities = ([] if H.health_calls == 1 else ["current_execution"])
+            protocol = 99 if H.health_calls == 5 else 2
+            if H.health_calls == 1:
+                capabilities = []
+            elif H.health_calls == 2:
+                capabilities = ["current_execution"]
+            else:
+                capabilities = ["current_execution", "idempotent_command_results"]
             body = json.dumps({"ok": True, "protocol": protocol,
                                "capabilities": capabilities}).encode()
         self.send_response(200)
@@ -365,6 +370,11 @@ PY
   assert_equals "$?" 2 "the command adapter should reject a hub without result retries"
   assert_contains "$out" "idempotent_command_results" \
     "the command refusal should name the missing acknowledgement capability"
+  out=$(printf '' | python3 "$BRIDGE" command --hub "http://$host:$port" \
+    --token-file "$CASE_DIR/view-token" --fleet-id test-fleet 2>&1)
+  assert_equals "$?" 2 "the command adapter should reject a hub without endpoint gating"
+  assert_contains "$out" "result_retry_orderability" \
+    "the command refusal should name the missing endpoint-gate generation"
   out=$(python3 "$BRIDGE" snapshot --hub "http://$host:$port" \
     --token-file "$CASE_DIR/view-token" 2>&1)
   assert_equals "$?" 0 "a read-only feed should accept the narrower current-execution capability"

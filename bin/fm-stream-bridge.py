@@ -159,7 +159,8 @@ CMD (default the fm-crew-state.sh beside this script), --fleet-id.
 
 Live subcommands negotiate protocol 2 and the hub's `current_execution`
 capability before doing work; `command` additionally requires
-`idempotent_command_results`.  An older running hub is refused with a diagnostic
+`idempotent_command_results` and `result_retry_orderability`.  An older running
+hub is refused with a diagnostic
 to restart or upgrade it; offline `translate` needs no hub negotiation.
 
 Exit status: 0 on success; 2 on a usage error, a refused credential, or an
@@ -188,6 +189,7 @@ BRIDGE_VERSION = "1.0.0"
 HUB_PROTOCOL = 2
 CURRENT_EXECUTION_CAPABILITY = "current_execution"
 IDEMPOTENT_RESULT_CAPABILITY = "idempotent_command_results"
+ORDERABLE_ENDPOINT_CAPABILITY = "result_retry_orderability"
 
 DEFAULT_FLEET_ID = "firstmate"
 DEFAULT_INTERVAL_MS = 500
@@ -407,7 +409,8 @@ class HubClient:
         capabilities = health.get("capabilities")
         required = [CURRENT_EXECUTION_CAPABILITY]
         if require_result_retry:
-            required.append(IDEMPOTENT_RESULT_CAPABILITY)
+            required.extend((IDEMPOTENT_RESULT_CAPABILITY,
+                             ORDERABLE_ENDPOINT_CAPABILITY))
         missing = [name for name in required
                    if not isinstance(capabilities, list) or name not in capabilities]
         if missing:

@@ -120,7 +120,9 @@ HUB_VERSION = "2.0.0"
 # announcing anything else is refused rather than driven on guessed routes.
 HUB_PROTOCOL = 2
 RESULT_RETRY_CAPABILITY = "idempotent_command_results"
-HUB_CAPABILITIES = ("current_execution", RESULT_RETRY_CAPABILITY)
+ORDERABLE_ENDPOINT_CAPABILITY = "result_retry_orderability"
+HUB_CAPABILITIES = ("current_execution", RESULT_RETRY_CAPABILITY,
+                    ORDERABLE_ENDPOINT_CAPABILITY)
 
 DEFAULT_PORT = 7717
 DEFAULT_RING_BYTES = 262144
@@ -1435,14 +1437,14 @@ class Hub:
             while True:
                 machine = self.machines.get(machine_name)
                 if machine is not None and machine.queue:
-                    taken = [c for c in machine.queue
-                             if not endpoint_id or c.endpoint_id == endpoint_id]
-                    if taken:
-                        for command in taken:
-                            machine.queue.remove(command)
-                            command.taken_at = _now()
-                            machine.pending[command.command_id] = command
-                        return taken
+                    command = next((candidate for candidate in machine.queue
+                                    if not endpoint_id
+                                    or candidate.endpoint_id == endpoint_id), None)
+                    if command is not None:
+                        machine.queue.remove(command)
+                        command.taken_at = _now()
+                        machine.pending[command.command_id] = command
+                        return [command]
                 remaining = deadline - _now()
                 if remaining <= 0:
                     return []
