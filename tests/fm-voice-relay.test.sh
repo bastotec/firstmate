@@ -4780,6 +4780,14 @@ except relay.records.RecordError as exc:
     check(str(config / "voice-gateway-url") in str(exc), "missing gateway must name path")
 (config / "voice-gateway-url").write_text("# explicit gateway\nhttps://gateway.invalid/v1\n")
 check(options().engine == "hybrid", "commented config must select hybrid")
+(config / "voice-gateway-url").write_text("http://gateway.invalid/v1\n")
+try:
+    options()
+    raise AssertionError("cleartext non-loopback gateway accepted")
+except relay.records.RecordError as exc:
+    check("HTTPS" in str(exc) and "loopback" in str(exc), "unsafe gateway diagnostic")
+(config / "voice-gateway-url").write_text("http://127.0.0.1:8329/v1\n")
+check(options().gateway_url == "http://127.0.0.1:8329/v1", "loopback tunnel must permit HTTP")
 (config / "voice-gateway-model").write_text("fixture/text-route\n")
 check(options().model == "fixture/text-route", "route must be configurable")
 os.environ["FM_VOICE_ENGINE"] = "bedrock"

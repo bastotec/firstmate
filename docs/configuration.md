@@ -1041,7 +1041,7 @@ The voice handover depends on `note`, so it keeps working in a home that has con
 | --- | --- | --- |
 | `config/voice-engine` | `FM_VOICE_ENGINE` | `bedrock` (default when absent) or `hybrid`; the hybrid keeps speech local and sends transcribed text and allowed tool results to a configured thinking gateway. |
 | `config/voice-local-url` | `FM_VOICE_LOCAL_URL` | Required for hybrid: `ws://<loopback-IP>:<port>/v1/realtime`, without credentials, query or fragment; no default endpoint. |
-| `config/voice-gateway-url` | `FM_VOICE_GATEWAY_URL` | Required for hybrid: the explicit OpenAI-compatible thinking gateway base URL, without credentials. |
+| `config/voice-gateway-url` | `FM_VOICE_GATEWAY_URL` | Required for hybrid: the explicit OpenAI-compatible thinking gateway base URL, without credentials; HTTPS is required except for HTTP loopback-IP tunnel endpoints. |
 | `config/voice-gateway-model` | `FM_VOICE_GATEWAY_MODEL` | Hybrid text model route; interim default `codex/gpt-6-astra`, explicitly configurable without automatic fallback. |
 | `config/voice-gateway-key` | `FM_VOICE_GATEWAY_KEY` | Optional hybrid gateway key, passed to the external server environment, never its command line; protect this file as a credential. |
 | `config/voice-local-command` | `FM_VOICE_LOCAL_COMMAND` | Required only by `--start-engine`: absolute path to the external stack's executable in its own virtual environment. |

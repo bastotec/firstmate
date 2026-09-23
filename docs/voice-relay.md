@@ -140,6 +140,7 @@ No local thinking model is needed for hybrid operation.
 
 The complete file/environment registry and reading rules are in [configuration](configuration.md), under “Spoken interface and captain inbox”.
 Alongside `voice-engine`, configure `voice-local-url` with an unused loopback Realtime address and `voice-gateway-url` with the gateway base URL.
+The gateway URL must use HTTPS unless it names a loopback IP for a local tunnel.
 There is no default endpoint, port, executable path or cache directory.
 Set `voice-local-command` to the absolute `speech-to-speech` executable in the external virtual environment and `voice-local-cache` to an existing absolute directory for the engine's home and caches.
 Protect an optional `voice-gateway-key` file as a credential, for example with mode `0600`; it is passed in the engine environment, never on its command line.
@@ -189,6 +190,20 @@ Portuguese recognition and response text were correct for these clips; accent, p
 The first-audio clock starts when file speech ends, before padding, and stops on the first decoded reply audio in the relay.
 Stage timings include generator and lock time, with revised final transcriptions summed; transcription can begin before speech ends, so do not add the columns to reconstruct the end-to-end figure.
 The file harness calls the relay's real session and shared tool dispatch with a file sink; it omits client framing, SSH, physical devices and record/tool round trips, and does not control other applications' load.
+A follow-up on 2026-09-23 drove `bin/fm-voice-client.py` against the relay as its local child, with the real bidirectional framing and file-backed capture and playback, and used the proxy's `gpt-6-luna` model.
+A file-selection shim supplied the four synthetic PCM clips to the client's `FileCapture` in one warmed session because the command-line `--in-file` repeats one clip; it did not replace the client transport, frame handling, clock, relay child or file playback.
+
+| Framed client turn | End of speech to first audio, seconds |
+| --- | --- |
+| English, first turn | 4.352 |
+| English, follow-up | 4.547 |
+| Portuguese, first turn | 6.420 |
+| Portuguese, follow-up | 5.853 |
+
+All four framed turns were answered without relay errors, both follow-ups remembered blue, and the English and Portuguese transcripts and response text were correct.
+These are the client's `first_audio_s` values, measured from file exhaustion to the first reply frame reaching its file playback, so they include the client threads, uplink queue, framing in both directions and relay process hop.
+Like the historical 1.15-1.3 second run, this local-child method omits only the `ssh -T <host>` prefix from the transport; it also omits physical audio devices and did not exercise a record or tool round trip.
+The framed run used the proxy model identifier `gpt-6-luna`; it does not establish that the fleet gateway's separately named `codex/gpt-6-luna` route has appeared.
 Gateway timings include transport and gateway queueing, not just remote model computation.
 These prompts are not the historical Bedrock record-reading prompt, so the documented **1.15-1.3 seconds** above is a reference bar, not a controlled A/B run.
 The hybrid remains slower than that reference.

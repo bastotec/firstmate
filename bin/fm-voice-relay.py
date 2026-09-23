@@ -998,10 +998,10 @@ class HybridSession(Session):
                     self._mark("transcribed")
                     self.down.send_json(frame.TEXT, {
                         "role": "USER", "text": event.get("transcript", "")})
-                elif kind in ("response.output_audio_transcript.done", "response.audio_transcript.done"):
+                elif kind == "response.output_audio_transcript.done":
                     self.down.send_json(frame.TEXT, {
                         "role": "ASSISTANT", "text": event.get("transcript", "")})
-                elif kind in ("response.output_audio.delta", "response.audio.delta"):
+                elif kind == "response.output_audio.delta":
                     pcm = base64.b64decode(event.get("delta", ""), validate=True)
                     if pcm:
                         if "first_audio" not in self.turn:
@@ -1441,8 +1441,15 @@ def resolve_settings(options):
         options.gateway_url = records.require_setting(
             home, "voice-gateway-url", "FM_VOICE_GATEWAY_URL", "thinking gateway base URL")
         gateway = urlsplit(options.gateway_url)
-        if gateway.scheme not in ("http", "https") or not gateway.hostname or gateway.username or gateway.password:
-            raise records.RecordError("config/voice-gateway-url must be an HTTP(S) base URL without credentials")
+        try:
+            gateway_loopback = ipaddress.ip_address(gateway.hostname or "").is_loopback
+        except ValueError:
+            gateway_loopback = False
+        if (gateway.scheme not in ("http", "https") or not gateway.hostname
+                or gateway.username or gateway.password
+                or (gateway.scheme == "http" and not gateway_loopback)):
+            raise records.RecordError(
+                "config/voice-gateway-url must use HTTPS, or HTTP with a loopback IP, without credentials")
         options.model = records.read_setting(
             home, "voice-gateway-model", "FM_VOICE_GATEWAY_MODEL") or "codex/gpt-6-astra"
         options.region = None
