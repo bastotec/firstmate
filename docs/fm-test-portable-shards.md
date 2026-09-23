@@ -67,9 +67,13 @@ That is not hypothetical: by 2026-09-01 the lane had grown from 116 to 139 scrip
 Refresh the hints whenever the serial lane gains scripts, rather than waiting for that bound to trip.
 
 `bin/fm-test-run.sh` owns the per-shard packing, so its `--check-coverage` output is the current account of lane size, shard composition, and balance rather than a copied table.
+PR 29 runs [35815524672](https://github.com/bastotec/firstmate/actions/runs/35815524672) and [35817972433](https://github.com/bastotec/firstmate/actions/runs/35817972433) exposed renewed imbalance when serial shard 1 reached the 30-minute job cap twice.
+The first run recorded 1,794,971 ms of passing shard 1 work, while the second run measured the other four shards at 1,025,813 ms, 985,229 ms, 1,043,983 ms, and 1,666,131 ms.
+Those completed measurements total about 108 minutes across five shards, so the lane now uses six shards to restore about an 18-minute average without raising the timeout.
+The Deck host regression increased `tests/fm-deck-harness.test.sh` from its old 12,000 ms hint to a measured 29,898 ms, and its hint now reflects that CI result.
 Run 34342484144 observed a shard reach about 20 minutes of passing work, so the 30-minute job cap keeps meaningful hang-tripwire margin for job setup and runner-speed spread.
 
-The single longest script, `tests/fm-watch-triage.test.sh` at 262626 ms, is the floor for any shard count.
+The single longest retained hint remains the floor for any shard count.
 
 Refresh the CI-derived hints by downloading the per-shard timing artifacts from several green CI runs and replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the slowest measured `duration_ms` per `path`:
 
@@ -109,7 +113,7 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 | Lane | Bound | Rationale |
 |---|---|---|
 | portable parallel 1/2 | See [CI workflow](../.github/workflows/ci.yml) | The workflow owns the parallel cap rationale and its evidence limits. |
-| portable serial 1-5 | job `timeout-minutes: 30` | Current runners can take about 20 minutes; the 30-minute cap remains a hang tripwire while leaving margin for job setup and runner-speed spread. |
+| portable serial 1-6 | job `timeout-minutes: 30` | Current runners average about 18 minutes after the six-way split; the 30-minute cap remains a hang tripwire while leaving margin for job setup and runner-speed spread. |
 | Herdr | family-run step `timeout-minutes: 20`; job `timeout-minutes: 75` backstop | Healthy runs finished around 7 minutes before this lane gained `fm-backend-herdr-focus-flash-e2e`, which measures about 2 minutes against a real lab locally, so the step bound is still the hang tripwire (cleanup and timing artifacts still upload) while the job cap stays a last-resort backstop. Refresh this figure from the lane's uploaded timing artifact. |
 
 Timeouts are intended as hang tripwires; a passing coverage guard does not establish a healthy job duration.
