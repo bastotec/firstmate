@@ -68,7 +68,7 @@ import time
 import fm_stream_tail_lib as tail
 
 SHIM_VERSION = "1.0.0"
-HUB_PROTOCOL = 2
+HUB_PROTOCOL = tail.WIRE_PROTOCOL
 LABEL_RE = re.compile(r"\A[A-Za-z0-9._@%+-]{1,128}\Z")
 DEFAULT_HUB_URL = "http://127.0.0.1:7717"
 ROTATION_SCAN_SECS = 5.0

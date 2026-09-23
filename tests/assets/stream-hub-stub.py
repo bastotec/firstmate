@@ -23,8 +23,10 @@ test can measure rather than infer.
   --second-command-id ID   deliver another command after the first
   --delay-command-secs N   delay the first command response
   --reject-result-command ID reject results for this command id
+  --reject-result-error CODE error code for a rejected result
   --fail-results-first N   refuse the first N result posts
   --result-file PATH       write the accepted result payload there
+  --closed-file PATH       write the accepted closing frame there
   --omit-result-capability omit result retry support from health
 """
 
@@ -85,7 +87,7 @@ class Stub(http.server.BaseHTTPRequestHandler):
                 "idempotent_command_results"]
             self._json(200, {
                 "ok": True,
-                "protocol": 2,
+                "protocol": 3,
                 "version": "stub",
                 "capabilities": capabilities,
                 "state_max_age_secs": 10,
@@ -145,6 +147,11 @@ class Stub(http.server.BaseHTTPRequestHandler):
             with state["lock"]:
                 state["frames"] += 1
                 allowed = state["frames"] <= state["frames_ok_first"]
+            closing = next((frame for frame in payload.get("frames", [])
+                            if isinstance(frame, dict) and frame.get("closed")), None)
+            if closing is not None and state["closed_file"]:
+                with open(state["closed_file"], "w", encoding="utf-8") as fh:
+                    json.dump(closing, fh)
             if allowed:
                 self._json(200, {"ok": True, "accepted": 1})
                 return
@@ -158,7 +165,9 @@ class Stub(http.server.BaseHTTPRequestHandler):
                 reject = (payload.get("command_id")
                           == state["reject_result_command"])
             if reject:
-                self._refuse(404, "no_such_command", "the result was rejected by design")
+                code = state["reject_result_error"]
+                status = 403 if code == "endpoint_unauthorized" else 404
+                self._refuse(status, code, "the result was rejected by design")
                 return
             if refuse:
                 self._refuse(503, "result_unavailable", "the result route is unavailable")
@@ -187,8 +196,10 @@ def main() -> int:
     parser.add_argument("--second-command-id", default="")
     parser.add_argument("--delay-command-secs", type=float, default=0.0)
     parser.add_argument("--reject-result-command", default="")
+    parser.add_argument("--reject-result-error", default="no_such_command")
     parser.add_argument("--fail-results-first", type=int, default=0)
     parser.add_argument("--result-file", default="")
+    parser.add_argument("--closed-file", default="")
     parser.add_argument("--omit-result-capability", action="store_true")
     options = parser.parse_args()
 
@@ -206,9 +217,11 @@ def main() -> int:
         "command_index": 0,
         "delay_command_secs": options.delay_command_secs,
         "reject_result_command": options.reject_result_command,
+        "reject_result_error": options.reject_result_error,
         "fail_results_first": options.fail_results_first,
         "result_attempts": 0,
         "result_file": options.result_file,
+        "closed_file": options.closed_file,
         "omit_result_capability": options.omit_result_capability,
     }
     open(options.journal, "a", encoding="utf-8").close()

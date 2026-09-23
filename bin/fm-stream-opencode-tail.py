@@ -91,7 +91,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fm_stream_tail_lib as tail  # noqa: E402 - beside this script
 
 ADAPTER_VERSION = "1.0.0"
-WIRE_PROTOCOL = 2
+WIRE_PROTOCOL = tail.WIRE_PROTOCOL
 
 # The tail block's source name; the Bridge feed's consumer keys on this to
 # know which harness a leaf runs, never on the adapter's filename.

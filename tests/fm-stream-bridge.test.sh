@@ -82,7 +82,7 @@ new_id() {
 register() {  # <endpoint-id> <machine> <label>
   local code
   code=$(publish POST /v1/agent/endpoints "$(jq -nc --arg id "$1" --arg m "$2" --arg l "$3" \
-    '{endpoint_id: $id, machine: $m, label: $l, cwd: "/tmp"}')")
+    '{endpoint_id: $id, machine: $m, label: $l, cwd: "/tmp", protocol: 3}')")
   assert_equals "$code" 201 "endpoint $3 should register"
 }
 
@@ -406,7 +406,7 @@ class H(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
     def do_GET(self):
-        self.reply(200, {"ok": True, "protocol": 2,
+        self.reply(200, {"ok": True, "protocol": 3,
                          "capabilities": ["current_execution",
                                           "idempotent_command_results",
                                           "result_retry_orderability", "endpoint_command_auth"],
@@ -426,8 +426,7 @@ class H(http.server.BaseHTTPRequestHandler):
                          "requested_execution_id": payload["execution_id"],
                          "execution_id": payload["execution_id"],
                          "outcome": "accepted", "delivered": True,
-                         "worker_gone": False, "not_registered": False,
-                         "requested_at": 1})
+                         "worker_gone": False, "requested_at": 1})
 server = http.server.HTTPServer(("127.0.0.1", 0), H)
 open(sys.argv[1], "w").write("%s %d\n" % server.server_address)
 server.serve_forever()

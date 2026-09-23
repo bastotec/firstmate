@@ -39,6 +39,7 @@ def joiner(tag):
                 "machine": "box-%s-%d" % (tag, n),
                 "label": "joiner-%s-%d" % (tag, n),
                 "cwd": "/tmp",
+                "protocol": 3,
             })
         except urllib.error.HTTPError:
             continue

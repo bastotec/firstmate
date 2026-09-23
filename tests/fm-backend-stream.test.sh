@@ -469,7 +469,7 @@ test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale() {
   forced=$(python3 -c 'import os; print(os.urandom(16).hex())')
   with_stream_env fm_backend_stream_api POST /v1/agent/endpoints \
     "$(jq -nc --arg id "$forced" --arg l "fm-forcedstate-$$" \
-      '{endpoint_id: $id, machine: "box-test", label: $l, cwd: "/tmp"}')" >/dev/null \
+      '{endpoint_id: $id, machine: "box-test", label: $l, cwd: "/tmp", protocol: 3}')" >/dev/null \
     || fail "the endpoint with no agent should register"
   with_stream_env fm_backend_stream_api DELETE "/v1/tasks/$forced" >/dev/null \
     || fail "the hub should close a record whose agent never answers"
@@ -612,7 +612,7 @@ test_only_a_close_the_agent_reported_counts_as_a_stop() {
   endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
   with_stream_env fm_backend_stream_api POST /v1/agent/endpoints \
     "$(jq -nc --arg id "$endpoint" --arg l "$label" \
-      '{endpoint_id: $id, machine: "box-test", label: $l, cwd: "/tmp"}')" >/dev/null \
+      '{endpoint_id: $id, machine: "box-test", label: $l, cwd: "/tmp", protocol: 3}')" >/dev/null \
     || fail "the endpoint with no agent should register"
   with_stream_env fm_backend_stream_api DELETE "/v1/tasks/$endpoint" >/dev/null \
     || fail "the hub should close a record whose agent never answers"

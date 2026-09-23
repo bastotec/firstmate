@@ -73,7 +73,7 @@ import urllib.parse
 import urllib.request
 
 AGENT_VERSION = "2.1.0"
-AGENT_PROTOCOL = 2
+AGENT_PROTOCOL = 3
 IDEMPOTENT_RESULT_CAPABILITY = "idempotent_command_results"
 
 STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
@@ -491,6 +491,7 @@ def registration(options: argparse.Namespace, endpoint_id: str) -> dict:
         "rows": options.rows,
         "cols": options.cols,
         "capabilities": [IDEMPOTENT_RESULT_CAPABILITY],
+        "protocol": AGENT_PROTOCOL,
     }
 
 
@@ -548,7 +549,8 @@ class HubClient:
                 raise Superseded(message)
             if code == "no_such_endpoint":
                 raise Forgotten(message)
-            if code in ("no_such_command", "result_conflict", "bad_command_id"):
+            if code in ("no_such_command", "result_conflict", "bad_command_id",
+                        "endpoint_unauthorized"):
                 raise ResultRejected(message)
             raise RuntimeError(message)
         except urllib.error.URLError as exc:
