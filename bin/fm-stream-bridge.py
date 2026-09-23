@@ -157,8 +157,9 @@ parked, and `consistent` otherwise.  It exits 1 when any row is a conflict or
 missing, 0 otherwise.  Options: --home DIR (default FM_HOME), --crew-state
 CMD (default the fm-crew-state.sh beside this script), --fleet-id.
 
-Live subcommands negotiate both protocol 2 and the hub's `current_execution`
-capability before doing work.  An older running hub is refused with a diagnostic
+Live subcommands negotiate protocol 2 and the hub's `current_execution`
+capability before doing work; `command` additionally requires
+`idempotent_command_results`.  An older running hub is refused with a diagnostic
 to restart or upgrade it; offline `translate` needs no hub negotiation.
 
 Exit status: 0 on success; 2 on a usage error, a refused credential, or an
@@ -186,6 +187,7 @@ BRIDGE_VERSION = "1.0.0"
 # than read on guessed routes.
 HUB_PROTOCOL = 2
 CURRENT_EXECUTION_CAPABILITY = "current_execution"
+IDEMPOTENT_RESULT_CAPABILITY = "idempotent_command_results"
 
 DEFAULT_FLEET_ID = "firstmate"
 DEFAULT_INTERVAL_MS = 500
@@ -396,19 +398,23 @@ class HubClient:
                                  % (self.url, path))
         return payload
 
-    def check_compatibility(self) -> None:
+    def check_compatibility(self, require_result_retry: bool = False) -> None:
         health = self.get("/v1/health")
         protocol = health.get("protocol")
         if protocol != HUB_PROTOCOL:
             raise BridgeError("the hub at %s speaks protocol %r; this bridge reads protocol %d"
                               % (self.url, protocol, HUB_PROTOCOL))
         capabilities = health.get("capabilities")
-        if (not isinstance(capabilities, list)
-                or CURRENT_EXECUTION_CAPABILITY not in capabilities):
+        required = [CURRENT_EXECUTION_CAPABILITY]
+        if require_result_retry:
+            required.append(IDEMPOTENT_RESULT_CAPABILITY)
+        missing = [name for name in required
+                   if not isinstance(capabilities, list) or name not in capabilities]
+        if missing:
             raise BridgeError(
                 "the hub at %s does not advertise the %s capability; restart or "
                 "upgrade the hub before starting this bridge"
-                % (self.url, CURRENT_EXECUTION_CAPABILITY))
+                % (self.url, missing[0]))
 
 
 class Clock:
@@ -540,7 +546,7 @@ class Commander:
 def cmd_command(options: argparse.Namespace) -> int:
     """Read command records on stdin, place each order, write its answer."""
     client = HubClient(options.hub, read_token(options.token_file))
-    client.check_compatibility()
+    client.check_compatibility(require_result_retry=True)
     commander = Commander(client, options.fleet_id)
     for line in sys.stdin:
         line = line.strip()
