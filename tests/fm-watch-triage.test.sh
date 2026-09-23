@@ -3328,6 +3328,57 @@ test_busy_pane_repeated_escalation_reaches_demand_deep_inspection() {
 # lifting the declaration on the SAME busy over-age pane restores the wedge
 # escalation, proving the discriminator is the worker's own declaration and not a
 # blanket silencing of the escalator (C).
+# Drive the due busy-turn ladder with the real backlog predicate. Every round
+# starts beyond the alarm threshold; ordinary polls must not consume the hold.
+test_busy_backlog_hold_bounds_wedge_ladder() {
+  local dir state out capture key mode pid
+  command -v tasks-axi >/dev/null 2>&1 \
+    || { echo 'skip: tasks-axi not found (busy backlog hold)'; return 0; }
+  dir=$(make_hold_home busy-backlog-bound 'working: monitoring progress' hold) \
+    || fail 'could not create busy hold fixture'
+  state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane.txt"; key=$(hold_key)
+  printf 'window=test:fm-held-merge\nkind=ship\nharness=pi\nbackend=tmux\n' > "$state/held-merge.meta"
+  record_pi_busy "$state" held-merge
+  touch -t 200001010000 "$state/held-merge.meta"
+  printf 'Working...\n' > "$capture"
+  for mode in first repeat reheld answered absent unreadable; do
+    case "$mode" in
+      reheld|answered)
+        printf 'proceed\n' > "$dir/decision.txt"
+        run_hold "$dir" answer held-merge --decision-file "$dir/decision.txt" --release \
+          || fail 'could not release busy hold'
+        if [ "$mode" = reheld ]; then
+          run_hold "$dir" hold held-merge --reason 'another decision' || fail 'could not re-hold busy task'
+        fi ;;
+      absent) rm "$dir/data/backlog.md" ;;
+      unreadable) mkdir "$dir/data/backlog.md" ;;
+    esac
+    echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+    printf '2\n' > "$state/.wedge-escalations-$key"
+    : > "$out"
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=240 hold_watch_launch "$dir" "$out" "$capture"
+    pid=$HOLD_WATCH_PID
+    if [ "$mode" = repeat ]; then
+      wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "held busy task re-alarmed: $(cat "$out")"; }
+      [ ! -s "$out" ] || fail 'held busy task printed a wake'
+      [ ! -e "$state/.paused-$key" ] || fail 'backlog-only hold became a declared pause'
+      [ ! -e "$state/.wedge-escalations-$key" ] || fail 'held busy task retained escalation count'
+      reap "$pid"
+    else
+      wait_for_exit "$pid" 150 || { reap "$pid"; fail "busy $mode did not wake"; }
+      grep -F 'stale: test:fm-held-merge' "$out" >/dev/null || fail "busy $mode lost stale wake"
+      case "$mode" in
+        first|reheld)
+          grep -F 'possible wedge' "$out" >/dev/null && fail "busy $mode call was wedge-escalated"
+          [ -s "$state/.paused-resurfaced-$key" ] || fail 'first call wake did not record its throttle' ;;
+        *) grep -F 'possible wedge' "$out" >/dev/null || fail "busy $mode stopped alarming" ;;
+      esac
+    fi
+    ack_stopped_cycle "$state" || fail "could not acknowledge busy $mode cycle"
+  done
+  pass 'busy backlog holds bound the ladder, retain first-sight and call identity, and fail open without a provable hold'
+}
+
 test_busy_declared_pause_is_rechecked_not_wedge_escalated() {
   local dir state fakebin out capture_file window key sig pid statusf back
   dir=$(make_case busy-declared-pause); state="$dir/state"; fakebin="$dir/fakebin"
@@ -3347,6 +3398,9 @@ test_busy_declared_pause_is_rechecked_not_wedge_escalated() {
 
   # Phase A: past the bound, with the wedge threshold set as low as it goes, the
   # declared pause is absorbed on the long cadence and never starts a wedge.
+  # An earlier undeclared phase must not leave its ladder running under the wait.
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  printf '2\n' > "$state/.wedge-escalations-$key"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
     FM_FAKE_CREW_STATE='state: working · source: pane · harness busy (pi-ext)' \
@@ -4922,6 +4976,7 @@ test_busy_pane_turn_end_touch_resets_age
 test_busy_pane_native_progress_resets_age
 test_busy_pane_repeated_escalation_reaches_demand_deep_inspection
 test_busy_pane_default_turn_age_bound_is_3600s
+test_busy_backlog_hold_bounds_wedge_ladder
 test_busy_declared_pause_is_rechecked_not_wedge_escalated
 test_afk_busy_declared_pause_hands_off_plain_stale
 test_afk_busy_declared_pause_ticking_pane_hands_off_once

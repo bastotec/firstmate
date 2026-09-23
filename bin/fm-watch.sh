@@ -241,14 +241,14 @@ TURNEND_CHURN_ABSORB_SECS=${FM_TURNEND_CHURN_ABSORB_SECS:-900}  # longest a task
 # Every other crew that stopped its turn is SURFACED, so a finish reported
 # only through interactive pane menus (no done: status) is never swallowed. An
 # ACTIONABLE wake (a captain-relevant signal, a no-verb signal without either
-# eligible proof, any check, a stale pane whose crew is not provably working, a
-# provably-working stale past the threshold, or anything unknown) is written to
+# eligible proof, any check, a stale pane whose crew is not provably working, an
+# unbounded provably-working stale past the threshold, or anything unknown) is written to
 # the durable queue and exits. That wakes the LLM through the background-task
 # completion. The same classifier
 # (fm-classify-lib.sh) backs the away-mode daemon; while state/.afk exists the
 # daemon owns triage, so this watcher reverts to one-shot (enqueue + exit on every
 # wake) and never double-triages - and never runs the costly provably-working read.
-STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provably-working stale escalates as a possible wedge
+STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before an unbounded provably-working stale escalates as a possible wedge
 # A busy pane is unconditional proof of liveness with no built-in duration bound,
 # so a hung foreground call can remain hidden even while its rendered busy
 # footer changes every poll. BUSY_TURN_MAX_SECS bounds how long any busy pane
@@ -259,8 +259,9 @@ STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provabl
 # STALE_ESCALATE_SECS-paced wedge_timer_check used for a provably-working
 # non-busy stale - so it escalates via the existing stale reason, escalation
 # counter, and demand-deep-inspection marker for human inspection only, never an
-# automatic interrupt, signal, or restart - unless the crew declared the wait
-# itself, which takes the long pause cadence instead. Set generously above
+# automatic interrupt, signal, or restart - unless a status-declared wait or a
+# proven ordinary-crew backlog captain call bounds it to the long pause cadence
+# instead. Set generously above
 # any legitimate interval without observable progress, including silent long
 # tool calls, builds, or test runs.
 BUSY_TURN_MAX_SECS=${FM_BUSY_TURN_MAX_SECS:-3600}
@@ -951,6 +952,27 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
     *)
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
+        # Reuse the stale path's durable hold bound only when an alarm is due,
+        # not on busy_turn_bound_check's ordinary over-age polls. Reset the timer
+        # even on absorption so this read runs once per escalation window at most.
+        # A backlog hold is not a status-declared pause: preserve its call-scoped
+        # throttle without creating pause state.
+        local key
+        key=$(window_key "$win")
+        if captain_call_stale_bound "$key" "$task"; then
+          date +%s > "$since_file"
+          rm -f "$escalation_file"
+          clear_write_tracking "$key"
+          triage_log "absorbed $label (open captain call): $win"
+          return 0
+        elif [ -n "$STALE_WAIT_DECLARATION" ]; then
+          fm_wake_append stale "$win" "stale: $win" || exit 1
+          stale_wait_record "$key"
+          date +%s > "$since_file"
+          rm -f "$escalation_file"
+          clear_write_tracking "$key"
+          wake "stale: $win"
+        fi
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
           wedge_defer_writing "$win" "$since_file" "$label" "$age"
           return 0
@@ -1224,11 +1246,12 @@ pause_state_class() {  # <window> <task>
 # a wait this watcher cannot prove is not a wait.
 #
 # The read costs one subprocess and runs only where the watcher is about to
-# alarm, so at most once per distinct stale hash per window, beside the crew-state
-# read the same paths already pay. The secondmate stale gate deliberately runs
-# before this bound and admits only status-declared waits: a backlog-only hold
-# whose mate still says `working:` or `done:` does not reach this read. Reaching
-# it would put backlog reads into windows deliberately skipped on ordinary polls.
+# alarm: on a first or changed stale hash, or once per STALE_ESCALATE_SECS when
+# an unchanged-pane ladder is due, never on ordinary polls. The secondmate stale
+# gate deliberately runs before this bound and admits only status-declared waits:
+# a backlog-only hold whose mate still says `working:` or `done:` does not reach
+# this read. Reaching it would put backlog reads into windows deliberately skipped
+# on ordinary polls.
 STALE_WAIT_DECLARATION=
 
 CAPTAIN_CALL_IDENTITY=
@@ -2442,7 +2465,8 @@ EOF
         # Pane busy or not yet stably stale: reset pending escalation bookkeeping,
         # unless a genuinely busy pane has gone too long with no completed turn -
         # then route it through busy_turn_bound_check, which hands the crossed
-        # bound to the same wedge timer unless the crew declared the wait itself.
+        # bound to the same wedge timer unless a status-declared wait or proven
+        # ordinary-crew backlog captain call bounds the alarm.
         paused_bound=1
         if [ "$busy_now" -eq 0 ] && busy_turn_over_age "$task"; then
           busy_turn_bound_check "$w" "$task" "$h" "$ssf" "$ewf" && paused_bound=0
