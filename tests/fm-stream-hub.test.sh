@@ -1484,17 +1484,26 @@ test_an_agent_retries_a_result_without_applying_the_command_twice() {
 }
 
 test_an_exiting_endpoint_keeps_retrying_its_applied_command_result() {
-  local command_id=abcdef0123456789abcdef0123456789 status ready result log pid waited=0
+  local command_id=abcdef0123456789abcdef0123456789 status ready result log pid waited=0 attempts
   status="$TMP_ROOT/exit-result-retry.status"
   ready="$TMP_ROOT/exit-result-retry.ready"
   result="$TMP_ROOT/exit-result-retry.json"
   log="$TMP_ROOT/exit-result-retry.log"
   start_stub exit-result-retry --frames-ok-first 1000 --command-id "$command_id" \
-    --delay-first-result 17 --result-file "$result"
-  python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
+    --fail-results-first 2 --result-file "$result"
+  python3 - "$AGENT" 3 serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
     --machine box-a --label "exit-result-retry-$RUN" --cwd "$CASE_DIR/cwd" \
     --status-path "$status" --ready-file "$ready" --state-interval 1 --poll-secs 1 \
-    > "$log" 2>&1 &
+    > "$log" 2>&1 <<'PY' &
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("fm_stream_agent", sys.argv[1])
+agent = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(agent)
+agent.RESULT_RETRY_SHUTDOWN_SECS = float(sys.argv[2])
+raise SystemExit(agent.main(sys.argv[3:]))
+PY
   pid=$!
   disown "$pid" 2>/dev/null || true
   fm_test_track_helper_pid "$pid"
@@ -1513,21 +1522,20 @@ test_an_exiting_endpoint_keeps_retrying_its_applied_command_result() {
     waited=$((waited + 1))
   done
   worker_ended "$pid" || fail "the worker did not exit during result retry"
-  sleep 16
-  kill -0 "$pid" 2>/dev/null \
-    || fail "the endpoint publisher exited before its applied result could retry"
   waited=0
   while [ "$waited" -lt 100 ]; do
     [ -s "$result" ] && break
     sleep 0.1
     waited=$((waited + 1))
   done
-  [ -s "$result" ] || fail "the exiting endpoint discarded its applied command result"
+  [ -s "$result" ] || fail "the exiting endpoint discarded its final result attempt"
+  attempts=$(grep -c 'POST /v1/agent/results' "$STUB_JOURNAL" 2>/dev/null || true)
+  [ "$attempts" -ge 3 ] || fail "the shutdown deadline produced only $attempts result attempts"
   assert_equals "$(jq -r '.command_id' "$result")" "$command_id" \
-    "the retry after worker exit should acknowledge the applied command"
+    "the final retry after worker exit should acknowledge the applied command"
   assert_equals "$(jq -r '.ok' "$result")" true \
-    "the retry after worker exit should preserve the successful result"
-  pass "hub: an exiting endpoint preserves its in-flight result retry"
+    "the final retry after worker exit should preserve the successful result"
+  pass "hub: shutdown wakes result backoff for a final attempt"
 }
 
 # registrations - the journal's RE-registration attempts, one timestamp a line.
@@ -1745,6 +1753,19 @@ test_the_hub_accepts_a_retried_result_without_changing_its_verdict() {
   assert_equals "$(api_code)" 409 \
     "a repeated command id must not replace the result already acknowledged"
   pass "hub: command result acknowledgements are idempotent"
+}
+
+test_completed_results_survive_machine_wide_command_volume() {
+  start_hub result-journal-volume --command-ack-secs 5
+  local out
+  out=$(python3 "$ROOT/tests/assets/stream-result-journal.py" \
+    "$URL" "$PUBLISH_TOKEN" "$VIEW_TOKEN") \
+    || fail "the result-journal driver failed: $out"
+  assert_equals "$(printf '%s' "$out" | jq -r '.completed')" 513 \
+    "the driver should exceed the old machine-wide completion bound"
+  assert_equals "$(printf '%s' "$out" | jq -r '.retry_status')" 200 \
+    "an early completed result should remain idempotently answerable"
+  pass "hub: completed results survive later machine command volume"
 }
 
 # order <leaf> <execution> <text> [order-id] -> the hub's answer, with api_code set.
@@ -2174,6 +2195,7 @@ test_a_stranded_agent_paces_its_return_rather_than_hammering_the_hub
 test_a_steer_lands_as_soon_as_the_worker_is_listed_again
 test_an_accepted_registration_returns_the_pace_to_its_floor
 test_the_hub_accepts_a_retried_result_without_changing_its_verdict
+test_completed_results_survive_machine_wide_command_volume
 test_orderability_follows_the_endpoint_registration_capability
 test_an_order_reaches_the_worker_its_leaf_names
 test_an_order_aimed_at_a_replaced_execution_never_reaches_the_replacement

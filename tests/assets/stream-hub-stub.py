@@ -21,7 +21,6 @@ test can measure rather than infer.
   --accept-registrations N how many registrations to accept (-1 for all)
   --command-id ID          deliver one successful status command with this id
   --fail-results-first N   refuse the first N result posts
-  --delay-first-result N   delay then refuse the first result post
   --result-file PATH       write the accepted result payload there
   --omit-result-capability omit result retry support from health
 """
@@ -146,12 +145,7 @@ class Stub(http.server.BaseHTTPRequestHandler):
         if path == "/v1/agent/results":
             with state["lock"]:
                 state["result_attempts"] += 1
-                attempt = state["result_attempts"]
-                refuse = attempt <= state["fail_results_first"]
-            if attempt == 1 and state["delay_first_result"] > 0:
-                time.sleep(state["delay_first_result"])
-                self._refuse(503, "result_unavailable", "the result route was delayed")
-                return
+                refuse = state["result_attempts"] <= state["fail_results_first"]
             if refuse:
                 self._refuse(503, "result_unavailable", "the result route is unavailable")
                 return
@@ -177,7 +171,6 @@ def main() -> int:
     parser.add_argument("--accept-registrations", type=int, default=-1)
     parser.add_argument("--command-id", default="")
     parser.add_argument("--fail-results-first", type=int, default=0)
-    parser.add_argument("--delay-first-result", type=float, default=0.0)
     parser.add_argument("--result-file", default="")
     parser.add_argument("--omit-result-capability", action="store_true")
     options = parser.parse_args()
@@ -194,7 +187,6 @@ def main() -> int:
         "command_id": options.command_id,
         "command_sent": False,
         "fail_results_first": options.fail_results_first,
-        "delay_first_result": options.delay_first_result,
         "result_attempts": 0,
         "result_file": options.result_file,
         "omit_result_capability": options.omit_result_capability,

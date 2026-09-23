@@ -133,7 +133,6 @@ DEFAULT_ENDPOINT_RETENTION = 3600.0
 # rather than guessing or sending the order twice, which is a short-lived need;
 # it is not a history of the fleet and nothing is persisted.
 ORDER_JOURNAL_MAX = 512
-COMMAND_RESULT_JOURNAL_MAX = 512
 # How long a command an agent took but never acknowledged remains eligible for
 # a late acknowledgement. It is kept far past the initial acknowledgement
 # window because that is exactly the command whose fate a caller most needs to
@@ -1354,6 +1353,9 @@ class Hub:
                 for command_id, command in list(machine.pending.items()):
                     if not command.done.is_set() and command.taken_at < stale:
                         machine.pending.pop(command_id, None)
+                for command_id, completed in list(machine.completed.items()):
+                    if completed[2] < stale:
+                        machine.completed.pop(command_id, None)
 
     # --- commands ---------------------------------------------------------
 
@@ -1457,7 +1459,7 @@ class Hub:
                     raise HubError(HTTPStatus.NOT_FOUND, "no_such_command",
                                    "machine %s holds no command %s"
                                    % (machine_name, command_id))
-                if completed != (ok, error):
+                if completed[:2] != (ok, error):
                     raise HubError(HTTPStatus.CONFLICT, "result_conflict",
                                    "command %s already has a different result"
                                    % command_id)
@@ -1466,9 +1468,7 @@ class Hub:
             command.ok = ok
             command.error = error
             command.done.set()
-            machine.completed[command_id] = (ok, error)
-            while len(machine.completed) > COMMAND_RESULT_JOURNAL_MAX:
-                machine.completed.popitem(last=False)
+            machine.completed[command_id] = (ok, error, _now())
 
     # --- orders -----------------------------------------------------------
 
