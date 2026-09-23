@@ -1188,8 +1188,8 @@ SH
   assert_contains "$out_fail_1" "SC1007" "the first failing root diagnostic was lost"
   assert_contains "$out_fail_1" "SC2086" "the later failing root diagnostic was lost"
   rc_bad_jobs=0
-  FM_LINT_JOBS=3 "$LINT" "$good" >/dev/null 2>&1 || rc_bad_jobs=$?
-  [ "$rc_bad_jobs" -eq 2 ] || fail "the lint owner must reject unbounded worker counts"
+  FM_LINT_JOBS=0 "$LINT" "$good" >/dev/null 2>&1 || rc_bad_jobs=$?
+  [ "$rc_bad_jobs" -eq 2 ] || fail "the lint owner must reject nonpositive worker counts"
 
   telemetry_out=$(FM_LINT_JOBS=2 FM_LINT_TELEMETRY="$telemetry" "$LINT" "$good" 2>&1) \
     || fail "telemetry-enabled clean lint failed"
@@ -1364,6 +1364,137 @@ SH
 
 test_help_reports_the_complete_interface
 test_list_files_reports_the_shell_inventory
+fm_lint_graph_fixture() {
+  local repo=$1
+  fm_git_identity
+  fm_git_init_commit "$repo"
+  mkdir -p "$repo/bin/backends" "$repo/tests"
+  cp "$LINT" "$ROOT/bin/fm-lint-plan.pl" "$repo/bin/"
+  printf '#!/bin/bash\nexit 0\n' > "$repo/bin/fm-lint-workflows.sh"
+  chmod +x "$repo/bin/fm-lint-workflows.sh"
+  printf '#!/bin/bash\nexit 0\n' > "$repo/bin/backends/noop.sh"
+  printf '#!/bin/bash\nexit 0\n' > "$repo/tests/noop.sh"
+}
+
+test_affected_roots_follow_transitive_sources() {
+  local tmp repo base listed full fakebin out log flags
+  tmp=$(fm_test_tmproot fm-lint-affected)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nvalue=before\n' > "$repo/bin/leaf.sh"
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\n# shellcheck source=bin/leaf.sh\n. "$DIR/leaf.sh"\n' > "$repo/bin/middle.sh"
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\n# shellcheck source=bin/middle.sh\n. "$DIR/middle.sh"\n' > "$repo/bin/root.sh"
+  git -C "$repo" add . || fail "could not stage graph fixture"
+  git -C "$repo" commit -qm fixture || fail "could not commit graph fixture"
+  base=$(git -C "$repo" rev-parse HEAD)
+  printf '#!/bin/bash\nvalue=after\n' > "$repo/bin/leaf.sh"
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files) || fail "affected selection failed"
+  [ "$listed" = $'bin/leaf.sh\nbin/middle.sh\nbin/root.sh' ] || fail "transitive roots were not selected: $listed"
+  full=$(CI=true "$repo/bin/fm-lint.sh" --full --list-files)
+  assert_contains "$full" 'bin/backends/noop.sh' "full lint omitted an unchanged root"
+  [ "$(CI=true "$repo/bin/fm-lint.sh" --changed nonexistent --list-files 2>/dev/null)" = "$full" ] \
+    || fail "missing history did not fall back to full lint"
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/roots.log"
+  flags="$tmp/flags.log"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+  out=$(PATH="$fakebin:$PATH" CI=true FM_TEST_FLAG_LOG="$flags" "$repo/bin/fm-lint.sh" --changed "$base" 2>&1) \
+    || fail "affected lint failed: $out"
+  fm_lint_assert_flag_log "$flags" yes none
+  [ "$(sort "$log")" = "$listed" ] || fail "affected invocation lost selected roots"
+  mv "$repo/bin/leaf.sh" "$repo/bin/renamed.sh"
+  git -C "$repo" add -A
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files)
+  [ "$listed" = $'bin/middle.sh\nbin/renamed.sh\nbin/root.sh' ] || fail "rename/deletion lost old importers: $listed"
+  git -C "$repo" reset --hard -q "$base"
+  [ -z "$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files)" ] || fail "empty diff selected roots"
+  printf '\n# changed lint policy\n' >> "$repo/bin/fm-lint.sh"
+  [ "$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files)" = "$full" ] || fail "owner change did not select full lint"
+  pass "affected mode follows transitive sources and renames, keeps all codes, and falls back safely"
+}
+
+test_memory_schedule_isolates_heavy_and_stale_roots() {
+  local tmp repo fakebin path events out jobs
+  tmp=$(fm_test_tmproot fm-lint-memory)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  for path in heavy-a heavy-b light-a light-b; do
+    printf '#!/bin/bash\nprintf ok\n' > "$repo/bin/$path.sh"
+  done
+  git -C "$repo" add . || fail "could not stage memory fixture"
+  git -C "$repo" commit -qm fixture || fail "could not commit memory fixture"
+  (
+    cd "$repo" || exit 1
+    printf '# ShellCheck 0.11.0\n' > bin/fm-lint-memory.tsv
+    perl bin/fm-lint-plan.pl fingerprints '' bin/heavy-a.sh bin/heavy-b.sh bin/light-a.sh bin/light-b.sh \
+      | awk -F '\t' '{print $0 "\t" ($1 ~ /heavy/ ? 5500000 : 1024)}' >> bin/fm-lint-memory.tsv
+  ) || fail "could not prepare memory estimates"
+  fakebin=$(fm_fakebin "$tmp")
+  cat > "$fakebin/getconf" <<'SH'
+#!/bin/bash
+printf '%s\n' "${FM_TEST_CPUS:-4}"
+SH
+  cat > "$fakebin/shellcheck" <<'SH'
+#!/bin/bash
+if [ "${1:-}" = --version ]; then printf 'version: 0.11.0\n'; exit 0; fi
+while [ "$1" != -- ]; do shift; done
+shift
+[ "$#" -eq 1 ] || exit 9
+printf 'start\t%s\n' "$1" >> "$FM_TEST_SCHEDULE"
+sleep 0.3
+printf 'end\t%s\n' "$1" >> "$FM_TEST_SCHEDULE"
+SH
+  chmod +x "$fakebin/getconf" "$fakebin/shellcheck"
+  events="$tmp/events"
+  for jobs in 1 4; do
+    : > "$events"
+    out=$(PATH="$fakebin:$PATH" FM_LINT_MEMORY_MIB=192 FM_TEST_SCHEDULE="$events" \
+      "$repo/bin/fm-lint.sh" --jobs "$jobs" bin/heavy-a.sh bin/heavy-b.sh bin/light-a.sh bin/light-b.sh 2>&1) \
+      || fail "memory schedule failed: $out"
+    awk -v jobs="$jobs" '
+      $1 == "start" { n++; if (n > peak) peak=n; if ($2 ~ /heavy/) heavy++; if ((heavy && n > 1) || n > jobs) bad=1 }
+      $1 == "end" { n--; if ($2 ~ /heavy/) heavy--; ended++ }
+      END { exit bad || n != 0 || ended != 4 || (jobs > 1 && peak < 2) }
+    ' "$events" || fail "heavy roots overlapped or light roots did not use available concurrency"
+  done
+  # A larger budget must not permit two heavy roots, even when both would fit.
+  : > "$events"
+  PATH="$fakebin:$PATH" FM_LINT_MEMORY_MIB=20000 FM_TEST_SCHEDULE="$events" \
+    "$repo/bin/fm-lint.sh" --jobs 4 bin/heavy-a.sh bin/heavy-b.sh bin/light-a.sh bin/light-b.sh > "$tmp/large.out" 2>&1 \
+    || fail "large-budget schedule failed"
+  awk '
+    $1 == "start" { n++; if (n > peak) peak=n; if ($2 ~ /heavy/) heavy++; if (heavy > 1) bad=1 }
+    $1 == "end" { n--; if ($2 ~ /heavy/) heavy-- }
+    END { exit bad || n || peak < 2 }
+  ' "$events" || fail "large budget paired heavy roots or failed to fill spare capacity"
+  # CPU detection and memory admission are independent bounds.
+  for jobs in cpu memory; do
+    : > "$events"
+    if [ "$jobs" = cpu ]; then
+      PATH="$fakebin:$PATH" FM_TEST_CPUS=1 FM_LINT_MEMORY_MIB=192 FM_TEST_SCHEDULE="$events" \
+        "$repo/bin/fm-lint.sh" --jobs 4 bin/light-a.sh bin/light-b.sh > "$tmp/bound.out" 2>&1
+    else
+      PATH="$fakebin:$PATH" FM_LINT_MEMORY_MIB=100 FM_TEST_SCHEDULE="$events" \
+        "$repo/bin/fm-lint.sh" --jobs 4 bin/light-a.sh bin/light-b.sh > "$tmp/bound.out" 2>&1
+    fi || fail "$jobs bound failed"
+    awk '$1 == "start" {n++; if(n>1) bad=1} $1 == "end" {n--} END {exit bad || n}' "$events" \
+      || fail "$jobs bound admitted too many roots"
+  done
+  # A source edit invalidates a reservation rather than trusting stale evidence.
+  printf '# changed\n' >> "$repo/bin/light-a.sh"
+  : > "$events"
+  PATH="$fakebin:$PATH" FM_LINT_MEMORY_MIB=192 FM_TEST_SCHEDULE="$events" \
+    "$repo/bin/fm-lint.sh" --jobs 4 bin/light-a.sh bin/light-b.sh > "$tmp/stale.out" 2>&1 \
+    || fail "stale schedule failed"
+  awk '$1 == "start" {n++; if(n>1) bad=1} $1 == "end" {n--} END {exit bad || n}' "$events" \
+    || fail "stale root ran beside another root"
+  pass "light roots fill spare capacity; heavy roots never pair and stale roots run alone"
+}
+
+test_affected_roots_follow_transitive_sources
+test_memory_schedule_isolates_heavy_and_stale_roots
 test_fast_mode_disables_extended_analysis
 test_ci_defaults_to_full_analysis
 test_ci_rejects_explicit_fast_mode
