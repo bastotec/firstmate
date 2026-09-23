@@ -1,0 +1,33 @@
+[workspace]
+# The stream backend is moving from Python to Rust one piece at a time.
+# This workspace currently contains the shared wire crate and bridge port;
+# docs/stream-backend.md owns its operator-facing status and limits.
+#
+# Cargo.lock is committed so binary builds are reproducible from a clean
+# checkout (every member is a binary or backs one).
+resolver = "2"
+members = [
+    "crates/fm-stream-wire",
+    "crates/fm-stream-bridge",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96"
+license = "MIT"
+
+[workspace.dependencies]
+fm-stream-wire = { path = "crates/fm-stream-wire" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "net"] }
+hyper = { version = "1", features = ["http1", "client"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "native-tokio", "ring", "tls12", "webpki-tokio"] }
+http-body-util = "0.1"
+
+[profile.release]
+# Determinism over speed: the bridge's job is a 500 ms poll, and reproducible
+# output matters more than the last few percent of runtime.
+strip = "none"

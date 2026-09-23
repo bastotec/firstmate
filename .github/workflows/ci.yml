@@ -23,6 +23,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  rust-stream:
+    name: Rust stream bridge parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+      - name: Check and test the locked workspace
+        run: |
+          cargo +stable fmt --all --check
+          cargo +stable test --workspace --locked
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

@@ -84,6 +84,18 @@ Run it on the host that runs the hub:
 `bin/fm-stream-bridge.py compare` sets the feed's rendered state for each of this home's stream-backed tasks against `bin/fm-crew-state.sh`, and flags a worker the feed calls stopped while the pane read says it is working.
 Nothing runs it automatically.
 
+### Rust bridge
+
+The opt-in Rust bridge builds with `cargo build --release --locked -p fm-stream-bridge` (Rust 1.96 or newer).
+Use `target/release/fm-stream-bridge` in place of `bin/fm-stream-bridge.py` with the same subcommands and explicit hub, token-file, and fleet-id flags; this does not replace or restart any deployed Python process.
+Install it beside the existing scripts in `bin/` if using `compare`'s executable-relative home default, or pass `--home` and `--crew-state` explicitly.
+The Cargo workspace shares the protocol handshake and heartbeat wire mapping in `crates/fm-stream-wire`.
+The bridge uses Tokio, Hyper, and rustls for HTTP and HTTPS access and Serde JSON for parsing, without an LLM framework.
+It follows HTTP redirects and accepts argparse-style unique long-option abbreviations.
+Epochs remain limited to signed 64-bit integers, unlike Python's arbitrary-precision values.
+`tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
+Live comparisons exclude process-local clocks; help presentation and transport-library error details are not byte contracts.
+
 ## Tail adapters
 
 The agent owns a pseudoterminal, so it can only publish a worker whose harness firstmate runs through the runtime backend.
@@ -130,9 +142,9 @@ The bundled viewer page is served without a credential - it is static, and the t
 
 ### The hub speaks plain HTTP
 
-There is no TLS anywhere in this backend, and nothing in it will warn you about that.
+The hub itself serves only plain HTTP, and nothing in it will warn you about that.
 
-Every byte is in the clear: the bearer token on each request, every keystroke sent to a worker, and every byte of terminal output that worker produces.
+On any untunneled connection to the hub, every byte is in the clear: the bearer token on each request, every keystroke sent to a worker, and every byte of terminal output that worker produces.
 Anyone who can read the path can read all of it; anyone who can read a `publish` token can register endpoints and publish forged frames for any of them, impersonating your workers, and anyone who can read a `control` token can type into those workers and close them.
 
 Loopback is the only setting where that is safe on its own.
