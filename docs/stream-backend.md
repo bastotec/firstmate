@@ -36,7 +36,23 @@ The locally started hub ranks below both configured sources, so a home pointed a
 The hub groups endpoints by the machine that owns them, and this home's name in that view comes from `FM_STREAM_MACHINE`, then `config/stream-machine`, then the hostname; it is a readable identity rather than an opaque id, so set it on any home whose hostname says nothing useful.
 
 Select the backend the way any explicit backend is selected: `config/backend`, `FM_BACKEND=stream`, or an explicit per-task request.
-It is never auto-detected, and a spawn refuses `--secondmate` until secondmate launch semantics are designed for it.
+It is never auto-detected.
+Secondmate spawns use the existing isolated-home launch path, including Deck's persistent home-host driver (`bin/fm-deck-worker.sh`); no home migration is performed.
+
+## Secondmate lifecycle
+
+The same owners serve stream, tmux, Herdr, and Zellij secondmate launches: `bin/fm-spawn.sh` selects the home and harness, and `bin/fm-task-inbox-lib.sh` with `bin/fm-send.sh` owns durable steering and the doorbell.
+Deck's backend-independent host invariants are documented in `bin/fm-deck-worker.sh`: a watcher wake is never lost between turns, turns never overlap, and failures are reported rather than swallowed.
+`tests/fm-deck-harness.test.sh` exercises those invariants with serialized watcher and stdin turns.
+`tests/fm-backend-stream.test.sh` exercises a Deck home through the real stream transport, including launch, unacknowledged steering, liveness, interrupt, exit, same-endpoint relaunch, and recovery.
+New state roots created by the wake library, home seeding, or secondmate spawn use mode `0700` even with a group-writable caller umask; existing directories are not silently repaired, and `bin/fm-state-io.py` remains the directory trust-check owner.
+
+Recovery classification remains solely `fm_backend_agent_state` in `bin/fm-backend.sh`; stream does not introduce a secondmate-specific predicate.
+`bin/fm-bootstrap.sh` owns secondmate recovery respawn, preserving the recorded backend rather than selecting a different backend from ambient configuration.
+`bin/fm-control.sh` owns interrupt, exit, and same-endpoint relaunch; its `recover-missing` verb remains tmux-only because stream cannot recreate a hub-assigned endpoint identity.
+Supported-backend differences remain explicit: Zellij's recovery classifier is unverified, as documented by the shared classifier owner.
+
+## Prerequisites
 
 `python3`, `curl`, and `jq` must be present, and the hub's protocol must match the adapter's.
 A missing dependency, an unreachable hub, a refused token, or a protocol mismatch is terminal for the selected backend: it refuses and names what is wrong rather than falling back to another backend.

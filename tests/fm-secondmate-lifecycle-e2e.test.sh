@@ -70,10 +70,14 @@ EOF
 
 phase_seed() {
   local out
-  out=$(PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" \
+  out=$(umask 0002; PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" \
     "$ROOT/bin/fm-home-seed.sh" design "$SUB" alpha beta gamma) \
     || fail "seed failed"
   SUB_ABS=$(cd "$SUB" && pwd -P)
+  python3 - "$SUB/state" <<'PY' || fail "seeded state directory grants group or other access"
+import os, stat, sys
+assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o700
+PY
 
   assert_contains "$out" "home=$SUB_ABS" "seed did not report the subhome"
   assert_present "$SUB/.fm-secondmate-home" "seed did not mark the subhome"

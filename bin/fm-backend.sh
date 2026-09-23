@@ -1002,7 +1002,7 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # report that its worker exited, which is a recorded fact rather than a live
 # reading, does not go stale, and reads `dead`. Zellij remains unverified because
 # its secondmate ghost-tab and agent-process recovery path has not been
-# empirically validated. Orca, cmux, and stream do not support secondmate spawns.
+# empirically validated. Orca and cmux do not support secondmate spawns.
 fm_backend_agent_state() {  # <backend> <target>
   local backend=$1 target=$2
   fm_backend_source "$backend" || { printf 'unverified'; return 0; }
