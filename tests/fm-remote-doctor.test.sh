@@ -498,6 +498,12 @@ rm -f "$CASE_BIN/claude" "$CASE_BIN/sleep" "$CASE_BIN/uname"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_BIN/deck"
 chmod +x "$CASE_BIN/deck"
 mkdir -p "$CASE_HOME/.local/bin"
+# The worker composes its own account PATH, including host package-manager
+# directories. Shadow any installed higher-priority harnesses with unavailable
+# account entries so this fixture remains Deck-only on every runner.
+for tool in claude codex opencode pi pi-signed grok kimi; do
+  : > "$CASE_HOME/.local/bin/$tool"
+done
 for tool in herdr tasks-axi treehouse deck; do
   ln -s "$CASE_BIN/$tool" "$CASE_HOME/.local/bin/$tool"
 done
