@@ -318,7 +318,10 @@ cmd_launch() {
   # the GUI login session, so the endpoint survives every SSH disconnection that
   # a remote route depends on. bin/fm-remote-doctor.sh is the readiness owner.
   case "$selected_backend" in herdr) ;; *) die "a remote secondmate runs only on the herdr backend, not '$selected_backend'" ;; esac
-  mkdir -p "$CONTROL_STATE" "$CONTROL_DATA"
+  # Deck's descriptor-bound status I/O rejects group/world-writable roots.
+  # Constrain creation even when the remote login has a permissive umask;
+  # existing directory permissions are not silently rewritten.
+  (umask 077; mkdir -p "$CONTROL_STATE" "$CONTROL_DATA")
   meta=$(meta_path "$id")
   old=$(recorded_identities "$id")
   if [ -f "$meta" ]; then

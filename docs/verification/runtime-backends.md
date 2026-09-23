@@ -948,6 +948,20 @@ FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=200109
 The regression checks an absent driver before a live one, busy and idle evidence, replacement on the same pane, exact task attribution, unreadable process and pane inventories, and stale busy/progress records after exit.
 The non-Deck registry path and Deck ship/scout classification are deliberately unchanged.
 
+Parent-route creation was also verified on 2026-09-23 through the real remote-control script against shimmed Herdr, with an ambient `umask 002`:
+
+```sh
+bin/fm-test-run.sh tests/fm-remote-secondmate-replacement.test.sh
+```
+
+Observed output:
+
+```text
+ok - parent-route creation is private under umask 002 and accepted by Deck safe status I/O
+```
+
+The test asserts mode `0700` and writes and reads a status record through `bin/fm-state-io.py`, the same descriptor-bound boundary used by the Deck driver.
+
 ### fm-remote server birth and login-keychain access
 
 Measured 2026-09-09 on macOS 26 (Darwin 25.6.0) aarch64 with Claude Code 2.1.266 and Herdr 0.9.0, the guarantee behind `bin/fm-remote-herdr-guard.sh` and the doctor's `herdr-server` check: login-keychain access follows the audit session a process was born into, never the launch shape or the shell.

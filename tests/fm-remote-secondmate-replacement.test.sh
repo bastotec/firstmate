@@ -103,7 +103,16 @@ bare_stand_in() {  # <pane>
 }
 
 # --- 1. A first launch proves its agent and records its identity ------------
-out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "first launch failed: $out"
+out=$(umask 002; control launch "$SM_ID" claude - - herdr 2>&1) || fail "first launch failed: $out"
+# The parent-route root is also the Deck driver's status directory. Exercise
+# its exact safe-I/O boundary, not merely mkdir's successful exit status.
+route_state=$(dirname "$ROUTE_META")
+route_mode=$(python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$route_state")
+[ "$route_mode" = 0o700 ] || fail "parent-route creation under umask 002 is unsafe: $route_mode"
+printf 'working: directory accepted\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
+  || fail "Deck safe status I/O rejected the created parent-route directory"
+[ "$(cat "$route_state/mode-check.status")" = 'working: directory accepted' ] || fail "safe status write was lost"
+pass "parent-route creation is private under umask 002 and accepted by Deck safe status I/O"
 assert_contains "$out" "backend=herdr" "first launch did not print its route"
 pane=$(route_pane)
 first=$(pane_agent "$pane")
