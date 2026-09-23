@@ -840,15 +840,33 @@ test_relaunch_stops_stale_deck_driver_before_rotating_generation() {
   local dir out rc gen pid
   dir=$(new_case stale-deck rl-deck-stale)
   add_ship_task "$dir" rl-deck-stale deck
-  cat > "$dir/fakebin/deck" <<'SH'
-#!/usr/bin/env bash
-printf '{"type":"run_started","session":"old-session"}\n'
-printf 'working: stub waiting\n' >> "$FM_DECK_TEST_STATUS"
-touch "$FM_DECK_TEST_READY"
-sleep 4
-touch "$FM_DECK_TEST_COMPLETED"
-printf '{"type":"run_finished","output":"x","turns":1}\n'
-SH
+  cat > "$dir/fakebin/deck" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import time
+
+stopping = False
+
+
+def stop(*_):
+    global stopping
+    stopping = True
+
+
+signal.signal(signal.SIGTERM, stop)
+print(json.dumps({"type": "run_started", "session": "old-session"}), flush=True)
+with open(os.environ["FM_DECK_TEST_STATUS"], "a") as stream:
+    stream.write("working: stub waiting\n")
+open(os.environ["FM_DECK_TEST_READY"], "w").close()
+while not stopping:
+    time.sleep(0.01)
+time.sleep(0.2)
+open(os.environ["FM_DECK_TEST_COMPLETED"], "w").close()
+print(json.dumps({"type": "run_failed", "error": "stopped after current tool"}), flush=True)
+raise SystemExit(143)
+PY
   chmod +x "$dir/fakebin/deck"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-stale)
   FM_DECK_TEST_STATUS="$dir/home/state/rl-deck-stale.status" FM_DECK_TEST_READY="$dir/ready" \
@@ -884,6 +902,7 @@ test_live_deck_relaunch_uses_control_protocol_before_residual_stop() {
   add_ship_task "$dir" rl-deck-live deck
   cat > "$dir/fakebin/deck" <<'SH'
 #!/usr/bin/env bash
+trap 'stop_requested=1' TERM
 printf '{"type":"run_started","session":"live-session"}\n'
 touch "$FM_DECK_TEST_READY"
 i=0
@@ -1189,15 +1208,33 @@ test_direct_spawn_relaunch_stops_stale_deck_driver_before_arming() {
   local dir out rc gen pid
   dir=$(new_case direct-stale-deck rl-deck-direct)
   add_ship_task "$dir" rl-deck-direct deck
-  cat > "$dir/fakebin/deck" <<'SH'
-#!/usr/bin/env bash
-printf '{"type":"run_started","session":"direct-old-session"}\n'
-printf 'working: direct stub waiting\n' >> "$FM_DECK_TEST_STATUS"
-touch "$FM_DECK_TEST_READY"
-sleep 8
-touch "$FM_DECK_TEST_COMPLETED"
-printf '{"type":"run_finished","output":"x","turns":1}\n'
-SH
+  cat > "$dir/fakebin/deck" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import time
+
+stopping = False
+
+
+def stop(*_):
+    global stopping
+    stopping = True
+
+
+signal.signal(signal.SIGTERM, stop)
+print(json.dumps({"type": "run_started", "session": "direct-old-session"}), flush=True)
+with open(os.environ["FM_DECK_TEST_STATUS"], "a") as stream:
+    stream.write("working: direct stub waiting\n")
+open(os.environ["FM_DECK_TEST_READY"], "w").close()
+while not stopping:
+    time.sleep(0.01)
+time.sleep(0.2)
+open(os.environ["FM_DECK_TEST_COMPLETED"], "w").close()
+print(json.dumps({"type": "run_failed", "error": "stopped after current tool"}), flush=True)
+raise SystemExit(143)
+PY
   chmod +x "$dir/fakebin/deck"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-direct)
   FM_DECK_TEST_STATUS="$dir/home/state/rl-deck-direct.status" \
