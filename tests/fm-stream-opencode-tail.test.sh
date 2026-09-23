@@ -516,9 +516,12 @@ task=$(api "$VIEW_TOKEN" GET "/v1/tasks/$EP")
 [ "$(jq -r ".task.machine" <<<"$task")" = "tailhost" ] || fail "listing machine: $task"
 pass "lists on the fleet as an ordinary endpoint"
 
+generation=$(api "$VIEW_TOKEN" GET /v1/health | jq -r '.generation')
 order_answer=$(api "$VIEW_TOKEN" POST /v1/orders "$(jq -nc --arg id "$EP" \
+  --arg generation "$generation" \
   '{leaf_worker_id: "tailhost/livework", execution_id: $id,
-    order_id: "tail-read-only", text: "echo MUST-NOT-RUN", submit: true}')")
+    order_id: "tail-read-only", text: "echo MUST-NOT-RUN", submit: true,
+    hub_generation: $generation}')")
 [ "$(jq -r '.reason' <<<"$order_answer")" = "endpoint_not_orderable" ] \
   || fail "a read-only tail endpoint accepted an order: $order_answer"
 [ "$(jq -r '.delivered' <<<"$order_answer")" = "false" ] \
