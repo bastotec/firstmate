@@ -198,16 +198,23 @@ watch_wait_handling_successor() {
       WATCH_PREDECESSOR_ARM_PID=''
       return 0
     fi
+    line=$(sed -n 's/^watcher: started pid=\([0-9][0-9]*\) (beacon fresh)$/\1/p' "$WORK/watch.out" 2>/dev/null | tail -1)
+    if [ -n "$line" ]; then
+      WATCH_HANDLING_WATCHER_PID=''
+      WATCH_HANDLING_GENERATION=''
+      WATCH_PREDECESSOR_ARM_PID=''
+      return 0
+    fi
     if ! kill -0 "$WATCH_PID" 2>/dev/null; then
       wait "$WATCH_PID" 2>/dev/null || true
       WATCH_PID=''
       cat "$WORK/watch.out"
-      host_failure 'successor watcher exited before confirming recovery generation'
+      host_failure 'successor watcher exited before confirming startup'
       return 1
     fi
     sleep 0.05
   done
-  host_failure 'successor watcher did not confirm its recovery generation'
+  host_failure 'successor watcher did not confirm startup'
   return 1
 }
 

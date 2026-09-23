@@ -570,9 +570,10 @@ fi
 trap 'exit 143' TERM INT
 printf '%s\n' "$$" >> "$FM_HOME/watch-starts"
 printf 'arm=%s predecessor=%s\n' "$$" "${FM_WATCH_PREDECESSOR_ARM_PID:-none}" >> "$FM_HOME/watch-arms"
-if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
+if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ] && [ ! -f "$FM_HOME/generationless-next-watch" ]; then
   printf 'watcher: started pid=%s (beacon fresh) recovery-generation=deck-%s\n' "$$" "$FM_WATCH_PREDECESSOR_ARM_PID"
 else
+  rm -f "$FM_HOME/generationless-next-watch"
   printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
 fi
 while [ ! -f "$FM_HOME/trigger" ]; do sleep 0.1; done
@@ -691,13 +692,20 @@ with (root/'pane').open('w') as output:
         assert len(deliveries) >= 3, 'latest handling successor was not confirmed'
         assert deliveries[-1].split(' watcher=', 1)[1] == watcher_starts()[-1], 'predecessor handoff was accepted instead of the current successor'
         assert not (root/'parent/host.turn-ended').exists(), 'watch handling emitted a parent turn-end wake'
+        deliveries_before_generationless = list(deliveries)
+        (home/'generationless-next-watch').touch()
+        (home/'trigger').touch()
+        wait_for(lambda: len(watcher_starts()) >= 5, 'generationless watcher successor')
+        wait_for(lambda: len(rows()) == 6, 'generationless successor wake')
+        assert p.poll() is None, 'generationless watcher successor stopped the host'
+        assert (home/'handling-delivered').read_text().splitlines() == deliveries_before_generationless, 'generationless successor attempted a recovery delivery handshake'
         p.stdin.write('split-'); p.stdin.flush()
         time.sleep(1.3)
         p.stdin.write('steer\n'); p.stdin.flush()
-        wait_for(lambda: len(rows()) == 6, 'partial input retained')
-        assert rows()[5]['prompt'] == 'split-steer'
+        wait_for(lambda: len(rows()) == 7, 'partial input retained')
+        assert rows()[6]['prompt'] == 'split-steer'
         (home/'trigger').touch()
-        wait_for(lambda: len(rows()) == 7, 'watcher rearmed')
+        wait_for(lambda: len(rows()) == 8, 'watcher rearmed')
         assert all(x['session'] == 'host-session' for x in rows())
         assert (home/'startups').read_text() == 'startup\n'
         assert (home/'state/.lock').read_text().strip() == str(p.pid), 'lock is not driver-owned'
@@ -708,11 +716,11 @@ with (root/'pane').open('w') as output:
         wait_for(lambda: (home/'in-turn').exists(), 'interruptible steer')
         os.killpg(p.pid, signal.SIGINT)
         p.stdin.write('after-interrupt\n'); p.stdin.flush()
-        wait_for(lambda: len(rows()) == 9, 'driver survived interrupt')
-        assert rows()[8]['prompt'] == 'after-interrupt'
+        wait_for(lambda: len(rows()) == 10, 'driver survived interrupt')
+        assert rows()[9]['prompt'] == 'after-interrupt'
         assert 'turn interrupted' in (root/'parent/host.status').read_text()
         (home/'trigger').touch()
-        wait_for(lambda: len(rows()) == 10, 'watcher survived interrupt')
+        wait_for(lambda: len(rows()) == 11, 'watcher survived interrupt')
         p.stdin.write('/quit\n'); p.stdin.flush()
         assert p.wait(timeout=15) == 0
     finally:
