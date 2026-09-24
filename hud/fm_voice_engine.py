@@ -329,4 +329,5 @@ class Engine:
             self.closed.set()
         self.ready.set()
         self.reply_done.set()
+        self.on_notice("engine-fault", {"error": why})
         self._vlog(why)

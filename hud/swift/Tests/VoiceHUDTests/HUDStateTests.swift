@@ -1,5 +1,5 @@
-// The state machine checks the brief requires: transitions on synthetic
-// events. Pure Swift, runs anywhere, no GUI session needed.
+// The state machine checks the brief requires: transitions on the events
+// the bridge announces. Pure Swift, runs anywhere, no GUI session needed.
 import XCTest
 @testable import VoiceHUD
 
@@ -9,29 +9,21 @@ final class HUDStateTests: XCTestCase {
         XCTAssertEqual(model.state, .listening, "the HUD must start listening, mic local")
     }
 
-    func testTurnLifecycle() {
+    func testApplyStateFollowsAnnouncedStates() {
         let model = HUDModel()
-        model.beginTurn()
-        XCTAssertEqual(model.state, .thinking, "an open turn must show thinking")
-        model.replyAudio()
-        XCTAssertEqual(model.state, .speaking, "reply audio must show speaking")
-        model.replyEnded()
-        XCTAssertEqual(model.state, .listening, "reply_end must return to listening")
+        model.applyState("thinking")
+        XCTAssertEqual(model.state, .thinking, "an announced turn must show thinking")
+        model.applyState("speaking")
+        XCTAssertEqual(model.state, .speaking, "announced reply audio must show speaking")
+        model.applyState("listening")
+        XCTAssertEqual(model.state, .listening, "an announced reply_end must return to listening")
     }
 
-    func testStaleAudioDoesNotInventASpeakingState() {
+    func testApplyStateIgnoresUnknownStrings() {
         let model = HUDModel()
-        // Audio with no turn open is a stale frame; the model must not
-        // reward it with a state change.
-        model.replyAudio()
-        XCTAssertEqual(model.state, .listening, "audio outside a turn must not speak")
-    }
-
-    func testEngineClosedReturnsToListening() {
-        let model = HUDModel()
-        model.beginTurn()
-        model.engineClosed()
-        XCTAssertEqual(model.state, .listening, "a closed engine must not claim a live turn")
+        model.applyState("thinking")
+        model.applyState("daydreaming")
+        XCTAssertEqual(model.state, .thinking, "an unknown state string must leave the model untouched")
     }
 
     func testTranscriptKeepsLatestLine() {
@@ -40,5 +32,21 @@ final class HUDStateTests: XCTestCase {
         model.transcriptLine(TranscriptLine(role: .assistant, text: "three o'clock"))
         XCTAssertEqual(model.transcript?.role, .assistant, "the latest transcript line must win")
         XCTAssertEqual(model.transcript?.text, "three o'clock")
+    }
+}
+
+final class BridgeEventTests: XCTestCase {
+    func testParseReadsTheBridgeSchema() {
+        XCTAssertEqual(Bridge.parse(line: #"{"type":"state","state":"speaking"}"#),
+                       .state("speaking"))
+        XCTAssertEqual(Bridge.parse(line: #"{"type":"transcript","role":"assistant","text":"hi"}"#),
+                       .transcript(role: "assistant", text: "hi"))
+        XCTAssertEqual(Bridge.parse(line: #"{"type":"notice","event":"wake"}"#),
+                       .notice(event: "wake"))
+    }
+
+    func testParseRejectsLinesThatAreNotBridgeEvents() {
+        XCTAssertNil(Bridge.parse(line: "not json at all"))
+        XCTAssertNil(Bridge.parse(line: #"{"type":"mystery"}"#), "an unknown event type must be dropped")
     }
 }

@@ -7,8 +7,9 @@
 //   thinking   a turn is open; the captain's audio goes to the relay child
 //   speaking   reply audio is arriving from the relay
 //
-// Transitions are event-driven, exactly the events the engine's callbacks
-// deliver, so the panel never invents a state the wire did not announce.
+// The model has exactly one way in per thing it owns: a state string the
+// bridge announced, and a transcript line the bridge delivered, so the
+// panel never invents a state the wire did not announce.
 
 import Foundation
 
@@ -50,26 +51,6 @@ public final class HUDModel {
 
     public init() {}
 
-    /// A turn opened: the engine's begin-turn event.
-    public func beginTurn() {
-        state = .thinking
-    }
-
-    /// Reply audio arrived: the engine's first-audio event.
-    public func replyAudio() {
-        // Only a turn that is open can be answered. Audio outside a turn is
-        // a stale frame the engine already guards against; the model never
-        // rewards it with a state change.
-        if state == .thinking {
-            state = .speaking
-        }
-    }
-
-    /// The relay's reply_end mark: the turn is over, the mic is local again.
-    public func replyEnded() {
-        state = .listening
-    }
-
     /// A transcript line arrived from the relay's TEXT frames.
     public func transcriptLine(_ line: TranscriptLine) {
         transcript = line
@@ -82,11 +63,5 @@ public final class HUDModel {
         if let s = HUDState(rawValue: raw) {
             state = s
         }
-    }
-
-    /// The engine died or was closed: no state but listening is truthful,
-    /// because with no relay child the mic is not streaming anywhere.
-    public func engineClosed() {
-        state = .listening
     }
 }

@@ -122,6 +122,22 @@ panel.orderFrontRegardless()
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
+// The bridge is told to quit when the app terminates, so the mic thread, the
+// decoder child and the relay child all come down with the panel instead of
+// being orphaned holding the microphone.
+final class HUDAppDelegate: NSObject, NSApplicationDelegate {
+    let bridge: Bridge
+
+    init(bridge: Bridge) {
+        self.bridge = bridge
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        bridge.quit()
+        return .terminateNow
+    }
+}
+
 // ------------------------------------------------------------------ engine
 
 // The engine and wake layer are Python in this repo. The bridge is the
@@ -130,6 +146,7 @@ app.setActivationPolicy(.accessory)
 // The panel sends nothing back except "quit" at exit. Launching the bridge
 // needs the repo root, which is the working directory at launch.
 let bridgeProcess = Bridge.launch(repoRoot: FileManager.default.currentDirectoryPath)
+app.delegate = HUDAppDelegate(bridge: bridgeProcess)
 
 Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
     // Bridge events arrive on a background thread; AppKit drawing happens
@@ -142,8 +159,25 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             case .transcript(let role, let text):
                 model.transcriptLine(TranscriptLine(
                     role: role == "user" ? .user : .assistant, text: text))
-            case .notice:
-                break
+            case .notice(let event):
+                // Notices the HUD must show rather than just carry: a dead
+                // engine or an abandoned turn leaves the mic deaf, and the
+                // panel says so instead of rendering listening forever.
+                switch event {
+                case "engine-fault":
+                    model.applyState("listening")
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant, text: "voice engine failed - restart the HUD"))
+                case "turn-timeout":
+                    model.applyState("listening")
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant, text: "that turn got no reply - ask again"))
+                case "output-unavailable":
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant, text: "no output device - replies are text only"))
+                default:
+                    break
+                }
             }
         }
         render()
