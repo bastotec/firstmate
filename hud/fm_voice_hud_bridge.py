@@ -28,6 +28,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "hud"))
 sys.path.insert(0, os.path.join(ROOT, "bin"))
 
+# Seconds a quit waits for buffered reply audio to finish before the stream
+# closes - the client's exit bound, so a quit right after an answer does not
+# cut the reply's tail off.
+QUIT_DRAIN_TIMEOUT = 30.0
+
 import fm_voice_engine as engine_mod      # noqa: E402
 import fm_voice_mic as mic_mod            # noqa: E402
 import fm_voice_speaker as speaker_mod    # noqa: E402
@@ -76,6 +81,7 @@ def main():
               "error": "{}: {}".format(type(exc).__name__, exc)})
 
     engine_fault = threading.Event()
+    decoder_fault = threading.Event()
 
     def report_fault():
         # The engine's own notice already said it when the wire died; this
@@ -84,6 +90,12 @@ def main():
             return
         engine_fault.set()
         emit({"type": "notice", "event": "engine-fault"})
+
+    def report_decoder_fault(why):
+        if decoder_fault.is_set():
+            return
+        decoder_fault.set()
+        emit({"type": "notice", "event": "decoder-fault", "error": why})
 
     def on_engine_notice(event, obj):
         if event == "engine-fault":
@@ -101,7 +113,16 @@ def main():
         on_audio=speaker.write if speaker else (lambda pcm: None),
         on_notice=on_engine_notice,
         verbose=verbose)
-    engine.start()
+    # A relay that refuses at startup is news the panel needs on the wire,
+    # not a traceback it can never see: the HUD's first live run is exactly
+    # when the home is least likely to be configured yet.
+    try:
+        engine.start()
+    except engine_mod.EngineError as exc:
+        emit({"type": "notice", "event": "engine-fault", "error": str(exc)})
+        if speaker is not None:
+            speaker.close()
+        return 1
     emit({"type": "state", "state": "listening"})
 
     # The wake layer owns the microphone from here. The decoder child is a
@@ -146,11 +167,12 @@ def main():
     def run_mic():
         # The mic thread owns block timing; the director's decisions come
         # back as engine callbacks, which emit on this same stdout safely
-        # because emit is the only writer and stays line-atomic. An engine
-        # fault here is reported on the wire, never allowed to die with a
-        # traceback the panel cannot see: a closed engine leaves the HUD
-        # deaf until restart, and a turn the engine abandoned mid-reply is
-        # re-armed, because the relay's renewal path is the next turn.
+        # because emit is the only writer and stays line-atomic. An engine or
+        # decoder fault here is reported on the wire, never allowed to die
+        # with a traceback the panel cannot see: a closed engine or a dead
+        # decoder leaves the HUD deaf until restart, and a turn the engine
+        # abandoned mid-reply is re-armed, because the relay's renewal path
+        # is the next turn.
         block_period = mic_mod.BLOCK / 16000.0
         next_at = time.monotonic()
         for block in mic.blocks():
@@ -166,6 +188,9 @@ def main():
                       "error": str(exc)})
                 director.recover()
                 continue
+            except mic_mod.DecoderError as exc:
+                report_decoder_fault(str(exc))
+                return
             next_at += block_period
             delay = next_at - time.monotonic()
             if delay > 0:
@@ -185,6 +210,7 @@ def main():
         decoder.close()
         engine.close()
         if speaker is not None:
+            speaker.drain(timeout=QUIT_DRAIN_TIMEOUT)
             speaker.close()
     return 0
 

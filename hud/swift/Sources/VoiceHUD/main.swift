@@ -168,6 +168,10 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "voice engine failed - restart the HUD"))
+                case "decoder-fault":
+                    model.applyState("listening")
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant, text: "the decoder died - restart the HUD"))
                 case "turn-timeout":
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
