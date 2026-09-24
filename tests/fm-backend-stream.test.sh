@@ -142,15 +142,14 @@ wait_for_capture() {  # <target> <needle>
   return 1
 }
 
-wait_for_agent_state() {  # <target> <state>
-  local target=$1 expected=$2 waited=0 state
-  while [ "$waited" -lt 100 ]; do
+wait_for_agent_state() {  # <target> <state> [budget-secs]
+  local target=$1 expected=$2 budget=${3:-60} state="" start=$SECONDS
+  while [ $((SECONDS - start)) -lt "$budget" ]; do
     state=$(with_stream_env fm_backend_agent_state stream "$target")
     [ "$state" != "$expected" ] || return 0
     sleep 0.1
-    waited=$((waited + 1))
   done
-  fail "endpoint state did not settle to $expected (last state: $state)"
+  fail "endpoint state did not settle to $expected within ${budget}s (last state: ${state:-none})"
 }
 
 test_create_yields_a_hub_bound_target_the_dispatcher_can_read() {

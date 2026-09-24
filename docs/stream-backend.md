@@ -46,7 +46,9 @@ Deck's backend-independent host invariants are documented in `bin/fm-deck-worker
 `tests/fm-deck-harness.test.sh` exercises those invariants with serialized watcher and stdin turns.
 `tests/fm-backend-stream.test.sh` exercises a Deck home through the real stream transport, including launch, unacknowledged steering, liveness, interrupt, exit, same-endpoint relaunch, and recovery.
 
-Recovery classification remains solely `fm_backend_agent_state` in `bin/fm-backend.sh`; stream does not introduce a secondmate-specific predicate.
+Recovery classification remains `fm_backend_agent_state` in `bin/fm-backend.sh`, with one stream-only secondmate rule reading on top of it in `bin/fm-bootstrap.sh`: for a stream mate, `missing` is the hub's in-memory registry not knowing that endpoint, which an agent still pacing its rejoin after a hub restart also produces, so it licenses no respawn and the sweep skips with an `absence from the hub registry` diagnostic.
+The consequence is a deliberate asymmetry with tmux and Herdr, whose `missing` is process-authoritative and does respawn: a stream mate whose own agent is gone reads `unreadable` while the hub still holds its record, then `missing` once the hub reaps that record after an hour of agent silence, so it is never respawned automatically and that skip line is the only signal.
+A stream mate whose worker exited while its agent lived still reads `dead` from the agent's own closing report, and the sweep respawns it exactly as it does on any other backend.
 `bin/fm-bootstrap.sh` owns secondmate recovery respawn, preserving the recorded backend rather than selecting a different backend from ambient configuration.
 `bin/fm-control.sh` owns interrupt, exit, and same-endpoint relaunch; its `recover-missing` verb remains tmux-only because stream cannot recreate a hub-assigned endpoint identity.
 

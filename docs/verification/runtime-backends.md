@@ -1784,7 +1784,7 @@ The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
 
 ### Deck home-host lifecycle
 
-Measured 2026-09-23 on macOS with Bash 3.2.57 and Python 3.9.6 using the portable fixtures, not live model calls.
+Measured 2026-09-24 on macOS with Bash 3.2.57 and Python 3.14.2 using the portable fixtures, not live model calls.
 `FM_LIVE=0 bin/fm-test-run.sh tests/fm-deck-harness.test.sh` exercises the real Deck driver against a shimmed Deck binary; its native PTY regression reports:
 
 ```text
@@ -1798,10 +1798,11 @@ The lifecycle case reports:
 ```text
 ok - stream: idle Deck exits; genuine pending text refuses without stopping the host
 ok - stream: Deck launch, alive classification, durable steering, exit, relaunch and recovery
+ok - stream: a restarted hub's registry gap licenses no secondmate respawn
 ok - stream: Deck interrupt preserves a usable idle composer for exit
 ```
 
-This is targeted lifecycle evidence, not a claim that the complete stream suite passes: the existing shell-died-at-birth refusal case also fails on the unchanged default branch in this environment.
+This is targeted lifecycle evidence, not a claim that the complete stream suite passes: in that run every other case passed except the existing shell-died-at-birth refusal case, which also fails on the unchanged default branch in this environment.
 `tests/fm-stream-agent-kill-safety.test.sh` additionally exercises child SIGINT handling under default and ignored parent dispositions, proving that the child normalization leaves the parent unchanged.
 
 ### Live harness identity
