@@ -103,7 +103,16 @@ bare_stand_in() {  # <pane>
 }
 
 # --- 1. A first launch proves its agent and records its identity ------------
-out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "first launch failed: $out"
+out=$(umask 002; control launch "$SM_ID" claude - - herdr 2>&1) || fail "first launch failed: $out"
+# The parent-route root is also the Deck driver's status directory. Exercise
+# its exact safe-I/O boundary, not merely mkdir's successful exit status.
+route_state=$(dirname "$ROUTE_META")
+route_mode=$(python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$route_state")
+[ "$route_mode" = 0o700 ] || fail "parent-route creation under umask 002 is unsafe: $route_mode"
+printf 'working: directory accepted\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
+  || fail "Deck safe status I/O rejected the created parent-route directory"
+[ "$(cat "$route_state/mode-check.status")" = 'working: directory accepted' ] || fail "safe status write was lost"
+pass "parent-route creation is private under umask 002 and accepted by Deck safe status I/O"
 assert_contains "$out" "backend=herdr" "first launch did not print its route"
 pane=$(route_pane)
 first=$(pane_agent "$pane")
@@ -143,6 +152,10 @@ assert_contains "$out" "lacks the configured Claude permission flag '--permissio
   "the failure did not name the missing permission flag"
 assert_contains "$out" "not reporting it as relaunched" "the failure did not refuse the success report"
 assert_not_contains "$out" "backend=herdr" "a failed proof still printed a route"
+# The endpoint's removal HUPs the old agent asynchronously, so wait for its
+# death within the same bound section 6 uses rather than racing it.
+n=0
+while alive "$bare" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
 alive "$bare" && fail "the old agent survived its endpoint's removal in the fixture"
 pass "a relaunch whose new agent lacks the configured permission flag is reported as a failure"
 
@@ -314,3 +327,266 @@ replacement=$(pane_agent "$pane")
 grep -q "^$replacement " "$IDENTITY" || fail "Deck remote relaunch did not record the replacement identity"
 cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
 pass "Deck remote launch and relaunch preserve the Herdr host runtime"
+
+# --- 9. Launch and relaunch reconcile a pre-existing unsafe mode -----------
+# A home that launched before private creation left state/parent-route as 0775,
+# which Deck's safe status I/O refuses; each lifecycle verb that starts an
+# agent repairs the root rather than demanding a hand chmod - the launch that
+# owns it, and the relaunch whose delegated control plane would otherwise
+# recreate the root with a plain mkdir -p. Refuse loudly on anything not
+# provably owned: a symlink, a non-owned directory, or a non-directory.
+dir_mode() { python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$1"; }
+kill -HUP "$replacement" 2>/dev/null || true
+reset_remote_herdr_fixture "$HERDR_STATE"
+rm -f "$ROUTE_META" "$IDENTITY"
+chmod 0775 "$route_state"
+if printf 'x' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status >/dev/null 2>&1; then
+  fail "fixture: Deck safe status I/O accepted a 0775 parent-route root"
+fi
+out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) || fail "launch over a 0775 parent-route failed: $out"
+[ "$(dir_mode "$route_state")" = 0o700 ] || fail "launch did not reconcile 0775 to private: $(dir_mode "$route_state")"
+printf 'working: reconciled\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
+  || fail "Deck safe status I/O still rejected the reconciled parent-route directory"
+pass "a launch reconciles a pre-existing 0775 parent-route root to a mode Deck accepts"
+previous=$(pane_agent "$(route_pane)")
+if [ -n "$previous" ]; then kill -HUP "$previous" 2>/dev/null || true; fi
+reset_remote_herdr_fixture "$HERDR_STATE"
+rm -f "$ROUTE_META" "$IDENTITY"
+out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "relaunch-reconcile setup failed: $out"
+pane=$(route_pane)
+chmod 0775 "$route_state"
+cat > "$CODE/bin/fm-control.sh" <<SH
+#!/usr/bin/env bash
+pid=\$(jq -r --arg p '$pane' '.agents[\$p] // empty' '$HERDR_STATE')
+kill -HUP "\$pid"
+while kill -0 "\$pid" 2>/dev/null; do sleep 0.1; done
+herdr pane send-text '$pane' 'claude --permission-mode auto --settings {}' --session fm-remote
+herdr pane send-keys '$pane' enter --session fm-remote
+echo "relaunched \$1 harness=claude from=claude model=default effort=default backend=herdr"
+SH
+chmod +x "$CODE/bin/fm-control.sh"
+out=$(control relaunch "$SM_ID" claude default default 2>&1) || fail "relaunch over a 0775 parent-route failed: $out"
+assert_contains "$out" "relaunched $SM_ID" "the reconciling relaunch did not report success"
+[ "$(dir_mode "$route_state")" = 0o700 ] || fail "relaunch did not reconcile 0775 to private: $(dir_mode "$route_state")"
+printf 'working: relaunch reconciled\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
+  || fail "Deck safe status I/O still rejected the relaunch-reconciled parent-route directory"
+cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
+pass "a relaunch reconciles a pre-existing 0775 parent-route root to a mode Deck accepts"
+
+# --- 10. The reconcile refuses anything it cannot provably own --------------
+# Drive the REAL control script with FM_HOME pointed at a fixture home whose
+# parent-route root is the artifact under test, so each refusal comes from the
+# production reconcile rather than a copy of it.
+refusal_launch() {  # <fixture-home>
+  env -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_PROJECTS_OVERRIDE \
+    -u FM_BACKEND -u HERDR_SESSION -u CLAUDECODE -u TMUX \
+    HOME="$USER_HOME" CLAUDE_CONFIG_DIR='' PATH="$FIXTURE/bin:$PATH" \
+    FM_HOME="$1" FM_ROOT_OVERRIDE="$CODE" \
+    FM_REMOTE_AGENT_IDENTITY_WAIT=3 FM_REMOTE_AGENT_IDENTITY_POLL=0.2 \
+    FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 \
+    "$CODE/bin/fm-remote-secondmate-control.sh" launch "$SM_ID" deck example/route - herdr 2>&1
+}
+
+make_refusal_home() {  # <home-path> - a seeded home skeleton for a refusal fixture
+  local home=$1
+  mkdir -p "$home/bin" "$home/data" "$home/state" "$home/config" "$home/projects"
+  printf '%s\n' "$SM_ID" > "$home/.fm-secondmate-home"
+  cp "$CODE/AGENTS.md" "$home/AGENTS.md"
+  printf '# Charter\nServe as a test second mate.\n' > "$home/data/charter.md"
+}
+
+link_home="$TMP_ROOT/refuse-home.symlink"
+make_refusal_home "$link_home"
+# A distinct 0775 target, so this case proves the refusal alone left it alone:
+# the real route root was already reconciled by section 9's successful launch.
+link_target="$TMP_ROOT/symlink-target"
+mkdir -p "$link_target"
+chmod 0775 "$link_target"
+ln -s "$link_target" "$link_home/state/parent-route"
+out=$(refusal_launch "$link_home") && fail "symlink: launch succeeded where it must refuse"
+assert_contains "$out" "not a directory" "symlink refusal did not name the path"
+assert_contains "$out" "$link_home/state/parent-route" "symlink refusal did not name the exact path"
+[ "$(dir_mode "$link_target")" = 0o775 ] || fail "symlink refusal chmod-ed the link target"
+
+nondir_home="$TMP_ROOT/refuse-home.nondir"
+make_refusal_home "$nondir_home"
+printf 'plain file\n' > "$nondir_home/state/parent-route"
+out=$(refusal_launch "$nondir_home") && fail "non-directory: launch succeeded where it must refuse"
+assert_contains "$out" "not a directory" "non-directory refusal did not name the path"
+
+foreign_uid=0
+[ "$(id -u)" -ne 0 ] || foreign_uid=1
+foreign_home="$TMP_ROOT/refuse-home.foreign"
+make_refusal_home "$foreign_home"
+mkdir -p "$foreign_home/state/parent-route"
+chmod 0775 "$foreign_home/state/parent-route"
+if chown "$foreign_uid" "$foreign_home/state/parent-route" 2>/dev/null; then
+  out=$(refusal_launch "$foreign_home") && fail "foreign-owned: launch succeeded where it must refuse"
+  assert_contains "$out" "owned by uid $foreign_uid" "foreign-owner refusal did not name the owner"
+  [ "$(dir_mode "$foreign_home/state/parent-route")" = 0o775 ] \
+    || fail "foreign-owner refusal chmod-ed a directory it does not own"
+  chown "$(id -u)" "$foreign_home/state/parent-route"
+else
+  printf 'not run - foreign-owner refusal requires chown privilege\n'
+fi
+pass "the reconcile refuses a symlink, a foreign-owned root, and a non-directory, naming each"
+
+# --- 11. A relocated parent-route data root still launches ------------------
+# The data root is not the directory Deck's safe status I/O validates, so an
+# operator who relocates it (a symlink to storage elsewhere) keeps launching:
+# only the state root is reconciled, and a launch tightens nothing it does not
+# own. The relocated root is group-writable on purpose - the old data-root
+# reconcile refused and chmod-ed exactly this shape.
+relocated_data="$TMP_ROOT/relocated-route-data"
+mkdir -p "$relocated_data"
+chmod 0775 "$relocated_data"
+printf 'relocated\n' > "$relocated_data/relocation-marker"
+previous=$(pane_agent "$(route_pane)")
+if [ -n "$previous" ]; then kill -HUP "$previous" 2>/dev/null || true; fi
+reset_remote_herdr_fixture "$HERDR_STATE"
+rm -f "$ROUTE_META" "$IDENTITY"
+rm -rf "$SM_HOME/data/.parent-route"
+ln -s "$relocated_data" "$SM_HOME/data/.parent-route"
+out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) \
+  || fail "a launch over a relocated parent-route data root failed: $out"
+assert_contains "$out" "harness=deck" "the relocated-data launch did not report its runtime"
+[ -L "$SM_HOME/data/.parent-route" ] || fail "the launch replaced the relocated data root"
+[ "$(dir_mode "$relocated_data")" = 0o775 ] \
+  || fail "the launch tightened a data root it does not own: $(dir_mode "$relocated_data")"
+[ "$(cat "$SM_HOME/data/.parent-route/relocation-marker" 2>/dev/null)" = relocated ] \
+  || fail "the launch did not keep the relocated data root wired to the home"
+[ "$(dir_mode "$route_state")" = 0o700 ] || fail "the state root lost its reconciled private mode"
+printf 'working: relocated route\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
+  || fail "Deck safe status I/O rejected the state root beside a relocated data root"
+pass "a symlinked or relocated parent-route data root still launches"
+
+# --- 12. A GNU-shaped stat on PATH cannot poison the owner read -------------
+# The shape this repository recorded in production: GNU `stat -f` is FILESYSTEM
+# stat, so it prints a dump on stdout and still exits 0. A collapsed
+# `stat -f '%u' || stat -c '%u'` fallback never reaches its second form, the
+# owner variable holds the dump, and the launch dies naming a bogus foreign
+# owner - for every harness, on every launch. Drive the real control script with
+# that stat shadowing PATH and assert the reconcile still repairs the root.
+previous=$(pane_agent "$(route_pane)")
+if [ -n "$previous" ]; then kill -HUP "$previous" 2>/dev/null || true; fi
+reset_remote_herdr_fixture "$HERDR_STATE"
+rm -f "$ROUTE_META" "$IDENTITY"
+chmod 0775 "$route_state"
+cat > "$FIXTURE/bin/stat" <<'FAKE'
+#!/usr/bin/env bash
+if [ "${1:-}" = -f ]; then
+  printf '  File: "%s"\n    ID: 0 Namelen: 255 Type: ext2/ext3\n' "${3:-}"
+  exit 0
+fi
+for real in /usr/bin/stat /bin/stat; do
+  [ -x "$real" ] && exec "$real" "$@"
+done
+exit 1
+FAKE
+chmod +x "$FIXTURE/bin/stat"
+out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) \
+  || fail "a GNU-shaped stat on PATH blocked the launch: $out"
+assert_contains "$out" "harness=deck" "the shadowed-stat launch did not report its runtime"
+[ "$(dir_mode "$route_state")" = 0o700 ] \
+  || fail "the owner read did not survive a GNU-shaped stat: $(dir_mode "$route_state")"
+printf 'working: shadowed stat\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
+  || fail "Deck safe status I/O rejected the root reconciled under a shadowed stat"
+rm -f "$FIXTURE/bin/stat"
+pass "a GNU-shaped stat on PATH cannot poison the parent-route owner read"
+
+# --- 13. A working remote Deck mate reads alive to the control plane ---------
+# The startup liveness sweep consumes `state`, so this is the read the reported
+# defect lived in: Herdr's registry answers agent_not_found for a Deck mate, and
+# a state read that resolved metadata in the ambient home instead of the
+# parent-route root mapped a working mate to dead and tore it down. Drive the
+# REAL control script against a REAL fm-deck-worker driver bound to the route
+# state, with the pane's registry registration gone. The dead boundary this
+# change must keep is owned by tests/fm-deck-harness.test.sh, which checks the
+# absent-driver verdict first for every kind and every registry answer.
+deckbin="$TMP_ROOT/deck-fake"
+mkdir -p "$deckbin"
+cat > "$deckbin/deck" <<'FAKE'
+#!/usr/bin/env bash
+# A fake deck binary: honors --session and the pre_complete hook, appends the
+# worker status line the evidence gate requires, and streams one finished turn.
+prompt=$2 session='' gate=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session) session=$2; shift 2 ;;
+    --hook) case "$2" in pre_complete=*) gate=${2#pre_complete=} ;; esac; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ -n "$session" ] || session="s-fake-$$"
+printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS"
+if [ -n "$gate" ] && ! bash -c "$gate" </dev/null 2>>"$(dirname "$0")/gate.err"; then
+  printf '{"type":"completion_blocked","attempt":1,"reason":"status evidence required"}\n'
+fi
+printf '{"type":"run_started","session":"%s","model":"m"}\n' "$session"
+printf '{"type":"text_delta","text":"echo: %s"}\n' "$prompt"
+printf '{"type":"run_finished","output":"x","turns":1}\n'
+FAKE
+chmod +x "$deckbin/deck"
+previous=$(pane_agent "$(route_pane)")
+if [ -n "$previous" ]; then kill -HUP "$previous" 2>/dev/null || true; fi
+reset_remote_herdr_fixture "$HERDR_STATE"
+rm -f "$ROUTE_META" "$IDENTITY"
+out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) \
+  || fail "the control-plane fixture launch failed: $out"
+pane=$(route_pane)
+stand_in=$(pane_agent "$pane")
+[ -n "$stand_in" ] || fail "the control-plane fixture launch left no host process"
+kill -HUP "$stand_in" 2>/dev/null || true
+n=0
+while alive "$stand_in" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+alive "$stand_in" && fail "the fixture stand-in survived its hangup"
+# Bind a real driver to the route state: exact task id, exact state root, and a
+# freshly armed busy generation, the identity a supervised restart preserves.
+gen=$("$ROOT/bin/fm-busy-event.sh" arm "$route_state" "$SM_ID") \
+  || fail "could not arm a busy generation for the driver"
+deck_fifo="$TMP_ROOT/deck-input"
+mkfifo "$deck_fifo"
+exec 7<>"$deck_fifo"
+FM_TEST_STATUS="$route_state/$SM_ID.status" bash -c 'exec -a fm-deck-worker bash "$@"' _ \
+  "$CODE/bin/fm-deck-worker.sh" --id "$SM_ID" --state "$route_state" --gen "$gen" \
+  --deck "$deckbin/deck" -- 'write-status the brief' \
+  < "$deck_fifo" > "$TMP_ROOT/deck-pane.out" 2>&1 &
+deck_driver=$!
+EXTRA_PIDS+=("$deck_driver")
+n=0
+until grep -q 'state=idle source=deck-wrapper' "$route_state/$SM_ID.busy-state" 2>/dev/null \
+  || [ "$n" -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
+grep -q 'state=idle source=deck-wrapper' "$route_state/$SM_ID.busy-state" 2>/dev/null \
+  || fail "the driver never reached an idle deck-wrapper record: $(tail -5 "$TMP_ROOT/deck-pane.out" 2>/dev/null)"
+# The registry cannot know this mate: deregister the pane so `agent get` answers
+# agent_not_found, then put the live driver in the pane it owns.
+deregister "$pane"
+jq --arg p "$pane" --argjson pid "$deck_driver" '.agents[$p] = $pid' "$HERDR_STATE" > "$HERDR_STATE.tmp"
+mv -f "$HERDR_STATE.tmp" "$HERDR_STATE"
+log_mark=$(wc -l < "$HERDR_LOG" | tr -d ' ')
+out=$(control state "$SM_ID" 2>&1)
+[ "$out" = alive ] \
+  || fail "a working remote Deck mate read '$out' to the control plane under an agent_not_found registry"
+sed -n "$((log_mark + 1)),\$p" "$HERDR_LOG" > "$TMP_ROOT/state-read.log"
+assert_grep 'pane process-info' "$TMP_ROOT/state-read.log" \
+  "the alive verdict did not inspect the pane's process inventory"
+assert_no_grep 'agent get' "$TMP_ROOT/state-read.log" \
+  "the state read consulted the registry that cannot know Deck"
+# A launch over that working mate reuses it: no teardown, no twin, nothing typed.
+tabs_before=$(jq '.tabs | length' "$HERDR_STATE")
+log_mark=$(wc -l < "$HERDR_LOG" | tr -d ' ')
+out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) \
+  || fail "a launch over a working remote Deck mate failed: $out"
+assert_contains "$out" "harness=deck" "the reuse launch did not report its runtime"
+alive "$deck_driver" || fail "the reuse launch tore down the working Deck mate"
+[ "$(pane_agent "$pane")" = "$deck_driver" ] \
+  || fail "the reuse launch started a twin beside the working Deck mate"
+[ "$(jq '.tabs | length' "$HERDR_STATE")" = "$tabs_before" ] \
+  || fail "the reuse launch opened a second tab"
+sed -n "$((log_mark + 1)),\$p" "$HERDR_LOG" > "$TMP_ROOT/reuse-launch.log"
+assert_no_grep 'pane send-text' "$TMP_ROOT/reuse-launch.log" \
+  "the reuse launch typed a new host line into the live mate's pane"
+printf '/quit\n' >&7
+wait "$deck_driver" || fail "the driver did not exit cleanly after /quit"
+exec 7>&-
+pass "a working remote Deck mate reads alive to the control plane and survives a launch"

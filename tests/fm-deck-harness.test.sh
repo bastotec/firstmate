@@ -600,6 +600,358 @@ test_control_busy_and_delivery_tables_name_deck() {
   pass "control and busy-source tables carry Deck mechanics without rendered delivery evidence"
 }
 
+# Recovery uses a real pane-resident driver and real process identities; only
+# the Herdr transport and the model endpoint are shimmed. No terminal server.
+test_herdr_deck_recovery() {
+  local dir="$TMP_ROOT/herdr-recovery" gen shell_pid driver out record
+  mkdir -p "$dir/state" "$dir/bin"
+  make_fake_deck "$dir"
+  sleep 300 & shell_pid=$!
+  fm_test_track_helper_pid "$shell_pid"
+  printf '%s\n' "$shell_pid" > "$dir/shell"
+  cat > "$dir/bin/herdr" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  'status --json') printf '{"client":{"protocol":14},"server":{"running":true}}' ;;
+  'pane get')
+    case "$(cat "$FM_TEST_HERDR/presence" 2>/dev/null)" in
+      error) echo 'socket error'; exit 1 ;;
+      missing) echo '{"error":{"code":"pane_not_found"}}' ;;
+      *) echo '{"result":{"pane":{"pane_id":"w1:p2"}}}' ;;
+    esac ;;
+  'pane process-info')
+    [ ! -e "$FM_TEST_HERDR/process-error" ] || exit 1
+    shell=$(cat "$FM_TEST_HERDR/shell")
+    driver=$(cat "$FM_TEST_HERDR/driver" 2>/dev/null || true)
+    if [ -n "$driver" ]; then
+      fg="{\"pid\":$driver,\"name\":\"bash\",\"argv0\":\"fm-deck-worker\"}"
+    else
+      fg="{\"pid\":$shell,\"name\":\"zsh\",\"argv0\":\"zsh\"}"
+    fi
+    printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":%s,"foreground_processes":[%s]}}}' "$shell" "$fg" ;;
+  'agent get')
+    echo registry >> "$FM_TEST_HERDR/registry.log"
+    case "$(cat "$FM_TEST_HERDR/registry" 2>/dev/null)" in
+      empty) ;;
+      error) echo 'socket error'; exit 1 ;;
+      live) echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+      *) echo '{"error":{"code":"agent_not_found"}}' ;;
+    esac ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$dir/bin/herdr"
+  printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=secondmate\n' > "$dir/state/t1.meta"
+  gen=$("$BUSY_EVENT" arm "$dir/state" t1)
+  "$BUSY_EVENT" progress "$dir/state" t1 --gen "$gen" || fail "progress fixture failed"
+  herdr_deck_verdict() {
+    FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$dir/state" FM_TEST_HERDR="$dir" PATH="$dir/bin:$PATH" \
+      bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ "$ROOT"
+  }
+  # Dead FIRST: stale busy/progress records cannot resurrect an absent driver.
+  out=$(herdr_deck_verdict)
+  [ "$out" = dead ] || fail "absent Deck driver with stale busy/progress must be dead: $out"
+  mkfifo "$dir/input"
+  exec 8<> "$dir/input"
+  FM_TEST_STATUS="$dir/state/t1.status" bash -c 'exec -a fm-deck-worker bash "$@"' _ \
+    "$WORKER" --id t1 --state "$dir/state" --gen "$gen" --deck "$dir/deck" -- write-status \
+    < "$dir/input" > "$dir/pane.out" 2>&1 &
+  driver=$!
+  fm_test_track_helper_pid "$driver"
+  printf '%s\n' "$driver" > "$dir/driver"
+  for _ in $(seq 1 100); do
+    record=$(fm_busy_record_read "$dir/state" t1)
+    case "$record" in 'idle deck-wrapper '*) break ;; esac
+    sleep 0.1
+  done
+  case "$record" in 'idle deck-wrapper '*) ;; *) fail "driver did not reach idle: $record" ;; esac
+  : > "$dir/registry.log"
+  out=$(herdr_deck_verdict)
+  [ "$out" = alive ] || fail "live Deck driver must bypass agent_not_found: $out"
+  [ ! -s "$dir/registry.log" ] || fail "Deck recovery consulted unsupported registry"
+  "$BUSY_EVENT" apply "$dir/state" t1 busy --gen "$gen" --source deck-wrapper --event turn-start
+  "$BUSY_EVENT" progress "$dir/state" t1 --gen "$gen"
+  [ "$(herdr_deck_verdict)" = alive ] || fail "busy Deck driver was not alive"
+  printf 'error\n' > "$dir/presence"
+  [ "$(herdr_deck_verdict)" = unreadable ] || fail "erroring pane inventory became alive"
+  printf 'missing\n' > "$dir/presence"
+  [ "$(herdr_deck_verdict)" = missing ] || fail "missing pane became alive"
+  rm "$dir/presence"
+  touch "$dir/process-error"
+  [ "$(herdr_deck_verdict)" = unreadable ] || fail "erroring process inventory became alive"
+  rm "$dir/process-error"
+  # Exact task identity, not any Deck process in the pane, is required.
+  mv "$dir/state/t1.meta" "$dir/state/t2.meta"
+  [ "$(herdr_deck_verdict)" != alive ] || fail "another task's driver was claimed"
+  mv "$dir/state/t2.meta" "$dir/state/t1.meta"
+  printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=pi\nkind=secondmate\n' > "$dir/state/t1.meta"
+  for record in missing empty error live; do
+    printf '%s\n' "$record" > "$dir/registry"
+    out=$(herdr_deck_verdict)
+    case "$record:$out" in missing:dead|empty:unreadable|error:unreadable|live:alive) ;;
+      *) fail "non-Deck registry behavior changed: $record -> $out" ;;
+    esac
+  done
+  # A Deck crewmate's driver carries the same identity arguments, so its
+  # liveness comes from the same evidence rather than the registry.
+  printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=ship\n' > "$dir/state/t1.meta"
+  printf 'missing\n' > "$dir/registry"
+  : > "$dir/registry.log"
+  [ "$(herdr_deck_verdict)" = alive ] || fail "a live Deck crewmate was not alive"
+  [ ! -s "$dir/registry.log" ] || fail "Deck crewmate recovery consulted the registry"
+  printf '/quit\n' >&8
+  wait "$driver" || fail "driver did not exit cleanly"
+  rm "$dir/driver"
+  for kind in secondmate ship scout; do
+    printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=%s\n' "$kind" > "$dir/state/t1.meta"
+    for record in missing empty error; do
+      printf '%s\n' "$record" > "$dir/registry"
+      out=$(herdr_deck_verdict)
+      [ "$out" = dead ] || fail "absent Deck $kind driver became $out with registry $record"
+    done
+  done
+  printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=secondmate\n' > "$dir/state/t1.meta"
+  # A supervised restart replaces the PID and generation, not the pane.
+  gen=$("$BUSY_EVENT" arm "$dir/state" t1)
+  FM_TEST_STATUS="$dir/state/t1.status" bash -c 'exec -a fm-deck-worker bash "$@"' _ \
+    "$WORKER" --id t1 --state "$dir/state" --gen "$gen" --deck "$dir/deck" -- write-status \
+    < "$dir/input" > "$dir/restarted.out" 2>&1 &
+  driver=$!
+  fm_test_track_helper_pid "$driver"
+  printf '%s\n' "$driver" > "$dir/driver"
+  for _ in $(seq 1 100); do
+    out=$(herdr_deck_verdict)
+    [ "$out" != alive ] || break
+    sleep 0.1
+  done
+  [ "$out" = alive ] || fail "replacement driver on the same pane was not alive: $out"
+  printf '/quit\n' >&8
+  wait "$driver" || fail "replacement driver did not exit cleanly"
+  exec 8>&-
+  kill "$shell_pid" 2>/dev/null || true
+  wait "$shell_pid" 2>/dev/null || true
+  pass "Herdr Deck recovery proves driver identity; dead and non-Deck paths remain conservative"
+}
+
+# A home whose code root or state root holds a space - a macOS account such as
+# /Users/John Smith, or an operator-chosen root: in data/secondmates.md - still
+# attributes its live driver, because the match reads the boundary-preserving
+# argv Herdr's process report carries rather than a whitespace-split `ps` line.
+# Real driver, real busy records; only the Herdr transport is shimmed, and its
+# argv comes from the live process wherever the platform exposes one.
+test_herdr_deck_recovery_spaced_paths() {
+  local dir="$TMP_ROOT/herdr-spaced" shell_pid
+  mkdir -p "$dir/bin"
+  make_fake_deck "$dir"
+  ln -sfn "$ROOT" "$TMP_ROOT/spaced code root"
+  sleep 300 & shell_pid=$!
+  fm_test_track_helper_pid "$shell_pid"
+  printf '%s\n' "$shell_pid" > "$dir/shell"
+  cat > "$dir/bin/herdr" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  'status --json') printf '{"client":{"protocol":14},"server":{"running":true}}' ;;
+  'pane get') echo '{"result":{"pane":{"pane_id":"w1:p2"}}}' ;;
+  'pane process-info')
+    shell=$(cat "$FM_TEST_HERDR/shell")
+    driver=$(cat "$FM_TEST_HERDR/driver" 2>/dev/null || true)
+    if [ -n "$driver" ] && kill -0 "$driver" 2>/dev/null; then
+      if [ -r "/proc/$driver/cmdline" ]; then
+        argv=$(tr '\0' '\n' < "/proc/$driver/cmdline" | jq -R . | jq -sc .)
+      else
+        argv=$(cat "$FM_TEST_HERDR/argv.json")
+      fi
+      fg="{\"pid\":$driver,\"name\":\"bash\",\"argv0\":\"fm-deck-worker\",\"argv\":$argv}"
+    else
+      fg="{\"pid\":$shell,\"name\":\"zsh\",\"argv0\":\"zsh\",\"argv\":[\"zsh\"]}"
+    fi
+    printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":%s,"foreground_processes":[%s]}}}' "$shell" "$fg" ;;
+  'agent get')
+    echo registry >> "$FM_TEST_HERDR/registry.log"
+    echo '{"error":{"code":"agent_not_found"}}' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$dir/bin/herdr"
+  spaced_verdict() {  # <fm-root> <state-dir>
+    FM_HOME="$dir" FM_ROOT_OVERRIDE="$1" FM_STATE_OVERRIDE="$2" FM_TEST_HERDR="$dir" PATH="$dir/bin:$PATH" \
+      bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ "$1"
+  }
+  spaced_case() {  # <label> <fm-root> <state-dir>
+    local label=$1 root=$2 state=$3 gen driver record out
+    local -a argv
+    mkdir -p "$state"
+    printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=secondmate\n' > "$state/t1.meta"
+    gen=$("$BUSY_EVENT" arm "$state" t1)
+    "$BUSY_EVENT" progress "$state" t1 --gen "$gen" || fail "$label: progress fixture failed"
+    rm -f "$dir/driver"
+    [ "$(spaced_verdict "$root" "$state")" = dead ] \
+      || fail "$label: an absent driver with stale busy records was not dead"
+    argv=(fm-deck-worker "$root/bin/fm-deck-worker.sh"
+      --id t1 --state "$state" --gen "$gen" --deck "$dir/deck" -- write-status)
+    printf '%s\n' "${argv[@]}" | jq -R . | jq -sc . > "$dir/argv.json"
+    rm -f "$dir/input"
+    mkfifo "$dir/input"
+    exec 8<> "$dir/input"
+    FM_TEST_STATUS="$state/t1.status" bash -c 'exec -a fm-deck-worker bash "$@"' _ "${argv[@]:1}" \
+      < "$dir/input" > "$dir/pane.out" 2>&1 &
+    driver=$!
+    fm_test_track_helper_pid "$driver"
+    printf '%s\n' "$driver" > "$dir/driver"
+    record=
+    for _ in $(seq 1 100); do
+      record=$(fm_busy_record_read "$state" t1)
+      case "$record" in 'idle deck-wrapper '*) break ;; esac
+      sleep 0.1
+    done
+    case "$record" in
+      'idle deck-wrapper '*) ;;
+      *) fail "$label: driver did not reach idle: $record"$'\n'"$(cat "$dir/pane.out")" ;;
+    esac
+    : > "$dir/registry.log"
+    out=$(spaced_verdict "$root" "$state")
+    [ "$out" = alive ] || fail "$label: a live Deck driver read '$out'"
+    [ ! -s "$dir/registry.log" ] || fail "$label: Deck recovery consulted the unsupported registry"
+    printf '/quit\n' >&8
+    wait "$driver" || fail "$label: driver did not exit cleanly"
+    exec 8>&-
+    rm -f "$dir/driver" "$dir/input"
+  }
+  spaced_case 'spaced state root' "$ROOT" "$TMP_ROOT/spaced state"
+  spaced_case 'spaced code root' "$TMP_ROOT/spaced code root" "$TMP_ROOT/spaced mate state"
+  kill "$shell_pid" 2>/dev/null || true
+  wait "$shell_pid" 2>/dev/null || true
+  pass "Herdr Deck recovery attributes a live driver across a spaced code root and state root"
+}
+
+# The steering doorbell for a remote Deck secondmate rings for a LIVE driver
+# even though Herdr's registry answers agent_not_found for it: the ring's
+# liveness read resolves the task's metadata in the SUPPLIED state directory
+# (the parent-route root), never in the ambient home state, so it never falls
+# back to the registry and never maps a live mate to dead. Real driver, real
+# ring library, real process identities; only the Herdr transport is shimmed.
+test_herdr_deck_ring_rings_live_driver() {
+  local dir="$TMP_ROOT/herdr-ring" gen shell_pid driver record rec rc
+  local first_registry first_send
+  local route="$TMP_ROOT/herdr-ring-route" ambient="$TMP_ROOT/herdr-ring-home/state"
+  mkdir -p "$dir/state" "$dir/bin" "$route" "$ambient"
+  make_fake_deck "$dir"
+  sleep 300 & shell_pid=$!
+  fm_test_track_helper_pid "$shell_pid"
+  printf '%s\n' "$shell_pid" > "$dir/shell"
+  cat > "$dir/bin/herdr" <<'SH'
+#!/usr/bin/env bash
+LOG="$FM_TEST_HERDR/commands.log"
+printf '%s\n' "$*" >> "$LOG"
+case "$1 $2" in
+  'status --json') printf '{"client":{"protocol":14},"server":{"running":true}}' ;;
+  'pane get')
+    case "$(cat "$FM_TEST_HERDR/presence" 2>/dev/null)" in
+      error) echo 'socket error'; exit 1 ;;
+      missing) echo '{"error":{"code":"pane_not_found"}}' ;;
+      *) echo '{"result":{"pane":{"pane_id":"w1:p2"}}}' ;;
+    esac ;;
+  'pane process-info')
+    [ ! -e "$FM_TEST_HERDR/process-error" ] || exit 1
+    shell=$(cat "$FM_TEST_HERDR/shell")
+    driver=$(cat "$FM_TEST_HERDR/driver" 2>/dev/null || true)
+    if [ -n "$driver" ] && kill -0 "$driver" 2>/dev/null; then
+      fg="{\"pid\":$driver,\"name\":\"bash\",\"argv0\":\"fm-deck-worker\"}"
+    else
+      fg="{\"pid\":$shell,\"name\":\"zsh\",\"argv0\":\"zsh\"}"
+    fi
+    printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":%s,"foreground_processes":[%s]}}}' "$shell" "$fg" ;;
+  'pane read') printf '\n' ;;
+  'pane send-text')
+    [ ! -e "$FM_TEST_HERDR/send-fail" ] || exit 1
+    shift 2
+    printf 'typed: %s\n' "$*" >> "$FM_TEST_HERDR/typed.log" ;;
+  'pane send-keys') exit 0 ;;
+  'agent get')
+    echo registry >> "$FM_TEST_HERDR/registry.log"
+    case "$(cat "$FM_TEST_HERDR/registry" 2>/dev/null)" in
+      empty) ;;
+      error) echo 'socket error'; exit 1 ;;
+      live) echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+      *) echo '{"error":{"code":"agent_not_found"}}' ;;
+    esac ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$dir/bin/herdr"
+  # The meta lives ONLY in the parent-route root; the ambient home state that a
+  # caller forgetting the supplied directory would search holds nothing.
+  printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=secondmate\n' > "$route/t1.meta"
+  gen=$("$BUSY_EVENT" arm "$route" t1)
+  "$BUSY_EVENT" progress "$route" t1 --gen "$gen" || fail "progress fixture failed"
+  ring() {  # -> ring return code
+    local rc=0
+    FM_HOME="$TMP_ROOT/herdr-ring-home" FM_ROOT_OVERRIDE="$ROOT" \
+      FM_TEST_HERDR="$dir" PATH="$dir/bin:$PATH" \
+      bash -c '. "$1/bin/fm-task-inbox-lib.sh"
+        rec=$2 state=$3
+        fm_task_inbox_ring herdr fmtest:w1:p2 "$rec" fm-t1 deck "$state" t1' \
+      _ "$ROOT" "$(find "$route/t1.inbox" -maxdepth 1 -name '*.msg' | sort | head -1)" "$route" || rc=$?
+    return "$rc"
+  }
+  # The inbox record the doorbell announces must exist under the route root.
+  rec=$(FM_STATE_OVERRIDE="$route" bash -c '
+    . "$1/bin/fm-task-inbox-lib.sh"
+    fm_task_inbox_write_idempotent "$2" t1 "please continue"' _ "$ROOT" "$route") \
+    || fail "ring fixture: inbox record could not be written"
+  case "$rec" in "$route"/*) ;; *) fail "ring fixture: record landed outside the route root: $rec" ;; esac
+  : > "$dir/typed.log"
+  : > "$dir/registry.log"
+  # DEAD FIRST, with the driver absent but its stale busy/progress in place: a
+  # registry that cannot know Deck must not turn that into an alive verdict,
+  # and nothing may be typed.
+  printf 'missing\n' > "$dir/registry"
+  rm -f "$dir/driver"
+  ring; rc=$?
+  [ "$rc" = 3 ] || fail "absent driver must skip the doorbell (rc 3), got $rc"
+  [ ! -s "$dir/typed.log" ] || fail "the doorbell typed into a dead endpoint:"$'\n'"$(cat "$dir/typed.log")"
+  # A live driver with the same stale registry answer: the doorbell RINGS.
+  mkfifo "$dir/input"
+  exec 9<> "$dir/input"
+  FM_TEST_STATUS="$route/t1.status" bash -c 'exec -a fm-deck-worker bash "$@"' _ \
+    "$WORKER" --id t1 --state "$route" --gen "$gen" --deck "$dir/deck" -- write-status \
+    < "$dir/input" > "$dir/pane.out" 2>&1 &
+  driver=$!
+  fm_test_track_helper_pid "$driver"
+  printf '%s\n' "$driver" > "$dir/driver"
+  record=
+  for _ in $(seq 1 100); do
+    record=$(fm_busy_record_read "$route" t1)
+    case "$record" in 'idle deck-wrapper '*) break ;; esac
+    sleep 0.1
+  done
+  case "$record" in 'idle deck-wrapper '*) ;; *) fail "ring fixture: driver did not reach idle: $record" ;; esac
+  : > "$dir/registry.log"
+  ring; rc=$?
+  [ "$rc" = 0 ] || fail "a live remote Deck driver must be rung, got rc $rc"
+  grep -q 'Firstmate instruction waiting' "$dir/typed.log" \
+    || fail "the doorbell text never reached the live driver's pane:"$'\n'"$(cat "$dir/typed.log")"
+  grep -q "$route/t1.inbox" "$dir/typed.log" \
+    || fail "the doorbell announced a path outside the parent-route root:"$'\n'"$(cat "$dir/typed.log")"
+  # Delivery confirmation may read the registry AFTER typing; liveness may not
+  # read it BEFORE, because that is the read that maps a live mate to dead.
+  if [ -s "$dir/registry.log" ] && grep -q '^pane send-text' "$dir/commands.log"; then
+    first_registry=$(grep -n '^agent get' "$dir/commands.log" | head -1 | cut -d: -f1)
+    first_send=$(grep -n '^pane send-text' "$dir/commands.log" | head -1 | cut -d: -f1)
+    if [ -n "$first_registry" ] && [ -n "$first_send" ] && [ "$first_registry" -lt "$first_send" ]; then
+      fail "the ring used the registry for liveness before typing: $(cat "$dir/commands.log")"
+    fi
+  fi
+  # The driver consumes the doorbell as an ordinary prompt turn and exits
+  # cleanly, proving the pane content was semantically deliverable.
+  printf '/quit\n' >&9
+  wait "$driver" || fail "ring fixture: driver did not exit cleanly after the ring"
+  exec 9>&-
+  kill "$shell_pid" 2>/dev/null || true
+  wait "$shell_pid" 2>/dev/null || true
+  pass "the steering doorbell rings a live remote Deck driver and skips an absent one"
+}
+
 test_deck_supervision_model_is_scoped_to_secondmate_launches() {
   local bin="$TMP_ROOT/named-model" out
   mkdir -p "$bin"
@@ -1139,6 +1491,9 @@ PYTHON
   pass "fm-deck-worker: a secondmate that cannot publish a failed turn stops instead of looping"
 }
 
+test_herdr_deck_recovery
+test_herdr_deck_recovery_spaced_paths
+test_herdr_deck_ring_rings_live_driver
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_survives_a_failed_turn
 test_secondmate_repeats_its_launch_brief_after_a_session_less_failure

@@ -102,6 +102,31 @@ validate_home() { # <id> [allow-absent]
 
 meta_path() { printf '%s/%s.meta\n' "$CONTROL_STATE" "$1"; }
 
+# Deck's descriptor-bound status I/O (bin/fm-state-io.py) refuses a
+# group/world-writable state root, and a launch that predates the private-mode
+# creation above left exactly that behind, which forced a hand chmod on every
+# such home before a Deck mate could start. Repair is in-scope for every verb
+# that starts an agent against the state root, launch and relaunch alike, but
+# only for a directory this code provably owns: a symlink, a non-directory, or
+# a directory owned by another user is refused loudly rather than chmod-ed,
+# because tightening permissions on something not provably ours would be worse
+# than leaving it alone.
+reconcile_route_state_mode() { # <dir>
+  local dir=$1 owner
+  [ -e "$dir" ] || [ -L "$dir" ] || return 0
+  [ -d "$dir" ] && [ ! -L "$dir" ] || die "parent-route state path '$dir' is not a directory; refusing to touch it"
+  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+    owner=$(/usr/bin/stat -f '%u' "$dir" 2>/dev/null) || owner=
+  else
+    owner=$(stat -c '%u' "$dir" 2>/dev/null) || owner=
+  fi
+  case "$owner" in
+    ''|*[!0-9]*) die "parent-route state directory '$dir' cannot be inspected; refusing to touch it" ;;
+  esac
+  [ "$owner" = "$(id -u)" ] || die "parent-route state directory '$dir' is owned by uid $owner, not $(id -u); refusing to touch it"
+  chmod 0700 "$dir" || die "parent-route state directory '$dir' could not be made private"
+}
+
 remote_endpoint_load() {
   local id=$1 herdr_session
   REMOTE_ENDPOINT_ERROR=
@@ -143,7 +168,7 @@ state_value() { # <id>; prints recovery-grade state
     printf 'unverified\n'
     return 0
   fi
-  fm_backend_agent_state "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" 2>/dev/null || printf 'unreadable\n'
+  FM_STATE_OVERRIDE="$CONTROL_STATE" fm_backend_agent_state "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" 2>/dev/null || printf 'unreadable\n'
 }
 
 print_route() { # <id>
@@ -318,12 +343,16 @@ cmd_launch() {
   # the GUI login session, so the endpoint survives every SSH disconnection that
   # a remote route depends on. bin/fm-remote-doctor.sh is the readiness owner.
   case "$selected_backend" in herdr) ;; *) die "a remote secondmate runs only on the herdr backend, not '$selected_backend'" ;; esac
-  mkdir -p "$CONTROL_STATE" "$CONTROL_DATA"
+  # Deck's descriptor-bound status I/O rejects a group/world-writable state
+  # root, so constrain creation even when the remote login has a permissive
+  # umask, and first reconcile the state root an earlier launch left unsafe.
+  reconcile_route_state_mode "$CONTROL_STATE"
+  (umask 077; mkdir -p "$CONTROL_STATE" "$CONTROL_DATA")
   meta=$(meta_path "$id")
   old=$(recorded_identities "$id")
   if [ -f "$meta" ]; then
     remote_endpoint_require "$id"
-    current=$(fm_backend_agent_state "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" 2>/dev/null || printf 'unreadable\n')
+    current=$(FM_STATE_OVERRIDE="$CONTROL_STATE" fm_backend_agent_state "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" 2>/dev/null || printf 'unreadable\n')
     case "$current" in
       alive)
         recorded_harness=$(fm_meta_get "$REMOTE_ENDPOINT_META" harness)
@@ -408,6 +437,7 @@ cmd_relaunch() {
   if [ "$effort" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$harness" "$model" "$effort" || return 1
   fi
+  reconcile_route_state_mode "$CONTROL_STATE"
   remote_endpoint_require "$id"
   [ "$model" != - ] || model=default
   [ "$effort" != - ] || effort=default
@@ -419,7 +449,7 @@ cmd_relaunch() {
   # Only a positively agent-free endpoint may relaunch without readable
   # identities: there, the recorded identity is the only previous agent there
   # is, and the delegated control plane owns the agent-free recovery itself.
-  current=$(fm_backend_agent_state "$old_backend" "$old_target" 2>/dev/null || printf 'unreadable\n')
+  current=$(FM_STATE_OVERRIDE="$CONTROL_STATE" fm_backend_agent_state "$old_backend" "$old_target" 2>/dev/null || printf 'unreadable\n')
   case "$current" in
     dead|missing) old= ;;
     *)

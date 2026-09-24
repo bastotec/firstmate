@@ -928,6 +928,57 @@ The CLI matrix was checked directly:
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.
 
+### Deck endpoint recovery (shim-based)
+
+Verified on 2026-09-23, re-verified on 2026-09-24 on macOS with the repository's real Deck driver, busy-state writer, and OS processes, a shimmed Herdr protocol-14 CLI, and a shimmed model endpoint; this is not a local live-Herdr or live-model result.
+`bin/backends/herdr.sh` owns the Deck-only recovery classifier; `bin/fm-agent-process-lib.sh` remains the process-identity owner.
+
+```sh
+bin/fm-test-run.sh tests/fm-deck-harness.test.sh tests/fm-backend-herdr.test.sh
+```
+
+Observed output:
+
+```text
+...
+ok - Herdr Deck recovery proves driver identity; dead and non-Deck paths remain conservative
+ok - Herdr Deck recovery attributes a live driver across a spaced code root and state root
+ok - the steering doorbell rings a live remote Deck driver and skips an absent one
+...
+fm-deck-harness: all cases passed
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=590179
+```
+
+The regression checks an absent driver before a live one, busy and idle evidence, replacement on the same pane, exact task attribution, unreadable process and pane inventories, stale busy/progress records after exit, and a live crewmate endpoint beside an absent one of every kind.
+The spaced-path case launches the same real driver under a code root and a state root whose paths hold a space, and the shimmed report carries the argv array the live process really presents - read from `/proc/<pid>/cmdline` where the platform exposes one, written from the same argument array the launch used where it does not - so it proves the boundary-preserving match rather than a fixture's opinion; against a whitespace-split `ps` line the same live mate read `unreadable`.
+The non-Deck registry path is deliberately unchanged, while every Deck endpoint - ship, scout, or second mate - is classified from its own driver rather than from a registry that cannot know Deck.
+
+Parent-route creation was also verified on 2026-09-23 and re-verified on 2026-09-24 through the real remote-control script against shimmed Herdr, with an ambient `umask 002`:
+
+```sh
+bin/fm-test-run.sh tests/fm-remote-secondmate-replacement.test.sh
+```
+
+Observed output:
+
+```text
+ok - parent-route creation is private under umask 002 and accepted by Deck safe status I/O
+...
+ok - a launch reconciles a pre-existing 0775 parent-route root to a mode Deck accepts
+ok - a relaunch reconciles a pre-existing 0775 parent-route root to a mode Deck accepts
+not run - foreign-owner refusal requires chown privilege
+ok - the reconcile refuses a symlink, a foreign-owned root, and a non-directory, naming each
+ok - a symlinked or relocated parent-route data root still launches
+ok - a GNU-shaped stat on PATH cannot poison the parent-route owner read
+ok - a working remote Deck mate reads alive to the control plane and survives a launch
+...
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=226041
+```
+
+The test asserts mode `0700` and writes and reads a status record through `bin/fm-state-io.py`, the same descriptor-bound boundary used by the Deck driver.
+The reconcile runs at both lifecycle boundaries that start an agent - launch and relaunch - and is scoped to the state root the driver validates: the data root keeps its `umask 077` creation, and a launch over a relocated data root still succeeds without tightening it.
+The owner read uses the repository's `uname` stat dispatch rather than a collapsed `stat -f || stat -c` fallback, and a GNU-shaped `stat` shadowing `PATH` - which answers `-f` with a filesystem dump and exit 0, the shape recorded in issue #2837 - still reconciles the root to `0700`.
+
 ### fm-remote server birth and login-keychain access
 
 Measured 2026-09-09 on macOS 26 (Darwin 25.6.0) aarch64 with Claude Code 2.1.266 and Herdr 0.9.0, the guarantee behind `bin/fm-remote-herdr-guard.sh` and the doctor's `herdr-server` check: login-keychain access follows the audit session a process was born into, never the launch shape or the shell.
