@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/primary.swiftdeps"
+  },
+  "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Tests/VoiceHUDTests/HUDStateTests.swift": {
+    "dependencies": "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/HUDStateTests.d",
+    "object": "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/HUDStateTests.swift.o",
+    "swiftmodule": "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/HUDStateTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/HUDStateTests.swiftdeps",
+    "diagnostics": "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/HUDStateTests.dia"
+  }
+}

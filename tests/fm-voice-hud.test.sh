@@ -215,3 +215,51 @@ check(eng.closed.is_set(), "close must mark the engine closed")
 check(eng.proc.poll() is not None, "the relay child must be reaped")
 PY
 pass "the engine wiring speaks the frame wire against a stub relay"
+
+# --- the panel bridge, headlessly --------------------------------------------
+#
+# The bridge is the Python half of the HUD process: it owns the engine and
+# reports state as JSON lines. The stub relay stands in for the relay again,
+# so this checks the bridge's own behavior: it starts the engine, reports the
+# listening state, forwards transcripts and notices, and quits cleanly. The
+# mic half of the bridge lands with the mic-capture stage.
+
+STUB2="$TMP_ROOT/stub-relay.py"
+python3 - "$ROOT" "$STUB" <<'PY' || fail "bridge"
+import json, os, subprocess, sys, threading, time
+root, stub = sys.argv[1], sys.argv[2]
+
+def check(cond, label):
+    if not cond:
+        sys.exit("bridge: " + label)
+
+proc = subprocess.Popen(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
+     "--stub-relay", stub],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+
+events = []
+def read_events():
+    for line in proc.stdout:
+        line = line.strip()
+        if line:
+            events.append(json.loads(line))
+threading.Thread(target=read_events, daemon=True).start()
+
+deadline = time.monotonic() + 10
+while not any(e.get("type") == "state" and e.get("state") == "listening"
+              for e in events):
+    if time.monotonic() > deadline:
+        sys.exit("bridge: never reported listening")
+    time.sleep(0.1)
+
+proc.stdin.write("quit\n")
+proc.stdin.flush()
+try:
+    rc = proc.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    proc.kill()
+    sys.exit("bridge: did not exit on quit")
+check(rc == 0, "the bridge must exit zero on a clean quit")
+PY
+pass "the panel bridge reports state and quits cleanly over the boundary"
