@@ -618,6 +618,11 @@ class Downlink:
         self._stream = stream
         self._queue = queue.Queue()
         self._first_audio = None
+        # Which response the queued audio belongs to, moved forward by arm_turn
+        # and arm_response. A frame stamps the wire moment only while it still
+        # belongs to the response being spoken, so one drained late from an
+        # ended response cannot stand in as the new response's first audio.
+        self._response = 0
         self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -628,18 +633,20 @@ class Downlink:
             item = self._queue.get()
             if item is None:
                 return
-            kind, payload = item
+            kind, payload, sent_as = item
             try:
                 writer.send(kind, payload)
             except (BrokenPipeError, ValueError, OSError):
                 return
             if kind == frame.AUDIO:
                 with self._lock:
-                    if self._first_audio is None:
+                    if sent_as == self._response and self._first_audio is None:
                         self._first_audio = time.monotonic()
 
     def send(self, kind, payload=b""):
-        self._queue.put((kind, payload))
+        with self._lock:
+            sent_as = self._response
+        self._queue.put((kind, payload, sent_as))
 
     def send_json(self, kind, obj):
         self.send(kind, json.dumps(obj, separators=(",", ":")).encode("utf-8"))
@@ -648,6 +655,7 @@ class Downlink:
         """Forget the previous turn's first-audio mark."""
         with self._lock:
             self._first_audio = None
+            self._response += 1
 
     def arm_response(self):
         """Forget the first-audio mark of the response that just ended.
@@ -660,6 +668,7 @@ class Downlink:
         """
         with self._lock:
             self._first_audio = None
+            self._response += 1
 
     def first_audio(self):
         with self._lock:
@@ -813,6 +822,7 @@ class Session:
         # turn, not to the connect and credential work that ran before it.
         self.budget = TurnBudget(
             "reply", getattr(self.options, "turn_timeout", None))
+        self.response_audio = False
         self.turn = {"began": time.monotonic()}
         self.tool_calls = 0
         self.tool_names = []
