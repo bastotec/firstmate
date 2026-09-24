@@ -84,6 +84,7 @@ case "$prompt" in
     printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS"
     "$FM_TEST_BUSY_EVENT" arm "$(dirname "$FM_TEST_STATUS")" t1 >/dev/null
     ;;
+  *legacy-finish-write-status*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
   *write-status*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
   *resolve-only*) printf 'resolved [key=choice]: answered: yes\n' >> "$FM_TEST_STATUS" ;;
   *sleep*)
@@ -108,7 +109,8 @@ if [ -n "$gate" ]; then
 fi
 case "$prompt" in
   *fail-turn*) printf '{"type":"run_failed","error":"provider failed"}\n'; exit 9 ;;
-  *) printf '{"type":"run_finished","output":"x","turns":1}\n' ;;
+  *legacy-finish*) printf '{"type":"run_finished","output":"x","turns":1}\n' ;;
+  *) printf '{"type":"run_finished","output":"x","turns":1,"finished_at":1790269292}\n' ;;
 esac
 SH
   chmod +x "$dir/deck"
@@ -198,6 +200,24 @@ test_busy_state_failures_stop_turns_and_publish_status() {
   pass "fm-deck-worker: busy-state failures stop turns and publish status evidence"
 }
 
+test_finished_turn_renders_the_utc_completion_time() {
+  local dir="$TMP_ROOT/finish-time" legacy="$TMP_ROOT/finish-time-legacy"
+  make_fake_deck "$dir"
+  run_worker "$dir" $'/quit\n' write-status || fail "the driver did not exit cleanly"
+  assert_grep 'turn finished 2026-09-24T17:01Z (1 model calls)' "$dir/pane.out" \
+    "the finished turn did not carry the UTC completion time from run_finished.finished_at"
+  assert_no_grep 'turn finished (' "$dir/pane.out" \
+    "the finished turn rendered the timestamp-less legacy wording while finished_at was present"
+
+  make_fake_deck "$legacy"
+  run_worker "$legacy" $'/quit\n' legacy-finish-write-status || fail "the legacy driver run did not exit cleanly"
+  assert_grep 'turn finished (1 model calls)' "$legacy/pane.out" \
+    "a run_finished without finished_at did not fall back to the timestamp-less wording"
+  assert_no_grep 'turn finished 2026-' "$legacy/pane.out" \
+    "a run_finished without finished_at invented a completion time"
+  pass "fm-deck-worker: the finished-turn line carries the UTC completion time and degrades safely without it"
+}
+
 test_turnend_signal_refuses_unsafe_paths() {
   local linked="$TMP_ROOT/turnend-symlink" irregular="$TMP_ROOT/turnend-directory" rc
   make_fake_deck "$linked"
@@ -238,7 +258,7 @@ test_stderr_before_completion_blocked_does_not_break_rendering() {
   [ "$(sed -n 2p "$dir/gate.log")" = pass ] || fail "the recovered completion attempt did not pass"
   assert_grep 'pre_complete hook rejected completion' "$dir/pane.out" "Deck stderr was not preserved outside the event stream"
   assert_grep 'finish refused (attempt 1)' "$dir/pane.out" "the completion_blocked event did not render after Deck wrote stderr"
-  assert_grep 'turn finished (1 model calls)' "$dir/pane.out" "the recovered turn did not render its completion"
+  assert_grep 'turn finished 2026-09-24T17:01Z (1 model calls)' "$dir/pane.out" "the recovered turn did not render its completion with the UTC finish time"
   [ "$(cat "$dir/state/t1.status")" = 'done: recovered after refusal' ] \
     || fail "the recovered turn was replaced with failure evidence"
   pass "fm-deck-worker: Deck stderr cannot break completion-blocked rendering"
@@ -1151,6 +1171,7 @@ test_turnend_signal_refuses_unsafe_paths
 test_evidence_gate_refuses_a_turn_without_a_status_line
 test_stderr_before_completion_blocked_does_not_break_rendering
 test_bookkeeping_lines_do_not_satisfy_turn_evidence
+test_finished_turn_renders_the_utc_completion_time
 test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
