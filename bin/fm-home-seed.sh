@@ -30,7 +30,7 @@
 #       the code root by path, so the home needs no remote naming it.
 #       Seeding is transactional: on validation, clone, init, or registry failure,
 #       generated briefs, new homes, new project clones, rewritten home remotes,
-#       and registry edits are rolled back. Treehouse-acquired homes are returned
+#       registry edits, and the minted stream credential are rolled back. Treehouse-acquired homes are returned
 #       only when the rollback target is safe; a failed return warns because the
 #       lease may still be held. When the seeding home hosts the fleet's stream
 #       hub (it owns config/stream-hub-tokens), the seeded home also receives
