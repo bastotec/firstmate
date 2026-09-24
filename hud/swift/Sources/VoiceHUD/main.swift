@@ -172,6 +172,10 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "the decoder died - restart the HUD"))
+                case "mic-fault":
+                    model.applyState("listening")
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant, text: "no microphone - restart the HUD"))
                 case "turn-timeout":
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
