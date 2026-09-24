@@ -1,0 +1,7 @@
+
+⛵ deck working - ctrl+c to stop
+echo: write-status
+── turn finished 2026-09-24T17:01Z (3 model calls)
+
+idle since 2026-09-24T18:13Z
+❯ 
