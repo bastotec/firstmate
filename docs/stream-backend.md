@@ -189,6 +189,11 @@ Tokens are class-scoped, and there are three classes:
 
 A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, so an operator credential is written `subscribe,control:<token>` and a home's own client credential, which both publishes and steers, is `publish,subscribe,control:<token>`.
 A bare token line grants `subscribe` alone, so the unqualified line is the read-only one.
+
+Seeding a secondmate home mints that home its own token rather than copying the primary's: `bin/fm-home-seed.sh` appends one `publish,subscribe,control:<token>` line to the hub host's `config/stream-hub-tokens` - the home hosting the hub is the one owning that file, since a client home's `config/stream-hub` names a remote hub its seeding must not touch - and writes the fresh token into the mate home's own `config/stream-token`, the same client-credential file any home reads (`bin/fm-stream-secondmate-credential-lib.sh`).
+A seeded token is INACTIVE until the hub restarts: the hub reads its token file once at serve start, so the credential the mate presents is refused until then.
+That restart is a planned quiet-boundary operation, not part of seeding - a restart clears terminal scrollback and empties Bridge-order reconciliation, the same cost [When the hub restarts](#when-the-hub-restarts) names, so it must not happen while an order is pending or may need a resend.
+The first real seeding gets one such planned restart; a supported token reload is separate queued work, because seeding recurs and every restart spends that fleet-wide cost again.
 A viewing token cannot register an endpoint, publish, or steer a worker: input, status, and close are all refused with 403.
 Command retrieval and result submission additionally require the endpoint's private `command_capability`, established by registration and carried in the `X-Endpoint-Capability` request header.
 A poll must name that endpoint; machine-wide command retrieval is refused.

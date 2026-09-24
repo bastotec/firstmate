@@ -32,7 +32,14 @@
 #       generated briefs, new homes, new project clones, rewritten home remotes,
 #       and registry edits are rolled back. Treehouse-acquired homes are returned
 #       only when the rollback target is safe; a failed return warns because the
-#       lease may still be held.
+#       lease may still be held. When the seeding home hosts the fleet's stream
+#       hub (it owns config/stream-hub-tokens), the seeded home also receives
+#       its own minted stream credential: one narrow class line appended to the
+#       hub host's config/stream-hub-tokens and the fresh token delivered into
+#       the mate home's config/stream-token, never a copy of the primary's
+#       credential (bin/fm-stream-secondmate-credential-lib.sh). The seeded
+#       token stays inactive until the hub restarts; docs/stream-backend.md
+#       owns that limit.
 #       Set FM_SECONDMATE_CHARTER='<charter>' to seed from inline charter text
 #       when no filled charter brief exists. Set FM_SECONDMATE_SCOPE='<scope>'
 #       to override the registry routing scope. Otherwise the registry summary
@@ -49,6 +56,9 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+# The seeding home's config dir, resolved the same way bin/fm-stream.sh does,
+# because stream mate credential seeding writes this home's stream-hub-tokens.
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 REG="$DATA/secondmates.md"
 SUB_HOME_MARKER=".fm-secondmate-home"
 SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
@@ -62,6 +72,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-home-route-lib.sh
 . "$SCRIPT_DIR/fm-home-route-lib.sh"
+# shellcheck source=bin/fm-stream-secondmate-credential-lib.sh
+. "$SCRIPT_DIR/fm-stream-secondmate-credential-lib.sh"
 
 usage() {
   echo "usage: fm-home-seed.sh <id> <home|-> {<project>...|--no-projects}" >&2
@@ -607,6 +619,7 @@ SEED_MARKER_EXISTED=0
 SEED_PARENT_MARKER_EXISTED=0
 SEED_HOME_REMOTES_CHANGED=0
 SEED_HOME_PRIOR_ORIGIN=
+SEED_STREAM_MATE_TOKEN=0
 
 restore_seed_file() {
   local existed=$1 backup=$2 path=$3
@@ -732,6 +745,11 @@ seed_rollback() {
         restore_seed_file "$SEED_SUB_REG_EXISTED" "$SEED_BACKUP_DIR/sub-projects.md" "$SEED_HOME/data/projects.md"
       fi
     fi
+  fi
+
+  if [ -n "${SEED_HOME:-}" ] && [ "$SEED_STREAM_MATE_TOKEN" = 1 ]; then
+    # Releases its own lock; safe when seeding never reached the mint.
+    rollback_stream_secondmate_token "$SEED_HOME" "$STATE" 2>/dev/null || true
   fi
 
   if [ -n "${SEED_BACKUP_DIR:-}" ]; then
@@ -1049,9 +1067,34 @@ seed_home() {
   mv -f -- "$home/$SUB_HOME_PARENT_MARKER.tmp.$$" "$home/$SUB_HOME_PARENT_MARKER"
   printf '%s\n' "$id" > "$home/$SUB_HOME_MARKER.tmp.$$"
   mv -f -- "$home/$SUB_HOME_MARKER.tmp.$$" "$home/$SUB_HOME_MARKER"
+  # Stream credential seeding: when this home hosts the fleet's stream hub,
+  # which it signals by owning a config/stream-hub-tokens file (the file
+  # `hub start` passes the hub; a client home instead writes config/stream-hub,
+  # which names a remote hub and must never be seeded into), a stream-hosted
+  # mate home gets its own minted credential now - a fresh token, one narrow
+  # class line in this home's stream-hub-tokens, and the token in the mate's
+  # own config/stream-token (fm-stream-secondmate-credential-lib.sh owns the
+  # contract). Deliberately NOT gated on a running hub: the seeded token is
+  # inactive until the hub restarts either way, so a stopped hub seeds exactly
+  # as well and the mint does not depend on fleet state. Unconditional minting
+  # on every seed is deliberately avoided: most homes never touch stream, and a
+  # token file gathering unused credentials widens the fleet's bearer surface
+  # for nothing. The token is INACTIVE until the hub restarts;
+  # docs/stream-backend.md owns that limit and its planned-restart cost.
+  if [ -f "$CONFIG/stream-hub-tokens" ]; then
+    # Armed before the mint so a partial mint - mate token written, hub append
+    # refused - rolls back too, not only a later seed failure.
+    SEED_STREAM_MATE_TOKEN=1
+    seed_stream_secondmate_token "$id" "$home" "$STATE" || return 1
+  fi
   write_registry "$id" "$home" "$projects_csv" "$SEED_PARENT_BRIEF"
   validate_registry
   SEED_COMMITTED=1
+  # Released only now: the EXIT trap is about to be disarmed, and a lock the
+  # process abandons without releasing wedges the next seed behind a pid
+  # stale-steal instead of a clean handoff.
+  commit_stream_secondmate_token "$STATE"
+  SEED_STREAM_MATE_TOKEN=0
   seed_registry_lock_release
   trap - EXIT
   rm -rf -- "$SEED_BACKUP_DIR"
