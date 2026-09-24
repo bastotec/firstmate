@@ -101,7 +101,10 @@ def main():
         if event == "engine-fault":
             report_fault()
         else:
-            emit({"type": "notice", "event": event})
+            notice = {"type": "notice", "event": event}
+            if obj.get("error"):
+                notice["error"] = obj["error"]
+            emit(notice)
 
     engine = engine_mod.Engine(
         argv,

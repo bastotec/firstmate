@@ -159,7 +159,7 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             case .transcript(let role, let text):
                 model.transcriptLine(TranscriptLine(
                     role: role == "user" ? .user : .assistant, text: text))
-            case .notice(let event):
+            case .notice(let event, let error):
                 // Notices the HUD must show rather than just carry: a dead
                 // engine or an abandoned turn leaves the mic deaf, and the
                 // panel says so instead of rendering listening forever.
@@ -176,6 +176,17 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "no microphone - restart the HUD"))
+                case "turn-failed":
+                    model.applyState("listening")
+                    var text = "that turn failed - ask again"
+                    if let reason = error, !reason.isEmpty {
+                        text = "that turn failed (\(reason)) - ask again"
+                    }
+                    model.transcriptLine(TranscriptLine(role: .assistant, text: text))
+                case "session-ended":
+                    model.applyState("listening")
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant, text: "the relay ended the session - ask again"))
                 case "turn-timeout":
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(

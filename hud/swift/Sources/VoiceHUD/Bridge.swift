@@ -13,7 +13,7 @@ import Foundation
 enum BridgeEvent: Equatable {
     case state(String)
     case transcript(role: String, text: String)
-    case notice(event: String)
+    case notice(event: String, error: String?)
 }
 
 final class Bridge {
@@ -90,7 +90,8 @@ final class Bridge {
             return .transcript(role: obj["role"] as? String ?? "user",
                                text: obj["text"] as? String ?? "")
         case "notice":
-            return .notice(event: obj["event"] as? String ?? "")
+            return .notice(event: obj["event"] as? String ?? "",
+                          error: obj["error"] as? String)
         default:
             return nil
         }
