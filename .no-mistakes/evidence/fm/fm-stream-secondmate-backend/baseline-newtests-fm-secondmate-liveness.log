@@ -1,0 +1,26 @@
+FM_TEST_BEGIN 2026-09-24T17:45:48Z tests/fm-secondmate-liveness.test.sh family=secondmate expected_gate_skip=none
+ok - fm_backend_tmux_agent_state: separates live, dead, missing, ambiguous, and unreadable
+ok - fm_backend_tmux_agent_state: rejects malformed targets before probing tmux
+ok - posture verdict: read from the agent's own arguments, with nothing claimed when no agent can be read
+ok - fm_backend_herdr_agent_state: preserves missing/no-agent/live/unknown husk behavior
+ok - fm_backend_agent_state: routes tmux/Herdr and keeps Zellij unverified
+ok - sweep: a confirmed-dead secondmate endpoint is killed and respawned
+ok - sweep: an endpoint whose kill nothing confirmed is reported and not relaunched onto
+ok - sweep: an already-live secondmate is untouched and distinguishable in verbose diagnostics
+ok - sweep: a live secondmate without the configured Claude posture is reported, neither stopped nor relaunched
+ok - sweep: an authoritatively missing Pi secondmate window is relaunched
+ok - sweep: an authoritatively missing pi-signed secondmate window is relaunched
+ok - sweep: an existing ambiguous Pi process prevents duplicate recovery
+ok - sweep: transient target unreadability never licenses recovery
+ok - sweep: failed relaunch diagnostics distinguish a confidently missing endpoint
+ok - sweep: an unverified harness blocks recovery with a concrete diagnostic
+ok - sweep: a cursor secondmate with a dead endpoint stays unverified and untouched
+not ok - a recorded deck secondmate should be verified for recovery: SECONDMATE_LIVENESS: secondmate sm1: skipped: recorded harness 'deck' is unverified for recovery (backend=tmux)
+SECONDMATE_SYNC: secondmate sm1: skipped: primary default-branch commit cannot be resolved (unexpected: 'unverified for recovery')
+--- output ---
+SECONDMATE_LIVENESS: secondmate sm1: skipped: recorded harness 'deck' is unverified for recovery (backend=tmux)
+SECONDMATE_SYNC: secondmate sm1: skipped: primary default-branch commit cannot be resolved
+FM_TEST_END 2026-09-24T17:48:12Z tests/fm-secondmate-liveness.test.sh exit=1 duration_ms=143376 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=145035
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=143376 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-secondmate-liveness.test.sh duration_ms=143376

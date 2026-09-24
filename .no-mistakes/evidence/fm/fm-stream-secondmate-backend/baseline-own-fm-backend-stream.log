@@ -1,0 +1,24 @@
+FM_TEST_BEGIN 2026-09-24T17:48:19Z tests/fm-backend-stream.test.sh family=unclassified expected_gate_skip=none
+ok - stream: create yields a hub-bound target the dispatcher can resolve
+ok - stream: a dispatcher send reaches the endpoint and capture reads it back
+ok - stream: capture returns only the requested tail through the dispatcher
+ok - stream: the composer capture keeps a blank screen apart from the cursor row
+ok - stream: agent state reads the endpoint's foreground process
+ok - stream: agent state separates a missing endpoint, a partition, and an unreachable hub
+ok - stream: a hub restart is waited out rather than reported as a missing worker
+ok - stream: the fleet listing reports a worker that lived through a hub restart
+ok - stream: an agent-reported exit stays dead past staleness, a forced close does not
+ok - stream: an agent's own close outranks a forced one that landed first
+ok - stream: kill closes the exact endpoint and leaves its sibling running
+ok - stream: only a close the endpoint's own agent reported counts as a stop
+ok - stream: a kill the hub cannot answer is reported as unconfirmed
+ok - stream: a 404 stays unconfirmed however long the hub has been up
+ok - stream: task and kill answers the adapter cannot read are unconfirmed, never a stop
+ok - stream: the status return channel appends through the normal status protocol
+ok - stream: a target recorded against another hub is refused, not redirected
+ok - stream: an unaddressable target reports whether a worker was ever named
+not ok - a spawn whose endpoint shell dies at birth should be refused
+FM_TEST_END 2026-09-24T17:53:06Z tests/fm-backend-stream.test.sh exit=1 duration_ms=285894 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=287439
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=285894 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-backend-stream.test.sh duration_ms=285894
