@@ -64,11 +64,14 @@ my $name_pattern = qr/(?<![\w.-])($alternatives)(?![\w.-])/;
 # above a source call is authoritative where present and resolves against the
 # same working directory: source=/dev/null means the lint definition analyzes
 # nothing there, so no edge is built from that call, while source=path is an
-# edge to exactly that path. A fully variable operand whose directive block
-# carries no source= matches no name and adds no edge: the pinned ShellCheck
-# reports SC1090 and follows nothing there, so such a call cannot hide a
-# dependency of a changed file. No shell code is evaluated anywhere in this
-# analysis.
+# edge to exactly that path. A fully variable operand with no source= in the
+# contiguous comment block directly above the source call matches no name and
+# adds no edge: the pinned ShellCheck reports SC1090 there and follows nothing.
+# The scan enforces only that adjacency: a source= directive placed above an
+# enclosing compound command is followed by the pinned ShellCheck into the
+# compound body, but the scan stops at the command line and does not see it, so
+# that shape can leave a changed sourced module unselected. No shell code is
+# evaluated anywhere in this analysis.
 my %directed;
 for my $path (keys %text) {
     my $body = $text{$path};
