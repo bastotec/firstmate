@@ -292,6 +292,11 @@ class Engine:
                         self.closed.set()
                 return
             kind, payload = got
+            # Which turn this frame belongs to, taken the moment it arrives,
+            # so a frame from an abandoned turn is never applied to the one
+            # now open.
+            with self.lock:
+                arrived_in = self.turn_id
             try:
                 if kind == frame.AUDIO:
                     self.on_audio(payload)
@@ -307,6 +312,22 @@ class Engine:
                     if event == "ready":
                         self.ready_notice = obj
                         self.ready.set()
+                    elif event in ("turn-failed", "session-ended"):
+                        # The relay's own release for a turn that will never
+                        # answer, sent while the relay stays alive: the
+                        # waiter must come back now, and only the turn the
+                        # failure arrived in may be released - a stale one
+                        # from an abandoned turn must not end the turn now
+                        # open. Checked and released in one critical
+                        # section, so no turn is released without being
+                        # able to say why.
+                        with self.lock:
+                            release = arrived_in == self.turn_id
+                            if release:
+                                self.reply_done.set()
+                        if release:
+                            self.on_state("listening")
+                        self.on_notice(event, obj)
                     else:
                         self.on_notice(event, obj)
                 elif kind == frame.MARK:

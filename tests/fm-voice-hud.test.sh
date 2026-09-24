@@ -216,6 +216,100 @@ check(eng.proc.poll() is not None, "the relay child must be reaped")
 PY
 pass "the engine wiring speaks the frame wire against a stub relay"
 
+# --- a failed turn releases the waiter, promptly and with its reason --------
+#
+# The relay's own failure path: the model stream breaks mid-turn and the
+# relay says turn-failed while staying alive. That notice is the only thing
+# that releases a client waiting for a reply, so the engine must bring its
+# waiter back at once - not burn the whole turn timeout - and carry the
+# failure to the HUD's notice wire.
+
+STUB_FAIL="$TMP_ROOT/stub-fail-relay.py"
+cat > "$STUB_FAIL" <<'STUBFAIL'
+import sys
+sys.path.insert(0, sys.argv[1])
+import fm_voice_frame as frame
+
+sys.stdout.buffer.write(frame.MAGIC)
+sys.stdout.buffer.flush()
+out = frame.Writer(sys.stdout.buffer)
+out.send_json(frame.NOTICE, {"event": "ready", "model": "stub"})
+
+reader = frame.Reader(sys.stdin.buffer)
+while True:
+    got = reader.read()
+    if got is None:
+        break
+    kind, payload = got
+    if kind == frame.TALK_END:
+        # The turn dies without an answer and without the reply_end mark.
+        out.send_json(frame.NOTICE, {
+            "event": "turn-failed",
+            "error": "RuntimeError: the model stream broke"})
+    elif kind == frame.QUIT:
+        break
+try:
+    out.send(frame.BYE)
+except BrokenPipeError:
+    pass
+STUBFAIL
+
+python3 - "$ROOT" "$STUB_FAIL" <<'PY' || fail "turn-failed release"
+import importlib.util, os, sys, time
+root, stub = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location(
+    "engine", os.path.join(root, "hud", "fm_voice_engine.py"))
+engine = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(engine)
+
+states = []
+notices = []
+eng = engine.Engine(
+    [sys.executable, stub, os.path.join(root, "bin")],
+    ready_timeout=10,
+    on_state=states.append,
+    on_notice=lambda event, obj: notices.append((event, obj)))
+eng.start()
+
+eng.begin_turn()
+eng.feed(b"\x01\x02" * 320)
+t0 = time.monotonic()
+try:
+    turn = eng.end_turn(timeout=8)
+except engine.EngineError as exc:
+    sys.exit("turn-failed: the waiter burned its timeout on a failed turn: "
+             + str(exc))
+elapsed = time.monotonic() - t0
+if elapsed > 5:
+    sys.exit("turn-failed: the release must be prompt, took {:.1f}s".format(
+        elapsed))
+if turn != 1:
+    sys.exit("turn-failed: the released turn must be id 1: " + str(turn))
+if states != ["thinking", "listening"]:
+    sys.exit("turn-failed: the states must return to listening: "
+             + repr(states))
+if not any(event == "turn-failed"
+           and obj.get("error") == "RuntimeError: the model stream broke"
+           for event, obj in notices):
+    sys.exit("turn-failed: the notice must carry the reason: " + repr(notices))
+if eng.closed.is_set():
+    sys.exit("turn-failed: a failed turn must not close the engine")
+
+# The relay stayed alive and renews: the next turn opens on the same wire.
+eng.begin_turn()
+eng.feed(b"\x01\x02" * 320)
+t0 = time.monotonic()
+try:
+    turn = eng.end_turn(timeout=8)
+except engine.EngineError as exc:
+    sys.exit("turn-failed: the second turn must also be released: " + str(exc))
+if turn != 2:
+    sys.exit("turn-failed: the second turn must be id 2: " + str(turn))
+
+eng.close()
+PY
+pass "a relay turn-failed notice releases the waiter promptly with its reason"
+
 # --- the panel bridge, headlessly --------------------------------------------
 #
 # The bridge is the Python half of the HUD process: it owns the engine and
@@ -972,6 +1066,80 @@ check(b"\x01\x02" * 240 in played,
           len(played)))
 PY
 pass "the spoken reply reaches the output stream end to end and a quit drains its tail"
+
+# --- a failed turn reaches the panel with its reason --------------------------
+#
+# The same failure against the whole bridge: the relay's turn-failed notice
+# must cross the boundary as a notice carrying the reason, return the HUD to
+# listening without waiting out the turn timeout, and leave the bridge
+# quittable.
+
+python3 - "$ROOT" "$STUB_FAIL" "$TMP_ROOT" <<'PY' || fail "failed turn"
+import json, os, subprocess, sys, threading, time
+root, stub, tmp = sys.argv[1], sys.argv[2], sys.argv[3]
+
+speech = open(os.path.join(root, "tests/assets/voice-hud-speech.pcm"), "rb").read()
+silence = open(os.path.join(root, "tests/assets/voice-hud-silence.pcm"), "rb").read()
+mic_path = os.path.join(tmp, "failed-turn.pcm")
+with open(mic_path, "wb") as fh:
+    fh.write(speech + silence * 3)
+
+env = dict(os.environ)
+env["FM_VOICE_HUD_DECODER"] = (
+    "python3 -c 'import sys, time; time.sleep(0.5); "
+    "print(\"Ziggy what time is it\"); sys.stdout.flush(); sys.stdin.read()'")
+proc = subprocess.Popen(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
+     "--stub-relay", stub, "--mic-file", mic_path],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
+
+events = []
+def read_events():
+    for line in proc.stdout:
+        line = line.strip()
+        if line:
+            events.append(json.loads(line))
+threading.Thread(target=read_events, daemon=True).start()
+
+def index_of(pred, start=0):
+    for i in range(start, len(events)):
+        if pred(events[i]):
+            return i
+    return -1
+
+# The turn opens, the relay fails it, and the HUD is listening again - all
+# without the mic thread burning its 120s turn timeout. The release lands
+# on the wire just ahead of the notice that names it.
+deadline = time.monotonic() + 20
+while True:
+    opened = index_of(lambda e: e.get("type") == "state"
+                      and e.get("state") == "thinking")
+    failed = index_of(lambda e: e.get("type") == "notice"
+                      and e.get("event") == "turn-failed", opened + 1)
+    settled = index_of(lambda e: e.get("type") == "state"
+                       and e.get("state") == "listening", opened + 1)
+    if opened >= 0 and failed >= 0 and settled >= 0:
+        break
+    if time.monotonic() > deadline:
+        proc.kill()
+        sys.exit("failed turn: the failure never settled: " + repr(events))
+    time.sleep(0.1)
+if events[failed].get("error") != "RuntimeError: the model stream broke":
+    sys.exit("failed turn: the notice must carry the relay's reason: "
+             + repr(events[failed]))
+
+proc.stdin.write("quit\n")
+proc.stdin.flush()
+try:
+    rc = proc.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    proc.kill()
+    sys.exit("failed turn: the bridge did not stay quittable")
+if rc != 0:
+    sys.exit("failed turn: the bridge must quit zero after a failed turn: "
+             + str(rc))
+PY
+pass "a failed turn reaches the panel with its reason and the HUD re-arms"
 
 # --- configuration fails loud -------------------------------------------------
 #
