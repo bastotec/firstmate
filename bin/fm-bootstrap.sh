@@ -860,7 +860,7 @@ secondmate_liveness_one() {  # <meta> <id>
   # hub restart also produces for the whole grace window
   # (bin/backends/stream.sh owns that window and its cost).
   if [ "$backend" = stream ] && [ "$agent_state" = missing ]; then
-    agent_state=registry-absent
+    agent_state="registry-absent"
   fi
   case "$agent_state" in
     alive)
