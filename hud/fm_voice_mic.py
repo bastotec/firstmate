@@ -273,9 +273,14 @@ class TurnDirector:
             return self.phase
 
         self.decoder.feed(block)
+        # Drained every loud block, so the decoder's pipe never fills behind
+        # an unread turn; matched only while listening, because a transcript
+        # the decoder finalized inside a turn belongs to that turn's speech
+        # and must never arm a stale wake once the turn closes.
+        transcripts = self.decoder.poll_transcripts()
 
         if self.phase == self.LISTENING:
-            for text in self.decoder.poll_transcripts():
+            for text in transcripts:
                 if self.keyword.feed(text):
                     self.phase = self.IN_WAKE
                     self._wake_at = now
