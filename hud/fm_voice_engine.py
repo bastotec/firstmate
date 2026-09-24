@@ -193,10 +193,15 @@ class Engine:
         than silently swallowing the captain's question. After a timeout the
         next begin_turn's TALK_START makes the relay open a replacement
         session, which is its documented renewal path.
+
+        The reply_done wait is not cleared here: a release the relay already
+        delivered mid-turn - its turn-failed notice, which is the only thing
+        that ends a turn whose session is spent - must survive to this wait,
+        or the late TALK_END the spent session drops would strand the caller
+        for the whole timeout. begin_turn owns the clear, for the next turn.
         """
         with self.lock:
             turn = self.turn_id
-            self.reply_done.clear()
         self.up_q.put(frame.TALK_END)
         if not self.reply_done.wait(timeout=timeout or self.turn_timeout):
             raise EngineError(
@@ -333,8 +338,16 @@ class Engine:
                 elif kind == frame.MARK:
                     obj = frame.decode_json(payload)
                     if obj.get("mark") == "reply_end":
-                        self.reply_done.set()
-                        self.on_state("listening")
+                        # The same turn identity guard the failure release
+                        # uses: end_turn no longer clears the wait, so a
+                        # stale mark from an abandoned turn must not
+                        # complete the turn now open.
+                        with self.lock:
+                            mine = arrived_in == self.turn_id
+                            if mine:
+                                self.reply_done.set()
+                        if mine:
+                            self.on_state("listening")
                 elif kind == frame.BYE:
                     with self.lock:
                         self.closed.set()

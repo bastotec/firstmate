@@ -245,8 +245,8 @@ class TurnDirector:
         The energy gate is the first and cheapest decision: a silent block
         goes nowhere at all - not to the decoder, not to the engine - so the
         microphone streams nowhere while the room is quiet. Only voiced
-        blocks are decoded, and only after a wake does audio reach the
-        engine.
+        blocks are decoded, and only while the HUD listens; from the wake
+        onward, audio reaches the engine alone.
 
         Two different facts must not be confused: whether the channel is
         active (speech, or a pause shorter than the hangover) and whether
@@ -272,26 +272,31 @@ class TurnDirector:
                 self.on_notice("no-speech")
             return self.phase
 
-        self.decoder.feed(block)
-        # Drained every loud block, so the decoder's pipe never fills behind
-        # an unread turn; matched only while listening, because a transcript
-        # the decoder finalized inside a turn belongs to that turn's speech
-        # and must never arm a stale wake once the turn closes.
+        phase = self.phase
+        # The decoder hears listening-phase audio only: speech inside a wake
+        # or an open turn belongs to the engine alone, so the decoder can
+        # never finalize a line for it, however late that line lands - a
+        # per-utterance decoder's final line arrives during the trailing
+        # quiet, after the turn's last loud block. Still drained on every
+        # loud block, so a late line from listening speech is discarded
+        # where it sits instead of buffering to arm a stale wake.
+        if phase == self.LISTENING:
+            self.decoder.feed(block)
         transcripts = self.decoder.poll_transcripts()
 
-        if self.phase == self.LISTENING:
+        if phase == self.LISTENING:
             for text in transcripts:
                 if self.keyword.feed(text):
                     self.phase = self.IN_WAKE
                     self._wake_at = now
                     self.on_notice("wake")
                     break
-        elif self.phase == self.IN_WAKE:
+        elif phase == self.IN_WAKE:
             # Speech followed the wake: open the turn and stream.
             self.engine.begin_turn()
             self.engine.feed(block)
             self.phase = self.IN_TURN
-        elif self.phase == self.IN_TURN:
+        elif phase == self.IN_TURN:
             self.engine.feed(block)
         return self.phase
 
