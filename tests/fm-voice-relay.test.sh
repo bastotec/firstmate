@@ -935,6 +935,9 @@ class Partial:
         self.closed = 0
         self.credentials = None
         self.connect_seconds = None
+        # renew bounds the reconnect with the budget's connect share, so the
+        # stand-in carries one the way every real session does.
+        self.budget = relay.TurnBudget("reply")
 
     async def start(self):
         raise RuntimeError("ServiceUnavailableException")
@@ -1183,6 +1186,10 @@ async def one_case(how):
             self.failed = False
             self.replies = 0
             self.ended = asyncio.Event()
+            # The one turn budget, which a replacement session owns the same
+            # way the session it replaced did. renew bounds the reconnect with
+            # its connect share, so a stand-in without one is not a session.
+            self.budget = relay.TurnBudget("reply")
             self.turns = 0
             built.append(self)
 
