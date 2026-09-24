@@ -677,6 +677,237 @@ if rc != 0:
 PY
 pass "an engine fault reaches the panel as a notice and the bridge stays quittable"
 
+# --- a relay that refuses at startup says so on the wire ----------------------
+#
+# The first live run is exactly when the home is least likely to be
+# configured: a relay that never says hello must reach the panel as an
+# engine-fault notice, not a traceback the wire never carries.
+
+STUB_SILENT="$TMP_ROOT/stub-silent-relay.py"
+cat > "$STUB_SILENT" <<'STUBSILENT'
+import sys
+# Not a relay: exits before the handshake.
+sys.exit(3)
+STUBSILENT
+
+python3 - "$ROOT" "$STUB_SILENT" <<'PY' || fail "startup fault"
+import json, os, subprocess, sys
+root, stub = sys.argv[1], sys.argv[2]
+
+proc = subprocess.run(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
+     "--stub-relay", stub],
+    capture_output=True, text=True, timeout=30)
+events = []
+for ln in proc.stdout.splitlines():
+    ln = ln.strip()
+    if ln:
+        events.append(json.loads(ln))
+if proc.returncode == 0:
+    sys.exit("startup fault: the bridge must exit non-zero when the relay refuses")
+if not any(e.get("type") == "notice" and e.get("event") == "engine-fault"
+           for e in events):
+    sys.exit("startup fault: the refusal never reached the wire: "
+             + repr(proc.stdout) + repr(proc.stderr[-500:]))
+PY
+pass "a relay refusing at startup surfaces as an engine-fault notice and a non-zero exit"
+
+# --- a dead decoder child says so, and the bridge stays quittable -------------
+#
+# The wake decision needs the decoder's transcripts, so a decoder command
+# that exits early - wrong path, missing venv, mid-session crash - must reach
+# the panel once and never kill the mic thread with a traceback.
+
+python3 - "$ROOT" "$STUB" <<'PY' || fail "decoder fault"
+import json, math, os, struct, subprocess, sys, tempfile, threading, time
+root, stub = sys.argv[1], sys.argv[2]
+
+# Six seconds of loud tone: loud blocks keep reaching the decoder after the
+# child has exited, which is when the dead pipe first speaks.
+tone = b"".join(
+    struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * i / 16000)))
+    for i in range(6 * 16000))
+fd, mic_path = tempfile.mkstemp(suffix=".pcm")
+with os.fdopen(fd, "wb") as fh:
+    fh.write(tone)
+
+env = dict(os.environ)
+env["FM_VOICE_HUD_DECODER"] = "python3 -c 'import time; time.sleep(1.0)'"
+proc = subprocess.Popen(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
+     "--stub-relay", stub, "--mic-file", mic_path],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
+
+events = []
+def read_events():
+    for line in proc.stdout:
+        line = line.strip()
+        if line:
+            events.append(json.loads(line))
+threading.Thread(target=read_events, daemon=True).start()
+
+deadline = time.monotonic() + 15
+while not any(e.get("type") == "notice" and e.get("event") == "decoder-fault"
+              for e in events):
+    if time.monotonic() > deadline:
+        proc.kill()
+        sys.exit("decoder fault: the fault notice never reached the wire: "
+                 + repr(events))
+    time.sleep(0.1)
+
+proc.stdin.write("quit\n")
+proc.stdin.flush()
+try:
+    rc = proc.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    proc.kill()
+    sys.exit("decoder fault: the bridge did not stay quittable after the fault")
+if rc != 0:
+    sys.exit("decoder fault: the bridge must quit zero after a decoder fault: "
+             + str(rc))
+os.unlink(mic_path)
+PY
+pass "a dead decoder child reaches the panel as a notice and the bridge stays quittable"
+
+# --- the spoken reply, end to end through the bridge -------------------------
+#
+# The whole lane with every real component a worker shell can host: the
+# committed speech clip wakes through a scripted decoder, the turn crosses to
+# the stub relay, the reply PCM plays through a stub output stream, and a
+# quit drains the buffered tail before the stream closes. The capture file is
+# what the output device actually received.
+
+SDSTUB="$TMP_ROOT/sdstub"
+mkdir -p "$SDSTUB"
+cat > "$SDSTUB/sounddevice.py" <<'SDPY'
+import atexit
+import os
+import threading
+import time
+
+received = bytearray()
+
+
+class RawOutputStream:
+    def __init__(self, samplerate, channels, dtype, blocksize, device,
+                 latency, callback):
+        self.callback = callback
+        self._running = True
+        threading.Thread(target=self._pump, daemon=True).start()
+
+    def _pump(self):
+        out = bytearray(4800)
+        while self._running:
+            self.callback(out, 2400, None, None)
+            received.extend(out)
+            time.sleep(0.02)
+
+    def start(self):
+        pass
+
+    def stop(self):
+        self._running = False
+
+    def close(self):
+        pass
+
+
+def _dump():
+    path = os.environ.get("FM_TEST_SPEAKER_CAPTURE")
+    if path:
+        with open(path, "wb") as fh:
+            fh.write(bytes(received))
+
+
+atexit.register(_dump)
+SDPY
+
+python3 - "$ROOT" "$STUB" "$SDSTUB" "$TMP_ROOT" <<'PY' || fail "spoken reply"
+import json, os, subprocess, sys, threading, time
+root, stub, sdstub, tmp = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+
+def check(cond, label):
+    if not cond:
+        sys.exit("spoken reply: " + label)
+
+# The speech clip wakes the turn; trailing silence ends it, which is when
+# the stub relay answers.
+speech = open(os.path.join(root, "tests/assets/voice-hud-speech.pcm"), "rb").read()
+silence = open(os.path.join(root, "tests/assets/voice-hud-silence.pcm"), "rb").read()
+mic_path = os.path.join(tmp, "spoken-reply.pcm")
+with open(mic_path, "wb") as fh:
+    fh.write(speech + silence * 3)
+
+capture = os.path.join(tmp, "speaker-capture.pcm")
+if os.path.exists(capture):
+    os.unlink(capture)
+
+env = dict(os.environ)
+env["FM_TEST_SPEAKER_CAPTURE"] = capture
+env["FM_VOICE_HUD_DECODER"] = (
+    "python3 -c 'import sys, time; time.sleep(0.5); "
+    "print(\"Ziggy what time is it\"); sys.stdout.flush(); sys.stdin.read()'")
+env["PYTHONPATH"] = sdstub + (
+    os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+
+proc = subprocess.Popen(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
+     "--stub-relay", stub, "--mic-file", mic_path],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
+
+events = []
+def read_events():
+    for line in proc.stdout:
+        line = line.strip()
+        if line:
+            events.append(json.loads(line))
+threading.Thread(target=read_events, daemon=True).start()
+
+def index_of(pred, start=0):
+    for i in range(start, len(events)):
+        if pred(events[i]):
+            return i
+    return -1
+
+# The full reply cycle: thinking when the turn opens, speaking when the
+# reply audio arrives, listening again at the reply_end mark.
+deadline = time.monotonic() + 20
+while True:
+    spoke = index_of(lambda e: e.get("type") == "state"
+                     and e.get("state") == "speaking")
+    settled = index_of(lambda e: e.get("type") == "state"
+                       and e.get("state") == "listening", spoke + 1)
+    if spoke >= 0 and settled >= 0:
+        break
+    if time.monotonic() > deadline:
+        proc.kill()
+        sys.exit("spoken reply: the reply never settled: " + repr(events))
+    time.sleep(0.1)
+check(any(e.get("type") == "transcript" and e.get("text") == "stub heard you"
+         for e in events), "the reply transcript must arrive: " + repr(events))
+
+# The quit drains the buffered tail before the stream closes, and stays
+# bounded well under the drain's own timeout.
+proc.stdin.write("quit\n")
+proc.stdin.flush()
+t0 = time.monotonic()
+try:
+    rc = proc.wait(timeout=15)
+except subprocess.TimeoutExpired:
+    proc.kill()
+    sys.exit("spoken reply: the quit drain did not stay bounded")
+check(rc == 0, "the bridge must exit zero after a spoken reply: " + str(rc))
+check(time.monotonic() - t0 < 10,
+      "the quit drain must return well inside its bound")
+
+with open(capture, "rb") as fh:
+    played = fh.read()
+check(b"\x01\x02" * 240 in played,
+      "the reply PCM must have reached the output stream: {} bytes played".format(
+          len(played)))
+PY
+pass "the spoken reply reaches the output stream end to end and a quit drains its tail"
+
 # --- configuration fails loud -------------------------------------------------
 #
 # The brief's config contract: one config/voice-hud* file per value with an

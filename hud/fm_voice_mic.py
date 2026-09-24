@@ -42,6 +42,10 @@ BLOCK = 3200
 POST_WAKE_SPEECH_TIMEOUT = 5.0
 
 
+class DecoderError(Exception):
+    """The decoder child stopped taking audio, so the HUD can never wake."""
+
+
 class FileMic:
     """Read a 16 kHz mono 16-bit LE PCM file as blocks. The testable end."""
 
@@ -119,6 +123,7 @@ class DecoderCommand:
         self.argv = list(argv)
         self.proc = None
         self.lock = threading.Lock()
+        self.dead = None
 
     def start(self):
         self.proc = subprocess.Popen(
@@ -126,12 +131,25 @@ class DecoderCommand:
         self._buf = bytearray()
 
     def feed(self, block):
-        """Send one block; return every complete transcript line it produced."""
+        """Send one block; return every complete transcript line it produced.
+
+        A child that exited takes its stdin with it: the first write says
+        so, is latched, and raises once - the wake decision needs this
+        child's transcripts, so a dead decoder is a fault the HUD must
+        surface, never a silent no-op on every block.
+        """
+        if self.dead is not None:
+            return []
         with self.lock:
             if self.proc.stdin.closed:
                 return []
-            self.proc.stdin.write(block)
-            self.proc.stdin.flush()
+            try:
+                self.proc.stdin.write(block)
+                self.proc.stdin.flush()
+            except (BrokenPipeError, OSError) as exc:
+                self.dead = "the decoder closed its input: {}: {}".format(
+                    type(exc).__name__, exc)
+                raise DecoderError(self.dead) from None
         # Non-blocking-ish: the decoder answers per utterance, not per block,
         # so lines are drained opportunistically; the director polls.
         return []
