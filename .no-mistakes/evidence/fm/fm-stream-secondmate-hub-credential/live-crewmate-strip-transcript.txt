@@ -1,0 +1,6 @@
+=== crewmate credential strip (real agent, real pty shell) ===
+agent pid=74925 crewmate pid=75284
+FM_STREAM_TOKEN absent from the crewmate environment: PASS
+FM_STREAM_ENDPOINT_ID not visible in ps output (may be truncated); checking parent handoff instead
+crewmate process line (first 200 chars):
+/bin/zsh -i

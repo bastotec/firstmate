@@ -1,0 +1,13 @@
+=== two simultaneous seeds from one hub-host home ===
+seed mate-a exit=0  seed mate-b exit=0
+distinct tokens: yes
+hub file class lines: 3 (expect 3: primary + 2 mates)
+hub file mode: 600 (expect 600)
+primary line intact: 1
+mate-a line present: 1
+mate-b line present: 1
+mate-a token mode: 600  mate-b token mode: 600
+
+=== real hub serves the raced file ===
+mate-a token -> /v1/health HTTP 200 {"ok":true}
+mate-b token -> /v1/health HTTP 200 {"ok":true}

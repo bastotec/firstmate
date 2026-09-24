@@ -1,0 +1,49 @@
+=== 1. real seed: bin/fm-home-seed.sh streammate (hub-host home) ===
+Note: switching to 'af631e19737abb189d0c9cc39decb680fb0ce851'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+scaffolded: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live-stream-cred.jIRgcW/hubhome/data/streammate/brief.md (secondmate charter)
+home=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-live-stream-cred.jIRgcW/matehome
+seed exit=0
+
+=== 2. seeded artifacts ===
+--- hub-host config/stream-hub-tokens (mode 600) ---
+publish,subscribe,control:primar…
+publish,subscribe,control:QLiVuZ…
+--- mate home config/stream-token (mode 600) ---
+QLiVuZ…
+primary line still first and intact:
+  yes
+mate token is NOT the primary's credential:
+  yes (distinct value)
+exactly one class line per credential:
+  primary lines: 1
+  mate lines:    1
+
+=== 3. real hub serving the seeded token file (http://127.0.0.1:58129) ===
+-- mate token: GET /v1/health (any valid token)
+   HTTP 200  {"ok":true,"protocol":3,"version":"2.0.0"}
+-- mate token: GET /v1/machines (needs subscribe class)
+   HTTP 200  {"ok":true,"machines":0}
+-- mate token: POST /v1/agent/nope (needs publish class)
+   HTTP 404  {"ok":false,"error":"no_such_route"}
+-- mate token: POST /v1/orders (needs control class)
+   HTTP 409  {"ok":false,"error":"hub_generation_changed"}
+-- bogus token: GET /v1/health
+   HTTP 401  {"ok":false,"error":"unauthenticated"}
+-- primary's own token: GET /v1/health (its line survived seeding)
+   HTTP 200  {"ok":true}
