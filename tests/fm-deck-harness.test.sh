@@ -218,6 +218,27 @@ test_finished_turn_renders_the_utc_completion_time() {
   pass "fm-deck-worker: the finished-turn line carries the UTC completion time and degrades safely without it"
 }
 
+test_idle_prompt_notes_the_utc_idle_instant() {
+  local dir="$TMP_ROOT/idle-note" before after note stamp last
+  make_fake_deck "$dir"
+  before=$(date -u +%Y-%m-%dT%H:%MZ)
+  run_worker "$dir" $'/quit\n' write-status || fail "the driver did not exit cleanly"
+  after=$(date -u +%Y-%m-%dT%H:%MZ)
+  note=$(grep -E '^idle since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z$' "$dir/pane.out" | tail -1)
+  [ -n "$note" ] || fail "the idle prompt did not note when the worker went idle"
+  stamp=${note#idle since }
+  [ "$stamp" = "$before" ] || [ "$stamp" = "$after" ] \
+    || fail "the idle-since note did not carry the turn's UTC end instant: $stamp (turn ran between $before and $after)"
+  last=$(tail -1 "$dir/pane.out")
+  case "$last" in
+    '❯'|'❯ ') ;;
+    *) fail "the prompt row is no longer the bare ❯ glyph row the shared composer contract reads: $last" ;;
+  esac
+  [ "$(tail -2 "$dir/pane.out" | sed -n 1p)" = "$note" ] \
+    || fail "the idle-since note does not sit on the line beside the ❯ prompt"
+  pass "fm-deck-worker: the idle prompt notes the UTC idle instant beside the bare ❯ prompt"
+}
+
 test_turnend_signal_refuses_unsafe_paths() {
   local linked="$TMP_ROOT/turnend-symlink" irregular="$TMP_ROOT/turnend-directory" rc
   make_fake_deck "$linked"
@@ -1172,6 +1193,7 @@ test_evidence_gate_refuses_a_turn_without_a_status_line
 test_stderr_before_completion_blocked_does_not_break_rendering
 test_bookkeeping_lines_do_not_satisfy_turn_evidence
 test_finished_turn_renders_the_utc_completion_time
+test_idle_prompt_notes_the_utc_idle_instant
 test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt

@@ -479,6 +479,7 @@ run_turn() {  # <prompt>
     elif [ "$event" != turn-end ] || [ -z "$SESSION" ]; then
       host_failure "turn failed ($event, exit $rc)" || published=$?
       record_busy_event idle turn-failed || return 1
+      IDLE_SINCE=$(date -u +%Y-%m-%dT%H:%MZ)
       publish_turnend || return 1
       # The failure is recorded and published exactly as before, and a repeated
       # failure keeps publishing, so a failing loop stays visible. Only a
@@ -496,6 +497,7 @@ run_turn() {  # <prompt>
     fi
   fi
   record_busy_event idle "$event" || return 1
+  IDLE_SINCE=$(date -u +%Y-%m-%dT%H:%MZ)
   publish_turnend || return 1
 }
 
@@ -561,6 +563,7 @@ while :; do
   fi
   if [ "$show_prompt" = 1 ]; then
     tty_ready
+    [ -z "${IDLE_SINCE:-}" ] || printf '\nidle since %s' "$IDLE_SINCE"
     printf '\n❯ '
     show_prompt=0
   fi
