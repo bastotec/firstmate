@@ -686,14 +686,12 @@ while IFS="$TAB" read -r rss path; do
   # whole budget; known heavy roots can share only with fitting light roots.
   weight=$(((rss * 3 + 2047) / 2048 + 64))
   heavy=0
-  unknown=0
   [ "$weight" -le 3072 ] || heavy=1
   if [ "$rss" -eq 0 ] || [ "$weight" -gt "$ADMISSION_BUDGET_MIB" ]; then
     weight=$ADMISSION_BUDGET_MIB
     heavy=1
-    unknown=1
   fi
-  printf '%s\t%s\t%s\t%s\t%s\n' "$weight" "$worker" "$path" "$heavy" "$unknown" >> "$WEIGHTS"
+  printf '%s\t%s\t%s\t%s\n' "$weight" "$worker" "$path" "$heavy" >> "$WEIGHTS"
   printf '%s\t%s\n' "$worker" "$path" > "$TMP_ROOT/manifest.$worker"
   worker=$((worker + 1))
 done < "$TMP_ROOT/measured"
@@ -801,7 +799,7 @@ reserved=0
 peak_reserved=0
 peak_parallel=0
 current_wave=0
-while IFS="$TAB" read -r wave weight worker path heavy unknown; do
+while IFS="$TAB" read -r wave weight worker path heavy; do
   if [ "$wave" -ne "$current_wave" ]; then
     fm_lint_wait_workers
     reserved=0

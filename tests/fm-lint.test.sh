@@ -1645,6 +1645,45 @@ test_devnull_directive_bounds_selection() {
   pass "a source=/dev/null directive bounds dependency selection"
 }
 
+# The pinned ShellCheck resolves a source call from the whole comment block
+# above it, so a `source=` directive separated from the call by another
+# directive still owns a fully variable operand that matches no basename.
+# bin/fm-mail.sh:375-377 is the live two-line shape; without the edge, a PR
+# touching the sourced module would silently skip the root that analyzes it.
+test_directive_block_above_variable_source_selects_root() {
+  local tmp repo base listed
+  tmp=$(fm_test_tmproot fm-lint-directive-block)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/wake-lib.sh"
+  cat > "$repo/bin/mailer.sh" <<'SH'
+#!/bin/bash
+lib="bin/wake-lib.sh"
+if [ -f "$lib" ]; then
+  # shellcheck source=bin/wake-lib.sh
+  # shellcheck disable=SC1091
+  . "$lib"
+fi
+SH
+  cat > "$repo/bin/poller.sh" <<'SH'
+#!/bin/bash
+lib="bin/wake-lib.sh"
+if [ -f "$lib" ]; then
+  # shellcheck source=bin/wake-lib.sh disable=SC1091
+  . "$lib"
+fi
+SH
+  git -C "$repo" add . || fail "could not stage directive-block fixture"
+  git -C "$repo" commit -qm directive-block-fixture || fail "could not commit directive-block fixture"
+  base=$(git -C "$repo" rev-parse HEAD)
+  printf '#!/bin/bash\nvalue=2\n' > "$repo/bin/wake-lib.sh"
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files) \
+    || fail "directive-block selection failed"
+  [ "$listed" = $'bin/mailer.sh\nbin/poller.sh\nbin/wake-lib.sh' ] \
+    || fail "a directive elsewhere in the comment block was ignored: $listed"
+  pass "a source= directive in the block above a variable source selects its root"
+}
+
 # A weights plan where every root reads as unmeasured must say so on stderr
 # rather than silently serializing the whole run: an operator hitting the CI
 # time tripwire needs the count in the log to explain it.
@@ -1669,6 +1708,7 @@ test_all_unknown_plan_prints_diagnostic() {
 
 test_affected_roots_follow_transitive_sources
 test_devnull_directive_bounds_selection
+test_directive_block_above_variable_source_selects_root
 test_all_unknown_plan_prints_diagnostic
 test_memory_schedule_isolates_heavy_and_stale_roots
 test_affected_mode_does_not_select_unrelated_uncertain_roots

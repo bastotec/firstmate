@@ -56,27 +56,39 @@ my $alternatives = join '|', map { quotemeta($_) } sort keys %names;
 my $name_pattern = qr/(?<![\w.-])($alternatives)(?![\w.-])/;
 # Edge building matches basenames inside source references. A literal skeleton
 # such as "$dir/name.sh" creates an edge the pinned ShellCheck (0.11.0) does
-# NOT follow - under --norc --external-sources it reports SC1091 and resolves
-# the literal skeleton relative to the script directory, dropping the variable
-# component - so such edges are deliberate over-inclusion for selection, wider
-# than what ShellCheck analyzes, and never narrower. A `# shellcheck source=`
-# directive on the line before a source call is authoritative where present:
-# source=/dev/null means the lint definition analyzes nothing there, so no
-# edge is built from that call; source=path resolves exactly as written. A
-# fully variable operand matches no name and adds no edge: the pinned
-# ShellCheck never follows it (SC1090), so it cannot hide a dependency of a
-# changed file. No shell code is evaluated anywhere in this analysis.
+# NOT follow: under --norc --external-sources it drops the variable component
+# and resolves the remainder relative to the process working directory, which
+# fm-lint.sh sets to the repository root, then reports SC1091 because
+# <root>/<basename> does not exist. Such an edge is therefore wider than what
+# the pinned tool analyzes, never narrower. A `# shellcheck source=` directive
+# above a source call is authoritative where present and resolves against the
+# same working directory: source=/dev/null means the lint definition analyzes
+# nothing there, so no edge is built from that call, while source=path is an
+# edge to exactly that path. A fully variable operand whose directive block
+# carries no source= matches no name and adds no edge: the pinned ShellCheck
+# reports SC1090 and follows nothing there, so such a call cannot hide a
+# dependency of a changed file. No shell code is evaluated anywhere in this
+# analysis.
 my %directed;
 for my $path (keys %text) {
     my $body = $text{$path};
     my @lines = split /\n/, $body;
     for (my $i = 0; $i < @lines; $i++) {
         next unless $lines[$i] =~ /(?:^|[;\s])(?:source|\.)\s+/;
-        # A shellcheck source directive on the line before a source call owns
-        # its resolution: /dev/null analyzes nothing, a literal path resolves
-        # as written.
-        my ($directive) = $i > 0 && $lines[$i - 1] =~ /^\s*#\s*shellcheck\s+source=(\S+)\s*$/
-            ? ($1) : ();
+        # The pinned ShellCheck reads the whole run of comment and blank lines
+        # above a source call, stopping at the first line of code, and the
+        # first source= directive in that run owns the call, whether it is
+        # alone on its line or listed beside other directives: /dev/null
+        # analyzes nothing, a path resolves as written.
+        my @block;
+        for (my $j = $i - 1; $j >= 0 && $lines[$j] =~ /^\s*(?:#.*)?$/; $j--) {
+            unshift @block, $lines[$j];
+        }
+        my $directive;
+        for my $comment (@block) {
+            next unless $comment =~ /^\s*#\s*shellcheck\b/;
+            if ($comment =~ /(?:^|\s)source=(\S+)/) { $directive = $1; last; }
+        }
         if (defined $directive) {
             $directed{$path}{$directive} = 1 unless $directive eq '/dev/null';
             next;
