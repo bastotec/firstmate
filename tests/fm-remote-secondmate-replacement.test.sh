@@ -328,10 +328,12 @@ grep -q "^$replacement " "$IDENTITY" || fail "Deck remote relaunch did not recor
 cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
 pass "Deck remote launch and relaunch preserve the Herdr host runtime"
 
-# --- 9. A launch reconciles a pre-existing unsafe parent-route mode ---------
+# --- 9. Launch and relaunch reconcile a pre-existing unsafe mode -----------
 # A home that launched before private creation left state/parent-route as 0775,
-# which Deck's safe status I/O refuses; the launch that owns the root repairs
-# it rather than demanding a hand chmod. Refuse loudly on anything not
+# which Deck's safe status I/O refuses; each lifecycle verb that starts an
+# agent repairs the root rather than demanding a hand chmod - the launch that
+# owns it, and the relaunch whose delegated control plane would otherwise
+# recreate the root with a plain mkdir -p. Refuse loudly on anything not
 # provably owned: a symlink, a non-owned directory, or a non-directory.
 dir_mode() { python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$1"; }
 kill -HUP "$replacement" 2>/dev/null || true
@@ -346,6 +348,30 @@ out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) || fail "launch o
 printf 'working: reconciled\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
   || fail "Deck safe status I/O still rejected the reconciled parent-route directory"
 pass "a launch reconciles a pre-existing 0775 parent-route root to a mode Deck accepts"
+previous=$(pane_agent "$(route_pane)")
+if [ -n "$previous" ]; then kill -HUP "$previous" 2>/dev/null || true; fi
+reset_remote_herdr_fixture "$HERDR_STATE"
+rm -f "$ROUTE_META" "$IDENTITY"
+out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "relaunch-reconcile setup failed: $out"
+pane=$(route_pane)
+chmod 0775 "$route_state"
+cat > "$CODE/bin/fm-control.sh" <<SH
+#!/usr/bin/env bash
+pid=\$(jq -r --arg p '$pane' '.agents[\$p] // empty' '$HERDR_STATE')
+kill -HUP "\$pid"
+while kill -0 "\$pid" 2>/dev/null; do sleep 0.1; done
+herdr pane send-text '$pane' 'claude --permission-mode auto --settings {}' --session fm-remote
+herdr pane send-keys '$pane' enter --session fm-remote
+echo "relaunched \$1 harness=claude from=claude model=default effort=default backend=herdr"
+SH
+chmod +x "$CODE/bin/fm-control.sh"
+out=$(control relaunch "$SM_ID" claude default default 2>&1) || fail "relaunch over a 0775 parent-route failed: $out"
+assert_contains "$out" "relaunched $SM_ID" "the reconciling relaunch did not report success"
+[ "$(dir_mode "$route_state")" = 0o700 ] || fail "relaunch did not reconcile 0775 to private: $(dir_mode "$route_state")"
+printf 'working: relaunch reconciled\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
+  || fail "Deck safe status I/O still rejected the relaunch-reconciled parent-route directory"
+cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
+pass "a relaunch reconciles a pre-existing 0775 parent-route root to a mode Deck accepts"
 
 # --- 10. The reconcile refuses anything it cannot provably own --------------
 # Drive the REAL control script with FM_HOME pointed at a fixture home whose
