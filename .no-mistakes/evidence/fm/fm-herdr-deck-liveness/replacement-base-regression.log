@@ -1,0 +1,6 @@
+FM_TEST_BEGIN 2026-09-24T17:30:31Z tests/fm-remote-secondmate-replacement.test.sh family=secondmate expected_gate_skip=none
+not ok - parent-route creation under umask 002 is unsafe: 0o775
+FM_TEST_END 2026-09-24T17:30:52Z tests/fm-remote-secondmate-replacement.test.sh exit=1 duration_ms=20725 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=22058
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=20725 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-remote-secondmate-replacement.test.sh duration_ms=20725

@@ -1,0 +1,22 @@
+FM_TEST_BEGIN 2026-09-24T17:26:39Z tests/fm-remote-secondmate-replacement.test.sh family=secondmate expected_gate_skip=none
+ok - parent-route creation is private under umask 002 and accepted by Deck safe status I/O
+ok - a first launch reports success only for a live agent carrying the configured permission flag
+ok - a running agent without the configured posture is reported as a mismatch, neither stopped nor replaced
+ok - a relaunch whose new agent lacks the configured permission flag is reported as a failure
+ok - a previous agent still running outside its endpoint blocks the relaunch instead of gaining a twin
+ok - the relaunch verb reports success only after the old agent is gone and a new one carries the posture
+ok - a relaunch whose endpoint is gone is delegated, not refused as a running agent
+ok - a running agent is not returned as healthy when its posture cannot be resolved
+ok - a recorded agent still running outside its endpoint blocks the relaunch before anything is touched
+ok - Deck remote launch and relaunch preserve the Herdr host runtime
+ok - a launch reconciles a pre-existing 0775 parent-route root to a mode Deck accepts
+ok - a relaunch reconciles a pre-existing 0775 parent-route root to a mode Deck accepts
+not run - foreign-owner refusal requires chown privilege
+ok - the reconcile refuses a symlink, a foreign-owned root, and a non-directory, naming each
+ok - a symlinked or relocated parent-route data root still launches
+ok - a GNU-shaped stat on PATH cannot poison the parent-route owner read
+ok - a working remote Deck mate reads alive to the control plane and survives a launch
+FM_TEST_END 2026-09-24T17:29:05Z tests/fm-remote-secondmate-replacement.test.sh exit=0 duration_ms=146384 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=146949
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=146384 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-remote-secondmate-replacement.test.sh duration_ms=146384
