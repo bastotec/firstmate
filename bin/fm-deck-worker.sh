@@ -325,7 +325,7 @@ RENDER='
   elif .type == "tool_call" then "\n▸ \(.name) \(.arguments | tostring | .[0:160])\n"
   elif .type == "tool_result" then "  ↳ \(.name) (\(.duration_ms) ms) \(.output | if type == "string" then . else tostring end | split("\n")[0] | .[0:160])\n"
   elif .type == "completion_blocked" then "\n⛔ finish refused (attempt \(.attempt)): \(.reason)\n"
-  elif .type == "run_finished" then "\n── turn finished (\(.turns) model calls)\n"
+  elif .type == "run_finished" then (if (.finished_at | type) == "number" then "\n── turn finished \(.finished_at | strftime("%Y-%m-%dT%H:%MZ")) (\(.turns) model calls)\n" else "\n── turn finished (\(.turns) model calls)\n" end)
   elif .type == "run_failed" then "\n✗ turn failed: \(.error)\n"
   else empty end'
 
@@ -479,6 +479,7 @@ run_turn() {  # <prompt>
     elif [ "$event" != turn-end ] || [ -z "$SESSION" ]; then
       host_failure "turn failed ($event, exit $rc)" || published=$?
       record_busy_event idle turn-failed || return 1
+      IDLE_SINCE=$(date -u +%Y-%m-%dT%H:%MZ)
       publish_turnend || return 1
       # The failure is recorded and published exactly as before, and a repeated
       # failure keeps publishing, so a failing loop stays visible. Only a
@@ -496,6 +497,7 @@ run_turn() {  # <prompt>
     fi
   fi
   record_busy_event idle "$event" || return 1
+  IDLE_SINCE=$(date -u +%Y-%m-%dT%H:%MZ)
   publish_turnend || return 1
 }
 
@@ -561,6 +563,7 @@ while :; do
   fi
   if [ "$show_prompt" = 1 ]; then
     tty_ready
+    [ -z "${IDLE_SINCE:-}" ] || printf '\nidle since %s' "$IDLE_SINCE"
     printf '\n❯ '
     show_prompt=0
   fi
