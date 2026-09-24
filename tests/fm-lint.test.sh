@@ -1215,6 +1215,80 @@ SH
   pass "jobs=1 and jobs=2 preserve deterministic diagnostics, failures, cleanup bounds, and quiet telemetry"
 }
 
+# One process per root means the wave shape, not the analysis, decides how
+# diagnostics are gathered. The check above lints roots that have no measured
+# reservation, so each of them runs alone and never exercises a concurrent
+# wave. This one drives the genuine pinned ShellCheck over measured light roots
+# that really do share a wave, and asserts the diagnostics stay complete,
+# byte-identical, and in canonical root order at every job count, with
+# telemetry proving the concurrency actually happened.
+test_concurrent_waves_keep_diagnostics_complete_and_ordered() {
+  if ! pinned_ready; then
+    pass "SKIP (ShellCheck $REQUIRED not resolved): concurrent-wave diagnostics parity check"
+    return
+  fi
+  local tmp repo fakebin order rc1 rc4 rc4b out1 out4 out4b peak1 peak4
+  tmp=$(fm_test_tmproot fm-lint-concurrent)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nclean_a() { printf "ok\\n"; }\n' > "$repo/bin/aaa-clean.sh"
+  printf '#!/bin/bash\nbbb_unused_assignment=1\n' > "$repo/bin/bbb-defect.sh"
+  printf '#!/bin/bash\nclean_c() { printf "ok\\n"; }\n' > "$repo/bin/ccc-clean.sh"
+  # shellcheck disable=SC2016 # The fixture's unquoted expansion is the defect.
+  printf '#!/bin/bash\nprintf "%%s" $ddd_unquoted_expansion\n' > "$repo/bin/ddd-defect.sh"
+  git -C "$repo" add . || fail "could not stage concurrent-wave fixture"
+  git -C "$repo" commit -qm concurrent-wave-fixture || fail "could not commit concurrent-wave fixture"
+  # Measured light reservations, produced by the planner itself, so these four
+  # roots pack into one wave instead of running alone as unknown roots.
+  (
+    cd "$repo" || exit 1
+    printf '# ShellCheck %s\n' "$REQUIRED" > bin/fm-lint-memory.tsv
+    perl bin/fm-lint-plan.pl fingerprints '' \
+      bin/aaa-clean.sh bin/bbb-defect.sh bin/ccc-clean.sh bin/ddd-defect.sh \
+      | awk -F '\t' '{print $0 "\t1024"}' >> bin/fm-lint-memory.tsv
+  ) || fail "could not prepare measured reservations for the concurrency fixture"
+  fakebin=$(fm_fakebin "$tmp")
+  cat > "$fakebin/getconf" <<'SH'
+#!/bin/bash
+printf '%s\n' 4
+SH
+  chmod +x "$fakebin/getconf"
+
+  rc1=0
+  out1=$(cd "$repo" && PATH="$fakebin:$PATH" FM_LINT_JOBS=1 bin/fm-lint.sh \
+    --telemetry "$tmp/telemetry-jobs1.tsv" \
+    bin/aaa-clean.sh bin/bbb-defect.sh bin/ccc-clean.sh bin/ddd-defect.sh \
+    2>"$tmp/err-jobs1") || rc1=$?
+  rc4=0
+  out4=$(cd "$repo" && PATH="$fakebin:$PATH" FM_LINT_JOBS=4 bin/fm-lint.sh \
+    --telemetry "$tmp/telemetry-jobs4.tsv" \
+    bin/aaa-clean.sh bin/bbb-defect.sh bin/ccc-clean.sh bin/ddd-defect.sh \
+    2>"$tmp/err-jobs4") || rc4=$?
+  rc4b=0
+  out4b=$(cd "$repo" && PATH="$fakebin:$PATH" FM_LINT_JOBS=4 bin/fm-lint.sh \
+    --telemetry "$tmp/telemetry-jobs4b.tsv" \
+    bin/aaa-clean.sh bin/bbb-defect.sh bin/ccc-clean.sh bin/ddd-defect.sh \
+    2>"$tmp/err-jobs4b") || rc4b=$?
+
+  [ "$rc1" -ne 0 ] && [ "$rc1" -eq "$rc4" ] && [ "$rc4" -eq "$rc4b" ] \
+    || fail "serial and concurrent waves disagreed on the failing result: $rc1/$rc4/$rc4b"
+  [ "$out1" = "$out4" ] && [ "$out4" = "$out4b" ] \
+    || fail "diagnostics are not byte-identical between serial and concurrent waves"$'\n'"--- jobs=1 ---"$'\n'"$out1"$'\n'"--- jobs=4 ---"$'\n'"$out4"
+  assert_contains "$out1" "SC2034" "the unused-assignment defect was lost in a concurrent wave"
+  assert_contains "$out1" "SC2086" "the unquoted-expansion defect was lost in a concurrent wave"
+  assert_no_grep "no measured reservation" "$tmp/err-jobs4" \
+    "the fixture roots ran as unknowns, so the wave proved no concurrency"
+  assert_grep $'root_count\t4' "$tmp/telemetry-jobs4.tsv" "the concurrent run did not analyze all four roots"
+  peak1=$(awk -F '\t' '$1 == "peak_parallel_roots" {print $2}' "$tmp/telemetry-jobs1.tsv")
+  peak4=$(awk -F '\t' '$1 == "peak_parallel_roots" {print $2}' "$tmp/telemetry-jobs4.tsv")
+  [ "$peak1" = 1 ] || fail "jobs=1 must run one root at a time, telemetry reports ${peak1:-none}"
+  [ "${peak4:-0}" -ge 2 ] || fail "jobs=4 never ran roots concurrently, telemetry reports ${peak4:-none}"
+  order=$(printf '%s\n' "$out1" | awk '/^In bin\// {print $2}')
+  [ "$order" = $'bin/bbb-defect.sh\nbin/ddd-defect.sh' ] \
+    || fail "diagnostic blocks left canonical root order: $order"
+  pass "measured roots share a wave and still emit complete diagnostics in canonical order"
+}
+
 test_worker_trees_stop_on_signal() {
   local tmp fakebin fixture jobs telemetry lint_tmp pid_file out_file telemetry_file
   local parent_pid shellcheck_pid i parent_rc survivor
@@ -1733,6 +1807,7 @@ test_rejects_direct_beads_cli_in_explicit_core_path
 test_ignores_ambient_shellcheck_opts
 test_clean_fixture_passes
 test_jobs_are_deterministic_and_complete
+test_concurrent_waves_keep_diagnostics_complete_and_ordered
 test_worker_trees_stop_on_signal
 test_seeded_module_boundary_parity
 test_changed_mode_lints_only_the_changed_file
