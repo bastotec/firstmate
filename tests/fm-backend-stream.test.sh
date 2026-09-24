@@ -1280,6 +1280,24 @@ PY
   wait_for_capture "$recovered" FIXTURE-TURN-DELIVERED || fail "recovered host never ran its charter"
   assert_present "$CASE_DIR/home/state/$id.inbox/001.msg" "recovery discarded an unacknowledged steer"
   pass "stream: Deck launch, alive classification, durable steering, exit, relaunch and recovery"
+  # A hub restart empties its in-memory registry, so every probe of this mate's
+  # endpoint 404s for the classifier's whole grace window while its agent is
+  # still pacing its rejoin. Freezing the agent makes that window deterministic,
+  # and resuming it afterwards proves the mate the sweep declined to replace was
+  # live the entire time.
+  kill -STOP "$pid"
+  restart_case_hub
+  out=$(FM_BOOTSTRAP_NETWORK=only FM_BACKEND=tmux host_command fm-bootstrap.sh 2>&1) \
+    || fail "the registry-gap sweep failed: $out"
+  kill -CONT "$pid"
+  assert_contains "$out" "secondmate $id: skipped: absence from the hub registry" \
+    "a live mate the restarted hub forgot was not reported as unlicensed for respawn: $out"
+  assert_not_contains "$out" 'relaunched after confirmed agent absence' \
+    "the sweep claimed an agent absence its registry read never proved: $out"
+  assert_equals "$(sed -n 's/^window=//p' "$CASE_DIR/home/state/$id.meta")" "$recovered" \
+    "the sweep moved a live mate off its endpoint"
+  wait_for_agent_state "$recovered" alive
+  pass "stream: a restarted hub's registry gap licenses no secondmate respawn"
   # An idle interrupt must not leave control-key echo masquerading as input.
   # The earlier partial-input case proves this is not a blanket composer clear.
   wait_for_agent_state "$recovered" alive
