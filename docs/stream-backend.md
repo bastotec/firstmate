@@ -50,6 +50,11 @@ Recovery classification remains solely `fm_backend_agent_state` in `bin/fm-backe
 `bin/fm-bootstrap.sh` owns secondmate recovery respawn, preserving the recorded backend rather than selecting a different backend from ambient configuration.
 `bin/fm-control.sh` owns interrupt, exit, and same-endpoint relaunch; its `recover-missing` verb remains tmux-only because stream cannot recreate a hub-assigned endpoint identity.
 
+A stream-hosted second mate launches, is steered, and reports its own lifecycle, but its isolated home holds no hub credential, so it cannot itself spawn or supervise on stream.
+`bin/fm-stream-agent.py` hands the hosted process the hub address and deliberately withholds the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`.
+Its first stream call therefore dies in `fm_backend_stream_token` (`bin/backends/stream.sh`) before any endpoint exists, and the remedy that refusal names does not work there: `bin/fm-stream.sh token --ensure` mints a fresh random token, which the fleet hub refuses.
+Only a credential that hub already accepts, written into the mate home's own `config/stream-token`, lets a stream-hosted mate drive stream; handing secondmate homes such a credential is separate, later work.
+
 ## Prerequisites
 
 `python3`, `curl`, and `jq` must be present, and the hub's protocol must match the adapter's.

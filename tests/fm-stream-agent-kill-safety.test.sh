@@ -40,6 +40,7 @@ cat > "$CASE_DIR/drive.py" <<'PY'
 """Drive the agent's real Pty through each kill-safety property."""
 import importlib.util
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -97,6 +98,17 @@ report("partial-write-completes",
        count == len(b"composer-order\r") and b"".join(chunks) == b"composer-order\r",
        "count=%r bytes=%r" % (count, b"".join(chunks)))
 
+
+def read_until(pty, marker, timeout):
+    """Accumulate pty output until <marker> appears or <timeout> expires."""
+    output = b""
+    deadline = time.monotonic() + timeout
+    while marker not in output and time.monotonic() < deadline:
+        if select.select([pty.master_fd], [], [], 0.1)[0]:
+            output += pty.read()
+    return output
+
+
 # --- ignored launcher SIGINT must not disable the PTY child's trap ---------
 # Each case execs a real shell, installs its own interrupt handler, and receives
 # Ctrl+C through the terminal rather than by directly signalling the child.
@@ -107,18 +119,15 @@ for disposition in (int(signal.SIG_DFL), int(signal.SIG_IGN)):
         pty = make_pty(["/bin/sh", "-c",
                         "trap 'echo INTERRUPT_HANDLED; exit 0' INT; "
                         "echo CHILD_READY; while :; do sleep 0.1; done"])
-        output = b""
-        deadline = time.monotonic() + 5
-        while b"CHILD_READY" not in output and time.monotonic() < deadline:
-            output += pty.read()
+        output = read_until(pty, b"CHILD_READY", 5)
         report("child-ready-with-parent-sigint-%s" % disposition,
-               b"CHILD_READY" in output, repr(output))
+               b"CHILD_READY" in output,
+               "expected CHILD_READY within 5s, got %r" % output)
         pty.write(b"\x03")
-        deadline = time.monotonic() + 5
-        while b"INTERRUPT_HANDLED" not in output and time.monotonic() < deadline:
-            output += pty.read()
+        output += read_until(pty, b"INTERRUPT_HANDLED", 5)
         report("child-handles-sigint-with-parent-%s" % disposition,
-               b"INTERRUPT_HANDLED" in output, repr(output))
+               b"INTERRUPT_HANDLED" in output,
+               "expected INTERRUPT_HANDLED within 5s of Ctrl+C, got %r" % output)
         report("parent-sigint-disposition-unchanged-%s" % disposition,
                signal.getsignal(signal.SIGINT) == disposition)
     finally:
