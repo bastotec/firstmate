@@ -310,6 +310,108 @@ eng.close()
 PY
 pass "a relay turn-failed notice releases the waiter promptly with its reason"
 
+# --- a mid-turn failure releases the turn the captain still holds -------------
+#
+# The relay's failure flow fires mid-turn, before the captain stops talking:
+# the notice releases the open turn, and the relay then drops the late
+# TALK_END on its spent session. end_turn must not erase that delivered
+# release - the mic thread comes back at once instead of waiting out the
+# full turn timeout on a wire that will never answer.
+
+STUB_MIDFAIL="$TMP_ROOT/stub-midfail-relay.py"
+cat > "$STUB_MIDFAIL" <<'STUBMID'
+import sys
+sys.path.insert(0, sys.argv[1])
+import fm_voice_frame as frame
+
+sys.stdout.buffer.write(frame.MAGIC)
+sys.stdout.buffer.flush()
+out = frame.Writer(sys.stdout.buffer)
+out.send_json(frame.NOTICE, {"event": "ready", "model": "stub"})
+
+failed = False
+reader = frame.Reader(sys.stdin.buffer)
+while True:
+    got = reader.read()
+    if got is None:
+        break
+    kind, payload = got
+    if kind == frame.TALK_START:
+        # A new talk key renews the spent session, as the relay documents.
+        failed = False
+    elif kind == frame.AUDIO and not failed:
+        # The model stream breaks mid-turn: the failure is named while the
+        # relay stays alive, and the session is spent from here.
+        failed = True
+        out.send_json(frame.NOTICE, {
+            "event": "turn-failed",
+            "error": "RuntimeError: the model stream broke"})
+    elif kind == frame.TALK_END and not failed:
+        out.send(frame.AUDIO, b"\x01\x02" * 240)
+        out.send_json(frame.MARK, {"mark": "reply_end", "since_talk_end": 0.1})
+    elif kind == frame.QUIT:
+        break
+try:
+    out.send(frame.BYE)
+except BrokenPipeError:
+    pass
+STUBMID
+
+python3 - "$ROOT" "$STUB_MIDFAIL" <<'PY' || fail "mid-turn failure release"
+import importlib.util, os, sys, time
+root, stub = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location(
+    "engine", os.path.join(root, "hud", "fm_voice_engine.py"))
+engine = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(engine)
+
+notices = []
+eng = engine.Engine(
+    [sys.executable, stub, os.path.join(root, "bin")],
+    ready_timeout=10,
+    on_notice=lambda event, obj: notices.append(event))
+eng.start()
+
+# The turn opens and the captain is still talking when the relay fails it.
+eng.begin_turn()
+eng.feed(b"\x01\x02" * 320)
+deadline = time.monotonic() + 5
+while "turn-failed" not in notices:
+    if time.monotonic() > deadline:
+        eng.close()
+        sys.exit("mid-turn failure: the notice never arrived")
+    time.sleep(0.02)
+
+# The release was delivered while the turn was open. Ending the turn now
+# must return at once, not erase the release and wait out the timeout on a
+# spent session that drops the late TALK_END.
+t0 = time.monotonic()
+try:
+    turn = eng.end_turn(timeout=8)
+except engine.EngineError as exc:
+    sys.exit("mid-turn failure: end_turn burned its timeout on a released "
+             "turn: " + str(exc))
+elapsed = time.monotonic() - t0
+if elapsed > 3:
+    sys.exit("mid-turn failure: the return must be prompt, took {:.1f}s".format(
+        elapsed))
+if turn != 1:
+    sys.exit("mid-turn failure: the ended turn must be id 1: " + str(turn))
+
+# The engine renews on the next turn: a fresh full round trip.
+eng.begin_turn()
+eng.feed(b"\x01\x02" * 320)
+t0 = time.monotonic()
+try:
+    turn = eng.end_turn(timeout=8)
+except engine.EngineError as exc:
+    sys.exit("mid-turn failure: the renewed turn must complete: " + str(exc))
+if turn != 2:
+    sys.exit("mid-turn failure: the renewed turn must be id 2: " + str(turn))
+eng.close()
+PY
+pass "a mid-turn failure releases the open turn and the engine renews"
+
 # --- the panel bridge, headlessly --------------------------------------------
 #
 # The bridge is the Python half of the HUD process: it owns the engine and
@@ -619,6 +721,122 @@ for _ in range(2):
 check(engine.begun == 1, "no stale line may survive later blocks either")
 PY
 pass "a wake word spoken inside a turn never arms a stale wake after it"
+
+# --- a late final line never arms a stale wake -------------------------------
+#
+# A per-utterance decoder finalizes each utterance's line only after its
+# audio ended - for the utterance that ended a turn, that lands during the
+# trailing quiet, after the turn's last loud block, so no poll inside the
+# turn can drain it. The decoder never hears turn speech at all (audio
+# crosses into it only while the HUD listens), so however late a line
+# lands, nothing from inside a turn exists in it to re-wake the HUD with.
+
+python3 - "$ROOT" <<'PY' || fail "late final lines"
+import importlib.util, math, os, struct, sys
+root = sys.argv[1]
+
+def load(name, relpath):
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(root, relpath))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+wake = load("wake", "hud/fm_voice_wake.py")
+mic_mod = load("micmod", "hud/fm_voice_mic.py")
+
+def check(cond, label):
+    if not cond:
+        sys.exit("late final lines: " + label)
+
+class LateFinalDecoder:
+    """A per-utterance decoder: a line exists only once its utterance's
+    audio has been fed, and lands in the pipe a chosen number of polls
+    later - for the utterance that ended a turn, during the trailing
+    quiet, where no poll runs at all."""
+    def __init__(self, lines):
+        self.pending = list(lines)   # (fed blocks needed, poll lag, text)
+        self.fed = 0
+        self.polled = 0
+    def start(self):
+        pass
+    def feed(self, block):
+        self.fed += 1
+        return []
+    def poll_transcripts(self):
+        self.polled += 1
+        out = []
+        rest = []
+        for need, lag, text in self.pending:
+            if self.fed >= need and self.polled >= need + lag:
+                out.append(text)
+            else:
+                rest.append((need, lag, text))
+        self.pending = rest
+        return out
+    def close(self):
+        pass
+
+class ScriptedEngine:
+    def __init__(self):
+        self.begun = 0
+        self.ended = 0
+    def begin_turn(self):
+        self.begun += 1
+    def feed(self, pcm):
+        pass
+    def end_turn(self):
+        self.ended += 1
+
+loud = b"".join(
+    struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * i / 16000)))
+    for i in range(1600)) * 2
+
+engine = ScriptedEngine()
+decoder = LateFinalDecoder([
+    (4, 0, "Ziggy what time is it"),
+    # Said inside the turn: ten loud blocks, its line landing two polls
+    # after they end - in the trailing quiet, past every in-turn poll.
+    (10, 2, "Ziggy I mean what time"),
+])
+director = mic_mod.TurnDirector(
+    engine, wake.EnergyGate(), wake.KeywordListener(), decoder)
+
+# Four loud blocks arm the wake on the first utterance's line.
+t = 0.0
+for _ in range(4):
+    director.feed(loud, t)
+    t += 0.1
+check(director.phase == "in-wake",
+      "the wake must fire on the first utterance: " + director.phase)
+
+# A loud block opens the turn; six more are speech inside it.
+for _ in range(7):
+    director.feed(loud, t)
+    t += 0.1
+check(director.phase == "in-turn", "the turn must be open")
+check(engine.begun == 1, "exactly one turn must have opened")
+
+# Quiet past the hangover ends the turn; the mid-turn utterance's line
+# lands in the pipe during this quiet, where no poll runs.
+for _ in range(12):
+    director.feed(bytes(3200), t)
+    t += 0.1
+check(director.phase == "listening" and engine.ended == 1,
+      "the turn must end on quiet: " + director.phase)
+
+# Fresh speech after the turn: the first loud block polls the pipe, and a
+# late line belonging to turn speech must not arm a wake on it.
+for _ in range(2):
+    director.feed(loud, t)
+    t += 0.1
+check(director.phase == "listening",
+      "a late line from inside the turn must not re-wake: "
+      + director.phase)
+check(engine.begun == 1,
+      "no model turn may open on turn speech: begun=" + str(engine.begun))
+PY
+pass "a late final line from a finished turn never arms a stale wake"
 
 # --- the device mic end, against a stub sounddevice ---------------------------
 #
