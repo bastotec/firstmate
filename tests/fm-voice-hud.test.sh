@@ -502,6 +502,124 @@ check("no-speech" in notices2, "a wake into silence must say so: " + repr(notice
 PY
 pass "the mic attach wakes on the word, streams only after the wake, and never opens a turn on silence"
 
+# --- a wake word spoken inside a turn never arms a stale wake ----------------
+#
+# The decoder finalizes each utterance's line only after it ended, so a
+# wake word said inside an open turn arrives as a transcript while the
+# director is in the turn. That line belongs to the turn's own speech: it
+# must be drained and discarded there, never buffered to re-wake the HUD
+# once the turn closes - the buffered form is exactly how a stray word
+# after a turn costs the captain a model turn.
+
+python3 - "$ROOT" <<'PY' || fail "stale transcripts"
+import importlib.util, math, os, struct, sys
+root = sys.argv[1]
+
+def load(name, relpath):
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(root, relpath))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+wake = load("wake", "hud/fm_voice_wake.py")
+mic_mod = load("micmod", "hud/fm_voice_mic.py")
+
+def check(cond, label):
+    if not cond:
+        sys.exit("stale transcripts: " + label)
+
+class UtteranceDecoder:
+    """Final lines land a set number of fed blocks after their utterance
+    began, like a real decoder that answers per utterance."""
+    def __init__(self, lines_at):
+        self.pending = list(lines_at)
+        self.fed = 0
+    def start(self):
+        pass
+    def feed(self, block):
+        self.fed += 1
+        return []
+    def poll_transcripts(self):
+        out = []
+        rest = []
+        for at, text in self.pending:
+            if self.fed >= at:
+                out.append(text)
+            else:
+                rest.append((at, text))
+        self.pending = rest
+        return out
+    def close(self):
+        pass
+
+class ScriptedEngine:
+    def __init__(self):
+        self.begun = 0
+        self.ended = 0
+    def begin_turn(self):
+        self.begun += 1
+    def feed(self, pcm):
+        pass
+    def end_turn(self):
+        self.ended += 1
+
+loud = b"".join(
+    struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * i / 16000)))
+    for i in range(1600)) * 2
+
+engine = ScriptedEngine()
+decoder = UtteranceDecoder([
+    (4, "Ziggy what time is it"),
+    (10, "Ziggy I mean what time"),
+    (15, "hello there"),
+])
+director = mic_mod.TurnDirector(
+    engine, wake.EnergyGate(), wake.KeywordListener(), decoder)
+
+# Four loud blocks: the wake fires on the finalized first utterance.
+t = 0.0
+for _ in range(4):
+    director.feed(loud, t)
+    t += 0.1
+check(director.phase == "in-wake",
+      "the wake must fire on the first utterance: " + director.phase)
+
+# A fifth loud block opens the turn; blocks 6-10 are speech inside it,
+# including a second wake word whose transcript finalizes at block 10.
+for _ in range(6):
+    director.feed(loud, t)
+    t += 0.1
+check(director.phase == "in-turn", "the turn must be open")
+check(engine.begun == 1, "exactly one turn must have opened")
+
+# Quiet past the hangover ends the turn.
+for _ in range(12):
+    director.feed(bytes(3200), t)
+    t += 0.1
+check(director.phase == "listening" and engine.ended == 1,
+      "the turn must end on quiet: " + director.phase)
+
+# Fresh speech after the turn must not open a second turn on the wake word
+# that was spoken inside it.
+for _ in range(2):
+    director.feed(loud, t)
+    t += 0.1
+check(director.phase == "listening",
+      "the director must stay listening without a fresh wake: "
+      + director.phase)
+check(engine.begun == 1,
+      "a wake word spoken inside the turn must not re-wake the HUD: "
+      "begun=" + str(engine.begun))
+
+# And the buffered line is gone for good: later speech, still no wake.
+for _ in range(2):
+    director.feed(loud, t)
+    t += 0.1
+check(engine.begun == 1, "no stale line may survive later blocks either")
+PY
+pass "a wake word spoken inside a turn never arms a stale wake after it"
+
 # --- the device mic end, against a stub sounddevice ---------------------------
 #
 # The real capture end cannot run here - no audio device exists in a worker
