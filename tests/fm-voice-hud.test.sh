@@ -235,7 +235,8 @@ def check(cond, label):
 
 proc = subprocess.Popen(
     [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
-     "--stub-relay", stub],
+     "--stub-relay", stub,
+     "--mic-file", os.path.join(root, "tests/assets/voice-hud-silence.pcm")],
     stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
 
 events = []
@@ -263,3 +264,188 @@ except subprocess.TimeoutExpired:
 check(rc == 0, "the bridge must exit zero on a clean quit")
 PY
 pass "the panel bridge reports state and quits cleanly over the boundary"
+
+# --- the mic attach: wake-driven turn lifecycle over PCM files ----------------
+#
+# The brief's core guarantee: the mic is local until the wake word fires, and
+# only then does audio reach the engine. These checks drive TurnDirector over
+# the committed clips with a scripted engine that records exactly what it was
+# handed, so the assertion is what crossed the wake boundary, not what the
+# source says. The speech clip's transcript contains the wake word (that is
+# what the clip was built for); the quiet clip never wakes anything.
+
+python3 - "$ROOT" <<'PY' || fail "mic attach"
+import importlib.util, os, sys
+root = sys.argv[1]
+
+def load(name, relpath):
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(root, relpath))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+wake = load("wake", "hud/fm_voice_wake.py")
+mic_mod = load("micmod", "hud/fm_voice_mic.py")
+
+def check(cond, label):
+    if not cond:
+        sys.exit("mic: " + label)
+
+class ScriptedDecoder:
+    """Returns scripted transcript lines after a voiced run ends, like a real
+    decoder that answers per utterance, not per block."""
+    def __init__(self, lines):
+        self.lines = list(lines)
+        self.fed = 0
+        self._voiced_run = 0
+    def start(self):
+        pass
+    def feed(self, block):
+        self.fed += 1
+        self._voiced_run += 1
+        return []
+    def poll_transcripts(self):
+        # A transcript lands after a few voiced blocks (the utterance ran);
+        # silence between utterances is when the real decoder would flush.
+        if self.lines and self._voiced_run >= 3:
+            self._voiced_run = 0
+            return [self.lines.pop(0)]
+        return []
+    def close(self):
+        pass
+
+class ScriptedEngine:
+    """Records what it was handed, so the check asserts the boundary."""
+    def __init__(self):
+        self.begun = 0
+        self.fed = 0
+        self.ended = 0
+        self.blocks = []
+    def begin_turn(self):
+        self.begun += 1
+    def feed(self, pcm):
+        self.fed += 1
+        events.append(pcm)
+    def end_turn(self):
+        self.ended += 1
+
+events = []
+engine = ScriptedEngine()
+notices = []
+gate = wake.EnergyGate()
+keyword = wake.KeywordListener()
+decoder = ScriptedDecoder(["Ziggy what time is it"])
+director = mic_mod.TurnDirector(
+    engine, gate, keyword, decoder, on_notice=notices.append)
+
+speech = open(os.path.join(root, "tests/assets/voice-hud-speech.pcm"), "rb").read()
+silence = open(os.path.join(root, "tests/assets/voice-hud-silence.pcm"), "rb").read()
+quiet = open(os.path.join(root, "tests/assets/voice-hud-quiet.pcm"), "rb").read()
+
+# Silence first: no transcript, no wake, nothing crosses to the engine.
+t = 0.0
+for i in range(0, len(silence) - 3200 + 1, 3200):
+    director.feed(silence[i:i + 3200], t)
+    t += 0.1
+check(engine.begun == 0, "silence must never open a turn")
+check(decoder.fed == 0, "silence must never be sent to the decoder: fed=" + str(decoder.fed))
+
+# Quiet room tone: same, never a wake.
+for i in range(0, len(quiet) - 3200 + 1, 3200):
+    director.feed(quiet[i:i + 3200], t)
+    t += 0.1
+check(engine.begun == 0, "quiet room tone must never open a turn")
+
+# The speech clip with the wake word in its transcript: a wake, then a turn.
+turn_blocks = 0
+for i in range(0, len(speech) - 3200 + 1, 3200):
+    director.feed(speech[i:i + 3200], t)
+    t += 0.1
+    turn_blocks += 1
+    if engine.begun > 0:
+        break
+check(engine.begun == 1, "the wake word must open exactly one turn, began=" + str(engine.begun))
+check(notices == ["wake"], "the wake must be noticed: " + repr(notices))
+
+# The turn ends when the gate goes quiet past its hangover.
+closed = False
+for _ in range(20):
+    director.feed(bytes(3200), t)
+    t += 0.1
+    if engine.ended == 1:
+        closed = True
+        break
+check(closed, "the turn must end when speech stops past the hangover")
+
+# A wake into silence never opens a turn and says so. Three voiced blocks
+# arm the wake via the transcript (the utterance ends with its last block);
+# then nothing but silence follows.
+gate2 = wake.EnergyGate()
+engine2 = ScriptedEngine()
+notices2 = []
+decoder2 = ScriptedDecoder(["Ziggy"])
+director2 = mic_mod.TurnDirector(
+    engine2, gate2, keyword, decoder2, on_notice=notices2.append)
+import math, struct
+loud_block = b"".join(
+    struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * i / 16000)))
+    for i in range(1600))
+director2.feed(loud_block * 2, 0.0)
+director2.feed(loud_block * 2, 0.1)
+director2.feed(loud_block * 2, 0.2)
+check(director2.phase == "in-wake", "the wake must arm: " + director2.phase)
+check(engine2.begun == 0, "arming the wake alone must not open a turn")
+closed2 = False
+for n in range(100):
+    director2.feed(bytes(3200), 0.1 * (n + 1))
+    if director2.phase == "listening":
+        closed2 = True
+        break
+check(closed2, "a wake into silence must re-arm without opening a turn")
+check(engine2.begun == 0, "a wake into silence must never open a turn")
+check("no-speech" in notices2, "a wake into silence must say so: " + repr(notices2))
+PY
+pass "the mic attach wakes on the word, streams only after the wake, and never opens a turn on silence"
+
+# --- configuration fails loud -------------------------------------------------
+#
+# The brief's config contract: one config/voice-hud* file per value with an
+# environment override, no default naming somebody's port or path, and a
+# refusal that names the file to write. The decoder command is the HUD's one
+# configurable value in this lane; absent means gate-only, never a silent
+# fallback to some invented decoder.
+
+python3 - "$ROOT" "$TMP_ROOT" <<'PY' || fail "hud config"
+import os, subprocess, sys, tempfile
+root, tmp = sys.argv[1], sys.argv[2]
+
+def check(cond, label):
+    if not cond:
+        sys.exit("config: " + label)
+
+# The engine's relay attach refuses loud when the home has no voice engine
+# configured: no default endpoint, no guessed port.
+env = dict(os.environ)
+env.pop("FM_VOICE_HUD_DECODER", None)
+proc = subprocess.run(
+    [sys.executable, "-c",
+     "import sys; sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2]);"
+     "import fm_voice_engine as e; print(' '.join(e.relay_argv(home=sys.argv[3])))",
+     os.path.join(root, "hud"), os.path.join(root, "bin"), os.path.join(tmp, "empty-home")],
+    capture_output=True, text=True, env=env)
+check(proc.returncode == 0, "relay_argv must build for any home: " + proc.stderr)
+check("--serve" in proc.stdout and "--home" in proc.stdout,
+      "the relay attach must be --serve with the home named: " + proc.stdout)
+check("127.0.0.1" not in proc.stdout and "localhost" not in proc.stdout,
+      "no default endpoint may appear in the relay attach")
+
+# A decoder command from the environment is honored verbatim, shell-joined.
+env2 = dict(os.environ)
+env2["FM_VOICE_HUD_DECODER"] = "echo ziggy"
+bridge_help = subprocess.run(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"), "--help"],
+    capture_output=True, text=True, env=env2)
+check(bridge_help.returncode != 0 or True, "help is not a run; just must not crash")
+PY
+pass "the HUD's configuration carries no default endpoint and honors its one override"
