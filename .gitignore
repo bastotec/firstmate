@@ -16,3 +16,6 @@ config/
 bin/ask-triage/node_modules/
 bin/wake-gate/node_modules/
 /target/
+
+# The Swift overlay's build artifacts stay out of the tree.
+hud/swift/.build/

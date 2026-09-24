@@ -21,12 +21,15 @@ owns the wire, and bin/fm-voice-relay.py owns everything behind it.
 import json
 import os
 import sys
+import threading
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "hud"))
 sys.path.insert(0, os.path.join(ROOT, "bin"))
 
 import fm_voice_engine as engine_mod      # noqa: E402
+import fm_voice_mic as mic_mod            # noqa: E402
 import fm_voice_wake as wake_mod          # noqa: E402
 
 
@@ -60,14 +63,75 @@ def main():
         verbose=verbose)
     engine.start()
     emit({"type": "state", "state": "listening"})
+
+    # The wake layer owns the microphone from here. The decoder child is a
+    # separate process; absent config means gate-only (the HUD hears speech
+    # and never wakes, which the panel shows as listening forever).
+    decoder_argv = None
+    decoder_config = os.path.join(ROOT, "config", "voice-hud-decoder")
+    env_decoder = os.environ.get("FM_VOICE_HUD_DECODER")
+    source = None
+    if env_decoder:
+        decoder_argv = ["sh", "-c", env_decoder]
+        source = "FM_VOICE_HUD_DECODER"
+    elif os.path.isfile(decoder_config):
+        first = open(decoder_config).read().splitlines()
+        first = [ln.strip() for ln in first if ln.strip() and not ln.startswith("#")]
+        if first:
+            decoder_argv = ["sh", "-c", first[0]]
+            source = "config/voice-hud-decoder"
+
+    decoder = mic_mod.DecoderCommand(decoder_argv) if decoder_argv \
+        else mic_mod.NullDecoder()
+    decoder.start()
+    if source:
+        emit({"type": "notice", "event": "decoder", "source": source})
+
+    # The mic end: a PCM file for offline checks (--mic-file), the real
+    # microphone otherwise. The device end is UNVERIFIED from a worker shell
+    # for the same reason the client's is; the file end is what every check
+    # here drives.
+    mic_file = None
+    if "--mic-file" in sys.argv:
+        mic_file = sys.argv[sys.argv.index("--mic-file") + 1]
+    if mic_file:
+        mic = mic_mod.FileMic(mic_file)
+    else:
+        mic = mic_mod.DeviceMic()
+
+    director = mic_mod.TurnDirector(
+        engine, wake_mod.EnergyGate(), wake_mod.KeywordListener(), decoder,
+        on_notice=lambda event: emit({"type": "notice", "event": event}))
+
+    stop = threading.Event()
+
+    def run_mic():
+        # The mic thread owns block timing; the director's decisions come
+        # back as engine callbacks, which emit on this same stdout safely
+        # because emit is the only writer and stays line-atomic.
+        block_period = mic_mod.BLOCK / 16000.0
+        next_at = time.monotonic()
+        for block in mic.blocks():
+            if stop.is_set():
+                return
+            director.feed(block, time.monotonic())
+            next_at += block_period
+            delay = next_at - time.monotonic()
+            if delay > 0:
+                stop.wait(delay)
+
+    mic_thread = threading.Thread(target=run_mic, daemon=True)
+    mic_thread.start()
+
     try:
-        # The wake layer owns the microphone from here. The decoder child and
-        # the mic attach land with the mic-capture stage; this bridge holds
-        # the engine side of the boundary ready for them.
+        # The main thread owns the quit signal; the mic thread owns blocks.
         for line in sys.stdin:
             if line.strip() == "quit":
                 break
     finally:
+        stop.set()
+        mic.close()
+        decoder.close()
         engine.close()
     return 0
 
