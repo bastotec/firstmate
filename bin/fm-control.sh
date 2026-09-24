@@ -9,6 +9,9 @@
 #                                         [--account-slot <id|default>]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> recover-missing
+#                                         [--harness <name>] [--model <name>]
+#                                         [--effort <level>]
+#                                         [--account-slot <id|default>]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -82,8 +85,24 @@
 #              It continues the SAME run, so the recorded harness, model, and
 #              effort carry through unchanged - nothing is re-resolved from
 #              configuration, including a secondmate's config/secondmate-harness
-#              pin - and only --note/--note-file apply; picking up a changed pin
-#              or choosing a different runtime is what `relaunch` is for.
+#              pin - and only --note/--note-file apply. Picking up a changed pin
+#              is what `relaunch` is for.
+#              The one deliberate exception is an explicit replacement profile:
+#              --harness/--model/--effort/--account-slot are accepted here too,
+#              with the identical precedence, axis-reset, and refusal semantics
+#              they carry on `relaunch`. This is the supported single-transaction
+#              route off a runtime whose endpoint is gone - under the 2026-09-22
+#              Deck-only coding-worker ruling, a stranded non-Deck task with no
+#              surviving terminal has no other: `relaunch` refuses a missing
+#              endpoint, so without this flag that task is unrecoverable through
+#              this plane. A replacement profile is a rescue onto a chosen
+#              runtime, never a config re-resolve: every axis still comes from
+#              the task's own durable record unless the caller names it.
+#              A recorded effort does not carry onto a replacement harness that
+#              has no effort control (deck), exactly as on `relaunch`: a harness
+#              change resets the effort axis to default unless it is named too,
+#              and naming it for such a harness still refuses with "deck has no
+#              effort control".
 #
 # Teardown and discard are NOT verbs here and never will be. `exit` stops an
 # agent and preserves everything else; removing a worktree, killing an
@@ -293,17 +312,10 @@ if [ -n "$control_want_value" ]; then
 fi
 
 case "$VERB" in
-  relaunch) ;;
-  recover-missing)
-    # A recovery recreates the recorded terminal and continues the SAME run, so
-    # it carries the recorded harness, model, effort, and account slot through
-    # unchanged. Choosing a different runtime is what 'relaunch' is for.
-    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$ACCOUNT_SLOT_SET" = 0 ] \
-      || die "--harness, --model, --effort, and --account-slot apply to 'relaunch' only; 'recover-missing' continues the recorded runtime"
-    ;;
+  relaunch|recover-missing) ;;
   *)
     [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$ACCOUNT_SLOT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-      || die "--harness, --model, --effort, and --account-slot apply to 'relaunch' only, and --note to 'relaunch' or 'recover-missing' only"
+      || die "--harness, --model, --effort, and --account-slot apply to 'relaunch' and 'recover-missing' only, and --note to 'relaunch' or 'recover-missing' only"
     ;;
 esac
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
@@ -657,6 +669,7 @@ RELAUNCH_AGENT_CONFIRMED=0
 RELAUNCH_TX=
 RELAUNCH_BRIEF=
 RELAUNCH_PAST_TENSE=relaunched
+RELAUNCH_NOUN=relaunch
 PRIOR_HARNESS=$HARNESS
 PRIOR_RECORDED_HARNESS=$RECORDED_HARNESS
 CONFIG_HARNESS=
@@ -804,10 +817,7 @@ resolve_relaunch_profile() {
   [ -n "$PRIOR_EFFORT" ] || PRIOR_EFFORT=default
   if [ "$HARNESS_SET" = 0 ] \
      && [ "$PRIOR_RECORDED_HARNESS" != "$PRIOR_HARNESS" ]; then
-    if [ "$VERB" = recover-missing ]; then
-      die "task $ID records harness '$PRIOR_RECORDED_HARNESS', whose original launch command cannot be reconstructed from its recorded basename; recovery continues the recorded runtime and would have to substitute the canonical adapter '$PRIOR_HARNESS' for the command actually running, so it refuses rather than bringing the terminal back on a different runtime than the record names"
-    fi
-    die "task $ID records harness '$PRIOR_RECORDED_HARNESS', whose original launch command cannot be reconstructed from its recorded basename; relaunching without --harness would substitute the canonical adapter '$PRIOR_HARNESS' for the command actually running. Pass an explicit --harness to choose the replacement runtime deliberately"
+    die "task $ID records harness '$PRIOR_RECORDED_HARNESS', whose original launch command cannot be reconstructed from its recorded basename; recovering it without --harness would substitute the canonical adapter '$PRIOR_HARNESS' for the command actually running. Pass an explicit --harness to choose the replacement runtime deliberately"
   fi
   CONFIG_HARNESS=
   CONFIG_MODEL=
@@ -823,10 +833,10 @@ resolve_relaunch_profile() {
     #
     # recover-missing resolves NOTHING here, for any kind. It continues the
     # same run in the same terminal, so every identity axis comes from the
-    # task's own durable record - which is what its header, its refusal of
-    # --harness/--model/--effort, and docs/agent-control.md all already
-    # promise. Re-resolving the pin here would silently move a secondmate onto
-    # a different runtime, and reset its model and effort, during a rescue.
+    # task's own durable record unless the caller names a replacement profile
+    # explicitly - which is what its header and docs/agent-control.md promise.
+    # Re-resolving the pin here would silently move a secondmate onto a
+    # different runtime, and reset its model and effort, during a rescue.
     CONFIG_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" secondmate 2>/dev/null || true)
     CONFIG_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
     CONFIG_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
@@ -840,7 +850,7 @@ resolve_relaunch_profile() {
   fi
   if [ "$HARNESS_SET" = 1 ]; then
     fm_control_harness_supported "$NEW_HARNESS" \
-      || die "'$NEW_HARNESS' is not a verified harness; fm-control refuses to relaunch onto an adapter with no verified control or launch mechanics"
+      || die "'$NEW_HARNESS' is not a verified harness; fm-control refuses to ${RELAUNCH_NOUN} onto an adapter with no verified control or launch mechanics"
     TARGET_HARNESS=$NEW_HARNESS
   elif [ "$HARNESS_SET" = 0 ] && [ -n "$CONFIG_HARNESS" ]; then
     fm_control_harness_supported "$CONFIG_HARNESS" \
@@ -858,8 +868,7 @@ resolve_relaunch_profile() {
       die "'$TARGET_HARNESS' is not verified to run a $KIND task, so recovering $ID would recreate its terminal for a launch that must be refused; its endpoint is missing and nothing was touched, so its work is preserved at $WT until this adapter is verified for this kind"
     fi
     die "'$TARGET_HARNESS' is not verified to run a $KIND task, so relaunching $ID onto it would stop the running agent for a launch that must be refused; choose an adapter verified for this kind"
-  fi
-  # A model or effort chosen for the previous harness does not transfer to a
+  fi  # A model or effort chosen for the previous harness does not transfer to a
   # different one, so an explicit harness change resets both axes unless the
   # caller names them too.
   if [ "$MODEL_SET" = 1 ]; then
@@ -1017,6 +1026,7 @@ do_relaunch() {
   local -a spawn_args
 
   require_state_verified_backend relaunch "the agent actually stopped"
+  RELAUNCH_NOUN=relaunch
   resolve_relaunch_profile
 
   case "$KIND" in
@@ -1095,6 +1105,7 @@ do_recover_missing() {
     || die "backend $BACKEND has no supported way to recreate an endpoint with the recorded identity; refusing to recover"
   resolve_relaunch_profile
   RELAUNCH_PAST_TENSE=recovered
+  RELAUNCH_NOUN=recovery
 
   case "$KIND" in
     ship|scout)
@@ -1186,8 +1197,14 @@ do_recover_missing() {
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
   # A recovery continues the recorded runtime, and the account slot is part of
   # it: without this the replacement worker would come back on the ambient
-  # account instead of the subscription the record names.
-  [ -z "$TARGET_ACCOUNT_SLOT" ] || spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
+  # account instead of the subscription the record names. An explicit
+  # --account-slot default clears it, and a replacement harness drops it, with
+  # the same arguments `relaunch` passes the launch owner.
+  if [ -n "$TARGET_ACCOUNT_SLOT" ]; then
+    spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
+  elif [ "$ACCOUNT_SLOT_SET" = 1 ] || [ -n "$PRIOR_ACCOUNT_SLOT" ]; then
+    spawn_args+=(--account-slot default)
+  fi
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
