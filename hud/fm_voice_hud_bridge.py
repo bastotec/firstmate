@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.join(ROOT, "bin"))
 
 import fm_voice_engine as engine_mod      # noqa: E402
 import fm_voice_mic as mic_mod            # noqa: E402
+import fm_voice_speaker as speaker_mod    # noqa: E402
 import fm_voice_wake as wake_mod          # noqa: E402
 
 
@@ -38,18 +39,57 @@ def emit(obj):
     sys.stdout.flush()
 
 
+def arg_after(flag):
+    if flag in sys.argv:
+        return sys.argv[sys.argv.index(flag) + 1]
+    return None
+
+
+def output_device_arg():
+    """The --output-device value as sounddevice takes it: an index when
+    the value is digits, a name otherwise - the client's selector rule."""
+    value = arg_after("--output-device")
+    if value is None:
+        return None
+    return int(value) if value.isdigit() else value
+
+
 def main():
     verbose = "--verbose" in sys.argv
-    home = None
-    if "--home" in sys.argv:
-        home = sys.argv[sys.argv.index("--home") + 1]
+    home = arg_after("--home")
     argv = engine_mod.relay_argv(home=home, verbose=verbose)
-    if "--stub-relay" in sys.argv:
+    stub = arg_after("--stub-relay")
+    if stub:
         # Offline checks: a stub relay stands in for the real one, exactly as
         # tests/fm-voice-hud.test.sh does for the engine wiring alone. The
         # stub gets the repo's bin dir so it can import the frame module.
-        argv = [sys.executable, sys.argv[sys.argv.index("--stub-relay") + 1],
-                os.path.join(ROOT, "bin")]
+        argv = [sys.executable, stub, os.path.join(ROOT, "bin")]
+
+    # The reply player: the engine hands reply audio to it whole. A machine
+    # with no output device keeps a working HUD - the transcript still
+    # arrives - and says so on the wire rather than dying at startup.
+    speaker = None
+    try:
+        speaker = speaker_mod.Speaker(device=output_device_arg())
+    except Exception as exc:                  # noqa: BLE001
+        emit({"type": "notice", "event": "output-unavailable",
+              "error": "{}: {}".format(type(exc).__name__, exc)})
+
+    engine_fault = threading.Event()
+
+    def report_fault():
+        # The engine's own notice already said it when the wire died; this
+        # is the same news from the mic loop's side, said once.
+        if engine_fault.is_set():
+            return
+        engine_fault.set()
+        emit({"type": "notice", "event": "engine-fault"})
+
+    def on_engine_notice(event, obj):
+        if event == "engine-fault":
+            report_fault()
+        else:
+            emit({"type": "notice", "event": event})
 
     engine = engine_mod.Engine(
         argv,
@@ -58,8 +98,8 @@ def main():
             "type": "transcript",
             "role": "user" if role == "USER" else "assistant",
             "text": text}),
-        on_audio=lambda pcm: None,
-        on_notice=lambda event, obj: emit({"type": "notice", "event": event}),
+        on_audio=speaker.write if speaker else (lambda pcm: None),
+        on_notice=on_engine_notice,
         verbose=verbose)
     engine.start()
     emit({"type": "state", "state": "listening"})
@@ -91,9 +131,7 @@ def main():
     # microphone otherwise. The device end is UNVERIFIED from a worker shell
     # for the same reason the client's is; the file end is what every check
     # here drives.
-    mic_file = None
-    if "--mic-file" in sys.argv:
-        mic_file = sys.argv[sys.argv.index("--mic-file") + 1]
+    mic_file = arg_after("--mic-file")
     if mic_file:
         mic = mic_mod.FileMic(mic_file)
     else:
@@ -108,13 +146,26 @@ def main():
     def run_mic():
         # The mic thread owns block timing; the director's decisions come
         # back as engine callbacks, which emit on this same stdout safely
-        # because emit is the only writer and stays line-atomic.
+        # because emit is the only writer and stays line-atomic. An engine
+        # fault here is reported on the wire, never allowed to die with a
+        # traceback the panel cannot see: a closed engine leaves the HUD
+        # deaf until restart, and a turn the engine abandoned mid-reply is
+        # re-armed, because the relay's renewal path is the next turn.
         block_period = mic_mod.BLOCK / 16000.0
         next_at = time.monotonic()
         for block in mic.blocks():
             if stop.is_set():
                 return
-            director.feed(block, time.monotonic())
+            try:
+                director.feed(block, time.monotonic())
+            except engine_mod.EngineError as exc:
+                if engine.closed.is_set():
+                    report_fault()
+                    return
+                emit({"type": "notice", "event": "turn-timeout",
+                      "error": str(exc)})
+                director.recover()
+                continue
             next_at += block_period
             delay = next_at - time.monotonic()
             if delay > 0:
@@ -133,6 +184,8 @@ def main():
         mic.close()
         decoder.close()
         engine.close()
+        if speaker is not None:
+            speaker.close()
     return 0
 
 

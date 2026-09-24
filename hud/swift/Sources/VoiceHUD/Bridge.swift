@@ -10,7 +10,7 @@
 
 import Foundation
 
-enum BridgeEvent {
+enum BridgeEvent: Equatable {
     case state(String)
     case transcript(role: String, text: String)
     case notice(event: String)
@@ -29,6 +29,8 @@ final class Bridge {
         process.standardError = FileHandle.standardError
         let outPipe = Pipe()
         process.standardOutput = outPipe
+        let inPipe = Pipe()
+        process.standardInput = inPipe
         try! process.run()
         let bridge = Bridge(process: process)
         bridge.readEvents(from: outPipe)

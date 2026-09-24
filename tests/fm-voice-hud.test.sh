@@ -408,6 +408,275 @@ check("no-speech" in notices2, "a wake into silence must say so: " + repr(notice
 PY
 pass "the mic attach wakes on the word, streams only after the wake, and never opens a turn on silence"
 
+# --- the device mic end, against a stub sounddevice ---------------------------
+#
+# The real capture end cannot run here - no audio device exists in a worker
+# shell - but its contract can: the device's callback fills a queue and
+# blocks() yields what it captured, in order, and close() ends the stream.
+
+python3 - "$ROOT" <<'PY' || fail "device mic"
+import importlib.util, os, sys, threading, time, types
+
+class StubRawInputStream:
+    instances = []
+    def __init__(self, samplerate, channels, dtype, blocksize, device,
+                 latency, callback):
+        self.settings = (samplerate, channels, dtype, blocksize, device, latency)
+        self.callback = callback
+        self.started = 0
+        self.stopped = 0
+        self.closed = 0
+        StubRawInputStream.instances.append(self)
+    def start(self):
+        self.started += 1
+    def stop(self):
+        self.stopped += 1
+    def close(self):
+        self.closed += 1
+
+stub = types.ModuleType("sounddevice")
+stub.RawInputStream = StubRawInputStream
+sys.modules["sounddevice"] = stub
+
+spec = importlib.util.spec_from_file_location(
+    "micmod", os.path.join(sys.argv[1], "hud", "fm_voice_mic.py"))
+mic_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mic_mod)
+
+def check(cond, label):
+    if not cond:
+        sys.exit("device mic: " + label)
+
+mic = mic_mod.DeviceMic(device=3)
+stream = StubRawInputStream.instances[-1]
+check(stream.started == 1, "the stream must start at construction")
+check(stream.settings == (16000, 1, "int16", 1600, 3, "low"),
+      "the stream must be 16 kHz mono int16 at the wake block size: "
+      + repr(stream.settings))
+
+blocks = []
+def collect():
+    for block in mic.blocks():
+        blocks.append(block)
+reader = threading.Thread(target=collect, daemon=True)
+reader.start()
+
+first = b"\x01\x02" * 1600
+second = b"\x03\x04" * 1600
+stream.callback(first, 1600, None, None)
+stream.callback(second, 1600, None, None)
+deadline = time.monotonic() + 2
+while len(blocks) < 2 and time.monotonic() < deadline:
+    time.sleep(0.02)
+check(blocks[:2] == [first, second],
+      "blocks() must yield the captured blocks in order: " + repr(blocks[:2]))
+
+mic.close()
+check(stream.stopped == 1 and stream.closed == 1,
+      "close must stop and close the stream")
+reader.join(timeout=2)
+check(not reader.is_alive(), "close must end the blocks() generator")
+PY
+pass "the device mic end yields captured blocks and ends at close"
+
+# --- the decoder drain never owns the mic thread -------------------------------
+#
+# poll_transcripts() runs on the mic thread while the captain is talking, so
+# it must return with what has arrived and never wait for more. A real child
+# that stays silent, then answers half a line at a time, is the drain's
+# contract: no blocking on silence, no partial lines, no repeats.
+
+python3 - "$ROOT" <<'PY' || fail "decoder drain"
+import importlib.util, os, sys, time
+
+spec = importlib.util.spec_from_file_location(
+    "micmod", os.path.join(sys.argv[1], "hud", "fm_voice_mic.py"))
+mic_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mic_mod)
+
+def check(cond, label):
+    if not cond:
+        sys.exit("decoder drain: " + label)
+
+child = (
+    "import sys, time\n"
+    "time.sleep(1.0)\n"
+    "sys.stdout.write('zig')\n"
+    "sys.stdout.flush()\n"
+    "time.sleep(1.0)\n"
+    "sys.stdout.write('gy hello\\n')\n"
+    "sys.stdout.flush()\n"
+    "sys.stdin.read()\n"
+)
+dec = mic_mod.DecoderCommand([sys.executable, "-c", child])
+dec.start()
+
+t0 = time.monotonic()
+lines = dec.poll_transcripts()
+elapsed = time.monotonic() - t0
+check(elapsed < 0.5,
+      "poll must return while the decoder is silent; took {:.2f}s".format(elapsed))
+check(lines == [], "a silent decoder must yield no lines")
+
+time.sleep(1.3)
+lines = dec.poll_transcripts()
+check(lines == [], "a partial line must not be returned: " + repr(lines))
+
+time.sleep(1.2)
+lines = dec.poll_transcripts()
+check(lines == ["ziggy hello"],
+      "the completed line must arrive once complete: " + repr(lines))
+lines = dec.poll_transcripts()
+check(lines == [], "a drained line must not repeat: " + repr(lines))
+
+dec.close()
+PY
+pass "the decoder drain never blocks and completes partial lines across polls"
+
+# --- the reply player, against a stub sounddevice ------------------------------
+#
+# The engine hands reply PCM to the player whole; the player hands it to the
+# output stream in order and owns the stream's life. The device end is
+# UNVERIFIED for the same reason the client's is; the buffering and close
+# discipline are what runs here, with the stream's callback driven by hand.
+
+python3 - "$ROOT" <<'PY' || fail "reply player"
+import importlib.util, os, sys, time, types
+
+class StubRawOutputStream:
+    instances = []
+    def __init__(self, samplerate, channels, dtype, blocksize, device,
+                 latency, callback):
+        self.settings = (samplerate, channels, dtype, blocksize, device, latency)
+        self.callback = callback
+        self.started = 0
+        self.stopped = 0
+        self.closed = 0
+        StubRawOutputStream.instances.append(self)
+    def start(self):
+        self.started += 1
+    def stop(self):
+        self.stopped += 1
+    def close(self):
+        self.closed += 1
+
+stub = types.ModuleType("sounddevice")
+stub.RawOutputStream = StubRawOutputStream
+sys.modules["sounddevice"] = stub
+
+spec = importlib.util.spec_from_file_location(
+    "speaker", os.path.join(sys.argv[1], "hud", "fm_voice_speaker.py"))
+speaker_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(speaker_mod)
+
+def check(cond, label):
+    if not cond:
+        sys.exit("reply player: " + label)
+
+sp = speaker_mod.Speaker(device="ziggys speakers")
+stream = StubRawOutputStream.instances[-1]
+check(stream.started == 1, "the stream must start at construction")
+check(stream.settings == (24000, 1, "int16", 2400, "ziggys speakers", "low"),
+      "the stream must be 24 kHz mono int16 at the reply block size: "
+      + repr(stream.settings))
+
+first = b"\x01\x02" * 300
+second = b"\x03\x04" * 100
+sp.write(first)
+sp.write(second)
+out = bytearray(4800)
+stream.callback(out, 2400, None, None)
+check(bytes(out) == first + second + bytes(4800 - len(first) - len(second)),
+      "the written PCM must reach the stream in order, silence-padded")
+
+out = bytearray(4800)
+stream.callback(out, 2400, None, None)
+check(bytes(out) == bytes(4800), "an empty buffer must play silence")
+
+sp.close()
+check(stream.stopped == 1 and stream.closed == 1,
+      "close must stop and close the stream exactly once")
+sp.write(b"\x05\x06" * 10)
+out = bytearray(4800)
+stream.callback(out, 2400, None, None)
+check(bytes(out) == bytes(4800),
+      "audio written after close must not reach the stream")
+
+sp2 = speaker_mod.Speaker()
+stream2 = StubRawOutputStream.instances[-1]
+sp2.write(b"\x07\x08" * 12000)
+t0 = time.monotonic()
+sp2.drain(timeout=0.3)
+elapsed = time.monotonic() - t0
+check(0.2 < elapsed < 2.0,
+      "drain must be bounded when nothing empties the buffer: {:.2f}s".format(
+          elapsed))
+out = bytearray(4800)
+stream2.callback(out, 2400, None, None)
+check(bytes(out) == b"\x07\x08" * 2400,
+      "the queued PCM must still be playable in order")
+sp2.close()
+PY
+pass "the reply player hands engine PCM to the stream and bounds its lifecycle"
+
+# --- an engine fault reaches the panel, not a dead thread ----------------------
+#
+# If the relay child dies mid-session, the fault must arrive on the boundary
+# as a notice the panel can show, and the bridge must stay quittable - never
+# die invisibly with a traceback while the HUD renders listening forever.
+
+STUB_DIE="$TMP_ROOT/stub-die-relay.py"
+cat > "$STUB_DIE" <<'STUBDIE'
+import sys
+sys.path.insert(0, sys.argv[1])
+import fm_voice_frame as frame
+
+sys.stdout.buffer.write(frame.MAGIC)
+sys.stdout.buffer.flush()
+out = frame.Writer(sys.stdout.buffer)
+out.send_json(frame.NOTICE, {"event": "ready", "model": "stub"})
+# The wire dies here without BYE: the relay process exits mid-session.
+sys.exit(0)
+STUBDIE
+
+python3 - "$ROOT" "$STUB_DIE" <<'PY' || fail "engine fault"
+import json, os, subprocess, sys, threading, time
+root, stub = sys.argv[1], sys.argv[2]
+
+proc = subprocess.Popen(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
+     "--stub-relay", stub,
+     "--mic-file", os.path.join(root, "tests/assets/voice-hud-silence.pcm")],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+
+events = []
+def read_events():
+    for line in proc.stdout:
+        line = line.strip()
+        if line:
+            events.append(json.loads(line))
+threading.Thread(target=read_events, daemon=True).start()
+
+deadline = time.monotonic() + 10
+while not any(e.get("type") == "notice" and e.get("event") == "engine-fault"
+              for e in events):
+    if time.monotonic() > deadline:
+        sys.exit("engine fault: the fault notice never reached the boundary: "
+                 + repr(events))
+    time.sleep(0.1)
+
+proc.stdin.write("quit\n")
+proc.stdin.flush()
+try:
+    rc = proc.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    proc.kill()
+    sys.exit("engine fault: the bridge did not stay quittable after the fault")
+if rc != 0:
+    sys.exit("engine fault: the bridge must quit zero after a fault: " + str(rc))
+PY
+pass "an engine fault reaches the panel as a notice and the bridge stays quittable"
+
 # --- configuration fails loud -------------------------------------------------
 #
 # The brief's config contract: one config/voice-hud* file per value with an
@@ -416,9 +685,9 @@ pass "the mic attach wakes on the word, streams only after the wake, and never o
 # configurable value in this lane; absent means gate-only, never a silent
 # fallback to some invented decoder.
 
-python3 - "$ROOT" "$TMP_ROOT" <<'PY' || fail "hud config"
-import os, subprocess, sys, tempfile
-root, tmp = sys.argv[1], sys.argv[2]
+python3 - "$ROOT" "$STUB" "$TMP_ROOT" <<'PY' || fail "hud config"
+import json, os, subprocess, sys, threading, time
+root, stub, tmp = sys.argv[1], sys.argv[2], sys.argv[3]
 
 def check(cond, label):
     if not cond:
@@ -440,12 +709,41 @@ check("--serve" in proc.stdout and "--home" in proc.stdout,
 check("127.0.0.1" not in proc.stdout and "localhost" not in proc.stdout,
       "no default endpoint may appear in the relay attach")
 
-# A decoder command from the environment is honored verbatim, shell-joined.
+# A decoder command from the environment is honored verbatim, shell-joined,
+# and the bridge names its source on the boundary when it attaches one.
 env2 = dict(os.environ)
 env2["FM_VOICE_HUD_DECODER"] = "echo ziggy"
-bridge_help = subprocess.run(
-    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"), "--help"],
-    capture_output=True, text=True, env=env2)
-check(bridge_help.returncode != 0 or True, "help is not a run; just must not crash")
+proc = subprocess.Popen(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
+     "--stub-relay", stub,
+     "--mic-file", os.path.join(root, "tests/assets/voice-hud-silence.pcm")],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env2)
+
+events = []
+def read_events():
+    for line in proc.stdout:
+        line = line.strip()
+        if line:
+            events.append(json.loads(line))
+threading.Thread(target=read_events, daemon=True).start()
+
+deadline = time.monotonic() + 10
+while not any(e.get("type") == "notice" and e.get("event") == "decoder"
+              for e in events):
+    if time.monotonic() > deadline:
+        proc.kill()
+        sys.exit("config: the decoder notice never arrived: " + repr(events))
+    time.sleep(0.1)
+source = [e for e in events if e.get("event") == "decoder"][0].get("source")
+check(source == "FM_VOICE_HUD_DECODER",
+      "the environment override must be named as the decoder source: " + repr(source))
+proc.stdin.write("quit\n")
+proc.stdin.flush()
+try:
+    rc = proc.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    proc.kill()
+    sys.exit("config: the bridge did not exit on quit")
+check(rc == 0, "the bridge must exit zero on a clean quit")
 PY
 pass "the HUD's configuration carries no default endpoint and honors its one override"

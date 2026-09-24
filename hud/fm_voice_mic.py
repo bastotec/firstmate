@@ -22,6 +22,8 @@ which knows whether a mic is attached.
 """
 
 import os
+import queue
+import select
 import subprocess
 import sys
 import threading
@@ -77,7 +79,7 @@ class DeviceMic:
 
     def __init__(self, device=None):
         import sounddevice                    # noqa: PLC0415
-        self._q = None
+        self._q = queue.SimpleQueue()
         self._stream = sounddevice.RawInputStream(
             samplerate=16000, channels=1, dtype="int16",
             blocksize=BLOCK // 2, device=device, latency="low",
@@ -86,15 +88,22 @@ class DeviceMic:
 
     def _callback(self, indata, frames_read, time_info, status):
         del frames_read, time_info, status
-        if self._q is not None:
-            self._q.put(bytes(indata))
+        self._q.put(bytes(indata))
 
-    def start(self, out_q):
-        self._q = out_q
+    def blocks(self):
+        """Yield blocks as the device produces them, until close()."""
+        while True:
+            block = self._q.get()
+            if block is None:
+                return
+            yield block
 
     def close(self):
         self._stream.stop()
         self._stream.close()
+        # The sentinel is last: stop() has already waited out any running
+        # callback, so nothing queues behind it and blocks() ends.
+        self._q.put(None)
 
 
 class DecoderCommand:
@@ -114,6 +123,7 @@ class DecoderCommand:
     def start(self):
         self.proc = subprocess.Popen(
             self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self._buf = bytearray()
 
     def feed(self, block):
         """Send one block; return every complete transcript line it produced."""
@@ -127,12 +137,24 @@ class DecoderCommand:
         return []
 
     def poll_transcripts(self):
-        """Return transcript lines that have arrived, without blocking."""
-        lines = []
-        while True:
-            line = self.proc.stdout.readline()
-            if not line:
+        """Return transcript lines that have arrived, without blocking.
+
+        A readline here would own the mic thread for as long as the decoder
+        stays quiet, so the drain reads only what is already on the pipe and
+        keeps any partial line for the next poll. The child's stdout is read
+        through the raw fd only, never through the buffered reader, so the
+        two never race for the same bytes.
+        """
+        fd = self.proc.stdout.fileno()
+        while select.select([fd], [], [], 0)[0]:
+            chunk = os.read(fd, 65536)
+            if not chunk:
                 break
+            self._buf += chunk
+        lines = []
+        while b"\n" in self._buf:
+            line, _, rest = self._buf.partition(b"\n")
+            self._buf = rest
             text = line.decode("utf-8", "replace").strip()
             if text:
                 lines.append(text)
@@ -249,3 +271,12 @@ class TurnDirector:
         elif self.phase == self.IN_TURN:
             self.engine.feed(block)
         return self.phase
+
+    def recover(self):
+        """Re-arm after a turn the engine abandoned but survived (a reply
+        timeout): the relay's documented renewal is the next turn's start,
+        so the director returns to listening and the next wake opens a
+        fresh turn instead of feeding one that was already ended."""
+        if self.phase == self.IN_TURN:
+            self.phase = self.LISTENING
+            self._wake_at = None
