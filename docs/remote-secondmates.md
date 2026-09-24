@@ -218,7 +218,7 @@ Raw launch commands are not accepted for remote secondmates.
 Backends that already refuse secondmate launch, currently Orca, cmux, and stream, remain unsupported on the remote host.
 
 A remote route's endpoint records live in `state/parent-route`, which the launch creates private (`0700`) even under a permissive remote umask, because Deck's descriptor-bound status I/O refuses a group- or world-writable state root.
-The launch also reconciles a root an earlier launch left group-writable to the mode Deck accepts, so no home needs a hand chmod before a Deck mate can start.
+The launch and the relaunch each reconcile a root an earlier launch left group-writable to the mode Deck accepts, so no home needs a hand chmod before a Deck mate can start.
 The reconcile touches only a real directory this host provably owns; a symlink, a non-directory, or a directory owned by another uid is refused loudly rather than chmod-ed, and the data root beside it is never tightened.
 
 Startup liveness recovery relaunches a dead or missing remote second mate through this same command, so recovery passes the same readiness gate rather than a weaker one.

@@ -105,11 +105,12 @@ meta_path() { printf '%s/%s.meta\n' "$CONTROL_STATE" "$1"; }
 # Deck's descriptor-bound status I/O (bin/fm-state-io.py) refuses a
 # group/world-writable state root, and a launch that predates the private-mode
 # creation above left exactly that behind, which forced a hand chmod on every
-# such home before a Deck mate could start. Repair is in-scope for the launch
-# that owns the state root, but only for a directory this code provably owns: a
-# symlink, a non-directory, or a directory owned by another user is refused
-# loudly rather than chmod-ed, because tightening permissions on something not
-# provably ours would be worse than leaving it alone.
+# such home before a Deck mate could start. Repair is in-scope for every verb
+# that starts an agent against the state root, launch and relaunch alike, but
+# only for a directory this code provably owns: a symlink, a non-directory, or
+# a directory owned by another user is refused loudly rather than chmod-ed,
+# because tightening permissions on something not provably ours would be worse
+# than leaving it alone.
 reconcile_route_state_mode() { # <dir>
   local dir=$1 owner
   [ -e "$dir" ] || [ -L "$dir" ] || return 0
