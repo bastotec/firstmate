@@ -28,8 +28,12 @@
 # Seeding is transactional from the caller's side: seed_stream_secondmate_token
 # performs the mate-home write first and the hub-file append second, and
 # rollback_stream_secondmate_token undoes both in reverse when the caller's own
-# transaction fails (bin/fm-home-seed.sh). The primary's config/stream-token
-# and config/stream-hub-tokens are only ever READ here, never written.
+# transaction fails (bin/fm-home-seed.sh). A re-seed of a home that already
+# holds a credential captures that token and its class line before minting, so
+# a failed re-seed puts the home back on the credential it had and a committed
+# one retires the line the superseded token leaves behind. The primary's own
+# config/stream-token is never read or written here, so a mate token cannot
+# arrive as a copy of it.
 
 FM_STREAM_MATE_CLASSES='publish,subscribe,control'
 
@@ -57,11 +61,45 @@ fm_stream_mate_class_line() {  # <token>
   printf '%s:%s\n' "$FM_STREAM_MATE_CLASSES" "$1"
 }
 
+# Whole-line membership and line removal stay in shell on purpose: the class
+# line carries the minted token, and an external grep would take it as argv,
+# briefly putting a live credential in every local process listing.
+fm_stream_mate_hub_file_has_line() {  # <line> <path>
+  local line=$1 path=$2 existing
+  while IFS= read -r existing || [ -n "$existing" ]; do
+    if [ "$existing" = "$line" ]; then
+      return 0
+    fi
+  done < "$path"
+  return 1
+}
+
+# Rewrite <path> without <line> under umask 077 and move the result into
+# place, so removing a line can never widen the fleet's secrets file away
+# from the 0600 mode it is created with.
+fm_stream_mate_remove_hub_line() {  # <line> <path>
+  local line=$1 path=$2 tmp existing
+  tmp="$path.tmp.$$"
+  if (
+    umask 077
+    while IFS= read -r existing || [ -n "$existing" ]; do
+      [ "$existing" = "$line" ] || printf '%s\n' "$existing"
+    done < "$path" > "$tmp"
+  ); then
+    mv -f -- "$tmp" "$path"
+  else
+    rm -f -- "$tmp" 2>/dev/null || true
+    return 1
+  fi
+}
+
 # Append "publish,subscribe,control:<token>" to the hub host's token file,
-# creating it 0600 when absent. The class line is built by the single owner
-# above and written through printf into a plain redirect, never handed to an
-# external command, so no minted value reaches a process listing. An existing
-# file's bytes and mode are left untouched.
+# creating it 0600 when absent. The class line never reaches an external
+# command - not even as a grep argv - so no minted value appears in a process
+# listing. An existing file's mode is left untouched; its bytes are left alone
+# except that a missing trailing newline is completed first, because the file
+# is hand-maintained (docs/stream-backend.md) and appending onto an
+# unterminated last line would splice the class line onto the operator's own.
 fm_stream_mate_append_hub_class_line() {  # <token> <hub-tokens-path>
   local token=$1 path=$2 line
   [ -n "$token" ] || { echo "error: refusing to append an empty stream mate token" >&2; return 1; }
@@ -74,12 +112,12 @@ fm_stream_mate_append_hub_class_line() {  # <token> <hub-tokens-path>
   if [ -f "$path" ]; then
     # Idempotent on the exact class line: a re-seed that mints the same token
     # (it cannot, but a restored backup can) appends one line, not two.
-    if grep -Fqx -- "$line" "$path"; then
+    if fm_stream_mate_hub_file_has_line "$line" "$path"; then
       return 0
     fi
-    # No blank separator line: the token parser skips empties, but a trailing
-    # blank per seed would accumulate and make the file's shape drift from
-    # every hand-maintained line in it.
+    if [ -s "$path" ] && [ -n "$(tail -c 1 "$path" 2>/dev/null)" ]; then
+      printf '\n' >> "$path"
+    fi
     printf '%s\n' "$line" >> "$path"
   else
     (umask 077 && printf '%s\n' "$line" > "$path")
@@ -97,7 +135,7 @@ fm_stream_mate_write_home_token() {  # <token> <mate-home>
 }
 
 seed_stream_secondmate_token() {  # <id> <mate-home> <state-dir>
-  local id=$1 home=$2 state_dir=$3 hub_tokens lock token
+  local id=$1 home=$2 state_dir=$3 hub_tokens lock token mate_token prior_line new_line
   [ -n "$id" ] || { echo "error: stream mate credential seeding needs a secondmate id" >&2; return 1; }
   [ -n "$home" ] || { echo "error: stream mate credential seeding needs a mate home path" >&2; return 1; }
   [ -n "$state_dir" ] || { echo "error: stream mate credential seeding needs a state dir" >&2; return 1; }
@@ -113,6 +151,21 @@ seed_stream_secondmate_token() {  # <id> <mate-home> <state-dir>
     return 1
   }
   FM_STREAM_MATE_LOCK_HELD=1
+  FM_STREAM_MATE_MINTED_TOKEN=
+  FM_STREAM_MATE_PRIOR_TOKEN=
+  FM_STREAM_MATE_PRIOR_TOKEN_EXISTED=0
+  FM_STREAM_MATE_PRIOR_LINE_EXISTED=0
+  mate_token=$(fm_stream_mate_token_path "$home")
+  if [ -f "$mate_token" ] && [ ! -L "$mate_token" ]; then
+    FM_STREAM_MATE_PRIOR_TOKEN_EXISTED=1
+    FM_STREAM_MATE_PRIOR_TOKEN=$(cat "$mate_token" 2>/dev/null || true)
+    if [ -n "$FM_STREAM_MATE_PRIOR_TOKEN" ]; then
+      prior_line=$(fm_stream_mate_class_line "$FM_STREAM_MATE_PRIOR_TOKEN")
+      if [ -f "$hub_tokens" ] && fm_stream_mate_hub_file_has_line "$prior_line" "$hub_tokens"; then
+        FM_STREAM_MATE_PRIOR_LINE_EXISTED=1
+      fi
+    fi
+  fi
   # The primary's own credential is never a source: nothing here reads
   # config/stream-token of the seeding home, so a mate token cannot arrive as
   # a copy of it even by accident of a later edit.
@@ -121,8 +174,16 @@ seed_stream_secondmate_token() {  # <id> <mate-home> <state-dir>
     return 1
   }
   [ -n "$token" ] || { echo "error: minting a stream hub token for secondmate $id produced nothing" >&2; return 1; }
+  FM_STREAM_MATE_MINTED_TOKEN=$token
   fm_stream_mate_write_home_token "$token" "$home" || return 1
   fm_stream_mate_append_hub_class_line "$token" "$hub_tokens" || return 1
+  if [ -n "$FM_STREAM_MATE_PRIOR_TOKEN" ] && [ "$FM_STREAM_MATE_PRIOR_LINE_EXISTED" = 1 ]; then
+    prior_line=$(fm_stream_mate_class_line "$FM_STREAM_MATE_PRIOR_TOKEN")
+    new_line=$(fm_stream_mate_class_line "$token")
+    if [ "$prior_line" != "$new_line" ]; then
+      fm_stream_mate_remove_hub_line "$prior_line" "$hub_tokens" || return 1
+    fi
+  fi
 }
 
 # Commit side of the transactional pair: releases the credential lock taken by
@@ -134,25 +195,41 @@ commit_stream_secondmate_token() {  # <state-dir>
     FM_STREAM_MATE_LOCK_HELD=0
     fm_lock_release "$(fm_stream_mate_credential_lock_path "$1")" 2>/dev/null || true
   fi
+  FM_STREAM_MATE_MINTED_TOKEN=
+  FM_STREAM_MATE_PRIOR_TOKEN=
   return 0
 }
 
 rollback_stream_secondmate_token() {  # <mate-home> <state-dir>
-  local home=$1 state_dir=$2 hub_tokens token lock line
+  local home=$1 state_dir=$2 hub_tokens token lock line mate_token
   [ "${FM_STREAM_MATE_LOCK_HELD:-0}" = 1 ] || return 0
   FM_STREAM_MATE_LOCK_HELD=0
   lock=$(fm_stream_mate_credential_lock_path "$state_dir")
   hub_tokens=$(fm_stream_mate_hub_tokens_path)
-  token=$(cat "$(fm_stream_mate_token_path "$home")" 2>/dev/null || true)
-  line="$FM_STREAM_MATE_CLASSES:$token"
+  mate_token=$(fm_stream_mate_token_path "$home")
+  token=${FM_STREAM_MATE_MINTED_TOKEN:-}
+  FM_STREAM_MATE_MINTED_TOKEN=
   if [ -n "$token" ]; then
-    if [ -f "$hub_tokens" ] && grep -Fqx -- "$line" "$hub_tokens"; then
-      grep -Fvx -- "$line" "$hub_tokens" > "$hub_tokens.tmp.$$" 2>/dev/null \
-        && mv -f -- "$hub_tokens.tmp.$$" "$hub_tokens" \
-        || rm -f -- "$hub_tokens.tmp.$$" 2>/dev/null || true
+    line=$(fm_stream_mate_class_line "$token")
+    if [ -f "$hub_tokens" ] && fm_stream_mate_hub_file_has_line "$line" "$hub_tokens"; then
+      fm_stream_mate_remove_hub_line "$line" "$hub_tokens" 2>/dev/null || true
     fi
-    rm -f -- "$(fm_stream_mate_token_path "$home")" 2>/dev/null || true
+    if [ "${FM_STREAM_MATE_PRIOR_TOKEN_EXISTED:-0}" = 1 ]; then
+      # A re-seed that fails rolls the home back onto the credential it held
+      # before the mint, and its class line goes back with it.
+      if [ -n "${FM_STREAM_MATE_PRIOR_TOKEN:-}" ]; then
+        fm_stream_mate_write_home_token "$FM_STREAM_MATE_PRIOR_TOKEN" "$home" 2>/dev/null || true
+        if [ "${FM_STREAM_MATE_PRIOR_LINE_EXISTED:-0}" = 1 ]; then
+          fm_stream_mate_append_hub_class_line "$FM_STREAM_MATE_PRIOR_TOKEN" "$hub_tokens" 2>/dev/null || true
+        fi
+      else
+        rm -f -- "$mate_token" 2>/dev/null || true
+      fi
+    else
+      rm -f -- "$mate_token" 2>/dev/null || true
+    fi
   fi
+  FM_STREAM_MATE_PRIOR_TOKEN=
   fm_lock_release "$lock" 2>/dev/null || true
   return 0
 }

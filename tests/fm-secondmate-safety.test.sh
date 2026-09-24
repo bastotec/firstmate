@@ -226,30 +226,108 @@ test_stream_mate_credential_seeding_skipped_for_remote_hub_client() {
 }
 
 test_stream_mate_credential_seeding_rolls_back_on_failure() {
-  local home sub mate_token other
+  local home sub hub_tokens
   home="$TMP_ROOT/stream-rollback-home"
   sub="$TMP_ROOT/stream-rollback-sub"
   make_stream_seed_world "$home" "$TMP_ROOT/remotes/stream-rollback-alpha.git"
-  # A home-assignment conflict fails the seed at validate_home_assignment,
-  # which runs before the credential mint; the failure that exercises the
-  # rollback is the registry write itself, so this registers the id to another
-  # home and lets the marker-order failure surface after the mint instead.
-  other="$TMP_ROOT/stream-rollback-other"
-  mkdir -p "$other"
-  printf '%s\n' "- mate-id - stream domain (home: $other; scope: stream domain; projects: alpha; added 2026-06-22)" \
-    > "$home/data/secondmates.md"
-  if FM_HOME="$home" FM_SECONDMATE_CHARTER='stream domain' \
-    "$ROOT/bin/fm-home-seed.sh" mate-id "$sub" alpha >/dev/null 2>&1; then
-    fail "seed succeeded despite the id being registered to another home"
+  hub_tokens="$home/config/stream-hub-tokens"
+  # The registry write is the first seed step that runs after the credential
+  # mint, so a parent data dir that cannot be written fails the seed with the
+  # mate token already minted: exactly the post-mint failure the rollback owns.
+  scaffold_secondmate_charter "$home" mate-id 'stream domain' alpha \
+    || fail "rollback fixture charter scaffold failed"
+  chmod 555 "$home/data"
+  if FM_HOME="$home" "$ROOT/bin/fm-home-seed.sh" mate-id "$sub" alpha >/dev/null 2>&1; then
+    chmod 755 "$home/data"
+    fail "seed succeeded despite an unwritable registry directory"
   fi
-  if [ -f "$sub/config/stream-token" ]; then
-    mate_token=$(cat "$sub/config/stream-token")
-    assert_no_grep "publish,subscribe,control:$mate_token" "$home/config/stream-hub-tokens" \
-      "a failed seed left the mate's class line in the hub token file"
-  fi
-  assert_grep 'publish,subscribe,control:primary-secret-token' "$home/config/stream-hub-tokens" \
-    "a failed seed disturbed the hub host's own credential line"
+  chmod 755 "$home/data"
+  [ ! -e "$sub" ] || fail "failed seed left the mate home behind"
+  grep -Fx 'publish,subscribe,control:primary-secret-token' "$hub_tokens" >/dev/null \
+    || fail "a failed seed disturbed the hub host's own credential line"
+  [ "$(grep -c '^publish,subscribe,control:' "$hub_tokens")" = 1 ] \
+    || fail "a failed seed left the mate's class line in the hub token file"
+  [ "$(file_mode "$hub_tokens")" = 600 ] \
+    || fail "credential rollback did not keep the hub token file 0600"
   pass "stream mate credential seeding leaves no stray credential when the seed fails"
+}
+
+test_stream_mate_reseed_rolls_back_to_the_prior_credential() {
+  local home sub hub_tokens prior_token
+  home="$TMP_ROOT/stream-reseed-rollback-home"
+  sub="$TMP_ROOT/stream-reseed-rollback-sub"
+  make_stream_seed_world "$home" "$TMP_ROOT/remotes/stream-reseed-rollback-alpha.git"
+  hub_tokens="$home/config/stream-hub-tokens"
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='stream domain' \
+    "$ROOT/bin/fm-home-seed.sh" m1 "$sub" alpha >/dev/null \
+    || fail "initial seed failed"
+  prior_token=$(cat "$sub/config/stream-token")
+  chmod 555 "$home/data"
+  if FM_HOME="$home" "$ROOT/bin/fm-home-seed.sh" m1 "$sub" alpha >/dev/null 2>&1; then
+    chmod 755 "$home/data"
+    fail "re-seed succeeded despite an unwritable registry directory"
+  fi
+  chmod 755 "$home/data"
+  assert_present "$sub/config/stream-token" \
+    "a failed re-seed left the mate home without a credential"
+  [ "$(cat "$sub/config/stream-token")" = "$prior_token" ] \
+    || fail "a failed re-seed did not restore the mate home's prior credential"
+  grep -Fx "publish,subscribe,control:$prior_token" "$hub_tokens" >/dev/null \
+    || fail "a failed re-seed dropped the prior credential's class line"
+  [ "$(grep -c '^publish,subscribe,control:' "$hub_tokens")" = 2 ] \
+    || fail "a failed re-seed left the hub token file with stray class lines"
+  [ "$(file_mode "$hub_tokens")" = 600 ] \
+    || fail "re-seed rollback did not keep the hub token file 0600"
+  pass "a failed re-seed rolls the mate home back to the credential it already held"
+}
+
+test_stream_mate_reseed_supersedes_the_prior_class_line() {
+  local home sub hub_tokens prior_token new_token
+  home="$TMP_ROOT/stream-reseed-supersede-home"
+  sub="$TMP_ROOT/stream-reseed-supersede-sub"
+  make_stream_seed_world "$home" "$TMP_ROOT/remotes/stream-reseed-supersede-alpha.git"
+  hub_tokens="$home/config/stream-hub-tokens"
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='stream domain' \
+    "$ROOT/bin/fm-home-seed.sh" m1 "$sub" alpha >/dev/null \
+    || fail "initial seed failed"
+  prior_token=$(cat "$sub/config/stream-token")
+  FM_HOME="$home" "$ROOT/bin/fm-home-seed.sh" m1 "$sub" alpha >/dev/null \
+    || fail "re-seed failed"
+  new_token=$(cat "$sub/config/stream-token")
+  [ "$new_token" != "$prior_token" ] \
+    || fail "re-seed delivered the same token instead of a fresh mint"
+  assert_no_grep "publish,subscribe,control:$prior_token" "$hub_tokens" \
+    "a committed re-seed left the superseded credential's class line behind"
+  grep -Fx "publish,subscribe,control:$new_token" "$hub_tokens" >/dev/null \
+    || fail "a committed re-seed did not add the new credential's class line"
+  [ "$(grep -c '^publish,subscribe,control:' "$hub_tokens")" = 2 ] \
+    || fail "a committed re-seed accumulated extra class lines"
+  [ "$(file_mode "$hub_tokens")" = 600 ] \
+    || fail "re-seed did not keep the hub token file 0600"
+  pass "a committed re-seed replaces the mate's class line instead of stacking a dead one"
+}
+
+test_stream_mate_seeding_survives_a_hub_file_without_trailing_newline() {
+  local home sub hub_tokens token
+  home="$TMP_ROOT/stream-newline-home"
+  sub="$TMP_ROOT/stream-newline-sub"
+  make_stream_seed_world "$home" "$TMP_ROOT/remotes/stream-newline-alpha.git"
+  hub_tokens="$home/config/stream-hub-tokens"
+  # A hand edit that left the last line unterminated must not splice the
+  # seeded class line onto the operator's own credential.
+  printf 'publish,subscribe,control:primary-secret-token' > "$hub_tokens"
+  chmod 600 "$hub_tokens"
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='stream domain' \
+    "$ROOT/bin/fm-home-seed.sh" nlmate "$sub" alpha >/dev/null \
+    || fail "seed into a hub token file without a trailing newline failed"
+  token=$(cat "$sub/config/stream-token")
+  grep -Fx 'publish,subscribe,control:primary-secret-token' "$hub_tokens" >/dev/null \
+    || fail "seeding spliced the hub host's own credential line"
+  grep -Fx "publish,subscribe,control:$token" "$hub_tokens" >/dev/null \
+    || fail "the seeded class line did not land on its own line"
+  [ "$(grep -c '^publish,subscribe,control:' "$hub_tokens")" = 2 ] \
+    || fail "the hub token file does not hold exactly the primary and mate lines"
+  pass "seeding appends onto a newline-less hub file without corrupting the last line"
 }
 
 test_home_seed_validate_rejects_unparseable_registry_entry() {
@@ -3303,6 +3381,9 @@ test_stream_mate_credential_seeding_mints_narrow_scoped_token
 test_stream_mate_credential_seeding_skipped_without_hub_config
 test_stream_mate_credential_seeding_skipped_for_remote_hub_client
 test_stream_mate_credential_seeding_rolls_back_on_failure
+test_stream_mate_reseed_rolls_back_to_the_prior_credential
+test_stream_mate_reseed_supersedes_the_prior_class_line
+test_stream_mate_seeding_survives_a_hub_file_without_trailing_newline
 test_home_seed_refuses_broken_registry_symlink
 test_home_seed_refuses_unreadable_registry
 test_home_seed_validate_rejects_duplicate_homes

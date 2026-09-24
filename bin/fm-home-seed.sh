@@ -718,6 +718,13 @@ seed_rollback() {
   [ "${SEED_ROLLBACK_ACTIVE:-0}" = 1 ] || return 0
   [ "${SEED_COMMITTED:-0}" = 0 ] || return 0
 
+  # Stream credential rollback runs before any home teardown below, so the
+  # mate home is still in place while its prior credential is restored into
+  # it. Releases its own lock; safe when seeding never reached the mint.
+  if [ -n "${SEED_HOME:-}" ] && [ "${SEED_STREAM_MATE_TOKEN:-0}" = 1 ]; then
+    rollback_stream_secondmate_token "$SEED_HOME" "$STATE" 2>/dev/null || true
+  fi
+
   if [ -n "${SEED_PARENT_BRIEF:-}" ] && [ "$SEED_PARENT_BRIEF_CREATED" = 1 ]; then
     rm -f "$SEED_PARENT_BRIEF" 2>/dev/null || true
   fi
@@ -745,11 +752,6 @@ seed_rollback() {
         restore_seed_file "$SEED_SUB_REG_EXISTED" "$SEED_BACKUP_DIR/sub-projects.md" "$SEED_HOME/data/projects.md"
       fi
     fi
-  fi
-
-  if [ -n "${SEED_HOME:-}" ] && [ "$SEED_STREAM_MATE_TOKEN" = 1 ]; then
-    # Releases its own lock; safe when seeding never reached the mint.
-    rollback_stream_secondmate_token "$SEED_HOME" "$STATE" 2>/dev/null || true
   fi
 
   if [ -n "${SEED_BACKUP_DIR:-}" ]; then
