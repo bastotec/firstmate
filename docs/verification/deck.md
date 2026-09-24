@@ -28,6 +28,10 @@ Deck's own tests pin that contract (`cargo test --locked`, 85 tests at `7308f21`
 ```
 $ bash tests/fm-deck-harness.test.sh
 ok - Deck host preserves handling-successor supervision without parent turn-end wakes
+ok - fm-deck-worker: a secondmate records a failed turn and waits at its prompt for the next wake
+ok - fm-deck-worker: a secondmate with no session repeats its launch brief on the next wake
+ok - fm-deck-worker: a secondmate that cannot open a session stops for the guarded relaunch
+ok - fm-deck-worker: a secondmate that cannot publish a failed turn stops instead of looping
 ok - fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model
 ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
 ok - fm-deck-worker: busy-state failures stop turns and publish status evidence
@@ -35,6 +39,8 @@ ok - fm-deck-worker: turn-end publication refuses unsafe targets
 ok - fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported
 ok - fm-deck-worker: Deck stderr cannot break completion-blocked rendering
 ok - fm-deck-worker: Firstmate bookkeeping cannot satisfy worker evidence
+ok - fm-deck-worker: the finished-turn line carries the UTC completion time and degrades safely without it
+ok - fm-deck-worker: the idle prompt notes the UTC idle instant beside the bare ❯ prompt
 ok - fm-deck-worker: status evidence never follows symlinked or non-regular paths
 ok - fm-deck-worker: silent and failed turns gain status evidence before turn-end
 ok - fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt
@@ -61,6 +67,7 @@ The evidence gate snapshots the status log's byte offset at turn start and searc
 Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy the gate or the driver's postcondition.
 Those reads, the driver's fallback append, and turn-end publication use Python 3 descriptor-bound I/O, reject symlinks and non-regular or multiply linked files, and never touch an unsafe target.
 The terminal regression drives two real `fm-send.sh` steers through tmux and proves delivery from the next `deck-wrapper` turn start after an idle baseline while each completed turn removes its transient rendered working row.
+The finished-turn row renders its UTC completion time from `run_finished.finished_at` and falls back to the timestamp-less wording when the field is absent, while the idle prompt notes the UTC idle instant beside its bare `❯` row.
 
 ## Driver lifecycle
 
