@@ -137,7 +137,11 @@ fm_agent_process_topmost() {  # pids on stdin -> pids on stdout
 # line was read and does not, and 2 when the process cannot be read. A
 # Linux-compatible /proc keeps argv boundaries, so one long argument - a launch
 # brief quoting a flag - can never satisfy the match; elsewhere ps's flattened
-# line is split on whitespace, which keeps every flag whole.
+# line is split on whitespace, which keeps every flag whole but cannot
+# reassemble an argument that itself holds a space, such as a path under a
+# spaced home. A backend that reads the boundaries itself matches those
+# arguments from its own report instead (bin/backends/herdr.sh's
+# fm_backend_herdr_deck_pid_is_driver).
 fm_agent_process_has_args() {  # <pid> <arg>...
   local pid=$1 proc_root flat
   shift

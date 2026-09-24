@@ -2381,12 +2381,46 @@ fm_backend_herdr_server_running_state() {  # <session>
   ' 2>/dev/null || printf 'unknown'
 }
 
+# fm_backend_herdr_deck_pid_is_driver: whether <pid> is THIS task's Deck driver,
+# proved from its own arguments: the driver script path, and the endpoint's
+# exact task id, state root, and armed generation as consecutive arguments
+# after argv[0] - the contract fm_agent_process_has_args owns. The argv array
+# Herdr's `pane process-info` already read from the operating system answers
+# first, because that report keeps argument boundaries while a flattened `ps`
+# line cannot: on a host without a Linux-compatible /proc the shared matcher
+# splits that line on whitespace, so one argument holding a path with a space -
+# a code root or a state root under a spaced home - arrives as several tokens
+# and can never match whole. Whatever the report cannot settle keeps the shared
+# matcher, which reads the boundaries itself wherever /proc does, so the report
+# only ever adds identity and never withholds it.
+fm_backend_herdr_deck_pid_is_driver() {  # <pid> <process-info-json> <id> <state> <gen>
+  local pid=$1 info=$2 id=$3 state=$4 gen=$5 worker="$FM_ROOT/bin/fm-deck-worker.sh"
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  if [ -n "$info" ] && printf '%s' "$info" | jq -e \
+    --arg pid "$pid" --arg worker "$worker" \
+    --arg id "$id" --arg state "$state" --arg gen "$gen" '
+    def carries($argv; $want):
+      ($argv | length) as $n | ($want | length) as $m |
+      $n > $m and ([range(1; $n - $m + 1) | . as $i | [range(0; $m) | $argv[$i + .]] == $want] | any);
+    [ .result.process_info.foreground_processes // [] | .[]
+      | select((.pid | type) == "number" and ((.pid | floor | tostring) == $pid))
+      | (.argv // [])
+      | select(type == "array" and length > 0)
+      | select(all(.[]; type == "string")) ]
+    | any(.[]; carries(.; [$worker]) and carries(.; ["--id", $id, "--state", $state, "--gen", $gen]))
+  ' >/dev/null 2>&1; then
+    return 0
+  fi
+  fm_agent_process_has_args "$pid" "$worker" || return 1
+  fm_agent_process_has_args "$pid" --id "$id" --state "$state" --gen "$gen" || return 1
+}
+
 # Deck endpoints are not registered with Herdr. Attribute the current driver
-# to this task and pane through the shared process owner, not a saved PID or a
+# to this task and pane through its live process identity, not a saved PID or a
 # busy/progress file that can survive its process. Busy generation binds the
 # driver's arguments to the same incarnation that owns progress publication.
 fm_backend_herdr_deck_pane_agent_state() {  # <session> <pane> <state-dir> <id>
-  local session=$1 pane=$2 state=$3 id=$4 presence pids pid gen record busy source rest
+  local session=$1 pane=$2 state=$3 id=$4 presence pids pid gen record busy source rest info
   presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane")
   case "$presence" in
     present) ;;
@@ -2396,10 +2430,10 @@ fm_backend_herdr_deck_pane_agent_state() {  # <session> <pane> <state-dir> <id>
   pids=$(fm_backend_herdr_pane_agent_pids "$session" "$pane") || { printf 'unknown'; return 0; }
   state=$(cd "$state" 2>/dev/null && pwd -P) || { printf 'unknown'; return 0; }
   gen=$(fm_busy_current_gen "$state" "$id") || gen=
+  info=$(fm_backend_herdr_cli "$session" pane process-info --pane "$pane" 2>/dev/null) || info=
   for pid in $pids; do
     [ -n "$gen" ] || continue
-    fm_agent_process_has_args "$pid" "$FM_ROOT/bin/fm-deck-worker.sh" || continue
-    fm_agent_process_has_args "$pid" --id "$id" --state "$state" --gen "$gen" || continue
+    fm_backend_herdr_deck_pid_is_driver "$pid" "$info" "$id" "$state" "$gen" || continue
     record=$(fm_busy_record_read "$state" "$id") || { printf 'unknown'; return 0; }
     read -r busy source rest <<< "$record"
     fm_busy_source_trusted deck "$source" || { printf 'unknown'; return 0; }
@@ -2414,7 +2448,6 @@ fm_backend_herdr_deck_pane_agent_state() {  # <session> <pane> <state-dir> <id>
     *) printf 'unknown' ;;
   esac
 }
-
 
 # fm_backend_herdr_agent_state: recovery-grade state for the same session-start
 # sweep as the tmux classifier. It reuses the husk classifier rather than

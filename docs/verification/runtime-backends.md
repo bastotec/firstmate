@@ -930,7 +930,7 @@ No ambient `herdr server stop` command is a supported test operation.
 
 ### Deck endpoint recovery (shim-based)
 
-Verified on 2026-09-23 on macOS with the repository's real Deck driver, busy-state writer, and OS processes, a shimmed Herdr protocol-14 CLI, and a shimmed model endpoint; this is not a local live-Herdr or live-model result.
+Verified on 2026-09-23, re-verified on 2026-09-24 on macOS with the repository's real Deck driver, busy-state writer, and OS processes, a shimmed Herdr protocol-14 CLI, and a shimmed model endpoint; this is not a local live-Herdr or live-model result.
 `bin/backends/herdr.sh` owns the Deck-only recovery classifier; `bin/fm-agent-process-lib.sh` remains the process-identity owner.
 
 ```sh
@@ -941,11 +941,13 @@ Observed output:
 
 ```text
 ok - Herdr Deck recovery proves driver identity; dead and non-Deck paths remain conservative
+ok - Herdr Deck recovery attributes a live driver across a spaced code root and state root
 fm-deck-harness: all cases passed
-FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=200109
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=300525
 ```
 
 The regression checks an absent driver before a live one, busy and idle evidence, replacement on the same pane, exact task attribution, unreadable process and pane inventories, stale busy/progress records after exit, and a live crewmate endpoint beside an absent one of every kind.
+The spaced-path case launches the same real driver under a code root and a state root whose paths hold a space, and the shimmed report carries the argv array the live process really presents - read from `/proc/<pid>/cmdline` where the platform exposes one, written from the same argument array the launch used where it does not - so it proves the boundary-preserving match rather than a fixture's opinion; against a whitespace-split `ps` line the same live mate read `unreadable`.
 The non-Deck registry path is deliberately unchanged, while every Deck endpoint - ship, scout, or second mate - is classified from its own driver rather than from a registry that cannot know Deck.
 
 Parent-route creation was also verified on 2026-09-23 through the real remote-control script against shimmed Herdr, with an ambient `umask 002`:

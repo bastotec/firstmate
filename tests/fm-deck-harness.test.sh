@@ -733,6 +733,97 @@ SH
   pass "Herdr Deck recovery proves driver identity; dead and non-Deck paths remain conservative"
 }
 
+# A home whose code root or state root holds a space - a macOS account such as
+# /Users/John Smith, or an operator-chosen root: in data/secondmates.md - still
+# attributes its live driver, because the match reads the boundary-preserving
+# argv Herdr's process report carries rather than a whitespace-split `ps` line.
+# Real driver, real busy records; only the Herdr transport is shimmed, and its
+# argv comes from the live process wherever the platform exposes one.
+test_herdr_deck_recovery_spaced_paths() {
+  local dir="$TMP_ROOT/herdr-spaced" shell_pid
+  mkdir -p "$dir/bin"
+  make_fake_deck "$dir"
+  ln -sfn "$ROOT" "$TMP_ROOT/spaced code root"
+  sleep 300 & shell_pid=$!
+  fm_test_track_helper_pid "$shell_pid"
+  printf '%s\n' "$shell_pid" > "$dir/shell"
+  cat > "$dir/bin/herdr" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  'status --json') printf '{"client":{"protocol":14},"server":{"running":true}}' ;;
+  'pane get') echo '{"result":{"pane":{"pane_id":"w1:p2"}}}' ;;
+  'pane process-info')
+    shell=$(cat "$FM_TEST_HERDR/shell")
+    driver=$(cat "$FM_TEST_HERDR/driver" 2>/dev/null || true)
+    if [ -n "$driver" ] && kill -0 "$driver" 2>/dev/null; then
+      if [ -r "/proc/$driver/cmdline" ]; then
+        argv=$(tr '\0' '\n' < "/proc/$driver/cmdline" | jq -R . | jq -sc .)
+      else
+        argv=$(cat "$FM_TEST_HERDR/argv.json")
+      fi
+      fg="{\"pid\":$driver,\"name\":\"bash\",\"argv0\":\"fm-deck-worker\",\"argv\":$argv}"
+    else
+      fg="{\"pid\":$shell,\"name\":\"zsh\",\"argv0\":\"zsh\",\"argv\":[\"zsh\"]}"
+    fi
+    printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":%s,"foreground_processes":[%s]}}}' "$shell" "$fg" ;;
+  'agent get')
+    echo registry >> "$FM_TEST_HERDR/registry.log"
+    echo '{"error":{"code":"agent_not_found"}}' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$dir/bin/herdr"
+  spaced_verdict() {  # <fm-root> <state-dir>
+    FM_HOME="$dir" FM_ROOT_OVERRIDE="$1" FM_STATE_OVERRIDE="$2" FM_TEST_HERDR="$dir" PATH="$dir/bin:$PATH" \
+      bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ "$1"
+  }
+  spaced_case() {  # <label> <fm-root> <state-dir>
+    local label=$1 root=$2 state=$3 gen driver record out
+    local -a argv
+    mkdir -p "$state"
+    printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=secondmate\n' > "$state/t1.meta"
+    gen=$("$BUSY_EVENT" arm "$state" t1)
+    "$BUSY_EVENT" progress "$state" t1 --gen "$gen" || fail "$label: progress fixture failed"
+    rm -f "$dir/driver"
+    [ "$(spaced_verdict "$root" "$state")" = dead ] \
+      || fail "$label: an absent driver with stale busy records was not dead"
+    argv=(fm-deck-worker "$root/bin/fm-deck-worker.sh"
+      --id t1 --state "$state" --gen "$gen" --deck "$dir/deck" -- write-status)
+    printf '%s\n' "${argv[@]}" | jq -R . | jq -sc . > "$dir/argv.json"
+    rm -f "$dir/input"
+    mkfifo "$dir/input"
+    exec 8<> "$dir/input"
+    FM_TEST_STATUS="$state/t1.status" bash -c 'exec -a fm-deck-worker bash "$@"' _ "${argv[@]:1}" \
+      < "$dir/input" > "$dir/pane.out" 2>&1 &
+    driver=$!
+    fm_test_track_helper_pid "$driver"
+    printf '%s\n' "$driver" > "$dir/driver"
+    record=
+    for _ in $(seq 1 100); do
+      record=$(fm_busy_record_read "$state" t1)
+      case "$record" in 'idle deck-wrapper '*) break ;; esac
+      sleep 0.1
+    done
+    case "$record" in
+      'idle deck-wrapper '*) ;;
+      *) fail "$label: driver did not reach idle: $record"$'\n'"$(cat "$dir/pane.out")" ;;
+    esac
+    : > "$dir/registry.log"
+    out=$(spaced_verdict "$root" "$state")
+    [ "$out" = alive ] || fail "$label: a live Deck driver read '$out'"
+    [ ! -s "$dir/registry.log" ] || fail "$label: Deck recovery consulted the unsupported registry"
+    printf '/quit\n' >&8
+    wait "$driver" || fail "$label: driver did not exit cleanly"
+    exec 8>&-
+    rm -f "$dir/driver" "$dir/input"
+  }
+  spaced_case 'spaced state root' "$ROOT" "$TMP_ROOT/spaced state"
+  spaced_case 'spaced code root' "$TMP_ROOT/spaced code root" "$TMP_ROOT/spaced mate state"
+  kill "$shell_pid" 2>/dev/null || true
+  wait "$shell_pid" 2>/dev/null || true
+  pass "Herdr Deck recovery attributes a live driver across a spaced code root and state root"
+}
+
 # The steering doorbell for a remote Deck secondmate rings for a LIVE driver
 # even though Herdr's registry answers agent_not_found for it: the ring's
 # liveness read resolves the task's metadata in the SUPPLIED state directory
@@ -1401,6 +1492,7 @@ PYTHON
 }
 
 test_herdr_deck_recovery
+test_herdr_deck_recovery_spaced_paths
 test_herdr_deck_ring_rings_live_driver
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_survives_a_failed_turn
