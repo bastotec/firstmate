@@ -985,7 +985,10 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 #   ambiguous  - the endpoint exists but its process cannot be attributed.
 #   unreadable - a target or inventory read failed or contradicted itself.
 #   unverified - this backend has no recovery classifier.
-# Only `dead` and `missing` license recovery. Every `alive` is proven at
+# Only `dead` and `missing` license recovery; the secondmate liveness sweep
+# alone narrows a stream `missing` to a no-respawn skip, because the hub's
+# registry not knowing an endpoint never proves its agent gone
+# (bin/fm-bootstrap.sh owns that narrowing). Every `alive` is proven at
 # process level through the shared classifier in bin/fm-agent-process-lib.sh,
 # never from a registration or a rendered title alone. The tmux adapter
 # requires a successful session inventory and returns `missing` only when it
