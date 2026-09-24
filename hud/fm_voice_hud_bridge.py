@@ -156,7 +156,19 @@ def main():
     if mic_file:
         mic = mic_mod.FileMic(mic_file)
     else:
-        mic = mic_mod.DeviceMic()
+        # The microphone is the shipped end: a python3 without sounddevice
+        # or a machine with no input device says so on the wire, never a
+        # traceback the panel cannot see.
+        try:
+            mic = mic_mod.DeviceMic()
+        except Exception as exc:              # noqa: BLE001
+            emit({"type": "notice", "event": "mic-fault",
+                  "error": "{}: {}".format(type(exc).__name__, exc)})
+            decoder.close()
+            engine.close()
+            if speaker is not None:
+                speaker.close()
+            return 1
 
     director = mic_mod.TurnDirector(
         engine, wake_mod.EnergyGate(), wake_mod.KeywordListener(), decoder,

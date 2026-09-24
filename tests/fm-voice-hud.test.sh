@@ -769,6 +769,71 @@ os.unlink(mic_path)
 PY
 pass "a dead decoder child reaches the panel as a notice and the bridge stays quittable"
 
+# --- a microphone that refuses to open says so on the wire --------------------
+#
+# The shipped path never passes --mic-file: the real microphone must attach,
+# and a python3 without sounddevice or a machine with no input device is
+# news the panel needs on the wire, not a traceback the wire never carries.
+# The stub raises exactly where a missing device would, so the check is
+# deterministic on every machine.
+
+SDSTUB_REFUSE="$TMP_ROOT/sdstub-refuse"
+mkdir -p "$SDSTUB_REFUSE"
+cat > "$SDSTUB_REFUSE/sounddevice.py" <<'SDREF'
+class PortAudioError(Exception):
+    pass
+
+
+class RawOutputStream:
+    def __init__(self, samplerate, channels, dtype, blocksize, device,
+                 latency, callback):
+        pass
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def RawInputStream(**kwargs):
+    raise PortAudioError("no input device available")
+SDREF
+
+python3 - "$ROOT" "$STUB" "$SDSTUB_REFUSE" <<'PY' || fail "mic fault"
+import json, os, subprocess, sys
+root, stub, sdstub = sys.argv[1], sys.argv[2], sys.argv[3]
+
+env = dict(os.environ)
+env.pop("FM_VOICE_HUD_DECODER", None)
+env["PYTHONPATH"] = sdstub + (
+    os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+
+proc = subprocess.run(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
+     "--stub-relay", stub],
+    capture_output=True, text=True, timeout=30, env=env)
+events = []
+for ln in proc.stdout.splitlines():
+    ln = ln.strip()
+    if ln:
+        events.append(json.loads(ln))
+faults = [e for e in events if e.get("type") == "notice"
+          and e.get("event") == "mic-fault"]
+if not faults:
+    sys.exit("mic fault: the refusal never reached the wire: "
+             + repr(proc.stdout) + repr(proc.stderr[-500:]))
+if proc.returncode != 1:
+    sys.exit("mic fault: the bridge must exit 1 on a refused microphone, got "
+             + str(proc.returncode))
+if "no input device" not in faults[0].get("error", ""):
+    sys.exit("mic fault: the notice must name the error: " + repr(faults[0]))
+PY
+pass "a microphone refusing to open surfaces as a mic-fault notice and a non-zero exit"
+
 # --- the spoken reply, end to end through the bridge -------------------------
 #
 # The whole lane with every real component a worker shell can host: the
