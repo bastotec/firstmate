@@ -221,6 +221,10 @@ class Engine:
         # answer to a question this end asked rather than the relay dying.
         self.quitting.set()
         self._quiet(lambda: self.up_q.put(frame.QUIT))
+        # And the sender's exit sentinel behind it, so the thread that owns
+        # the uplink finishes instead of blocking on an empty queue while
+        # close() waits out its whole join timeout.
+        self._quiet(lambda: self.up_q.put(None))
         if self.sender_thread is not None:
             self.sender_thread.join(timeout=CLOSE_TIMEOUT)
         if self.proc is not None:

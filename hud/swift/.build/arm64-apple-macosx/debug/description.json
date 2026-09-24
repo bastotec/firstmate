@@ -1,0 +1,676 @@
+{
+  "builtTestProducts" : [
+    {
+      "binaryPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.xctest/Contents/MacOS/VoiceHUDPackageTests",
+      "packagePath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift",
+      "productName" : "VoiceHUDPackageTests"
+    }
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.VoiceHUD-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/sources",
+      "importPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/Bridge.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/HUDState.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/main.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "VoiceHUD",
+      "moduleOutputPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules/VoiceHUD.swiftmodule",
+      "objects" : [
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/Bridge.swift.o",
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/HUDState.swift.o",
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/main.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j8",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "VoiceHUD_main",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "swift"
+      ],
+      "outputFileMapPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/Bridge.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/HUDState.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/main.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules/VoiceHUD.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/Bridge.swift",
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/HUDState.swift",
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/main.swift"
+      ],
+      "tempsPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.VoiceHUDPackageTests-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.build/sources",
+      "importPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.derived/runner.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules/VoiceHUDTests.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "VoiceHUDPackageTests",
+      "moduleOutputPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules/VoiceHUDPackageTests.swiftmodule",
+      "objects" : [
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.build/runner.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-Xfrontend",
+        "-enable-cross-import-overlays",
+        "-j8",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.build/include/VoiceHUDPackageTests-Swift.h",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "swift"
+      ],
+      "outputFileMapPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.build/runner.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules/VoiceHUDPackageTests.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.derived/runner.swift"
+      ],
+      "tempsPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.VoiceHUDTests-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/sources",
+      "importPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Tests/VoiceHUDTests/HUDStateTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "VoiceHUDTests",
+      "moduleOutputPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules/VoiceHUDTests.swiftmodule",
+      "objects" : [
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/HUDStateTests.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-Xfrontend",
+        "-enable-cross-import-overlays",
+        "-j8",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "swift"
+      ],
+      "outputFileMapPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/HUDStateTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules/VoiceHUDTests.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Tests/VoiceHUDTests/HUDStateTests.swift"
+      ],
+      "tempsPath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "VoiceHUD" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "VoiceHUD",
+      "-package-name",
+      "swift",
+      "-c",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/Bridge.swift",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/HUDState.swift",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/main.swift",
+      "-I",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j8",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "VoiceHUD_main",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "swift",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "VoiceHUDPackageTests" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "VoiceHUDPackageTests",
+      "-package-name",
+      "swift",
+      "-c",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.derived/runner.swift",
+      "-I",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-Xfrontend",
+      "-enable-cross-import-overlays",
+      "-j8",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.build/include/VoiceHUDPackageTests-Swift.h",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "swift",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "VoiceHUDTests" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "VoiceHUDTests",
+      "-package-name",
+      "swift",
+      "-c",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Tests/VoiceHUDTests/HUDStateTests.swift",
+      "-I",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-Xfrontend",
+      "-enable-cross-import-overlays",
+      "-j8",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "swift",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "VoiceHUD" : [
+
+    ],
+    "VoiceHUDPackageTests" : [
+      "VoiceHUDTests",
+      "VoiceHUD"
+    ],
+    "VoiceHUDTests" : [
+      "VoiceHUD"
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+    "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.derived/runner.swift" : {
+      "inputs" : [
+
+      ],
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.derived/runner.swift"
+        }
+      ]
+    }
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD-entitlement.plist" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<entitlement-plist>"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<com.apple.security.get-task-allow>"
+        }
+      ],
+      "outputFilePath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD-entitlement.plist"
+    },
+    "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/Bridge.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/HUDState.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Sources/VoiceHUD/main.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/sources"
+    },
+    "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/Bridge.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/HUDState.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/main.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.product/Objects.LinkFileList"
+    },
+    "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.derived/runner.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.build/sources"
+    },
+    "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/Bridge.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/HUDState.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUD.build/main.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.build/runner.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/HUDStateTests.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDPackageTests.product/Objects.LinkFileList"
+    },
+    "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/Tests/VoiceHUDTests/HUDStateTests.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/VoiceHUDTests.build/sources"
+    },
+    "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/bastotecnologia/.treehouse/firstmate-0243e2/15/firstmate/hud/swift/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}
