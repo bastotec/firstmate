@@ -984,9 +984,9 @@ test_recover_missing_basename_harness_names_the_replacement_path() {
   pass "fm-control recover-missing: a basename harness names --harness, and the named replacement recovers it"
 }
 
-# --- 3. the runtime is not switchable here ----------------------------------
+# --- 3. profile-switch flags belong to relaunch and recover-missing only -----
 
-test_recover_missing_rejects_runtime_switch_flags() {
+test_profile_switch_flags_are_rejected_on_other_verbs() {
   local dir out rc flag
   dir=$(new_case profile rm9)
   add_ship_task "$dir" rm9
@@ -1278,7 +1278,7 @@ test_launch_failure_never_claims_an_agent_was_stopped
 test_recover_missing_refuses_a_backend_it_cannot_recreate_on
 test_recover_missing_refusal_names_the_postcondition_it_cannot_prove
 test_recover_missing_refuses_a_basename_harness_without_naming_a_rejected_flag
-test_recover_missing_rejects_runtime_switch_flags
+test_profile_switch_flags_are_rejected_on_other_verbs
 test_recover_missing_requires_a_note_for_a_ship_task
 test_recover_missing_preserves_the_recorded_account_slot
 test_recover_missing_refuses_a_slot_its_home_no_longer_binds

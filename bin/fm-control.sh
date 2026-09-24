@@ -670,6 +670,9 @@ RELAUNCH_TX=
 RELAUNCH_BRIEF=
 RELAUNCH_PAST_TENSE=relaunched
 RELAUNCH_NOUN=relaunch
+if [ "$VERB" = recover-missing ]; then
+  RELAUNCH_NOUN=recovery
+fi
 PRIOR_HARNESS=$HARNESS
 PRIOR_RECORDED_HARNESS=$RECORDED_HARNESS
 CONFIG_HARNESS=
@@ -817,7 +820,7 @@ resolve_relaunch_profile() {
   [ -n "$PRIOR_EFFORT" ] || PRIOR_EFFORT=default
   if [ "$HARNESS_SET" = 0 ] \
      && [ "$PRIOR_RECORDED_HARNESS" != "$PRIOR_HARNESS" ]; then
-    die "task $ID records harness '$PRIOR_RECORDED_HARNESS', whose original launch command cannot be reconstructed from its recorded basename; recovering it without --harness would substitute the canonical adapter '$PRIOR_HARNESS' for the command actually running. Pass an explicit --harness to choose the replacement runtime deliberately"
+    die "task $ID records harness '$PRIOR_RECORDED_HARNESS', whose original launch command cannot be reconstructed from its recorded basename; this ${RELAUNCH_NOUN} without --harness would substitute the canonical adapter '$PRIOR_HARNESS' for the command actually running. Pass an explicit --harness to choose the replacement runtime deliberately"
   fi
   CONFIG_HARNESS=
   CONFIG_MODEL=
@@ -850,7 +853,7 @@ resolve_relaunch_profile() {
   fi
   if [ "$HARNESS_SET" = 1 ]; then
     fm_control_harness_supported "$NEW_HARNESS" \
-      || die "'$NEW_HARNESS' is not a verified harness; fm-control refuses to ${RELAUNCH_NOUN} onto an adapter with no verified control or launch mechanics"
+      || die "'$NEW_HARNESS' is not a verified harness; fm-control refuses this ${RELAUNCH_NOUN} onto an adapter with no verified control or launch mechanics"
     TARGET_HARNESS=$NEW_HARNESS
   elif [ "$HARNESS_SET" = 0 ] && [ -n "$CONFIG_HARNESS" ]; then
     fm_control_harness_supported "$CONFIG_HARNESS" \
@@ -1026,7 +1029,6 @@ do_relaunch() {
   local -a spawn_args
 
   require_state_verified_backend relaunch "the agent actually stopped"
-  RELAUNCH_NOUN=relaunch
   resolve_relaunch_profile
 
   case "$KIND" in
@@ -1105,7 +1107,6 @@ do_recover_missing() {
     || die "backend $BACKEND has no supported way to recreate an endpoint with the recorded identity; refusing to recover"
   resolve_relaunch_profile
   RELAUNCH_PAST_TENSE=recovered
-  RELAUNCH_NOUN=recovery
 
   case "$KIND" in
     ship|scout)
