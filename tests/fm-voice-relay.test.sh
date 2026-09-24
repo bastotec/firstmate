@@ -1087,6 +1087,9 @@ class Down:
     def arm_turn(self):
         pass
 
+    def arm_response(self):
+        pass
+
     def first_audio(self):
         return None
 
@@ -2121,9 +2124,9 @@ def fault_after_answer(label, make_stream, out_name):
         make_stream(gate, window), StartGate(gate))
     quiet_wait = after._wait_audio_quiet
 
-    def open_the_window(deadline):
+    def open_the_window():
         window.set()
-        quiet_wait(deadline)
+        quiet_wait()
         # take_turn copies the record on the line after this returns, so the fault
         # has to be in before it. closed is the downlink's own mark that it has
         # finished with the connection and it is set only after the fault has been

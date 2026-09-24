@@ -1118,7 +1118,7 @@ class Client:
         deadline = budget.transport_seconds()
         if not self.reply_done.wait(timeout=deadline):
             say("client: no reply within {}s".format(deadline))
-        self._wait_audio_quiet(deadline)
+        self._wait_audio_quiet()
 
         with self.lock:
             turn = dict(self.turn)
@@ -1186,7 +1186,7 @@ class Client:
                 "included.")
         return record
 
-    def _wait_audio_quiet(self, wait):
+    def _wait_audio_quiet(self):
         """Wait for the reply audio to stop arriving before reading the turn.
 
         Measured, the last audio frame and END_TURN land within about ten
@@ -1195,12 +1195,12 @@ class Client:
         no-overlap wait below depends on, and a turn that ends any other way,
         such as the session closing, would otherwise be counted short.
 
-        The wait given is the turn budget's own remaining share, so this ends
-        with the budget rather than past it: the deadline and the reply wait
-        are the same turn, and this must never be the waiter that outlives it.
+        The wait reads the turn budget's own remaining share, so it ends with
+        the budget rather than past it: the deadline and the reply wait are
+        the same turn, and this must never be the waiter that outlives it. A
+        turn whose budget is already spent reads its record at once.
         """
-        budget = TurnBudget("audio quiet", wait)
-        while budget.remaining() > 0:
+        while self.budget.remaining() > 0:
             with self.lock:
                 last = self.turn.get("last_frame")
             if last is None:

@@ -701,10 +701,10 @@ class Session:
         self.tool_names = []
         self.ended = asyncio.Event()
         self.turn_done = asyncio.Event()
-        # The one turn budget this session's waits read from. Created here so
-        # every waiter - the reply deadline, the handover grace, the self-test
-        # wait - shares the object and none carries its own seconds; see
-        # TurnBudget for the invariant and the failure that forced it.
+        # The one turn budget this session's waits read from. Armed fresh at
+        # every talk start, because the deadline is relative to the turn; the
+        # budget built here is the one a renewal reads its connect share from.
+        # See TurnBudget for the invariant and the failure that forced it.
         self.budget = TurnBudget(
             "reply", getattr(options, "turn_timeout", None))
         # Audio of the CURRENT RESPONSE, the one after the last state change.
@@ -809,6 +809,10 @@ class Session:
         if self.audio_content is not None:
             return
         self.audio_content = str(uuid.uuid4())
+        # A fresh budget for the turn, because the deadline is relative to the
+        # turn, not to the connect and credential work that ran before it.
+        self.budget = TurnBudget(
+            "reply", getattr(self.options, "turn_timeout", None))
         self.turn = {"began": time.monotonic()}
         self.tool_calls = 0
         self.tool_names = []
@@ -871,6 +875,24 @@ class Session:
             self.options.tail_ms))
 
     # ---------------------------------------------------------------- downlink
+
+    async def await_turn_done(self):
+        """Wait for this turn to end, on the turn budget and no number of its own.
+
+        The deadline is re-read on every slice rather than captured once,
+        because it can move: the handover grace grants a later deadline after
+        this wait is already armed, and a waiter that froze its seconds at arm
+        time would expire at the original deadline and close the session under
+        the handover - the recorded failure the one budget exists to end.
+        """
+        while not self.turn_done.is_set():
+            remaining = self.budget.reply_seconds()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            try:
+                await asyncio.wait_for(self.turn_done.wait(), remaining)
+            except asyncio.TimeoutError:
+                continue
 
     def _mark(self, name, at=None):
         now = at if at is not None else time.monotonic()
@@ -1015,8 +1037,6 @@ class Session:
             if stop == "INTERRUPTED":
                 self.down.send_json(frame.NOTICE, {"event": "interrupted"})
             if stop == "END_TURN":
-                # Trap 1: this, not completionEnd, is the end of the reply.
-                self._mark("reply_end")
                 # A turn only answered what it was asked when the current
                 # response - the one after the last tool call, not a lead-in
                 # before it - actually spoke. Without this test the handover
@@ -1026,6 +1046,8 @@ class Session:
                     raise RuntimeError(
                         "the model ended the turn without speaking after its "
                         "last tool call")
+                # Trap 1: this, not completionEnd, is the end of the reply.
+                self._mark("reply_end")
                 # first_audio above is stamped when the model event is decoded.
                 # The Downlink knows the later instant when that audio reached
                 # the connection, which is the one the captain hears, so it is
@@ -1203,8 +1225,7 @@ class HybridSession(Session):
         retry queueing the same request twice.
         """
         try:
-            await asyncio.wait_for(self.turn_done.wait(),
-                                   self.budget.reply_seconds())
+            await self.await_turn_done()
         except asyncio.TimeoutError:
             self.turn["timeout"] = True
             fail_turn(self, self.down, TimeoutError("hybrid engine reply timed out"))
@@ -1586,8 +1607,7 @@ async def self_test(options):
         fail_turn(session, sink, exc)
         session.turn_done.set()
     try:
-        await asyncio.wait_for(session.turn_done.wait(),
-                               timeout=session.budget.reply_seconds())
+        await session.await_turn_done()
     except asyncio.TimeoutError:
         session.turn["timeout"] = True
         if not session.failed:
