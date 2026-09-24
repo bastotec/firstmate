@@ -302,6 +302,12 @@ Neither the stopped-server exception nor the stale-registration verdict widens h
 Native registration still identifies Pi by name where tmux would see a generic interpreter; the process-level proof only decides whether that registration is backed by a running process.
 `tests/fm-backend-herdr-agent-exit-shell-e2e.test.sh` pins the live-Pi versus leftover-shell distinction; [`verification/runtime-backends.md`](verification/runtime-backends.md#agent-lifecycle-control) owns the versioned evidence.
 
+A Deck endpoint never consults that registry path, because Herdr's registry cannot know Deck: it registers only the harnesses that register themselves, so a live Deck driver reads `agent_not_found` and the registry answer would map a working mate to `dead`.
+Its liveness comes from the driver's own evidence instead: the pane's process inventory must hold the `fm-deck-worker` driver whose arguments carry the endpoint's exact task id, state root, and armed busy generation, and the task's busy record must still name a `deck-wrapper` busy or idle state bound to that same generation.
+`alive` requires both, so a pane that hosts some other task's driver, an unarmed generation, or a stale busy record left by an exited driver never reads alive.
+Absence keeps its positive-proof boundary: only the shell-only pane proof that already establishes `dead` may do so for Deck, so an empty or erroring pane, process, or record read stays `unknown` and recovery still refuses rather than trusting the registry's `agent_not_found` as evidence of death.
+`bin/backends/herdr.sh` owns the classifier; `tests/fm-deck-harness.test.sh` and the control-plane case in `tests/fm-remote-secondmate-replacement.test.sh` pin both boundaries.
+
 The session-start sweep uses this probe.
 Mid-session secondmate agent-process liveness is not implemented because idle secondmates are deliberately exempt from stale-pane escalation and need a separate periodic identity signal.
 

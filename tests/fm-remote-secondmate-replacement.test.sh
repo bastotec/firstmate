@@ -467,3 +467,100 @@ printf 'working: shadowed stat\n' | python3 "$ROOT/bin/fm-state-io.py" root-appe
   || fail "Deck safe status I/O rejected the root reconciled under a shadowed stat"
 rm -f "$FIXTURE/bin/stat"
 pass "a GNU-shaped stat on PATH cannot poison the parent-route owner read"
+
+# --- 13. A working remote Deck mate reads alive to the control plane ---------
+# The startup liveness sweep consumes `state`, so this is the read the reported
+# defect lived in: Herdr's registry answers agent_not_found for a Deck mate, and
+# a state read that resolved metadata in the ambient home instead of the
+# parent-route root mapped a working mate to dead and tore it down. Drive the
+# REAL control script against a REAL fm-deck-worker driver bound to the route
+# state, with the pane's registry registration gone. The dead boundary this
+# change must keep is owned by tests/fm-deck-harness.test.sh, which checks the
+# absent-driver verdict first for every kind and every registry answer.
+deckbin="$TMP_ROOT/deck-fake"
+mkdir -p "$deckbin"
+cat > "$deckbin/deck" <<'FAKE'
+#!/usr/bin/env bash
+# A fake deck binary: honors --session and the pre_complete hook, appends the
+# worker status line the evidence gate requires, and streams one finished turn.
+prompt=$2 session='' gate=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session) session=$2; shift 2 ;;
+    --hook) case "$2" in pre_complete=*) gate=${2#pre_complete=} ;; esac; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ -n "$session" ] || session="s-fake-$$"
+printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS"
+if [ -n "$gate" ] && ! bash -c "$gate" </dev/null 2>>"$(dirname "$0")/gate.err"; then
+  printf '{"type":"completion_blocked","attempt":1,"reason":"status evidence required"}\n'
+fi
+printf '{"type":"run_started","session":"%s","model":"m"}\n' "$session"
+printf '{"type":"text_delta","text":"echo: %s"}\n' "$prompt"
+printf '{"type":"run_finished","output":"x","turns":1}\n'
+FAKE
+chmod +x "$deckbin/deck"
+previous=$(pane_agent "$(route_pane)")
+if [ -n "$previous" ]; then kill -HUP "$previous" 2>/dev/null || true; fi
+reset_remote_herdr_fixture "$HERDR_STATE"
+rm -f "$ROUTE_META" "$IDENTITY"
+out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) \
+  || fail "the control-plane fixture launch failed: $out"
+pane=$(route_pane)
+stand_in=$(pane_agent "$pane")
+[ -n "$stand_in" ] || fail "the control-plane fixture launch left no host process"
+kill -HUP "$stand_in" 2>/dev/null || true
+n=0
+while alive "$stand_in" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+alive "$stand_in" && fail "the fixture stand-in survived its hangup"
+# Bind a real driver to the route state: exact task id, exact state root, and a
+# freshly armed busy generation, the identity a supervised restart preserves.
+gen=$("$ROOT/bin/fm-busy-event.sh" arm "$route_state" "$SM_ID") \
+  || fail "could not arm a busy generation for the driver"
+deck_fifo="$TMP_ROOT/deck-input"
+mkfifo "$deck_fifo"
+exec 7<>"$deck_fifo"
+FM_TEST_STATUS="$route_state/$SM_ID.status" bash -c 'exec -a fm-deck-worker bash "$@"' _ \
+  "$CODE/bin/fm-deck-worker.sh" --id "$SM_ID" --state "$route_state" --gen "$gen" \
+  --deck "$deckbin/deck" -- 'write-status the brief' \
+  < "$deck_fifo" > "$TMP_ROOT/deck-pane.out" 2>&1 &
+deck_driver=$!
+EXTRA_PIDS+=("$deck_driver")
+n=0
+until grep -q 'state=idle source=deck-wrapper' "$route_state/$SM_ID.busy-state" 2>/dev/null \
+  || [ "$n" -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
+grep -q 'state=idle source=deck-wrapper' "$route_state/$SM_ID.busy-state" 2>/dev/null \
+  || fail "the driver never reached an idle deck-wrapper record: $(tail -5 "$TMP_ROOT/deck-pane.out" 2>/dev/null)"
+# The registry cannot know this mate: deregister the pane so `agent get` answers
+# agent_not_found, then put the live driver in the pane it owns.
+deregister "$pane"
+jq --arg p "$pane" --argjson pid "$deck_driver" '.agents[$p] = $pid' "$HERDR_STATE" > "$HERDR_STATE.tmp"
+mv -f "$HERDR_STATE.tmp" "$HERDR_STATE"
+log_mark=$(wc -l < "$HERDR_LOG" | tr -d ' ')
+out=$(control state "$SM_ID" 2>&1)
+[ "$out" = alive ] \
+  || fail "a working remote Deck mate read '$out' to the control plane under an agent_not_found registry"
+sed -n "$((log_mark + 1)),\$p" "$HERDR_LOG" > "$TMP_ROOT/state-read.log"
+assert_grep 'pane process-info' "$TMP_ROOT/state-read.log" \
+  "the alive verdict did not inspect the pane's process inventory"
+assert_no_grep 'agent get' "$TMP_ROOT/state-read.log" \
+  "the state read consulted the registry that cannot know Deck"
+# A launch over that working mate reuses it: no teardown, no twin, nothing typed.
+tabs_before=$(jq '.tabs | length' "$HERDR_STATE")
+log_mark=$(wc -l < "$HERDR_LOG" | tr -d ' ')
+out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) \
+  || fail "a launch over a working remote Deck mate failed: $out"
+assert_contains "$out" "harness=deck" "the reuse launch did not report its runtime"
+alive "$deck_driver" || fail "the reuse launch tore down the working Deck mate"
+[ "$(pane_agent "$pane")" = "$deck_driver" ] \
+  || fail "the reuse launch started a twin beside the working Deck mate"
+[ "$(jq '.tabs | length' "$HERDR_STATE")" = "$tabs_before" ] \
+  || fail "the reuse launch opened a second tab"
+sed -n "$((log_mark + 1)),\$p" "$HERDR_LOG" > "$TMP_ROOT/reuse-launch.log"
+assert_no_grep 'pane send-text' "$TMP_ROOT/reuse-launch.log" \
+  "the reuse launch typed a new host line into the live mate's pane"
+printf '/quit\n' >&7
+wait "$deck_driver" || fail "the driver did not exit cleanly after /quit"
+exec 7>&-
+pass "a working remote Deck mate reads alive to the control plane and survives a launch"
