@@ -215,7 +215,7 @@ An explicit request for any other backend is refused rather than honored, and th
 An existing remote endpoint recorded in another Herdr session, including `default`, is classified as unverified and left untouched; launch, liveness recovery, control, and retirement refuse it until an operator explicitly migrates it instead of attempting a live cutover.
 A launch after a host has drifted out of readiness fails with the doctor's own gap text instead of leaving a half-created endpoint.
 Raw launch commands are not accepted for remote secondmates.
-Backends that already refuse secondmate launch, currently Orca, cmux, and stream, remain unsupported on the remote host.
+Backends that still refuse secondmate launch, currently Orca and cmux, remain unsupported on the remote host, and so does stream: the Herdr-only launch contract above refuses every other backend remotely, so a stream second mate launchable locally has no remote launch path.
 
 A remote route's endpoint records live in `state/parent-route`, which the launch creates private (`0700`) even under a permissive remote umask, because Deck's descriptor-bound status I/O refuses a group- or world-writable state root.
 The launch and the relaunch each reconcile a root an earlier launch left group-writable to the mode Deck accepts, so no home needs a hand chmod before a Deck mate can start.
