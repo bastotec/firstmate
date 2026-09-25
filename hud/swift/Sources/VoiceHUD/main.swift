@@ -264,8 +264,9 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                 model.applyMic(level: level, gate: gate)
             case .notice(let event, let error):
                 // Notices the HUD must show rather than just carry: a dead
-                // engine or an abandoned turn leaves the mic deaf, and the
-                // panel says so instead of rendering listening forever.
+                // engine or an abandoned turn leaves the mic deaf, and a
+                // wake into silence is never swallowed - the panel says
+                // what happened instead of rendering listening forever.
                 switch event {
                 case "engine-fault":
                     model.applyState("listening")
@@ -289,6 +290,21 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                 case "mic-status":
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "mic: \(error ?? "capture status")"))
+                case "wake":
+                    // The gate's own news is visible too: the wake word
+                    // fired, so the pause-then-command contract is coached
+                    // right where the captain is looking.
+                    model.applyState("listening")
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant, text: "wake word heard - say the command"))
+                case "no-speech":
+                    // A wake into silence is named, never swallowed: the
+                    // turn was never opened, so nothing was spent but the
+                    // captain still learns the wake fired and died.
+                    model.applyState("listening")
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant,
+                        text: "nothing after the wake word - pause briefly, then say the command"))
                 case "turn-failed":
                     model.applyState("listening")
                     var text = "that turn failed - ask again"

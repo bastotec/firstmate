@@ -303,8 +303,8 @@ The decoder finalizes each utterance only on its trailing silence, so the wake
 arms as your command's first speech arrives: the wake word needs its own
 utterance, and a wake word spoken in one breath with the command is heard as
 one utterance that never wakes the HUD.
-A wake into silence reports `no-speech` on the wire and re-arms without opening
-a turn, so it costs no model turn.
+A wake into silence is named on the panel (`no-speech`, with the pause-then-command
+coaching) and re-arms without opening a turn, so it costs no model turn.
 Speech during an open turn belongs to the turn alone and can never arm a stale
 wake, and a failed or timed-out turn is named on the panel with its reason.
 
