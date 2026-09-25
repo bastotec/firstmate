@@ -127,6 +127,8 @@ def main():
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--threshold", type=float, default=None)
     ap.add_argument("--patience", type=int, default=1)
+    ap.add_argument("--score-log", default=None,
+                    help="append every score >= 0.5 with a wall-clock stamp")
     ap.add_argument("--block", type=int, default=3200,
                     help="bytes per read (3200 = 100 ms)")
     args = ap.parse_args()
@@ -134,11 +136,17 @@ def main():
     print("spotter ready threshold=%.2f" % spot.threshold, file=sys.stderr,
           flush=True)
     stdin = sys.stdin.buffer
+    score_log = open(args.score_log, "a", buffering=1) if args.score_log else None
     while True:
         block = stdin.read(args.block)
         if not block:
             break
-        for w in spot.feed(block):
+        wakes = spot.feed(block)
+        if score_log is not None and spot.last_score >= 0.5:
+            import time
+            score_log.write("%.3f %.4f%s\n" % (time.time(), spot.last_score,
+                                                " WAKE" if wakes else ""))
+        for w in wakes:
             sys.stdout.write("wake %.3f %.3f\n" % (w.score, w.audio_time))
             sys.stdout.flush()
 

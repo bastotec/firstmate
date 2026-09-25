@@ -121,6 +121,12 @@ def main():
             time.sleep(0.3)
             print("   speak ...", flush=True)
             x = record(sd, secs)
+            if not x.any():
+                print("\n   The microphone delivered pure silence. macOS does that when this")
+                print("   app is not allowed to use the microphone: allow your terminal in")
+                print("   System Settings > Privacy & Security > Microphone, restart the")
+                print("   terminal, and run this again.")
+                return
             path = os.path.join(out, "%03d.pcm" % k)
             x.astype("<i2").tofile(path)
             wakes = []
