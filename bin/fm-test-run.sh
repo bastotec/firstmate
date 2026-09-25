@@ -807,6 +807,9 @@ tests/fm-turnend-guard.test.sh 42565
 tests/fm-update.test.sh 5212
 tests/fm-vendor-auth-probe.test.sh 43316
 tests/fm-voice-relay.test.sh 28699
+tests/fm-voice-hud.test.sh 42841
+tests/fm-voice-hud-live-e2e.test.sh 1161
+tests/fm-voice-hud-panel.test.sh 12078
 tests/fm-wake-daemon-lifecycle-e2e.test.sh 7381
 tests/fm-wake-drain-open-decisions-cursor.test.sh 20629
 tests/fm-wake-drain-open-decisions.test.sh 6240

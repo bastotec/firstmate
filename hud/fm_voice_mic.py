@@ -36,6 +36,13 @@ import fm_voice_wake as wake_mod          # noqa: E402
 # timing bounds are expressed against this block size.
 BLOCK = 3200
 
+# Seconds of the shipped capture bound that all-zero input must persist
+# before the HUD says so on the wire. A microphone the system denies does
+# not fail to open - it opens and delivers digital silence, which is
+# indistinguishable from not-heard unless someone counts. The count is the
+# product's own: after this bound the panel is told the mic is denied.
+SILENT_NOTICE_AFTER_SECONDS = 2.0
+
 # Seconds after a wake with no further speech before the HUD gives up on the
 # turn and says so. The turn is never opened, so nothing reaches the relay:
 # a wake into silence must not cost the captain a model turn.
@@ -79,11 +86,32 @@ class DeviceMic:
     interface, never run against a real device from a worker shell. The
     stream stays open for the whole session because the wake gate, not the
     device, decides what is sent.
+
+    Health the panel needs, said on the wire instead of staying quiet:
+    `on_status(flag)` fires once per distinct PortAudio callback status
+    (an input overflow is news), and `on_silent()` fires once per sustained
+    run of all-zero blocks longer than `silent_after_blocks` - the digital
+    silence a denied microphone delivers.
     """
 
-    def __init__(self, device=None):
+    def __init__(self, device=None, on_silent=None, on_status=None,
+                 silent_after_blocks=None):
         import sounddevice                    # noqa: PLC0415
+        if device is None:
+            # Name the default input device instead of letting PortAudio
+            # guess: a machine with no input device fails here with the
+            # device it tried in hand.
+            device = sounddevice.default.device[0]
         self._q = queue.SimpleQueue()
+        self._on_silent = on_silent
+        self._on_status = on_status
+        if silent_after_blocks is None:
+            silent_after_blocks = max(1, int(round(
+                SILENT_NOTICE_AFTER_SECONDS * 16000 / (BLOCK // 2))))
+        self._silent_after = silent_after_blocks
+        self._zero_run = 0
+        self._silent_notified = False
+        self._reported_status = set()
         self._stream = sounddevice.RawInputStream(
             samplerate=16000, channels=1, dtype="int16",
             blocksize=BLOCK // 2, device=device, latency="low",
@@ -91,8 +119,25 @@ class DeviceMic:
         self._stream.start()
 
     def _callback(self, indata, frames_read, time_info, status):
-        del frames_read, time_info, status
-        self._q.put(bytes(indata))
+        del frames_read, time_info
+        if status:
+            flag = str(status).strip()
+            if flag and flag not in self._reported_status:
+                self._reported_status.add(flag)
+                if self._on_status is not None:
+                    self._on_status(flag)
+        block = bytes(indata)
+        if any(block):
+            self._zero_run = 0
+            self._silent_notified = False
+        else:
+            self._zero_run += 1
+            if self._zero_run >= self._silent_after \
+                    and not self._silent_notified:
+                self._silent_notified = True
+                if self._on_silent is not None:
+                    self._on_silent()
+        self._q.put(block)
 
     def blocks(self):
         """Yield blocks as the device produces them, until close()."""
