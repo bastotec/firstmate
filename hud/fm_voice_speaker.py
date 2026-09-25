@@ -34,6 +34,9 @@ class Speaker:
         self._buffer = bytearray()
         self._lock = threading.Lock()
         self._closed = False
+        # Monotonic time the device last played reply audio; the mic side
+        # reads it to stay deaf to the HUD's own voice.
+        self.last_sound = None
         self._stream = sounddevice.RawOutputStream(
             samplerate=24000, channels=1, dtype="int16",
             blocksize=OUT_BLOCK, device=device, latency="low",
@@ -48,6 +51,8 @@ class Speaker:
             chunk = bytes(self._buffer[:take])
             del self._buffer[:take]
         outdata[:take] = chunk
+        if take:
+            self.last_sound = time.monotonic()
         if take < want:
             outdata[take:want] = b"\x00" * (want - take)
 
@@ -58,6 +63,17 @@ class Speaker:
             if self._closed:
                 return
             self._buffer += pcm
+
+    def sounding(self, tail=0.8):
+        """Whether reply audio is queued, playing, or ended under `tail` seconds
+        ago (room echo). Unsolicited speech - a background answer - reaches
+        the speaker with no turn blocking the microphone, so the mic side
+        asks this instead."""
+        with self._lock:
+            if self._buffer:
+                return True
+        last = self.last_sound
+        return last is not None and time.monotonic() - last < tail
 
     def drain(self, timeout=30):
         """Wait for the buffered reply to finish, so a quit right after an

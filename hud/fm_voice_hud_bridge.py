@@ -208,6 +208,13 @@ def main():
         for block in mic.blocks():
             if stop.is_set():
                 return
+            if speaker is not None and speaker.sounding():
+                # The HUD's own voice: never decoded, never a wake.
+                next_at += block_period
+                delay = next_at - time.monotonic()
+                if delay > 0:
+                    stop.wait(delay)
+                continue
             try:
                 director.feed(block, time.monotonic())
             except engine_mod.EngineError as exc:

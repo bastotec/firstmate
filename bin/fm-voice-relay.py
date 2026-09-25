@@ -995,15 +995,24 @@ class HybridSession(Session):
                 and (not self.turn or self.turn_done.is_set()))
 
     async def deliver_background(self, question, answer):
-        """Speak a background answer as soon as no turn is in progress."""
+        """Speak a background answer as soon as no turn is in progress. The
+        captain always wins: a turn started meanwhile cancels the delivery,
+        which then waits for the next quiet moment and tries again."""
         async with self.deliver_lock:
-            waited = 0.0
-            while not self._idle():
-                if self.failed or self.closing or waited >= self.deliver_patience:
-                    log(self.verbose, "background answer dropped: {}".format(question))
+            for _ in range(3):
+                if await self._deliver_once(question, answer):
                     return
-                await asyncio.sleep(0.25)
-                waited += 0.25
+            log(self.verbose, "background answer dropped after retries: {}".format(question))
+
+    async def _deliver_once(self, question, answer):
+        waited = 0.0
+        while not self._idle():
+            if self.failed or self.closing or waited >= self.deliver_patience:
+                log(self.verbose, "background answer dropped: {}".format(question))
+                return True
+            await asyncio.sleep(0.25)
+            waited += 0.25
+        if True:
             now = time.monotonic()
             self.turn = {"began": now, "talk_end": now, "background": True}
             self.tool_calls = 0
@@ -1018,13 +1027,19 @@ class HybridSession(Session):
                         question, answer)}]}})
             await self._send({"type": "response.create"})
             self.timeout_task = asyncio.create_task(self._deadline())
+            turn = self.turn
             await self.turn_done.wait()
+            return not turn.get("cancelled")
 
     async def start(self):
         self.connect_seconds = 0
         self.timeout_task = None
         self.pending_tools = False
         self.deliver_lock = asyncio.Lock()
+        # Response ids: the background answer being spoken, and one cancelled
+        # because the captain spoke over it (its late events are dropped).
+        self.background_response = None
+        self.cancelled_response = None
         began = time.monotonic()
         try:
             # Optional: installed by the speech stack in its own virtualenv.
@@ -1120,6 +1135,13 @@ class HybridSession(Session):
             return
         if self.audio_content is not None:
             return
+        if self.turn.get("background") and not self.turn_done.is_set():
+            # The captain spoke over a background answer being prepared:
+            # cancel it; its delivery retries after this turn.
+            self.turn["cancelled"] = True
+            self.cancelled_response = self.background_response
+            await self._send({"type": "response.cancel"})
+            self.turn_done.set()
         if self.turn and not self.turn_done.is_set():
             raise RuntimeError("hybrid engine is still answering the previous turn")
         if self.timeout_task is not None:
@@ -1169,6 +1191,8 @@ class HybridSession(Session):
                 if kind == "error":
                     raise RuntimeError("local engine: {}".format(
                         event.get("error", {}).get("message", "unknown error")))
+                if kind == "response.created" and self.turn.get("background"):
+                    self.background_response = event.get("response", {}).get("id")
                 if kind == "conversation.item.input_audio_transcription.completed":
                     self._mark("transcribed")
                     self.down.send_json(frame.TEXT, {
@@ -1178,6 +1202,9 @@ class HybridSession(Session):
                         "role": "ASSISTANT", "text": event.get("transcript", "")})
                 elif kind == "response.output_audio.delta":
                     pcm = base64.b64decode(event.get("delta", ""), validate=True)
+                    if pcm and self.cancelled_response and \
+                            event.get("response_id") == self.cancelled_response:
+                        continue
                     if pcm:
                         if "first_audio" not in self.turn:
                             self._mark("first_audio")
@@ -1197,7 +1224,12 @@ class HybridSession(Session):
                     self._mark("tool_answered")
                     self.pending_tools = True
                 elif kind == "response.done":
-                    if event.get("response", {}).get("status") != "completed":
+                    status = event.get("response", {}).get("status")
+                    if self.cancelled_response and \
+                            event.get("response", {}).get("id") == self.cancelled_response:
+                        # The cancelled background answer's own end.
+                        continue
+                    if status != "completed":
                         raise RuntimeError("hybrid engine response did not complete")
                     if self.pending_tools:
                         self.pending_tools = False
