@@ -155,7 +155,12 @@ test_clear_archives_the_record_and_replacement_archives_the_prior_one() {
   ext "$dir" clear t1 --by "firstmate" >/dev/null || fail "clear failed"
   [ ! -e "$record" ] || fail "clear left the live record in place"
   ext "$dir" active t1 && fail "a cleared declaration still read as active"
-  archive=$(ls "$state/external-waits/"*-t1.external-wait 2>/dev/null | head -1)
+  archive=
+  for f in "$state/external-waits/"*-t1.external-wait; do
+    [ -f "$f" ] || continue
+    archive=$f
+    break
+  done
   [ -n "$archive" ] && [ -f "$archive" ] || fail "clear did not archive the record for the audit trail"
   assert_equals "cleared" "$(sed -n 's/^outcome: //p' "$archive")" "the archive does not record how the wait ended"
   assert_equals "firstmate" "$(sed -n 's/^ended_by: //p' "$archive")" "the archive does not record who ended the wait"
@@ -189,7 +194,13 @@ test_same_named_archives_keep_both_records() {
   sed -i.bak "s/^declared_epoch: .*/declared_epoch: $declared_epoch/" "$record"
   rm -f "$record.bak"
   ext "$dir" declare t1 --reason "third wait" --until "$(future_iso 900)" >/dev/null || fail "replace failed"
-  second=$(ls "$state/external-waits/" | grep -v -F "$(basename "$first")" | head -1)
+  second=
+  for f in "$state/external-waits/"*; do
+    [ -f "$f" ] || continue
+    [ "$f" = "$first" ] && continue
+    second=$(basename "$f")
+    break
+  done
   [ -n "$second" ] && [ -f "$state/external-waits/$second" ] \
     || fail "a same-second replace destroyed the prior archive instead of taking a unique name"
   assert_equals "cleared" "$(sed -n 's/^outcome: //p' "$first")" \

@@ -223,7 +223,7 @@ fm_external_wait_line_value_ok() {  # <text>
 }
 
 fm_external_wait_declare() {  # <task> --reason <text> --until <UTC ISO 8601> [--by <text>]
-  local task=$1 reason= until= by=firstmate until_epoch now record tmp declared
+  local task=$1 reason='' until='' by=firstmate until_epoch now record tmp declared
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
