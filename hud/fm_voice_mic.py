@@ -61,6 +61,15 @@ SPOT_PREROLL_BLOCKS = 15
 # command starts ("Ziggy ... what's the status?") without the turn ending.
 SPOT_COMMAND_GRACE = 3.0
 
+# Conversation window: after Ziggy answers, speech opens the next turn without
+# the wake word until this many seconds pass with no speech, or the captain
+# stands Ziggy down.
+FOLLOW_UP_SECONDS = 8.0
+
+# Blocks of audio kept ahead of speech that opens a follow-up turn, so its
+# first syllable is not clipped (0.4 s).
+FOLLOW_UP_PREROLL_BLOCKS = 4
+
 
 class DecoderError(Exception):
     """The decoder child stopped taking audio, so the HUD can never wake."""
@@ -284,6 +293,7 @@ class TurnDirector:
     LISTENING = "listening"
     IN_WAKE = "in-wake"
     IN_TURN = "in-turn"
+    FOLLOW_UP = "follow-up"
 
     def __init__(self, engine, gate, keyword, decoder, on_notice=None,
                  speech_timeout=POST_WAKE_SPEECH_TIMEOUT, spotter=None):
@@ -296,6 +306,11 @@ class TurnDirector:
         self.spotter = spotter
         self._preroll = []
         self._spoke_since_wake = False
+        # Conversation window state: when it closes, and whether the captain
+        # asked to stand down (set from the bridge on his transcript).
+        self.follow_up_seconds = FOLLOW_UP_SECONDS
+        self._follow_until = None
+        self._stand_down = False
         self.gate = gate
         self.keyword = keyword
         self.decoder = decoder
@@ -414,6 +429,31 @@ class TurnDirector:
                 self._spoke_since_wake = False
             return self.phase
 
+        if self.phase == self.FOLLOW_UP:
+            if self._follow_until is None:
+                # First block after the reply: the window starts now.
+                self._follow_until = now + self.follow_up_seconds
+            if spotted or loud:
+                # The captain kept talking: the next turn, no wake word.
+                self.on_notice("follow-up-turn")
+                self.engine.begin_turn()
+                for held in self._preroll[-FOLLOW_UP_PREROLL_BLOCKS:]:
+                    self.engine.feed(held)
+                self.engine.feed(block)
+                self._preroll = []
+                self.phase = self.IN_TURN
+                self._wake_at = now
+                self._spoke_since_wake = True
+                return self.phase
+            self._preroll.append(block)
+            if len(self._preroll) > SPOT_PREROLL_BLOCKS:
+                del self._preroll[0]
+            if now >= self._follow_until:
+                self.on_notice("stand-by")
+                self.phase = self.LISTENING
+                self._follow_until = None
+            return self.phase
+
         if self.phase == self.IN_TURN:
             if loud:
                 self.engine.feed(block)
@@ -427,9 +467,29 @@ class TurnDirector:
             # after the grace if only the name was said.
             if self._spoke_since_wake or now - self._wake_at >= SPOT_COMMAND_GRACE:
                 self.engine.end_turn()
-                self.phase = self.LISTENING
                 self._wake_at = None
+                self._preroll = []
+                if self._stand_down or not self.follow_up_seconds:
+                    self._stand_down = False
+                    self.on_notice("stand-by")
+                    self.phase = self.LISTENING
+                else:
+                    # Ziggy has answered (end_turn waits for the reply): keep
+                    # listening without the wake word for the window.
+                    self.on_notice("follow-up")
+                    self.phase = self.FOLLOW_UP
+                    self._follow_until = None
         return self.phase
+
+    def stand_down(self):
+        """The captain said "stand down" (or similar): close the conversation
+        window after the current reply instead of keeping it open."""
+        self._stand_down = True
+        if self.phase == self.FOLLOW_UP:
+            self.phase = self.LISTENING
+            self._follow_until = None
+            self._stand_down = False
+            self.on_notice("stand-by")
 
     def _check_wake(self, transcripts, now):
         """Act on finished listening lines. Returns True when one woke.
@@ -456,7 +516,8 @@ class TurnDirector:
         timeout): the relay's documented renewal is the next turn's start,
         so the director returns to listening and the next wake opens a
         fresh turn instead of feeding one that was already ended."""
-        if self.phase == self.IN_TURN:
+        if self.phase in (self.IN_TURN, self.FOLLOW_UP):
             self.phase = self.LISTENING
             self._wake_at = None
             self._preroll = []
+            self._follow_until = None

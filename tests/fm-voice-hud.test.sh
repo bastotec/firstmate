@@ -867,11 +867,12 @@ loud = b"".join(
     for i in range(1600)) * 2
 quiet = bytes(3200)
 
-def run(blocks, spot_at):
+def run(blocks, spot_at, follow_up=0):
     engine, notices = RecordingEngine(), []
     director = mic_mod.TurnDirector(
         engine, wake.EnergyGate(), wake.KeywordListener(), NoDecoder(),
         on_notice=notices.append, spotter=ScriptedSpotter(spot_at))
+    director.follow_up_seconds = follow_up
     t, opened_at = 0.0, None
     for block in blocks:
         director.feed(block, t)
@@ -887,7 +888,22 @@ check(engine.begun == 1, "the spot must open exactly one turn")
 check(abs(opened_at - 0.4) < 1e-6, "the turn must open on the spotted block, at %r" % opened_at)
 check(engine.fed >= 15 * 3200, "pre-roll plus command must all be sent, got %d bytes" % engine.fed)
 check(engine.ended == 1 and director.phase == "listening", "the turn must end on quiet")
-check(notices == ["wake"], "the wake must be noticed once: %r" % notices)
+check(notices == ["wake", "stand-by"], "the wake must be noticed once: %r" % notices)
+
+# The conversation window: after the reply, speech opens the next turn with no
+# wake word; quiet past the window stands the HUD down to wake-word mode.
+engine, director, notices, _ = run(
+    [loud] * 10 + [quiet] * 15 + [loud] * 6 + [quiet] * 15, 5, follow_up=8.0)
+check(engine.begun == 2, "speech in the window must open a second turn without the name: %d" % engine.begun)
+check("follow-up-turn" in notices, "the follow-up turn must be noticed: %r" % notices)
+engine, director, notices, _ = run([loud] * 10 + [quiet] * 110, 5, follow_up=8.0)
+check(engine.begun == 1 and director.phase == "listening" and notices[-1] == "stand-by",
+      "quiet past the window must return to wake-word mode: %r %s" % (notices, director.phase))
+# Standing down closes the window at once.
+engine, director, notices, _ = run([loud] * 10 + [quiet] * 15, 5, follow_up=8.0)
+check(director.phase == "follow-up", "the window must be open after a reply: " + director.phase)
+director.stand_down()
+check(director.phase == "listening" and notices[-1] == "stand-by", "stand down must close the window")
 
 # "Ziggy" then a pause longer than the hangover but shorter than the grace,
 # then the command: one turn, not ended in the pause.

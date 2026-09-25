@@ -294,9 +294,8 @@ func render() {
         }
     }
     let stateName = model.state.rawValue
-    if lastRenderedState == "speaking" && stateName == "listening" {
-        glowAwake = false
-    }
+    // The glow stays on through the conversation window after a reply and
+    // goes dark on the "stand-by" notice (quiet window over, or stood down).
     lastRenderedState = stateName
     if model.micBlocked || muteToggler.muted {
         glow.set(.off)
@@ -427,6 +426,15 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "heard you"))
+                case "follow-up", "follow-up-turn":
+                    // Still in the conversation: no wake word needed.
+                    glowAwake = true
+                    model.applyState("listening")
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant, text: "still listening - just talk"))
+                case "stand-by":
+                    glowAwake = false
+                    model.applyState("listening")
                 case "no-speech":
                     glowAwake = false
                     // A wake into silence is named, never swallowed: the

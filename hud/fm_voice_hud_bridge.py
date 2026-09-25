@@ -20,6 +20,7 @@ owns the wire, and bin/fm-voice-relay.py owns everything behind it.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -110,13 +111,27 @@ def main():
                 notice["error"] = obj["error"]
             emit(notice)
 
+    # "Stand down", "that's all", "thanks Ziggy"...: close the conversation
+    # window after this reply. The director is created later, so it is
+    # looked up when the transcript arrives.
+    stand_down_words = re.compile(
+        r"\b(stand down|stand by|that'?s all|that is all|that'?ll be all|"
+        r"thanks?,? ziggy|thank you,? ziggy|dismissed|go to sleep|never ?mind)\b",
+        re.IGNORECASE)
+    holder = {}
+
+    def on_transcript(role, text):
+        emit({"type": "transcript",
+              "role": "user" if role == "USER" else "assistant",
+              "text": text})
+        if role == "USER" and stand_down_words.search(text or "") \
+                and "director" in holder:
+            holder["director"].stand_down()
+
     engine = engine_mod.Engine(
         argv,
         on_state=lambda state: emit({"type": "state", "state": state}),
-        on_transcript=lambda role, text: emit({
-            "type": "transcript",
-            "role": "user" if role == "USER" else "assistant",
-            "text": text}),
+        on_transcript=on_transcript,
         on_audio=speaker.write if speaker else (lambda pcm: None),
         on_notice=on_engine_notice,
         verbose=verbose)
@@ -226,6 +241,7 @@ def main():
     director = mic_mod.TurnDirector(
         engine, wake_mod.EnergyGate(), wake_mod.KeywordListener(), decoder,
         on_notice=on_director_notice, spotter=spotter)
+    holder["director"] = director
 
     stop = threading.Event()
     # The panel's mute button: while set, no block reaches the wake gate,
