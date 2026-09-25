@@ -1,0 +1,4 @@
+client: relay ready, fixture.nova-sonic in eu-north-1, read scope full, connected in 0.001s
+client: the relay ended the session
+client: the relay could not finish that turn: TimeoutError: 
+client: the relay signed off

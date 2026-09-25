@@ -1,0 +1,6 @@
+client: relay ready, fixture.nova-sonic in eu-north-1, read scope full, connected in 0.0s
+client: no reply within 0.0s
+  handed to the first mate: please check the flaky sign-in test
+  assistant: queued as 1790298269-YTKs8Z
+client: the relay could not finish that turn: RuntimeError: the model ended the turn without speaking after its last tool call
+client: the relay signed off

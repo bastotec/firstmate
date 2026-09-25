@@ -1,0 +1,11 @@
+usage: fm-voice-client.py [-h] [--host HOST] [--local] [--relay RELAY]
+                          [--relay-python RELAY_PYTHON]
+                          [--relay-arg RELAY_ARG]
+                          [--listen {push-to-talk,open-mic}] [--runs RUNS]
+                          [--talk-seconds TALK_SECONDS] [--in-file IN_FILE]
+                          [--out-file OUT_FILE] [--input-device INPUT_DEVICE]
+                          [--output-device OUTPUT_DEVICE] [--timeout TIMEOUT]
+                          [--wait-for-reply | --no-wait-for-reply]
+                          [--gap-seconds GAP_SECONDS]
+                          [--audio-idle AUDIO_IDLE] [--verbose]
+fm-voice-client.py: error: --timeout must be greater than zero

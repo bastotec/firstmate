@@ -1,0 +1,5 @@
+client: relay ready, fixture/route in None, read scope full, connected in 0.057s
+  you: A question.
+  assistant: I will hand that over.
+  assistant: That is queued.
+client: the relay signed off
