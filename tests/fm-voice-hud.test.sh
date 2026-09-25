@@ -899,6 +899,17 @@ check("follow-up-turn" in notices, "the follow-up turn must be noticed: %r" % no
 engine, director, notices, _ = run([loud] * 10 + [quiet] * 110, 5, follow_up=8.0)
 check(engine.begun == 1 and director.phase == "listening" and notices[-1] == "stand-by",
       "quiet past the window must return to wake-word mode: %r %s" % (notices, director.phase))
+# Ziggy's own speech is not the captain's silence: while it talks, the window
+# restarts, so a long answer never uses the window up.
+engine, director, notices, _ = run([loud] * 10 + [quiet] * 15, 5, follow_up=8.0)
+t = 2.5                          # where run() left the clock
+for _ in range(60):             # 6 s of quiet...
+    director.feed(quiet, t); t += 0.1
+director.ziggy_speaking()        # ...then Ziggy talks (blocks skipped upstream)
+for _ in range(60):             # 6 s more quiet after it finished
+    director.feed(quiet, t); t += 0.1
+check(director.phase == "follow-up",
+      "Ziggy speaking must restart the window, not count as silence: " + director.phase)
 # Standing down closes the window at once.
 engine, director, notices, _ = run([loud] * 10 + [quiet] * 15, 5, follow_up=8.0)
 check(director.phase == "follow-up", "the window must be open after a reply: " + director.phase)

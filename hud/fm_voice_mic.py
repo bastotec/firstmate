@@ -481,6 +481,12 @@ class TurnDirector:
                     self._follow_until = None
         return self.phase
 
+    def ziggy_speaking(self):
+        """Ziggy's own voice is playing: its speech is not the captain's
+        silence, so the conversation window restarts once it has finished."""
+        if self.phase == self.FOLLOW_UP:
+            self._follow_until = None
+
     def stand_down(self):
         """The captain said "stand down" (or similar): close the conversation
         window after the current reply instead of keeping it open."""

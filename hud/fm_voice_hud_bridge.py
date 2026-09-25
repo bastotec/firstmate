@@ -281,7 +281,9 @@ def main():
                     stop.wait(delay)
                 continue
             if speaker is not None and speaker.sounding():
-                # The HUD's own voice: never decoded, never a wake.
+                # The HUD's own voice: never decoded, never a wake, and never
+                # counted as the captain's silence in the conversation window.
+                director.ziggy_speaking()
                 next_at += block_period
                 delay = next_at - time.monotonic()
                 if paced and delay > 0:
@@ -318,9 +320,13 @@ def main():
                 break
             if command == "mute":
                 muted.set()
+                if speaker is not None:
+                    speaker.set_muted(True)
                 emit({"type": "notice", "event": "muted"})
             elif command == "unmute":
                 muted.clear()
+                if speaker is not None:
+                    speaker.set_muted(False)
                 emit({"type": "notice", "event": "unmuted"})
     finally:
         stop.set()

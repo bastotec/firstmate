@@ -115,6 +115,7 @@ import datetime
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -176,6 +177,11 @@ SYSTEM_PROMPT = (
     "started, fixed or built anything yourself.\n"
     "\n"
     "Speak in one or two short sentences. You are being listened to, not read.\n"
+    "\n"
+    "You have quick tools of your own: get_time for the date and time, and "
+    "run_command for read-only checks on this Mac (disk, uptime, files, git "
+    "status). Use them first for anything simple; never ask the first mate for "
+    "the time or for something a quick command can show.\n"
     "\n"
     "Never answer that you cannot answer, do not know, or that something is "
     "not available. Whatever you cannot answer yourself right now, ask the "
@@ -241,6 +247,84 @@ ASK_TOOL = {"toolSpec": {
             "required": ["question"],
         })},
     }}
+
+
+# Quick local tools for the hybrid voice model: answered on this machine at
+# once, so simple questions never wait on the first mate.
+TIME_TOOL = {"toolSpec": {
+    "name": "get_time",
+    "description": "The current local date, time, weekday and time zone.",
+    "inputSchema": {"json": json.dumps({"type": "object", "properties": {}, "required": []})},
+}}
+SHELL_TOOL = {"toolSpec": {
+    "name": "run_command",
+    "description": (
+        "Run one READ-ONLY command on this Mac and get its output, for quick "
+        "checks: date, cal, uptime, df -h, du -sh, ls, pwd, cat, head, tail, wc, "
+        "grep, find, ps, sw_vers, pmset -g batt, hostname, whoami, and git "
+        "status/log/diff/branch/show. No pipes, redirects or anything that "
+        "changes files; those are refused. The working directory is the first "
+        "mate's home."),
+    "inputSchema": {"json": json.dumps({
+        "type": "object",
+        "properties": {"command": {"type": "string",
+                                   "description": "One command line, e.g. \"df -h /\"."}},
+        "required": ["command"],
+    })},
+}}
+HYBRID_TOOLS = [ASK_TOOL, TIME_TOOL, SHELL_TOOL]
+
+READ_ONLY_COMMANDS = {"date", "cal", "uptime", "df", "du", "ls", "pwd", "cat",
+                      "head", "tail", "wc", "grep", "find", "ps", "sw_vers",
+                      "pmset", "hostname", "whoami", "which", "file", "stat"}
+READ_ONLY_GIT = {"status", "log", "diff", "branch", "show", "remote", "rev-parse"}
+FILE_COMMANDS = {"ls", "cat", "head", "tail", "wc", "grep", "find", "du", "file", "stat"}
+SECRET_NAMES = re.compile(
+    r"(secret|credential|token|password|passwd|\.env\b|\.pem$|\.key$|id_rsa|id_ed25519|"
+    r"/\.ssh/|auth\.json|keychain|voice-gateway-key)", re.IGNORECASE)
+SHELL_METACHARACTERS = set(";|&<>`$\\\n")
+
+
+def run_read_only(command, cwd):
+    """Run one allowlisted read-only command without a shell; refuse the rest."""
+    import shlex
+    text = (command or "").strip()
+    if not text or any(ch in SHELL_METACHARACTERS for ch in text):
+        return {"refused": "only single read-only commands, no pipes or redirects; "
+                           "ask the first mate for anything else"}
+    try:
+        argv = shlex.split(text)
+    except ValueError as exc:
+        return {"refused": "could not parse the command: {}".format(exc)}
+    name = argv[0]
+    if name == "git":
+        if len(argv) < 2 or argv[1] not in READ_ONLY_GIT:
+            return {"refused": "git is limited to status, log, diff, branch, show, remote"}
+    elif name not in READ_ONLY_COMMANDS:
+        return {"refused": "{} is not on the read-only list; ask the first mate".format(name)}
+    if name == "find" and any(a in ("-delete", "-exec", "-execdir", "-ok") for a in argv):
+        return {"refused": "find may only list files here"}
+    # Output goes to the cloud voice model: file access stays inside the first
+    # mate's home and never touches anything that looks like a secret.
+    if name in FILE_COMMANDS:
+        home = os.path.realpath(cwd)
+        for arg in argv[1:]:
+            if arg.startswith("-"):
+                continue
+            path = os.path.realpath(os.path.join(cwd, os.path.expanduser(arg)))
+            if path != home and not path.startswith(home + os.sep):
+                return {"refused": "file access is limited to the first mate's home"}
+            if SECRET_NAMES.search(path):
+                return {"refused": "that looks like a secret or credential file"}
+    try:
+        done = subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, timeout=8)
+    except FileNotFoundError:
+        return {"error": "{} is not installed".format(name)}
+    except subprocess.TimeoutExpired:
+        return {"error": "the command took longer than 8 seconds"}
+    out = (done.stdout or "") + (done.stderr or "")
+    return {"exit": done.returncode, "output": out[-2500:]}
 
 
 def log(enabled, message):
@@ -931,6 +1015,13 @@ class Session:
                 # would otherwise stop the relay reading the captain's audio.
                 result = await asyncio.to_thread(
                     records.fleet_status, self.home, self.scope)
+            elif name == "get_time":
+                now = time.localtime()
+                result = {"local_time": time.strftime("%A %d %B %Y, %H:%M", now),
+                          "time_zone": time.strftime("%Z (UTC%z)", now)}
+            elif name == "run_command":
+                result = await asyncio.to_thread(
+                    run_read_only, arguments.get("command", ""), self.home)
             elif name == "ask_firstmate":
                 question = (arguments.get("question") or "").strip()
                 if not question:
@@ -1052,7 +1143,7 @@ class HybridSession(Session):
             # Bedrock-only homes never import it or any local model dependency.
             await self._open_stream()
             tools = []
-            for entry in TOOLS["tools"] + [ASK_TOOL]:
+            for entry in TOOLS["tools"] + HYBRID_TOOLS:
                 spec = entry["toolSpec"]
                 tools.append({"type": "function", "name": spec["name"],
                               "description": spec["description"],

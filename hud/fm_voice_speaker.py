@@ -37,6 +37,7 @@ class Speaker:
         # Monotonic time the device last played reply audio; the mic side
         # reads it to stay deaf to the HUD's own voice.
         self.last_sound = None
+        self.muted = False
         self._stream = sounddevice.RawOutputStream(
             samplerate=24000, channels=1, dtype="int16",
             blocksize=OUT_BLOCK, device=device, latency="low",
@@ -58,11 +59,19 @@ class Speaker:
 
     def write(self, pcm):
         """Queue one chunk of reply audio; a write after close is dropped,
-        because no callback remains to drain it."""
+        because no callback remains to drain it, and so is one while muted."""
         with self._lock:
-            if self._closed:
+            if self._closed or self.muted:
                 return
             self._buffer += pcm
+
+    def set_muted(self, muted):
+        """The panel's mute: silence Ziggy's voice too, dropping anything
+        queued, so a guest in the room hears nothing from it."""
+        with self._lock:
+            self.muted = muted
+            if muted:
+                self._buffer = bytearray()
 
     def sounding(self, tail=0.8):
         """Whether reply audio is queued, playing, or ended under `tail` seconds
