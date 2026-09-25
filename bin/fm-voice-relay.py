@@ -278,10 +278,13 @@ READ_ONLY_COMMANDS = {"date", "cal", "uptime", "df", "du", "ls", "pwd", "cat",
                       "head", "tail", "wc", "grep", "find", "ps", "sw_vers",
                       "pmset", "hostname", "whoami", "which", "file", "stat"}
 READ_ONLY_GIT = {"status", "log", "diff", "branch", "show", "remote", "rev-parse"}
-FILE_COMMANDS = {"ls", "cat", "head", "tail", "wc", "grep", "find", "du", "file", "stat"}
-SECRET_NAMES = re.compile(
-    r"(secret|credential|token|password|passwd|\.env\b|\.pem$|\.key$|id_rsa|id_ed25519|"
-    r"/\.ssh/|auth\.json|keychain|voice-gateway-key)", re.IGNORECASE)
+# Files and folders run_command never reads: secrets and credentials.
+NEVER_READ = [os.path.expanduser(p) for p in (
+    "~/.secrets", "~/.ssh", "~/.aws", "~/.gnupg", "~/.netrc", "~/.config/gh",
+    "~/.pi/agent/auth.json", "~/Library/Keychains",
+    "~/.local/share/cli-proxy-native", "~/.config/cli-proxy-native",
+)]
+NEVER_READ_IN_HOME = ("config/voice-gateway-key", "config/wake-gate-key-var")
 SHELL_METACHARACTERS = set(";|&<>`$\\\n")
 
 
@@ -296,6 +299,8 @@ def run_read_only(command, cwd):
         argv = shlex.split(text)
     except ValueError as exc:
         return {"refused": "could not parse the command: {}".format(exc)}
+    # No shell runs this, so "~" is expanded here.
+    argv = [argv[0]] + [os.path.expanduser(a) for a in argv[1:]]
     name = argv[0]
     if name == "git":
         if len(argv) < 2 or argv[1] not in READ_ONLY_GIT:
@@ -304,18 +309,14 @@ def run_read_only(command, cwd):
         return {"refused": "{} is not on the read-only list; ask the first mate".format(name)}
     if name == "find" and any(a in ("-delete", "-exec", "-execdir", "-ok") for a in argv):
         return {"refused": "find may only list files here"}
-    # Output goes to the cloud voice model: file access stays inside the first
-    # mate's home and never touches anything that looks like a secret.
-    if name in FILE_COMMANDS:
-        home = os.path.realpath(cwd)
-        for arg in argv[1:]:
-            if arg.startswith("-"):
-                continue
-            path = os.path.realpath(os.path.join(cwd, os.path.expanduser(arg)))
-            if path != home and not path.startswith(home + os.sep):
-                return {"refused": "file access is limited to the first mate's home"}
-            if SECRET_NAMES.search(path):
-                return {"refused": "that looks like a secret or credential file"}
+    # Output goes to the cloud voice model: never these files or folders.
+    for arg in argv[1:]:
+        if arg.startswith("-"):
+            continue
+        path = os.path.realpath(os.path.join(cwd, os.path.expanduser(arg)))
+        denied = NEVER_READ + [os.path.realpath(os.path.join(cwd, p)) for p in NEVER_READ_IN_HOME]
+        if any(path == deny or path.startswith(deny + os.sep) for deny in denied):
+            return {"refused": "that file is off limits to voice"}
     try:
         done = subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
                               stdin=subprocess.DEVNULL, timeout=8)
