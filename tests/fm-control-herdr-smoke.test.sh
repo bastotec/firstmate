@@ -308,20 +308,26 @@ mv "$HOME_DIR/state/hsmoke.meta.tmp" "$HOME_DIR/state/hsmoke.meta"
 pass "real herdr: a stale registration no longer blocks relaunch, and the endpoint and local copy survive"
 
 # Last: the foreground process is a plain `sleep`, so the pane never draws any
-# recognized composer chrome. exit's composer-empty guard (bin/fm-control.sh)
-# therefore refuses before ever typing the exit command, rather than typing it
-# into a live agent that ignores it and reporting a stop that did not happen.
+# recognized composer chrome and the composer state stays unproven. The exit
+# gate (bin/fm-control.sh) no longer refuses that reading structurally:
+# claude has no verified clear key, so the gate spends its bounded re-reads,
+# warns, and types the exit command anyway - and the authoritative agent-state
+# wait fails closed, because the live agent behind that pane ignores it.
 start_agent_process
 herdr pane report-agent "$PANE_ID" --source fm-control-smoke --agent fm-control-smoke-agent \
   --state idle --session "$SESSION" >/dev/null 2>&1 \
   || fail "could not re-register the live agent on the task pane"
 if OUT=$(run_control hsmoke exit 2>&1); then
-  fail "exit should fail closed when the agent's composer is not proven empty: $OUT"
+  fail "exit should fail closed when a live agent ignores the typed exit command: $OUT"
 fi
 case "$OUT" in
-  *"not proven empty"*) : ;;
-  *) fail "the exit failure should say the composer is not proven empty, got: $OUT" ;;
+  *"composer state stayed"*) : ;;
+  *) fail "the gate should warn it is typing past an unproven composer, got: $OUT" ;;
 esac
-pass "real herdr: an agent behind an unproven composer fails closed instead of typing an exit command into it"
+case "$OUT" in
+  *"exit=unconfirmed"*) : ;;
+  *) fail "the exit failure should report the unconfirmed stop, not a composer refusal, got: $OUT" ;;
+esac
+pass "real herdr: an unproven composer behind a live agent is typed past with a warning and fails closed on the unconfirmed stop"
 
 fm_backend_herdr_kill "$SESSION:$PANE_ID" 2>/dev/null || true
