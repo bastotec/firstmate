@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+# Faithful setsid stand-in for local verification on macOS: new session, then
+# exec the command with its own name as argv[0], like util-linux setsid does
+# when the caller is not already a group leader (the stream agent path forks).
+import os, sys
+try:
+    os.setsid()
+except OSError:
+    pass  # util-linux setsid(1) without -f also fails when already a leader
+os.execvp(sys.argv[1], sys.argv[1:])

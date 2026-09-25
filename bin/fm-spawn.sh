@@ -40,8 +40,8 @@
 #   positional, and batch pairs are all refused alongside it; only harness,
 #   model, and effort may change, which is what makes a harness switch one
 #   ordinary relaunch. It refuses unless the recorded endpoint is positively
-#   agent-free on a backend with a recovery-grade agent-state classifier (tmux
-#   or herdr), and clears the previous harness's per-task wiring before arming
+#   agent-free on a backend with a recovery-grade agent-state classifier (tmux,
+#   herdr, or stream), and clears the previous harness's per-task wiring before arming
 #   the new incarnation. A relaunch whose recorded prior harness is Deck also
 #   proves every task-bound residual Deck driver stopped before that new
 #   incarnation is armed. The replacement still never starts outside the copy
@@ -72,8 +72,8 @@
 #   auto-detected.
 #   codex-app is not a known backend yet; docs/codex-app-backend.md owns that
 #   blocked backend contract. Default tmux spawns do not write backend= to meta;
-#   absent backend= means tmux. Neither cmux nor stream supports --secondmate
-#   spawns yet.
+#   absent backend= means tmux. Stream supports --secondmate through the same
+#   home-host driver as tmux/herdr/zellij; cmux does not support it yet.
 #   A backend spawn refusal (missing dependency, version gate, unauthenticated
 #   socket, or unsupported secondmate mode) is terminal for that selected backend;
 #   callers must surface it instead of silently retrying another backend.
@@ -1341,10 +1341,6 @@ if [ "$RELAUNCH" -eq 0 ]; then
     echo "error: backend=cmux does not support --secondmate spawns yet" >&2
     exit 1
   fi
-  if [ "$BACKEND" = stream ] && [ "$KIND" = secondmate ]; then
-    echo "error: backend=stream does not support --secondmate spawns yet" >&2
-    exit 1
-  fi
   if [ "$BACKEND" = orca ]; then
     fm_backend_orca_runtime_check || exit 1
   fi
@@ -1394,8 +1390,8 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fm_backend_validate_spawn "$BACKEND" || exit 1
   fm_backend_source "$BACKEND" || exit 1
   # A relaunch must PROVE the previous agent is gone before it launches another
-  # one into the same endpoint, and only tmux and herdr have a recovery-grade
-  # classifier that can (bin/fm-control-lib.sh owns that capability table).
+  # one into the same endpoint, using the recovery-grade classifier capability
+  # owned by bin/fm-control-lib.sh.
   fm_control_backend_state_verified "$BACKEND" || {
     echo "error: backend '$BACKEND' has no recovery-grade agent-state classifier, so a relaunch cannot prove the previous agent exited; refusing rather than risking two agents in one endpoint" >&2
     exit 1

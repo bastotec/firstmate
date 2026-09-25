@@ -36,7 +36,28 @@ The locally started hub ranks below both configured sources, so a home pointed a
 The hub groups endpoints by the machine that owns them, and this home's name in that view comes from `FM_STREAM_MACHINE`, then `config/stream-machine`, then the hostname; it is a readable identity rather than an opaque id, so set it on any home whose hostname says nothing useful.
 
 Select the backend the way any explicit backend is selected: `config/backend`, `FM_BACKEND=stream`, or an explicit per-task request.
-It is never auto-detected, and a spawn refuses `--secondmate` until secondmate launch semantics are designed for it.
+It is never auto-detected.
+Secondmate spawns use the existing isolated-home launch path, including Deck's persistent home-host driver (`bin/fm-deck-worker.sh`); no home migration is performed.
+
+## Secondmate lifecycle
+
+The same owners serve stream, tmux, Herdr, and Zellij secondmate launches: `bin/fm-spawn.sh` selects the home and harness, and `bin/fm-task-inbox-lib.sh` with `bin/fm-send.sh` owns durable steering and the doorbell.
+Deck's backend-independent host invariants are documented in `bin/fm-deck-worker.sh`: a watcher wake is never lost between turns, turns never overlap, and failures are reported rather than swallowed.
+`tests/fm-deck-harness.test.sh` exercises those invariants with serialized watcher and stdin turns.
+`tests/fm-backend-stream.test.sh` exercises a Deck home through the real stream transport, including launch, unacknowledged steering, liveness, interrupt, exit, same-endpoint relaunch, and recovery.
+
+Recovery classification remains `fm_backend_agent_state` in `bin/fm-backend.sh`, with one stream-only secondmate rule reading on top of it in `bin/fm-bootstrap.sh`: for a stream mate, `missing` is the hub's in-memory registry not knowing that endpoint, which an agent still pacing its rejoin after a hub restart also produces, so it licenses no respawn and the sweep skips with an `absence from the hub registry` diagnostic.
+The consequence is a deliberate asymmetry with tmux and Herdr, whose `missing` is process-authoritative and does respawn: a stream mate whose own agent is gone reads `unreadable` while the hub still holds its record, then `missing` once the hub reaps that record after an hour of agent silence, so it is never respawned automatically and that skip line is the only signal.
+A stream mate whose worker exited while its agent lived still reads `dead` from the agent's own closing report, and the sweep respawns it exactly as it does on any other backend.
+`bin/fm-bootstrap.sh` owns secondmate recovery respawn, preserving the recorded backend rather than selecting a different backend from ambient configuration.
+`bin/fm-control.sh` owns interrupt, exit, and same-endpoint relaunch; its `recover-missing` verb remains tmux-only because stream cannot recreate a hub-assigned endpoint identity.
+
+A stream-hosted second mate launches, is steered, and reports its own lifecycle, but its isolated home holds no hub credential, so it cannot itself spawn or supervise on stream.
+`bin/fm-stream-agent.py` hands the hosted process the hub address and deliberately withholds the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`.
+Its first stream call therefore dies in `fm_backend_stream_token` (`bin/backends/stream.sh`) before any endpoint exists, and the remedy that refusal names does not work there: `bin/fm-stream.sh token --ensure` mints a fresh random token, which the fleet hub refuses.
+Only a credential that hub already accepts, written into the mate home's own `config/stream-token`, lets a stream-hosted mate drive stream; handing secondmate homes such a credential is separate, later work.
+
+## Prerequisites
 
 `python3`, `curl`, and `jq` must be present, and the hub's protocol must match the adapter's.
 A missing dependency, an unreachable hub, a refused token, or a protocol mismatch is terminal for the selected backend: it refuses and names what is wrong rather than falling back to another backend.
@@ -336,7 +357,6 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
 - Experimental, with no dedicated real-backend CI lane.
   [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) is the live guard that proves each installed harness is still classified through the hub, and the command that refreshes the dated per-harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md).
   The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, `tests/fm-stream-claude-tail.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
-- No secondmate support.
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.
 - An unreachable agent and a dead worker are indistinguishable from the hub, so a stale read carries no liveness verdict at all.
   Only one of those two states authorizes recovery, and reporting silence as death is how a healthy worker gets torn down.

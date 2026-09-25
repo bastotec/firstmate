@@ -849,11 +849,19 @@ secondmate_liveness_one() {  # <meta> <id>
   [ -n "$target" ] || target="$window"
   agent_state=$(fm_backend_agent_state "$backend" "$target" 2>/dev/null) || agent_state=unreadable
   case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi|omp) ;;
+    claude|codex|opencode|pi|pi-signed|grok|kimi|omp|deck) ;;
     *)
       case "$agent_state" in dead|missing) agent_state=unverified-harness ;; esac
       ;;
   esac
+  # Only an absence read that is process-authoritative licenses a respawn
+  # without the kill gate. A stream `missing` is the hub's in-memory registry
+  # not knowing the endpoint, which an agent still pacing its rejoin after a
+  # hub restart also produces for the whole grace window
+  # (bin/backends/stream.sh owns that window and its cost).
+  if [ "$backend" = stream ] && [ "$agent_state" = missing ]; then
+    agent_state="registry-absent"
+  fi
   case "$agent_state" in
     alive)
       if [ "$harness" = claude ] && flag=$(fm_claude_permission_flag "$CONFIG" 2>/dev/null); then
@@ -879,7 +887,7 @@ secondmate_liveness_one() {  # <meta> <id>
       else
         cause="recorded endpoint confidently missing"
       fi
-      if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); then
+      if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate --backend "$backend" 2>&1); then
         secondmate_note_respawned "$id"
         report_relaunch "$id" "$cause" "backend=$backend"
       else
@@ -891,6 +899,9 @@ secondmate_liveness_one() {  # <meta> <id>
       ;;
     unreadable)
       echo "SECONDMATE_LIVENESS: secondmate $id: skipped: endpoint probe unreadable (backend=$backend)"
+      ;;
+    registry-absent)
+      echo "SECONDMATE_LIVENESS: secondmate $id: skipped: absence from the hub registry does not prove the agent is gone, so no relaunch was attempted (backend=$backend)"
       ;;
     unverified-harness)
       echo "SECONDMATE_LIVENESS: secondmate $id: skipped: recorded harness '$harness' is unverified for recovery (backend=$backend)"

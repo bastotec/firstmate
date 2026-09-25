@@ -236,10 +236,10 @@ Do not hand off `local-only` items.
 For local `kind=secondmate` meta with no window, treat the secondmate as a dead persistent direct report and respawn it with:
 
 ```sh
-bin/fm-spawn.sh <id> --secondmate
+bin/fm-spawn.sh <id> --secondmate --backend <recorded-backend>
 ```
 
-Use the recorded `home=` in meta.
+Use the recorded `home=` in meta and pass its recorded `backend=` the same way, with an absent `backend=` meaning tmux, so the replacement stays on the mate's own backend rather than the ambient selection, exactly as the session-start liveness sweep's respawn does.
 If meta is missing but `data/secondmates.md` still registers the secondmate, respawn from the registry entry and its persistent home.
 For a remote route, the same command probes and relaunches only on the configured host.
 An SSH transport failure or unreadable remote endpoint remains unknown and must be reconciled on that host; never launch a local replacement.

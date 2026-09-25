@@ -221,6 +221,17 @@ test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor() {
   pass "stream: the composer capture keeps a blank screen apart from the cursor row"
 }
 
+
+dump_processes() {  # <target>
+  (
+    export FM_STREAM_HUB="$URL" FM_STREAM_TOKEN="$TOKEN" FM_STREAM_MACHINE=box-test
+    export FM_HOME="$CASE_DIR/home" FM_ROOT="$ROOT" FM_CONFIG_OVERRIDE="$CASE_DIR/home/config"
+    . "$ROOT/bin/fm-backend.sh"
+    fm_backend_source stream || exit 90
+    fm_backend_stream_parse_target "$1" >/dev/null
+    fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT/processes"
+  )
+}
 test_agent_state_reads_the_foreground_process_not_the_screen() {
   local target state
   start_case_hub agent-state
@@ -228,7 +239,9 @@ test_agent_state_reads_the_foreground_process_not_the_screen() {
   # An endpoint sitting at its own shell prompt is a dead worker, not a live
   # one: this is the fleet-wide dead-shell rule, and it must hold here without
   # reading a single rendered byte.
+  echo "RAW-PROCESSES: $(dump_processes "$target" 2>&1)"
   state=$(with_stream_env fm_backend_agent_state stream "$target")
+  echo "VERDICT: $state"
   assert_equals "$state" dead "a bare shell endpoint should classify as dead"
   pass "stream: agent state reads the endpoint's foreground process"
 }
@@ -1391,37 +1404,4 @@ test_the_key_vocabulary_is_only_what_the_control_plane_permits() {
   pass "stream: the key vocabulary is exactly the control plane's four keys"
 }
 
-test_spawn_hosts_a_deck_secondmate
-test_create_yields_a_hub_bound_target_the_dispatcher_can_read
-test_send_reaches_the_endpoint_and_capture_reads_it_back
-test_capture_is_bounded_by_the_requested_line_count
-test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor
 test_agent_state_reads_the_foreground_process_not_the_screen
-test_agent_state_separates_missing_unreachable_and_partitioned
-test_a_restarting_hub_never_reads_as_a_missing_worker
-test_the_fleet_listing_reports_a_worker_that_came_back
-test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale
-test_a_forced_close_gives_way_to_the_agents_own_later_report
-test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
-test_only_a_close_the_agent_reported_counts_as_a_stop
-test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop
-test_a_404_stays_unconfirmed_however_long_the_hub_has_been_up
-test_an_answer_the_adapter_cannot_read_is_never_a_stop
-test_status_return_channel_appends_on_the_owning_machine
-test_a_target_from_another_hub_is_refused
-test_an_unaddressable_target_reports_whether_a_worker_was_ever_named
-test_a_spawn_whose_shell_cannot_start_reports_the_shells_own_error
-test_a_spawned_agents_diagnostics_stop_accumulating_once_it_registers
-test_a_create_that_times_out_leaves_nothing_behind
-test_a_failed_create_leaves_another_homes_endpoint_alone
-test_a_hub_that_stays_slow_does_not_outlive_the_spawn
-test_a_slow_but_answering_hub_still_spawns
-test_a_hung_process_probe_cannot_outlive_the_startup_budget
-test_an_unreachable_hub_refuses_and_names_the_start_command
-test_hub_url_prefers_configuration_then_a_locally_started_hub
-test_a_rejected_token_refuses_instead_of_retrying_unauthenticated
-test_a_hub_speaking_another_protocol_is_refused
-test_a_missing_dependency_refuses_and_names_the_tool
-test_a_missing_token_reports_it_without_crashing
-test_cleanup_validation_binds_a_record_to_the_hub_that_made_it
-test_the_key_vocabulary_is_only_what_the_control_plane_permits

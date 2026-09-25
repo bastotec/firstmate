@@ -1,0 +1,1723 @@
+﻿2026-09-25T00:24:17.2622877Z Current runner version: '2.337.0'
+2026-09-25T00:24:17.2650314Z ##[group]Runner Image Provisioner
+2026-09-25T00:24:17.2651190Z Hosted Compute Agent
+2026-09-25T00:24:17.2651858Z Version: 20260828.587
+2026-09-25T00:24:17.2652507Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-25T00:24:17.2653219Z Build Date: 2026-08-28T16:44:25Z
+2026-09-25T00:24:17.2654025Z Worker ID: {bb4e85f5-fbdf-4250-94ba-4702b51939b6}
+2026-09-25T00:24:17.2654743Z Azure Region: westus2
+2026-09-25T00:24:17.2655390Z ##[endgroup]
+2026-09-25T00:24:17.2657192Z ##[group]Operating System
+2026-09-25T00:24:17.2658250Z Ubuntu
+2026-09-25T00:24:17.2658927Z 24.04.5
+2026-09-25T00:24:17.2659441Z LTS
+2026-09-25T00:24:17.2659985Z ##[endgroup]
+2026-09-25T00:24:17.2660558Z ##[group]Runner Image
+2026-09-25T00:24:17.2661166Z Image: ubuntu-24.04
+2026-09-25T00:24:17.2661825Z Version: 20260920.314.1
+2026-09-25T00:24:17.2663112Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260920.314/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-25T00:24:17.2664734Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260920.314
+2026-09-25T00:24:17.2665712Z ##[endgroup]
+2026-09-25T00:24:17.2666910Z ##[group]GITHUB_TOKEN Permissions
+2026-09-25T00:24:17.2669511Z Contents: read
+2026-09-25T00:24:17.2670251Z Metadata: read
+2026-09-25T00:24:17.2670810Z ##[endgroup]
+2026-09-25T00:24:17.2673037Z Secret source: Actions
+2026-09-25T00:24:17.2674003Z Cache mode: write
+2026-09-25T00:24:17.2674703Z Prepare workflow directory
+2026-09-25T00:24:17.3061798Z Prepare all required actions
+2026-09-25T00:24:17.3108475Z Getting action download info
+2026-09-25T00:24:17.6546458Z Download action repository 'actions/checkout@v6' (SHA:d23441a48e516b6c34aea4fa41551a30e30af803)
+2026-09-25T00:24:17.7812857Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-09-25T00:24:18.0009174Z Complete job name: Behavior portable serial 5
+2026-09-25T00:24:18.0736180Z ##[group]Run actions/checkout@v6
+2026-09-25T00:24:18.0737056Z with:
+2026-09-25T00:24:18.0737478Z   fetch-depth: 0
+2026-09-25T00:24:18.0738152Z   repository: bastotec/firstmate
+2026-09-25T00:24:18.0741788Z   token: ***
+2026-09-25T00:24:18.0742214Z   ssh-strict: true
+2026-09-25T00:24:18.0742645Z   ssh-user: git
+2026-09-25T00:24:18.0743080Z   persist-credentials: true
+2026-09-25T00:24:18.0743552Z   clean: true
+2026-09-25T00:24:18.0743990Z   sparse-checkout-cone-mode: true
+2026-09-25T00:24:18.0744498Z   fetch-tags: false
+2026-09-25T00:24:18.0744940Z   show-progress: true
+2026-09-25T00:24:18.0745388Z   lfs: false
+2026-09-25T00:24:18.0745789Z   submodules: false
+2026-09-25T00:24:18.0746240Z   set-safe-directory: true
+2026-09-25T00:24:18.0746743Z   allow-unsafe-pr-checkout: false
+2026-09-25T00:24:18.0747677Z ##[endgroup]
+2026-09-25T00:24:18.1757301Z Syncing repository: bastotec/firstmate
+2026-09-25T00:24:18.1760358Z ##[group]Getting Git version info
+2026-09-25T00:24:18.1761581Z Working directory is '/home/runner/work/firstmate/firstmate'
+2026-09-25T00:24:18.1763213Z [command]/usr/bin/git version
+2026-09-25T00:24:18.1845566Z git version 2.55.0
+2026-09-25T00:24:18.1889579Z ##[endgroup]
+2026-09-25T00:24:18.1896628Z Temporarily overriding HOME='/home/runner/work/_temp/8ece089a-a8a2-443b-99c4-66a0e8473ca1' before making global git config changes
+2026-09-25T00:24:18.1899244Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-25T00:24:18.1901000Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/firstmate/firstmate
+2026-09-25T00:24:18.1961020Z Deleting the contents of '/home/runner/work/firstmate/firstmate'
+2026-09-25T00:24:18.1965020Z ##[group]Determining repository object format
+2026-09-25T00:24:18.1967886Z ##[endgroup]
+2026-09-25T00:24:18.1969158Z ##[group]Initializing the repository
+2026-09-25T00:24:18.1973543Z [command]/usr/bin/git init /home/runner/work/firstmate/firstmate
+2026-09-25T00:24:18.2125807Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-25T00:24:18.2128638Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-25T00:24:18.2130881Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-25T00:24:18.2132442Z hint: call:
+2026-09-25T00:24:18.2133452Z hint:
+2026-09-25T00:24:18.2134523Z hint: 	git config --global init.defaultBranch <name>
+2026-09-25T00:24:18.2135741Z hint:
+2026-09-25T00:24:18.2136842Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-25T00:24:18.2138976Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-25T00:24:18.2140500Z hint:
+2026-09-25T00:24:18.2142453Z hint: 	git branch -m <name>
+2026-09-25T00:24:18.2143545Z hint:
+2026-09-25T00:24:18.2144875Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-25T00:24:18.2146946Z Initialized empty Git repository in /home/runner/work/firstmate/firstmate/.git/
+2026-09-25T00:24:18.2151079Z [command]/usr/bin/git remote add origin https://github.com/bastotec/firstmate
+2026-09-25T00:24:18.2229480Z ##[endgroup]
+2026-09-25T00:24:18.2230349Z ##[group]Disabling automatic garbage collection
+2026-09-25T00:24:18.2234101Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-25T00:24:18.2268322Z ##[endgroup]
+2026-09-25T00:24:18.2269443Z ##[group]Setting up auth
+2026-09-25T00:24:18.2270374Z Removing SSH command configuration
+2026-09-25T00:24:18.2278584Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-25T00:24:18.2315117Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-25T00:24:18.2709182Z Removing HTTP extra header
+2026-09-25T00:24:18.2716752Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-25T00:24:18.2756205Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-25T00:24:18.2978975Z Removing includeIf entries pointing to credentials config files
+2026-09-25T00:24:18.2986301Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-25T00:24:18.3022743Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-25T00:24:18.3276908Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-25T00:24:18.3327219Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/firstmate/firstmate/.git.path /home/runner/work/_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:24:18.3369177Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/firstmate/firstmate/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:24:18.3422168Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:24:18.3461268Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:24:18.3495652Z ##[endgroup]
+2026-09-25T00:24:18.3496427Z ##[group]Fetching the repository
+2026-09-25T00:24:18.3509013Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +ef6a5d0727e21328647cdb60a96e3bb7cd7c4549:refs/remotes/pull/36/merge
+2026-09-25T00:24:20.4614926Z From https://github.com/bastotec/firstmate
+2026-09-25T00:24:20.4618103Z  * [new branch]        archive/deck-driver-surface-busy-errors-prerebase -> origin/archive/deck-driver-surface-busy-errors-prerebase
+2026-09-25T00:24:20.4621632Z  * [new branch]        archive/stream-command-path-prerebase    -> origin/archive/stream-command-path-prerebase
+2026-09-25T00:24:20.4624327Z  * [new branch]        fm/afk-pi-wake-bypass-r1                 -> origin/fm/afk-pi-wake-bypass-r1
+2026-09-25T00:24:20.4626698Z  * [new branch]        fm/backend-list-one-owner                -> origin/fm/backend-list-one-owner
+2026-09-25T00:24:20.4629537Z  * [new branch]        fm/deck-driver-surface-busy-errors       -> origin/fm/deck-driver-surface-busy-errors
+2026-09-25T00:24:20.4632009Z  * [new branch]        fm/deck-secondmate-host                  -> origin/fm/deck-secondmate-host
+2026-09-25T00:24:20.4634500Z  * [new branch]        fm/firstmate-account-slot-routing        -> origin/fm/firstmate-account-slot-routing
+2026-09-25T00:24:20.4637165Z  * [new branch]        fm/firstmate-account-slot-routing-forkmain -> origin/fm/firstmate-account-slot-routing-forkmain
+2026-09-25T00:24:20.4639854Z  * [new branch]        fm/firstmate-local-voice                 -> origin/fm/firstmate-local-voice
+2026-09-25T00:24:20.4643038Z  * [new branch]        fm/fm-actionable-update-escalation-misclassification-r1 -> origin/fm/fm-actionable-update-escalation-misclassification-r1
+2026-09-25T00:24:20.4645114Z  * [new branch]        fm/fm-actionable-update-escalation-misclassification-r3 -> origin/fm/fm-actionable-update-escalation-misclassification-r3
+2026-09-25T00:24:20.4646870Z  * [new branch]        fm/fm-afk-pi-branch-both-postures-r1     -> origin/fm/fm-afk-pi-branch-both-postures-r1
+2026-09-25T00:24:20.4648538Z  * [new branch]        fm/fm-bearings-running-table             -> origin/fm/fm-bearings-running-table
+2026-09-25T00:24:20.4650009Z  * [new branch]        fm/fm-bearings-running-table-fork        -> origin/fm/fm-bearings-running-table-fork
+2026-09-25T00:24:20.4652408Z  * [new branch]        fm/fm-bootstrap-version-probe-nonsemver  -> origin/fm/fm-bootstrap-version-probe-nonsemver
+2026-09-25T00:24:20.4654463Z  * [new branch]        fm/fm-branch-note-sailboat-r2            -> origin/fm/fm-branch-note-sailboat-r2
+2026-09-25T00:24:20.4655948Z  * [new branch]        fm/fm-composer-thin-adapter-refactor-r1  -> origin/fm/fm-composer-thin-adapter-refactor-r1
+2026-09-25T00:24:20.4657350Z  * [new branch]        fm/fm-crossworker-awareness              -> origin/fm/fm-crossworker-awareness
+2026-09-25T00:24:20.4659094Z  * [new branch]        fm/fm-deck-secondmate-survives-failed-turn -> origin/fm/fm-deck-secondmate-survives-failed-turn
+2026-09-25T00:24:20.4660533Z  * [new branch]        fm/fm-deck-worker-timestamp              -> origin/fm/fm-deck-worker-timestamp
+2026-09-25T00:24:20.4661924Z  * [new branch]        fm/fm-documentation-audience-cleanup-r1  -> origin/fm/fm-documentation-audience-cleanup-r1
+2026-09-25T00:24:20.4663356Z  * [new branch]        fm/fm-herdr-contiguity-resume            -> origin/fm/fm-herdr-contiguity-resume
+2026-09-25T00:24:20.4664646Z  * [new branch]        fm/fm-herdr-deck-liveness                -> origin/fm/fm-herdr-deck-liveness
+2026-09-25T00:24:20.4666274Z  * [new branch]        fm/fm-herdr-recovery-classifier-stale-agent-r1 -> origin/fm/fm-herdr-recovery-classifier-stale-agent-r1
+2026-09-25T00:24:20.4668080Z  * [new branch]        fm/fm-home-seed-delivery-route           -> origin/fm/fm-home-seed-delivery-route
+2026-09-25T00:24:20.4669483Z  * [new branch]        fm/fm-jev-triage-pass                    -> origin/fm/fm-jev-triage-pass
+2026-09-25T00:24:20.4670701Z  * [new branch]        fm/fm-launch-truncation                  -> origin/fm/fm-launch-truncation
+2026-09-25T00:24:20.4671900Z  * [new branch]        fm/fm-merge-poll-trust                   -> origin/fm/fm-merge-poll-trust
+2026-09-25T00:24:20.4673301Z  * [new branch]        fm/fm-migration-receipt-atomicity        -> origin/fm/fm-migration-receipt-atomicity
+2026-09-25T00:24:20.4674951Z  * [new branch]        fm/fm-missing-endpoint-relaunch          -> origin/fm/fm-missing-endpoint-relaunch
+2026-09-25T00:24:20.4676770Z  * [new branch]        fm/fm-needs-decision-main-only-r1        -> origin/fm/fm-needs-decision-main-only-r1
+2026-09-25T00:24:20.4678439Z  * [new branch]        fm/fm-needs-decision-whole-batch-r1      -> origin/fm/fm-needs-decision-whole-batch-r1
+2026-09-25T00:24:20.4679868Z  * [new branch]        fm/fm-nm-evidence-store-firstmate-r1     -> origin/fm/fm-nm-evidence-store-firstmate-r1
+2026-09-25T00:24:20.4681329Z  * [new branch]        fm/fm-per-task-delivery-override-r1      -> origin/fm/fm-per-task-delivery-override-r1
+2026-09-25T00:24:20.4682848Z  * [new branch]        fm/fm-public-stow-readbeforewrite-port-r1 -> origin/fm/fm-public-stow-readbeforewrite-port-r1
+2026-09-25T00:24:20.4684508Z  * [new branch]        fm/fm-recover-missing-dirty-guard        -> origin/fm/fm-recover-missing-dirty-guard
+2026-09-25T00:24:20.4686673Z  * [new branch]        fm/fm-recover-missing-rollback-meta-restore -> origin/fm/fm-recover-missing-rollback-meta-restore
+2026-09-25T00:24:20.4689888Z  * [new branch]        fm/fm-recover-missing-runtime-switch     -> origin/fm/fm-recover-missing-runtime-switch
+2026-09-25T00:24:20.4692670Z  * [new branch]        fm/fm-relaunch-doc-record-claim          -> origin/fm/fm-relaunch-doc-record-claim
+2026-09-25T00:24:20.4695233Z  * [new branch]        fm/fm-relaunch-posture-and-verify        -> origin/fm/fm-relaunch-posture-and-verify
+2026-09-25T00:24:20.4698345Z  * [new branch]        fm/fm-relaunch-refuses-blocked-inflight  -> origin/fm/fm-relaunch-refuses-blocked-inflight
+2026-09-25T00:24:20.4700909Z  * [new branch]        fm/fm-remote-brief-inbox-path            -> origin/fm/fm-remote-brief-inbox-path
+2026-09-25T00:24:20.4703145Z  * [new branch]        fm/fm-remote-home-migration              -> origin/fm/fm-remote-home-migration
+2026-09-25T00:24:20.4705623Z  * [new branch]        fm/fm-safe-auto-reboot-simple-r1         -> origin/fm/fm-safe-auto-reboot-simple-r1
+2026-09-25T00:24:20.4707826Z  * [new branch]        fm/fm-secondmate-creation-record-intake-r1 -> origin/fm/fm-secondmate-creation-record-intake-r1
+2026-09-25T00:24:20.4709584Z  * [new branch]        fm/fm-secondmate-parent-channel-structural-r1 -> origin/fm/fm-secondmate-parent-channel-structural-r1
+2026-09-25T00:24:20.4711280Z  * [new branch]        fm/fm-secondmate-record-atomic-transitions-r1 -> origin/fm/fm-secondmate-record-atomic-transitions-r1
+2026-09-25T00:24:20.4712817Z  * [new branch]        fm/fm-sessionstart-network-free-r1       -> origin/fm/fm-sessionstart-network-free-r1
+2026-09-25T00:24:20.4714585Z  * [new branch]        fm/fm-shared-test-fixtures-r1            -> origin/fm/fm-shared-test-fixtures-r1
+2026-09-25T00:24:20.4716614Z  * [new branch]        fm/fm-ship-done-contract                 -> origin/fm/fm-ship-done-contract
+2026-09-25T00:24:20.4718208Z  * [new branch]        fm/fm-skill-frontmatter-desc-r1          -> origin/fm/fm-skill-frontmatter-desc-r1
+2026-09-25T00:24:20.4719599Z  * [new branch]        fm/fm-stream-command-path                -> origin/fm/fm-stream-command-path
+2026-09-25T00:24:20.4720850Z  * [new branch]        fm/fm-stream-hub-adapter                 -> origin/fm/fm-stream-hub-adapter
+2026-09-25T00:24:20.4722142Z  * [new branch]        fm/fm-stream-secondmate-backend          -> origin/fm/fm-stream-secondmate-backend
+2026-09-25T00:24:20.4723542Z  * [new branch]        fm/fm-stream-secondmate-hub-credential   -> origin/fm/fm-stream-secondmate-hub-credential
+2026-09-25T00:24:20.4725287Z  * [new branch]        fm/fm-supervision-pr-url-hallucination-r1 -> origin/fm/fm-supervision-pr-url-hallucination-r1
+2026-09-25T00:24:20.4726878Z  * [new branch]        fm/fm-supervision-rearm-resurface-r1     -> origin/fm/fm-supervision-rearm-resurface-r1
+2026-09-25T00:24:20.4729967Z  * [new branch]        fm/fm-supervision-refused-ack-loop-r1    -> origin/fm/fm-supervision-refused-ack-loop-r1
+2026-09-25T00:24:20.4732996Z  * [new branch]        fm/fm-teardown-closes-captain-held-scout-r1 -> origin/fm/fm-teardown-closes-captain-held-scout-r1
+2026-09-25T00:24:20.4735992Z  * [new branch]        fm/fm-teardown-slot-collision-fix-r1     -> origin/fm/fm-teardown-slot-collision-fix-r1
+2026-09-25T00:24:20.4739109Z  * [new branch]        fm/fm-test-step-bound-main               -> origin/fm/fm-test-step-bound-main
+2026-09-25T00:24:20.4741384Z  * [new branch]        fm/fm-watch-arm-fork-fragility           -> origin/fm/fm-watch-arm-fork-fragility
+2026-09-25T00:24:20.4743644Z  * [new branch]        fm/fm-watcher-flap-autoarm-fix-r2        -> origin/fm/fm-watcher-flap-autoarm-fix-r2
+2026-09-25T00:24:20.4746039Z  * [new branch]        fm/fm-watcher-hardening-r1               -> origin/fm/fm-watcher-hardening-r1
+2026-09-25T00:24:20.4747336Z  * [new branch]        fm/fm-watcher-hardening-r2               -> origin/fm/fm-watcher-hardening-r2
+2026-09-25T00:24:20.4748849Z  * [new branch]        fm/fm-watcher-hardening-r3               -> origin/fm/fm-watcher-hardening-r3
+2026-09-25T00:24:20.4750108Z  * [new branch]        fm/fm-wedge-ladder-hold-bound            -> origin/fm/fm-wedge-ladder-hold-bound
+2026-09-25T00:24:20.4751517Z  * [new branch]        fm/herdr-workspace-contiguity-maintenance -> origin/fm/herdr-workspace-contiguity-maintenance
+2026-09-25T00:24:20.4752756Z  * [new branch]        fm/jev-deck                              -> origin/fm/jev-deck
+2026-09-25T00:24:20.4754484Z  * [new branch]        fm/nm-required-exempt-release-please-r1  -> origin/fm/nm-required-exempt-release-please-r1
+2026-09-25T00:24:20.4756621Z  * [new branch]        fm/pi-branch-test-flake                  -> origin/fm/pi-branch-test-flake
+2026-09-25T00:24:20.4758427Z  * [new branch]        fm/reconcile-inactive-crew-investigate-s1 -> origin/fm/reconcile-inactive-crew-investigate-s1
+2026-09-25T00:24:20.4759924Z  * [new branch]        fm/remote-send-confirm-readback-fix-r1   -> origin/fm/remote-send-confirm-readback-fix-r1
+2026-09-25T00:24:20.4761302Z  * [new branch]        fm/remote-send-delivery-delta-r1         -> origin/fm/remote-send-delivery-delta-r1
+2026-09-25T00:24:20.4762906Z  * [new branch]        fm/secondmate-autonomous-supervision-s7  -> origin/fm/secondmate-autonomous-supervision-s7
+2026-09-25T00:24:20.4764281Z  * [new branch]        fm/stream-agent-reregister               -> origin/fm/stream-agent-reregister
+2026-09-25T00:24:20.4831056Z  * [new branch]        fm/stream-backend-rust-port              -> origin/fm/stream-backend-rust-port
+2026-09-25T00:24:20.4832527Z  * [new branch]        fm/stream-claude-tail-agent              -> origin/fm/stream-claude-tail-agent
+2026-09-25T00:24:20.4833931Z  * [new branch]        fm/stream-command-path-finish            -> origin/fm/stream-command-path-finish
+2026-09-25T00:24:20.4835130Z  * [new branch]        fm/stream-hub                            -> origin/fm/stream-hub
+2026-09-25T00:24:20.4836223Z  * [new branch]        fm/stream-kill-contract                  -> origin/fm/stream-kill-contract
+2026-09-25T00:24:20.4837436Z  * [new branch]        fm/stream-opencode-adapter               -> origin/fm/stream-opencode-adapter
+2026-09-25T00:24:20.4838834Z  * [new branch]        fm/wake-gate                             -> origin/fm/wake-gate
+2026-09-25T00:24:20.4839783Z  * [new branch]        main                                     -> origin/main
+2026-09-25T00:24:20.4840778Z  * [new branch]        no-mistakes/evidence                     -> origin/no-mistakes/evidence
+2026-09-25T00:24:20.4842016Z  * [new branch]        proto/herdr-child-workspaces             -> origin/proto/herdr-child-workspaces
+2026-09-25T00:24:20.4843147Z  * [new ref]           ef6a5d0727e21328647cdb60a96e3bb7cd7c4549 -> pull/36/merge
+2026-09-25T00:24:20.4845081Z ##[endgroup]
+2026-09-25T00:24:20.4845896Z ##[group]Determining the checkout info
+2026-09-25T00:24:20.4846784Z ##[endgroup]
+2026-09-25T00:24:20.4847319Z [command]/usr/bin/git sparse-checkout disable
+2026-09-25T00:24:20.4849494Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-25T00:24:20.4851322Z ##[group]Checking out the ref
+2026-09-25T00:24:20.4852123Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/36/merge
+2026-09-25T00:24:20.5835767Z Note: switching to 'refs/remotes/pull/36/merge'.
+2026-09-25T00:24:20.5836399Z 
+2026-09-25T00:24:20.5836858Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:24:20.5838220Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:24:20.5839275Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:24:20.5839867Z 
+2026-09-25T00:24:20.5840279Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:24:20.5841241Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:24:20.5841775Z 
+2026-09-25T00:24:20.5842033Z   git switch -c <new-branch-name>
+2026-09-25T00:24:20.5842403Z 
+2026-09-25T00:24:20.5842653Z Or undo this operation with:
+2026-09-25T00:24:20.5843001Z 
+2026-09-25T00:24:20.5843226Z   git switch -
+2026-09-25T00:24:20.5843506Z 
+2026-09-25T00:24:20.5843985Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:24:20.5844634Z 
+2026-09-25T00:24:20.5845363Z HEAD is now at ef6a5d07 Merge 0c9c62d71bff21f81027a9fff2406451af02d4e7 into ee23a2daf855a584a73060a7f6369098b9a7540a
+2026-09-25T00:24:20.5856302Z ##[endgroup]
+2026-09-25T00:24:20.5903733Z [command]/usr/bin/git log -1 --format=%H
+2026-09-25T00:24:20.5931302Z ef6a5d0727e21328647cdb60a96e3bb7cd7c4549
+2026-09-25T00:24:20.6160193Z ##[group]Run set -eu
+2026-09-25T00:24:20.6160846Z [36;1mset -eu[0m
+2026-09-25T00:24:20.6161482Z [36;1mbin/fm-install-shellcheck.sh "$RUNNER_TEMP/bin"[0m
+2026-09-25T00:24:20.6162271Z [36;1mecho "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"[0m
+2026-09-25T00:24:20.6457235Z shell: /usr/bin/bash -e {0}
+2026-09-25T00:24:20.6458208Z ##[endgroup]
+2026-09-25T00:24:21.1293638Z ShellCheck - shell script analysis tool
+2026-09-25T00:24:21.1295245Z version: 0.11.0
+2026-09-25T00:24:21.1302794Z license: GNU General Public License, version 3
+2026-09-25T00:24:21.1304014Z website: https://www.shellcheck.net
+2026-09-25T00:24:21.1446738Z ##[group]Run set -eu
+2026-09-25T00:24:21.1447343Z [36;1mset -eu[0m
+2026-09-25T00:24:21.1448369Z [36;1mbin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"[0m
+2026-09-25T00:24:21.1449247Z [36;1mecho "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"[0m
+2026-09-25T00:24:21.1514964Z shell: /usr/bin/bash -e {0}
+2026-09-25T00:24:21.1515538Z ##[endgroup]
+2026-09-25T00:24:21.4838880Z 1.7.12
+2026-09-25T00:24:21.4841075Z installed by downloading from release page
+2026-09-25T00:24:21.4842574Z built with go1.26.1 compiler for linux/amd64
+2026-09-25T00:24:21.5059786Z ##[group]Run set -eu
+2026-09-25T00:24:21.5061080Z [36;1mset -eu[0m
+2026-09-25T00:24:21.5062310Z [36;1mcommand -v tmux >/dev/null || {[0m
+2026-09-25T00:24:21.5064335Z [36;1m  echo "::error::tmux is required for real afk injection e2e coverage"[0m
+2026-09-25T00:24:21.5066341Z [36;1m  exit 1[0m
+2026-09-25T00:24:21.5067479Z [36;1m}[0m
+2026-09-25T00:24:21.5068885Z [36;1mtmux -V[0m
+2026-09-25T00:24:21.5136733Z shell: /usr/bin/bash -e {0}
+2026-09-25T00:24:21.5138129Z ##[endgroup]
+2026-09-25T00:24:21.5935252Z tmux 3.4
+2026-09-25T00:24:21.6034667Z ##[group]Run set -eu
+2026-09-25T00:24:21.6035755Z [36;1mset -eu[0m
+2026-09-25T00:24:21.6036796Z [36;1mnpm install -g tasks-axi[0m
+2026-09-25T00:24:21.6038310Z [36;1mtasks-axi --version[0m
+2026-09-25T00:24:21.6103211Z shell: /usr/bin/bash -e {0}
+2026-09-25T00:24:21.6104309Z ##[endgroup]
+2026-09-25T00:24:22.7676554Z 
+2026-09-25T00:24:22.7677061Z added 3 packages in 842ms
+2026-09-25T00:24:22.8396899Z 0.2.6
+2026-09-25T00:24:22.8470152Z ##[group]Run set -eu
+2026-09-25T00:24:22.8470462Z [36;1mset -eu[0m
+2026-09-25T00:24:22.8470754Z [36;1mnpm install -g @earendil-works/pi-coding-agent[0m
+2026-09-25T00:24:22.8471170Z [36;1mnpm ls -g --depth 0 @earendil-works/pi-coding-agent[0m
+2026-09-25T00:24:22.8534181Z shell: /usr/bin/bash -e {0}
+2026-09-25T00:24:22.8534458Z ##[endgroup]
+2026-09-25T00:24:25.2641864Z npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+2026-09-25T00:24:28.2451954Z 
+2026-09-25T00:24:28.2452884Z added 119 packages in 5s
+2026-09-25T00:24:28.2453363Z 
+2026-09-25T00:24:28.2453577Z 9 packages are looking for funding
+2026-09-25T00:24:28.2454110Z   run `npm fund` for details
+2026-09-25T00:24:32.5087859Z /usr/local/lib
+2026-09-25T00:24:32.5088964Z └── @earendil-works/pi-coding-agent@0.87.1
+2026-09-25T00:24:32.5089412Z 
+2026-09-25T00:24:32.5248377Z ##[group]Run set -eu
+2026-09-25T00:24:32.5248693Z [36;1mset -eu[0m
+2026-09-25T00:24:32.5248942Z [36;1mmkdir -p "$RUNNER_TEMP/fm-test"[0m
+2026-09-25T00:24:32.5249390Z [36;1m# The Pi package is installed above and CI provides npm and tsc, so[0m
+2026-09-25T00:24:32.5249956Z [36;1m# any missing typecheck prerequisite is a broken lane, not a valid skip.[0m
+2026-09-25T00:24:32.5250450Z [36;1mbin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \[0m
+2026-09-25T00:24:32.5250938Z [36;1m  --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \[0m
+2026-09-25T00:24:32.5251604Z [36;1m  --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json"[0m
+2026-09-25T00:24:32.5315322Z shell: /usr/bin/bash -e {0}
+2026-09-25T00:24:32.5315593Z env:
+2026-09-25T00:24:32.5315826Z   FM_SERIAL_LANE: portable-serial-5of6
+2026-09-25T00:24:32.5316122Z   FM_SERIAL_SHARD: 5
+2026-09-25T00:24:32.5316343Z ##[endgroup]
+2026-09-25T00:24:33.5876744Z FM_TEST_BEGIN 2026-09-25T00:24:33Z tests/fm-backlog-atomicity.test.sh family=session-bootstrap expected_gate_skip=none
+2026-09-25T00:24:33.6616375Z ok - backend resolution preserves unreadable configuration errors for every caller
+2026-09-25T00:24:33.7207160Z ok - backend resolution preserves environment, project, user, and default precedence
+2026-09-25T00:24:33.9660378Z ok - backlog readers and mutations refuse unresolved backends without touching either backlog
+2026-09-25T00:24:37.0450333Z ok - captain hold refuses backend errors and preserves relocated addressing for valid configuration
+2026-09-25T00:24:40.6184411Z ok - dispatch publishes the record and moves the backlog item In flight in one run
+2026-09-25T00:24:43.5328358Z ok - dispatch omits the markdown file when probing a Beads backlog
+2026-09-25T00:24:46.4501705Z ok - a leftover markdown symlink does not brick a Beads home's dispatch
+2026-09-25T00:24:48.2148839Z ok - completion applies and closes a Beads backlog without any markdown file
+2026-09-25T00:24:49.2639368Z ok - dispatch refuses to supersede a pending authoritative close
+2026-09-25T00:24:50.2799614Z ok - dispatch refuses held rows before creating resources
+2026-09-25T00:24:51.3009730Z ok - dispatch refuses dependency-blocked rows before creating resources
+2026-09-25T00:24:52.4015086Z ok - dispatch refuses held In-flight rows before relaunch
+2026-09-25T00:24:55.9625538Z ok - dispatch reads backlog rows from the backlog addressing root
+2026-09-25T00:24:57.2135460Z ok - recovery uses the parent of a trailing-slash data record
+2026-09-25T00:24:59.6459790Z ok - completion targets nested relative data from the caller directory
+2026-09-25T00:25:05.4100723Z ok - an immediate-child absolute data path keeps one paired backlog
+2026-09-25T00:25:11.1570754Z ok - bare relative data addresses one backlog through dispatch and completion
+2026-09-25T00:25:11.7957799Z ok - dispatch refuses symlinked backlogs without crossing homes
+2026-09-25T00:25:12.9563879Z ok - automatic homes refuse lifecycle mutation without compatible tasks-axi
+2026-09-25T00:25:13.3511848Z ok - dispatch refuses an unresolvable backlog data directory
+2026-09-25T00:25:13.8028666Z ok - completion refuses before mutation when backlog data is unresolvable
+2026-09-25T00:25:14.6014809Z ok - dispatch refuses, before creating anything, when the home has no item for the id
+2026-09-25T00:25:15.4238042Z ok - dispatch distinguishes backlog read failures from missing items
+2026-09-25T00:25:16.4460207Z ok - dispatch refuses a closed item instead of silently reopening it
+2026-09-25T00:25:18.7311040Z ok - dispatch cannot commit without a verified task-record publication
+2026-09-25T00:25:22.6187855Z ok - a failed backlog transition fails the dispatch loudly and leaves no record
+2026-09-25T00:25:26.6102815Z ok - dispatch reports when failed-transition rollback cannot remove its record
+2026-09-25T00:25:30.5727914Z ok - dispatch verifies both task and busy records during rollback
+2026-09-25T00:25:31.5714474Z ok - dispatch commits neither record nor backlog state before launch delivery succeeds
+2026-09-25T00:25:39.7113739Z ok - dispatch retries interrupted transitions before honoring termination
+2026-09-25T00:25:43.7957396Z ok - a signal-deferred spawn verifies its preserved state and repairs a row that did not move
+2026-09-25T00:25:47.6290059Z ok - a signal-deferred spawn reports attempted preservation as attempted when it cannot be verified
+2026-09-25T00:25:54.4623601Z ok - a signal-deferred spawn bounds its verification so an unresponsive tasks-axi cannot hold the meta lock forever
+2026-09-25T00:25:54.5166977Z /home/runner/work/firstmate/firstmate/bin/fm-backlog-transition-lib.sh: line 84: dirname: command not found
+2026-09-25T00:25:54.5174400Z /home/runner/work/firstmate/firstmate/bin/fm-backlog-transition-lib.sh: line 84: /home/runner/work/firstmate/firstmate/fm-timeout-lib.sh: No such file or directory
+2026-09-25T00:25:56.5875202Z ok - fm_tasks_axi bounds the call through its perl watchdog when no timeout binary exists
+2026-09-25T00:25:56.6419809Z /home/runner/work/firstmate/firstmate/bin/fm-backlog-transition-lib.sh: line 84: dirname: command not found
+2026-09-25T00:25:56.6425677Z /home/runner/work/firstmate/firstmate/bin/fm-backlog-transition-lib.sh: line 84: /home/runner/work/firstmate/firstmate/fm-timeout-lib.sh: No such file or directory
+2026-09-25T00:25:56.7072414Z ok - fm_tasks_axi's perl watchdog passes the child status and output through unchanged
+2026-09-25T00:25:56.7577245Z /home/runner/work/firstmate/firstmate/bin/fm-backlog-transition-lib.sh: line 84: dirname: command not found
+2026-09-25T00:25:56.7583293Z /home/runner/work/firstmate/firstmate/bin/fm-backlog-transition-lib.sh: line 84: /home/runner/work/firstmate/firstmate/fm-timeout-lib.sh: No such file or directory
+2026-09-25T00:25:56.7616443Z ok - fm_tasks_axi fails closed rather than running unbounded when no bounding mechanism exists
+2026-09-25T00:25:56.8148824Z /home/runner/work/firstmate/firstmate/bin/fm-backlog-transition-lib.sh: line 84: dirname: command not found
+2026-09-25T00:25:56.8154678Z /home/runner/work/firstmate/firstmate/bin/fm-backlog-transition-lib.sh: line 84: /home/runner/work/firstmate/firstmate/fm-timeout-lib.sh: No such file or directory
+2026-09-25T00:26:00.8202164Z ok - fm_tasks_axi's GNU timeout kills a child that ignores SIGTERM after one further bound
+2026-09-25T00:26:01.2187049Z ok - Kimi readiness interruptions fail before backlog commit
+2026-09-25T00:26:04.9918125Z ok - dispatch does not resurrect a row closed after preflight
+2026-09-25T00:26:08.7045406Z ok - dispatch fails when its backlog row vanishes after preflight
+2026-09-25T00:26:11.1634836Z ok - completion closes a local-only ship, with its landing note, before reporting success
+2026-09-25T00:26:14.2361299Z ok - completion closes a scout item against its report
+2026-09-25T00:26:14.9831118Z ok - completion leaves legacy records open when no incarnation can be recorded
+2026-09-25T00:26:15.7356182Z ok - completion refuses ambiguous task incarnations
+2026-09-25T00:26:18.7313433Z ok - completion records relocated scout reports relative to the backlog root
+2026-09-25T00:26:22.4898621Z ok - space-containing scout report paths round-trip through recovery
+2026-09-25T00:26:23.0398514Z ok - control-byte data paths fail closed before paired transitions
+2026-09-25T00:26:23.5919383Z ok - unreplayable data paths are refused before destructive cleanup
+2026-09-25T00:26:25.7202810Z ok - completion preserves recovery state when task-record removal fails
+2026-09-25T00:26:27.8705154Z ok - completion refuses to report success while its item is still open, and records what it owes
+2026-09-25T00:26:33.9693146Z ok - an interrupt before the kill keeps every record for a rerun
+2026-09-25T00:26:35.7080250Z ok - completion refuses directory-symlink close targets
+2026-09-25T00:26:38.0669903Z ok - completion reports failure until its durable close marker is removed
+2026-09-25T00:26:40.4160668Z ok - session start retries a close whose marker could not be removed
+2026-09-25T00:26:41.3439039Z ok - session start reports owned backlog rows it cannot read
+2026-09-25T00:26:42.8352918Z ok - Orca cleanup recovery is excluded from backlog lifecycle transitions
+2026-09-25T00:26:43.9847928Z ok - session start marks an item In flight when this home already owns a worker for it
+2026-09-25T00:26:44.2554978Z ok - session start rejects internal worker-record symlinks
+2026-09-25T00:26:44.5211723Z ok - session start rejects symlinked worker records
+2026-09-25T00:26:45.8150145Z ok - session start finishes a close an interrupted cleanup recorded but never landed
+2026-09-25T00:26:48.7615857Z ok - completion marks a pending close whose worker could not be proved stopped, and recovery honours it
+2026-09-25T00:26:51.8530983Z ok - a herdr refusal leaves its pending close stamped, and recovery honours it
+2026-09-25T00:26:54.5313321Z ok - a refusal before the kill leaves its pending close unconfirmed, and replay honours it
+2026-09-25T00:26:58.0900337Z ok - an interrupt after a proven kill still replays its close
+2026-09-25T00:27:03.8951654Z ok - a pending close that could not be cleared keeps every record for a rerun
+2026-09-25T00:27:07.7822844Z ok - no automatic path retires a record no backend can answer for
+2026-09-25T00:27:10.5448436Z ok - retirement requires exact record identities and refuses wildcards
+2026-09-25T00:27:14.2467386Z ok - a retirement carries who asserted it and when, and is consumed by the cleanup it authorizes
+2026-09-25T00:27:17.1254041Z ok - a retirement past an unconfirmed kill names what cleanup cannot tell apart
+2026-09-25T00:27:20.4801933Z ok - a retirement with no loadable adapter claims no backend answer
+2026-09-25T00:27:22.9948305Z ok - a retirement leaves work on disk byte-untouched and names what remains
+2026-09-25T00:27:27.3774777Z ok - only the named override flag retires a record whose runtime refused, and it is recorded
+2026-09-25T00:27:32.0944952Z ok - an interrupt during a retirement retires nothing and leaves no authorization
+2026-09-25T00:27:33.7834871Z ok - a refusal other than the work gate stops the retirement
+2026-09-25T00:27:36.2681782Z ok - a cleanup that failed partway is reported as partial, not as a no-op
+2026-09-25T00:27:38.8549236Z ok - a backlog row that cannot be read refuses the retirement instead of losing the record
+2026-09-25T00:27:41.5185532Z ok - a captain-held row is retained with its deliverable, not closed as done
+2026-09-25T00:27:42.5119002Z ok - a manual-backlog home retires its record and its backlog is left as the operator keeps it
+2026-09-25T00:27:43.8165069Z ok - a record-only retirement takes its pending close with it
+2026-09-25T00:27:46.2795761Z ok - a retirement records the record, its author, the time and the override durably
+2026-09-25T00:27:46.5843980Z ok - a retirement that cannot record its author retires nothing
+2026-09-25T00:27:47.5378601Z ok - a retirement keeps its record when the pending close cannot be cleared
+2026-09-25T00:27:51.0097074Z ok - a retirement leaves a close session start can finish
+2026-09-25T00:27:51.0772889Z ok - the retirement command's help states the condition it is for
+2026-09-25T00:27:52.0931533Z ok - session start refuses to replay a close whose worker was never proved stopped
+2026-09-25T00:27:53.6484902Z ok - session start still finishes an ordinary interrupted cleanup
+2026-09-25T00:27:55.0125435Z ok - recovery backfills recorded links onto already Done items
+2026-09-25T00:27:57.1200559Z ok - session start preserves a pending close across a transient backlog read failure
+2026-09-25T00:27:59.4183207Z ok - recovery preserves incomplete-cleanup evidence across a failed replay
+2026-09-25T00:28:00.9818845Z ok - session start finishes a close for the matching meta incarnation
+2026-09-25T00:28:02.0056612Z ok - recovery preserves closes for ambiguous task incarnations
+2026-09-25T00:28:04.6232294Z ok - recovery preserves both records when meta removal fails
+2026-09-25T00:28:05.5182181Z ok - recovery preserves closes beside symlinked metadata
+2026-09-25T00:28:06.6759023Z ok - recovery binds close-marker identity to its locked filename
+2026-09-25T00:28:07.9044882Z ok - recovery rejects close markers targeting another home's data
+2026-09-25T00:28:08.8638356Z ok - recovery validates an unterminated final marker field
+2026-09-25T00:28:09.8185889Z ok - recovery rejects lexical traversal before resolving marker data
+2026-09-25T00:28:10.7689643Z ok - recovery rejects marker control bytes before parsing
+2026-09-25T00:28:12.3176795Z ok - recovery rejects malformed PR URL values
+2026-09-25T00:28:13.2135117Z ok - a retained pending close is never started by reconciliation
+2026-09-25T00:28:14.1026686Z ok - recovery rejects close-marker arguments outside its protocol
+2026-09-25T00:28:14.4449151Z ok - recovery reports and rejects dangling symlink close markers
+2026-09-25T00:28:15.7263922Z ok - session start drops a close recorded for an older meta incarnation
+2026-09-25T00:28:16.6773849Z ok - session start rejects an unversioned close marker
+2026-09-25T00:28:17.5594281Z ok - bootstrap rechecks worker-record containment after locking
+2026-09-25T00:28:18.4099289Z ok - lifecycle files reject ancestor symlinks outside home roots
+2026-09-25T00:28:19.5694967Z ok - same-home state overrides remain supported
+2026-09-25T00:28:19.8645045Z ok - bootstrap refuses symlinked state before reconciliation
+2026-09-25T00:28:20.4953238Z ok - bootstrap stops when backlog data disappears before reconciliation
+2026-09-25T00:28:21.4966410Z ok - bootstrap preserves secondmate, manual, and absent-backlog exemptions
+2026-09-25T00:28:22.5484898Z ok - session start leaves a captain-held item where the captain put it
+2026-09-25T00:28:22.7359711Z ok - no-backlog teardown refuses symlinked records before resource actions
+2026-09-25T00:28:23.0417039Z ok - teardown rechecks record parents after locking
+2026-09-25T00:28:23.1601598Z ok - teardown refuses symlinked state before resource actions
+2026-09-25T00:28:27.1885252Z ok - a home with no backlog remains exempt from lifecycle transitions
+2026-09-25T00:28:27.6418210Z ok - spawn refuses a special-file tasks-axi config instead of blocking on it
+2026-09-25T00:28:28.0307751Z ok - spawn refuses an unsafe tasks-axi config before any exemption is derived from it
+2026-09-25T00:28:28.4924535Z ok - spawn refuses a data directory symlinked outside the home
+2026-09-25T00:28:28.9505631Z ok - a configured adapter refuses a data directory outside the home
+2026-09-25T00:28:36.8474206Z ok - dispatch and completion transition structurally with evidence
+2026-09-25T00:28:41.8096503Z ok - refused teardown leaves the backlog item in flight
+2026-09-25T00:28:44.7858557Z ok - environment-selected adapters bypass the legacy markdown file override
+2026-09-25T00:28:48.7578808Z ok - a manual-backlog home dispatches and completes without a hard failure
+2026-09-25T00:28:54.6146951Z ok - a secondmate home keeps its own books paired through dispatch and completion
+2026-09-25T00:28:56.0491592Z ok - dispatching a persistent secondmate needs no backlog item
+2026-09-25T00:28:56.9509114Z FM_TEST_END 2026-09-25T00:28:56Z tests/fm-backlog-atomicity.test.sh exit=0 duration_ms=263356 gate_skip=false
+2026-09-25T00:28:56.9732457Z FM_TEST_BEGIN 2026-09-25T00:28:56Z tests/fm-secondmate-restart.test.sh family=secondmate expected_gate_skip=none
+2026-09-25T00:28:58.7611262Z ok - T1 persist is a gate, and asks for open records and task status only
+2026-09-25T00:29:01.2494578Z ok - T2 the mate persists before anything is stopped
+2026-09-25T00:29:03.7638719Z ok - T2b an arrived persist answer is resolved before timeout
+2026-09-25T00:29:06.3683031Z ok - T2c a reply between the preliminary scan and timeout decision wins
+2026-09-25T00:29:07.1914089Z ok - T3 a runtime that cannot prove a restart falls back to the re-read message
+2026-09-25T00:29:09.9634686Z ok - T4 every named mate is accounted for, including one this home does not know
+2026-09-25T00:29:11.1945353Z ok - T5 a refused restart leaves the mate running and reports an unknown outcome
+2026-09-25T00:29:13.6242050Z ok - T8 a local restart re-resolves this home's pin and reports the runtime that came up
+2026-09-25T00:29:16.9953823Z ok - native Ultra survives local restart and the remote restart transport
+2026-09-25T00:29:17.8945087Z ok - T6 a remote mate restarts through the host-local control plane over the fm-on hop
+2026-09-25T00:29:19.0588905Z ok - T7 an unreachable host is reported honestly instead of claimed as reloaded
+2026-09-25T00:29:20.8501632Z ok - T9 the persist gate retains its explicitly allocated correlation
+2026-09-25T00:29:24.8870492Z ok - T10 pending persist answers are polled as one fleet
+2026-09-25T00:29:27.6968166Z ok - T11 post-stop restart failure is never misreported as a nudge
+2026-09-25T00:29:31.3246022Z ok - T12 relaunch waits do not block fleet persistence polling
+2026-09-25T00:29:34.2365507Z ok - T13 a dead restart worker cannot hang the parent
+2026-09-25T00:29:37.1683087Z ok - T14 a result published during reaping is honored
+2026-09-25T00:29:40.0406870Z ok - T15 an already-current live mate is named by the update pass and genuinely restarted
+2026-09-25T00:29:41.1992066Z ok - T16 an already-current mate with an unprovable runtime keeps the honest nudge path
+2026-09-25T00:29:41.1995393Z # all fm-secondmate-restart tests passed
+2026-09-25T00:29:41.3182069Z FM_TEST_END 2026-09-25T00:29:41Z tests/fm-secondmate-restart.test.sh exit=0 duration_ms=44336 gate_skip=false
+2026-09-25T00:29:41.3414587Z FM_TEST_BEGIN 2026-09-25T00:29:41Z tests/fm-pending-reply.test.sh family=standalone expected_gate_skip=none
+2026-09-25T00:29:41.6390092Z ok - normal correlated reply resolves once (idempotent)
+2026-09-25T00:29:41.8453260Z ok - completed turn with no report triggers exactly one recovery
+2026-09-25T00:29:42.6985521Z ok - recovery attempts reconcile without reinjection
+2026-09-25T00:29:42.9719693Z ok - recovery reply resolves the original expectation
+2026-09-25T00:29:43.4103101Z ok - second missed turn escalates once and remains durable
+2026-09-25T00:29:44.2186096Z ok - escalations and replies wake; the home's own escalation close stays quiet
+2026-09-25T00:29:44.6475930Z ok - failed escalation publication remains retryable and publishes once
+2026-09-25T00:29:44.9341182Z ok - legacy escalation closes under the shared default key
+2026-09-25T00:29:45.2754179Z ok - legacy escalation cannot close an unrelated default-key decision
+2026-09-25T00:29:45.8402194Z ok - foreign correlated blocker cannot impersonate a pending-reply escalation
+2026-09-25T00:29:46.7895325Z ok - concurrent resolution closes one keyed escalation exactly once
+2026-09-25T00:29:48.5683639Z ok - concurrent escalation yields to a late correlated reply
+2026-09-25T00:29:48.6882309Z ok - transport success cannot masquerade as reply success
+2026-09-25T00:29:49.0781652Z ok - undelivered records remain immutable across scan paths
+2026-09-25T00:29:51.2511129Z ok - delivery confirmation fallback reconciles durably
+2026-09-25T00:29:51.5916683Z ok - delivery confirmation serializes with reconciliation
+2026-09-25T00:29:51.8672366Z ok - unrelated events and stale correlation ids cannot resolve
+2026-09-25T00:29:51.9755448Z ok - restart preserves expectation and exact parent destination
+2026-09-25T00:29:52.2996319Z ok - wrong-home reports are detected but do not silently acknowledge
+2026-09-25T00:29:52.9093561Z ok - direct unmarked captain input creates no expectation
+2026-09-25T00:29:53.6515961Z ok - fm-send marked secondmate path creates pending and embeds corr
+2026-09-25T00:29:53.8053858Z ok - status-pointed document resolves the expectation
+2026-09-25T00:29:54.0137706Z ok - optional helper report resolves without being required for correctness
+2026-09-25T00:29:54.1371432Z ok - backend busy/idle observation covers Pi/Claude paths without conversation scrape
+2026-09-25T00:29:57.7081667Z ok - tmux and zellij unknown states use bounded capture fallback
+2026-09-25T00:29:58.1479644Z ok - pending replies scope Kimi capture fallback by recorded harness
+2026-09-25T00:30:00.1915569Z ok - tick skips terminal records and reuses target observations
+2026-09-25T00:30:02.3672927Z ok - correlations are reused only for matching open task records
+2026-09-25T00:30:03.9404584Z ok - tick end-to-end: miss -> one recovery -> escalate -> durable
+2026-09-25T00:30:04.0415439Z ok - failed transport discards undelivered expectation only
+2026-09-25T00:30:04.3636156Z ok - a remote repost waits for the reply channel and still fires on a real miss
+2026-09-25T00:30:04.5931461Z ok - a mirrored correlated remote reply resolves without any repost
+2026-09-25T00:30:05.4022896Z ok - same-basename self-home corr= is restated onto the parent channel and resolves
+2026-09-25T00:30:05.9732618Z ok - same-basename reply resolves at the recovery failure boundary
+2026-09-25T00:30:07.4428520Z ok - a child-file mate-home sighting is not copied and still escalates
+2026-09-25T00:30:07.8818781Z ok - mechanical helper writes the parent channel from verb, corr, and note
+2026-09-25T00:30:08.1014839Z ok - remote parent-replies.status is not classified as wrong-home
+2026-09-25T00:30:08.2596553Z ok - local parent-replies.status remains wrong-home evidence
+2026-09-25T00:30:09.0401511Z ok - an escalated correlation stays retryable only while undelivered
+2026-09-25T00:30:09.0403977Z ok - all pending-reply tests passed
+2026-09-25T00:30:09.0857885Z FM_TEST_END 2026-09-25T00:30:09Z tests/fm-pending-reply.test.sh exit=0 duration_ms=27736 gate_skip=false
+2026-09-25T00:30:09.1087291Z FM_TEST_BEGIN 2026-09-25T00:30:09Z tests/fm-remote-transport-lanes.test.sh family=secondmate expected_gate_skip=none
+2026-09-25T00:30:09.6482689Z ok - atomic sequence claims remain unique and reap only after expiry
+2026-09-25T00:30:14.6853597Z ok - lanes run homes concurrently while each home stays FIFO
+2026-09-25T00:30:19.5790264Z ok - same-home jobs staged in the same second execute in staging-sequence order
+2026-09-25T00:30:25.4586803Z ok - same-home sequence order follows completed staging publication
+2026-09-25T00:30:30.9180021Z ok - a caller killed mid-wait cancels its queued job before execution
+2026-09-25T00:30:35.1772075Z ok - a caller killed mid-wait stops its running job's process group
+2026-09-25T00:30:39.1624017Z ok - a signal-less caller disconnect cancels the abandoned job through the parent probe
+2026-09-25T00:30:41.8501887Z ok - bounded reads after a cancellation meet their own budget with no convoy
+2026-09-25T00:30:42.8306782Z ok - an open caller stdin no longer wedges a non-payload remote command
+2026-09-25T00:30:46.3294803Z ok - a live explicit-stdin stage survives the staging-litter age bound
+2026-09-25T00:30:47.1995763Z ok - --stdin still delivers a payload caller's bytes
+2026-09-25T00:30:47.2655568Z ok - abandoned stage litter is reaped by age while live staging survives
+2026-09-25T00:30:47.2656736Z ALL TESTS PASSED
+2026-09-25T00:31:11.8793155Z FM_TEST_END 2026-09-25T00:31:11Z tests/fm-remote-transport-lanes.test.sh exit=0 duration_ms=62762 gate_skip=false
+2026-09-25T00:31:11.9022105Z FM_TEST_BEGIN 2026-09-25T00:31:11Z tests/fm-secondmate-safety.test.sh family=secondmate expected_gate_skip=none
+2026-09-25T00:31:12.8283162Z ok - FM_HOME parameterizes data and state paths
+2026-09-25T00:31:12.8486283Z ok - fm-lock status is scoped per home
+2026-09-25T00:31:12.9800043Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:12.9800590Z 
+2026-09-25T00:31:12.9800982Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:12.9801816Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:12.9802628Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:12.9803095Z 
+2026-09-25T00:31:12.9803409Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:12.9804164Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:12.9804614Z 
+2026-09-25T00:31:12.9804778Z   git switch -c <new-branch-name>
+2026-09-25T00:31:12.9805070Z 
+2026-09-25T00:31:12.9805236Z Or undo this operation with:
+2026-09-25T00:31:12.9805768Z 
+2026-09-25T00:31:12.9805911Z   git switch -
+2026-09-25T00:31:12.9806104Z 
+2026-09-25T00:31:12.9806454Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:12.9806986Z 
+2026-09-25T00:31:13.8165112Z ok - seed allows overlapping project clone lists and drops the owns/owner routing
+2026-09-25T00:31:13.8387854Z ok - home-seed validation rejects registry records no operational parser can consume
+2026-09-25T00:31:13.8974043Z ok - home seeding refuses broken registry symlinks before provisioning
+2026-09-25T00:31:13.9646300Z ok - home seeding refuses unreadable registries before provisioning
+2026-09-25T00:31:13.9935451Z ok - home seed validation rejects duplicate home routes
+2026-09-25T00:31:14.0254164Z ok - home seed validation rejects duplicate id routes
+2026-09-25T00:31:14.0597442Z ok - home seed validation rejects nested home routes
+2026-09-25T00:31:14.0898265Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:14.0898657Z 
+2026-09-25T00:31:14.0899018Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:14.0899925Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:14.0900773Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:14.0901265Z 
+2026-09-25T00:31:14.0901589Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:14.0902332Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:14.0902770Z 
+2026-09-25T00:31:14.0902935Z   git switch -c <new-branch-name>
+2026-09-25T00:31:14.0903226Z 
+2026-09-25T00:31:14.0903378Z Or undo this operation with:
+2026-09-25T00:31:14.0903643Z 
+2026-09-25T00:31:14.0903774Z   git switch -
+2026-09-25T00:31:14.0903971Z 
+2026-09-25T00:31:14.0904323Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:14.0904847Z 
+2026-09-25T00:31:14.2522970Z leased worktree for dash
+2026-09-25T00:31:14.4614985Z ok - home seeding durably leases treehouse-acquired dash homes under the secondmate id
+2026-09-25T00:31:14.4916978Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:14.4917463Z 
+2026-09-25T00:31:14.4918079Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:14.4918723Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:14.4919198Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:14.4919480Z 
+2026-09-25T00:31:14.4919670Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:14.4920100Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:14.4920351Z 
+2026-09-25T00:31:14.4920451Z   git switch -c <new-branch-name>
+2026-09-25T00:31:14.4920625Z 
+2026-09-25T00:31:14.4920717Z Or undo this operation with:
+2026-09-25T00:31:14.4920874Z 
+2026-09-25T00:31:14.4920958Z   git switch -
+2026-09-25T00:31:14.4921081Z 
+2026-09-25T00:31:14.4921288Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:14.4921595Z 
+2026-09-25T00:31:14.7315466Z ok - home seeding returns rejected acquired homes through treehouse
+2026-09-25T00:31:14.7621522Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:14.7622014Z 
+2026-09-25T00:31:14.7622230Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:14.7622729Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:14.7623190Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:14.7623472Z 
+2026-09-25T00:31:14.7623662Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:14.7624117Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:14.7624391Z 
+2026-09-25T00:31:14.7624493Z   git switch -c <new-branch-name>
+2026-09-25T00:31:14.7624886Z 
+2026-09-25T00:31:14.7624980Z Or undo this operation with:
+2026-09-25T00:31:14.7625156Z 
+2026-09-25T00:31:14.7625240Z   git switch -
+2026-09-25T00:31:14.7625355Z 
+2026-09-25T00:31:14.7625568Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:14.7625867Z 
+2026-09-25T00:31:14.9865117Z ok - home seed rollback warns when treehouse-acquired return fails
+2026-09-25T00:31:15.1559919Z ok - home seeding leaves unsafe acquired active homes untouched
+2026-09-25T00:31:15.5937333Z ok - home seeding rolls back failed clone attempts without residue
+2026-09-25T00:31:15.8983462Z ok - home seeding refuses direct seed without filled charter text
+2026-09-25T00:31:16.2288746Z ok - home seeding refuses unfilled placeholder charters
+2026-09-25T00:31:16.8791398Z ok - home seeding refuses empty normalized charter fields
+2026-09-25T00:31:16.9515809Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:16.9516379Z 
+2026-09-25T00:31:16.9516770Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:16.9517937Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:16.9518830Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:16.9519433Z 
+2026-09-25T00:31:16.9519839Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:16.9520844Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:16.9521396Z 
+2026-09-25T00:31:16.9521607Z   git switch -c <new-branch-name>
+2026-09-25T00:31:16.9521970Z 
+2026-09-25T00:31:16.9522174Z Or undo this operation with:
+2026-09-25T00:31:16.9522515Z 
+2026-09-25T00:31:16.9522663Z   git switch -
+2026-09-25T00:31:16.9522916Z 
+2026-09-25T00:31:16.9523393Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:16.9524034Z 
+2026-09-25T00:31:18.7683060Z ok - home seeding scaffolds, registers, and spawns a project-less home end to end
+2026-09-25T00:31:20.3291293Z ok - secondmate spawn resolves home validation and projects from punctuated registry fields
+2026-09-25T00:31:22.7453758Z ok - secondmate spawn refuses ambiguous, supplied-home, and metadata-home registry bindings
+2026-09-25T00:31:23.1012200Z ok - home seeding validates reused project-less charters before mutation
+2026-09-25T00:31:23.2324980Z ok - home seeding refuses project-less conversion of a populated home
+2026-09-25T00:31:23.3521011Z ok - home seeding refuses project-less homes whose projects directory cannot be inspected
+2026-09-25T00:31:23.4730059Z ok - home seeding refuses project-less homes with symlinked projects directories
+2026-09-25T00:31:23.5886500Z ok - home seeding refuses project-less homes with non-directory projects paths
+2026-09-25T00:31:23.7096224Z ok - home seeding refuses project-less homes whose project registry cannot be inspected
+2026-09-25T00:31:23.7434488Z ok - home seeding fails loudly on accidental project omission and rejects mixed --no-projects
+2026-09-25T00:31:23.8071578Z ok - home seeding refuses local-only projects
+2026-09-25T00:31:24.0868779Z ok - home seeding refuses registry delimiter home paths
+2026-09-25T00:31:24.0944686Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:24.0944993Z 
+2026-09-25T00:31:24.0945226Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:24.0945733Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:24.0946210Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:24.0946488Z 
+2026-09-25T00:31:24.0946681Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:24.0947128Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:24.0947397Z 
+2026-09-25T00:31:24.0947798Z   git switch -c <new-branch-name>
+2026-09-25T00:31:24.0948000Z 
+2026-09-25T00:31:24.0948104Z Or undo this operation with:
+2026-09-25T00:31:24.0948272Z 
+2026-09-25T00:31:24.0949960Z   git switch -
+2026-09-25T00:31:24.0950174Z 
+2026-09-25T00:31:24.0950508Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:24.0950987Z 
+2026-09-25T00:31:24.5033481Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:24.5034013Z 
+2026-09-25T00:31:24.5034909Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:24.5035792Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:24.5036607Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:24.5037094Z 
+2026-09-25T00:31:24.5037408Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:24.5038448Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:24.5038897Z 
+2026-09-25T00:31:24.5039077Z   git switch -c <new-branch-name>
+2026-09-25T00:31:24.5039389Z 
+2026-09-25T00:31:24.5039551Z Or undo this operation with:
+2026-09-25T00:31:24.5039833Z 
+2026-09-25T00:31:24.5039983Z   git switch -
+2026-09-25T00:31:24.5040184Z 
+2026-09-25T00:31:24.5040535Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:24.5041087Z 
+2026-09-25T00:31:24.6869025Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:24.6869573Z 
+2026-09-25T00:31:24.6869927Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:24.6870776Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:24.6871594Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:24.6872098Z 
+2026-09-25T00:31:24.6872404Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:24.6873185Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:24.6873640Z 
+2026-09-25T00:31:24.6873805Z   git switch -c <new-branch-name>
+2026-09-25T00:31:24.6874100Z 
+2026-09-25T00:31:24.6874280Z Or undo this operation with:
+2026-09-25T00:31:24.6874547Z 
+2026-09-25T00:31:24.6874684Z   git switch -
+2026-09-25T00:31:24.6874881Z 
+2026-09-25T00:31:24.6875237Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:24.6875764Z 
+2026-09-25T00:31:24.8004603Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:24.8004933Z 
+2026-09-25T00:31:24.8005135Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:24.8005637Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:24.8006132Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:24.8006406Z 
+2026-09-25T00:31:24.8006592Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:24.8007045Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:24.8007317Z 
+2026-09-25T00:31:24.8007425Z   git switch -c <new-branch-name>
+2026-09-25T00:31:24.8007891Z 
+2026-09-25T00:31:24.8007991Z Or undo this operation with:
+2026-09-25T00:31:24.8008155Z 
+2026-09-25T00:31:24.8008233Z   git switch -
+2026-09-25T00:31:24.8008351Z 
+2026-09-25T00:31:24.8008555Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:24.8008871Z 
+2026-09-25T00:31:24.9642522Z ok - home seeding refuses active home and repo root
+2026-09-25T00:31:24.9951697Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:24.9952210Z 
+2026-09-25T00:31:24.9952564Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:24.9953475Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:24.9954309Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:24.9954793Z 
+2026-09-25T00:31:24.9955102Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:24.9955862Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:24.9956595Z 
+2026-09-25T00:31:24.9956771Z   git switch -c <new-branch-name>
+2026-09-25T00:31:24.9957063Z 
+2026-09-25T00:31:24.9957226Z Or undo this operation with:
+2026-09-25T00:31:24.9957493Z 
+2026-09-25T00:31:24.9957920Z   git switch -
+2026-09-25T00:31:24.9958354Z 
+2026-09-25T00:31:24.9958729Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:24.9959275Z 
+2026-09-25T00:31:25.1886382Z ok - home seeding refuses homes marked for another id
+2026-09-25T00:31:25.2191853Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:25.2192165Z 
+2026-09-25T00:31:25.2192380Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:25.2192853Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:25.2193311Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:25.2193581Z 
+2026-09-25T00:31:25.2193779Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:25.2194216Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:25.2194465Z 
+2026-09-25T00:31:25.2194570Z   git switch -c <new-branch-name>
+2026-09-25T00:31:25.2194735Z 
+2026-09-25T00:31:25.2194845Z Or undo this operation with:
+2026-09-25T00:31:25.2195002Z 
+2026-09-25T00:31:25.2195085Z   git switch -
+2026-09-25T00:31:25.2195202Z 
+2026-09-25T00:31:25.2195405Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:25.2195711Z 
+2026-09-25T00:31:25.4329243Z ok - home seeding refuses homes registered to another id
+2026-09-25T00:31:25.5305983Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:25.5306494Z 
+2026-09-25T00:31:25.5306842Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:25.5307899Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:25.5308764Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:25.5309250Z 
+2026-09-25T00:31:25.5309554Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:25.5310309Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:25.5310775Z 
+2026-09-25T00:31:25.5310942Z   git switch -c <new-branch-name>
+2026-09-25T00:31:25.5311236Z 
+2026-09-25T00:31:25.5311404Z Or undo this operation with:
+2026-09-25T00:31:25.5311665Z 
+2026-09-25T00:31:25.5311806Z   git switch -
+2026-09-25T00:31:25.5311999Z 
+2026-09-25T00:31:25.5312361Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:25.5312893Z 
+2026-09-25T00:31:25.9407096Z ok - home seeding refuses same-id reassignment to a different home
+2026-09-25T00:31:25.9713800Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:25.9714299Z 
+2026-09-25T00:31:25.9714653Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:25.9715516Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:25.9716332Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:25.9716821Z 
+2026-09-25T00:31:25.9717148Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:25.9718192Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:25.9718670Z 
+2026-09-25T00:31:25.9718837Z   git switch -c <new-branch-name>
+2026-09-25T00:31:25.9719135Z 
+2026-09-25T00:31:25.9719287Z Or undo this operation with:
+2026-09-25T00:31:25.9719558Z 
+2026-09-25T00:31:25.9719698Z   git switch -
+2026-09-25T00:31:25.9719892Z 
+2026-09-25T00:31:25.9720251Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:25.9720772Z 
+2026-09-25T00:31:26.0858456Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:26.0858911Z 
+2026-09-25T00:31:26.0859575Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:26.0860133Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:26.0860600Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:26.0860964Z 
+2026-09-25T00:31:26.0861716Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:26.0862198Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:26.0862539Z 
+2026-09-25T00:31:26.0862929Z   git switch -c <new-branch-name>
+2026-09-25T00:31:26.0863129Z 
+2026-09-25T00:31:26.0863229Z Or undo this operation with:
+2026-09-25T00:31:26.0863388Z 
+2026-09-25T00:31:26.0863467Z   git switch -
+2026-09-25T00:31:26.0863585Z 
+2026-09-25T00:31:26.0863790Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:26.0864098Z 
+2026-09-25T00:31:26.3768886Z ok - home seeding refuses registered home overlaps
+2026-09-25T00:31:26.3859627Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:26.3860132Z 
+2026-09-25T00:31:26.3860475Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:26.3861307Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:26.3862152Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:26.3862639Z 
+2026-09-25T00:31:26.3862942Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:26.3863696Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:26.3864140Z 
+2026-09-25T00:31:26.3864311Z   git switch -c <new-branch-name>
+2026-09-25T00:31:26.3864600Z 
+2026-09-25T00:31:26.3864761Z Or undo this operation with:
+2026-09-25T00:31:26.3865030Z 
+2026-09-25T00:31:26.3865171Z   git switch -
+2026-09-25T00:31:26.3865371Z 
+2026-09-25T00:31:26.3865721Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:26.3866268Z 
+2026-09-25T00:31:26.5585634Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:26.5586107Z 
+2026-09-25T00:31:26.5586382Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:26.5586925Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:26.5587404Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:26.5587953Z 
+2026-09-25T00:31:26.5588141Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:26.5588601Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:26.5588855Z 
+2026-09-25T00:31:26.5588961Z   git switch -c <new-branch-name>
+2026-09-25T00:31:26.5589138Z 
+2026-09-25T00:31:26.5589239Z Or undo this operation with:
+2026-09-25T00:31:26.5589391Z 
+2026-09-25T00:31:26.5589485Z   git switch -
+2026-09-25T00:31:26.5589606Z 
+2026-09-25T00:31:26.5589810Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:26.5590124Z 
+2026-09-25T00:31:28.1937461Z ok - home seeding routes a seeded home to the fork and still imports from the code root by path
+2026-09-25T00:31:28.2028214Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:28.2029080Z 
+2026-09-25T00:31:28.2029646Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:28.2030475Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:28.2031374Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:28.2031922Z 
+2026-09-25T00:31:28.2032373Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:28.2033196Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:28.2033694Z 
+2026-09-25T00:31:28.2033968Z   git switch -c <new-branch-name>
+2026-09-25T00:31:28.2034256Z 
+2026-09-25T00:31:28.2034479Z Or undo this operation with:
+2026-09-25T00:31:28.2035066Z 
+2026-09-25T00:31:28.2035313Z   git switch -
+2026-09-25T00:31:28.2035506Z 
+2026-09-25T00:31:28.2035927Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:28.2036528Z 
+2026-09-25T00:31:28.4617365Z ok - home seeding refuses a code root that cannot name the fork
+2026-09-25T00:31:28.4762060Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:28.4804178Z 
+2026-09-25T00:31:28.4808523Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:28.4868220Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:28.4928128Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:28.4953135Z 
+2026-09-25T00:31:28.4958198Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:28.5008031Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:28.5008572Z 
+2026-09-25T00:31:28.5038041Z   git switch -c <new-branch-name>
+2026-09-25T00:31:28.5038550Z 
+2026-09-25T00:31:28.5077911Z Or undo this operation with:
+2026-09-25T00:31:28.5097740Z 
+2026-09-25T00:31:28.5125688Z   git switch -
+2026-09-25T00:31:28.5136994Z 
+2026-09-25T00:31:28.5137686Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:28.5167864Z 
+2026-09-25T00:31:28.6366768Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:28.6407976Z 
+2026-09-25T00:31:28.6408680Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:28.6438263Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:28.6439338Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:28.6468050Z 
+2026-09-25T00:31:28.6498270Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:28.6518258Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:28.6525894Z 
+2026-09-25T00:31:28.6526304Z   git switch -c <new-branch-name>
+2026-09-25T00:31:28.6526818Z 
+2026-09-25T00:31:28.6558058Z Or undo this operation with:
+2026-09-25T00:31:28.6558565Z 
+2026-09-25T00:31:28.6578358Z   git switch -
+2026-09-25T00:31:28.6578855Z 
+2026-09-25T00:31:28.6579390Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:28.6580090Z 
+2026-09-25T00:31:28.9589000Z ok - home seeding refuses a home whose pipeline registration still delivers to a path
+2026-09-25T00:31:28.9697183Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:28.9708105Z 
+2026-09-25T00:31:28.9738594Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:28.9768307Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:28.9798206Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:28.9798937Z 
+2026-09-25T00:31:28.9828355Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:28.9833593Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:28.9834295Z 
+2026-09-25T00:31:28.9834690Z   git switch -c <new-branch-name>
+2026-09-25T00:31:28.9835199Z 
+2026-09-25T00:31:28.9835585Z Or undo this operation with:
+2026-09-25T00:31:28.9836093Z 
+2026-09-25T00:31:28.9836454Z   git switch -
+2026-09-25T00:31:28.9836896Z 
+2026-09-25T00:31:28.9837466Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:28.9838455Z 
+2026-09-25T00:31:29.2349399Z leased worktree for fdev
+2026-09-25T00:31:29.3841165Z ok - home seeding never writes remotes through a linked-worktree home
+2026-09-25T00:31:29.4782808Z ok - remote-backed subhome seeding requires a source origin
+2026-09-25T00:31:29.5097319Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:29.5097998Z 
+2026-09-25T00:31:29.5098331Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:29.5099397Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:29.5100165Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:29.5100631Z 
+2026-09-25T00:31:29.5101109Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:29.5101830Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:29.5102242Z 
+2026-09-25T00:31:29.5102401Z   git switch -c <new-branch-name>
+2026-09-25T00:31:29.5102665Z 
+2026-09-25T00:31:29.5102817Z Or undo this operation with:
+2026-09-25T00:31:29.5103059Z 
+2026-09-25T00:31:29.5103186Z   git switch -
+2026-09-25T00:31:29.5103372Z 
+2026-09-25T00:31:29.5103696Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:29.5104196Z 
+2026-09-25T00:31:29.8258157Z ok - remote-backed subhome seeding validates existing destination origins
+2026-09-25T00:31:29.9480118Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:29.9480453Z 
+2026-09-25T00:31:29.9480664Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:29.9481165Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:29.9481650Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:29.9481917Z 
+2026-09-25T00:31:29.9482101Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:29.9482533Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:29.9482805Z 
+2026-09-25T00:31:29.9482905Z   git switch -c <new-branch-name>
+2026-09-25T00:31:29.9483080Z 
+2026-09-25T00:31:29.9483173Z Or undo this operation with:
+2026-09-25T00:31:29.9483332Z 
+2026-09-25T00:31:29.9483409Z   git switch -
+2026-09-25T00:31:29.9483528Z 
+2026-09-25T00:31:29.9483732Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:29.9484047Z 
+2026-09-25T00:31:30.4826851Z ok - home seeding resolves relative source origins against the source project
+2026-09-25T00:31:30.5357406Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:30.5358092Z 
+2026-09-25T00:31:30.5358482Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:30.5359322Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:30.5360134Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:30.5360614Z 
+2026-09-25T00:31:30.5360930Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:30.5361696Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:30.5362151Z 
+2026-09-25T00:31:30.5362323Z   git switch -c <new-branch-name>
+2026-09-25T00:31:30.5362617Z 
+2026-09-25T00:31:30.5362778Z Or undo this operation with:
+2026-09-25T00:31:30.5363048Z 
+2026-09-25T00:31:30.5363194Z   git switch -
+2026-09-25T00:31:30.5363396Z 
+2026-09-25T00:31:30.5363749Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:30.5364280Z 
+2026-09-25T00:31:30.9700998Z ok - home seeding skips initialized existing no-mistakes clones
+2026-09-25T00:31:31.0010979Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:31.0011484Z 
+2026-09-25T00:31:31.0011815Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:31.0012672Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:31.0013486Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:31.0013964Z 
+2026-09-25T00:31:31.0014274Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:31.0015036Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:31.0015498Z 
+2026-09-25T00:31:31.0015665Z   git switch -c <new-branch-name>
+2026-09-25T00:31:31.0016218Z 
+2026-09-25T00:31:31.0016381Z Or undo this operation with:
+2026-09-25T00:31:31.0016650Z 
+2026-09-25T00:31:31.0016784Z   git switch -
+2026-09-25T00:31:31.0016989Z 
+2026-09-25T00:31:31.0017344Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:31.0018463Z 
+2026-09-25T00:31:31.3496804Z ok - home seeding refuses uninitialized existing no-mistakes clones
+2026-09-25T00:31:31.3804747Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:31.3805244Z 
+2026-09-25T00:31:31.3805497Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:31.3806006Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:31.3806480Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:31.3806752Z 
+2026-09-25T00:31:31.3806932Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:31.3807367Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:31.3807925Z 
+2026-09-25T00:31:31.3808030Z   git switch -c <new-branch-name>
+2026-09-25T00:31:31.3808200Z 
+2026-09-25T00:31:31.3808300Z Or undo this operation with:
+2026-09-25T00:31:31.3808451Z 
+2026-09-25T00:31:31.3808532Z   git switch -
+2026-09-25T00:31:31.3808658Z 
+2026-09-25T00:31:31.3808865Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:31.3809161Z 
+2026-09-25T00:31:31.6044491Z ok - home seeding refuses project destinations outside the subhome
+2026-09-25T00:31:31.6622246Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:31.6622764Z 
+2026-09-25T00:31:31.6623106Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:31.6623952Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:31.6624783Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:31.6625296Z 
+2026-09-25T00:31:31.6625603Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:31.6626373Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:31.6626817Z 
+2026-09-25T00:31:31.6626996Z   git switch -c <new-branch-name>
+2026-09-25T00:31:31.6627284Z 
+2026-09-25T00:31:31.6627463Z Or undo this operation with:
+2026-09-25T00:31:31.6628029Z 
+2026-09-25T00:31:31.6628183Z   git switch -
+2026-09-25T00:31:31.6628396Z 
+2026-09-25T00:31:31.6628752Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:31.6629283Z 
+2026-09-25T00:31:31.8510215Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:31.8510719Z 
+2026-09-25T00:31:31.8511056Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:31.8511593Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:31.8512056Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:31.8512357Z 
+2026-09-25T00:31:31.8512536Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:31.8512983Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:31.8513231Z 
+2026-09-25T00:31:31.8513353Z   git switch -c <new-branch-name>
+2026-09-25T00:31:31.8513521Z 
+2026-09-25T00:31:31.8513617Z Or undo this operation with:
+2026-09-25T00:31:31.8513768Z 
+2026-09-25T00:31:31.8513853Z   git switch -
+2026-09-25T00:31:31.8513974Z 
+2026-09-25T00:31:31.8514190Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:31.8514499Z 
+2026-09-25T00:31:32.0444178Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:32.0444672Z 
+2026-09-25T00:31:32.0444906Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:32.0445405Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:32.0446136Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:32.0446408Z 
+2026-09-25T00:31:32.0446592Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:32.0447026Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:32.0447410Z 
+2026-09-25T00:31:32.0447751Z   git switch -c <new-branch-name>
+2026-09-25T00:31:32.0447938Z 
+2026-09-25T00:31:32.0448034Z Or undo this operation with:
+2026-09-25T00:31:32.0448192Z 
+2026-09-25T00:31:32.0448270Z   git switch -
+2026-09-25T00:31:32.0448389Z 
+2026-09-25T00:31:32.0448596Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:32.0448899Z 
+2026-09-25T00:31:32.2356349Z ok - home seeding refuses operational directories outside the subhome
+2026-09-25T00:31:32.2925404Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:32.2925733Z 
+2026-09-25T00:31:32.2925938Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:32.2926466Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:32.2926941Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:32.2927214Z 
+2026-09-25T00:31:32.2927407Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:32.2928096Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:32.2928357Z 
+2026-09-25T00:31:32.2928462Z   git switch -c <new-branch-name>
+2026-09-25T00:31:32.2928632Z 
+2026-09-25T00:31:32.2928733Z Or undo this operation with:
+2026-09-25T00:31:32.2928884Z 
+2026-09-25T00:31:32.2928967Z   git switch -
+2026-09-25T00:31:32.2929084Z 
+2026-09-25T00:31:32.2929285Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:32.2929587Z 
+2026-09-25T00:31:32.5414206Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:32.5414555Z 
+2026-09-25T00:31:32.5414775Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:32.5415311Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:32.5415809Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:32.5416095Z 
+2026-09-25T00:31:32.5416313Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:32.5416805Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:32.5417079Z 
+2026-09-25T00:31:32.5417183Z   git switch -c <new-branch-name>
+2026-09-25T00:31:32.5417360Z 
+2026-09-25T00:31:32.5417456Z Or undo this operation with:
+2026-09-25T00:31:32.5418114Z 
+2026-09-25T00:31:32.5418205Z   git switch -
+2026-09-25T00:31:32.5418326Z 
+2026-09-25T00:31:32.5418546Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:32.5418869Z 
+2026-09-25T00:31:32.7902154Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:32.7902626Z 
+2026-09-25T00:31:32.7902847Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:32.7903352Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:32.7903818Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:32.7904102Z 
+2026-09-25T00:31:32.7904287Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:32.7904712Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:32.7904962Z 
+2026-09-25T00:31:32.7905061Z   git switch -c <new-branch-name>
+2026-09-25T00:31:32.7905225Z 
+2026-09-25T00:31:32.7905317Z Or undo this operation with:
+2026-09-25T00:31:32.7905470Z 
+2026-09-25T00:31:32.7905546Z   git switch -
+2026-09-25T00:31:32.7905661Z 
+2026-09-25T00:31:32.7905860Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:32.7906158Z 
+2026-09-25T00:31:33.0495880Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:33.0496820Z 
+2026-09-25T00:31:33.0497176Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:33.0498295Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:33.0499458Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:33.0499975Z 
+2026-09-25T00:31:33.0500290Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:33.0501052Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:33.0501503Z 
+2026-09-25T00:31:33.0501676Z   git switch -c <new-branch-name>
+2026-09-25T00:31:33.0501959Z 
+2026-09-25T00:31:33.0502119Z Or undo this operation with:
+2026-09-25T00:31:33.0502377Z 
+2026-09-25T00:31:33.0502510Z   git switch -
+2026-09-25T00:31:33.0502705Z 
+2026-09-25T00:31:33.0503071Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:33.0503625Z 
+2026-09-25T00:31:33.3054337Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:33.3054748Z 
+2026-09-25T00:31:33.3054968Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:33.3055461Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:33.3055948Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:33.3056230Z 
+2026-09-25T00:31:33.3056410Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:33.3056834Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:33.3057082Z 
+2026-09-25T00:31:33.3057180Z   git switch -c <new-branch-name>
+2026-09-25T00:31:33.3057348Z 
+2026-09-25T00:31:33.3057442Z Or undo this operation with:
+2026-09-25T00:31:33.3057856Z 
+2026-09-25T00:31:33.3057940Z   git switch -
+2026-09-25T00:31:33.3058069Z 
+2026-09-25T00:31:33.3058275Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:33.3058604Z 
+2026-09-25T00:31:33.5498375Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:33.5498934Z 
+2026-09-25T00:31:33.5499176Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:33.5499691Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:33.5500168Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:33.5500445Z 
+2026-09-25T00:31:33.5500628Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:33.5501062Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:33.5501311Z 
+2026-09-25T00:31:33.5501414Z   git switch -c <new-branch-name>
+2026-09-25T00:31:33.5501583Z 
+2026-09-25T00:31:33.5501680Z Or undo this operation with:
+2026-09-25T00:31:33.5501830Z 
+2026-09-25T00:31:33.5501912Z   git switch -
+2026-09-25T00:31:33.5502027Z 
+2026-09-25T00:31:33.5502227Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:33.5502540Z 
+2026-09-25T00:31:33.7934607Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:33.7935050Z 
+2026-09-25T00:31:33.7935266Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:33.7935792Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:33.7936253Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:33.7936517Z 
+2026-09-25T00:31:33.7936702Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:33.7937123Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:33.7937369Z 
+2026-09-25T00:31:33.7937468Z   git switch -c <new-branch-name>
+2026-09-25T00:31:33.7937887Z 
+2026-09-25T00:31:33.7937982Z Or undo this operation with:
+2026-09-25T00:31:33.7938139Z 
+2026-09-25T00:31:33.7938220Z   git switch -
+2026-09-25T00:31:33.7938547Z 
+2026-09-25T00:31:33.7938763Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:33.7939067Z 
+2026-09-25T00:31:34.0419089Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:34.0419523Z 
+2026-09-25T00:31:34.0419947Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:34.0420455Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:34.0420928Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:34.0421202Z 
+2026-09-25T00:31:34.0421385Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:34.0421827Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:34.0422087Z 
+2026-09-25T00:31:34.0422194Z   git switch -c <new-branch-name>
+2026-09-25T00:31:34.0422363Z 
+2026-09-25T00:31:34.0422462Z Or undo this operation with:
+2026-09-25T00:31:34.0422619Z 
+2026-09-25T00:31:34.0422712Z   git switch -
+2026-09-25T00:31:34.0422837Z 
+2026-09-25T00:31:34.0423049Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:34.0423360Z 
+2026-09-25T00:31:34.2834576Z ok - home seeding refuses symlinked and non-regular leaf files
+2026-09-25T00:31:34.3489132Z Note: switching to 'ef6a5d0727e21328647cdb60a96e3bb7cd7c4549'.
+2026-09-25T00:31:34.3489524Z 
+2026-09-25T00:31:34.3489986Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-25T00:31:34.3490476Z changes and commit them, and you can discard any commits you make in this
+2026-09-25T00:31:34.3490997Z state without impacting any branches by switching back to a branch.
+2026-09-25T00:31:34.3491315Z 
+2026-09-25T00:31:34.3491748Z If you want to create a new branch to retain commits you create, you may
+2026-09-25T00:31:34.3492173Z do so (now or later) by using -c with the switch command. Example:
+2026-09-25T00:31:34.3492464Z 
+2026-09-25T00:31:34.3492760Z   git switch -c <new-branch-name>
+2026-09-25T00:31:34.3492966Z 
+2026-09-25T00:31:34.3493221Z Or undo this operation with:
+2026-09-25T00:31:34.3493382Z 
+2026-09-25T00:31:34.3493488Z   git switch -
+2026-09-25T00:31:34.3493614Z 
+2026-09-25T00:31:34.3493824Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-25T00:31:34.3494170Z 
+2026-09-25T00:31:34.9519536Z ok - home reseeding preserves and enforces the durable parent binding
+2026-09-25T00:31:38.6622584Z ok - secondmate spawn validates homes before launch
+2026-09-25T00:31:40.3273261Z ok - secondmate spawn refuses operational directories outside the subhome
+2026-09-25T00:31:40.6063823Z ok - fm-send refuses a bare firstmate window with no metadata in this home
+2026-09-25T00:31:41.2991212Z ok - secondmate teardown retires empty homes and releases routing
+2026-09-25T00:31:43.4672744Z ok - secondmate teardown refuses ambiguous and identity-mismatched registry bindings
+2026-09-25T00:31:44.5590224Z ok - normal secondmate teardown sweeps process events before removal
+2026-09-25T00:31:45.3453054Z ok - secondmate teardown preserves state when process-event sweeping is unavailable
+2026-09-25T00:31:46.2643453Z ok - a cleanup that fails its process-event restore retires nothing
+2026-09-25T00:31:47.1015156Z ok - later teardown refusals preserve active process-event sources
+2026-09-25T00:31:48.7173969Z ok - force teardown sweeps nested secondmate homes before deletion
+2026-09-25T00:31:50.0357870Z ok - force teardown preserves nested process-event restoration status and recovery state
+2026-09-25T00:31:51.0772631Z ok - secondmate teardown refuses to hide failed leased-home return
+2026-09-25T00:31:52.1399717Z ok - secondmate teardown raw-removes plain-clone homes
+2026-09-25T00:31:54.0951546Z ok - secondmate force teardown discards child work
+2026-09-25T00:31:55.3571440Z ok - forced secondmate teardown refuses duplicated descendant pool slots
+2026-09-25T00:31:56.5975110Z ok - secondmate force teardown preserves child worktree after unproven lock refusal
+2026-09-25T00:31:59.9637902Z ok - force teardown allows non-state operational directory symlinks inside the subhome
+2026-09-25T00:32:00.6941710Z ok - force teardown refuses operational directory symlinks outside the subhome
+2026-09-25T00:32:01.4153370Z ok - secondmate teardown refuses homes containing registered nested homes
+2026-09-25T00:32:02.1758203Z ok - secondmate teardown refuses nested homes from the child registry
+2026-09-25T00:32:02.8766049Z ok - force teardown validates subhome before child cleanup
+2026-09-25T00:32:03.6054794Z ok - forced teardown refuses a non-directory descendant state path
+2026-09-25T00:32:04.3496861Z ok - forced teardown refuses a symlinked descendant state path
+2026-09-25T00:32:05.1979146Z ok - forced teardown locks a descendant whose state directory was absent
+2026-09-25T00:32:06.2222849Z ok - forced teardown refuses while a fresh task is being published in the home
+2026-09-25T00:32:06.4577153Z ok - a fresh spawn refuses to publish while a forced teardown owns the task set
+2026-09-25T00:32:06.6595701Z ok - a fresh remote secondmate spawn refuses while the task set is owned
+2026-09-25T00:32:07.4359721Z ok - force teardown refuses child worktrees inside the active home
+2026-09-25T00:32:07.8258814Z ok - force teardown refuses child worktrees inside the firstmate repo
+2026-09-25T00:32:08.6043114Z ok - force teardown refuses unregistered child worktree paths
+2026-09-25T00:32:11.0286312Z ok - secondmate teardown path-boundary matrix refuses unmarked/ancestor/active-descendant/repo-descendant homes
+2026-09-25T00:32:13.8287352Z ok - idle kind=secondmate pane is healthy and not stale
+2026-09-25T00:32:13.8639733Z ok - secondmate charter brief is idle by default and does not self-initiate work
+2026-09-25T00:32:14.2553211Z ok - fm-backlog-handoff aborts atomically on unmatched, in-flight, and unregistered targets
+2026-09-25T00:32:14.7999533Z ok - fm-backlog-handoff refuses Done items under whitespace section headings and unsafe homes
+2026-09-25T00:32:17.0090751Z FM_TEST_END 2026-09-25T00:32:17Z tests/fm-secondmate-safety.test.sh exit=0 duration_ms=65099 gate_skip=false
+2026-09-25T00:32:17.0317000Z FM_TEST_BEGIN 2026-09-25T00:32:17Z tests/fm-backlog-handoff.test.sh family=secondmate expected_gate_skip=none
+2026-09-25T00:32:19.3696101Z ok - a routed handoff wakes once and a successful rerun stays idempotent
+2026-09-25T00:32:21.6986035Z ok - a failed receiver wake is loud and retries from an already-present handoff
+2026-09-25T00:32:23.2842618Z ok - a failed advisory doorbell leaves the inbox delivery successful and idempotent
+2026-09-25T00:32:24.9656001Z ok - concurrent reconciliation treats enqueue as delivery despite a failed advisory ring
+2026-09-25T00:32:25.4250962Z tests/fm-backlog-handoff.test.sh: line 263: 239392 Killed                  FM_REAL_TASKS_AXI="$real_tasks" PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-backlog-handoff.sh" design crash-item > "$TMP_ROOT/move-crash.out" 2>&1
+2026-09-25T00:32:27.6293274Z ok - a post-move crash preserves wake intent for an idempotent retry
+2026-09-25T00:32:28.0143449Z tests/fm-backlog-handoff.test.sh: line 339: 240555 Killed                  FM_REAL_TASKS_AXI="$real_tasks" PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-backlog-handoff.sh" design pre-move-crash > "$TMP_ROOT/pre-move-crash.out" 2>&1
+2026-09-25T00:32:30.3671229Z ok - a pre-move crash wakes only after retry makes the item durable
+2026-09-25T00:32:32.4931420Z tests/fm-backlog-handoff.test.sh: line 414: 241770 Killed                  PATH="$fakebin:$PATH" FM_REAL_RM="$real_rm" FM_CONFIRM_CRASH_ONCE="$TMP_ROOT/confirm-crash.once" FM_CONFIRM_WAKE_MARKER="$home/state/.backlog-handoff-design.wake-pending" FM_HOME="$home" "$ROOT/bin/fm-backlog-handoff.sh" design confirm-crash > "$TMP_ROOT/confirm-crash.out" 2>&1
+2026-09-25T00:32:34.6922118Z ok - a post-confirmation crash reconciles once without suppressing a later handoff wake
+2026-09-25T00:32:36.4740595Z ok - an unresolved delivery attempt refuses an immediate duplicate wake
+2026-09-25T00:32:40.7873481Z ok - concurrent local handoffs serialize each durable move with its wake
+2026-09-25T00:32:43.7457402Z ok - local teardown waits for the routed move and receiver wake
+2026-09-25T00:32:45.7628207Z ok - failed local home removal preserves its wake and a retry retires both
+2026-09-25T00:32:47.8913085Z ok - body followed by another item moves intact with no source orphans
+2026-09-25T00:32:50.0021914Z ok - body followed by section heading moves intact; section stays
+2026-09-25T00:32:52.2878331Z ok - multi-paragraph body with internal blank lines moves whole and is idempotent
+2026-09-25T00:32:54.4039940Z ok - body as last lines of the file moves intact
+2026-09-25T00:32:56.5137057Z ok - EOF body before a seeded destination section keeps its boundary
+2026-09-25T00:32:58.6221414Z ok - untouched EOF line preserves its original terminator
+2026-09-25T00:33:00.8934328Z ok - body-carrying handoff is idempotent: re-run changes nothing
+2026-09-25T00:33:01.0655287Z ok - noncanonical one-space and tab continuations refuse without changes
+2026-09-25T00:33:03.1864606Z ok - indented ## Intent / ## Acceptance are body, not section boundaries
+2026-09-25T00:33:04.4452415Z ok - registry home parses when summary has parentheses before (home: ...)
+2026-09-25T00:33:04.5710642Z ok - registry entry without (home: ...) fails cleanly with has no home
+2026-09-25T00:33:07.2639437Z ok - handoff reports a moved item whose public commitment still binds this home
+2026-09-25T00:33:09.3726930Z ok - handoff says nothing about public commitments in a relay-free home
+2026-09-25T00:33:09.3727850Z ALL TESTS PASSED
+2026-09-25T00:33:09.4289706Z FM_TEST_END 2026-09-25T00:33:09Z tests/fm-backlog-handoff.test.sh exit=0 duration_ms=52389 gate_skip=false
+2026-09-25T00:33:09.4518327Z FM_TEST_BEGIN 2026-09-25T00:33:09Z tests/fm-classify-corr-token.test.sh family=standalone expected_gate_skip=none
+2026-09-25T00:33:12.1120343Z ok - a correlation token between the verb and the key breaks neither opening nor closing
+2026-09-25T00:33:14.9790968Z ok - the token is read through before the key, after it, doubled, bracketed, and unkeyed
+2026-09-25T00:33:16.5291426Z ok - the untokened opener/closer pair behaves exactly as before
+2026-09-25T00:33:25.4796856Z ok - prose, malformed, wrong-length and unknown name=value tokens stay non-transitions
+2026-09-25T00:33:26.6640626Z ok - a token-first line cannot impersonate any opening or closing verb
+2026-09-25T00:33:26.6817949Z ok - untokened captain-relevance, pause, terminal-verb and captain-held verdicts are unchanged
+2026-09-25T00:33:26.6943228Z ok - captain-relevance, terminal-verb, pause and captain-held all read through the token
+2026-09-25T00:33:26.7060234Z ok - the daemon and crew-state verb case arms read through the token
+2026-09-25T00:33:28.2424184Z ok - reading through the token does not weaken the reserved-key namespace rule
+2026-09-25T00:33:29.2482912Z ok - the cursor-backed fold and the whole-file fold agree on every correlated transition
+2026-09-25T00:33:29.8201829Z ok - a cursor persisted under the previous reading is discarded and refolded
+2026-09-25T00:33:30.2614867Z ok - both real correlation-token writers produce lines this classifier reads through
+2026-09-25T00:33:30.2988302Z FM_TEST_END 2026-09-25T00:33:30Z tests/fm-classify-corr-token.test.sh exit=0 duration_ms=20839 gate_skip=false
+2026-09-25T00:33:30.3223521Z FM_TEST_BEGIN 2026-09-25T00:33:30Z tests/fm-afk-inject-e2e.test.sh family=afk expected_gate_skip=none
+2026-09-25T00:33:46.5967201Z ok - Scenario A: partial input defers injection; digest arrives clean after idle
+2026-09-25T00:33:56.3476961Z ok - Scenario B: swallowed Enter produces exactly one clean digest
+2026-09-25T00:34:04.3593344Z ok - Scenario C: a normal captain status injects exactly one clean single-line sentinel digest
+2026-09-25T00:34:04.3593929Z all e2e injection tests passed
+2026-09-25T00:34:04.3941976Z FM_TEST_END 2026-09-25T00:34:04Z tests/fm-afk-inject-e2e.test.sh exit=0 duration_ms=34063 gate_skip=false
+2026-09-25T00:34:04.4172295Z FM_TEST_BEGIN 2026-09-25T00:34:04Z tests/fm-cursor-harness.test.sh family=standalone expected_gate_skip=none
+2026-09-25T00:34:04.5435396Z ok - fm_cursor_process_matches: cursor's real shapes identify; real node/agent lookalikes do not
+2026-09-25T00:34:04.5717230Z ok - fm_cursor_process_matches: name and install-tree signals each carry a verdict alone
+2026-09-25T00:34:04.5935440Z ok - fm_cursor_verify_executable: the legacy alias is accepted only with cursor evidence
+2026-09-25T00:34:04.5998369Z ok - fm_cursor_resolve_binary: prints the stable launcher, not the versioned target
+2026-09-25T00:34:04.6575677Z ok - tmux liveness: a cursor pane is agent; an unrelated node/agent is other, never dead
+2026-09-25T00:34:05.1402727Z ok - fm-harness.sh: cursor's marker outranks an inherited CLAUDECODE when ancestry is silent
+2026-09-25T00:34:05.3489992Z ok - fm-harness.sh: cursor-like node script names do not establish ancestry identity
+2026-09-25T00:34:05.4345732Z ok - cursor transcript fold: role:user opens a turn, turn_ended closes it, aborts included
+2026-09-25T00:34:05.4834853Z ok - cursor transcript fold: malformed closes cannot settle through either parser
+2026-09-25T00:34:05.5473840Z ok - cursor transcript fold: partial appends never make an active turn idle
+2026-09-25T00:34:05.5813650Z ok - cursor transcript fold: an unresolvable binding is unknown, never idle
+2026-09-25T00:34:05.6150545Z ok - cursor transcript binding: exact recorded workspacePath only, never a prefix or rebuilt slug
+2026-09-25T00:34:05.6562761Z ok - cursor transcript fold: a prior conversation is excluded so a relaunch folds its own turn
+2026-09-25T00:34:34.5035748Z FM_TEST_END 2026-09-25T00:34:34Z tests/fm-cursor-harness.test.sh exit=0 duration_ms=30079 gate_skip=false
+2026-09-25T00:34:34.5271097Z FM_TEST_BEGIN 2026-09-25T00:34:34Z tests/fm-backend-stream.test.sh family=unclassified expected_gate_skip=none
+2026-09-25T00:34:47.2254593Z ok - stream: idle Deck exits; genuine pending text refuses without stopping the host
+2026-09-25T00:35:01.9034185Z ok - stream: Deck launch, alive classification, durable steering, exit, relaunch and recovery
+2026-09-25T00:35:09.5055693Z ok - stream: a restarted hub's registry gap licenses no secondmate respawn
+2026-09-25T00:35:10.1279984Z not ok - post-interrupt exit failed: error: task host-291529's composer state is 'unknown', not proven empty; refusing to type the /quit exit command because it could concatenate onto existing text. Clear the composer, then retry 'exit'; capture: 0
+2026-09-25T00:35:10.1282379Z |
+2026-09-25T00:35:10.2971293Z FM_TEST_END 2026-09-25T00:35:10Z tests/fm-backend-stream.test.sh exit=1 duration_ms=35764 gate_skip=false
+2026-09-25T00:35:10.3211768Z FM_TEST_BEGIN 2026-09-25T00:35:10Z tests/fm-claude-trust.test.sh family=backend-dispatch expected_gate_skip=none
+2026-09-25T00:35:10.4665948Z ok - fm-claude-trust.sh: a fresh task worktree is trusted
+2026-09-25T00:35:10.5956810Z ok - fm-claude-trust.sh: a fresh registration trusts the project root without manufacturing import consent
+2026-09-25T00:35:10.7260533Z ok - fm-claude-trust.sh: carries forward a project's already-granted import consent to the worktree entry
+2026-09-25T00:35:10.8599736Z ok - fm-claude-trust.sh: preserves unrelated keys on the project-root entry
+2026-09-25T00:35:10.9741214Z ok - fm-claude-trust.sh: refuses to override a project's declined external-imports consent
+2026-09-25T00:35:11.1014139Z ok - fm-claude-trust.sh: a never-asked default external-imports pair is not treated as a decline
+2026-09-25T00:35:11.2614658Z ok - fm-claude-trust.sh: repeat registration is idempotent
+2026-09-25T00:35:11.3336179Z ok - fm-claude-trust.sh: refuses the primary checkout
+2026-09-25T00:35:11.4053005Z ok - fm-claude-trust.sh: an exported CDPATH cannot defeat the scope refusal
+2026-09-25T00:35:11.4787263Z ok - fm-claude-trust.sh: inherited git environment overrides cannot defeat the scope refusal
+2026-09-25T00:35:11.6003326Z ok - fm-claude-trust.sh: refuses a home directory the git checks would accept
+2026-09-25T00:35:11.6382386Z ok - fm-claude-trust.sh: refuses the Claude config directory
+2026-09-25T00:35:11.6747039Z ok - fm-claude-trust.sh: refuses a relative CLAUDE_CONFIG_DIR
+2026-09-25T00:35:11.7384460Z ok - fm-claude-trust.sh: refuses a directory that is not a git worktree
+2026-09-25T00:35:11.7733865Z ok - fm-claude-trust.sh: refuses a path that does not exist
+2026-09-25T00:35:11.8761120Z ok - fm-claude-trust.sh: refuses a worktree belonging to another project
+2026-09-25T00:35:11.9421106Z ok - fm-claude-trust.sh: refuses a subdirectory of the worktree
+2026-09-25T00:35:12.0863392Z ok - fm-claude-trust.sh: a project argument that is itself a linked worktree resolves to the primary checkout
+2026-09-25T00:35:12.3030114Z ok - fm-claude-trust.sh: preserves unrelated store content
+2026-09-25T00:35:12.3865556Z ok - fm-claude-trust.sh: refuses a store symlinked to another user's file
+2026-09-25T00:35:12.5629561Z ok - fm-claude-trust.sh: follows a store symlink to this user's own file and leaves the link intact
+2026-09-25T00:35:12.6498266Z ok - fm-claude-trust.sh: refuses an unparseable store and leaves it untouched
+2026-09-25T00:35:12.7363198Z ok - fm-claude-trust.sh: a missing node is refused rather than degraded
+2026-09-25T00:35:12.7909581Z ok - fm-claude-trust.sh: a scope refusal stays fail-closed without node
+2026-09-25T00:35:15.3947028Z ok - fm-spawn.sh: a claude spawn pre-trusts its worktree and launches with the brief
+2026-09-25T00:35:16.9450286Z ok - fm-spawn.sh: a trust-refused claude spawn leaves no task state behind
+2026-09-25T00:35:18.3898293Z ok - fm-spawn.sh: a claude secondmate spawn pre-trusts a standalone-clone home
+2026-09-25T00:35:19.8472546Z ok - fm-spawn.sh: a claude secondmate spawn pre-trusts a leased worktree home
+2026-09-25T00:35:20.1612342Z ok - fm-claude-trust.sh: home-level trust is refused for everything but a home seeded for this secondmate
+2026-09-25T00:35:20.2164948Z ok - fm-claude-trust.sh: worktree mode still refuses a secondmate home
+2026-09-25T00:35:20.6504266Z ok - fm-spawn.sh: a claude secondmate spawn refuses when home trust cannot be recorded
+2026-09-25T00:35:20.7666538Z FM_TEST_END 2026-09-25T00:35:20Z tests/fm-claude-trust.test.sh exit=0 duration_ms=10438 gate_skip=false
+2026-09-25T00:35:20.7898354Z FM_TEST_BEGIN 2026-09-25T00:35:20Z tests/fm-mail-check.test.sh family=watcher-wake-lock expected_gate_skip=none
+2026-09-25T00:35:20.8370512Z ok - fm-mail-check: help and usage plumbing
+2026-09-25T00:35:21.0812720Z ok - fm-mail-check: arm writes and binds, re-arm is idempotent, disarm removes
+2026-09-25T00:35:21.1955053Z ok - fm-mail-check: arm resolves a relative home into the shim
+2026-09-25T00:35:21.2142247Z ok - fm-mail-check: arm refuses a symlink at the shim path
+2026-09-25T00:35:21.2293846Z ok - fm-mail-check: arm refuses without the mail plane
+2026-09-25T00:35:21.3996653Z ok - fm-mail-check: a successful poll that surfaces new mail emits one wake line
+2026-09-25T00:35:21.6900810Z ok - fm-mail-check: a poll failure is reported once and re-reported after recovery
+2026-09-25T00:35:21.7554354Z ok - fm-mail-check: an unconfigured home is reported once, not every poll
+2026-09-25T00:35:26.7871762Z ok - fm-mail-check: a slow poll times out into a one-line report
+2026-09-25T00:35:26.9525407Z ok - fm-mail-check: a fail-closed poll after a wake reports the failure, not the wake
+2026-09-25T00:35:27.2208462Z ok - fm-mail-check: a repeated status-4 fail-closed poll still wakes
+2026-09-25T00:35:27.2925085Z ok - fm-mail-check: a repeated status-2 stays-queued poll still wakes
+2026-09-25T00:35:27.3638311Z ok - fm-mail-check: a repeated failure that queued new mail still wakes
+2026-09-25T00:35:27.4245089Z ok - fm-mail-check: a repeated timeout still wakes
+2026-09-25T00:35:27.6082555Z ok - fm-mail-check: a repeated pre-wake heal failure stays silent
+2026-09-25T00:35:27.6324910Z ok - fm-mail-check: a missing mail plane is reported, not assumed
+2026-09-25T00:35:27.6680704Z FM_TEST_END 2026-09-25T00:35:27Z tests/fm-mail-check.test.sh exit=0 duration_ms=6870 gate_skip=false
+2026-09-25T00:35:27.6916382Z FM_TEST_BEGIN 2026-09-25T00:35:27Z tests/fm-rovo-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+2026-09-25T00:35:30.3945521Z ok - fm-spawn: rovo launches bare, waits for readiness, and delivers its brief pointer
+2026-09-25T00:35:33.0582773Z ok - fm-spawn: rovo omits efficiencyLevel for xhigh but keeps its allowedExternalPaths grant, recording xhigh in task metadata
+2026-09-25T00:35:35.7322542Z ok - fm-spawn: rovo's supported effort values merge into the same --config-override as its allowedExternalPaths grant
+2026-09-25T00:35:38.4249705Z ok - fm-spawn: rovo never sends the brief pointer before an observable ready signal, and tears down the created endpoint on failure
+2026-09-25T00:35:41.2573130Z ok - fm-spawn: rovo treats a silent pointer drop as a failed spawn, and tears down the created endpoint
+2026-09-25T00:35:41.4719528Z ok - fm-spawn: missing rovo executable refuses before pane creation
+2026-09-25T00:35:41.7417790Z ok - fm-spawn: rovo cannot be launched as a secondmate
+2026-09-25T00:35:41.9104960Z ok - fm-harness: rovo's markers outrank an inherited CLAUDECODE, and markerless ancestry still resolves rovo
+2026-09-25T00:35:41.9140057Z ok - fm-control-lib: rovo's lifecycle table matches its verified facts
+2026-09-25T00:35:41.9349337Z ok - busy detection: rovo's rendered busy line classifies through its own isolated fallback
+2026-09-25T00:35:41.9426374Z ok - busy detection: a rovo busy marker scrolled out of the tail classifies unknown, never idle
+2026-09-25T00:35:41.9965198Z FM_TEST_END 2026-09-25T00:35:41Z tests/fm-rovo-harness.test.sh exit=0 duration_ms=14297 gate_skip=false
+2026-09-25T00:35:42.0199637Z FM_TEST_BEGIN 2026-09-25T00:35:42Z tests/fm-stream-bridge.test.sh family=unclassified expected_gate_skip=none
+2026-09-25T00:35:42.1513431Z ok - bridge: recorded hub traffic replays into the Bridge UI's record shape
+2026-09-25T00:35:42.2206214Z ok - bridge: only an exit the owning agent reported becomes Stopped or Failed
+2026-09-25T00:35:42.5971478Z ok - bridge: malformed recordings are refused and malformed endpoints left out
+2026-09-25T00:35:42.9267172Z ok - bridge: a leaf is emitted once from the hub's current execution
+2026-09-25T00:35:43.2836154Z ok - bridge: a snapshot reads a real hub's registrations and closes
+2026-09-25T00:35:47.4452496Z ok - bridge: a real agent's reported worker exit reaches the Bridge
+2026-09-25T00:35:48.5678518Z ok - bridge: serve streams every tick and goes silent while the hub is gone
+2026-09-25T00:35:49.3578014Z ok - bridge: wrong credentials and incompatible hubs are refused during negotiation
+2026-09-25T00:35:49.5566806Z ok - bridge: commands rebind atomically to the active hub generation
+2026-09-25T00:35:50.5361308Z ok - bridge: a composer command reaches the worker and is acknowledged
+2026-09-25T00:35:52.3793050Z ok - bridge: a reused command id refuses a different payload
+2026-09-25T00:35:56.3724888Z ok - bridge: a command for a worker its agent reported gone is nacked
+2026-09-25T00:36:00.9997187Z ok - bridge: a command aimed at a replaced execution is refused without claiming absence
+2026-09-25T00:36:02.0421170Z ok - bridge: commands require the execution they were composed against
+2026-09-25T00:36:03.0773372Z ok - bridge: commands for another or missing fleet are nacked
+2026-09-25T00:36:24.0022553Z ok - bridge: an order the hub cannot settle is left pending rather than answered
+2026-09-25T00:36:24.2996403Z ok - bridge: a command that names no worker stays pending rather than nacked
+2026-09-25T00:36:24.5019186Z ok - bridge: the comparison harness sets rendered states against crew state
+2026-09-25T00:36:24.5912451Z FM_TEST_END 2026-09-25T00:36:24Z tests/fm-stream-bridge.test.sh exit=0 duration_ms=42563 gate_skip=false
+2026-09-25T00:36:24.6146897Z FM_TEST_BEGIN 2026-09-25T00:36:24Z tests/fm-task-inbox.test.sh family=watcher-wake-lock expected_gate_skip=none
+2026-09-25T00:36:24.8198083Z ok - inbox: a steer is written durably and round-trips byte-exact with a self-describing doorbell
+2026-09-25T00:36:24.8933423Z ok - inbox: a hostile-path doorbell executes as a no-op in bare shells
+2026-09-25T00:36:25.1754428Z ok - inbox: terminal-control paths are rejected without typing
+2026-09-25T00:36:27.1088995Z ok - inbox: the ring skips dead or missing endpoints and still rings live or unclassifiable endpoints
+2026-09-25T00:36:27.3280433Z ok - inbox: the idempotent enqueue dedups an exact re-run onto the same record, handled or not
+2026-09-25T00:36:27.4367266Z ok - inbox: idempotent enqueue follows a record concurrently moved to handled
+2026-09-25T00:36:27.6410546Z ok - inbox: the handled mv is the idempotent ack and sequences are never reissued
+2026-09-25T00:36:28.3681620Z ok - inbox: concurrent writers serialize on the sequence lock and lose nothing
+2026-09-25T00:36:28.4361564Z ok - inbox: a writer retries when a competing lock vanishes after its failed claim
+2026-09-25T00:36:28.5206822Z ok - inbox: ladder bookkeeping ignores a concurrently removed inbox
+2026-09-25T00:36:28.6750501Z ok - inbox: fire-and-forget records stay durable and outside the ladder
+2026-09-25T00:36:29.0249511Z ok - inbox: the re-ring ladder paces by grace, escalates once, and resets on ack
+2026-09-25T00:36:35.7994214Z ok - watcher: an unhandled aged message on an idle pane re-rings without waking firstmate, and the ack silences it
+2026-09-25T00:36:40.6124706Z ok - watcher: a busy pane just waits - the record is durable and no doorbell is typed
+2026-09-25T00:36:44.9257368Z ok - watcher: a healthy or empty inbox stays completely silent
+2026-09-25T00:36:47.9565916Z ok - watcher: acknowledgement silences an unwritable ladder without a stale wake
+2026-09-25T00:36:49.8482735Z ok - watcher: unwritable ladder bookkeeping surfaces a stale wake after the doorbell
+2026-09-25T00:36:53.2640085Z ok - watcher: a spent ring budget emits exactly one ordinary stale wake for recovery
+2026-09-25T00:36:54.1665642Z ok - watcher: a positively dead pane is never typed into and surfaces exactly one stale wake
+2026-09-25T00:36:55.0371150Z ok - watcher: dead-pane recovery overrides stale busy state
+2026-09-25T00:36:55.0805601Z FM_TEST_END 2026-09-25T00:36:55Z tests/fm-task-inbox.test.sh exit=0 duration_ms=30458 gate_skip=false
+2026-09-25T00:36:55.1038082Z FM_TEST_BEGIN 2026-09-25T00:36:55Z tests/fm-secondmate-sync.test.sh family=secondmate expected_gate_skip=none
+2026-09-25T00:36:55.2175921Z ok - T1 updated: a behind home fast-forwards to the primary's local HEAD
+2026-09-25T00:36:55.2722182Z ok - T2 current: an already-current home is a no-op and reports no instruction change
+2026-09-25T00:36:55.3273938Z ok - T3 dirty: an uncommitted home is skipped, its edit preserved
+2026-09-25T00:36:55.4049834Z ok - scratchpad2/ does not mark a secondmate home dirty for the sync guard
+2026-09-25T00:36:55.4722399Z ok - T4 diverged: a home that is not an ancestor of the primary's HEAD is skipped
+2026-09-25T00:36:55.5322857Z ok - T5 in-flight: a home on a feature branch is skipped, its work preserved
+2026-09-25T00:36:55.6388955Z ok - T6 no fetch: the local-HEAD sync never invokes git fetch
+2026-09-25T00:36:55.7290738Z ok - T7 sweep nudges on a real instruction change only, but still fast-forwards
+2026-09-25T00:36:58.3095821Z ok - T8 bootstrap sweeps live homes and sends exactly one marked nudge for the instruction change
+2026-09-25T00:36:59.5309824Z ok - T8a bootstrap nudge send respects FM_STATE_OVERRIDE
+2026-09-25T00:36:59.7494846Z ok - T8f bootstrap nudge retry rejects malformed marker ids
+2026-09-25T00:37:00.8632256Z ok - T8c failed bootstrap nudge is surfaced and recorded for retry
+2026-09-25T00:37:04.2144113Z ok - T8d bootstrap nudge retry is idempotent after success
+2026-09-25T00:37:05.7646622Z ok - T8e bootstrap nudge retry refuses a changed home instead of guessing
+2026-09-25T00:37:08.4258914Z ok - T8b a stale herdr endpoint cannot lose a durably enqueued nudge, and fm-<id> resolves through post-respawn metadata
+2026-09-25T00:37:08.9312549Z ok - T9 bootstrap surfaces a skipped dirty live secondmate home
+2026-09-25T00:37:10.3295213Z ok - T10 spawn fast-forwards a secondmate worktree to the primary's local HEAD before launch
+2026-09-25T00:37:11.7042146Z ok - T11 spawn warns when pre-launch sync is skipped
+2026-09-25T00:37:11.7619046Z ok - T12 gitignored marker: a freshly seeded home reads clean to fleet-sync and the ff sweep
+2026-09-25T00:37:11.8433486Z ok - T13 gitignored marker: an existing marker-only-dirty home converges, then reads clean
+2026-09-25T00:37:11.9005023Z ok - T14 marker tolerance does not mask a genuinely dirty home
+2026-09-25T00:37:12.1291009Z ok - R1 a remote home ahead of the host's Firstmate copy still advances to the primary's commit
+2026-09-25T00:37:12.6712683Z ok - R1b a remote sync names exactly which instruction paths its advance changed
+2026-09-25T00:37:12.9054559Z ok - R2 a missing target is imported from the host's Firstmate copy without moving it
+2026-09-25T00:37:13.1435749Z ok - R3 a target neither side holds is imported from the home's own origin
+2026-09-25T00:37:13.3582564Z ok - R4 an already-present target advances the home with no fetch available
+2026-09-25T00:37:13.5202202Z ok - R5 a target neither the host copy nor the origin holds skips with an actionable reason
+2026-09-25T00:37:13.9720342Z ok - R6 dirty, diverged, and feature-branch remote homes skip and are left untouched
+2026-09-25T00:37:14.2250871Z ok - R7 a sync with no target still follows the host's own refreshed Firstmate copy
+2026-09-25T00:37:46.6049454Z ok - R8 session start converges a remote home on the primary's default-branch commit
+2026-09-25T00:37:48.1246822Z ok - R10 a host too old for a parent-targeted sync is reported with the command that fixes it
+2026-09-25T00:37:48.9373800Z ok - R9 a remote launch leaves the home on the parent's commit while an ordinary spawn follows its own checkout
+2026-09-25T00:37:48.9374776Z # all fm-secondmate-sync tests passed
+2026-09-25T00:37:49.3184888Z FM_TEST_END 2026-09-25T00:37:49Z tests/fm-secondmate-sync.test.sh exit=0 duration_ms=54206 gate_skip=false
+2026-09-25T00:37:49.3419054Z FM_TEST_BEGIN 2026-09-25T00:37:49Z tests/fm-tangle-guard.test.sh family=session-bootstrap expected_gate_skip=none
+2026-09-25T00:37:49.4196193Z ok - fm_primary_tangle_branch: feature branch alarms; default/detached/non-git stay silent
+2026-09-25T00:37:50.2234348Z ok - fm-guard: bordered tangle banner fires only for a feature branch and suppresses repair commands in read-only mode
+2026-09-25T00:37:51.7497421Z ok - fm-bootstrap: TANGLE problem line fires only for a feature branch and suppresses repair commands in detect-only mode
+2026-09-25T00:37:51.7885118Z ok - fm-brief: ship brief asserts worktree isolation before the branch step
+2026-09-25T00:37:54.4691778Z ok - fm-spawn: aborts unless the resolved worktree is a genuine, isolated worktree
+2026-09-25T00:37:56.9256128Z ok - fm-spawn: appends windows by session-colon, pins the name, and targets the window id
+2026-09-25T00:37:56.9686834Z FM_TEST_END 2026-09-25T00:37:56Z tests/fm-tangle-guard.test.sh exit=0 duration_ms=7619 gate_skip=false
+2026-09-25T00:37:56.9918253Z FM_TEST_BEGIN 2026-09-25T00:37:56Z tests/fm-fleet-snapshot-view.test.sh family=snapshot-bearings expected_gate_skip=optional-binary
+2026-09-25T00:37:57.1797111Z ok - empty fleet snapshot and view use explicit absence markers
+2026-09-25T00:37:58.0060245Z ok - fixture snapshot covers task rows, backlog rows, pointers, and stable ordering
+2026-09-25T00:37:59.1576372Z ok - home-summary excludes kind=secondmate from unowned_current and terminal_in_flight
+2026-09-25T00:37:59.5037226Z ok - undated captain holds age after a configurable threshold, decided only from structured fields
+2026-09-25T00:37:59.6169720Z ok - captain-hold buckets are total, mutually exclusive, and never decided by prose
+2026-09-25T00:38:00.2089447Z ok - main_inventory discloses orphan/unstructured and clears when inventory is consistent
+2026-09-25T00:38:00.7237091Z ok - backlog normalization preserves strict roles and resolves every blocker compatibly
+2026-09-25T00:38:01.4646017Z ok - snapshot event hints follow reconciled current state
+2026-09-25T00:38:01.8868845Z ok - durable fold keeps an open decision past a later unrelated event
+2026-09-25T00:38:02.2952900Z ok - a live secondmate endpoint preserves unrelated open decisions
+2026-09-25T00:38:02.7078654Z ok - durable captain-held transfer closes the duplicate live status decision
+2026-09-25T00:38:03.1323490Z ok - durable fold clears a decision only on a keyed resolution
+2026-09-25T00:38:03.4112507Z ok - a completed scout's stale decision surfaces as a report pointer, not pending
+2026-09-25T00:38:03.6800095Z ok - a scout still parked at a decision stays pending (terminal clear does not over-fire)
+2026-09-25T00:38:03.7762801Z ok - snapshot includes durable scout reports after teardown
+2026-09-25T00:38:04.3698754Z ok - snapshot parses tasks-axi rows and respects operational overrides
+2026-09-25T00:38:05.1815156Z ok - fleet view renders the snapshot without secondmate peek guidance
+2026-09-25T00:38:05.5910809Z ok - fleet view renders secondmate agent liveness
+2026-09-25T00:38:05.6295941Z FM_TEST_END 2026-09-25T00:38:05Z tests/fm-fleet-snapshot-view.test.sh exit=0 duration_ms=8630 gate_skip=false
+2026-09-25T00:38:05.6529694Z FM_TEST_BEGIN 2026-09-25T00:38:05Z tests/fm-herdr-session-cleanup.test.sh family=backend-dispatch expected_gate_skip=none
+2026-09-25T00:38:05.7889140Z ok - process proof reads Linux Herdr argv arrays and rejects malformed executable identities
+2026-09-25T00:38:06.0778090Z ok - exact stale projection closes one exact pane under task then presentation locks
+2026-09-25T00:38:06.0801433Z ok - successful cleanup is idempotent on repeat
+2026-09-25T00:38:06.1059909Z ok - malformed title preserves the candidate
+2026-09-25T00:38:06.1315058Z ok - missing token preserves the candidate
+2026-09-25T00:38:06.1780828Z ok - malformed journal preserves the candidate
+2026-09-25T00:38:06.2980531Z ok - duplicate token preserves the candidate
+2026-09-25T00:38:06.3241775Z ok - duplicate title token preserves the candidate
+2026-09-25T00:38:06.3292256Z ok - zero journal match preserves the candidate
+2026-09-25T00:38:06.3955950Z ok - multiple journal matches preserves the candidate
+2026-09-25T00:38:06.4871829Z ok - cross-home journal preserves the candidate
+2026-09-25T00:38:06.6667019Z ok - v2 workspace binding mismatch preserves the candidate
+2026-09-25T00:38:06.8460374Z ok - v2 tab binding mismatch preserves the candidate
+2026-09-25T00:38:07.0251561Z ok - v2 pane binding mismatch preserves the candidate
+2026-09-25T00:38:07.5696375Z ok - v2 cleanup requires and accepts the exact journal endpoint binding
+2026-09-25T00:38:07.6432434Z ok - current task metadata preserves the candidate
+2026-09-25T00:38:07.7752952Z ok - registered agent preserves the candidate
+2026-09-25T00:38:07.8974704Z ok - unknown agent preserves the candidate
+2026-09-25T00:38:07.9940690Z ok - multiple tabs preserves the candidate
+2026-09-25T00:38:08.0909959Z ok - multiple panes preserves the candidate
+2026-09-25T00:38:08.2126096Z ok - non-idle shell preserves the candidate
+2026-09-25T00:38:08.3353078Z ok - child process or shell job preserves the candidate
+2026-09-25T00:38:08.4095950Z ok - unreadable snapshot preserves the candidate
+2026-09-25T00:38:08.5918712Z ok - unreadable topology check preserves the candidate
+2026-09-25T00:38:08.7596311Z ok - revalidation race preserves the candidate
+2026-09-25T00:38:08.8579498Z ok - active target preserves the candidate
+2026-09-25T00:38:09.1218980Z ok - focus refusal preserves the candidate
+2026-09-25T00:38:09.7752230Z ok - standalone bootstrap cannot run lock-owned stale projection cleanup
+2026-09-25T00:38:12.1005569Z ok - session start runs cleanup only after acquiring its home lock
+2026-09-25T00:38:12.1006060Z all fm-herdr-session-cleanup tests passed
+2026-09-25T00:38:12.1397035Z FM_TEST_END 2026-09-25T00:38:12Z tests/fm-herdr-session-cleanup.test.sh exit=0 duration_ms=6479 gate_skip=false
+2026-09-25T00:38:12.1627702Z FM_TEST_BEGIN 2026-09-25T00:38:12Z tests/fm-branch-supervision.test.sh family=standalone expected_gate_skip=none
+2026-09-25T00:38:13.2174487Z ok - branch prompt is byte-stable across homes, cwd, timezone, and time, above the cache floor
+2026-09-25T00:38:13.7449937Z ok - outcome store is append-only and refuses sequence reuse after a torn tail
+2026-09-25T00:38:14.1812281Z ok - only routine fleet outcomes can be silent
+2026-09-25T00:38:14.4846260Z ok - startup replay cannot advance the cursor across an unrendered captain outcome
+2026-09-25T00:38:14.9296950Z ok - malformed and ahead-of-store cursor state fail closed before any outcome can be skipped
+2026-09-25T00:38:15.2902551Z ok - cursor advancement refuses to legitimize an ahead processed marker
+2026-09-25T00:38:15.4738268Z ok - middle sequence conflicts fail closed for every store read and append
+2026-09-25T00:38:15.7049525Z ok - outcome stores require terminated single-line JSON records
+2026-09-25T00:38:17.0437461Z ok - the processed marker is sequence-bound, never ahead of the read cursor, never backwards, and migrates delivered history once
+2026-09-25T00:38:17.5995042Z ok - lease exclusivity, same-actor refresh, release, staleness, and sweep hold
+2026-09-25T00:38:18.0728112Z ok - fm-control and fm-teardown refuse the other actor's live lease and pass through otherwise
+2026-09-25T00:38:18.8398871Z ok - PR merge, local landing, and new-task spawn refuse the branch actor and spare main
+2026-09-25T00:38:19.0216237Z ok - a non-Pi home ignores stale Pi leases even when the recycled pid owns its lock
+2026-09-25T00:38:19.3120632Z ok - lease liveness requires an exact valid session-lock pid
+2026-09-25T00:38:19.5185996Z ok - concurrent stale-lease claims serialize so exactly one actor succeeds
+2026-09-25T00:38:19.8414295Z ok - guard stale cleanup cannot race with or delete a newer lease claim
+2026-09-25T00:38:20.1422383Z ok - lease guard excludes a concurrent actor for the complete mutation
+2026-09-25T00:38:20.1822677Z ok - a claim naming the other actor fails loudly instead of silently impersonating it
+2026-09-25T00:38:20.3978712Z ok - release commands authorize the caller and bulk release drops only that actor's leases
+2026-09-25T00:38:20.9048971Z ok - the branch cannot force a teardown or bypass fm-control for a relaunch
+2026-09-25T00:38:20.9443325Z FM_TEST_END 2026-09-25T00:38:20Z tests/fm-branch-supervision.test.sh exit=0 duration_ms=8774 gate_skip=false
+2026-09-25T00:38:20.9671919Z FM_TEST_BEGIN 2026-09-25T00:38:20Z tests/fm-bearings-board.test.sh family=pure-contract-unit expected_gate_skip=none
+2026-09-25T00:38:21.0066964Z ok - path prints the stable home-scoped board location
+2026-09-25T00:38:21.3969454Z ok - build refuses malformed payloads before touching the board
+2026-09-25T00:38:22.3772767Z ok - charted kind is optional and accepts queued and warning
+2026-09-25T00:38:23.5025485Z ok - build injects the payload, binds any-origin, then arms the source
+2026-09-25T00:38:27.9603155Z not-autohandled: lavish-ce18d765e39e71ff (left for the handler; still unacknowledged)
+2026-09-25T00:38:28.8248897Z ok - registration can consume answers only after any-origin binding exists
+2026-09-25T00:38:29.1818385Z ok - build establishes the Lavish session before binding and arming
+2026-09-25T00:38:30.6889072Z ok - rebuild refreshes the board in place without double-arming
+2026-09-25T00:38:30.7116466Z ok - build refuses a template without exactly one data slot
+2026-09-25T00:38:33.1776950Z ok - a board build reopens a session the captain ended instead of arming a dead one
+2026-09-25T00:38:34.5235491Z ok - build reopens a session that ends between establish and listing
+2026-09-25T00:38:34.8651066Z ok - build refuses to arm a poll on a session that stays ended
+2026-09-25T00:38:37.7820770Z ok - a rebuild starts a listener when an already-armed board has none
+2026-09-25T00:38:38.7385990Z ok - build drops decision cards whose subject already landed and keeps open ones
+2026-09-25T00:38:40.0635450Z ok - build keeps remote decisions absent from the main backlog
+2026-09-25T00:38:51.1427424Z ok - build fails when reconcile cannot prove a live listener
+2026-09-25T00:38:52.0945654Z ok - every decision card carries exactly one reconcile choice
+2026-09-25T00:38:52.1210387Z ok - build refuses a payload that occupies the reserved reconcile value
+2026-09-25T00:38:52.1465344Z ok - build reserves reconcile across non-decision cards
+2026-09-25T00:38:56.8563510Z FM_TEST_END 2026-09-25T00:38:56Z tests/fm-bearings-board.test.sh exit=0 duration_ms=35881 gate_skip=false
+2026-09-25T00:38:56.8799911Z FM_TEST_BEGIN 2026-09-25T00:38:56Z tests/fm-afk-contract.test.sh family=afk expected_gate_skip=none
+2026-09-25T00:38:57.3305478Z ok - structural refusals name their missing part
+2026-09-25T00:38:57.5871292Z ok - an omitted stop uses the no-stop marker and confirms
+2026-09-25T00:38:58.9930511Z ok - the never-set flags listed concepts and their inflections without refusing, and never fires on unrelated names
+2026-09-25T00:38:59.6338408Z ok - clause fields are recorded verbatim, and no static parser judges the wording
+2026-09-25T00:38:59.7598169Z ok - clause fields preserve repeated spaces, tabs, newlines, and backslashes
+2026-09-25T00:39:00.0093312Z ok - clause ids are input ordinals across accepted and refused clauses
+2026-09-25T00:39:00.1212436Z ok - the read-back renders the words verbatim beside the accepted and refused lists
+2026-09-25T00:39:00.3281220Z ok - words preserve their final newline shape in storage and read-back
+2026-09-25T00:39:01.7389419Z ok - propose then confirm writes the record, announces hold-for-return only, and every read subcommand reflects it
+2026-09-25T00:39:03.0967739Z ok - confirmation requires a read-back, and refresh leaves the standing record untouched
+2026-09-25T00:39:04.5919147Z ok - a replacement archives the old mandate and keeps the session start
+2026-09-25T00:39:04.9712423Z ok - a failed replacement keeps the standing posture live
+2026-09-25T00:39:05.3650687Z ok - a failed final replacement publication rolls back its superseded archive
+2026-09-25T00:39:05.7270000Z ok - validation and archive refuse incomplete clause rows by name
+2026-09-25T00:39:06.4932786Z ok - validation and archive refuse blank decoded clause fields
+2026-09-25T00:39:07.2482325Z ok - validation and archive refuse blank stop and refused text
+2026-09-25T00:39:07.8436517Z ok - validation and archive refuse damaged words blocks
+2026-09-25T00:39:08.2114035Z ok - archive keys the record by its entry time, empties the posture, and is idempotent
+2026-09-25T00:39:08.2825483Z ok - malformed inputs and foreign record versions are refused rather than guessed
+2026-09-25T00:39:08.5159196Z ok - merge grants round-trip through propose, confirm, read-back, and grants
+2026-09-25T00:39:08.6095266Z ok - empty grants write the scalar form, and invalid or duplicate ids are usage errors
+2026-09-25T00:39:08.8711686Z ok - a pre-field v1 record reads as empty grants rather than skipping the field
+2026-09-25T00:39:09.3366989Z ok - malformed and duplicate merge-grant fields fail record validation
+2026-09-25T00:39:09.6350158Z ok - archive removes live grants so archived copies are not consulted
+2026-09-25T00:39:12.3265251Z ok - confirm and archive refuse while the record is locked, and proceed once it clears
+2026-09-25T00:39:12.3671785Z FM_TEST_END 2026-09-25T00:39:12Z tests/fm-afk-contract.test.sh exit=0 duration_ms=15479 gate_skip=false
+2026-09-25T00:39:12.3901824Z FM_TEST_BEGIN 2026-09-25T00:39:12Z tests/fm-tmux-agent-liveness.test.sh family=backend-dispatch expected_gate_skip=none
+2026-09-25T00:39:12.4776715Z ok - tmux liveness: a harness-named foreground process classifies alive
+2026-09-25T00:39:12.5098126Z ok - tmux liveness: muse's version-suffixed muse-bin-<version> classifies alive
+2026-09-25T00:39:12.9647391Z ok - tmux liveness: unrelated muse-containing command names stay ambiguous
+2026-09-25T00:39:12.9946295Z ok - tmux liveness: omp's bare binary name classifies alive
+2026-09-25T00:39:13.2195747Z ok - tmux liveness: unrelated omp-containing command names stay ambiguous
+2026-09-25T00:39:13.4833965Z ok - tmux liveness: a version-named executable under a harness install path classifies alive
+2026-09-25T00:39:13.5932222Z ok - tmux liveness: a version-named executable under a decoy path stays ambiguous
+2026-09-25T00:39:13.6992837Z ok - tmux liveness: a process neither name source attributes stays ambiguous rather than inventing an agent
+2026-09-25T00:39:13.7497167Z ok - tmux liveness: a launcher whose own identity reads as a bare shell classifies alive from its harness child
+2026-09-25T00:39:13.8457399Z ok - tmux liveness: an idle shell pane classifies dead
+2026-09-25T00:39:13.9519667Z ok - tmux liveness: a harness-named background process in an idle pane still classifies dead
+2026-09-25T00:39:13.9744601Z ok - tmux liveness: an absent window classifies missing rather than inheriting tmux's active-window fallback
+2026-09-25T00:39:14.1251123Z ok - cursor composer: an idle Cursor pane reads empty even though the cursor row is blind
+2026-09-25T00:39:14.2400874Z ok - cursor composer: real typed text still reads pending, so the injection guard holds
+2026-09-25T00:39:14.3283026Z ok - cursor composer: an identical screen stays unknown when the pane is not Cursor
+2026-09-25T00:39:14.4178126Z ok - cursor composer: a stale Cursor screen over a dead shell never reads empty
+2026-09-25T00:39:14.4544119Z FM_TEST_END 2026-09-25T00:39:14Z tests/fm-tmux-agent-liveness.test.sh exit=0 duration_ms=2056 gate_skip=false
+2026-09-25T00:39:14.4776892Z FM_TEST_BEGIN 2026-09-25T00:39:14Z tests/fm-classify-decision-key.test.sh family=pure-contract-unit expected_gate_skip=none
+2026-09-25T00:39:14.5900583Z ok - a stated [key=X] opens X whether it precedes or follows the verb colon
+2026-09-25T00:39:14.6665735Z ok - a keyless needs-decision still opens and closes the default key
+2026-09-25T00:39:14.7486957Z ok - a resolution closes its decision regardless of either line's key position
+2026-09-25T00:39:14.8180210Z ok - blocked [key=X] opens X in both key positions
+2026-09-25T00:39:14.9100285Z ok - two colon-form keyed decisions never collapse into one shared bucket
+2026-09-25T00:39:14.9930230Z ok - a [key=x] mentioned mid-note is prose, never an opened or closed key
+2026-09-25T00:39:15.0531212Z ok - a malformed stated key is rejected in both positions, never folded as default
+2026-09-25T00:39:15.0562184Z ok - status_line_verb strips every bracket tag before the colon, in any order, and recovers the bare verb
+2026-09-25T00:39:15.1264994Z ok - a [corr=...] tag ahead of [key=...] no longer swallows the verb: opens and closes under the stated key
+2026-09-25T00:39:15.1750266Z ok - a [corr=...] tag with no stated key opens under 'default', exactly like a bare needs-decision line
+2026-09-25T00:39:15.2094388Z ok - a [key=x] tag alone (no corr tag) still opens x - no regression from the tag-stripping fix
+2026-09-25T00:39:15.3148207Z ok - blocked/resolved parse their bare verb with any bracket-tag order preceding the colon
+2026-09-25T00:39:15.4564985Z ok - the incremental fold matches the full fold across appends in both key positions
+2026-09-25T00:39:15.4862795Z ok - status_key_closing_verb separates resolution, durable transfer, and still-open
+2026-09-25T00:39:15.5586547Z ok - status_key_closing_verb reports the last real transition, in either key position
+2026-09-25T00:39:15.5909258Z FM_TEST_END 2026-09-25T00:39:15Z tests/fm-classify-decision-key.test.sh exit=0 duration_ms=1105 gate_skip=false
+2026-09-25T00:39:15.6142061Z FM_TEST_BEGIN 2026-09-25T00:39:15Z tests/fm-check-unregister.test.sh family=pr-forge expected_gate_skip=none
+2026-09-25T00:39:15.7871991Z ok - empty id or missing state dir refuses loudly and never rms a stray path
+2026-09-25T00:39:15.9004800Z ok - happy path removes only the named check.sh and check-trust
+2026-09-25T00:39:16.0224538Z ok - hard-linked or symlinked artifacts are refused and left in place
+2026-09-25T00:39:16.0541016Z FM_TEST_END 2026-09-25T00:39:16Z tests/fm-check-unregister.test.sh exit=0 duration_ms=432 gate_skip=false
+2026-09-25T00:39:16.0771560Z FM_TEST_BEGIN 2026-09-25T00:39:16Z tests/fm-trace-context-lib.test.sh family=pure-contract-unit expected_gate_skip=none
+2026-09-25T00:39:16.1025403Z ok - fm_trace_context_valid accepts a conformant W3C traceparent
+2026-09-25T00:39:16.1032724Z ok - fm_trace_context_valid rejects all-zero ids, ff version, uppercase, wrong length, missing field, shell metacharacters, and empty
+2026-09-25T00:39:16.1033828Z ok - a command-substitution-shaped value is rejected as inert data, never executed
+2026-09-25T00:39:16.1132095Z ok - fm_trace_context_hex yields exact-length lowercase hex, distinct per call
+2026-09-25T00:39:16.1190351Z ok - fm_trace_context_mint starts a valid sampled root trace
+2026-09-25T00:39:16.1248249Z ok - every mint is an unrelated fresh root - one trace per task, no parent adoption
+2026-09-25T00:39:16.1249446Z ok - a minted root is the fixed 55-char W3C form (hex and hyphens only), so firstmate originates no free-form content in the carrier
+2026-09-25T00:39:16.1362817Z ok - enablement is default-off; FM_TRACE_CONTEXT overrides with truthy/other precedence, and unset or empty defers to config/trace-context
+2026-09-25T00:39:16.1515115Z ok - session start normalizes config and environment precedence into frozen on/off state
+2026-09-25T00:39:16.1609733Z ok - session state is atomically published through a same-directory replacement
+2026-09-25T00:39:16.1752947Z ok - a stale on record is inactive when publication fails in a new locked session
+2026-09-25T00:39:16.1790800Z ok - missing or invalid frozen session state defaults off
+2026-09-25T00:39:16.1798221Z ok - resolve omits the carrier and returns success when the capability is off (byte-identical default)
+2026-09-25T00:39:16.1877919Z ok - resolve mints a valid traceparent when enabled
+2026-09-25T00:39:16.2142875Z ok - Secondmate home-session state stays off or on despite later file state; ambient TRACEPARENT is never adopted, so each routed task roots its own trace
+2026-09-25T00:39:16.2197000Z ok - resolve reuses a valid recorded traceparent verbatim on relaunch (stable identity across restarts)
+2026-09-25T00:39:16.2204247Z ok - disabling the capability omits the carrier even for a task with a recorded identity
+2026-09-25T00:39:16.2306091Z ok - a corrupt recorded traceparent is re-minted rather than propagated
+2026-09-25T00:39:16.2388032Z ok - resolve yields exactly one carrier per logical task, so the recorded and injected values are identical by construction
+2026-09-25T00:39:16.2440153Z ok - entropy failure omits telemetry safely: mint reports failure, resolve returns success with no carrier
+2026-09-25T00:39:16.2483327Z ok - the resolver has no sleep/timeout/command hang source and always returns success
+2026-09-25T00:39:16.2515212Z ok - the carrier is minted identically for every harness, backend, and spawn kind (no such branching in the lib code)
+2026-09-25T00:39:16.2519295Z ok - the lib code never reads a brief, prompt, report, or status - it cannot leak content
+2026-09-25T00:39:16.2572365Z ok - config/trace-context is inherited into secondmate homes, keeping the nested chain enabled end to end
+2026-09-25T00:39:16.2573036Z # fm-trace-context-lib.test.sh: all assertions passed
+2026-09-25T00:39:16.2882341Z FM_TEST_END 2026-09-25T00:39:16Z tests/fm-trace-context-lib.test.sh exit=0 duration_ms=204 gate_skip=false
+2026-09-25T00:39:16.3114834Z FM_TEST_BEGIN 2026-09-25T00:39:16Z tests/fm-ask-user-authority.test.sh family=pure-contract-unit expected_gate_skip=none
+2026-09-25T00:39:16.3982003Z ok - primary workers and secondmates receive the authority rule through generated instructions
+2026-09-25T00:39:16.4291274Z FM_TEST_END 2026-09-25T00:39:16Z tests/fm-ask-user-authority.test.sh exit=0 duration_ms=109 gate_skip=false
+2026-09-25T00:39:16.4527386Z FM_TEST_BEGIN 2026-09-25T00:39:16Z tests/fm-herdr-version-floor-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+2026-09-25T00:39:16.4791889Z skip: live: herdr absent
+2026-09-25T00:39:16.5130530Z fm-test-run: gate skip: tests/fm-herdr-version-floor-live-e2e.test.sh: live: herdr absent
+2026-09-25T00:39:16.5131308Z FM_TEST_END 2026-09-25T00:39:16Z tests/fm-herdr-version-floor-live-e2e.test.sh exit=0 duration_ms=48 gate_skip=true
+2026-09-25T00:39:16.5363019Z FM_TEST_BEGIN 2026-09-25T00:39:16Z tests/fm-codex-continuity-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+2026-09-25T00:39:16.5608517Z skip: live: opt-in; set FM_CODEX_LIVE_E2E=1 to run
+2026-09-25T00:39:16.5946233Z fm-test-run: gate skip: tests/fm-codex-continuity-live-e2e.test.sh: live: opt-in; set FM_CODEX_LIVE_E2E=1 to run
+2026-09-25T00:39:16.5947064Z FM_TEST_END 2026-09-25T00:39:16Z tests/fm-codex-continuity-live-e2e.test.sh exit=0 duration_ms=46 gate_skip=true
+2026-09-25T00:39:16.6179381Z FM_TEST_BEGIN 2026-09-25T00:39:16Z tests/fm-quota-array-dispatch-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+2026-09-25T00:39:16.6425713Z skip: live: opt-in; set FM_QUOTA_ARRAY_DISPATCH_LIVE_E2E=1 to run
+2026-09-25T00:39:16.6763922Z fm-test-run: gate skip: tests/fm-quota-array-dispatch-live-e2e.test.sh: live: opt-in; set FM_QUOTA_ARRAY_DISPATCH_LIVE_E2E=1 to run
+2026-09-25T00:39:16.6764898Z FM_TEST_END 2026-09-25T00:39:16Z tests/fm-quota-array-dispatch-live-e2e.test.sh exit=0 duration_ms=46 gate_skip=true
+2026-09-25T00:39:16.6970840Z FM_TEST_SUMMARY total=30 failed=1 skipped_gate=3 duration_ms=884135
+2026-09-25T00:39:16.6987329Z FM_TEST_SUMMARY_FAMILY family=afk count=2 duration_ms=49542 failed=0
+2026-09-25T00:39:16.6988625Z FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=3 duration_ms=18973 failed=0
+2026-09-25T00:39:16.6989706Z FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=3 duration_ms=140 failed=0
+2026-09-25T00:39:16.6990734Z FM_TEST_SUMMARY_FAMILY family=pr-forge count=1 duration_ms=432 failed=0
+2026-09-25T00:39:16.6991736Z FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=5 duration_ms=51596 failed=0
+2026-09-25T00:39:16.6992604Z FM_TEST_SUMMARY_FAMILY family=secondmate count=5 duration_ms=278792 failed=0
+2026-09-25T00:39:16.6993210Z FM_TEST_SUMMARY_FAMILY family=session-bootstrap count=2 duration_ms=270975 failed=0
+2026-09-25T00:39:16.6993800Z FM_TEST_SUMMARY_FAMILY family=snapshot-bearings count=1 duration_ms=8630 failed=0
+2026-09-25T00:39:16.6994396Z FM_TEST_SUMMARY_FAMILY family=standalone count=4 duration_ms=87428 failed=0
+2026-09-25T00:39:16.6995752Z FM_TEST_SUMMARY_FAMILY family=unclassified count=2 duration_ms=78327 failed=1
+2026-09-25T00:39:16.6996926Z FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 duration_ms=37328 failed=0
+2026-09-25T00:39:16.7013000Z FM_TEST_SLOWEST rank=1 script=tests/fm-backlog-atomicity.test.sh duration_ms=263356
+2026-09-25T00:39:16.7013775Z FM_TEST_SLOWEST rank=2 script=tests/fm-secondmate-safety.test.sh duration_ms=65099
+2026-09-25T00:39:16.7014539Z FM_TEST_SLOWEST rank=3 script=tests/fm-remote-transport-lanes.test.sh duration_ms=62762
+2026-09-25T00:39:16.7015263Z FM_TEST_SLOWEST rank=4 script=tests/fm-secondmate-sync.test.sh duration_ms=54206
+2026-09-25T00:39:16.7015890Z FM_TEST_SLOWEST rank=5 script=tests/fm-backlog-handoff.test.sh duration_ms=52389
+2026-09-25T00:39:16.7016526Z FM_TEST_SLOWEST rank=6 script=tests/fm-secondmate-restart.test.sh duration_ms=44336
+2026-09-25T00:39:16.7017127Z FM_TEST_SLOWEST rank=7 script=tests/fm-stream-bridge.test.sh duration_ms=42563
+2026-09-25T00:39:16.7018185Z FM_TEST_SLOWEST rank=8 script=tests/fm-bearings-board.test.sh duration_ms=35881
+2026-09-25T00:39:16.7020339Z FM_TEST_SLOWEST rank=9 script=tests/fm-backend-stream.test.sh duration_ms=35764
+2026-09-25T00:39:16.7021196Z FM_TEST_SLOWEST rank=10 script=tests/fm-afk-inject-e2e.test.sh duration_ms=34063
+2026-09-25T00:39:16.7022054Z FM_TEST_SLOWEST rank=11 script=tests/fm-task-inbox.test.sh duration_ms=30458
+2026-09-25T00:39:16.7024736Z FM_TEST_SLOWEST rank=12 script=tests/fm-cursor-harness.test.sh duration_ms=30079
+2026-09-25T00:39:16.7025349Z FM_TEST_SLOWEST rank=13 script=tests/fm-pending-reply.test.sh duration_ms=27736
+2026-09-25T00:39:16.7025898Z FM_TEST_SLOWEST rank=14 script=tests/fm-classify-corr-token.test.sh duration_ms=20839
+2026-09-25T00:39:16.7026452Z FM_TEST_SLOWEST rank=15 script=tests/fm-afk-contract.test.sh duration_ms=15479
+2026-09-25T00:39:16.7301229Z fm-test-run: wrote timing artifact: /home/runner/work/_temp/fm-test/fm-test-timing-portable-serial-5.json
+2026-09-25T00:39:16.7351871Z ##[error]Process completed with exit code 1.
+2026-09-25T00:39:16.7437095Z ##[group]Run actions/upload-artifact@v4
+2026-09-25T00:39:16.7437422Z with:
+2026-09-25T00:39:16.7438037Z   name: fm-test-timing-portable-serial-5
+2026-09-25T00:39:16.7438501Z   path: /home/runner/work/_temp/fm-test/fm-test-timing-portable-serial-5.json
+2026-09-25T00:39:16.7438926Z   if-no-files-found: warn
+2026-09-25T00:39:16.7439365Z   compression-level: 6
+2026-09-25T00:39:16.7439577Z   overwrite: false
+2026-09-25T00:39:16.7439786Z   include-hidden-files: false
+2026-09-25T00:39:16.7440022Z ##[endgroup]
+2026-09-25T00:39:16.9131187Z (node:405616) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-25T00:39:16.9132846Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-25T00:39:16.9210673Z With the provided path, there will be 1 file uploaded
+2026-09-25T00:39:16.9211738Z Artifact name is valid!
+2026-09-25T00:39:16.9212002Z Root directory input is valid!
+2026-09-25T00:39:17.3113589Z Beginning upload of artifact content to blob storage
+2026-09-25T00:39:17.3305912Z (node:405616) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-09-25T00:39:17.6114954Z Uploaded bytes 1405
+2026-09-25T00:39:17.6887846Z Finished uploading artifact content to blob storage!
+2026-09-25T00:39:17.6889154Z SHA256 digest of uploaded artifact zip is 54329d0b9c9de763a202d5ca120ab38a86916231a712d6cc76bfabde961cefad
+2026-09-25T00:39:17.6891592Z Finalizing artifact upload
+2026-09-25T00:39:17.9699385Z Artifact fm-test-timing-portable-serial-5.zip successfully finalized. Artifact ID 10841425658
+2026-09-25T00:39:17.9701391Z Artifact fm-test-timing-portable-serial-5 has been successfully uploaded! Final size is 1405 bytes. Artifact ID is 10841425658
+2026-09-25T00:39:17.9718661Z Artifact download URL: https://github.com/bastotec/firstmate/actions/runs/36077368885/artifacts/10841425658
+2026-09-25T00:39:17.9935456Z Post job cleanup.
+2026-09-25T00:39:18.0816203Z [command]/usr/bin/git version
+2026-09-25T00:39:18.0864291Z git version 2.55.0
+2026-09-25T00:39:18.0910087Z Temporarily overriding HOME='/home/runner/work/_temp/a13c1015-7f02-4943-8eac-821195e2b3d8' before making global git config changes
+2026-09-25T00:39:18.0911722Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-25T00:39:18.0916929Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/firstmate/firstmate
+2026-09-25T00:39:18.0975654Z Removing SSH command configuration
+2026-09-25T00:39:18.0984479Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-25T00:39:18.1032533Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-25T00:39:18.1288649Z Removing HTTP extra header
+2026-09-25T00:39:18.1296501Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-25T00:39:18.1329295Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-25T00:39:18.1598336Z Removing includeIf entries pointing to credentials config files
+2026-09-25T00:39:18.1610523Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-25T00:39:18.1641576Z includeif.gitdir:/home/runner/work/firstmate/firstmate/.git.path
+2026-09-25T00:39:18.1642577Z includeif.gitdir:/home/runner/work/firstmate/firstmate/.git/worktrees/*.path
+2026-09-25T00:39:18.1643265Z includeif.gitdir:/github/workspace/.git.path
+2026-09-25T00:39:18.1643993Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-25T00:39:18.1653637Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/firstmate/firstmate/.git.path
+2026-09-25T00:39:18.1678059Z /home/runner/work/_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:39:18.1692511Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/firstmate/firstmate/.git.path /home/runner/work/_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:39:18.1733422Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/firstmate/firstmate/.git/worktrees/*.path
+2026-09-25T00:39:18.1760392Z /home/runner/work/_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:39:18.1771680Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/firstmate/firstmate/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:39:18.1811520Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-09-25T00:39:18.1837340Z /github/runner_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:39:18.1860262Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:39:18.1895571Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-25T00:39:18.1923816Z /github/runner_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:39:18.1937152Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config
+2026-09-25T00:39:18.1985663Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-25T00:39:18.2283791Z Removing credentials config '/home/runner/work/_temp/git-credentials-a4babdb6-7216-4776-8291-4328164f6e6b.config'
+2026-09-25T00:39:18.2425980Z Cleaning up orphan processes
+2026-09-25T00:39:18.2780924Z Terminate orphan process: pid (403181) (claude-link)
+2026-09-25T00:39:18.2789636Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
