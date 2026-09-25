@@ -70,6 +70,10 @@ FOLLOW_UP_SECONDS = 8.0
 # first syllable is not clipped (0.4 s).
 FOLLOW_UP_PREROLL_BLOCKS = 4
 
+# Consecutive loud blocks needed to open a follow-up turn (0.3 s): real speech,
+# not a click, a cough or a door, which opened empty turns.
+FOLLOW_UP_MIN_LOUD_BLOCKS = 3
+
 
 class DecoderError(Exception):
     """The decoder child stopped taking audio, so the HUD can never wake."""
@@ -311,6 +315,7 @@ class TurnDirector:
         self.follow_up_seconds = FOLLOW_UP_SECONDS
         self._follow_until = None
         self._stand_down = False
+        self._loud_run = 0
         self.gate = gate
         self.keyword = keyword
         self.decoder = decoder
@@ -433,11 +438,13 @@ class TurnDirector:
             if self._follow_until is None:
                 # First block after the reply: the window starts now.
                 self._follow_until = now + self.follow_up_seconds
-            if spotted or loud:
+            self._loud_run = self._loud_run + 1 if loud else 0
+            if spotted or self._loud_run >= FOLLOW_UP_MIN_LOUD_BLOCKS:
                 # The captain kept talking: the next turn, no wake word.
+                self._loud_run = 0
                 self.on_notice("follow-up-turn")
                 self.engine.begin_turn()
-                for held in self._preroll[-FOLLOW_UP_PREROLL_BLOCKS:]:
+                for held in self._preroll[-(FOLLOW_UP_PREROLL_BLOCKS + FOLLOW_UP_MIN_LOUD_BLOCKS - 1):]:
                     self.engine.feed(held)
                 self.engine.feed(block)
                 self._preroll = []

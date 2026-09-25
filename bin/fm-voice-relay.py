@@ -1062,8 +1062,16 @@ class Session:
         over the first mate's home, whose reply is spoken when it lands."""
         answer = await asyncio.to_thread(
             records.ask_thinker, question, self.home, self.root)
-        self.down.send_json(frame.NOTICE, {"event": "answered", "ticket": ticket})
-        await self.deliver_background(question, answer)
+        # Deliver through whichever session is live now: a renewal while the
+        # first mate was thinking must not lose the answer.
+        target = LIVE_SESSION.get("session") or self
+        target.down.send_json(frame.NOTICE, {"event": "answered", "ticket": ticket})
+        await target.deliver_background(question, answer)
+
+
+# The hybrid session currently serving the captain, for background answers
+# that outlive the session they were asked in.
+LIVE_SESSION = {}
 
 
 class HybridSession(Session):
@@ -1162,6 +1170,7 @@ class HybridSession(Session):
                 raise RuntimeError("local engine did not accept session settings")
             self.connect_seconds = round(time.monotonic() - began, 3)
             self.reader_task = asyncio.create_task(self._read_realtime())
+            LIVE_SESSION["session"] = self
         except Exception as exc:
             fail_turn(self, self.down, RuntimeError(
                 "hybrid engine unavailable: {}: {}".format(type(exc).__name__, exc)))
@@ -1270,8 +1279,29 @@ class HybridSession(Session):
         self.audio_content = None
         self.timeout_task = asyncio.create_task(self._deadline())
 
+    # Seconds after the turn's audio ends for the engine to transcribe
+    # something. A turn it heard no speech in never gets a reply, so waiting
+    # out the whole reply deadline only blocked every later turn.
+    no_speech_timeout = 8.0
+
     async def _deadline(self):
+        turn = self.turn
         try:
+            if not turn.get("background"):
+                waited = 0.0
+                while "transcribed" not in turn and not self.turn_done.is_set():
+                    if waited >= self.no_speech_timeout:
+                        # Release the HUD's turn but keep the session: its
+                        # conversation and any pending background answer live
+                        # on. Only a real failure spends the session.
+                        turn["no_speech"] = True
+                        self.down.send_json(frame.NOTICE, {
+                            "event": "turn-failed",
+                            "error": "no speech was heard in that turn"})
+                        self.turn_done.set()
+                        return
+                    await asyncio.sleep(0.25)
+                    waited += 0.25
             await asyncio.wait_for(self.turn_done.wait(), self.options.turn_timeout)
         except asyncio.TimeoutError:
             self.turn["timeout"] = True
