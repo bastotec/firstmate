@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-tasks-axi.sh home addressing and bootstrap's
-# shadow-backlog check, over the split layout where the operational home lives
-# outside the code root that carries the tracked .tasks.toml.
+# shadow-backlog check, over both layouts the check distinguishes: the split
+# layout where the operational home lives outside the code root that carries
+# the tracked .tasks.toml, and the layout where the home IS that code root
+# with only its data directory split off.
 #
 # The fork these guard against: .tasks.toml names data/backlog.md relative to
 # the caller's working directory, and tasks-axi writes by renaming a temp file
@@ -10,8 +12,11 @@
 # that every write through bin/fm-tasks-axi.sh lands in $FM_HOME/data from the
 # code root (including archiving and relative --body-file arguments),
 # that the command refuses addressing it cannot keep correct, and that bootstrap
-# reports any code-root copy that is not this home's own file while staying
-# silent for a link into the home, an absent copy, and the single-home layout.
+# never names the code root's data files to a home whose FM_HOME is not the
+# code root - those files may be the code-root home's own live queue - while a
+# home that IS the code root with a data directory split off from its default
+# still gets the report, and a link into the home, an absent copy, and the
+# single-home layout stay silent.
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -52,51 +57,91 @@ wrapper_from_code() {  # <case-dir> <tasks-axi args...>
   (cd "$dir/code" && FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$dir/code" "$WRAPPER" "$@")
 }
 
-# Only the shadow-backlog lines matter here; the rest of a detect-only local
-# bootstrap pass reports this host's toolchain, which is not under test, so it
-# runs on the bare base PATH where every tool probe is a fast miss.
-bootstrap_backlog_lines() {  # <code-root> [<home>]
-  local code=$1 home=${2:-}
-  if [ -n "$home" ]; then
-    PATH="$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$code" FM_BOOTSTRAP_DETECT_ONLY=1 \
-      FM_BOOTSTRAP_NETWORK=skip "$BOOTSTRAP" 2>&1 | grep '^BACKLOG_RECONCILE: code-root' || true
-  else
-    PATH="$BASE_PATH" FM_ROOT_OVERRIDE="$code" FM_BOOTSTRAP_DETECT_ONLY=1 \
-      FM_BOOTSTRAP_NETWORK=skip "$BOOTSTRAP" 2>&1 | grep '^BACKLOG_RECONCILE: code-root' || true
-  fi
+# Only the shadow-backlog lines matter for most cases here; the rest of a
+# detect-only local bootstrap pass reports this host's toolchain, which is not
+# under test, so it runs on the bare base PATH where every tool probe is a fast
+# miss. Every case states its own layout: an empty home means the code root IS
+# the home, and an empty data directory keeps that home's default data path.
+bootstrap_output() {  # <code-root> [<home>] [<data-dir>]
+  local code=$1 home=${2:-$1} data=${3:-}
+  PATH="$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$code" FM_DATA_OVERRIDE="$data" \
+    FM_BOOTSTRAP_DETECT_ONLY=1 FM_BOOTSTRAP_NETWORK=skip "$BOOTSTRAP" 2>&1 || true
+}
+
+bootstrap_backlog_lines() {  # <code-root> [<home>] [<data-dir>]
+  bootstrap_output "$@" | grep '^BACKLOG_RECONCILE: code-root' || true
+}
+
+# The opposite layout from make_split: this home IS the code root and only its
+# data directory lives elsewhere, so the code root's data/ is this home's own
+# default location rather than another home's queue - the one layout where the
+# shadow-backlog report must keep firing.
+make_code_root_home() {  # <name>; prints the case directory
+  local dir="$TMP_ROOT/$1"
+  mkdir -p "$dir/code/data" "$dir/code/state" "$dir/code/config" "$dir/livedata"
+  cp "$ROOT/.tasks.toml" "$dir/code/.tasks.toml"
+  empty_backlog "$dir/livedata/backlog.md"
+  ln -s "$dir/livedata/backlog.md" "$dir/code/data/backlog.md"
+  printf '%s\n' "$dir"
+}
+
+# The defect this suite now pins: for a home whose FM_HOME is NOT the code
+# root, the code-root data files may be another home's live queue (a Deck
+# second mate's driver runs from the parent's code root while its FM_HOME sits
+# elsewhere), so bootstrap must not name them at all - no report, no merge
+# remedy, no code-root path in its output - however forked they look.
+test_guard_never_names_a_foreign_code_root() {
+  local dir out
+  dir=$(make_split guard-foreign-root)
+  out=$(bootstrap_output "$dir/code" "$dir/home")
+  assert_not_contains "$out" "$dir/code" \
+    "a home outside the code root was pointed at a code-root path"
+  assert_equals "" "$(bootstrap_backlog_lines "$dir/code" "$dir/home")" \
+    "a code-root link into this home must stay silent"
+
+  rm "$dir/code/data/backlog.md"
+  printf '## In flight\n\n## Queued\n\n- [ ] stray: written from the code root\n\n## Done\n' \
+    > "$dir/code/data/backlog.md"
+  printf '## Done\n' > "$dir/code/data/done-archive.md"
+  out=$(bootstrap_output "$dir/code" "$dir/home")
+  assert_equals "" "$(bootstrap_backlog_lines "$dir/code" "$dir/home")" \
+    "the code-root backlog and archive of another home were reported to this home"
+  assert_not_contains "$out" "$dir/code" \
+    "the diagnostic named a code-root path outside the home it diagnoses"
+  pass "bootstrap never names a code-root path to a home whose FM_HOME is elsewhere"
 }
 
 test_guard_reports_regular_code_root_backlog() {
   local dir out
-  dir=$(make_split guard-regular)
-  out=$(bootstrap_backlog_lines "$dir/code" "$dir/home")
+  dir=$(make_code_root_home guard-regular)
+  out=$(bootstrap_backlog_lines "$dir/code" "$dir/code" "$dir/livedata")
   assert_equals "" "$out" "a code-root link into this home must stay silent"
 
   rm "$dir/code/data/backlog.md"
-  out=$(bootstrap_backlog_lines "$dir/code" "$dir/home")
+  out=$(bootstrap_backlog_lines "$dir/code" "$dir/code" "$dir/livedata")
   assert_equals "" "$out" "an absent code-root backlog must stay silent"
 
   printf '## In flight\n\n## Queued\n\n- [ ] stray: written from the code root\n\n## Done\n' \
     > "$dir/code/data/backlog.md"
-  out=$(bootstrap_backlog_lines "$dir/code" "$dir/home")
-  assert_contains "$out" "BACKLOG_RECONCILE: code-root $dir/code/data/backlog.md is not this home's $dir/home/data/backlog.md" \
-    "a regular code-root backlog beside a separate home was not reported"
+  out=$(bootstrap_backlog_lines "$dir/code" "$dir/code" "$dir/livedata")
+  assert_contains "$out" "BACKLOG_RECONCILE: code-root $dir/code/data/backlog.md is not this home's $dir/livedata/backlog.md" \
+    "a regular code-root backlog beside a split data directory was not reported"
   assert_not_contains "$out" "done-archive.md" "an absent code-root archive was reported"
-  pass "bootstrap reports a regular code-root backlog and stays silent for a link into the home or no copy"
+  pass "bootstrap reports a regular code-root backlog to a home that is the code root"
 }
 
 test_guard_reports_foreign_link_and_archive() {
   local dir out
-  dir=$(make_split guard-foreign)
+  dir=$(make_code_root_home guard-foreign)
   empty_backlog "$dir/elsewhere.md"
   rm "$dir/code/data/backlog.md"
   ln -s "$dir/elsewhere.md" "$dir/code/data/backlog.md"
   printf '## Done\n' > "$dir/code/data/done-archive.md"
-  out=$(bootstrap_backlog_lines "$dir/code" "$dir/home")
+  out=$(bootstrap_backlog_lines "$dir/code" "$dir/code" "$dir/livedata")
   assert_contains "$out" "code-root $dir/code/data/backlog.md is not this home's" \
     "a code-root backlog linked outside this home was not reported"
-  assert_contains "$out" "code-root $dir/code/data/done-archive.md is not this home's $dir/home/data/done-archive.md" \
-    "a regular code-root archive beside a separate home was not reported"
+  assert_contains "$out" "code-root $dir/code/data/done-archive.md is not this home's $dir/livedata/done-archive.md" \
+    "a regular code-root archive beside a split data directory was not reported"
   pass "bootstrap reports a code-root backlog linked elsewhere and a forked archive"
 }
 
@@ -119,16 +164,16 @@ test_guard_silent_for_single_home() {
 # a replaced link is reported, a written-through link is not.
 test_bare_tasks_axi_fork_is_detected() {
   local dir out
-  dir=$(make_split bare-fork)
+  dir=$(make_code_root_home bare-fork)
   (cd "$dir/code" && tasks-axi add bare-1 "written from the code root" >/dev/null 2>&1) \
     || fail "bare tasks-axi add failed in the code root"
-  out=$(bootstrap_backlog_lines "$dir/code" "$dir/home")
+  out=$(bootstrap_backlog_lines "$dir/code" "$dir/code" "$dir/livedata")
   if [ -L "$dir/code/data/backlog.md" ]; then
-    assert_grep "bare-1" "$dir/home/data/backlog.md" "a written-through link lost the row"
+    assert_grep "bare-1" "$dir/livedata/backlog.md" "a written-through link lost the row"
     assert_equals "" "$out" "a written-through link was reported as a fork"
     pass "bare tasks-axi wrote through the code-root link and bootstrap stayed silent"
   else
-    assert_no_grep "bare-1" "$dir/home/data/backlog.md" "the replaced link still reached the home"
+    assert_no_grep "bare-1" "$dir/livedata/backlog.md" "the replaced link still reached the home"
     assert_contains "$out" "code-root $dir/code/data/backlog.md is not this home's" \
       "bootstrap missed the fork a bare tasks-axi write left behind"
     pass "bare tasks-axi replaced the code-root link and bootstrap reported the fork"
@@ -216,6 +261,7 @@ test_wrapper_single_home() {
   pass "fm-tasks-axi.sh keeps the single-home layout addressing its own code-root backlog"
 }
 
+test_guard_never_names_a_foreign_code_root
 test_guard_reports_regular_code_root_backlog
 test_guard_reports_foreign_link_and_archive
 test_guard_silent_for_single_home

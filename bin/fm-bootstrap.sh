@@ -1603,14 +1603,20 @@ detect_local_config() {
   detect_home_summary_publication
 }
 
-# Shadow-backlog check. When this home's data directory is not the code root's,
-# a code-root data/backlog.md or data/done-archive.md that is not this home's
-# own file is a queue a cwd-relative tasks-axi write has already forked; a link
-# into the home does not survive such a write (docs/configuration.md "Backlog
-# backend" owns why). Detect-only: neither copy is a safe winner, so nothing is
-# merged here.
+# Shadow-backlog check. Only a home that IS the code root may be diagnosed
+# against the code root's data directory: for every other home that directory
+# may be another home's live queue - a Deck second mate's driver runs from the
+# parent's code root while its FM_HOME sits elsewhere - so naming it would aim
+# the merge-and-move-aside remedy at the supervising home's own backlog. The
+# ownership guard runs first and considers nothing outside this home; only then
+# does the check compare the code root's data/backlog.md or data/done-archive.md
+# against this home's own file, reporting a queue a cwd-relative tasks-axi write
+# has already forked (a link into the home does not survive such a write,
+# docs/configuration.md "Backlog backend" owns why). Detect-only: neither copy
+# is a safe winner, so nothing is merged here.
 detect_code_root_backlog_fork() {
   local name root_copy
+  [ "$FM_ROOT" -ef "$FM_HOME" ] || return 0
   [ "$FM_ROOT/data" -ef "$DATA" ] && return 0
   for name in backlog.md done-archive.md; do
     root_copy="$FM_ROOT/data/$name"
