@@ -425,7 +425,7 @@ class TurnDirector:
                 del self._preroll[0]
             if spotted:
                 self.on_notice("wake")
-                self.engine.begin_turn()
+                self.engine.begin_turn(wake=True)
                 for held in self._preroll:
                     self.engine.feed(held)
                 self._preroll = []

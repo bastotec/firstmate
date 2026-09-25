@@ -775,7 +775,7 @@ class RecordingEngine:
     def __init__(self):
         self.begun = self.ended = 0
         self.fed = []
-    def begin_turn(self): self.begun += 1
+    def begin_turn(self, wake=False): self.begun += 1
     def feed(self, pcm): self.fed.append(pcm)
     def end_turn(self): self.ended += 1
 
@@ -858,7 +858,7 @@ class RecordingEngine:
     def __init__(self):
         self.begun = self.ended = 0
         self.fed = 0
-    def begin_turn(self): self.begun += 1
+    def begin_turn(self, wake=False): self.begun += 1
     def feed(self, pcm): self.fed += len(pcm)
     def end_turn(self): self.ended += 1
 

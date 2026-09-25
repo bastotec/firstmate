@@ -432,6 +432,10 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "still listening - just talk"))
+                case "not-for-me":
+                    // A false wake: nobody said Ziggy. Go dark quietly.
+                    glowAwake = false
+                    model.applyState("listening")
                 case "stand-by":
                     glowAwake = false
                     model.applyState("listening")

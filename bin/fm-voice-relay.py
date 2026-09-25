@@ -1069,6 +1069,12 @@ class Session:
         await target.deliver_background(question, answer)
 
 
+# The wake word and the ways the speech engine mishears it. A wake turn whose
+# transcript has none of these was a false wake and is dropped unanswered.
+WAKE_HEARD = re.compile(
+    r"\b(ziggy|ziggie|ziggi|zigy|ziggys|zeggy|zaggy|ziggle|diggy|siggy|zigg|zig)\b",
+    re.IGNORECASE)
+
 # The hybrid session currently serving the captain, for background answers
 # that outlive the session they were asked in.
 LIVE_SESSION = {}
@@ -1321,10 +1327,25 @@ class HybridSession(Session):
                         event.get("error", {}).get("message", "unknown error")))
                 if kind == "response.created" and self.turn.get("background"):
                     self.background_response = event.get("response", {}).get("id")
+                if kind == "response.created" and self.turn.get("rejected"):
+                    self.cancelled_response = event.get("response", {}).get("id")
+                    await self._send({"type": "response.cancel"})
+                    continue
+                if self.turn.get("rejected") and kind.startswith("response."):
+                    # Everything from the rejected turn's reply is dropped.
+                    continue
                 if kind == "conversation.item.input_audio_transcription.completed":
                     self._mark("transcribed")
-                    self.down.send_json(frame.TEXT, {
-                        "role": "USER", "text": event.get("transcript", "")})
+                    heard = event.get("transcript", "")
+                    if self.turn.get("wake") and not WAKE_HEARD.search(heard):
+                        # A false wake: nobody said Ziggy. Answer nothing,
+                        # cancel the reply the engine starts, release the HUD.
+                        self.turn["rejected"] = True
+                        self.down.send_json(frame.NOTICE, {"event": "not-for-me"})
+                        await self._send({"type": "response.cancel"})
+                        self.turn_done.set()
+                        continue
+                    self.down.send_json(frame.TEXT, {"role": "USER", "text": heard})
                 elif kind == "response.output_audio_transcript.done":
                     self.down.send_json(frame.TEXT, {
                         "role": "ASSISTANT", "text": event.get("transcript", "")})
@@ -1504,6 +1525,11 @@ async def handle_uplink_frame(kind, payload, session, options, down):
                     or (session.replies and not getattr(session, "persistent", False))):
                 session = await renew(session, options, down)
             await session.talk_start()
+            if payload:
+                try:
+                    session.turn["wake"] = bool(json.loads(payload).get("wake"))
+                except (ValueError, AttributeError):
+                    pass
         elif kind == frame.AUDIO:
             await session.audio(payload)
         elif kind == frame.TALK_END:

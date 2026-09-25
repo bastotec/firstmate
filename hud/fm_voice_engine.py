@@ -166,7 +166,7 @@ class Engine:
 
     # ------------------------------------------------------------------ turns
 
-    def begin_turn(self):
+    def begin_turn(self, wake=False):
         """Open a turn; audio fed after this belongs to it.
 
         The control frame goes through the queue rather than straight to the
@@ -177,7 +177,9 @@ class Engine:
         with self.lock:
             self.turn_id += 1
             self.reply_done.clear()
-        self.up_q.put(frame.TALK_START)
+        # A wake-word turn says so, so the relay can drop it if the transcript
+        # shows the wake word was never said (a false wake).
+        self.up_q.put((frame.TALK_START, b'{"wake":true}') if wake else frame.TALK_START)
         self.on_state("thinking")
 
     def feed(self, pcm):
@@ -266,7 +268,9 @@ class Engine:
             if item is None:
                 return
             try:
-                if item is frame.TALK_END or item is frame.TALK_START \
+                if isinstance(item, tuple):
+                    self.uplink.send(*item)
+                elif item is frame.TALK_END or item is frame.TALK_START \
                         or item is frame.QUIT:
                     self.uplink.send(item)
                 else:
@@ -317,7 +321,7 @@ class Engine:
                     if event == "ready":
                         self.ready_notice = obj
                         self.ready.set()
-                    elif event in ("turn-failed", "session-ended"):
+                    elif event in ("turn-failed", "session-ended", "not-for-me"):
                         # The relay's own release for a turn that will never
                         # answer, sent while the relay stays alive: the
                         # waiter must come back now, and only the turn the
