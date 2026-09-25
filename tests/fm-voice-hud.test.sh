@@ -549,7 +549,6 @@ pass "a mid-turn failure releases the open turn and the engine renews"
 # listening state, forwards transcripts and notices, and quits cleanly. The
 # mic half of the bridge lands with the mic-capture stage.
 
-STUB2="$TMP_ROOT/stub-relay.py"
 python3 - "$ROOT" "$STUB" <<'PY' || fail "bridge"
 import json, os, subprocess, sys, threading, time
 root, stub = sys.argv[1], sys.argv[2]
