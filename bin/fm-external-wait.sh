@@ -74,9 +74,9 @@
 # the ordinary stale-owner recovery in bin/fm-wake-lib.sh, which owns the lock
 # primitive itself.
 #
-# SOURCEABLE: with the BASH_SOURCE guard, other scripts get the path, presence,
-# liveness, and field helpers (fm_external_wait_path, fm_external_wait_present,
-# fm_external_wait_active, fm_external_wait_field) without running main.
+# SOURCEABLE: with the BASH_SOURCE guard, other scripts get the path,
+# liveness, and field helpers (fm_external_wait_path, fm_external_wait_active,
+# fm_external_wait_field) without running main.
 # fm_external_wait_active sets FM_EXTERNAL_WAIT_AGE (seconds since declare),
 # FM_EXTERNAL_WAIT_SCOPE (the declaration identity a re-surface throttle binds
 # to), FM_EXTERNAL_WAIT_REASON, FM_EXTERNAL_WAIT_BY, and FM_EXTERNAL_WAIT_UNTIL
@@ -119,10 +119,6 @@ fm_external_wait_now_epoch() {
 
 fm_external_wait_path() {  # <task> [state-dir]
   printf '%s/%s.external-wait' "${2:-$FM_EXTERNAL_WAIT_STATE}" "$1"
-}
-
-fm_external_wait_present() {  # <task> [state-dir]
-  [ -f "$(fm_external_wait_path "$1" "${2:-}")" ]
 }
 
 fm_external_wait_archive_dir() {  # [state-dir]
@@ -255,7 +251,7 @@ fm_external_wait_declare() {  # <task> --reason <text> --until <UTC ISO 8601> [-
   fm_external_wait_lock_hold "$task" || return 1
   record=$(fm_external_wait_path "$task")
   if [ -f "$record" ]; then
-    fm_external_wait_archive "$task" replaced || { fm_external_wait_lock_release; return 1; }
+    fm_external_wait_archive "$task" replaced "$by" || { fm_external_wait_lock_release; return 1; }
   fi
   declared=$(fm_external_wait_now_iso)
   tmp="$record.tmp.$$"
@@ -282,7 +278,7 @@ fm_external_wait_declare() {  # <task> --reason <text> --until <UTC ISO 8601> [-
 # archive is the audit trail: a declared wait never disappears without a trace of
 # who declared it, why, and how it ended.
 fm_external_wait_archive() {  # <task> <outcome: cleared|replaced> [by]
-  local task=$1 outcome=$2 by=${3:-firstmate} record dir archive declared
+  local task=$1 outcome=$2 by=${3:-firstmate} record dir archive declared n
   record=$(fm_external_wait_path "$task")
   [ -f "$record" ] || return 0
   dir=$(fm_external_wait_archive_dir)
@@ -290,6 +286,11 @@ fm_external_wait_archive() {  # <task> <outcome: cleared|replaced> [by]
   declared=$(fm_external_wait_field "$record" declared_epoch)
   case "$declared" in ''|*[!0-9]*) declared=$(fm_external_wait_now_epoch) ;; esac
   archive="$dir/$declared-$task.external-wait"
+  n=0
+  while [ -e "$archive" ]; do
+    n=$(( n + 1 ))
+    archive="$dir/$declared-$task.$n.external-wait"
+  done
   {
     printf 'ended: %s\n' "$(fm_external_wait_now_iso)"
     printf 'ended_epoch: %s\n' "$(fm_external_wait_now_epoch)"

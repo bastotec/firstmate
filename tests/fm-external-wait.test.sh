@@ -163,10 +163,44 @@ test_clear_archives_the_record_and_replacement_archives_the_prior_one() {
     "the archive lost the declaration's reason"
   ext "$dir" clear t1 >/dev/null || fail "clearing an already-cleared task must be a no-op success"
   ext "$dir" declare t1 --reason "second wait" --until "$(future_iso 600)" >/dev/null || fail "redeclare failed"
-  ext "$dir" declare t1 --reason "third wait" --until "$(future_iso 900)" >/dev/null || fail "replace failed"
-  assert_equals "replaced" "$(sed -n 's/^outcome: //p' "$state/external-waits/"*-t1.external-wait | tail -1)" \
-    "replacing a declaration did not archive the prior record"
+  ext "$dir" declare t1 --reason "third wait" --until "$(future_iso 900)" --by "the supervisor" >/dev/null || fail "replace failed"
+  archive=$(grep -l '^outcome: replaced$' "$state/external-waits/"*-t1*.external-wait 2>/dev/null | head -1)
+  [ -n "$archive" ] && [ -f "$archive" ] || fail "replacing a declaration did not archive the prior record"
+  assert_equals "the supervisor" "$(sed -n 's/^ended_by: //p' "$archive")" \
+    "the replace archive does not attribute who ended the wait"
+  assert_equals "second wait" "$(sed -n 's/^reason: //p' "$archive")" \
+    "the replace archive lost the replaced declaration's reason"
   pass "clear and replace archive the record with who ended it and why, and clear is idempotent"
+}
+
+test_same_named_archives_keep_both_records() {
+  local dir state record declared_epoch first second
+  dir="$TMP_ROOT/archive-collision"; state="$dir/state"; mkdir -p "$state"
+  ext "$dir" declare t1 --reason "first wait" --until "$(future_iso 600)" >/dev/null || fail "declare failed"
+  record="$state/t1.external-wait"
+  declared_epoch=$(sed -n 's/^declared_epoch: //p' "$record")
+  ext "$dir" clear t1 >/dev/null || fail "clear failed"
+  first="$state/external-waits/$declared_epoch-t1.external-wait"
+  [ -f "$first" ] || fail "clear did not archive at the canonical name"
+  ext "$dir" declare t1 --reason "second wait" --until "$(future_iso 600)" >/dev/null || fail "redeclare failed"
+  # Two declarations of one task inside the same clock second: the redeclared
+  # record is stamped with the archived declaration's epoch so the next replace
+  # would land on the very same archive name.
+  sed -i.bak "s/^declared_epoch: .*/declared_epoch: $declared_epoch/" "$record"
+  rm -f "$record.bak"
+  ext "$dir" declare t1 --reason "third wait" --until "$(future_iso 900)" >/dev/null || fail "replace failed"
+  second=$(ls "$state/external-waits/" | grep -v -F "$(basename "$first")" | head -1)
+  [ -n "$second" ] && [ -f "$state/external-waits/$second" ] \
+    || fail "a same-second replace destroyed the prior archive instead of taking a unique name"
+  assert_equals "cleared" "$(sed -n 's/^outcome: //p' "$first")" \
+    "the first archive lost its outcome to the collision"
+  assert_equals "first wait" "$(sed -n 's/^reason: //p' "$first")" \
+    "the first archive lost its reason to the collision"
+  assert_equals "replaced" "$(sed -n 's/^outcome: //p' "$state/external-waits/$second")" \
+    "the colliding archive lost its outcome"
+  assert_equals "second wait" "$(sed -n 's/^reason: //p' "$state/external-waits/$second")" \
+    "the colliding archive lost its reason"
+  pass "two archives that would share one name keep both audit records"
 }
 
 test_expiry_is_a_reader_verdict_not_a_cleanup_step() {
@@ -311,6 +345,7 @@ test_a_new_status_event_still_wakes_under_a_live_declaration() {
 test_declare_records_attribution_without_touching_the_status_log
 test_declare_refuses_unbounded_or_malformed_input
 test_clear_archives_the_record_and_replacement_archives_the_prior_one
+test_same_named_archives_keep_both_records
 test_expiry_is_a_reader_verdict_not_a_cleanup_step
 test_live_declaration_absorbs_the_wedge_ladder_and_clears_the_counter
 test_expired_declaration_restores_ordinary_escalation
