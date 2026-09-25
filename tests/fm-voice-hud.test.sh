@@ -74,6 +74,135 @@ check(wake.block_energy(silence) < wake.ENERGY_FLOOR, "silence must sit below th
 PY
 pass "the wake gate keeps silence quiet and wakes only on the word"
 
+# --- the energy gate in a real room -------------------------------------------
+#
+# The absolute floor assumes a quiet machine, and a real one is not: the
+# captain's MacBook measures about 2.5e5 mean square of idle room tone
+# (an AGC-managed laptop microphone), a hundred times ENERGY_FLOOR. On that
+# machine a gate fixed at the absolute floor calls the room itself speech:
+# the decoder is fed forever and a turn, once open, never sees the quiet
+# that ends it - the HUD listens and never answers. The gate must learn the
+# room: sustained tone becomes the floor, speech must clear it, a room that
+# quiets down must not stay deaf, and the turn must end when the room
+# returns after speech.
+
+python3 - "$ROOT" <<'PY' || fail "energy gate tracks the real room"
+import importlib.util, math, os, random, struct, sys
+spec = importlib.util.spec_from_file_location(
+    "wake", os.path.join(sys.argv[1], "hud", "fm_voice_wake.py"))
+wake = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(wake)
+
+sys.path.insert(0, os.path.join(sys.argv[1], "hud"))
+import importlib
+mic_mod = importlib.import_module("fm_voice_mic")
+
+def check(cond, label):
+    if not cond:
+        sys.exit("room gate: " + label)
+
+random.seed(7)
+BLOCK = 3200
+
+def room(rms=500, blocks=1):
+    # Gaussian noise whose mean square sits where the captain's MacBook's
+    # idle room does: rms 500 -> about 2.5e5, a hundred times ENERGY_FLOOR.
+    out = bytearray()
+    for _ in range(blocks):
+        out += struct.pack("<1600h",
+                           *(int(random.gauss(0, rms)) for _ in range(1600)))
+    return bytes(out)
+
+def tone(amp=12000, blocks=1):
+    out = bytearray()
+    for _ in range(blocks):
+        out += struct.pack("<1600h",
+                           *(int(amp * math.sin(2 * math.pi * 440 * i / 16000))
+                             for i in range(1600)))
+    return bytes(out)
+
+# Sustained room tone must stop counting as speech: a cold start measures
+# with the absolute floor, then adopts the sustained level as the room.
+gate = wake.EnergyGate()
+voiced = [gate.feed(room(), 0.1 * i) for i in range(40)]
+check(voiced[0], "a cold start must still measure before it judges")
+check(not voiced[35], "a real room's floor must not count as speech")
+check(gate.floor > 4 * wake.ENERGY_FLOOR,
+      "the tracked floor must sit above the quiet-room minimum")
+
+# Speech in that room is still voiced, and the channel holds through a
+# single sub-floor dip (microphone AGC pulls speech down mid-word).
+check(gate.feed(tone(), 4.1), "speech must clear the tracked room floor")
+check(gate.feed(room(), 4.2), "a dip inside speech is quiet, not speech")
+check(gate.active(4.2 + wake.HANGOVER_SECONDS / 2),
+      "the hangover must hold the channel across a dip")
+
+# A room that quiets down must not stay deaf: after real silence, audio far
+# above ENERGY_FLOOR but below the loud room's threshold is speech again.
+for i in range(44, 64):
+    gate.feed(bytes(BLOCK), 0.1 * i)
+check(gate.feed(room(rms=80), 6.5),
+      "a quieter room must re-open the gate's sensitivity")
+
+# The lifecycle the gate exists for, in that same loud room: the wake opens
+# the turn and the RETURN OF ROOM TONE ends it - the end on quiet a fixed
+# floor can never reach on a real machine.
+class ScriptedDecoder:
+    """A scripted per-utterance decoder. It counts only speech-level audio
+    toward an utterance - room tone is noise to a real VAD - and lands the
+    final line once the utterance has run."""
+    def __init__(self, lines):
+        self.lines = list(lines)
+        self._run = 0
+    def start(self):
+        pass
+    def feed(self, block):
+        if wake.block_energy(block) >= 1e6:
+            self._run += 1
+        return []
+    def poll_transcripts(self):
+        if self.lines and self._run >= 3:
+            self._run = 0
+            return [self.lines.pop(0)]
+        return []
+    def close(self):
+        pass
+
+class ScriptedEngine:
+    def __init__(self):
+        self.begun = 0
+        self.ended = 0
+    def begin_turn(self):
+        self.begun += 1
+    def feed(self, pcm):
+        pass
+    def end_turn(self):
+        self.ended += 1
+
+gate2 = wake.EnergyGate()
+engine = ScriptedEngine()
+director = mic_mod.TurnDirector(
+    engine, gate2, wake.KeywordListener(),
+    ScriptedDecoder(["Ziggy what time is it"]))
+for i in range(30):                      # the loud room, learned as the floor
+    director.feed(room(), 0.1 * i)
+check(engine.begun == 0, "the loud room alone must never open a turn")
+t = 3.0
+for i in range(6):                       # the wake word, spoken in that room
+    director.feed(tone(), t)
+    t += 0.1
+check(engine.begun == 1, "speech in the loud room must open the turn")
+closed = False
+for i in range(20):                      # speech stops; the room remains
+    director.feed(room(), t)
+    t += 0.1
+    if engine.ended == 1:
+        closed = True
+        break
+check(closed, "the turn must end when speech stops and the room remains")
+PY
+pass "the energy gate learns the real room so turns can end"
+
 # --- wake detection over the committed PCM clips ------------------------------
 #
 # The brief's offline detector check: fixed clips containing and lacking the
