@@ -80,7 +80,9 @@ def main():
     # arrives - and says so on the wire rather than dying at startup.
     speaker = None
     try:
-        speaker = speaker_mod.Speaker(device=output_device_arg())
+        speaker = speaker_mod.Speaker(
+            device=output_device_arg(),
+            gain=float(os.environ.get("FM_VOICE_HUD_GAIN", speaker_mod.OUT_GAIN)))
     except Exception as exc:                  # noqa: BLE001
         emit({"type": "notice", "event": "output-unavailable",
               "error": "{}: {}".format(type(exc).__name__, exc)})
@@ -301,6 +303,11 @@ def main():
                 # The HUD's own voice: never decoded, never a wake, and never
                 # counted as the captain's silence in the conversation window.
                 director.ziggy_speaking()
+                if director.spot_over_reply(block):
+                    # "Ziggy, ..." over its own voice: stop talking, listen.
+                    speaker.flush()
+                    director.barge_in(time.monotonic())
+                    continue
                 if collector is not None:
                     collector.feed(block, False)
                 emit({"type": "mic", "level": round(mic_level(block), 3),

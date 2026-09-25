@@ -1565,6 +1565,25 @@ stream2.callback(out, 2400, None, None)
 check(bytes(out) == b"\x07\x08" * 2400,
       "the queued PCM must still be playable in order")
 sp2.close()
+
+import struct
+sp3 = speaker_mod.Speaker(gain=2.5)
+stream3 = StubRawOutputStream.instances[-1]
+sp3.write(struct.pack("<3h", 1000, -1000, 20000))
+out = bytearray(4800)
+stream3.callback(out, 2400, None, None)
+check(struct.unpack("<3h", bytes(out[:6])) == (2500, -2500, 32767),
+      "the gain must lift the reply and clip instead of wrapping: "
+      + repr(struct.unpack("<3h", bytes(out[:6]))))
+sp3.write(b"\x01\x00" * 1000)
+sp3.flush()
+check(not sp3.sounding(), "a flushed speaker must stop sounding at once")
+sp3.write(b"\x01\x00" * 1000)
+out = bytearray(4800)
+stream3.callback(out, 2400, None, None)
+check(bytes(out) == bytes(4800),
+      "audio of the interrupted reply still arriving must be dropped")
+sp3.close()
 PY
 pass "the reply player hands engine PCM to the stream and bounds its lifecycle"
 
@@ -1865,6 +1884,7 @@ if os.path.exists(capture):
 
 env = dict(os.environ)
 env["FM_TEST_SPEAKER_CAPTURE"] = capture
+env["FM_VOICE_HUD_GAIN"] = "1"
 env["FM_VOICE_HUD_DECODER"] = (
     "python3 -c 'import sys, time; time.sleep(0.5); "
     "print(\"Ziggy\"); sys.stdout.flush(); sys.stdin.read()'")

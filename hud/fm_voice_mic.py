@@ -488,6 +488,30 @@ class TurnDirector:
                     self._follow_until = None
         return self.phase
 
+    def spot_over_reply(self, block):
+        """While Ziggy talks, the spotter still listens for its name, so the
+        captain can cut in with "Ziggy, ...". Nothing else is heard. Returns
+        True when the name was spotted."""
+        if self.spotter is None or self.phase not in (self.LISTENING, self.FOLLOW_UP):
+            return False
+        self._preroll.append(block)
+        if len(self._preroll) > SPOT_PREROLL_BLOCKS:
+            del self._preroll[0]
+        self.spotter.feed(block)
+        return bool(self.spotter.poll())
+
+    def barge_in(self, now):
+        """The captain interrupted Ziggy: open a wake turn right away."""
+        self.on_notice("wake")
+        self.engine.begin_turn(wake=True)
+        for held in self._preroll:
+            self.engine.feed(held)
+        self._preroll = []
+        self.phase = self.IN_TURN
+        self._wake_at = now
+        self._spoke_since_wake = False
+        self._follow_until = None
+
     def ziggy_speaking(self):
         """Ziggy's own voice is playing: its speech is not the captain's
         silence, so the conversation window restarts once it has finished."""

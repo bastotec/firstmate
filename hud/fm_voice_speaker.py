@@ -18,6 +18,12 @@ import time
 
 # 100 ms at the reply rate, the client's output block.
 OUT_BLOCK = 2400
+# Kokoro speaks at about a third of full scale; lift it to a normal level.
+# Clipped, so a loud line cannot wrap around.
+OUT_GAIN = 2.5
+# After an interruption, audio still arriving for the cut-off reply is dropped
+# for this long; the relay cancels it, this covers what was already sent.
+FLUSH_DROP_S = 0.8
 
 
 class Speaker:
@@ -29,8 +35,10 @@ class Speaker:
     fast one never plays out of order.
     """
 
-    def __init__(self, device=None):
+    def __init__(self, device=None, gain=1.0):
         import sounddevice                    # noqa: PLC0415
+        self.gain = gain
+        self._drop_until = None
         self._buffer = bytearray()
         self._lock = threading.Lock()
         self._closed = False
@@ -72,7 +80,26 @@ class Speaker:
         with self._lock:
             if self._closed or self.muted:
                 return
-            self._buffer += pcm
+            if self._drop_until and time.monotonic() < self._drop_until:
+                # The tail of the reply the captain just cut off, still in
+                # the pipe from the relay.
+                return
+            self._buffer += self._amplify(pcm)
+
+    def _amplify(self, pcm):
+        if self.gain == 1.0 or len(pcm) < 2:
+            return pcm
+        import numpy                          # noqa: PLC0415
+        x = numpy.frombuffer(pcm[:len(pcm) // 2 * 2], dtype="<i2").astype(numpy.float32)
+        return numpy.clip(x * self.gain, -32768, 32767).astype("<i2").tobytes()
+
+    def flush(self):
+        """Drop whatever is queued: the captain interrupted."""
+        with self._lock:
+            self._buffer = bytearray()
+            self._drop_until = time.monotonic() + FLUSH_DROP_S
+        self.last_sound = None
+        self.out_level = 0.0
 
     def set_muted(self, muted):
         """The panel's mute: silence Ziggy's voice too, dropping anything

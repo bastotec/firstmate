@@ -1152,6 +1152,7 @@ class HybridSession(Session):
         # because the captain spoke over it (its late events are dropped).
         self.background_response = None
         self.cancelled_response = None
+        self.current_response = None
         began = time.monotonic()
         try:
             # Optional: installed by the speech stack in its own virtualenv.
@@ -1256,7 +1257,11 @@ class HybridSession(Session):
             await self._send({"type": "response.cancel"})
             self.turn_done.set()
         if self.turn and not self.turn_done.is_set():
-            raise RuntimeError("hybrid engine is still answering the previous turn")
+            # The captain cut in over the reply: cancel it and take the turn.
+            self.turn["cancelled"] = True
+            self.cancelled_response = self.current_response
+            await self._send({"type": "response.cancel"})
+            self.turn_done.set()
         if self.timeout_task is not None:
             self.timeout_task.cancel()
             await asyncio.gather(self.timeout_task, return_exceptions=True)
@@ -1325,6 +1330,8 @@ class HybridSession(Session):
                 if kind == "error":
                     raise RuntimeError("local engine: {}".format(
                         event.get("error", {}).get("message", "unknown error")))
+                if kind == "response.created":
+                    self.current_response = event.get("response", {}).get("id")
                 if kind == "response.created" and self.turn.get("background"):
                     self.background_response = event.get("response", {}).get("id")
                 if kind == "response.created" and self.turn.get("rejected"):
