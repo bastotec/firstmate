@@ -1,0 +1,38 @@
+FM_TEST_BEGIN 2026-09-25T16:48:37Z tests/fm-deck-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - Herdr Deck recovery proves driver identity; dead and non-Deck paths remain conservative
+ok - Herdr Deck recovery attributes a live driver across a spaced code root and state root
+ok - the steering doorbell rings a live remote Deck driver and skips an absent one
+ok - Deck idle Ctrl+C stays a signal, not fake input, while partial input remains visible
+ok - Deck host preserves handling-successor supervision without parent turn-end wakes
+ok - fm-deck-worker: a secondmate records a failed turn and waits at its prompt for the next wake
+ok - fm-deck-worker: a secondmate with no session repeats its launch brief on the next wake
+ok - fm-deck-worker: a secondmate that cannot open a session stops for the guarded relaunch
+ok - fm-deck-worker: a secondmate that cannot publish a failed turn stops instead of looping
+ok - fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model
+ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
+ok - fm-deck-worker: busy-state failures stop turns and publish status evidence
+ok - fm-deck-worker: turn-end publication refuses unsafe targets
+ok - fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported
+ok - fm-deck-worker: Deck stderr cannot break completion-blocked rendering
+ok - fm-deck-worker: Firstmate bookkeeping cannot satisfy worker evidence
+ok - fm-deck-worker: the finished-turn line carries the UTC completion time and degrades safely without it
+ok - fm-deck-worker: the idle prompt notes the UTC idle instant beside the bare ❯ prompt
+ok - fm-deck-worker: status evidence never follows symlinked or non-regular paths
+ok - fm-deck-worker: silent and failed turns gain status evidence before turn-end
+ok - fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt
+ok - fm-deck-worker: each completed turn leaves the next steer an idle baseline
+ok - Deck stop: physical aliases and spaced paths stop the active Deck process
+ok - Deck stop: stale secondmate drivers stop before replacement arming
+tests/fm-deck-harness.test.sh: line 586: 14479 Killed: 9               FM_DECK_READY="$dir/ready" FM_DECK_SIGNALLED="$dir/signalled" python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' "$WORKER" --id owned --state "$dir/state" --gen "$gen" --deck "$dir/deck" -- old-brief < /dev/null > "$dir/pane.out" 2>&1
+ok - Deck stop: exact task scope and bounded escalation remove survivors
+ok - liveness: the deck driver and binary are agents, unrelated names are not
+ok - tmux liveness: Deck's Linux comm and argv0 classify alive
+ok - control and busy-source tables carry Deck mechanics without rendered delivery evidence
+ok - Deck supervision autoarm remains scoped to secondmate launches
+ok - fm-spawn: ordinary Deck dispatch records only default effort
+ok - fm-spawn: Deck refuses unsupported effort before launch metadata
+fm-deck-harness: all cases passed
+FM_TEST_END 2026-09-25T16:51:46Z tests/fm-deck-harness.test.sh exit=0 duration_ms=188351 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=189930
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=188351 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-harness.test.sh duration_ms=188351

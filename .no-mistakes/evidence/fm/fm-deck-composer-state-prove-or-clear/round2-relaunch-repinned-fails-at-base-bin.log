@@ -1,0 +1,11 @@
+FM_TEST_BEGIN 2026-09-25T16:53:34Z tests/fm-control-relaunch.test.sh family=backend-dispatch expected_gate_skip=none
+ok - fm-control relaunch: an existing secondmate migrates onto Deck
+ok - fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree
+ok - fm-control relaunch: pending composer text refuses before the exit command is typed
+not ok - a relaunch must never be refused on a composer state it cannot prove
+error: task rl44's composer state is 'unknown', not proven empty; refusing to type the /exit exit command because it could concatenate onto existing text. Clear the composer, then retry 'relaunch'
+error: relaunch of rl44 failed while stopping the old agent, which is still running; its original instructions were restored: expected exit 0, got 1
+FM_TEST_END 2026-09-25T16:53:47Z tests/fm-control-relaunch.test.sh exit=1 duration_ms=12908 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=14604
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=1 duration_ms=12908 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-control-relaunch.test.sh duration_ms=12908
