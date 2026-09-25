@@ -1,0 +1,44 @@
+FM_TEST_BEGIN 2026-09-24T23:49:32Z tests/fm-control-recover-missing.test.sh family=backend-dispatch expected_gate_skip=none
+ok - fm-control recover-missing: a whole gone session is recreated under its recorded name, then the task window
+ok - fm-control recover-missing: a surviving session is left untouched and only the window comes back
+ok - fm-control recover-missing: a session that cannot be recreated refuses and leaves everything in place
+ok - fm-control recover-missing: a secondmate's recorded harness, model and effort survive a differing configured pin
+ok - fm-control recover-missing: a copy full of uncommitted work is rescued with every change left untouched
+ok - fm-control recover-missing: the checkpoint still records the rescued copy's dirty state
+ok - fm-control recover-missing: a missing terminal is recreated under its recorded handle and relaunched
+ok - fm-control recover-missing: an explicit replacement harness recovers a missing terminal in one transaction
+ok - fm-control recover-missing: a replacement harness resets unnamed profile axes exactly as a relaunch does
+ok - fm-control recover-missing: a recorded effort resets to default on a deck replacement instead of refusing the rescue
+ok - fm-control recover-missing: an explicit effort for a deck replacement refuses before the terminal is recreated
+ok - fm-control recover-missing: a replacement profile honours the axes the caller names
+ok - fm-control recover-missing: a harness-changing replacement clears a recorded account slot rather than rebinding it
+ok - fm-control recover-missing: an unverified replacement harness refuses before anything is touched
+ok - fm-control recover-missing: a replacement the launch owner must refuse is refused before recreation
+ok - fm-control recover-missing: a held backlog row still refuses, replacement profile or not
+ok - fm-control recover-missing: a failed replacement handoff keeps the recorded runtime and never claims a stop
+ok - fm-control recover-missing: a basename harness names --harness, and the named replacement recovers it
+ok - fm-control recover-missing: verified Deck recreates and relaunches its endpoint
+ok - fm-control recover-missing: a recreated terminal whose shell is still starting is waited out, not handed over
+ok - fm-control recover-missing: a recreated terminal that never goes agent-free refuses instead of launching into it
+ok - fm-control recover-missing: a live endpoint refuses and changes nothing
+ok - fm-control recover-missing: an ambiguous endpoint refuses and changes nothing
+ok - fm-control recover-missing: an unavailable local copy refuses rather than reallocating one
+ok - fm-control recover-missing: a pool slot claimed by another task refuses rather than tangling ownership
+ok - fm-control recover-missing: an unreadable pool-slot claim refuses rather than risking a conflict
+ok - fm-control recover-missing: a task's own pool slot recovers with its claim untouched
+ok - fm-control recover-missing: a failed recreation rolls the progress note back so retries do not stack
+ok - fm-control recover-missing: a failed recreation leaves a concurrent record write alone
+ok - fm-control recover-missing: an unreadable endpoint after a failed recreation claims no terminal exists
+ok - fm-control recover-missing: a failed launch handoff reports the bare shell it left, not a stop that never happened
+ok - fm-control recover-missing: a backend that cannot recreate the recorded endpoint refuses before anything changes
+ok - fm-control recover-missing: an unclassifiable backend refuses on the postcondition recovery actually needs
+ok - fm-control recover-missing: an unreconstructable recorded harness points at the replacement this verb supports
+ok - fm-control: profile-switch flags belong to relaunch and recover-missing only
+ok - fm-control recover-missing: a ship task's recovery requires the progress note
+ok - fm-control recover-missing: the recorded account slot survives the rescue, by logical id alone
+ok - fm-control recover-missing: an unbindable account slot refuses instead of falling back to the ambient account
+PASS: fm-control-recover-missing
+FM_TEST_END 2026-09-24T23:54:48Z tests/fm-control-recover-missing.test.sh exit=0 duration_ms=315842 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=316500
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=1 duration_ms=315842 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-control-recover-missing.test.sh duration_ms=315842

@@ -1,0 +1,14 @@
+FM_TEST_BEGIN 2026-09-24T23:48:07Z tests/fm-control-recover-missing.test.sh family=backend-dispatch expected_gate_skip=none
+ok - fm-control recover-missing: a whole gone session is recreated under its recorded name, then the task window
+ok - fm-control recover-missing: a surviving session is left untouched and only the window comes back
+ok - fm-control recover-missing: a session that cannot be recreated refuses and leaves everything in place
+ok - fm-control recover-missing: a secondmate's recorded harness, model and effort survive a differing configured pin
+ok - fm-control recover-missing: a copy full of uncommitted work is rescued with every change left untouched
+ok - fm-control recover-missing: the checkpoint still records the rescued copy's dirty state
+ok - fm-control recover-missing: a missing terminal is recreated under its recorded handle and relaunched
+not ok - a recovery onto a named replacement runtime should succeed
+error: --harness, --model, --effort, and --account-slot apply to 'relaunch' only; 'recover-missing' continues the recorded runtime: expected exit 0, got 1
+FM_TEST_END 2026-09-24T23:49:18Z tests/fm-control-recover-missing.test.sh exit=1 duration_ms=69708 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=71248
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=1 duration_ms=69708 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-control-recover-missing.test.sh duration_ms=69708
