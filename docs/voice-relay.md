@@ -111,7 +111,9 @@ The clip is headerless 16000 Hz mono signed 16-bit little-endian PCM and must en
 on speech, not silence. It prints one JSON line: what it heard, what it said, how
 long each stage took, whether it answered at all, and, in `relay_error`, what
 broke when a turn broke rather than merely going unanswered, so an
-infrastructure failure is not read as a slow answer. Feed it a clip that
+infrastructure failure is not read as a slow answer.
+Answered is counted from the speech after the turn's last tool call, so a spoken lead-in ahead of a handover keeps its seconds in the report but does not by itself answer the turn, and a model that goes silent after its tool fails the turn by name.
+Feed it a clip that
 already ends in silence and it will tell you the timings are measured from the
 wrong instant rather than printing a number that looks fast.
 

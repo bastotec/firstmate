@@ -935,6 +935,9 @@ class Partial:
         self.closed = 0
         self.credentials = None
         self.connect_seconds = None
+        # renew bounds the reconnect with the budget's connect share, so the
+        # stand-in carries one the way every real session does.
+        self.budget = relay.TurnBudget("reply")
 
     async def start(self):
         raise RuntimeError("ServiceUnavailableException")
@@ -1084,6 +1087,9 @@ class Down:
     def arm_turn(self):
         pass
 
+    def arm_response(self):
+        pass
+
     def first_audio(self):
         return None
 
@@ -1183,6 +1189,10 @@ async def one_case(how):
             self.failed = False
             self.replies = 0
             self.ended = asyncio.Event()
+            # The one turn budget, which a replacement session owns the same
+            # way the session it replaced did. renew bounds the reconnect with
+            # its connect share, so a stand-in without one is not a session.
+            self.budget = relay.TurnBudget("reply")
             self.turns = 0
             built.append(self)
 
@@ -2114,9 +2124,9 @@ def fault_after_answer(label, make_stream, out_name):
         make_stream(gate, window), StartGate(gate))
     quiet_wait = after._wait_audio_quiet
 
-    def open_the_window(deadline):
+    def open_the_window():
         window.set()
-        quiet_wait(deadline)
+        quiet_wait()
         # take_turn copies the record on the line after this returns, so the fault
         # has to be in before it. closed is the downlink's own mark that it has
         # finished with the connection and it is set only after the fault has been

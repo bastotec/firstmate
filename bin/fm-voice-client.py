@@ -70,7 +70,8 @@ Options:
   --out-file <file.pcm>  write reply audio here instead of playing it.
   --input-device <id>    sounddevice input device.
   --output-device <id>   sounddevice output device.
-  --timeout <sec>        how long to wait for a reply.        default 30
+  --timeout <sec>        the turn budget this end waits within for a reply.
+                         default 30
   --no-wait-for-reply    open the next turn without waiting for the previous
                          answer to finish. The model treats that as being
                          interrupted and stops instead of answering, so this
@@ -116,6 +117,47 @@ MAX_PREAMBLE = 8192
 # gives: everything the uplink carries has to stay in the order it happened in.
 START = object()
 END = object()
+
+
+class TurnBudget:
+    """The client's share of the one turn budget the spoken interface owns.
+
+    This is the same owner the relay carries in bin/fm-voice-relay.py, reduced
+    to the part a client needs, because the laptop runs this file and
+    fm_voice_frame.py and nothing else. The wait it bounds is the client's own
+    reply wait: a reply that has not arrived by the end of the budget is
+    reported unanswered rather than waited on into the next turn. The relay
+    holds its own budget for the model it is talking to; the two cannot share an
+    object across the SSH channel, but they share the meaning, so an operator
+    narrowing one narrows the turn and not one waiter inside it.
+
+    The reason this exists at all rather than a bare seconds constant: the
+    relay's waits were once independent numbers, and two of them defeated each
+    other - a handover grace was closed under by a rival deadline, and the
+    captain's request was queued with nobody told. Every timed wait on the turn
+    path on both ends reads a budget now, and the fast-routing layer to come
+    takes its deadline from the same object rather than contributing a number
+    of its own.
+    """
+
+    # The seconds one turn may take when the operator says nothing.
+    SECONDS = 30.0
+
+    def __init__(self, purpose, seconds=None):
+        self.purpose = purpose
+        self.total = self.SECONDS if seconds is None else float(seconds)
+        if self.total <= 0:
+            raise ValueError(
+                "the {} turn budget must be greater than zero".format(purpose))
+        self.deadline = time.monotonic() + self.total
+
+    def remaining(self):
+        """Seconds left on the one deadline, never below zero."""
+        return max(0.0, self.deadline - time.monotonic())
+
+    def transport_seconds(self):
+        """The share this end waits for one turn's reply."""
+        return self.remaining()
 
 
 class DeviceError(Exception):
@@ -564,6 +606,18 @@ class Client:
         # no path at all behind it, which nothing here can currently produce.
         self.closed_because = "the connection closed"
         self.lock = threading.Lock()
+        # THE TURN BUDGET, rebuilt for every turn in take_turn. One wait per
+        # turn reads it, and the wait is not a number of its own: the relay
+        # owns the same budget shape on its side, and a client that waited on
+        # an independent number could give up on a turn the relay was still
+        # holding a handover open for, which is the defeat the single budget
+        # exists to make impossible.
+        self.budget = None
+
+    def _new_budget(self):
+        """Build this turn's budget from the one wait the operator configured."""
+        self.budget = TurnBudget("client reply", self.options.timeout)
+        return self.budget
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -630,15 +684,19 @@ class Client:
         own one-line error is already on the captain's terminal, because stderr is
         inherited rather than piped, so waiting out the full timeout after that
         just leaves them watching nothing.
+
+        The wait reads the turn budget, because it is the same turn being waited
+        for and the operator set one number for it. A startup wait with its own
+        constant is how the relay's waits drifted apart in the first place.
         """
-        deadline = time.monotonic() + self.options.timeout
+        budget = TurnBudget("client ready", self.options.timeout)
         while not self.ready.is_set():
             if self.closed.is_set():
                 raise SystemExit(
                     "fm-voice-client: the relay closed the connection before it "
                     "was ready; run the relay command by hand over SSH to see "
                     "its error")
-            if time.monotonic() >= deadline:
+            if budget.remaining() <= 0:
                 raise SystemExit(
                     "fm-voice-client: the relay never reported ready; run it by "
                     "hand over SSH to see why")
@@ -1040,6 +1098,9 @@ class Client:
             # frames carry, so there is no instant where the turn has advanced and
             # the playback is still counting audio toward the turn before it.
             self.playback.turn_reset(self.turn_id)
+            # The turn's own budget, built as the turn opens so every wait below
+            # reads one deadline rather than each carrying the flag's number.
+            budget = self._new_budget()
         self.up_q.put(START)
 
         # Unreachable while parse_args refuses open-mic, and kept so that turning
@@ -1054,10 +1115,10 @@ class Client:
         else:
             release = self._push_to_talk(index)
 
-        deadline = self.options.timeout
+        deadline = budget.transport_seconds()
         if not self.reply_done.wait(timeout=deadline):
             say("client: no reply within {}s".format(deadline))
-        self._wait_audio_quiet(deadline)
+        self._wait_audio_quiet()
 
         with self.lock:
             turn = dict(self.turn)
@@ -1125,7 +1186,7 @@ class Client:
                 "included.")
         return record
 
-    def _wait_audio_quiet(self, deadline):
+    def _wait_audio_quiet(self):
         """Wait for the reply audio to stop arriving before reading the turn.
 
         Measured, the last audio frame and END_TURN land within about ten
@@ -1133,9 +1194,13 @@ class Client:
         at once. It is here because the count of reply audio is what the
         no-overlap wait below depends on, and a turn that ends any other way,
         such as the session closing, would otherwise be counted short.
+
+        The wait reads the turn budget's own remaining share, so it ends with
+        the budget rather than past it: the deadline and the reply wait are
+        the same turn, and this must never be the waiter that outlives it. A
+        turn whose budget is already spent reads its record at once.
         """
-        limit = time.monotonic() + deadline
-        while time.monotonic() < limit:
+        while self.budget.remaining() > 0:
             with self.lock:
                 last = self.turn.get("last_frame")
             if last is None:
@@ -1168,7 +1233,12 @@ class Client:
             say("client: run {}, capturing {}s.".format(index, seconds))
             time.sleep(seconds)
         elif self.options.in_file:
-            self.capture.wait_exhausted(self.options.timeout)
+            # The clip is this turn's speech, so the wait that bounds feeding it
+            # is the turn budget's, not a constant of its own: a clip that
+            # cannot finish feeding inside the turn's own budget is a turn that
+            # cannot finish, and this end should discover that when the budget
+            # does rather than on a second, rival clock.
+            self.capture.wait_exhausted(self.budget.transport_seconds())
         else:
             say("  listening. Enter to send.")
             try:
@@ -1306,7 +1376,8 @@ def parse_args(argv):
     parser.add_argument("--out-file")
     parser.add_argument("--input-device", type=device_selector)
     parser.add_argument("--output-device", type=device_selector)
-    parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--timeout", type=float, default=TurnBudget.SECONDS,
+                        help="the turn budget this end waits within for a reply")
     parser.add_argument("--wait-for-reply", action=argparse.BooleanOptionalAction,
                         default=True,
                         help="wait for each answer to finish being spoken before "
@@ -1326,6 +1397,8 @@ def parse_args(argv):
             "desktop>, or set FM_VOICE_RELAY")
     if options.runs < 1:
         parser.error("--runs must be at least 1")
+    if options.timeout <= 0:
+        parser.error("--timeout must be greater than zero")
     if options.listen == OPEN_MIC and options.in_file:
         parser.error(
             "--listen open-mic with --in-file would end the turn when the file "

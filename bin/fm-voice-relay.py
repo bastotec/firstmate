@@ -104,7 +104,9 @@ Options:
   --home <dir>          firstmate home for records.  default $FM_HOME or this repo
   --scope <name>        override the read scope for this run.
   --tail-ms <int>       silence appended on talk end. default 400; hybrid min 1500
-  --turn-timeout <sec>  reply deadline.              default 40
+  --turn-timeout <sec>  the one turn budget every wait in the turn path derives
+                        from: the reply deadline, the handover grace, the
+                        self-test wait. default 40
   --verbose             log the session to stderr.
 """
 
@@ -224,6 +226,140 @@ def widen_path():
     added = [p for p in extra if os.path.isdir(p) and p not in parts]
     if added:
         os.environ["PATH"] = os.pathsep.join(added + parts)
+
+
+class BudgetSpent(Exception):
+    """A waiter asked the budget for a share and the turn had none left."""
+
+
+class TurnBudget:
+    """The single owner of every number that bounds a spoken turn.
+
+    THE INVARIANT. One budget is stated here, and every timed wait in the turn
+    path - the reply deadline, the handover grace, the self-test wait, the
+    client's reply wait, and any later wait such as a fast routing layer - reads
+    a share of it through this class. No waiter carries its own seconds.
+
+    The invariant exists because independent numbers defeat each other, which is
+    not a hypothesis but a recorded failure. The hybrid self-test once waited on
+    its own shorter timeout while a handover was mid-flight: that wait expired at
+    the original deadline, closed the session, and cancelled the reader while the
+    non-cancellable queue thread could still create the note, so the report named
+    no queued notice and a retry could queue the same request twice. Two waits,
+    two numbers, one lost handover. One budget cannot produce that shape, because
+    a share that is spent while another is still owed draws the same deadline
+    later rather than starting a rival one.
+
+    A budget is created per turn and carries its purpose in its name, because the
+    deadline is relative to the turn, not to the process. The client also builds
+    one, from its own wait: the two ends cannot share an object, but they share
+    the meaning of the shares, so a client that asks for less than the relay
+    allows sets the tighter bound for its own turn and the relay still owns its
+    own.
+
+    Shares, all of one stated budget:
+      reply      the whole budget. The model has this long to finish the turn.
+      handover   HANDOVER_SHARE of what is left. Spent when a tool call is
+                 answered, to keep the session alive for the post-tool reply
+                 that confirms out loud what the turn did. Never a fresh
+                 deadline: it draws the turn's own deadline later.
+      connect    CONNECT_SHARE of what is left, for opening a replacement
+                 session between the captain's key presses.
+      transport  the whole budget, for a client. A reply that has not arrived
+                 by then is reported unanswered rather than waited on into the
+                 next turn.
+      later(...) any future waiter, named at the call. A fast routing layer
+                 takes its deadline here too; it contributes no number of its
+                 own, and on expiry the turn routes up rather than dying.
+    """
+
+    # The budget in seconds, stated once. Every share derives from it, and the
+    # operator's --turn-timeout narrows this same budget rather than adding one.
+    SECONDS = 40.0
+    # What a client waits for a reply when the operator says nothing. It is the
+    # client's own budget, not a second relay number: the client waits on the
+    # turn as it hears it and reports unanswered at its own deadline, while the
+    # relay keeps its full budget for the model it is talking to.
+    CLIENT_SECONDS = 30.0
+    # Fraction of the budget granted to a turn with a handover in flight, so the
+    # post-tool reply that confirms the handover out loud has room to arrive.
+    # Granted once per turn, never per tool call, so the bound stays one number.
+    HANDOVER_SHARE = 0.25
+    # Fraction of the budget spent opening a replacement session between turns.
+    CONNECT_SHARE = 0.25
+
+    def __init__(self, purpose, seconds=None):
+        self.purpose = purpose
+        self.total = self.SECONDS if seconds is None else float(seconds)
+        if not 0 < self.total <= 600:
+            raise ValueError(
+                "the {} turn budget must be greater than zero and at most 600 "
+                "seconds".format(purpose))
+        self.began = time.monotonic()
+        self.deadline = self.began + self.total
+        self.handover_granted = False
+
+    def remaining(self):
+        """Seconds left on the one deadline, never below zero."""
+        return max(0.0, self.deadline - time.monotonic())
+
+    def share(self, fraction, label):
+        """Return a share of what is left, refusing a waiter with none.
+
+        Refusing is the whole point of one owner. A waiter that took a share of
+        the total rather than of the remainder could outlive the deadline and
+        become exactly the rival wait the budget exists to prevent, so a turn
+        with nothing left gives a later waiter nothing and it must give up at
+        once rather than wait past the turn's own end.
+        """
+        seconds = self.remaining() * fraction
+        if seconds <= 0:
+            raise BudgetSpent(
+                "the {} turn has no budget left for {}".format(
+                    self.purpose, label))
+        return seconds
+
+    def reply_seconds(self):
+        """The share for a reply wait: the whole of what is left."""
+        return self.remaining()
+
+    def grant_handover(self):
+        """Extend THE deadline for a handover in flight. Once per turn.
+
+        This is the handover grace, and it is a grant against the one deadline
+        rather than a wait with its own number, which is what once defeated it:
+        a handover started near the reply deadline, an independent self-test
+        wait expired at that same original deadline, the session was closed
+        under the tool and the reader was cancelled while the queue thread could
+        still create the note - so the report named no queued notice and a retry
+        could queue the same request twice.
+
+        One grant, bounded by the same share of the same stated budget, means
+        every waiter reading this budget - the reply deadline, the self-test
+        wait, any later fast-routing layer - sees the same later deadline
+        instead of one of them racing an earlier one. The cap keeps a turn of
+        many tool calls from compounding grants into twice the budget: the
+        deadline may never pass the start plus the budget plus one handover
+        share of it.
+        """
+        if self.handover_granted:
+            return
+        self.handover_granted = True
+        cap = self.began + self.total * (1.0 + self.HANDOVER_SHARE)
+        wanted = time.monotonic() + self.total * self.HANDOVER_SHARE
+        self.deadline = min(cap, max(self.deadline, wanted))
+
+    def handover_seconds(self):
+        """The share that keeps a session alive for the post-tool answer."""
+        return self.share(self.HANDOVER_SHARE, "the post-tool reply")
+
+    def connect_seconds(self):
+        """The share for opening a replacement session between turns."""
+        return self.share(self.CONNECT_SHARE, "reconnecting")
+
+    def transport_seconds(self):
+        """The share a client waits for one turn's reply."""
+        return self.remaining()
 
 
 # A credential that states an expiry this interpreter cannot read. The
@@ -469,12 +605,24 @@ class Downlink:
     the captain's audio or the model's output, and the moment a reply byte is
     actually handed to the connection is the only honest place to timestamp it.
     Both of those want the writes off the event loop, so they live here.
+
+    It also stamps the first audio of the CURRENT RESPONSE, not of the turn,
+    which is the reporting standard this build holds everywhere: a spoken
+    lead-in before a tool call is not the answer, and crediting it as this
+    response's first audio is how a turn once reported success with no answer
+    in it at all. The mark moves forward when a new response begins, so a
+    lead-in stamps the lead-in and the answer after the tool stamps the answer.
     """
 
     def __init__(self, stream):
         self._stream = stream
         self._queue = queue.Queue()
         self._first_audio = None
+        # Which response the queued audio belongs to, moved forward by arm_turn
+        # and arm_response. A frame stamps the wire moment only while it still
+        # belongs to the response being spoken, so one drained late from an
+        # ended response cannot stand in as the new response's first audio.
+        self._response = 0
         self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -485,18 +633,20 @@ class Downlink:
             item = self._queue.get()
             if item is None:
                 return
-            kind, payload = item
+            kind, payload, sent_as = item
             try:
                 writer.send(kind, payload)
             except (BrokenPipeError, ValueError, OSError):
                 return
             if kind == frame.AUDIO:
                 with self._lock:
-                    if self._first_audio is None:
+                    if sent_as == self._response and self._first_audio is None:
                         self._first_audio = time.monotonic()
 
     def send(self, kind, payload=b""):
-        self._queue.put((kind, payload))
+        with self._lock:
+            sent_as = self._response
+        self._queue.put((kind, payload, sent_as))
 
     def send_json(self, kind, obj):
         self.send(kind, json.dumps(obj, separators=(",", ":")).encode("utf-8"))
@@ -505,6 +655,20 @@ class Downlink:
         """Forget the previous turn's first-audio mark."""
         with self._lock:
             self._first_audio = None
+            self._response += 1
+
+    def arm_response(self):
+        """Forget the first-audio mark of the response that just ended.
+
+        A tool call ends the response that called it: any audio before it was a
+        lead-in, and the answer this turn is owed comes after the tool result.
+        Without this the lead-in's stamp stands in for the answer's, and a turn
+        whose model went silent after the handover still reported a first-audio
+        figure and with it success.
+        """
+        with self._lock:
+            self._first_audio = None
+            self._response += 1
 
     def first_audio(self):
         with self._lock:
@@ -546,6 +710,17 @@ class Session:
         self.tool_names = []
         self.ended = asyncio.Event()
         self.turn_done = asyncio.Event()
+        # The one turn budget this session's waits read from. Armed fresh at
+        # every talk start, because the deadline is relative to the turn; the
+        # budget built here is the one a renewal reads its connect share from.
+        # See TurnBudget for the invariant and the failure that forced it.
+        self.budget = TurnBudget(
+            "reply", getattr(options, "turn_timeout", None))
+        # Audio of the CURRENT RESPONSE, the one after the last state change.
+        # Turn-level audio once let a spoken lead-in stand in for the answer a
+        # tool-backed turn owed, so success no longer means the captain heard
+        # anything; this mark is reset on every tool call for that reason.
+        self.response_audio = False
         self.home = options.home or records.default_home()
         self.scope = options.scope or records.read_scope(self.home)
         self.root = os.path.dirname(os.path.abspath(__file__))
@@ -643,6 +818,11 @@ class Session:
         if self.audio_content is not None:
             return
         self.audio_content = str(uuid.uuid4())
+        # A fresh budget for the turn, because the deadline is relative to the
+        # turn, not to the connect and credential work that ran before it.
+        self.budget = TurnBudget(
+            "reply", getattr(self.options, "turn_timeout", None))
+        self.response_audio = False
         self.turn = {"began": time.monotonic()}
         self.tool_calls = 0
         self.tool_names = []
@@ -705,6 +885,24 @@ class Session:
             self.options.tail_ms))
 
     # ---------------------------------------------------------------- downlink
+
+    async def await_turn_done(self):
+        """Wait for this turn to end, on the turn budget and no number of its own.
+
+        The deadline is re-read on every slice rather than captured once,
+        because it can move: the handover grace grants a later deadline after
+        this wait is already armed, and a waiter that froze its seconds at arm
+        time would expire at the original deadline and close the session under
+        the handover - the recorded failure the one budget exists to end.
+        """
+        while not self.turn_done.is_set():
+            remaining = self.budget.reply_seconds()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            try:
+                await asyncio.wait_for(self.turn_done.wait(), remaining)
+            except asyncio.TimeoutError:
+                continue
 
     def _mark(self, name, at=None):
         now = at if at is not None else time.monotonic()
@@ -818,6 +1016,13 @@ class Session:
             if pcm:
                 if "first_audio" not in self.turn:
                     self._mark("first_audio")
+                # Audio of the CURRENT RESPONSE, which is what a turn has to
+                # have after its final state change before it may report
+                # success. The turn-level mark above is not that: it can be
+                # stamped by a spoken lead-in ahead of a tool call, and a turn
+                # whose handover completed with no answer after it once
+                # reported success on the strength of that lead-in alone.
+                self.response_audio = True
                 self.down.send(frame.AUDIO, pcm)
 
         if "textOutput" in event:
@@ -842,6 +1047,15 @@ class Session:
             if stop == "INTERRUPTED":
                 self.down.send_json(frame.NOTICE, {"event": "interrupted"})
             if stop == "END_TURN":
+                # A turn only answered what it was asked when the current
+                # response - the one after the last tool call, not a lead-in
+                # before it - actually spoke. Without this test the handover
+                # lead-in's audio stood in for the confirmation the turn owed,
+                # and the record said success for words never spoken.
+                if self.tool_calls and not self.response_audio:
+                    raise RuntimeError(
+                        "the model ended the turn without speaking after its "
+                        "last tool call")
                 # Trap 1: this, not completionEnd, is the end of the reply.
                 self._mark("reply_end")
                 # first_audio above is stamped when the model event is decoded.
@@ -858,6 +1072,12 @@ class Session:
     # -------------------------------------------------------------------- tools
 
     async def _run_tool(self, call):
+        # A tool call is a state change: whatever audio came before it was a
+        # lead-in, and the turn is owed a new response that speaks. Both marks
+        # move here, the response flag on the session and the wire stamp in the
+        # Downlink, or a lead-in's stamp would stand in for the answer's.
+        self.response_audio = False
+        self.down.arm_response()
         result = await self._tool_result(call)
         use_id = call.get("toolUseId")
         content = str(uuid.uuid4())
@@ -873,6 +1093,14 @@ class Session:
         await self._send({"contentEnd": {
             "promptName": self.prompt, "contentName": content}})
         self._mark("tool_answered")
+        # The handover grace: the ONE deadline is granted room for the
+        # post-tool reply, and the reader keeps reading. There is no sleep here
+        # on purpose - a reader blocked in a grace sleep cannot deliver the
+        # reply it exists to wait for, which is the exact shape of the failure
+        # this budget ended. Every waiter reading the budget now sees the same
+        # later deadline, and the session is held open by the deadline rather
+        # than by a blocked coroutine.
+        self.budget.grant_handover()
 
     async def _tool_result(self, call):
         """The same records and inbox boundary for either model transport."""
@@ -965,6 +1193,12 @@ class HybridSession(Session):
         if self.timeout_task is not None:
             self.timeout_task.cancel()
             await asyncio.gather(self.timeout_task, return_exceptions=True)
+        # A new turn gets a fresh budget, because the deadline belongs to the
+        # turn rather than to the session. The persistent session keeps its
+        # context; only the clock restarts.
+        self.budget = TurnBudget(
+            "reply", getattr(self.options, "turn_timeout", None))
+        self.response_audio = False
         self.turn = {"began": time.monotonic()}
         self.audio_content = True
         self.tool_calls = 0
@@ -991,8 +1225,17 @@ class HybridSession(Session):
         self.timeout_task = asyncio.create_task(self._deadline())
 
     async def _deadline(self):
+        """The production reply deadline, reading the one turn budget.
+
+        This task and the handover grace inside _run_tool read the SAME budget,
+        which is the fix for the failure where they read different numbers: the
+        deadline holds the session open while a handover finishes, so the
+        non-cancellable queue thread can create its note and the notice can
+        reach the record, instead of the session being closed under it and a
+        retry queueing the same request twice.
+        """
         try:
-            await asyncio.wait_for(self.turn_done.wait(), self.options.turn_timeout)
+            await self.await_turn_done()
         except asyncio.TimeoutError:
             self.turn["timeout"] = True
             fail_turn(self, self.down, TimeoutError("hybrid engine reply timed out"))
@@ -1021,6 +1264,12 @@ class HybridSession(Session):
                     if pcm:
                         if "first_audio" not in self.turn:
                             self._mark("first_audio")
+                        # The current response's own audio, which is what a
+                        # turn must have after its final state change before it
+                        # may report success. See the matching line in
+                        # Session._handle for why the turn-level mark above is
+                        # not enough.
+                        self.response_audio = True
                         self.down.send(frame.AUDIO, pcm)
                 elif kind == "response.function_call_arguments.done":
                     self.tool_calls += 1
@@ -1028,6 +1277,11 @@ class HybridSession(Session):
                         raise RuntimeError("hybrid engine exceeded the turn's tool limit")
                     self.tool_names.append(event.get("name", ""))
                     self._mark("tool_use")
+                    # A tool call is a state change: the response that called
+                    # the tool is over, whatever it said was a lead-in, and the
+                    # turn is owed a new response that speaks.
+                    self.response_audio = False
+                    self.down.arm_response()
                     result = await self._tool_result({
                         "toolName": event.get("name", ""),
                         "content": event.get("arguments", "{}")})
@@ -1036,6 +1290,11 @@ class HybridSession(Session):
                         "output": json.dumps(result)}})
                     self._mark("tool_answered")
                     self.pending_tools = True
+                    # The same handover grace as the Bedrock path: the one
+                    # deadline is granted room for the post-tool reply, and
+                    # this reader keeps reading rather than sleeping, because
+                    # the reply it is waiting for arrives on this very loop.
+                    self.budget.grant_handover()
                 elif kind == "response.done":
                     if event.get("response", {}).get("status") != "completed":
                         raise RuntimeError("hybrid engine response did not complete")
@@ -1045,6 +1304,15 @@ class HybridSession(Session):
                     else:
                         if "first_audio" not in self.turn:
                             raise RuntimeError("hybrid engine completed a turn without audio")
+                        # The same standard as the Bedrock path: audio after
+                        # the last state change. A lead-in before the handover
+                        # is not the confirmation the turn owes, so ending the
+                        # turn without a response that spoke is a failure
+                        # rather than a success with nothing heard in it.
+                        if self.tool_calls and not self.response_audio:
+                            raise RuntimeError(
+                                "hybrid engine ended the turn without speaking "
+                                "after its last tool call")
                         self._mark("reply_end")
                         wire = self.down.first_audio()
                         if wire is not None:
@@ -1121,7 +1389,12 @@ async def renew(session, options, down):
     session_type = HybridSession if getattr(options, "engine", "bedrock") == "hybrid" else Session
     fresh = session_type(options, down, session.credentials)
     try:
-        await fresh.start()
+        # Opening the replacement is bounded by the one budget's connect share,
+        # so a reconnect that hangs cannot outlive the turn it was opened for.
+        # A waiter with its own number here is the defect class this budget
+        # ended: two waits, two numbers, and whichever expired first closed the
+        # session under the other.
+        await asyncio.wait_for(fresh.start(), fresh.budget.connect_seconds())
     except BaseException:
         # start() creates the reader task before it sends anything, so a
         # reconnect that fails part way leaves a live task holding an open
@@ -1277,11 +1550,17 @@ async def self_test(options):
         and the record below reports no figure for it rather than reporting one
         that would be zero because of how this stub is built. The first_audio
         figure it does report is the model event, which is real in both modes.
+
+        It carries the same response boundary the real Downlink does, because a
+        self-test report is a turn record too: a lead-in ahead of a tool call is
+        not the answer, and the report's own answer figure is read off the mark
+        the response that spoke actually stamped.
         """
 
         def __init__(self):
             self.first = None
             self.bytes = 0
+            self.response_bytes = 0
             self.heard = []
             self.said = []
             self.notices = []
@@ -1291,6 +1570,7 @@ async def self_test(options):
                 if self.first is None:
                     self.first = time.monotonic()
                 self.bytes += len(payload)
+                self.response_bytes += len(payload)
 
         def send_json(self, kind, obj):
             # The transcript is the only way to check the two things that matter
@@ -1310,6 +1590,16 @@ async def self_test(options):
         def arm_turn(self):
             self.first = None
 
+        def arm_response(self):
+            """Drop the ended response's stamp, keeping the turn's audio total.
+
+            The turn total stays because the lead-in was real audio the captain
+            really heard; only the CURRENT RESPONSE's claim to have answered
+            goes, because that response is over.
+            """
+            self.first = None
+            self.response_bytes = 0
+
         def first_audio(self):
             return self.first
 
@@ -1327,8 +1617,7 @@ async def self_test(options):
         fail_turn(session, sink, exc)
         session.turn_done.set()
     try:
-        await asyncio.wait_for(session.turn_done.wait(),
-                               timeout=options.turn_timeout)
+        await session.await_turn_done()
     except asyncio.TimeoutError:
         session.turn["timeout"] = True
         if not session.failed:
@@ -1375,7 +1664,15 @@ async def self_test(options):
         "first_audio_s": since("first_audio"),
         "reply_end_s": since("reply_end"),
         "reply_audio_seconds": round(sink.bytes / float(OUT_RATE * 2), 3),
-        "answered": sink.bytes > 0,
+        # The turn's answer figure, read off the CURRENT RESPONSE rather than
+        # off everything the model ever said in the turn. A handover lead-in
+        # speaks real audio, so the total stays as evidence, but a turn whose
+        # model went silent after the tool has no answer to report, and the
+        # record has to say so rather than counting the lead-in as heard
+        # confirmation.
+        "response_audio_seconds": round(
+            sink.response_bytes / float(OUT_RATE * 2), 3),
+        "answered": sink.response_bytes > 0,
         "timed_out": bool(session.turn.get("timeout")),
         # Named the same as the client's turn record, and here for the same
         # reason: a record that says only that the turn was not answered invites
@@ -1387,7 +1684,8 @@ async def self_test(options):
         "said": " ".join(sink.said),
         "notices": sink.notices,
     }))
-    return 0 if sink.bytes > 0 and not session.failed and not session.turn.get("timeout") else 1
+    return 0 if sink.response_bytes > 0 and not session.failed \
+        and not session.turn.get("timeout") else 1
 
 
 def parse_args(argv):
@@ -1415,8 +1713,9 @@ def parse_args(argv):
     parser.add_argument("--home")
     parser.add_argument("--scope", choices=records.SCOPES)
     parser.add_argument("--tail-ms", type=int, default=TAIL_MS)
-    parser.add_argument("--turn-timeout", type=float, default=40.0,
-                        help="seconds --self-test waits for a reply")
+    parser.add_argument("--turn-timeout", type=float, default=TurnBudget.SECONDS,
+                        help="the one turn budget every wait derives from; "
+                             "default {}".format(TurnBudget.SECONDS))
     parser.add_argument("--verbose", action="store_true")
     options = parser.parse_args(argv)
     if options.tail_ms < 0:
