@@ -806,6 +806,10 @@ tests/fm-trace-context-spawn.test.sh 44702
 tests/fm-turnend-guard.test.sh 42565
 tests/fm-update.test.sh 5212
 tests/fm-vendor-auth-probe.test.sh 43316
+# Locally measured seed for the new voice gate suite (three runs, worst
+# ~14s on the dev host); refresh from CI timing artifacts per
+# docs/fm-test-portable-shards.md.
+tests/fm-voice-gate.test.sh 14137
 tests/fm-voice-relay.test.sh 28699
 tests/fm-wake-daemon-lifecycle-e2e.test.sh 7381
 tests/fm-wake-drain-open-decisions-cursor.test.sh 20629
