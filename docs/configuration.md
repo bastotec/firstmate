@@ -1047,6 +1047,8 @@ The voice handover depends on `note`, so it keeps working in a home that has con
 | `config/voice-gateway-key` | `FM_VOICE_GATEWAY_KEY` | Optional hybrid gateway key, passed to the external server environment, never its command line; protect this file as a credential. |
 | `config/voice-local-command` | `FM_VOICE_LOCAL_COMMAND` | Required only by `--start-engine`: absolute path to the external stack's executable in its own virtual environment. |
 | `config/voice-local-cache` | `FM_VOICE_LOCAL_CACHE` | Required only by `--start-engine`: existing absolute directory for the external engine's home and caches. |
+| `config/voice-gate-key-var` | `FM_VOICE_GATE_KEY_VAR` | Opt-in for the hybrid engine's fast routing layer: first line names the secrets variable holding the gateway key, which is read at call time and never logged; absent, the fast layer is inert and the relay behaves exactly as before. |
+| `config/voice-gate-mode` | `FM_VOICE_GATE_MODE` | Fast-layer mode; `shadow` (the default when absent) logs every route decision beside what the heavy model actually did and acts on none, while `act` refuses in this build. |
 | `config/voice-region` | `FM_VOICE_REGION` | Bedrock region for the relay's bidirectional session, required when the engine is `bedrock`. |
 | `config/voice-model` | `FM_VOICE_MODEL` | Speech-to-speech model id, required when the engine is `bedrock`. |
 | `config/voice-profile` | `FM_VOICE_PROFILE` | AWS profile the relay exports credentials from; absent, or an explicitly empty variable, means it uses only credentials already in its environment. |
@@ -1232,6 +1234,8 @@ FM_VOICE_GATEWAY_MODEL= # overrides config/voice-gateway-model; interim default 
 FM_VOICE_GATEWAY_KEY=   # overrides config/voice-gateway-key; never place it in a URL or command line
 FM_VOICE_LOCAL_COMMAND= # overrides config/voice-local-command for --start-engine
 FM_VOICE_LOCAL_CACHE=   # overrides config/voice-local-cache for --start-engine
+FM_VOICE_GATE_KEY_VAR=  # overrides config/voice-gate-key-var; the fast layer's whole opt-in
+FM_VOICE_GATE_MODE=     # overrides config/voice-gate-mode; shadow when neither is set
 FM_VOICE_REGION=        # overrides config/voice-region for one Bedrock relay run
 FM_VOICE_MODEL=         # overrides config/voice-model for one Bedrock relay run
 FM_VOICE_PROFILE=       # overrides config/voice-profile; explicitly empty forces ambient credentials

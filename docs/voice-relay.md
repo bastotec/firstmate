@@ -159,6 +159,12 @@ Only hybrid sessions import `websockets`, already installed in the external stac
 Use the same virtual environment as the relay interpreter when invoking the unchanged laptop client.
 The gateway, key and model settings take effect at engine launch; restart the engine after changing them.
 
+The hybrid engine also carries an optional fast routing layer in front of the heavy model, inert until `voice-gate-key-var` names its secrets key variable.
+One narrow-model fan-out call classifies each transcript, and code routes records reads, handovers and scripted lines away from the heavy model while everything uncertain reaches the model as before.
+This build ships shadow only: every route decision is logged beside what the heavy model actually did and acted on by nothing.
+The layer takes its deadline from the relay's one turn budget and contributes no timeout of its own, and `python3 bin/fm_voice_gate.py report` and `cost` read its `state/voice-gate/` records.
+`bin/fm_voice_gate.py`'s header owns the full contract.
+
 The interim text route defaults to `codex/gpt-6-astra`, which was verified with a real completion and the voice turns below.
 The requested `codex/gpt-6-luna` route was absent from the measured gateway's catalog.
 `voice-gateway-model` makes the route explicit and configurable; there is no automatic model substitution.

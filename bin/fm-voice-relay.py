@@ -75,9 +75,18 @@ variable, and a missing required value refuses with the path to write.
   voice-gateway-key    FM_VOICE_GATEWAY_KEY    text gateway key.    optional
   voice-local-command  FM_VOICE_LOCAL_COMMAND  server executable.  launcher required
   voice-local-cache    FM_VOICE_LOCAL_CACHE    cache directory.    launcher required
+  voice-gate-key-var   FM_VOICE_GATE_KEY_VAR   fast-layer key var.  optional
+  voice-gate-mode      FM_VOICE_GATE_MODE      fast-layer mode.     default shadow
 
 All names in that column are files beneath config/. The full interim text route
 is codex/gpt-6-astra.
+
+The fast layer (bin/fm_voice_gate.py) is hybrid-only and inert until
+config/voice-gate-key-var names the secrets variable holding the gateway key:
+no key, no gate, zero behavior change. In this build it ships shadow only -
+every route decision is logged beside what the heavy model actually did and
+acted on by nothing - and its call takes its deadline as a share of the one
+turn budget, contributing no timeout of its own.
 
 An absent profile means the Bedrock relay uses only credentials that are already
 in its environment. An empty FM_VOICE_PROFILE, or an empty `--profile ""`, forces
@@ -129,6 +138,7 @@ import ipaddress
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import fm_voice_frame as frame              # noqa: E402
+import fm_voice_gate as gate                # noqa: E402
 import fm_voice_records as records          # noqa: E402
 
 # A Bedrock voice id names nobody and costs nothing to inherit, so this one has a
@@ -724,6 +734,11 @@ class Session:
         self.home = options.home or records.default_home()
         self.scope = options.scope or records.read_scope(self.home)
         self.root = os.path.dirname(os.path.abspath(__file__))
+        # The hybrid-only fast layer's per-turn shadow record and its detached
+        # decision task. Neither ever gates this turn: this build ships shadow
+        # only, so both exist to log, never to route.
+        self.gate_turn = None
+        self.gate_task = None
 
     # ---------------------------------------------------------------- protocol
 
@@ -1206,6 +1221,9 @@ class HybridSession(Session):
         self.pending_tools = False
         self.turn_done.clear()
         self.down.arm_turn()
+        gate_obj = getattr(self.options, "gate", None)
+        self.gate_turn = (gate_obj.turn(uuid.uuid4().hex[:12])
+                          if gate_obj is not None and gate_obj.enabled else None)
 
     async def audio(self, pcm):
         if self.failed or self.audio_content is None:
@@ -1238,9 +1256,41 @@ class HybridSession(Session):
             await self.await_turn_done()
         except asyncio.TimeoutError:
             self.turn["timeout"] = True
+            self._settle_gate("timeout")
             fail_turn(self, self.down, TimeoutError("hybrid engine reply timed out"))
             self.turn_done.set()
             self.ended.set()
+
+    def _start_gate(self, transcript):
+        """Ask the fast layer what this transcript is, detached from the turn.
+
+        Shadow only: the decision is logged beside what the heavy model
+        actually does and the turn is never held for it, so this build changes
+        nothing the captain can hear. The call's deadline is a share of the one
+        turn budget - the gate states no number of its own - and a turn with no
+        budget left routes up without a call.
+        """
+        if self.gate_turn is None:
+            return
+        try:
+            seconds = self.budget.share(1.0, "the fast route")
+        except BudgetSpent:
+            self.gate_turn.record_decision(
+                gate.Decision(gate.ROUTE_HEAVY, "budget-spent"))
+            return
+        self.gate_task = asyncio.create_task(
+            self._run_gate(self.gate_turn, transcript, seconds))
+
+    async def _run_gate(self, record, transcript, seconds):
+        # Off the loop, like the tool reads below: the reply this reader exists
+        # to deliver arrives on this very loop, so a gate call blocking it would
+        # be an act rather than a shadow.
+        await asyncio.to_thread(record.decide, transcript, seconds)
+
+    def _settle_gate(self, heavy):
+        """Record what the heavy model did; the first answer for a turn wins."""
+        if self.gate_turn is not None:
+            self.gate_turn.record_heavy(heavy)
 
     async def _read_realtime(self):
         try:
@@ -1254,8 +1304,10 @@ class HybridSession(Session):
                         event.get("error", {}).get("message", "unknown error")))
                 if kind == "conversation.item.input_audio_transcription.completed":
                     self._mark("transcribed")
+                    transcript = event.get("transcript", "")
                     self.down.send_json(frame.TEXT, {
-                        "role": "USER", "text": event.get("transcript", "")})
+                        "role": "USER", "text": transcript})
+                    self._start_gate(transcript)
                 elif kind == "response.output_audio_transcript.done":
                     self.down.send_json(frame.TEXT, {
                         "role": "ASSISTANT", "text": event.get("transcript", "")})
@@ -1318,10 +1370,13 @@ class HybridSession(Session):
                         if wire is not None:
                             self._mark("first_audio_wire", wire)
                         self.replies += 1
+                        self._settle_gate(
+                            ",".join(n for n in self.tool_names if n) or "answered")
                         self.turn_done.set()
             if not self.closing and not self.failed:
                 raise RuntimeError("local engine connection ended")
         except Exception as exc:
+            self._settle_gate("failed")
             if not self.closing and not self.failed:
                 fail_turn(self, self.down, exc)
         finally:
@@ -1330,6 +1385,9 @@ class HybridSession(Session):
 
     async def close(self):
         self.closing = True
+        # A turn cut down mid-flight keeps its shadow row as failed rather than
+        # losing the verdict the fast layer already paid for.
+        self._settle_gate("failed")
         for task in (self.timeout_task, self.reader_task):
             if task is not None:
                 task.cancel()
@@ -1769,6 +1827,12 @@ def resolve_settings(options):
                 "config/voice-gateway-url must use HTTPS, or HTTP with a loopback IP, without credentials")
         options.model = records.read_setting(
             home, "voice-gateway-model", "FM_VOICE_GATEWAY_MODEL") or "codex/gpt-6-astra"
+        # The fast layer is hybrid-only: it reads the transcript this engine
+        # already produces before the model runs, and engines without one keep
+        # paying model cost per turn rather than gaining a transcription stage
+        # to feed a gate. Its configuration is validated here so a misconfigured
+        # home refuses loudly instead of silently running without the gate.
+        options.gate = gate.VoiceGate(home)
         options.region = None
         options.profile = None
         options.voice = None
