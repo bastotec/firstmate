@@ -909,6 +909,199 @@ check(not reader.is_alive(), "close must end the blocks() generator")
 PY
 pass "the device mic end yields captured blocks and ends at close"
 
+# --- the device mic's health: denied silence is named, not rendered --------
+#
+# A microphone the system denies does not fail to open - it opens and
+# delivers digital silence, which is indistinguishable from not-heard
+# unless someone counts. The count is the product's own: after a bound of
+# all-zero input the HUD says so on the wire (mic-denied), once per silent
+# run, and a PortAudio status flag surfaces once per distinct flag.
+
+python3 - "$ROOT" <<'PY' || fail "mic health"
+import importlib.util, os, sys, types
+
+class StubRawInputStream:
+    instances = []
+    def __init__(self, samplerate, channels, dtype, blocksize, device,
+                 latency, callback):
+        self.settings = (samplerate, channels, dtype, blocksize, device, latency)
+        self.callback = callback
+        StubRawInputStream.instances.append(self)
+    def start(self):
+        pass
+    def stop(self):
+        pass
+    def close(self):
+        pass
+
+stub = types.ModuleType("sounddevice")
+stub.RawInputStream = StubRawInputStream
+stub.default = types.SimpleNamespace(device=[2, 9])
+sys.modules["sounddevice"] = stub
+
+spec = importlib.util.spec_from_file_location(
+    "micmod", os.path.join(sys.argv[1], "hud", "fm_voice_mic.py"))
+mic_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mic_mod)
+
+def check(cond, label):
+    if not cond:
+        sys.exit("mic health: " + label)
+
+silent = []
+status = []
+mic = mic_mod.DeviceMic(on_silent=lambda: silent.append(True),
+                        on_status=status.append,
+                        silent_after_blocks=4)
+stream = StubRawInputStream.instances[-1]
+check(stream.settings[4] == 2,
+      "the default input device must be picked explicitly: " + repr(stream.settings))
+
+zero = bytes(3200)
+loud = b"\x01\x02" * 1600
+
+# Three zero blocks stay quiet; the fourth crosses the bound and says so.
+for _ in range(3):
+    stream.callback(zero, 1600, None, None)
+check(silent == [], "zeros under the bound must stay quiet: " + repr(silent))
+stream.callback(zero, 1600, None, None)
+check(silent == [True], "the bound of all-zero input must fire once: " + repr(silent))
+for _ in range(5):
+    stream.callback(zero, 1600, None, None)
+check(silent == [True], "one notice per silent run: " + repr(silent))
+
+# Real audio resets the run, so a later silent run is news again.
+stream.callback(loud, 1600, None, None)
+check(silent == [True], "speech must never fire the silent notice")
+for _ in range(4):
+    stream.callback(zero, 1600, None, None)
+check(silent == [True, True],
+      "a fresh silent run after speech must be news again: " + repr(silent))
+
+# A PortAudio status flag surfaces once per distinct flag.
+stream.callback(zero, 1600, None, "input overflow")
+stream.callback(zero, 1600, None, "input overflow")
+check(status == ["input overflow"],
+      "each distinct status flag surfaces once: " + repr(status))
+PY
+pass "a denied-silent microphone is named on the wire after a bounded run"
+
+# --- synthetic zero input reaches the panel over the bridge wire ------------
+#
+# The synthetic reproduction of the captain's blocker: the shipped mic end
+# (no --mic-file) opens fine and delivers pure digital silence - exactly
+# what a denied TCC microphone produces. The notice path is the fix: the
+# panel hears mic-denied on the wire, the mic level events keep flowing so
+# the silence is visible, and the bridge stays quittable.
+
+SDSTUB_SILENT_MIC="$TMP_ROOT/sdstub-silent-mic"
+mkdir -p "$SDSTUB_SILENT_MIC"
+cat > "$SDSTUB_SILENT_MIC/sounddevice.py" <<'SDPY'
+import threading
+import time
+
+
+class RawOutputStream:
+    def __init__(self, **kwargs):
+        pass
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class _Default:
+    device = [0, 0]
+
+
+default = _Default()
+
+
+class RawInputStream:
+    """Delivers exactly what a microphone the system denies delivers:
+    digital silence, block after block, on the real cadence."""
+    def __init__(self, samplerate, channels, dtype, blocksize, device,
+                 latency, callback):
+        self.callback = callback
+        threading.Thread(target=self._pump, daemon=True).start()
+
+    def _pump(self):
+        time.sleep(0.3)
+        block = bytes(3200)
+        for _ in range(80):          # eight seconds of digital silence
+            self.callback(block, 1600, None, None)
+            time.sleep(0.05)
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def close(self):
+        pass
+SDPY
+
+python3 - "$ROOT" "$STUB" "$SDSTUB_SILENT_MIC" <<'PY' || fail "mic denial wire"
+import json, os, subprocess, sys, threading, time
+root, stub, sdstub = sys.argv[1], sys.argv[2], sys.argv[3]
+
+env = dict(os.environ)
+env.pop("FM_VOICE_HUD_DECODER", None)
+env["PYTHONPATH"] = sdstub + (
+    os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+
+proc = subprocess.Popen(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
+     "--stub-relay", stub],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
+
+events = []
+def read_events():
+    for line in proc.stdout:
+        line = line.strip()
+        if line:
+            events.append(json.loads(line))
+threading.Thread(target=read_events, daemon=True).start()
+
+# The mic level events flow while the input is silent (level 0, gate
+# listening), then the denial itself is named on the wire.
+deadline = time.monotonic() + 15
+while True:
+    mic_events = [e for e in events if e.get("type") == "mic"]
+    denied = any(e.get("type") == "notice" and e.get("event") == "mic-denied"
+                 for e in events)
+    if mic_events and denied:
+        break
+    if time.monotonic() > deadline:
+        proc.kill()
+        sys.exit("mic denial: the denial never reached the wire: " + repr(events))
+    time.sleep(0.1)
+
+check_level = all(e.get("level") == 0 and e.get("gate") == "listening"
+                  for e in mic_events)
+if not check_level:
+    sys.exit("mic denial: silent input must show level 0 at the listening gate: "
+             + repr(mic_events[:4]))
+
+proc.stdin.write("quit\n")
+proc.stdin.flush()
+try:
+    rc = proc.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    proc.kill()
+    sys.exit("mic denial: the bridge did not stay quittable")
+if rc != 0:
+    sys.exit("mic denial: the bridge must quit zero after naming a silent mic: "
+             + str(rc))
+PY
+pass "synthetic zero input reaches the panel as a mic-denied notice"
+
 # --- the decoder drain never owns the mic thread -------------------------------
 #
 # poll_transcripts() runs on the mic thread while the captain is talking, so
@@ -1214,6 +1407,13 @@ class PortAudioError(Exception):
     pass
 
 
+class _Default:
+    device = [0, 0]
+
+
+default = _Default()
+
+
 class RawOutputStream:
     def __init__(self, samplerate, channels, dtype, blocksize, device,
                  latency, callback):
@@ -1402,6 +1602,80 @@ check(b"\x01\x02" * 240 in played,
           len(played)))
 PY
 pass "the spoken reply reaches the output stream end to end and a quit drains its tail"
+
+# --- the live mic level and wake-gate state ride the wire ---------------------
+#
+# The debug surface that makes a silent room distinguishable from a mic not
+# heard: every block the mic end captures is reported with a 0..1 level and
+# the wake gate's own phase, so the panel can always show both. The speech
+# clip drives the level to its top and the scripted decoder walks the gate
+# from listening through the wake into the turn.
+
+python3 - "$ROOT" "$STUB" "$TMP_ROOT" <<'PY' || fail "mic level wire"
+import json, os, subprocess, sys, threading, time
+root, stub, tmp = sys.argv[1], sys.argv[2], sys.argv[3]
+
+speech = open(os.path.join(root, "tests/assets/voice-hud-speech.pcm"), "rb").read()
+silence = open(os.path.join(root, "tests/assets/voice-hud-silence.pcm"), "rb").read()
+mic_path = os.path.join(tmp, "mic-level.pcm")
+with open(mic_path, "wb") as fh:
+    fh.write(speech + silence * 2)
+
+env = dict(os.environ)
+env["FM_VOICE_HUD_DECODER"] = (
+    "python3 -c 'import sys, time; time.sleep(0.5); "
+    "print(\"Ziggy what time is it\"); sys.stdout.flush(); sys.stdin.read()'")
+proc = subprocess.Popen(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
+     "--stub-relay", stub, "--mic-file", mic_path],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
+
+events = []
+def read_events():
+    for line in proc.stdout:
+        line = line.strip()
+        if line:
+            events.append(json.loads(line))
+threading.Thread(target=read_events, daemon=True).start()
+
+deadline = time.monotonic() + 20
+while True:
+    mic_events = [e for e in events if e.get("type") == "mic"]
+    gates = [e.get("gate") for e in mic_events]
+    levels = [e.get("level", 0) for e in mic_events]
+    # The gate must cross listening -> in-turn and come back: the return
+    # happens only after the trailing silence has crossed the wire.
+    reopened = False
+    for i, gate in enumerate(gates):
+        if gate == "in-turn":
+            if "listening" in gates[i + 1:]:
+                reopened = True
+            break
+    if mic_events and reopened and max(levels) >= 0.5:
+        break
+    if time.monotonic() > deadline:
+        proc.kill()
+        sys.exit("mic level: the level and gate never crossed the wire: "
+                 + repr(mic_events[:6]))
+    time.sleep(0.1)
+
+if min(levels) != 0:
+    sys.exit("mic level: silence must report level 0: " + repr(sorted(set(levels))))
+if max(levels) < 0.5:
+    sys.exit("mic level: the speech clip must drive the level high: "
+             + str(max(levels)))
+
+proc.stdin.write("quit\n")
+proc.stdin.flush()
+try:
+    rc = proc.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    proc.kill()
+    sys.exit("mic level: the bridge did not stay quittable")
+if rc != 0:
+    sys.exit("mic level: the bridge must quit zero: " + str(rc))
+PY
+pass "the live mic level and wake-gate state ride the wire to the panel"
 
 # --- a failed turn reaches the panel with its reason --------------------------
 #

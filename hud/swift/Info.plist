@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>works.earendil.firstmate.voice-hud</string>
+	<key>CFBundleName</key>
+	<string>VoiceHUD</string>
+	<key>CFBundleExecutable</key>
+	<string>VoiceHUD</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>The HUD listens locally for its wake word; speech reaches the model only after the wake word fires.</string>
+</dict>
+</plist>

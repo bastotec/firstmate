@@ -13,15 +13,41 @@
 // the working directory; the panel finds the engine and wake layer from it.
 
 import AppKit
+import AVFoundation
 
 // ------------------------------------------------------------------ model
 
 let model = HUDModel()
 
+// The panel reads the microphone permission verdict itself, so a denied
+// microphone is a loud blocked face instead of a silent "listening". It is
+// re-read on app activation and whenever the panel gains focus, so flipping
+// the switch in System Settings is picked up without a relaunch.
+func micPermissionNow() -> MicPermission {
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized: return .granted
+    case .denied: return .denied
+    case .restricted: return .restricted
+    default: return .notDetermined
+    }
+}
+
+final class MicSettingsOpener: NSObject {
+    // The one deep link that matters when the mic is blocked: this app's
+    // own toggle in System Settings' microphone privacy pane.
+    @objc func open(_ sender: Any?) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+let micSettingsOpener = MicSettingsOpener()
+
 // ------------------------------------------------------------------ panel
 
 let panel = NSPanel(
-    contentRect: NSRect(x: 0, y: 0, width: 340, height: 84),
+    contentRect: NSRect(x: 0, y: 0, width: 340, height: 96),
     styleMask: [.borderless, .nonactivatingPanel],
     backing: .buffered,
     defer: false
@@ -37,7 +63,7 @@ panel.isOpaque = false
 panel.appearance = NSAppearance(named: .vibrantDark)
 
 // A rounded background view that is also the drag surface.
-let container = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 84))
+let container = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 96))
 container.wantsLayer = true
 container.layer?.cornerRadius = 18
 container.layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.82).cgColor
@@ -59,6 +85,25 @@ dot.layer?.backgroundColor = NSColor.systemGreen.cgColor
 dot.layer?.cornerRadius = 5
 dot.translatesAutoresizingMaskIntoConstraints = false
 
+// The wake gate's own phase, always named while it is not plain listening.
+let gateLabel = makeLabel("", size: 11, weight: .regular)
+gateLabel.textColor = NSColor(white: 1.0, alpha: 0.55)
+
+// The live mic level: a thin bar that always moves with the room, so a
+// silent room is never indistinguishable from a microphone not heard.
+let levelTrack = NSView()
+levelTrack.wantsLayer = true
+levelTrack.layer?.cornerRadius = 2
+levelTrack.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.14).cgColor
+levelTrack.translatesAutoresizingMaskIntoConstraints = false
+let levelFill = NSView()
+levelFill.wantsLayer = true
+levelFill.layer?.cornerRadius = 2
+levelFill.layer?.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.85).cgColor
+levelFill.translatesAutoresizingMaskIntoConstraints = false
+var levelFillWidth: NSLayoutConstraint!
+let levelTrackWidth: CGFloat = 308
+
 let transcriptLabel = makeLabel("", size: 12, weight: .regular)
 transcriptLabel.textColor = NSColor(white: 1.0, alpha: 0.72)
 transcriptLabel.lineBreakMode = NSLineBreakMode.byTruncatingTail
@@ -66,35 +111,77 @@ transcriptLabel.maximumNumberOfLines = 1
 transcriptLabel.cell?.truncatesLastVisibleLine = true
 transcriptLabel.cell?.wraps = false
 
+// The blocked face's way out: one button, deep-linking to this app's mic
+// toggle in System Settings. Hidden unless the microphone is blocked.
+let settingsButton = NSButton(title: "allow the microphone in settings…", target: micSettingsOpener, action: #selector(MicSettingsOpener.open(_:)))
+settingsButton.bezelStyle = .rounded
+settingsButton.controlSize = .small
+settingsButton.font = .systemFont(ofSize: 11, weight: .medium)
+settingsButton.translatesAutoresizingMaskIntoConstraints = false
+settingsButton.isHidden = true
+
 container.addSubview(dot)
 container.addSubview(stateLabel)
+container.addSubview(gateLabel)
+container.addSubview(levelTrack)
+levelTrack.addSubview(levelFill)
 panel.contentView?.addSubview(container)
 container.addSubview(transcriptLabel)
+container.addSubview(settingsButton)
 
-// Layout: dot left, state beside it, transcript below, inset margins.
+// Layout: dot left, state beside it, gate trailing, transcript below,
+// level bar along the bottom.
 NSLayoutConstraint.activate([
     container.widthAnchor.constraint(equalToConstant: 340),
-    container.heightAnchor.constraint(equalToConstant: 84),
+    container.heightAnchor.constraint(equalToConstant: 96),
 
     dot.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
     dot.centerYAnchor.constraint(equalTo: stateLabel.centerYAnchor),
 
     stateLabel.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 10),
-    stateLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
+    stateLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+
+    gateLabel.centerYAnchor.constraint(equalTo: stateLabel.centerYAnchor),
+    gateLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
 
     transcriptLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
     transcriptLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-    transcriptLabel.topAnchor.constraint(equalTo: stateLabel.bottomAnchor, constant: 6),
+    transcriptLabel.topAnchor.constraint(equalTo: stateLabel.bottomAnchor, constant: 4),
+
+    settingsButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+    settingsButton.centerYAnchor.constraint(equalTo: transcriptLabel.centerYAnchor),
+
+    levelTrack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+    levelTrack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+    levelTrack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
+    levelTrack.heightAnchor.constraint(equalToConstant: 4),
+
+    levelFill.leadingAnchor.constraint(equalTo: levelTrack.leadingAnchor),
+    levelFill.centerYAnchor.constraint(equalTo: levelTrack.centerYAnchor),
+    levelFill.heightAnchor.constraint(equalToConstant: 4),
 ])
+levelFillWidth = levelFill.widthAnchor.constraint(equalToConstant: 0)
+levelFillWidth.isActive = true
 
 func render() {
-    stateLabel.stringValue = model.labels[model.state] ?? model.state.rawValue
-    switch model.state {
-    case .listening: dot.layer?.backgroundColor = NSColor.systemGreen.cgColor
-    case .thinking: dot.layer?.backgroundColor = NSColor.systemYellow.cgColor
-    case .speaking: dot.layer?.backgroundColor = NSColor.systemBlue.cgColor
+    if model.micBlocked {
+        // Never a silent "listening" when the system says no: the blocked
+        // face is loud, red, and carries its own way out.
+        stateLabel.stringValue = model.blockedLabel
+        dot.layer?.backgroundColor = NSColor.systemRed.cgColor
+    } else {
+        stateLabel.stringValue = model.labels[model.state] ?? model.state.rawValue
+        switch model.state {
+        case .listening: dot.layer?.backgroundColor = NSColor.systemGreen.cgColor
+        case .thinking: dot.layer?.backgroundColor = NSColor.systemYellow.cgColor
+        case .speaking: dot.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        }
     }
-    if let line = model.transcript {
+    gateLabel.stringValue = model.gate == .listening ? "" : "gate: \(model.gate.rawValue)"
+    levelFillWidth.constant = levelTrackWidth * CGFloat(model.micLevel)
+    transcriptLabel.isHidden = model.micBlocked
+    settingsButton.isHidden = !model.micBlocked
+    if let line = model.transcript, !model.micBlocked {
         transcriptLabel.stringValue = "\(line.role == .user ? "you" : "ziggy"): \(line.text)"
     } else {
         transcriptLabel.stringValue = ""
@@ -108,7 +195,7 @@ if let screen = NSScreen.main {
     let visible = screen.visibleFrame
     let origin = NSPoint(
         x: visible.maxX - 340 - 24,
-        y: visible.maxY - 84 - 24
+        y: visible.maxY - 96 - 24
     )
     panel.setFrameOrigin(origin)
 }
@@ -148,6 +235,20 @@ final class HUDAppDelegate: NSObject, NSApplicationDelegate {
 let bridgeProcess = Bridge.launch(repoRoot: FileManager.default.currentDirectoryPath)
 app.delegate = HUDAppDelegate(bridge: bridgeProcess)
 
+// The permission verdict is read once at launch and re-read every time the
+// app activates or the panel gains focus, so flipping the mic toggle in
+// System Settings is picked up without a relaunch.
+model.applyPermission(micPermissionNow())
+func recheckMicPermission() {
+    model.applyPermission(micPermissionNow())
+}
+NotificationCenter.default.addObserver(
+    forName: NSApplication.didBecomeActiveNotification, object: nil,
+    queue: .main) { _ in recheckMicPermission() }
+NotificationCenter.default.addObserver(
+    forName: NSWindow.didBecomeKeyNotification, object: panel,
+    queue: .main) { _ in recheckMicPermission() }
+
 Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
     // Bridge events arrive on a background thread; AppKit drawing happens
     // on the main thread only.
@@ -159,6 +260,8 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             case .transcript(let role, let text):
                 model.transcriptLine(TranscriptLine(
                     role: role == "user" ? .user : .assistant, text: text))
+            case .mic(let level, let gate):
+                model.applyMic(level: level, gate: gate)
             case .notice(let event, let error):
                 // Notices the HUD must show rather than just carry: a dead
                 // engine or an abandoned turn leaves the mic deaf, and the
@@ -176,6 +279,16 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "no microphone - restart the HUD"))
+                case "mic-denied":
+                    // The device opened but delivers digital silence: the
+                    // same loud blocked face as a denied permission.
+                    model.applyMicDenial()
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant,
+                        text: "the microphone is silent - allow it in settings, then click the HUD"))
+                case "mic-status":
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant, text: "mic: \(error ?? "capture status")"))
                 case "turn-failed":
                     model.applyState("listening")
                     var text = "that turn failed - ask again"

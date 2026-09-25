@@ -14,6 +14,7 @@ enum BridgeEvent: Equatable {
     case state(String)
     case transcript(role: String, text: String)
     case notice(event: String, error: String?)
+    case mic(level: Double, gate: String)
 }
 
 final class Bridge {
@@ -92,6 +93,9 @@ final class Bridge {
         case "notice":
             return .notice(event: obj["event"] as? String ?? "",
                           error: obj["error"] as? String)
+        case "mic":
+            return .mic(level: obj["level"] as? Double ?? 0,
+                        gate: obj["gate"] as? String ?? "listening")
         default:
             return nil
         }

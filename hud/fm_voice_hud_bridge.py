@@ -161,9 +161,18 @@ def main():
     else:
         # The microphone is the shipped end: a python3 without sounddevice
         # or a machine with no input device says so on the wire, never a
-        # traceback the panel cannot see.
+        # traceback the panel cannot see. A device that opens but delivers
+        # digital silence - the signature of a microphone the system denied
+        # - is named on the wire too, once per silent run, instead of
+        # rendering a listening HUD that cannot hear.
         try:
-            mic = mic_mod.DeviceMic()
+            mic = mic_mod.DeviceMic(
+                on_silent=lambda: emit({
+                    "type": "notice", "event": "mic-denied",
+                    "error": "the microphone delivers digital silence - "
+                             "check microphone permission for this app"}),
+                on_status=lambda flag: emit({
+                    "type": "notice", "event": "mic-status", "error": flag}))
         except Exception as exc:              # noqa: BLE001
             emit({"type": "notice", "event": "mic-fault",
                   "error": "{}: {}".format(type(exc).__name__, exc)})
@@ -178,6 +187,12 @@ def main():
         on_notice=lambda event: emit({"type": "notice", "event": event}))
 
     stop = threading.Event()
+
+    def mic_level(block):
+        # A 0..1 display level for the panel: full bar near the loudness of
+        # normal desk speech, floor at silence. The panel always shows it, so
+        # a silent room is never indistinguishable from a mic not heard.
+        return min(1.0, wake_mod.block_energy(block) / 1e7)
 
     def run_mic():
         # The mic thread owns block timing; the director's decisions come
@@ -207,6 +222,8 @@ def main():
                 report_decoder_fault(str(exc))
                 return
             next_at += block_period
+            emit({"type": "mic", "level": round(mic_level(block), 3),
+                  "gate": director.phase})
             delay = next_at - time.monotonic()
             if delay > 0:
                 stop.wait(delay)

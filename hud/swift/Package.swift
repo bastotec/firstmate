@@ -10,7 +10,21 @@ let package = Package(
     name: "VoiceHUD",
     platforms: [.macOS(.v13)],
     targets: [
-        .executableTarget(name: "VoiceHUD", path: "Sources/VoiceHUD"),
+        .executableTarget(
+            name: "VoiceHUD",
+            path: "Sources/VoiceHUD",
+            linkerSettings: [
+                // Embed the app's Info.plist into the executable's __TEXT
+                // segment, so even a bare `swift run` binary carries
+                // NSMicrophoneUsageDescription and macOS raises the real
+                // microphone prompt for this app instead of silently
+                // denying it.
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT", "-Xlinker", "__info_plist",
+                    "-Xlinker", "Info.plist",
+                ]),
+            ]),
         .testTarget(name: "VoiceHUDTests", dependencies: ["VoiceHUD"],
                     path: "Tests/VoiceHUDTests"),
     ]
