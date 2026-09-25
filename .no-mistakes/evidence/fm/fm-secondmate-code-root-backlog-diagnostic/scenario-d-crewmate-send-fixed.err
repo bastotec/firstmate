@@ -1,0 +1,2 @@
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+fm-send: the steer is durably delivered at /tmp/fm-live-drive.c6lDvJ/scenario-d-doorbell/home/state/t1.inbox/001.msg; the doorbell did not reach sess:fm-t1 and the watcher will re-ring

@@ -1,0 +1,8 @@
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the requested message WILL still be sent.
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /tmp/fm-live-drive.c6lDvJ/scenario-d-doorbell/home/.pi/extensions/fm-primary-turnend-guard.ts -e /tmp/fm-live-drive.c6lDvJ/scenario-d-doorbell/home/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+fm-send: the steer is durably delivered at /tmp/fm-live-drive.c6lDvJ/scenario-d-doorbell/home/state/domain.inbox/001.msg; the doorbell did not reach sess:fm-domain and the watcher will re-ring

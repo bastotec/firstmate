@@ -1,0 +1,12 @@
+--- inbox directory ---
+total 16
+drwxr-xr-x@ 5 bastotecnologia  wheel  160 Sep 25 00:40 .
+drwxr-xr-x@ 7 bastotecnologia  wheel  224 Sep 25 00:40 ..
+-rw-------@ 1 bastotecnologia  wheel  112 Sep 25 00:40 001.msg
+-rw-------@ 1 bastotecnologia  wheel  112 Sep 25 00:40 002.msg
+drwxr-xr-x@ 2 bastotecnologia  wheel   64 Sep 25 00:40 handled
+--- record body ---
+[body] schema=fm-task-inbox.v1
+[body] at=2026-09-25T03:40:44Z
+[body] (marker line)
+[body] [fm-from-firstmate]⁣corr=b7ec118e117c593b second mate steer

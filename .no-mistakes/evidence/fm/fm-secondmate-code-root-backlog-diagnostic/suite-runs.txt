@@ -1,0 +1,42 @@
+Targeted suite runs (FM_LIVE=0 bin/fm-test-run.sh ...), all exit 0:
+
+tests/fm-tasks-axi.test.sh (family=unclassified, 29.8s)
+ok - bootstrap never names a code-root path to a home whose FM_HOME is elsewhere
+ok - bootstrap reports a regular code-root backlog to a home that is the code root
+ok - bootstrap reports a code-root backlog linked elsewhere and a forked archive
+ok - bootstrap stays silent when the code root is the home
+ok - bare tasks-axi replaced the code-root link and bootstrap reported the fork
+ok - fm-tasks-axi.sh writes, holds, archives, and reads relative body files through to the home from the code root
+ok - fm-tasks-axi.sh pins the home's backlog over an ambient TASKS_AXI_FILE and serves the dashboard
+ok - fm-tasks-axi.sh refuses caller --file, a symlinked home backlog, and an unresolvable home
+ok - fm-tasks-axi.sh keeps the single-home layout addressing its own code-root backlog
+
+Regression proof (base-commit code, fixed tests): the new guards fail on the base
+commit exactly as the intent describes:
+  not ok - the code-root backlog and archive of another home were reported to
+    this home (expected '', got 'BACKLOG_RECONCILE: code-root .../code/data/backlog.md
+    is not this home's .../home/data/backlog.md ...')
+  not ok - a failed doorbell must report the durable delivery first, not read as
+    a failed send (missing: 'the steer is durably delivered at')
+
+tests/fm-send-inbox.test.sh (family=backend-dispatch, 120.0s)
+ok - fm-send inbox: a failed doorbell is still a durably sent steer
+ok - fm-send inbox: a secondmate doorbell failure reports durable delivery, not a failed send
+(all 13 cases ok)
+
+tests/fm-deck-harness.test.sh (family=pure-contract-unit, 819.5s) - establishes the
+Deck second mate delivery contract the new notice relies on:
+ok - fm-deck-worker: a secondmate that cannot open a session stops for the guarded relaunch
+ok - (secondmate host fixture: watcher wakes and typed steers serialize as turns of one
+     Deck session; turn prompts carry 'Firstmate instruction waiting:' and the inbox
+     records are drained and moved to handled/)
+ok - the steering doorbell rings a live remote Deck driver and skips an absent one
+(all cases ok - suite prints 'fm-deck-harness: all cases passed')
+
+tests/fm-task-inbox.test.sh (family=watcher-wake-lock, 108.9s) - the re-ring ladder
+that owns delivery after the doorbell: all 20 cases ok, including
+ok - inbox: the ring skips dead or missing endpoints and still rings live or unclassifiable endpoints
+ok - inbox: the re-ring ladder paces by grace, escalates once, and resets on ack
+
+tests/fm-send-secondmate-marker.test.sh (family=secondmate, 36.7s): all 8 cases ok
+tests/fm-bootstrap.test.sh (family=session-bootstrap, 498.5s): all cases ok
