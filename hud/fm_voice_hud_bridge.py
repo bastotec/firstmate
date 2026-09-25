@@ -303,6 +303,8 @@ def main():
                 director.ziggy_speaking()
                 if collector is not None:
                     collector.feed(block, False)
+                emit({"type": "mic", "level": round(mic_level(block), 3),
+                      "gate": director.phase, "out": round(speaker.out_level, 3)})
                 next_at += block_period
                 delay = next_at - time.monotonic()
                 if paced and delay > 0:
@@ -325,7 +327,8 @@ def main():
                 return
             next_at += block_period
             emit({"type": "mic", "level": round(mic_level(block), 3),
-                  "gate": director.phase})
+                  "gate": director.phase,
+                  "out": round(speaker.out_level, 3) if speaker is not None else 0.0})
             delay = next_at - time.monotonic()
             if paced and delay > 0:
                 stop.wait(delay)

@@ -18,6 +18,8 @@ enum BridgeEvent: Equatable {
 }
 
 final class Bridge {
+    /// Latest output (Ziggy speaking) level from the bridge, 0...1.
+    static var outLevel: Double = 0
     private let process: Process
     private let queue = DispatchQueue(label: "hud.bridge.events")
     private var pending: [BridgeEvent] = []
@@ -94,6 +96,8 @@ final class Bridge {
             return .notice(event: obj["event"] as? String ?? "",
                           error: obj["error"] as? String)
         case "mic":
+            // Ziggy's own voice level rides on the mic event for the critter's mouth.
+            Bridge.outLevel = obj["out"] as? Double ?? 0
             return .mic(level: obj["level"] as? Double ?? 0,
                         gate: obj["gate"] as? String ?? "listening")
         default:

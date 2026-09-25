@@ -47,7 +47,7 @@ let micSettingsOpener = MicSettingsOpener()
 // ------------------------------------------------------------------ panel
 
 let panel = NSPanel(
-    contentRect: NSRect(x: 0, y: 0, width: 340, height: 96),
+    contentRect: NSRect(x: 0, y: 0, width: 220, height: 250),
     styleMask: [.borderless, .nonactivatingPanel],
     backing: .buffered,
     defer: false
@@ -63,7 +63,7 @@ panel.isOpaque = false
 panel.appearance = NSAppearance(named: .vibrantDark)
 
 // A rounded background view that is also the drag surface.
-let container = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 96))
+let container = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: 250))
 container.wantsLayer = true
 container.layer?.cornerRadius = 18
 container.layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.82).cgColor
@@ -232,6 +232,12 @@ muteButton.controlSize = .small
 muteButton.font = .systemFont(ofSize: 11, weight: .medium)
 muteButton.translatesAutoresizingMaskIntoConstraints = false
 
+// The face: the blob critter fills the top; state and the last line of
+// conversation sit under it; mute floats top-right. The old level bar and
+// gate label stay hidden: the critter shows both.
+let critter = CritterView(frame: NSRect(x: 0, y: 0, width: 220, height: 170))
+critter.translatesAutoresizingMaskIntoConstraints = false
+container.addSubview(critter)
 container.addSubview(dot)
 container.addSubview(muteButton)
 container.addSubview(stateLabel)
@@ -241,28 +247,37 @@ levelTrack.addSubview(levelFill)
 panel.contentView?.addSubview(container)
 container.addSubview(transcriptLabel)
 container.addSubview(settingsButton)
+gateLabel.isHidden = true
+levelTrack.isHidden = true
+transcriptLabel.maximumNumberOfLines = 2
+transcriptLabel.cell?.wraps = true
+transcriptLabel.lineBreakMode = .byWordWrapping
+stateLabel.font = .systemFont(ofSize: 13, weight: .semibold)
 
-// Layout: dot left, state beside it, gate trailing, transcript below,
-// level bar along the bottom.
 NSLayoutConstraint.activate([
-    container.widthAnchor.constraint(equalToConstant: 340),
-    container.heightAnchor.constraint(equalToConstant: 96),
+    container.widthAnchor.constraint(equalToConstant: 220),
+    container.heightAnchor.constraint(equalToConstant: 250),
 
-    dot.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+    critter.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
+    critter.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+    critter.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+    critter.heightAnchor.constraint(equalToConstant: 170),
+
+    muteButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+    muteButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+
+    dot.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
     dot.centerYAnchor.constraint(equalTo: stateLabel.centerYAnchor),
 
-    stateLabel.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 10),
-    stateLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-
-    muteButton.centerYAnchor.constraint(equalTo: stateLabel.centerYAnchor),
-    muteButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+    stateLabel.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
+    stateLabel.topAnchor.constraint(equalTo: critter.bottomAnchor, constant: 2),
 
     gateLabel.centerYAnchor.constraint(equalTo: stateLabel.centerYAnchor),
-    gateLabel.trailingAnchor.constraint(equalTo: muteButton.leadingAnchor, constant: -8),
+    gateLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
 
-    transcriptLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-    transcriptLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-    transcriptLabel.topAnchor.constraint(equalTo: stateLabel.bottomAnchor, constant: 4),
+    transcriptLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+    transcriptLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
+    transcriptLabel.topAnchor.constraint(equalTo: stateLabel.bottomAnchor, constant: 3),
 
     settingsButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
     settingsButton.centerYAnchor.constraint(equalTo: transcriptLabel.centerYAnchor),
@@ -297,15 +312,23 @@ func render() {
     // The glow stays on through the conversation window after a reply and
     // goes dark on the "stand-by" notice (quiet window over, or stood down).
     lastRenderedState = stateName
-    if model.micBlocked || muteToggler.muted {
-        glow.set(.off)
+    // The critter carries the glow now; the old edge ring stays off.
+    glow.set(.off)
+    if model.micBlocked {
+        critter.mode = .blocked
+    } else if muteToggler.muted {
+        critter.mode = .muted
     } else if model.state == .speaking {
-        glow.set(.speaking)
-    } else if glowAwake || model.state == .thinking {
-        glow.set(.awake)
+        critter.mode = .speaking
+    } else if model.state == .thinking {
+        critter.mode = .thinking
+    } else if glowAwake {
+        critter.mode = .awake
     } else {
-        glow.set(.off)
+        critter.mode = .idle
     }
+    critter.micLevel = model.micLevel
+    critter.outLevel = Bridge.outLevel
     gateLabel.stringValue = model.gate == .listening ? "" : "gate: \(model.gate.rawValue)"
     levelFillWidth.constant = levelTrackWidth * CGFloat(model.micLevel)
     transcriptLabel.isHidden = model.micBlocked

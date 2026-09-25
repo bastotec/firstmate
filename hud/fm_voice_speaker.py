@@ -38,6 +38,7 @@ class Speaker:
         # reads it to stay deaf to the HUD's own voice.
         self.last_sound = None
         self.muted = False
+        self.out_level = 0.0
         self._stream = sounddevice.RawOutputStream(
             samplerate=24000, channels=1, dtype="int16",
             blocksize=OUT_BLOCK, device=device, latency="low",
@@ -54,6 +55,14 @@ class Speaker:
         outdata[:take] = chunk
         if take:
             self.last_sound = time.monotonic()
+            # Loudness of what is playing, 0..1, for the critter's mouth.
+            samples = [int.from_bytes(chunk[i:i + 2], "little", signed=True)
+                       for i in range(0, take - 1, 64)]
+            if samples:
+                peak = max(abs(v) for v in samples)
+                self.out_level = min(1.0, peak / 12000.0)
+        else:
+            self.out_level = 0.0
         if take < want:
             outdata[take:want] = b"\x00" * (want - take)
 
