@@ -1,0 +1,5 @@
+case home: /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-gate-drive-mkiwre0w
+relay: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3BRKT89SJ4M6BA6HGX5MRX0/bin/fm-voice-relay.py
+exit=2
+stderr: fm-voice-relay: config/voice-gate-mode says act, but this build ships shadow only: act mode is follow-up work behind the shadow measurement; write shadow into /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-gate-drive-mkiwre0w/config/voice-gate-mode or set FM_VOICE_GATE_MODE
+REFUSE_OK=True

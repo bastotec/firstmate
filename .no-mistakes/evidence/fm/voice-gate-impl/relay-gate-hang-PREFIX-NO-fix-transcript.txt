@@ -1,0 +1,19 @@
+case home: /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-gate-drive-26lacd77
+relay: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3BRKT89SJ4M6BA6HGX5MRX0/.tmp-prefix/fm-voice-relay.py
+ready notice: {'event': 'ready', 'model': 'fixture/text-route', 'region': None, 'read_scope': 'counts', 'tail_ms': 1500, 'connect_seconds': 0.053}
+turn1: user='Please fix the login bug now.' assistant='On it.' audio_bytes=480 reply_end=0.01s notices=0
+helper spawns after turn 1: 0 (cold start spends none)
+turn2: user='Please fix the login bug now.' assistant='On it.' audio_bytes=480 reply_end=0.01s
+helper spawns after turn 2: 0
+helper is alive and mid-sleep: "start pid=79996 argv=['/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-gate-drive-26lacd77/stub-helper'] mode='hang'"
+BYE after QUIT: True (0.01s)
+relay exit=0 25.21s after QUIT
+shadow.log:
+  1790325089	e0d32180f6a5	shadow	heavy	cold-start	-	-	-	-	0	0	-	answered
+  1790325115	982f1ac259c5	shadow	heavy	bad-rows	-	-	-	-	0	0	-	answered
+usage.log:
+  1790325115	1	0	0	0	error
+leftover helper processes: ''
+stub-debug.log:
+  start pid=79996 argv=['/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-gate-drive-26lacd77/stub-helper'] mode='hang'
+HANG_OK=False

@@ -1,0 +1,19 @@
+case home: /var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-gate-drive-xnt1ti37
+relay: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3BRKT89SJ4M6BA6HGX5MRX0/bin/fm-voice-relay.py
+ready notice: {'event': 'ready', 'model': 'fixture/text-route', 'region': None, 'read_scope': 'counts', 'tail_ms': 1500, 'connect_seconds': 0.146}
+turn1: user='Please fix the login bug now.' assistant='On it.' audio_bytes=480 reply_end=0.02s notices=0
+helper spawns after turn 1: 0 (cold start spends none)
+turn2: user='Please fix the login bug now.' assistant='On it.' audio_bytes=480 reply_end=0.01s
+helper spawns after turn 2: 0
+shadow rows settled 0.74s after turn 2 reply
+BYE after QUIT: True (0.01s)
+relay exit=0 0.15s after QUIT
+shadow.log:
+  1790325033	a295f7af7ec1	shadow	heavy	cold-start	-	-	-	-	0	0	-	answered
+  1790325033	9df26d171c98	shadow	fast-handover	hand-over	real_work	0.1000	0.9000	0.1000	360	713	Handing that to the first mate. It is queued.	answered
+usage.log:
+  1790325033	1	713	112	360	ok
+leftover helper processes: ''
+stub-debug.log:
+  start pid=82438 argv=['/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-gate-drive-xnt1ti37/stub-helper'] mode='answer'
+SHADOW_OK=True

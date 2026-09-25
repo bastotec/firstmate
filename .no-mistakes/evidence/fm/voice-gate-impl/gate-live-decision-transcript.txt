@@ -1,0 +1,13 @@
+gate enabled: True
+decision 1 (cold start): route=heavy why=cold-start calls=0
+decision 2 (live call):   route=fast-script why=script intent=smalltalk needs_records=0.0900 hand_over=0.0200 answerable_fast=0.9400 gate_ms=725 in_tok=715 out_tok=113 calls=1 outcome=ok (0.96s wall)
+  pre-rendered line: 'All good here. Ask me anything about the fleet.'
+usage.log rows:
+  1790325169	1	715	113	725	ok
+$ fm_voice_gate.py report --home <case>
+  no shadow decisions recorded
+$ fm_voice_gate.py cost --home <case>
+  calls=1 input_tokens=715 output_tokens=113
+  per_decision_cost_usd mean=0.000030030 max=0.000030030
+  ceiling_usd=0.0001 verdict=inside
+LIVE_OK=True
