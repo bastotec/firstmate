@@ -24,6 +24,8 @@ final class CritterView: NSView {
     private var timer: Timer?
 
     override var isFlipped: Bool { true }
+    // The window has no background left to grab, so the critter is the handle.
+    override var mouseDownCanMoveWindow: Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
