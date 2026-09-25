@@ -174,7 +174,19 @@ SYSTEM_PROMPT = (
     "their own words. Then confirm it is queued. Never say you have done, "
     "started, fixed or built anything yourself.\n"
     "\n"
-    "Speak in one or two short sentences. You are being listened to, not read."
+    "Speak in one or two short sentences. You are being listened to, not read.\n"
+    "\n"
+    "Never make the captain wait on a slow answer. When a question needs more "
+    "than get_fleet_status gives you - names, details, reasons, history, what a "
+    "worker is doing, what the first mate thinks, anything you would have to "
+    "look up or decide - call ask_firstmate with the question, say one short "
+    "sentence such as \"I've asked the first mate, I'll tell you when it "
+    "answers\", and keep talking with the captain meanwhile. Do not guess the "
+    "answer and do not wait for it.\n"
+    "\n"
+    "A message that starts with [Background answer] is the first mate's reply "
+    "to an earlier ask_firstmate question. Tell the captain the answer right "
+    "away in one or two short sentences, starting with what it is about."
 )
 
 TOOLS = {"tools": [
@@ -203,6 +215,26 @@ TOOLS = {"tools": [
         })},
     }},
 ]}
+
+# Offered only by the hybrid engine: the answer arrives later and is spoken
+# unprompted, which only the persistent Realtime session can do.
+ASK_TOOL = {"toolSpec": {
+        "name": "ask_firstmate",
+        "description": (
+            "Ask the first mate a question you cannot answer from "
+            "get_fleet_status: details, names, reasons, history, what a "
+            "worker is doing, or anything needing judgement. Returns at once; "
+            "the answer arrives later as a [Background answer] message, "
+            "usually within a minute. Say you asked and keep talking."),
+        "inputSchema": {"json": json.dumps({
+            "type": "object",
+            "properties": {"question": {
+                "type": "string",
+                "description": "The captain's question, self-contained.",
+            }},
+            "required": ["question"],
+        })},
+    }}
 
 
 def log(enabled, message):
@@ -549,6 +581,8 @@ class Session:
         self.home = options.home or records.default_home()
         self.scope = options.scope or records.read_scope(self.home)
         self.root = os.path.dirname(os.path.abspath(__file__))
+        # ask_firstmate jobs still running; held so they are not collected.
+        self.background = set()
 
     # ---------------------------------------------------------------- protocol
 
@@ -891,6 +925,22 @@ class Session:
                 # would otherwise stop the relay reading the captain's audio.
                 result = await asyncio.to_thread(
                     records.fleet_status, self.home, self.scope)
+            elif name == "ask_firstmate":
+                question = (arguments.get("question") or "").strip()
+                if not question:
+                    result = {"error": "ask_firstmate needs a question"}
+                elif not hasattr(self, "deliver_background"):
+                    result = {"error": "background questions need the hybrid engine"}
+                else:
+                    ticket = uuid.uuid4().hex[:8]
+                    task = asyncio.create_task(self._ask_in_background(ticket, question))
+                    self.background.add(task)
+                    task.add_done_callback(self.background.discard)
+                    self.down.send_json(frame.NOTICE, {
+                        "event": "asked", "ticket": ticket, "question": question})
+                    result = {"status": "asked", "ticket": ticket,
+                              "note": "The answer will arrive later as a [Background "
+                                      "answer] message. Do not wait for it."}
             elif name == "hand_over_to_firstmate":
                 request = (arguments.get("request") or "").strip()
                 result = await asyncio.to_thread(
@@ -905,6 +955,17 @@ class Session:
         except Exception as exc:                       # noqa: BLE001
             result = {"error": "{}: {}".format(type(exc).__name__, exc)}
         return result
+
+
+    # ------------------------------------------------------- background asks
+
+    async def _ask_in_background(self, ticket, question):
+        """Run the slow, smart answer off the conversation: a read-only agent
+        over the first mate's home, whose reply is spoken when it lands."""
+        answer = await asyncio.to_thread(
+            records.ask_thinker, question, self.home, self.root)
+        self.down.send_json(frame.NOTICE, {"event": "answered", "ticket": ticket})
+        await self.deliver_background(question, answer)
 
 
 class HybridSession(Session):
@@ -924,17 +985,53 @@ class HybridSession(Session):
     # one frame each way: anything slower is a dead path, not a slow one.
     link_verify_timeout = 5.0
 
+    # Seconds a background answer waits for the captain's turn to finish
+    # before it is dropped instead of spoken over a later conversation.
+    deliver_patience = 300.0
+
+    def _idle(self):
+        return (not self.failed and not self.closing
+                and self.audio_content is None and not self.pending_tools
+                and (not self.turn or self.turn_done.is_set()))
+
+    async def deliver_background(self, question, answer):
+        """Speak a background answer as soon as no turn is in progress."""
+        async with self.deliver_lock:
+            waited = 0.0
+            while not self._idle():
+                if self.failed or self.closing or waited >= self.deliver_patience:
+                    log(self.verbose, "background answer dropped: {}".format(question))
+                    return
+                await asyncio.sleep(0.25)
+                waited += 0.25
+            now = time.monotonic()
+            self.turn = {"began": now, "talk_end": now, "background": True}
+            self.tool_calls = 0
+            self.tool_names = []
+            self.pending_tools = False
+            self.turn_done.clear()
+            self.down.arm_turn()
+            await self._send({"type": "conversation.item.create", "item": {
+                "type": "message", "role": "user", "content": [{
+                    "type": "input_text",
+                    "text": "[Background answer] to the captain's question \"{}\": {}".format(
+                        question, answer)}]}})
+            await self._send({"type": "response.create"})
+            self.timeout_task = asyncio.create_task(self._deadline())
+            await self.turn_done.wait()
+
     async def start(self):
         self.connect_seconds = 0
         self.timeout_task = None
         self.pending_tools = False
+        self.deliver_lock = asyncio.Lock()
         began = time.monotonic()
         try:
             # Optional: installed by the speech stack in its own virtualenv.
             # Bedrock-only homes never import it or any local model dependency.
             await self._open_stream()
             tools = []
-            for entry in TOOLS["tools"]:
+            for entry in TOOLS["tools"] + [ASK_TOOL]:
                 spec = entry["toolSpec"]
                 tools.append({"type": "function", "name": spec["name"],
                               "description": spec["description"],

@@ -542,6 +542,45 @@ def queue_request(text, home=None, root=None):
     }
 
 
+# The background thinker behind ask_firstmate: a read-only headless agent over
+# the first mate's home. It is slow (tens of seconds) on purpose - it is the
+# smart half, and the conversation never waits on it.
+THINKER_TIMEOUT = 240
+THINKER_TOOLS = "read,ls,grep,find"
+THINKER_PROMPT = (
+    "You answer the captain's spoken questions about this firstmate home by "
+    "reading its records (state/, data/, config/ and the project docs). You "
+    "are read-only: never edit, write or run commands that change anything. "
+    "Answer in at most three short spoken sentences, plain words, no "
+    "markdown, no lists, no file paths. If the records do not say, say so.")
+
+
+def ask_thinker(question, home=None, root=None):
+    """Answer one question with the background agent; always returns text."""
+    home = home or default_home()
+    route = read_setting(home, "voice-thinker-model", env="FM_VOICE_THINKER_MODEL")
+    if not route:
+        return "The first mate's background agent has no model configured."
+    command = read_setting(home, "voice-thinker-command",
+                           env="FM_VOICE_THINKER_COMMAND") or "pi"
+    provider, _, model = route.partition("/")
+    argv = [command, "--no-session", "-p", "--provider", provider,
+            "--model", model, "--thinking", "off", "--tools", THINKER_TOOLS,
+            "--append-system-prompt", THINKER_PROMPT, question]
+    try:
+        # stdin closed: pi -p also reads piped stdin and would wait on it forever.
+        done = subprocess.run(argv, cwd=home, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, timeout=THINKER_TIMEOUT)
+    except FileNotFoundError:
+        return "The first mate's background agent is not installed here."
+    except subprocess.TimeoutExpired:
+        return "The first mate took too long to answer that one."
+    answer = (done.stdout or "").strip()
+    if done.returncode != 0 or not answer:
+        return "The first mate could not answer that right now."
+    return answer[-1500:]
+
+
 def main(argv):
     parser = argparse.ArgumentParser(
         prog="fm_voice_records.py", description=__doc__.splitlines()[0],

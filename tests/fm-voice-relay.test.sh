@@ -455,6 +455,15 @@ names = sorted(t["toolSpec"]["name"] for t in relay.TOOLS["tools"])
 if names != ["get_fleet_status", "hand_over_to_firstmate"]:
     sys.exit("relay declares unexpected tools: %s" % names)
 
+# The background question tool has to take the question, or the agent can say
+# it asked the first mate without asking anything.
+ask = relay.ASK_TOOL["toolSpec"]
+if ask["name"] != "ask_firstmate":
+    sys.exit("the hybrid-only tool must be ask_firstmate")
+import json as _json
+if _json.loads(ask["inputSchema"]["json"]).get("required") != ["question"]:
+    sys.exit("ask_firstmate must require the question text")
+
 # The handover tool has to take the request text, or the agent can announce a
 # handover it never performed.
 handover = [t["toolSpec"] for t in relay.TOOLS["tools"]
