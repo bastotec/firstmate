@@ -249,6 +249,11 @@ def main():
         # is the next turn.
         block_period = mic_mod.BLOCK / 16000.0
         next_at = time.monotonic()
+        # Only a file needs pacing to real time. A live microphone already
+        # delivers blocks at that rate; pacing it too meant audio queued while
+        # the HUD started (seconds of it) was drained at exactly real speed and
+        # never caught up, leaving the whole HUD that far behind the captain.
+        paced = isinstance(mic, mic_mod.FileMic)
         for block in mic.blocks():
             if stop.is_set():
                 return
@@ -256,14 +261,14 @@ def main():
                 next_at += block_period
                 emit({"type": "mic", "level": 0.0, "gate": "muted"})
                 delay = next_at - time.monotonic()
-                if delay > 0:
+                if paced and delay > 0:
                     stop.wait(delay)
                 continue
             if speaker is not None and speaker.sounding():
                 # The HUD's own voice: never decoded, never a wake.
                 next_at += block_period
                 delay = next_at - time.monotonic()
-                if delay > 0:
+                if paced and delay > 0:
                     stop.wait(delay)
                 continue
             try:
@@ -283,7 +288,7 @@ def main():
             emit({"type": "mic", "level": round(mic_level(block), 3),
                   "gate": director.phase})
             delay = next_at - time.monotonic()
-            if delay > 0:
+            if paced and delay > 0:
                 stop.wait(delay)
 
     mic_thread = threading.Thread(target=run_mic, daemon=True)
