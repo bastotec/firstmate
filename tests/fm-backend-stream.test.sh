@@ -1257,6 +1257,30 @@ PY
     waited=$((waited + 1))
   done
   assert_grep '"fixture pending input"' "$home/turns" "fixture input was never handled"
+  # The exit gate's verified composer clear, consumed by the REAL driver: the
+  # same adapter calls the gate makes (bin/fm-control.sh gate_exit_composer via
+  # fm_control_composer_clear_keys deck), delivered onto a pane holding echoed
+  # but unsubmitted text. The driver must discard the whole line carrying the
+  # Ctrl+U clear byte - so the concatenated text can never become a turn - and
+  # repaint its prompt, turning the reading back into a proven-empty composer
+  # that the exit command can then be typed into without concatenating.
+  with_stream_env fm_backend_stream_send_literal "$target" 'fixture gate clear text' \
+    || fail "could not type the gate-clear partial input"
+  wait_for_capture "$target" 'fixture gate clear text' || fail "gate-clear input was not rendered"
+  for key in C-u Enter; do
+    with_stream_env fm_backend_send_key stream "$target" "$key" \
+      || fail "could not deliver the gate's clear key $key"
+  done
+  waited=0
+  while [ "$(with_stream_env fm_backend_composer_state stream "$target")" != empty ] \
+    && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$(with_stream_env fm_backend_composer_state stream "$target")" empty \
+    "the gate's C-u + Enter clear must return the driver to a provably empty composer"
+  assert_no_grep 'fixture gate clear text' "$home/turns" \
+    "the cleared line must be discarded whole, never submitted as a Deck turn"
   out=$(host_command fm-control.sh "$id" exit 2>&1) || fail "idle exit failed: $out"
   pass "stream: idle Deck exits; genuine pending text refuses without stopping the host"
   assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" dead "exit must leave no agent"
