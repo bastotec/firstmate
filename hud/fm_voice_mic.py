@@ -80,6 +80,12 @@ class FileMic:
         except OSError:
             pass
 
+    def discard_pending(self):
+        """Drop blocks captured but not yet read. Nothing is ever pending
+        here: the file is read on demand, so no block can pile up while the
+        mic thread waits out a turn's reply."""
+        return 0
+
 
 class DeviceMic:
     """Capture from the microphone. UNVERIFIED: written from the sounddevice
@@ -153,6 +159,29 @@ class DeviceMic:
         # The sentinel is last: stop() has already waited out any running
         # callback, so nothing queues behind it and blocks() ends.
         self._q.put(None)
+
+    def discard_pending(self):
+        """Drop every block already captured and not yet read, returning how
+        many.
+
+        The reply window's one suppression point: the mic thread waits out
+        a turn's reply inside end_turn while this device keeps capturing,
+        and every block queued in that window is the HUD's own spoken
+        answer coming back through the room - the HUD must never transcribe
+        itself, or a reply that speaks the wake word wakes it. The close
+        sentinel survives, because close() promises the sentinel ends the
+        stream.
+        """
+        dropped = 0
+        while True:
+            try:
+                block = self._q.get_nowait()
+            except queue.Empty:
+                return dropped
+            if block is None:
+                self._q.put(None)
+                return dropped
+            dropped += 1
 
 
 class DecoderCommand:
@@ -263,6 +292,9 @@ class TurnDirector:
       decoder transcripts).
     - Only a wake opens a turn; while a turn is open every block goes to the
       engine; when the gate goes quiet past its hangover the turn ends.
+    - A turn's reply never reaches the wake layer: blocks captured while the
+      reply played are the HUD's own voice, and are dropped before listening
+      resumes, so the HUD cannot wake itself.
     - A wake into silence never opens a turn: after POST_WAKE_SPEECH_TIMEOUT
       the HUD reports no-speech and re-arms, because a silent turn would cost
       the captain a model turn and answer nothing.
@@ -273,7 +305,7 @@ class TurnDirector:
     IN_TURN = "in-turn"
 
     def __init__(self, engine, gate, keyword, decoder, on_notice=None,
-                 speech_timeout=POST_WAKE_SPEECH_TIMEOUT):
+                 speech_timeout=POST_WAKE_SPEECH_TIMEOUT, mic=None):
         self.engine = engine
         self.gate = gate
         self.keyword = keyword
@@ -282,7 +314,8 @@ class TurnDirector:
         self.speech_timeout = speech_timeout
         self.phase = self.LISTENING
         self._wake_at = None
-        self._turned = False
+        # The mic end whose reply-window blocks the turn close discards.
+        self.mic = mic
 
     def feed(self, block, now):
         """Feed one block at monotonic time `now`. Returns the phase after.
@@ -307,7 +340,18 @@ class TurnDirector:
             # Silence or room tone, whatever the hangover says about the
             # pause. The block itself is forwarded nowhere.
             if self.phase == self.IN_TURN and not channel:
-                self.engine.end_turn()
+                try:
+                    self.engine.end_turn()
+                finally:
+                    # The reply window: this thread was held inside end_turn
+                    # for the whole answer while the mic kept capturing, and
+                    # every block that piled up is the reply's own echo -
+                    # dropped here, before listening resumes, so the decoder
+                    # never hears the HUD speak and a reply that says the
+                    # wake word cannot wake it. The discard runs on the
+                    # timeout path too: those blocks are just as stale.
+                    if self.mic is not None:
+                        self.mic.discard_pending()
                 self.phase = self.LISTENING
                 self._wake_at = None
             elif self.phase == self.IN_WAKE and \

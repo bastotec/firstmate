@@ -184,7 +184,8 @@ def main():
 
     director = mic_mod.TurnDirector(
         engine, wake_mod.EnergyGate(), wake_mod.KeywordListener(), decoder,
-        on_notice=lambda event: emit({"type": "notice", "event": event}))
+        on_notice=lambda event: emit({"type": "notice", "event": event}),
+        mic=mic)
 
     stop = threading.Event()
 

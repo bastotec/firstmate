@@ -966,6 +966,184 @@ check(engine.begun == 1,
 PY
 pass "a late final line from a finished turn never arms a stale wake"
 
+# --- the HUD never hears its own reply ----------------------------------------
+#
+# The mic thread waits out a turn's reply inside end_turn while the device
+# keeps capturing: every block queued in that window is the reply's own echo
+# through the room. Fed to the decoder, that transcribes every answer, and a
+# reply that speaks the wake word wakes the HUD on its own voice and spends
+# a model turn nobody asked for. The turn's close discards them all - one
+# suppression point, before listening resumes.
+
+python3 - "$ROOT" <<'PY' || fail "reply echo"
+import importlib.util, math, os, queue, struct, sys
+root = sys.argv[1]
+
+def load(name, relpath):
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(root, relpath))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+wake = load("wake", "hud/fm_voice_wake.py")
+mic_mod = load("micmod", "hud/fm_voice_mic.py")
+
+def check(cond, label):
+    if not cond:
+        sys.exit("reply echo: " + label)
+
+class QueueMic:
+    """The device end's queue contract: a callback fills it from another
+    thread while the mic thread is held, and discard_pending drops the
+    backlog - what the real DeviceMic does through its own queue."""
+    def __init__(self):
+        self.q = queue.SimpleQueue()
+        self.discarded = 0
+    def push(self, block):
+        self.q.put(block)
+    def blocks(self):
+        while True:
+            block = self.q.get()
+            if block is None:
+                return
+            yield block
+    def discard_pending(self):
+        while True:
+            try:
+                block = self.q.get_nowait()
+            except queue.Empty:
+                return 0
+            if block is None:
+                self.q.put(None)
+                return 0
+            self.discarded += 1
+    def close(self):
+        self.q.put(None)
+
+class EchoEngine:
+    """end_turn holds the mic thread for the reply while the room feeds the
+    mic the reply's own echo: loud blocks, exactly as a speaker sounds to a
+    microphone sitting beside it."""
+    def __init__(self, mic, echo_blocks, echo):
+        self.mic = mic
+        self.echo_blocks = echo_blocks
+        self.echo = echo
+        self.begun = 0
+        self.ended = 0
+    def begin_turn(self):
+        self.begun += 1
+    def feed(self, pcm):
+        pass
+    def end_turn(self):
+        self.ended += 1
+        for _ in range(self.echo_blocks):
+            self.mic.push(self.echo)
+
+class UtteranceDecoder:
+    """A line lands once its utterance ran long enough - five voiced blocks.
+    Any speech the decoder hears after the first wake says the wake word,
+    exactly as the echo of a reply that names the captain would."""
+    def __init__(self, need=5):
+        self.need = need
+        self.fed = 0
+        self._run = 0
+    def start(self):
+        pass
+    def feed(self, block):
+        self.fed += 1
+        self._run += 1
+        return []
+    def poll_transcripts(self):
+        if self._run >= self.need:
+            self._run = 0
+            return ["Ziggy"]
+        return []
+    def close(self):
+        pass
+
+loud = b"".join(
+    struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * i / 16000)))
+    for i in range(1600)) * 2
+zero = bytes(3200)
+
+mic = QueueMic()
+engine = EchoEngine(mic, echo_blocks=40, echo=loud)
+decoder = UtteranceDecoder()
+notices = []
+director = mic_mod.TurnDirector(
+    engine, wake.EnergyGate(), wake.KeywordListener(), decoder,
+    on_notice=notices.append, mic=mic)
+stream = mic.blocks()
+
+def run(count, t):
+    for _ in range(count):
+        director.feed(next(stream), t)
+        t += 0.1
+    return t
+
+# The wake utterance: five loud blocks arm the wake on its transcript.
+for _ in range(5):
+    mic.push(loud)
+t = run(5, 0.0)
+check(director.phase == "in-wake", "the wake must arm: " + director.phase)
+check(notices == ["wake"], "the wake must be noticed: " + repr(notices))
+
+# Speech follows the wake: the turn opens and streams to the engine alone.
+mic.push(loud)
+t = run(1, t)
+check(director.phase == "in-turn" and engine.begun == 1,
+      "the turn must open on post-wake speech: " + director.phase)
+for _ in range(3):
+    mic.push(loud)
+t = run(3, t)
+check(decoder.fed == 5,
+      "turn speech must never reach the decoder: fed=" + str(decoder.fed))
+
+# Quiet past the hangover ends the turn; end_turn holds the thread while
+# the reply plays and forty echo blocks pile up behind it. Each quiet block
+# is pushed and pulled one at a time, as the device produces them: the
+# discard drains everything queued at the close, which in the product is
+# exactly the reply window's capture.
+closed = False
+for _ in range(10):
+    mic.push(zero)
+    director.feed(next(stream), t)
+    t += 0.1
+    if engine.ended == 1:
+        closed = True
+check(closed and director.phase == "listening",
+      "the turn must close on quiet: " + director.phase)
+check(mic.discarded == 40,
+      "every block captured while the reply played must be dropped: "
+      + str(mic.discarded))
+check(decoder.fed == 5,
+      "the reply's echo must never reach the decoder: fed=" + str(decoder.fed))
+
+# Fresh speech after the reply still reaches the decoder; the stream ends
+# at the sentinel, so a broken discard that leaves the echo queued shows up
+# here as extra pulled blocks, a wake on the echo, or a second turn.
+for _ in range(2):
+    mic.push(loud)
+mic.close()
+pulled = 0
+for block in stream:
+    director.feed(block, t)
+    t += 0.1
+    pulled += 1
+check(pulled == 2, "only fresh blocks may remain after the reply: "
+      + str(pulled))
+check(decoder.fed == 7,
+      "fresh post-reply speech must still reach the decoder: fed="
+      + str(decoder.fed))
+check(director.phase == "listening",
+      "the echo must not arm a wake: " + director.phase)
+check(engine.begun == 1,
+      "the reply's echo must never open a model turn: begun="
+      + str(engine.begun))
+PY
+pass "the HUD never hears its own reply"
+
 # --- the device mic end, against a stub sounddevice ---------------------------
 #
 # The real capture end cannot run here - no audio device exists in a worker
@@ -1034,6 +1212,36 @@ check(stream.stopped == 1 and stream.closed == 1,
       "close must stop and close the stream")
 reader.join(timeout=2)
 check(not reader.is_alive(), "close must end the blocks() generator")
+
+# The reply window's discard on the real end: blocks queued while the mic
+# thread was held never reach a reader, and the close sentinel survives.
+mic2 = mic_mod.DeviceMic(device=3)
+stream2 = StubRawInputStream.instances[-1]
+echo1 = b"\x05\x06" * 1600
+echo2 = b"\x07\x08" * 1600
+fresh = b"\x09\x0a" * 1600
+stream2.callback(echo1, 1600, None, None)
+stream2.callback(echo2, 1600, None, None)
+check(mic2.discard_pending() == 2,
+      "the discard must drop exactly the queued blocks")
+stream2.callback(fresh, 1600, None, None)
+blocks2 = []
+def collect2():
+    for block in mic2.blocks():
+        blocks2.append(block)
+reader2 = threading.Thread(target=collect2, daemon=True)
+reader2.start()
+deadline = time.monotonic() + 2
+while len(blocks2) < 1 and time.monotonic() < deadline:
+    time.sleep(0.02)
+check(blocks2 == [fresh],
+      "only post-discard blocks may reach a reader: " + repr(blocks2))
+stream2.callback(echo1, 1600, None, None)
+mic2.close()
+mic2.discard_pending()
+reader2.join(timeout=2)
+check(not reader2.is_alive(),
+      "the close sentinel must survive a discard")
 PY
 pass "the device mic end yields captured blocks and ends at close"
 

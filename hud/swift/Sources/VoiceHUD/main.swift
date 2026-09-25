@@ -316,8 +316,11 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                 case "renewed":
                     // A successful (re)connect: the failure line this
                     // renewal recovered from is cleared here, never left to
-                    // caption a healthy listening HUD.
-                    model.applyState("listening")
+                    // caption a healthy listening HUD. The state stays as
+                    // announced - the turn whose TALK_START renewed the
+                    // session is still open, still thinking, and a renewal
+                    // outside a turn always finds the state listening
+                    // already.
                     model.clearTranscript()
                 case "turn-failed":
                     model.applyState("listening")

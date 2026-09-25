@@ -170,11 +170,7 @@ class KeywordListener:
 
     def __init__(self, config=None):
         self.config = config or default_config()
-        self.last_match = None
 
     def feed(self, text):
         """Return True exactly when text contains the wake word."""
-        woke = self.config.matches(text)
-        if woke:
-            self.last_match = text
-        return woke
+        return self.config.matches(text)
