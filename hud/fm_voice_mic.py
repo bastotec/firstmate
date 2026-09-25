@@ -48,6 +48,16 @@ SILENT_NOTICE_AFTER_SECONDS = 2.0
 # a wake into silence must not cost the captain a model turn.
 POST_WAKE_SPEECH_TIMEOUT = 5.0
 
+# Seconds the echo guard holds past the machine's output going quiet: room
+# reverb and the drain's own granularity, on the order of the gate's
+# hangover rather than the reply's length.
+ECHO_TAIL_SECONDS = 1.0
+
+# Overall bound on the echo guard after a turn closes. Playback itself is
+# bounded by the same fact the bridge's quit drain waits out, so a speaker
+# whose buffer never drains must not deafen the HUD for good.
+ECHO_SETTLE_TIMEOUT = 30.0
+
 
 class DecoderError(Exception):
     """The decoder child stopped taking audio, so the HUD can never wake."""
@@ -293,8 +303,9 @@ class TurnDirector:
     - Only a wake opens a turn; while a turn is open every block goes to the
       engine; when the gate goes quiet past its hangover the turn ends.
     - A turn's reply never reaches the wake layer: blocks captured while the
-      reply played are the HUD's own voice, and are dropped before listening
-      resumes, so the HUD cannot wake itself.
+      reply played, or while its sound still drained from the speaker past
+      the wire's reply_end mark, are the HUD's own voice and are dropped,
+      so the HUD cannot wake itself.
     - A wake into silence never opens a turn: after POST_WAKE_SPEECH_TIMEOUT
       the HUD reports no-speech and re-arms, because a silent turn would cost
       the captain a model turn and answer nothing.
@@ -305,7 +316,8 @@ class TurnDirector:
     IN_TURN = "in-turn"
 
     def __init__(self, engine, gate, keyword, decoder, on_notice=None,
-                 speech_timeout=POST_WAKE_SPEECH_TIMEOUT, mic=None):
+                 speech_timeout=POST_WAKE_SPEECH_TIMEOUT, mic=None,
+                 reply_pending=None):
         self.engine = engine
         self.gate = gate
         self.keyword = keyword
@@ -316,6 +328,12 @@ class TurnDirector:
         self._wake_at = None
         # The mic end whose reply-window blocks the turn close discards.
         self.mic = mic
+        # Whether the machine's own output is still playing, asked while
+        # the echo guard holds past the turn's close. Absent means the
+        # machine makes no sound and no guard is needed.
+        self._reply_pending = reply_pending
+        self._echo_deadline = None
+        self._quiet_since = None
 
     def feed(self, block, now):
         """Feed one block at monotonic time `now`. Returns the phase after.
@@ -333,6 +351,21 @@ class TurnDirector:
         relay and cost a model turn whenever the captain said the wake word
         and then paused.
         """
+        if self._echo_deadline is not None:
+            # The echo guard's settle window: reply_end releasing the turn
+            # says the answer crossed the wire, not that it finished playing
+            # - the speaker's buffer outlives the mark, and a
+            # faster-than-realtime engine can leave whole seconds buffered.
+            # Every block captured in the window is the machine's own voice:
+            # forwarded nowhere, not even into the gate's room tracker, and
+            # the pipe is drained without matching so nothing stale arms a
+            # wake when the window closes. The bound keeps a speaker that
+            # never drains from deafening the HUD for good.
+            if now < self._echo_deadline and not self._quiet_past_tail(now):
+                self.decoder.poll_transcripts()
+                return self.phase
+            self._echo_deadline = None
+            self._quiet_since = None
         loud = wake_mod.block_energy(block) >= self.gate.floor
         channel = self.gate.feed(block, now)
 
@@ -349,9 +382,14 @@ class TurnDirector:
                     # dropped here, before listening resumes, so the decoder
                     # never hears the HUD speak and a reply that says the
                     # wake word cannot wake it. The discard runs on the
-                    # timeout path too: those blocks are just as stale.
+                    # timeout path too: those blocks are just as stale. The
+                    # settle window then holds the same guard past the close
+                    # for as long as the answer is still playing.
                     if self.mic is not None:
                         self.mic.discard_pending()
+                    if self._reply_pending is not None:
+                        self._echo_deadline = now + ECHO_SETTLE_TIMEOUT
+                        self._quiet_since = None
                 self.phase = self.LISTENING
                 self._wake_at = None
             elif self.phase == self.IN_WAKE and \
@@ -388,6 +426,21 @@ class TurnDirector:
         elif phase == self.IN_TURN:
             self.engine.feed(block)
         return self.phase
+
+    def _quiet_past_tail(self, now):
+        """Whether the machine's output has been quiet past the tail.
+
+        Playback is the speaker's to report; the tail holds the guard past
+        the first quiet report for room reverb, so the window closes only
+        once the machine has been silent for the tail, not merely silent
+        this instant.
+        """
+        if self._reply_pending():
+            self._quiet_since = None
+            return False
+        if self._quiet_since is None:
+            self._quiet_since = now
+        return now - self._quiet_since >= ECHO_TAIL_SECONDS
 
     def recover(self):
         """Re-arm after a turn the engine abandoned but survived (a reply

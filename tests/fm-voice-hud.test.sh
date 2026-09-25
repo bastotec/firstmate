@@ -1144,6 +1144,227 @@ check(engine.begun == 1,
 PY
 pass "the HUD never hears its own reply"
 
+# --- the echo guard outlasts the reply's playback ------------------------------
+#
+# reply_end says the answer crossed the wire, not that it finished playing:
+# the hybrid stack's local TTS is faster than realtime, so the whole answer
+# can sit in the speaker's buffer when the mark releases the turn, and the
+# room keeps hearing it for seconds. Every block captured in that window is
+# still the HUD's own voice: the guard holds until the buffer drains plus a
+# tail, then closes so the captain is heard again.
+
+python3 - "$ROOT" <<'PY' || fail "echo guard"
+import importlib.util, math, os, queue, struct, sys
+root = sys.argv[1]
+
+def load(name, relpath):
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(root, relpath))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+wake = load("wake", "hud/fm_voice_wake.py")
+mic_mod = load("micmod", "hud/fm_voice_mic.py")
+
+def check(cond, label):
+    if not cond:
+        sys.exit("echo guard: " + label)
+
+class QueueMic:
+    """The device end's queue contract: blocks arrive one per period while
+    the mic thread runs, and discard_pending drops a backlog."""
+    def __init__(self):
+        self.q = queue.SimpleQueue()
+        self.discarded = 0
+    def push(self, block):
+        self.q.put(block)
+    def blocks(self):
+        while True:
+            block = self.q.get()
+            if block is None:
+                return
+            yield block
+    def discard_pending(self):
+        while True:
+            try:
+                block = self.q.get_nowait()
+            except queue.Empty:
+                return 0
+            if block is None:
+                self.q.put(None)
+                return 0
+            self.discarded += 1
+    def close(self):
+        self.q.put(None)
+
+class StubSpeaker:
+    """The buffer that outlives the wire mark: the whole answer landed at
+    reply_end (faster-than-realtime delivery) and drains at the reply rate,
+    one block per block period."""
+    def __init__(self):
+        self.buffered = 0
+    def pending(self):
+        return self.buffered > 0
+
+class TailEchoEngine:
+    """end_turn holds the mic thread while the reply crosses the wire; a few
+    echo blocks pile up behind the hold, and the whole answer is buffered at
+    once - the defect shape: playback is only starting as the mark
+    releases."""
+    def __init__(self, mic, speaker, hold_blocks, buffered_blocks, echo):
+        self.mic = mic
+        self.speaker = speaker
+        self.hold_blocks = hold_blocks
+        self.buffered_blocks = buffered_blocks
+        self.echo = echo
+        self.begun = 0
+        self.ended = 0
+    def begin_turn(self):
+        self.begun += 1
+    def feed(self, pcm):
+        pass
+    def end_turn(self):
+        self.ended += 1
+        for _ in range(self.hold_blocks):
+            self.mic.push(self.echo)
+        self.speaker.buffered = self.buffered_blocks
+
+class UtteranceDecoder:
+    """A line lands once its utterance ran long enough - five voiced blocks.
+    Any speech the decoder hears after the first wake says the wake word,
+    exactly as the echo of a reply that names the captain would."""
+    def __init__(self, need=5):
+        self.need = need
+        self.fed = 0
+        self._run = 0
+    def start(self):
+        pass
+    def feed(self, block):
+        self.fed += 1
+        self._run += 1
+        return []
+    def poll_transcripts(self):
+        if self._run >= self.need:
+            self._run = 0
+            return ["Ziggy"]
+        return []
+    def close(self):
+        pass
+
+loud = b"".join(
+    struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * i / 16000)))
+    for i in range(1600)) * 2
+zero = bytes(3200)
+
+speaker = StubSpeaker()
+mic = QueueMic()
+engine = TailEchoEngine(mic, speaker, hold_blocks=4, buffered_blocks=20,
+                        echo=loud)
+decoder = UtteranceDecoder()
+notices = []
+director = mic_mod.TurnDirector(
+    engine, wake.EnergyGate(), wake.KeywordListener(), decoder,
+    on_notice=notices.append, mic=mic, reply_pending=speaker.pending)
+stream = mic.blocks()
+
+def step(block, t):
+    mic.push(block)
+    director.feed(next(stream), t)
+
+# The wake utterance, then the turn with its speech.
+t = 0.0
+for _ in range(5):
+    step(loud, t)
+    t += 0.1
+check(director.phase == "in-wake", "the wake must arm: " + director.phase)
+for _ in range(4):
+    step(loud, t)
+    t += 0.1
+check(director.phase == "in-turn" and engine.begun == 1,
+      "the turn must be open: " + director.phase)
+check(decoder.fed == 5,
+      "turn speech must never reach the decoder: fed=" + str(decoder.fed))
+
+# Quiet past the hangover closes the turn: four echo blocks pile up behind
+# the hold and twenty blocks of answer are buffered at the mark.
+for _ in range(10):
+    step(zero, t)
+    t += 0.1
+check(engine.ended == 1 and director.phase == "listening",
+      "the turn must close on quiet: " + director.phase)
+check(mic.discarded == 4,
+      "every block captured during the hold must be dropped: "
+      + str(mic.discarded))
+
+# The playback tail: thirty loud echo blocks arrive while the buffered
+# answer drains at the reply rate - none may reach the decoder.
+for i in range(30):
+    speaker.buffered = max(0, 20 - i)
+    step(loud, t)
+    t += 0.1
+check(decoder.fed == 5,
+      "the playback tail must never reach the decoder: fed=" + str(decoder.fed))
+check(notices == ["wake"],
+      "the playback tail must never arm a wake: " + repr(notices))
+check(engine.begun == 1,
+      "the playback tail must never open a model turn: begun="
+      + str(engine.begun))
+
+# The room goes quiet again and the guard closes, so fresh speech is
+# heard once more.
+for _ in range(15):
+    step(zero, t)
+    t += 0.1
+for _ in range(2):
+    step(loud, t)
+    t += 0.1
+check(decoder.fed == 7,
+      "fresh speech after the guard must be heard: fed=" + str(decoder.fed))
+check(director.phase == "listening",
+      "fresh speech below the utterance length must not arm a wake: "
+      + director.phase)
+check(engine.begun == 1,
+      "no turn may open on the tail or the fresh fragments: begun="
+      + str(engine.begun))
+
+# The bound: a speaker whose buffer never drains must not deafen the HUD
+# for good. A second turn closes into a permanently-full buffer; the guard
+# suppresses inside its bound, closes at it, and speech is heard again.
+for _ in range(3):
+    step(loud, t)
+    t += 0.1
+check(director.phase == "in-wake",
+      "a fresh full utterance must arm a wake: " + director.phase)
+step(loud, t)
+t += 0.1
+check(director.phase == "in-turn" and engine.begun == 2,
+      "the second turn must open")
+for _ in range(10):
+    step(zero, t)
+    t += 0.1
+check(engine.ended == 2 and director.phase == "listening",
+      "the second turn must close: " + director.phase)
+speaker.buffered = 10**9
+for _ in range(3):
+    step(loud, t)
+    t += 0.1
+check(decoder.fed == 10,
+      "a stuck speaker must still be suppressed inside its bound: fed="
+      + str(decoder.fed))
+t += 31.0
+for _ in range(2):
+    step(loud, t)
+    t += 0.1
+check(decoder.fed == 12,
+      "the guard must close at its bound so the HUD hears again: fed="
+      + str(decoder.fed))
+check(engine.begun == 2,
+      "no third turn may open on the guard's fragments: begun="
+      + str(engine.begun))
+PY
+pass "the echo guard outlasts the reply's playback"
+
 # --- the device mic end, against a stub sounddevice ---------------------------
 #
 # The real capture end cannot run here - no audio device exists in a worker
@@ -1543,10 +1764,14 @@ first = b"\x01\x02" * 300
 second = b"\x03\x04" * 100
 sp.write(first)
 sp.write(second)
+check(sp.pending(),
+      "buffered reply audio must report itself pending")
 out = bytearray(4800)
 stream.callback(out, 2400, None, None)
 check(bytes(out) == first + second + bytes(4800 - len(first) - len(second)),
       "the written PCM must reach the stream in order, silence-padded")
+check(not sp.pending(),
+      "a drained buffer must report itself settled")
 
 out = bytearray(4800)
 stream.callback(out, 2400, None, None)

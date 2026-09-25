@@ -59,6 +59,18 @@ class Speaker:
                 return
             self._buffer += pcm
 
+    def pending(self):
+        """Whether reply audio is still buffered to play.
+
+        The fact the HUD's echo guard waits out: the buffer outlives the
+        wire's reply_end mark - the same fact the quit drain bounds - because
+        the engine hands audio over as it arrives while the device plays it
+        at the reply rate, and a faster-than-realtime engine can buffer whole
+        seconds of answer by the time the mark crosses.
+        """
+        with self._lock:
+            return bool(self._buffer)
+
     def drain(self, timeout=30):
         """Wait for the buffered reply to finish, so a quit right after an
         answer does not cut it off."""
