@@ -815,6 +815,94 @@ check(engine.begun == 0,
 PY
 pass "a one-breath \"Ziggy, <command>\" is sent as one turn; the name alone still waits"
 
+# --- the fast spotter opens the turn at the name, with the held pre-roll -----
+#
+# With a spotter configured the HUD wakes the moment the name is spotted, not
+# after the decoder's final line: the turn opens then, carries the held
+# pre-roll so "Ziggy" and the start of the command are not clipped, streams
+# the command, and ends on quiet. The name alone keeps the turn open for the
+# command grace before it gives up.
+
+python3 - "$ROOT" <<'PY' || fail "spotter wake"
+import importlib.util, math, os, struct, sys
+root = sys.argv[1]
+
+def load(name, relpath):
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(root, relpath))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+wake = load("wake", "hud/fm_voice_wake.py")
+mic_mod = load("micmod", "hud/fm_voice_mic.py")
+
+def check(cond, label):
+    if not cond:
+        sys.exit("spotter wake: " + label)
+
+class ScriptedSpotter:
+    """Spots on the Nth block fed."""
+    def __init__(self, at):
+        self.at, self.fed = at, 0
+    def feed(self, block): self.fed += 1
+    def poll(self): return [(0.99, 0.0)] if self.fed == self.at else []
+
+class NoDecoder:
+    def start(self): pass
+    def feed(self, block): raise AssertionError("the decoder must not be fed")
+    def poll_transcripts(self): raise AssertionError("the decoder must not be read")
+    def close(self): pass
+
+class RecordingEngine:
+    def __init__(self):
+        self.begun = self.ended = 0
+        self.fed = 0
+    def begin_turn(self): self.begun += 1
+    def feed(self, pcm): self.fed += len(pcm)
+    def end_turn(self): self.ended += 1
+
+loud = b"".join(
+    struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * i / 16000)))
+    for i in range(1600)) * 2
+quiet = bytes(3200)
+
+def run(blocks, spot_at):
+    engine, notices = RecordingEngine(), []
+    director = mic_mod.TurnDirector(
+        engine, wake.EnergyGate(), wake.KeywordListener(), NoDecoder(),
+        on_notice=notices.append, spotter=ScriptedSpotter(spot_at))
+    t, opened_at = 0.0, None
+    for block in blocks:
+        director.feed(block, t)
+        if engine.begun and opened_at is None:
+            opened_at = t
+        t += 0.1
+    return engine, director, notices, opened_at
+
+# "Ziggy, what is the status?": 5 loud blocks of name, spotted on the 5th,
+# then 10 loud blocks of command, then quiet.
+engine, director, notices, opened_at = run([loud] * 15 + [quiet] * 15, 5)
+check(engine.begun == 1, "the spot must open exactly one turn")
+check(abs(opened_at - 0.4) < 1e-6, "the turn must open on the spotted block, at %r" % opened_at)
+check(engine.fed >= 15 * 3200, "pre-roll plus command must all be sent, got %d bytes" % engine.fed)
+check(engine.ended == 1 and director.phase == "listening", "the turn must end on quiet")
+check(notices == ["wake"], "the wake must be noticed once: %r" % notices)
+
+# "Ziggy" then a pause longer than the hangover but shorter than the grace,
+# then the command: one turn, not ended in the pause.
+engine, director, notices, _ = run([loud] * 5 + [quiet] * 15 + [loud] * 8 + [quiet] * 15, 5)
+check(engine.begun == 1 and engine.ended == 1,
+      "a pause after the name must not end the turn before the command")
+check(engine.fed >= 13 * 3200, "the name and the later command must both be sent")
+
+# The name alone: the turn ends once the grace runs out.
+engine, director, notices, _ = run([loud] * 5 + [quiet] * 40, 5)
+check(engine.ended == 1 and director.phase == "listening",
+      "the name alone must end its turn after the grace")
+PY
+pass "the fast spotter opens the turn at the name with its pre-roll and ends it on quiet"
+
 # --- a wake word spoken inside a turn never arms a stale wake ----------------
 #
 # The decoder finalizes each utterance's line only after it ended, so a

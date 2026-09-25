@@ -53,6 +53,14 @@ POST_WAKE_SPEECH_TIMEOUT = 5.0
 # command's audio has to be held until then or it is gone. 30 s at BLOCK size.
 UTTERANCE_KEEP_BLOCKS = 300
 
+# With the fast spotter: audio sent ahead of the spot, so the turn carries
+# "Ziggy" itself and anything said in the same breath (1.5 s at BLOCK size).
+SPOT_PREROLL_BLOCKS = 15
+
+# With the fast spotter: after the name, how long a pause may last before the
+# command starts ("Ziggy ... what's the status?") without the turn ending.
+SPOT_COMMAND_GRACE = 3.0
+
 
 class DecoderError(Exception):
     """The decoder child stopped taking audio, so the HUD can never wake."""
@@ -278,8 +286,16 @@ class TurnDirector:
     IN_TURN = "in-turn"
 
     def __init__(self, engine, gate, keyword, decoder, on_notice=None,
-                 speech_timeout=POST_WAKE_SPEECH_TIMEOUT):
+                 speech_timeout=POST_WAKE_SPEECH_TIMEOUT, spotter=None):
         self.engine = engine
+        # The fast wake source (hud/wake/ziggy_spotter.py as a child). When
+        # present it replaces the decoder for waking: it hears the name
+        # within ~0.1 s of the word, and the turn opens right then with the
+        # held pre-roll, so the relay's own speech engine transcribes the
+        # command. The slow decoder is then never fed.
+        self.spotter = spotter
+        self._preroll = []
+        self._spoke_since_wake = False
         self.gate = gate
         self.keyword = keyword
         self.decoder = decoder
@@ -325,6 +341,8 @@ class TurnDirector:
         relay and cost a model turn whenever the captain said the wake word
         and then paused.
         """
+        if self.spotter is not None:
+            return self._feed_spotted(block, now)
         loud = wake_mod.block_energy(block) >= self.gate.floor
         channel = self.gate.feed(block, now)
 
@@ -374,6 +392,45 @@ class TurnDirector:
             self.engine.feed(block)
         return self.phase
 
+    def _feed_spotted(self, block, now):
+        """The spotter path: wake on the spot, stream the turn, end on quiet."""
+        loud = wake_mod.block_energy(block) >= self.gate.floor
+        channel = self.gate.feed(block, now)
+        self.spotter.feed(block)
+        spotted = self.spotter.poll()
+
+        if self.phase == self.LISTENING:
+            self._preroll.append(block)
+            if len(self._preroll) > SPOT_PREROLL_BLOCKS:
+                del self._preroll[0]
+            if spotted:
+                self.on_notice("wake")
+                self.engine.begin_turn()
+                for held in self._preroll:
+                    self.engine.feed(held)
+                self._preroll = []
+                self.phase = self.IN_TURN
+                self._wake_at = now
+                self._spoke_since_wake = False
+            return self.phase
+
+        if self.phase == self.IN_TURN:
+            if loud:
+                self.engine.feed(block)
+                # Speech clearly after the name itself: the command began.
+                if now - self._wake_at > 0.3:
+                    self._spoke_since_wake = True
+                return self.phase
+            if channel:
+                return self.phase
+            # Quiet past the hangover: end once the command was said, or
+            # after the grace if only the name was said.
+            if self._spoke_since_wake or now - self._wake_at >= SPOT_COMMAND_GRACE:
+                self.engine.end_turn()
+                self.phase = self.LISTENING
+                self._wake_at = None
+        return self.phase
+
     def _check_wake(self, transcripts, now):
         """Act on finished listening lines. Returns True when one woke.
 
@@ -402,3 +459,4 @@ class TurnDirector:
         if self.phase == self.IN_TURN:
             self.phase = self.LISTENING
             self._wake_at = None
+            self._preroll = []

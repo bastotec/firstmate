@@ -182,9 +182,32 @@ def main():
                 speaker.close()
             return 1
 
+    # Optional fast wake spotter, same config shape as the decoder:
+    # config/voice-hud-spotter (or FM_VOICE_HUD_SPOTTER) holds one command
+    # line. When set it wakes the HUD and the decoder is not used.
+    spotter = None
+    spotter_cmd = (os.environ.get("FM_VOICE_HUD_SPOTTER") or "").strip()
+    spotter_config = os.path.join(ROOT, "config", "voice-hud-spotter")
+    if not spotter_cmd and os.path.isfile(spotter_config):
+        with open(spotter_config) as handle:
+            lines = [ln.strip() for ln in handle.read().splitlines()
+                     if ln.strip() and not ln.strip().startswith("#")]
+        spotter_cmd = lines[0] if lines else ""
+    if spotter_cmd:
+        sys.path.insert(0, os.path.join(ROOT, "hud", "wake"))
+        from spotter_source import SpotterCommand   # noqa: E402
+        spotter = SpotterCommand(["sh", "-c", spotter_cmd])
+        spotter.start()
+        # The spotter wakes the HUD and the relay's own speech engine hears the
+        # command, so the slow transcribing decoder is not run at all.
+        decoder.close()
+        decoder = mic_mod.NullDecoder()
+        decoder.start()
+
     director = mic_mod.TurnDirector(
         engine, wake_mod.EnergyGate(), wake_mod.KeywordListener(), decoder,
-        on_notice=lambda event: emit({"type": "notice", "event": event}))
+        on_notice=lambda event: emit({"type": "notice", "event": event}),
+        spotter=spotter)
 
     stop = threading.Event()
     # The panel's mute button: while set, no block reaches the wake gate,
@@ -264,6 +287,8 @@ def main():
         stop.set()
         mic.close()
         decoder.close()
+        if spotter is not None:
+            spotter.close()
         engine.close()
         if speaker is not None:
             speaker.drain(timeout=QUIT_DRAIN_TIMEOUT)

@@ -1,0 +1,6 @@
+.venv/
+data/
+samples/
+models/sherpa-onnx-*/
+__pycache__/
+synth/
