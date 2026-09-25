@@ -44,7 +44,10 @@ An interrupt is not complete until the composer is empty.
 muse is the one verified adapter that restores the cancelled prompt back into its composer as real text, so its interrupt key is followed by a Ctrl+U clear; without it the next submitted line - including this plane's own exit command - would concatenate onto the restored prompt and submit both as one line.
 The clear is refused before anything is sent when the recorded backend cannot deliver it.
 
-`exit` reads the composer's state before typing the exit command and requires the exact `empty` verdict; a `pending` verdict refuses by naming the pending text, and any other verdict (`unknown`, `pending-unproven`, or an unreadable read) refuses as not proven empty, matching the fail-safe contract every other consumer that can overwrite composer input follows.
+`exit` runs a verify-then-clear composer gate before typing the exit command.
+A proven `empty` verdict passes immediately and a proven `pending` verdict refuses by naming the pending text, so real typed input is preserved instead of being concatenated.
+Any state the fleet cannot prove (`unknown`, `pending-unproven`, or an unreadable read) never refuses structurally: the gate delivers the harness's verified composer clear (`bin/fm-control-lib.sh`'s `fm_control_composer_clear_keys`), re-reads the state, and retries on a bounded budget before typing the exit command anyway, because restart and relaunch must never stay blocked on a composer state the fleet cannot prove.
+An agent found gone during that gate is reported stopped instead, since a dead endpoint is a respawn question for `relaunch` or `recover-missing`, not a composer question.
 
 **Teardown and discard are not verbs and will not become verbs.**
 `exit` stops an agent and preserves everything else.
@@ -153,7 +156,7 @@ There are two ways out:
   A session that cannot be recreated refuses before the window, the record, or the instructions are touched.
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
-- `exit`'s composer-empty check, above, is itself a fail-closed boundary that `relaunch` inherits by stopping the old agent through `exit`.
+- `exit`'s composer gate, above, is a fail-closed boundary exactly where the fleet can prove text (`pending` refuses), and `relaunch` inherits it by stopping the old agent through `exit`.
 - `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free, so a replacement can never join a live agent.
   When the recorded prior harness is Deck, it also requires the adapter's residual-driver proof before arming the new incarnation, including when an operator invokes the already-stopped relaunch boundary directly.
   It also requires the shell to be in the recorded worktree: tmux refuses immediately when it is not, while Herdr sends one `cd` to the recorded path and refuses unless a subsequent path read confirms the move.

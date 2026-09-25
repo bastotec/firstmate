@@ -17,6 +17,10 @@
 #   6. Marker non-regression: a control command to a kind=secondmate task
 #      carries NO from-firstmate marker and opens no pending-reply expectation,
 #      while fm-send's marking of the same task is untouched.
+#   7. The exit composer gate's three verification shapes: an idle driver
+#      prompt is proven empty and untouched, an unproven reading is cleared and
+#      re-read instead of refused, and a gone agent is reported stopped rather
+#      than refused on a composer state (a respawn question, not a composer one).
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -35,7 +39,7 @@ mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-VERIFIED_HARNESSES="claude codex opencode pi pi-signed grok kimi cursor muse omp"
+VERIFIED_HARNESSES="claude codex opencode pi pi-signed grok kimi cursor muse omp deck"
 
 # The expectation table, written out independently of the implementation so a
 # silent change to either side shows up here. The fourth field is the composer
@@ -53,6 +57,7 @@ verified_adapter_contract() {  # <harness> -> exit command, interrupt key, repea
     kimi) printf '/exit\tEscape\t1\t\n' ;;
     cursor) printf '/exit\tEscape\t1\t\n' ;;
     muse) printf '/exit\tEscape\t1\tC-u\n' ;;
+    deck) printf '/quit\tC-c\t1\t\n' ;;
     *) return 1 ;;
   esac
 }
@@ -107,6 +112,17 @@ case "${1:-}" in
          && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
         printf 'zsh' > "$D/command"
       fi
+      # The composer-clear key's two observable effects, modelled as knobs:
+      # a real clear repaints the pane's prompt row (FM_FAKE_CLEAR_REPAINTS),
+      # and an agent can die between the clear delivery and the gate's re-read
+      # (FM_FAKE_DEAD_ON_CLEAR).
+      if [ "$payload" = C-u ]; then
+        [ -z "${FM_FAKE_CLEAR_REPAINTS:-}" ] || {
+          printf '❯ \n' > "$D/pane"
+          printf '0\n' > "$D/cursor"
+        }
+        [ -z "${FM_FAKE_DEAD_ON_CLEAR:-}" ] || printf 'zsh' > "$D/command"
+      fi
       if [ "$payload" = Escape ] && [ -n "${FM_FAKE_MUSE_LOG:-}" ]; then
         if [ -n "${FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK:-}" ]; then
           : > "$D/muse-ack-pending"
@@ -119,7 +135,11 @@ case "${1:-}" in
   display-message)
     for a in "$@"; do
       case "$a" in
-        *cursor_y*) printf '1\n'; exit 0 ;;
+        *cursor_y*)
+          # A case may park the cursor anywhere on the pane; default row 1
+          # (inside the default composer box) for the ordinary cases.
+          if [ -f "$D/cursor" ]; then cat "$D/cursor"; else printf '1\n'; fi
+          exit 0 ;;
         *pane_current_command*) cat "$D/command"; printf '\n'; exit 0 ;;
         *pane_current_path*) cat "$D/cwd"; printf '\n'; exit 0 ;;
       esac
@@ -879,6 +899,105 @@ test_fm_send_still_marks_the_same_secondmate_task() {
   pass "fm-control's arrival leaves fm-send's from-firstmate marking untouched"
 }
 
+# --- 7. the exit composer gate: verify-then-clear across the three shapes ----
+#
+# The composer-state UNKNOWN refusal (captain's fix-now defect): restart and
+# relaunch were structurally refused on a composer state the fleet cannot
+# prove. The exit gate replaces that refusal with a bounded verify-then-clear
+# sequence, and the campaign's three shapes are pinned here: an idle driver
+# prompt (proven empty, nothing to clear), a pane whose last turn failed (an
+# unproven reading the verified clear actually changes), and a pane whose agent
+# is actually gone (a respawn question, never a composer question).
+
+test_exit_proves_an_idle_deck_driver_prompt_empty() {
+  local dir out rc
+  dir=$(new_case gate-idle)
+  add_task "$dir" t1 deck
+  alive_as "$dir" deck
+  # The common idle Deck-driver pane: a bare `❯` prompt row under the cursor.
+  printf 'turn finished 2026-09-24T17:01Z (1 model calls)\n❯ ' > "$dir/fake/pane"
+  printf '1\n' > "$dir/fake/cursor"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "exit on an idle Deck driver should succeed"$'\n'"$out"
+  [ "$(literals "$dir")" = /quit ] \
+    || fail "an idle Deck driver should receive exactly its exit command, got: $(literals "$dir")"
+  [ -z "$(keys_sent "$dir")" ] \
+    || fail "a provably empty composer must receive no clearing keys: $(keys_sent "$dir")"
+  assert_not_contains "$out" "composer state stayed" \
+    "a proven-empty composer must not spend a clear budget"
+  pass "fm-control exit: an idle Deck driver prompt is proven empty and receives no clearing keys"
+}
+
+test_exit_verify_then_clear_changes_an_unproven_composer() {
+  local dir out rc
+  # The verified clear is the table's contract, written out independently of
+  # the implementation, and a harness with no verified clear gets no guessed
+  # key - the gate falls back to bounded re-reads only.
+  [ "$(fm_control_composer_clear_keys deck)" = $'C-u\nEnter' ] \
+    || fail "deck's verified composer clear must stay the driver-consumed Ctrl+U then Enter pair"
+  [ "$(fm_control_composer_clear_keys muse)" = 'C-u' ] \
+    || fail "muse's verified composer clear must stay Ctrl+U"
+  fm_control_composer_clear_keys someagent \
+    && fail "a harness with no verified clear must not be given a guessed key"
+
+  dir=$(new_case gate-clear)
+  add_task "$dir" t1 deck
+  alive_as "$dir" deck
+  # A pane whose last turn failed: the prompt row sits above the cursor, so the
+  # reading is unproven - the exact shape the campaign refused on.
+  printf '❯ \n\nfail footer\n' > "$dir/fake/pane"
+  printf '1\n' > "$dir/fake/cursor"
+  out=$(FM_FAKE_CLEAR_REPAINTS=1 run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "an unproven composer must not refuse the exit command"$'\n'"$out"
+  [ "$(keys_sent "$dir")" = C-u ] \
+    || fail "the verified clear's Ctrl+U must be delivered exactly once: $(cat "$dir/fake/keys")"
+  [ "$(sed -n 2p "$dir/fake/keys")" = Enter ] \
+    || fail "deck's clear must be Ctrl+U then Enter, consumed by the driver as one input line: $(cat "$dir/fake/keys")"
+  [ "$(literals "$dir")" = /quit ] \
+    || fail "the exit command should follow the verified clear, got: $(literals "$dir")"
+  assert_not_contains "$out" "composer state stayed" \
+    "the verified clear must change the reading, not spend the budget"
+  pass "fm-control exit: verify-then-clear turns an unproven composer back into a proven one"
+}
+
+test_exit_reports_a_gone_agent_instead_of_a_composer_refusal() {
+  local dir out rc
+  # The agent is already gone: the pane's composer is exactly as unproven as
+  # the shape above, but the remedy is a respawn (relaunch / recover-missing),
+  # never a composer clear - so the outcome must name the gone agent and must
+  # never read as a composer problem.
+  dir=$(new_case gate-dead)
+  add_task "$dir" t1 deck
+  alive_as "$dir" zsh
+  printf 'user@host:~$ ' > "$dir/fake/pane"
+  printf '0\n' > "$dir/fake/cursor"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "exiting a gone agent is idempotent success"$'\n'"$out"
+  assert_contains "$out" "already-stopped t1" "the outcome should name the gone agent"
+  assert_not_contains "$out" "composer" \
+    "a gone agent must never be reported as a composer problem"
+  [ -z "$(literals "$dir")" ] || fail "a gone agent must receive no bytes"
+  [ -z "$(keys_sent "$dir")" ] || fail "a gone agent must receive no clearing keys"
+
+  # The same distinction when the agent dies while the gate is re-reading a
+  # state it cannot prove: nothing may be typed at the endpoint, and the exit
+  # command typed blindly is exactly the concatenation the gate exists to stop.
+  dir=$(new_case gate-dies)
+  add_task "$dir" t1 deck
+  alive_as "$dir" deck
+  printf '❯ \n\nfail footer\n' > "$dir/fake/pane"
+  printf '1\n' > "$dir/fake/cursor"
+  out=$(FM_FAKE_DEAD_ON_CLEAR=1 run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "an agent that died mid-gate is a stopped agent"$'\n'"$out"
+  assert_contains "$out" "already-stopped t1" "the outcome should name the gone agent"
+  assert_not_contains "$out" "typing the" \
+    "an agent that died mid-gate must not have an exit command typed into its pane"
+  assert_not_contains "$out" "composer state stayed" \
+    "a gone agent must not be reported through the composer-clear path"
+  [ -z "$(literals "$dir")" ] || fail "nothing may be typed at an endpoint whose agent is gone"
+  pass "fm-control exit: a gone agent is distinguished from an unknown composer - respawn, not composer clear"
+}
+
 test_exit_types_each_harness_verified_command
 test_interrupt_sends_each_harness_verified_key
 test_opencode_interrupts_twice_and_others_once
@@ -914,3 +1033,6 @@ test_grok_interrupt_without_acknowledgement_reports_unconfirmed
 test_grok_idle_footer_does_not_confirm_cancellation
 test_secondmate_control_command_carries_no_marker
 test_fm_send_still_marks_the_same_secondmate_task
+test_exit_proves_an_idle_deck_driver_prompt_empty
+test_exit_verify_then_clear_changes_an_unproven_composer
+test_exit_reports_a_gone_agent_instead_of_a_composer_refusal
