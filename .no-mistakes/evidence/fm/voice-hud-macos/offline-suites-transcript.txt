@@ -1,0 +1,36 @@
+FM_LIVE=0 bin/fm-test-run.sh tests/fm-voice-hud.test.sh   (the HUD rig: real bridge/engine/mic/speaker scripts, PCM clips, scripted decoder, stub relay + stub sounddevice)
+ok - the wake gate keeps silence quiet and wakes only on the word
+ok - wake detection fires on the speech clip and stays quiet on silence and room tone
+ok - the engine wiring speaks the frame wire against a stub relay
+ok - a relay turn-failed notice releases the waiter promptly with its reason
+ok - a mid-turn failure releases the open turn and the engine renews
+ok - the panel bridge reports state and quits cleanly over the boundary
+ok - the mic attach wakes on the word, streams only after the wake, and never opens a turn on silence
+ok - a wake word spoken inside a turn never arms a stale wake after it
+ok - a late final line from a finished turn never arms a stale wake
+ok - the device mic end yields captured blocks and ends at close
+ok - a denied-silent microphone is named on the wire after a bounded run
+ok - synthetic zero input reaches the panel as a mic-denied notice
+ok - the decoder drain never blocks and completes partial lines across polls
+ok - the reply player hands engine PCM to the stream and bounds its lifecycle
+ok - an engine fault reaches the panel as a notice and the bridge stays quittable
+ok - a relay refusing at startup surfaces as an engine-fault notice and a non-zero exit
+ok - a dead decoder child reaches the panel as a notice and the bridge stays quittable
+ok - a microphone refusing to open surfaces as a mic-fault notice and a non-zero exit
+ok - the spoken reply reaches the output stream end to end and a quit drains its tail
+ok - the live mic level and wake-gate state ride the wire to the panel
+ok - a failed turn reaches the panel with its reason and the HUD re-arms
+ok - the HUD's configuration carries no default endpoint and honors its one override
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
+
+FM_LIVE=0 bin/fm-test-run.sh tests/fm-voice-hud-panel.test.sh   (swift test on the panel package + the shipped binary's embedded Info.plist)
+ok - the panel model, blocked face and wire parse pass their Swift tests
+shipped: NSMicrophoneUsageDescription embedded in the app binary
+ok - the shipped app binary embeds the microphone usage description
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
+
+PATH=<worktree-venv>:$PATH FM_VOICE_HUD_LIVE=1 bin/fm-test-run.sh tests/fm-voice-hud-live-e2e.test.sh   (live, real device)
+live: captured 2.0s in 20 blocks, peak energy 347730
+live: non-silent capture - the microphone path is live and audible
+ok - the HUD's real microphone end captures and names what it hears
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0

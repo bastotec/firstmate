@@ -1,0 +1,11 @@
+$ PATH=$PWD/.tmp-live-venv/bin:$PATH FM_VOICE_HUD_LIVE=1 bin/fm-test-run.sh tests/fm-voice-hud-live-e2e.test.sh
+FM_TEST_BEGIN 2026-09-25T01:07:26Z tests/fm-voice-hud-live-e2e.test.sh family=unclassified expected_gate_skip=none
+live: captured 2.0s in 20 blocks, peak energy 481102
+live: non-silent capture - the microphone path is live and audible
+ok - the HUD's real microphone end captures and names what it hears
+FM_TEST_END 2026-09-25T01:08:09Z tests/fm-voice-hud-live-e2e.test.sh exit=0 duration_ms=41937 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=46105
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=41937 failed=0
+
+panel-side authorization read (same API as micPermissionNow in hud/swift/Sources/VoiceHUD/main.swift):
+panel-side authorization-status read (AVCaptureDevice.authorizationStatus(for: .audio)) for the calling app: granted

@@ -1,0 +1,4 @@
+output device: MacBook Pro Speakers
+stream active: True
+drained in 1.58s, 0 bytes left buffered after drain
+live: the shipped Speaker played 1.2s of reply-rate PCM through the real output device

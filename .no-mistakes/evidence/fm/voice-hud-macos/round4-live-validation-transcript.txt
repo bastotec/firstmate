@@ -1,0 +1,82 @@
+Round 4 live validation at target commit 1a12deb4 (branch fm/voice-hud-macos).
+Every command ran from the gate worktree. Live audio tests used a throwaway
+venv (.tmp-live-venv, python3 + sounddevice 0.5.6 + numpy + faster-whisper,
+removed after the run) with HF_HOME pointed at a temp cache inside the
+worktree (also removed). No system state was changed.
+
+1) Offline suites (FM_LIVE=0)
+$ FM_LIVE=0 bin/fm-test-run.sh tests/fm-voice-hud.test.sh          (67s, exit 0)
+   23/23 ok - including: room-floor energy gate, turn-failed release,
+   mid-turn failure release, stale/late final lines never re-wake,
+   mic-denied + mic-fault notices on the wire, spoken reply end-to-end
+   through the bridge with quit drain, live mic level wire, fail-loud config.
+$ FM_LIVE=0 bin/fm-test-run.sh tests/fm-voice-hud-panel.test.sh    (90s, exit 0)
+   ok - panel model, blocked face and wire parse pass their Swift tests
+   shipped: NSMicrophoneUsageDescription embedded in the app binary
+
+2) Regression guards proven by mutation (fix reverted -> test fails -> restored)
+   git worktree is clean after each; every mutant produced exactly the
+   failing test its fix shipped:
+   - F17 mutant (reply_done.clear() reintroduced in end_turn):
+       not ok - mid-turn failure release
+   - F13 mutant (turn-failed notice no longer releases the waiter):
+       not ok - turn-failed release
+   - F15 mutant (decoder fed turn speech again, LISTENING gate removed):
+       not ok - late final lines
+   Each file restored with git checkout; suite green again at target.
+
+3) Live microphone, on this Mac (real DeviceMic + sounddevice + real device)
+$ PATH=<venv>:$PATH FM_VOICE_HUD_LIVE=1 \
+    bin/fm-test-run.sh tests/fm-voice-hud-live-e2e.test.sh          (exit 0)
+   live: captured 2.0s in 20 blocks, peak energy 127876
+   live: non-silent capture - the microphone path is live and audible
+   ok - the HUD's real microphone end captures and names what it hears
+
+4) Live spoken loop, on this Mac's own mic + speakers (only the model brain
+   behind the relay was a stub speaking the real frame wire)
+$ PATH=<venv>:$PATH FM_VOICE_HUD_LIVE=1 \
+    bin/fm-test-run.sh tests/fm-voice-hud-live-wake.test.sh         (53s, exit 0)
+   live: gates listening->in-wake->in-turn->listening
+   live: states listening->thinking->speaking->listening
+   live: the spoken loop ran - wake word heard, turn routed after the wake,
+         ended on quiet, reply back on the wire (stub model), bridge exit 0
+   ok - the spoken HUD's wake loop runs live on real audio
+
+   What ran: `say "Ziggy"` -> real MacBook microphone (DeviceMic) -> room-floor
+   energy gate -> real faster-whisper decoder child (base.en int8) -> keyword
+   match -> wake -> `say "what time is it in Lisbon right now"` -> turn opens
+   (audio routed to the engine only after the wake) -> turn ends on quiet when
+   the room tone returns -> stub relay answers on the real frame wire ->
+   HUD back to listening, bridge exits 0 on quit.
+
+5) Real GUI panel on screen (shipped binary, shipped spawn path)
+   ./hud/swift/.build/debug/VoiceHUD &   (built by the panel suite's swift test)
+   Window-server proof while other apps were frontmost:
+     window=44124 owner=VoiceHUD layer=3 bounds 340x96 at (3476, 54)
+     main display: 3840x1600
+     layer 3 = NSFloatingWindowLevel: above every normal window (always-on-top)
+   Shipped chain fired for real: panel -> real bridge -> real relay ->
+     relay refused per the fail-loud config contract:
+     "fm-voice-relay: no Bedrock region is configured: write one line into
+      <worktree>/config/voice-region or set FM_VOICE_REGION"
+     bridge surfaced engine-fault and exited; the panel kept rendering.
+   Visual evidence: round4-panel-window.png (340x96 window surface),
+   round4-panel-context.png (full-screen context with the panel on screen).
+   Shutdown: kill -> 0 VoiceHUD windows, 0 bridge/relay processes left.
+
+6) Drag attempt (synthesized CGEvent drag at the panel, delta -300,+200)
+   before: (3476.0, 54.0, 340.0, 96.0)  after: (3476.0, 54.0, 340.0, 96.0)
+   The synthesized pointer events were dropped: the hosting terminal lacks
+   the macOS Accessibility permission (System Settings > Privacy & Security >
+   Accessibility), so programmatic drag could not be driven. Same authority
+   round 3 named; unchanged.
+
+Still not drivable from this process:
+  - spoken round trip with the REAL model: needs a configured voice engine
+    (config/voice-region choosing the Bedrock region + the captain's AWS
+    credentials; ~/.aws exists but no region is configured anywhere the
+    shipped path reads) - a configuration decision and token spend the
+    captain owns; round 1's ruling reserved the real-model reply as the
+    captain's own live drive.
+  - drag of the panel: synthesized pointer events require the Accessibility
+    permission for this terminal (see 6).

@@ -1,0 +1,44 @@
+Live drive of the real VoiceHUD panel on this Mac (GUI session "Aqua", 2026-09-24)
+================================================================================
+
+Command:
+  cd <worktree> && ./hud/swift/.build/debug/VoiceHUD &        # built with `swift build` in hud/swift
+
+What the real product did:
+  - The Swift panel launched and spawned the real Python bridge
+    (hud/fm_voice_hud_bridge.py) against the real relay (bin/fm-voice-relay.py --serve,
+    home = this worktree).
+  - The relay refused at startup exactly as the fail-loud config contract requires,
+    naming the file to write (bridge stderr):
+      fm-voice-relay: no Bedrock region is configured: write one line into
+      <worktree>/config/voice-region or set FM_VOICE_REGION
+  - The bridge surfaced that refusal on the event wire (engine-fault notice,
+    exit code 1) instead of dying with a traceback; no bridge/relay/orphan
+    processes were left behind.
+  - The panel kept running and rendering after the bridge child exited.
+
+Window-server proof that the overlay is really on screen, always on top
+(query of CGWindowListCopyWindowInfo, .optionOnScreenOnly, run while ordinary
+apps were active):
+  window=43382 owner=VoiceHUD layer=3 bounds=["Y": 610, "X": 2638, "Width": 340, "Height": 84]
+  main display: (0.0, 0.0, 3840.0, 1600.0)
+
+  layer 3 = NSFloatingWindowLevel: above every normal window (layer 0).
+  bounds = exactly the 340x84 panel the code creates.
+  On-screen at capture time with other applications frontmost.
+
+Shutdown:
+  kill <panel pid> -> panel terminated, 0 VoiceHUD windows remain,
+  0 fm_voice_hud_bridge / fm-voice-relay processes remain.
+
+Not drivable from this process (permissions/credentials named in the report):
+  - Screenshot of the rendered panel: `screencapture -x` failed with
+    "could not create image from display" - the host terminal lacks the macOS
+    Screen Recording permission (System Settings > Privacy & Security >
+    Screen Recording).
+  - Programmatic drag of the panel: needs synthesized pointer events, which
+    require the Accessibility permission.
+  - Full spoken round trip with the real model: needs a configured voice
+    engine (FM_VOICE_REGION / Bedrock credentials or the hybrid gateway) and
+    sounddevice installed for python3 (pip install - a system change outside
+    this worktree's boundary).

@@ -1,0 +1,77 @@
+Round 3 live validation at target commit 1a12deb4 (branch fm/voice-hud-macos).
+All commands run from the gate worktree; live audio tests used a throwaway
+venv (.tmp-live-venv, python3.13 + sounddevice + numpy + faster-whisper,
+removed after the run) with HF_HOME pointed at a temp cache, so no machine
+state was changed.
+
+$ FM_LIVE=0 bin/fm-test-run.sh tests/fm-voice-hud.test.sh        (44s, exit 0)
+ok - the wake gate keeps silence quiet and wakes only on the word
+ok - the energy gate learns the real room so turns can end
+ok - wake detection fires on the speech clip and stays quiet on silence and room tone
+ok - the engine wiring speaks the frame wire against a stub relay
+ok - a relay turn-failed notice releases the waiter promptly with its reason
+ok - a mid-turn failure releases the open turn and the engine renews
+ok - the panel bridge reports state and quits cleanly over the boundary
+ok - the mic attach wakes on the word, streams only after the wake, and never opens a turn on silence
+ok - a wake word spoken inside a turn never arms a stale wake after it
+ok - a late final line from a finished turn never arms a stale wake
+ok - the device mic end yields captured blocks and ends at close
+ok - a denied-silent microphone is named on the wire after a bounded run
+ok - synthetic zero input reaches the panel as a mic-denied notice
+ok - the decoder drain never blocks and completes partial lines across polls
+ok - the reply player hands engine PCM to the stream and bounds its lifecycle
+ok - an engine fault reaches the panel as a notice and the bridge stays quittable
+ok - a relay refusing at startup surfaces as an engine-fault notice and a non-zero exit
+ok - a dead decoder child reaches the panel as a notice and the bridge stays quittable
+ok - a microphone refusing to open surfaces as a mic-fault notice and a non-zero exit
+ok - the spoken reply reaches the output stream end to end and a quit drains its tail
+ok - the live mic level and wake-gate state ride the wire to the panel
+ok - a failed turn reaches the panel with its reason and the HUD re-arms
+ok - the HUD's configuration carries no default endpoint and honors its one override
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
+
+$ FM_LIVE=0 bin/fm-test-run.sh tests/fm-voice-hud-panel.test.sh  (7s, exit 0)
+ok - the panel model, blocked face and wire parse pass their Swift tests
+shipped: NSMicrophoneUsageDescription embedded in the app binary
+ok - the shipped app binary embeds the microphone usage description
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
+
+$ PATH=<venv>:$PATH FM_VOICE_HUD_LIVE=1 bin/fm-test-run.sh tests/fm-voice-hud-live-e2e.test.sh   (live mic)
+live: captured 2.0s in 20 blocks, peak energy 275389
+live: non-silent capture - the microphone path is live and audible
+ok - the HUD's real microphone end captures and names what it hears
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
+
+$ PATH=<venv>:$PATH FM_VOICE_HUD_LIVE=1 bin/fm-test-run.sh tests/fm-voice-hud-live-wake.test.sh   (live spoken loop, run 1: 52s)
+live: gates listening->in-wake->in-turn->listening
+live: states listening->thinking->speaking->listening
+live: the spoken loop ran - wake word heard, turn routed after the wake, ended
+     on quiet, reply back on the wire (stub model), bridge exit 0
+ok - the spoken HUD's wake loop runs live on real audio
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
+(second run for stability, warm decoder, 30s: identical gates/states, exit 0)
+
+What the live wake run drove, end to end on this machine's own mic+speakers:
+  say "Ziggy"  ->  real MacBook Pro Microphone (DeviceMic)  ->  room-floor
+  energy gate  ->  real faster-whisper decoder child (base.en, int8)  ->
+  keyword match  ->  wake  ->  say "what time is it in Lisbon right now"  ->
+  turn opens (mic gate in-wake -> in-turn; audio routed to the engine only
+  after the wake)  ->  turn ends on quiet when the room tone returns  ->
+  stub relay answers on the real frame wire (transcript + reply audio)  ->
+  HUD back to listening, bridge exits 0 on quit. Only the model brain behind
+  the relay was a stub speaking the real wire; everything else is shipped code.
+
+Real GUI panel on screen at this commit (Aqua session):
+  window=44090 owner=VoiceHUD layer=3 bounds 340x96, on-screen while other
+  apps were frontmost (layer 3 = NSFloatingWindowLevel, above normal windows).
+  The panel spawned the real bridge against the real relay; the relay refused
+  at startup exactly per the fail-loud config contract (no config/voice-region),
+  the bridge surfaced engine-fault on the wire and exited 1, the panel kept
+  rendering; kill left 0 VoiceHUD windows and 0 bridge/relay processes.
+  Visual captures: live-panel-current-commit.png (340x96 window surface),
+  live-panel-current-context.png (3840x1600 full screen, panel in context).
+
+Still not drivable from this process (named in previous rounds, unchanged):
+  - drag of the panel: needs synthesized pointer events (Accessibility permission)
+  - spoken round trip with the REAL model: needs a configured voice engine
+    (config/voice-region + Bedrock credentials or the hybrid gateway)
