@@ -84,6 +84,14 @@ public final class HUDModel {
         transcript = line
     }
 
+    /// The rendered line is cleared here, on a successful (re)connect: the
+    /// panel must not keep showing the failure line the reconnect recovered
+    /// from - a stale "that turn failed" over a healthy listening HUD reads
+    /// as a broken HUD.
+    public func clearTranscript() {
+        transcript = nil
+    }
+
     /// A state string from the bridge, applied only if it names a real state.
     /// Unknown strings leave the model untouched: the panel never renders a
     /// state the wire did not announce.

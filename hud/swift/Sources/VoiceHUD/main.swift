@@ -305,6 +305,20 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     model.transcriptLine(TranscriptLine(
                         role: .assistant,
                         text: "nothing after the wake word - pause briefly, then say the command"))
+                case "engine-link":
+                    // The post-turn send-path check failed: the link is
+                    // already marked dead and the next wake renews it, so
+                    // the panel says that instead of holding a stale failure
+                    // line while the mic looks live.
+                    model.applyState("listening")
+                    model.transcriptLine(TranscriptLine(
+                        role: .assistant, text: "engine link lost - the next wake reconnects"))
+                case "renewed":
+                    // A successful (re)connect: the failure line this
+                    // renewal recovered from is cleared here, never left to
+                    // caption a healthy listening HUD.
+                    model.applyState("listening")
+                    model.clearTranscript()
                 case "turn-failed":
                     model.applyState("listening")
                     var text = "that turn failed - ask again"

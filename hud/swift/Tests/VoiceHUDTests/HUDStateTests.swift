@@ -34,6 +34,17 @@ final class HUDStateTests: XCTestCase {
         XCTAssertEqual(model.transcript?.text, "three o'clock")
     }
 
+    func testSuccessfulReconnectClearsTheFailureLine() {
+        let model = HUDModel()
+        model.transcriptLine(TranscriptLine(
+            role: .assistant, text: "that turn failed (TimeoutError: hybrid engine reply timed out) - ask again"))
+        XCTAssertNotNil(model.transcript, "a failure line must render over the panel")
+        model.applyState("listening")
+        model.clearTranscript()
+        XCTAssertNil(model.transcript, "a successful (re)connect must clear the stale failure line")
+        XCTAssertEqual(model.state, .listening, "the cleared HUD is left listening")
+    }
+
     func testDeniedPermissionIsLoudGrantedClearsIt() {
         let model = HUDModel()
         XCTAssertFalse(model.micBlocked, "an unread verdict must not block the face")
