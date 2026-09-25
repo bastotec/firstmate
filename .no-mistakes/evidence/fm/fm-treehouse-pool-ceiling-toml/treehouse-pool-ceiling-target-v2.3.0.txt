@@ -1,0 +1,24 @@
+Live drive: real treehouse v2.3.0 (end-user install, /Users/bastotecnologia/.local/bin/treehouse)
+against a clean clone of the TARGET commit 681a8239 (tracked treehouse.toml, max_trees = 24),
+isolated pool root TREEHOUSE_ROOT=/tmp/th-live/pool-target.
+
+clone HEAD: 681a8239 chore: track checkout-root treehouse.toml with worktree-pool ceiling of 24
+checkout-root treehouse.toml: max_trees = 24 / root = ""
+
+$ treehouse get --lease --no-fetch   (repeat; isolated pool)
+lease #1:  /tmp/th-live/pool-target/.treehouse/repo-target-ee51b8/1/repo-target
+lease #24: /tmp/th-live/pool-target/.treehouse/repo-target-ee51b8/24/repo-target
+leases acquired before refusal: 24
+25th acquire -> rc=1, stderr:
+  all 24 worktrees are in use or dirty (max_trees = 24). Run 'treehouse status'
+  to see details, or increase max_trees in treehouse.toml
+
+$ treehouse status --json -> pool worktrees: 24 | statuses: ['leased']
+
+Checkout-root discovery from a subdirectory (bin/ of the same checkout):
+$ cd bin && TREEHOUSE_ROOT=/tmp/th-live/pool-target treehouse status --json
+  from subdir bin/: pool has 24 worktrees
+
+Result: the tracked checkout-root treehouse.toml lifts the shared worktree-pool
+ceiling to exactly 24 for this repository; acquire #25 is refused citing the
+configured value.

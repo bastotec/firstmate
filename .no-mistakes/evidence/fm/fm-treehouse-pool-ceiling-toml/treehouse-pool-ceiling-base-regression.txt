@@ -1,0 +1,31 @@
+Regression drive (proves the tracked file is what changes behavior): real treehouse
+v2.3.0 against a clean clone of the BASE commit ef7370fb (no tracked treehouse.toml;
+`ls treehouse.toml` -> No such file or directory), isolated pool root
+TREEHOUSE_ROOT=/tmp/th-live/pool-base. Same repository content otherwise; treehouse
+derives the identical pool hash (repo-base-ee51b8, same -ee51b8 suffix as the target
+clone), so the only delta between this run and the target run is the tracked config.
+
+clone HEAD: ef7370fb fix(bin): keep the code-root backlog diagnostic inside its own home...(#41)
+
+$ treehouse get --lease --no-fetch   (repeat)
+lease #16: /tmp/th-live/pool-base/.treehouse/repo-base-ee51b8/16/repo-base
+leases acquired before refusal: 16
+17th acquire -> rc=1, stderr:
+  all 16 worktrees are in use or dirty (max_trees = 16). Run 'treehouse status'
+  to see details, or increase max_trees in treehouse.toml
+
+Also, treehouse init in an empty repo shows the tool's built-in default template
+carries max_trees = 16, i.e. without the tracked file the pool ceiling stays at 16.
+
+Git-level fork-PR-path proof (in the gate worktree):
+$ git diff --name-status ef7370fb..681a8239
+  A	treehouse.toml
+$ git show 681a8239:treehouse.toml | head -2
+  max_trees = 24
+  root = ""
+$ git show ef7370fb:treehouse.toml
+  fatal: path 'treehouse.toml' exists on disk, but not in 'ef7370fb'
+
+Result: without the change the pool ceiling is the default 16; with the change it is
+24. The file is tracked as a new file at the checkout root in the target commit, so
+it ships through the fork pull-request path.

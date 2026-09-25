@@ -1,0 +1,18 @@
+Live drive: repo CI-pinned treehouse v2.0.1 (installed by the repository's own
+bin/fm-install-treehouse.sh, checksum-verified, to /tmp/th-live/pin201) against a
+clean clone of the TARGET commit 681a8239 (tracked treehouse.toml, max_trees = 24).
+v2.0.1 has no TREEHOUSE_ROOT/--root support, so the pool was isolated by redirecting
+HOME=/tmp/th-live/home201 (pool lands in $HOME/.treehouse, per the config comments).
+
+$ /tmp/th-live/pin201/treehouse --version
+v2.0.1
+
+$ treehouse get --lease   (repeat; pool /tmp/th-live/home201/.treehouse/repo-target-ee51b8)
+lease #24 (v2.0.1): /tmp/th-live/home201/.treehouse/repo-target-ee51b8/24/repo-target
+v2.0.1 leases acquired before refusal: 24
+25th acquire -> rc=1, stderr:
+  all 24 worktrees are in use or dirty (max_trees = 24). Run 'treehouse status'
+  to see details, or increase max_trees in treehouse.toml
+
+Result: the CI-pinned treehouse version also consumes the tracked checkout-root
+treehouse.toml and enforces the same ceiling of 24.
