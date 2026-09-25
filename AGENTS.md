@@ -127,6 +127,7 @@ state/               runtime records and signals; gitignored
   .lease-<task>        per-task supervision lease naming which actor (main or branch) may change that task; bin/fm-lease-lib.sh owns the contract the guarded scripts enforce
   ask-triage/        optional possible-ask cursors, flags, and token usage; written only by bin/fm-ask-triage.sh
   wake-gate/         optional wake-gate decision log, per-task last-model-look records retired with their tasks, and token usage; written only by bin/fm-wake-gate.sh
+  voice-gate/        optional hybrid-engine fast-layer usage and shadow-decision logs; written only by bin/fm_voice_gate.py (docs/voice-relay.md)
   x-watch.check.sh   generated Relay poll shim; present only when opted in (section 14)
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
   mail.check.sh      generated received-mail poll shim and its .check-trust binding; present only after bin/fm-mail-check.sh arm; report record .mail-check (mail schema: docs/configuration.md "Mail plane")

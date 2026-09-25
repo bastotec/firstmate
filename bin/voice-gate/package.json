@@ -1,0 +1,11 @@
+{
+  "name": "fm-voice-gate",
+  "private": true,
+  "type": "module",
+  "description": "Pinned runtime for bin/voice-gate/jev-route.mjs; install with npm ci --prefix bin/voice-gate --omit=dev",
+  "dependencies": {
+    "@ai-sdk/gateway": "4.0.86",
+    "ai": "7.0.106",
+    "zod": "4.6.5"
+  }
+}
