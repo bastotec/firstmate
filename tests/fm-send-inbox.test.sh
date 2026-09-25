@@ -12,8 +12,9 @@
 #      so the terminal can never truncate, garble, or duplicate a steer.
 #   4. The composer pre-check is advisory: visibly pending text skips the ring
 #      with a notice, and the steer is still durably sent (exit 0).
-#   5. A failed doorbell is still a sent steer (exit 0, record durable): the
-#      watcher's re-ring ladder owns delivery from the record on.
+#   5. A failed doorbell is still a sent steer (exit 0, record durable) and its
+#      notice leads with that durable delivery, crewmate and secondmate alike:
+#      the watcher's re-ring ladder owns delivery from the record on.
 #   6. Carve-outs keep the typed plane: a leading "/" (any harness), a leading
 #      "$" to codex, an explicit backend target, and the --key path.
 #   7. A marked secondmate steer carries its marker + corr token in the record
@@ -72,7 +73,9 @@ case "${1:-}" in
       printf '╭────╮\n│    │\n╰────╯\n'
     fi
     exit 0 ;;
-  list-windows) printf 'fm-t1\n'; exit 0 ;;
+  # fm-domain keeps the secondmate fixture's pane live so its ring path is
+  # exercised instead of the dead-pane branch.
+  list-windows) printf 'fm-t1\nfm-domain\n'; exit 0 ;;
 esac
 exit 0
 SH
@@ -184,7 +187,28 @@ test_failed_ring_is_still_sent() {
   [ -f "$dir/home/state/t1.inbox/001.msg" ] || fail "the steer was not recorded"
   assert_contains "$(cat "$err")" "watcher will re-ring" \
     "the failed-ring notice should point at the re-ring"
+  assert_contains "$(cat "$err")" "the steer is durably delivered at" \
+    "a failed doorbell must report the durable delivery first, not read as a failed send"
   pass "fm-send inbox: a failed doorbell is still a durably sent steer"
+}
+
+# The second-mate path on its own: a Deck second mate's driver prompt tells the
+# worker to list its steering inbox, so the durable record IS the delivery
+# exactly as it is for a crewmate. A doorbell that never reaches the pane must
+# therefore report the delivery first, never read as a failed delivery.
+test_secondmate_failed_ring_reports_durable_delivery() {
+  local dir err rc
+  dir=$(setup_case secondmate-ringfail); err="$dir/send.err"
+  fm_write_secondmate_meta "$dir/home/state/domain.meta" "$dir/home" "sess:fm-domain"
+  run_send "$dir" "$err" FM_FAKE_TMUX_SEND_FAIL=1 -- domain "second mate steer"; rc=$?
+  expect_code 0 "$rc" "a failed doorbell must not fail a secondmate steer"
+  [ -f "$dir/home/state/domain.inbox/001.msg" ] || fail "the secondmate steer was not durably recorded"
+  assert_contains "$(cat "$err")" \
+    "the steer is durably delivered at $dir/home/state/domain.inbox/001.msg; the doorbell did not reach" \
+    "a secondmate doorbell failure must lead with the durable delivery, not with the failed keystroke"
+  assert_not_contains "$(cat "$err")" "error:" \
+    "a delivered secondmate steer must not carry a failure report"
+  pass "fm-send inbox: a secondmate doorbell failure reports durable delivery, not a failed send"
 }
 
 test_harness_invocations_stay_typed() {
@@ -343,6 +367,7 @@ test_multiline_steer_is_legal
 test_resend_enqueues_new_sequence
 test_pending_composer_skips_ring_advisorily
 test_failed_ring_is_still_sent
+test_secondmate_failed_ring_reports_durable_delivery
 test_harness_invocations_stay_typed
 test_explicit_target_stays_typed
 test_key_path_never_touches_inbox
