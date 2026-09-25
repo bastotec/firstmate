@@ -48,6 +48,11 @@ SILENT_NOTICE_AFTER_SECONDS = 2.0
 # a wake into silence must not cost the captain a model turn.
 POST_WAKE_SPEECH_TIMEOUT = 5.0
 
+# Longest listening utterance kept for a one-breath "Ziggy, <command>" turn.
+# The decoder names the wake word only after the whole utterance ends, so the
+# command's audio has to be held until then or it is gone. 30 s at BLOCK size.
+UTTERANCE_KEEP_BLOCKS = 300
+
 
 class DecoderError(Exception):
     """The decoder child stopped taking audio, so the HUD can never wake."""
@@ -283,6 +288,26 @@ class TurnDirector:
         self.phase = self.LISTENING
         self._wake_at = None
         self._turned = False
+        # Listening audio of the utterance the decoder is still finalizing:
+        # voiced blocks plus the short pauses inside it (channel active).
+        self._utterance = []
+
+    def _keep(self, block):
+        self._utterance.append(block)
+        if len(self._utterance) > UTTERANCE_KEEP_BLOCKS:
+            del self._utterance[0]
+
+    def _one_breath_turn(self):
+        """Send the held utterance as a whole turn: "Ziggy, what's the status?"
+        said in one breath carries its command in the same audio as the wake
+        word, and the relay's model reads the name as an address."""
+        self.engine.begin_turn()
+        for held in self._utterance:
+            self.engine.feed(held)
+        self.engine.end_turn()
+        self._utterance = []
+        self.phase = self.LISTENING
+        self._wake_at = None
 
     def feed(self, block, now):
         """Feed one block at monotonic time `now`. Returns the phase after.
@@ -305,7 +330,15 @@ class TurnDirector:
 
         if not loud:
             # Silence or room tone, whatever the hangover says about the
-            # pause. The block itself is forwarded nowhere.
+            # pause. The block goes to no one live; a pause inside a listening
+            # utterance is only held for a possible one-breath turn.
+            if self.phase == self.LISTENING:
+                if channel:
+                    self._keep(block)
+                # The decoder's final line lands in the trailing quiet, after
+                # the last loud block, so it is checked here too.
+                if self._check_wake(self.decoder.poll_transcripts(), now):
+                    return self.phase
             if self.phase == self.IN_TURN and not channel:
                 self.engine.end_turn()
                 self.phase = self.LISTENING
@@ -327,15 +360,11 @@ class TurnDirector:
         # where it sits instead of buffering to arm a stale wake.
         if phase == self.LISTENING:
             self.decoder.feed(block)
+            self._keep(block)
         transcripts = self.decoder.poll_transcripts()
 
         if phase == self.LISTENING:
-            for text in transcripts:
-                if self.keyword.feed(text):
-                    self.phase = self.IN_WAKE
-                    self._wake_at = now
-                    self.on_notice("wake")
-                    break
+            self._check_wake(transcripts, now)
         elif phase == self.IN_WAKE:
             # Speech followed the wake: open the turn and stream.
             self.engine.begin_turn()
@@ -344,6 +373,26 @@ class TurnDirector:
         elif phase == self.IN_TURN:
             self.engine.feed(block)
         return self.phase
+
+    def _check_wake(self, transcripts, now):
+        """Act on finished listening lines. Returns True when one woke.
+
+        "Ziggy" alone arms the wake and waits for the command, as before.
+        "Ziggy, <command>" in one breath sends the held utterance as the turn
+        at once. Any other finished line closes its utterance, so the held
+        audio never spans two sentences."""
+        for text in transcripts:
+            if self.keyword.feed(text):
+                self.on_notice("wake")
+                if self.keyword.has_command(text):
+                    self._one_breath_turn()
+                else:
+                    self._utterance = []
+                    self.phase = self.IN_WAKE
+                    self._wake_at = now
+                return True
+            self._utterance = []
+        return False
 
     def recover(self):
         """Re-arm after a turn the engine abandoned but survived (a reply

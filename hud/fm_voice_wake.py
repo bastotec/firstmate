@@ -178,3 +178,16 @@ class KeywordListener:
         if woke:
             self.last_match = text
         return woke
+
+    def has_command(self, text):
+        """Return True when text carries words beyond the wake word itself:
+        "Ziggy, what's the status?" does, "Ziggy." and "Hey Ziggy" do not."""
+        match = self.config.pattern.search(text or "")
+        if not match:
+            return False
+        # The name must open the sentence (after an optional "hey"), so talk
+        # that merely mentions Ziggy is never sent as a command.
+        lead = [w for w in re.findall(r"[^\W_]+", text[:match.start(1)])
+                if w.lower() not in ("hey", "ok", "okay", "hi")]
+        rest = re.findall(r"[^\W_]+", text[match.end(1):])
+        return not lead and len(rest) >= 1

@@ -61,7 +61,7 @@ check(gate.active(0.1 + wake.HANGOVER_SECONDS / 2), "hangover must hold the chan
 check(not gate.active(0.1 + wake.HANGOVER_SECONDS * 2), "hangover must close after the quiet bound")
 
 listener = wake.KeywordListener()
-check(listener.feed("hey Ziggy what time is it"), "the wake word must wake")
+check(listener.feed("hey Ziggy"), "the wake word must wake")
 check(not listener.feed("what time is it"), "a question without the word must not wake")
 check(not listener.feed("I love ziggywithnospaces"), "the word must match as a whole word")
 check(listener.feed("Ziggie, can you help"), "an observed mishearing must wake")
@@ -183,7 +183,7 @@ gate2 = wake.EnergyGate()
 engine = ScriptedEngine()
 director = mic_mod.TurnDirector(
     engine, gate2, wake.KeywordListener(),
-    ScriptedDecoder(["Ziggy what time is it"]))
+    ScriptedDecoder(["Ziggy"]))
 for i in range(30):                      # the loud room, learned as the floor
     director.feed(room(), 0.1 * i)
 check(engine.begun == 0, "the loud room alone must never open a turn")
@@ -659,7 +659,7 @@ engine = ScriptedEngine()
 notices = []
 gate = wake.EnergyGate()
 keyword = wake.KeywordListener()
-decoder = ScriptedDecoder(["Ziggy what time is it"])
+decoder = ScriptedDecoder(["Ziggy"])
 director = mic_mod.TurnDirector(
     engine, gate, keyword, decoder, on_notice=notices.append)
 
@@ -732,6 +732,89 @@ check("no-speech" in notices2, "a wake into silence must say so: " + repr(notice
 PY
 pass "the mic attach wakes on the word, streams only after the wake, and never opens a turn on silence"
 
+# --- "Ziggy, <command>" in one breath is sent as one turn ----------------------
+#
+# The decoder names the wake word only once the whole utterance has ended, so
+# a command said in the same breath as the name would be lost if the audio
+# were not held. The held utterance must be sent as the turn at once; a
+# sentence that merely mentions the name, or the name alone, must not be.
+
+python3 - "$ROOT" <<'PY' || fail "one-breath wake"
+import importlib.util, math, os, struct, sys
+root = sys.argv[1]
+
+def load(name, relpath):
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(root, relpath))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+wake = load("wake", "hud/fm_voice_wake.py")
+mic_mod = load("micmod", "hud/fm_voice_mic.py")
+
+def check(cond, label):
+    if not cond:
+        sys.exit("one-breath wake: " + label)
+
+class LineAfterDecoder:
+    """Returns its line once `after` blocks were fed and the caller polls in
+    the utterance's trailing quiet, like a real per-utterance decoder."""
+    def __init__(self, text, after):
+        self.text, self.after, self.fed, self.done = text, after, 0, False
+    def start(self): pass
+    def feed(self, block): self.fed += 1
+    def poll_transcripts(self):
+        if not self.done and self.fed >= self.after:
+            self.done = True
+            return [self.text]
+        return []
+    def close(self): pass
+
+class RecordingEngine:
+    def __init__(self):
+        self.begun = self.ended = 0
+        self.fed = []
+    def begin_turn(self): self.begun += 1
+    def feed(self, pcm): self.fed.append(pcm)
+    def end_turn(self): self.ended += 1
+
+loud = b"".join(
+    struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * i / 16000)))
+    for i in range(1600)) * 2
+quiet = bytes(3200)
+
+def run(text, loud_blocks=12):
+    engine, notices = RecordingEngine(), []
+    director = mic_mod.TurnDirector(
+        engine, wake.EnergyGate(), wake.KeywordListener(),
+        LineAfterDecoder(text, loud_blocks), on_notice=notices.append)
+    t = 0.0
+    for _ in range(loud_blocks):
+        director.feed(loud, t); t += 0.1
+    # The final line lands in the trailing quiet, after the last loud block.
+    for _ in range(3):
+        director.feed(quiet, t); t += 0.1
+    return engine, director, notices
+
+engine, director, notices = run("Ziggy, what is the status?")
+check(engine.begun == 1 and engine.ended == 1,
+      "a one-breath command must open and close one turn: %d/%d" % (engine.begun, engine.ended))
+check(sum(len(b) for b in engine.fed) >= 12 * 3200,
+      "the whole held utterance must reach the engine, got %d bytes" % sum(len(b) for b in engine.fed))
+check(director.phase == "listening", "the HUD must be listening again: " + director.phase)
+check(notices == ["wake"], "the wake must be noticed once: " + repr(notices))
+
+engine, director, notices = run("Ziggy.")
+check(engine.begun == 0 and director.phase == "in-wake",
+      "the name alone must arm the wake and wait for the command")
+
+engine, director, notices = run("I told Ziggy about it yesterday")
+check(engine.begun == 0,
+      "a sentence that only mentions the name must never be sent as a turn")
+PY
+pass "a one-breath \"Ziggy, <command>\" is sent as one turn; the name alone still waits"
+
 # --- a wake word spoken inside a turn never arms a stale wake ----------------
 #
 # The decoder finalizes each utterance's line only after it ended, so a
@@ -800,7 +883,7 @@ loud = b"".join(
 
 engine = ScriptedEngine()
 decoder = UtteranceDecoder([
-    (4, "Ziggy what time is it"),
+    (4, "Ziggy"),
     (10, "Ziggy I mean what time"),
     (15, "hello there"),
 ])
@@ -922,7 +1005,7 @@ loud = b"".join(
 
 engine = ScriptedEngine()
 decoder = LateFinalDecoder([
-    (4, 0, "Ziggy what time is it"),
+    (4, 0, "Ziggy"),
     # Said inside the turn: ten loud blocks, its line landing two polls
     # after they end - in the trailing quiet, past every in-turn poll.
     (10, 2, "Ziggy I mean what time"),
@@ -1669,7 +1752,7 @@ env = dict(os.environ)
 env["FM_TEST_SPEAKER_CAPTURE"] = capture
 env["FM_VOICE_HUD_DECODER"] = (
     "python3 -c 'import sys, time; time.sleep(0.5); "
-    "print(\"Ziggy what time is it\"); sys.stdout.flush(); sys.stdin.read()'")
+    "print(\"Ziggy\"); sys.stdout.flush(); sys.stdin.read()'")
 env["PYTHONPATH"] = sdstub + (
     os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
 
@@ -1752,7 +1835,7 @@ with open(mic_path, "wb") as fh:
 env = dict(os.environ)
 env["FM_VOICE_HUD_DECODER"] = (
     "python3 -c 'import sys, time; time.sleep(0.5); "
-    "print(\"Ziggy what time is it\"); sys.stdout.flush(); sys.stdin.read()'")
+    "print(\"Ziggy\"); sys.stdout.flush(); sys.stdin.read()'")
 proc = subprocess.Popen(
     [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
      "--stub-relay", stub, "--mic-file", mic_path],
@@ -1825,7 +1908,7 @@ with open(mic_path, "wb") as fh:
 env = dict(os.environ)
 env["FM_VOICE_HUD_DECODER"] = (
     "python3 -c 'import sys, time; time.sleep(0.5); "
-    "print(\"Ziggy what time is it\"); sys.stdout.flush(); sys.stdin.read()'")
+    "print(\"Ziggy\"); sys.stdout.flush(); sys.stdin.read()'")
 proc = subprocess.Popen(
     [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
      "--stub-relay", stub, "--mic-file", mic_path],
