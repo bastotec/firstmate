@@ -826,6 +826,21 @@ class Session:
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 pass
 
+    def stop_gate(self):
+        """Cut the detached fast-layer call loose so this relay never waits on it.
+
+        Shadow bookkeeping must not hold an exit: the task is disowned and the
+        gate is told to stop, which kills any live helper so the thread it ran
+        on ends instead of being joined mid-call. A turn torn down here keeps a
+        fail-open verdict, never behavior.
+        """
+        if self.gate_task is not None:
+            self.gate_task.cancel()
+            self.gate_task = None
+        gate_obj = getattr(self.options, "gate", None)
+        if gate_obj is not None:
+            gate_obj.stop()
+
     # ------------------------------------------------------------------ uplink
 
     async def talk_start(self):
@@ -1588,6 +1603,7 @@ async def serve(options):
         if reason is not None:
             down.send_json(frame.NOTICE, {"event": "turn-failed",
                                           "error": reason})
+        session.stop_gate()
         await session.close()
         down.send(frame.BYE)
         down.close()
@@ -1681,6 +1697,7 @@ async def self_test(options):
         if not session.failed:
             fail_turn(session, sink, TimeoutError("voice engine reply timed out"))
     await session.close()
+    session.stop_gate()
 
     base = session.turn.get("talk_end")
 

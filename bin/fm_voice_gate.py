@@ -161,20 +161,6 @@ class Decision:
         self.line = line
 
 
-def _first_line(path):
-    """Return the first line with comments cut, or None."""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            raw = handle.read()
-    except FileNotFoundError:
-        return None
-    for line in raw.splitlines():
-        text = line.split("#", 1)[0].strip()
-        if text:
-            return text
-    return None
-
-
 def read_settings(home):
     """Return the gate's (key variable, mode), or None when the gate is inert.
 
@@ -245,6 +231,13 @@ class VoiceGate:
         self.home = home
         self.settings = read_settings(home) if settings is None else settings
         self.cold = True
+        # The live helper processes, under the lock their spawner and the
+        # relay's teardown share. A stop latches: nothing later spawns, and
+        # every live child is cut, so a detached shadow call can never hold
+        # the relay's exit for the length of its turn-budget share.
+        self.children = set()
+        self.stopped = False
+        self.child_lock = threading.Lock()
 
     @property
     def enabled(self):
@@ -269,6 +262,17 @@ class VoiceGate:
             # Fail-open IS the contract: an unexpected shape is a route up,
             # never a dead turn and never a swallowed command.
             return Decision(ROUTE_HEAVY, "error")
+
+    def stop(self):
+        """End the gate for this process: nothing later runs, live helpers die."""
+        with self.child_lock:
+            self.stopped = True
+            children = list(self.children)
+        for child in children:
+            try:
+                child.kill()
+            except OSError:
+                pass
 
     def _call(self, utterance, seconds):
         override = os.environ.get("FM_VOICE_GATE_HELPER")
@@ -296,24 +300,37 @@ class VoiceGate:
         env["FM_VOICE_GATE_TIMEOUT_MS"] = str(int(seconds * 1000))
         started = time.monotonic()
         try:
-            done = subprocess.run(
-                run, input=json.dumps({"utterance": utterance}),
-                capture_output=True, text=True, timeout=seconds, env=env)
-        except subprocess.TimeoutExpired:
-            return self._spent(Decision(
-                ROUTE_HEAVY, "helper-timeout", calls=1,
-                gate_ms=int((time.monotonic() - started) * 1000),
-                outcome="error-timeout"))
+            with self.child_lock:
+                if self.stopped:
+                    return Decision(ROUTE_HEAVY, "stopped")
+                child = subprocess.Popen(
+                    run, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True, env=env)
+                self.children.add(child)
         except OSError:
             return Decision(ROUTE_HEAVY, "no-helper")
+        try:
+            try:
+                stdout, _ = child.communicate(
+                    input=json.dumps({"utterance": utterance}), timeout=seconds)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+                return self._spent(Decision(
+                    ROUTE_HEAVY, "helper-timeout", calls=1,
+                    gate_ms=int((time.monotonic() - started) * 1000),
+                    outcome="error-timeout"))
+        finally:
+            with self.child_lock:
+                self.children.discard(child)
         elapsed = int((time.monotonic() - started) * 1000)
-        rows = [line for line in done.stdout.splitlines() if line.strip()]
+        rows = [line for line in stdout.splitlines() if line.strip()]
         error = None
         for line in rows:
             fields = line.split("\t")
             if fields and fields[0] == "error":
                 error = fields[1] if len(fields) > 1 else "unknown"
-        if done.returncode != 0 or error is not None:
+        if child.returncode != 0 or error is not None:
             reason = error or "unknown"
             calls = 0 if reason in PRE_CALL_ERRORS else 1
             return self._spent(Decision(
