@@ -29,7 +29,12 @@
 #                          external-wait pause or verified captain-held transfer is
 #                          absorbed instead with its own long re-surface cadence,
 #                          never as a wedge, and that recheck reason names which
-#                          human the wait is on. Only when neither absorb class
+#                          human the wait is on. A supervisor-declared external
+#                          wait (bin/fm-external-wait.sh owns the record) is
+#                          absorbed the same way, with its recheck reason naming
+#                          the declarer, reason, and expected clear time, and its
+#                          expiry as the bound that restores ordinary escalation.
+#                          Only when neither absorb class
 #                          applies does the log's last line decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
 #                          both surfaced at once. A provably-working stale past the
@@ -52,10 +57,12 @@
 #                          (state/<id>.turn-ended, or the spawn record before any
 #                          turn completes). Past that bound, a declared external
 #                          wait or verified captain-held transfer uses the long
-#                          pause recheck cadence; under daemon-backed afk an
-#                          external wait is instead handed to the daemon as this
-#                          plain reason once per declaration, while captain-held
-#                          work stays silent until return
+#                          pause recheck cadence; under daemon-backed afk a
+#                          status-declared external wait is instead handed to
+#                          the daemon as this plain reason once per declaration,
+#                          while captain-held work stays silent until return and
+#                          a supervisor-declared external wait is absorbed by
+#                          this watcher, bounded by its own expiry
 #                          (busy_turn_bound_check owns that split);
 #                          every other pane goes through the same wedge timer and
 #                          surfaces with the identical "stale: ..." reason,
@@ -173,6 +180,12 @@ mkdir -p "$STATE"
 # watcher reads only its presence (afk_record_present below).
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# The supervisor-declared external-wait record (state/<id>.external-wait);
+# bin/fm-external-wait.sh owns its schema, lifecycle, and expiry verdict, and
+# this watcher reads only its live-declaration facts (external_wait_declaration
+# below) to absorb a stale pane the declaration covers.
+# shellcheck source=bin/fm-external-wait.sh
+. "$SCRIPT_DIR/fm-external-wait.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -320,6 +333,61 @@ afk_record_present() { fm_afk_contract_present "$STATE"; }
 # pane silently instead of rechecking it.
 captain_held_silenced() {  # <status-line>
   status_is_captain_held "$1" && afk_record_present
+}
+
+# Supervisor-declared external wait (bin/fm-external-wait.sh owns the record).
+# A worker that cannot generate at all cannot write its own `paused:` line, so a
+# supervisor may record the wait with a reason and an expected clear time
+# instead. Sets EXT_WAIT_SCOPE (the declaration identity a re-surface throttle
+# binds to), EXT_WAIT_AGE (seconds since the declaration), EXT_WAIT_REASON,
+# EXT_WAIT_BY, and EXT_WAIT_UNTIL while a LIVE declaration exists, and returns
+# 0; returns 1 with them cleared for an absent, expired, or cleared declaration,
+# which is exactly how an expired declaration restores ordinary escalation.
+# Only the stale/wedge absorb paths below read it: a status line, check result,
+# terminal outcome, or PR merge is a genuinely new event and never consults it.
+external_wait_declaration() {  # <task>
+  EXT_WAIT_SCOPE='' EXT_WAIT_AGE='' EXT_WAIT_REASON='' EXT_WAIT_BY='' EXT_WAIT_UNTIL=''
+  [ -n "${1:-}" ] || return 1
+  fm_external_wait_active "$1" "$STATE" || return 1
+  EXT_WAIT_SCOPE=$FM_EXTERNAL_WAIT_SCOPE
+  EXT_WAIT_AGE=$FM_EXTERNAL_WAIT_AGE
+  EXT_WAIT_REASON=$FM_EXTERNAL_WAIT_REASON
+  EXT_WAIT_BY=$FM_EXTERNAL_WAIT_BY
+  EXT_WAIT_UNTIL=$FM_EXTERNAL_WAIT_UNTIL
+  return 0
+}
+
+# The bounded re-surface for a declaration-absorbed stale pane: once per
+# PAUSE_RESURFACE_SECS on its own .ext-wait-resurfaced-<key> marker (nothing else
+# writes that marker, so the cadence cannot be erased by the pause bookkeeping a
+# status-declared wait keeps), bound to this declaration's identity so a replaced
+# declaration starts its own window. The reason names who declared the wait, why,
+# and until when, so the recheck that reaches the supervisor is distinguishable
+# at a glance from a worker-authored `paused:` recheck. Wakes (and exits) only
+# when the cadence is due; otherwise returns having logged the absorb.
+external_wait_resurface() {  # <window> <key> <label>
+  local win=$1 key=$2 label=$3
+  resurface_absorbed "$win" "$STATE/.ext-wait-resurfaced-$key" "$EXT_WAIT_AGE" \
+    "stale: $win (supervisor-declared external wait ${EXT_WAIT_AGE}s, until ${EXT_WAIT_UNTIL}: ${EXT_WAIT_REASON} - declared by ${EXT_WAIT_BY}, rechecked on a long cadence not a wedge; confirm the wait still holds or clear the declaration)" \
+    "ext-wait:$EXT_WAIT_SCOPE"
+  triage_log "absorbed $label (supervisor-declared external wait, until $EXT_WAIT_UNTIL): $win"
+}
+
+# Absorb one stale sighting under a supervisor declaration and leave the ordinary
+# wedge timer running against the declaration instead of the pane: the timer is
+# reset and the escalation counter removed exactly as the captain-call bound
+# clears them, so the counter a pre-declaration episode earned cannot outlive the
+# declaration, and once the declaration expires the ladder resumes from a fresh
+# count. wedge_timer_check owns calling this at the threshold; the re-surface
+# cadence is what keeps a long wait visible instead of escalating it.
+external_wait_timer_absorb() {  # <window> <task> <key> <label> <since-file> <escalation-file>
+  local win=$1 task=$2 key=$3 label=$4 since_file=$5 escalation_file=$6
+  external_wait_declaration "$task" || return 1
+  date +%s > "$since_file"
+  rm -f "$escalation_file"
+  clear_write_tracking "$key"
+  external_wait_resurface "$win" "$key" "$label"
+  return 0
 }
 
 hash_pane() {
@@ -959,7 +1027,12 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         # throttle without creating pause state.
         local key
         key=$(window_key "$win")
-        if captain_call_stale_bound "$key" "$task"; then
+        if external_wait_timer_absorb "$win" "$task" "$key" "$label" "$since_file" "$escalation_file"; then
+          # A supervisor-declared external wait absorbs the whole ladder: never
+          # a wedge alarm while the declaration is live, and its expiry is what
+          # hands the pane back to ordinary escalation.
+          return 0
+        elif captain_call_stale_bound "$key" "$task"; then
           date +%s > "$since_file"
           rm -f "$escalation_file"
           clear_write_tracking "$key"
@@ -1042,7 +1115,7 @@ busy_turn_over_age() {  # <task>
 # wording; a caller that reached the bounded cadence off pause tracking alone, with
 # no declaring verb left on the log, keeps the external-wait wording it always had.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age detail reason declaration last until now min_age
+  local win=$1 task=$2 h=$3 key statusf mtime age detail reason declaration last until now min_age throttle
   key=$(window_key "$win")
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
@@ -1055,6 +1128,7 @@ handle_paused_stale() {  # <window> <task> <hash>
   age=$(( now - mtime ))
   last=$(last_status_line "$statusf")
   min_age=$PAUSE_RESURFACE_SECS
+  throttle="$STATE/.paused-resurfaced-$key"
   declaration="declared:$(fm_wake_signal_sig "$statusf" || true)"
   if status_is_captain_held "$last"; then
     if afk_record_present; then
@@ -1078,11 +1152,27 @@ handle_paused_stale() {  # <window> <task> <hash>
       declaration="$declaration:due"
       min_age=0
     fi
+  elif external_wait_declaration "$task"; then
+    # A SUPERVISOR-declared external wait (bin/fm-external-wait.sh owns the
+    # record): there is no status line behind it - the worker cannot write one -
+    # so the pause flag the loop-top reconciliation reads off the status line is
+    # deliberately not set here, exactly as the backlog-hold path keeps its own
+    # bookkeeping out of it, and the re-surface throttle binds to this
+    # DECLARATION's identity on its own marker rather than the status-log
+    # signature. The recorded reason, declarer, and expected clear time make the
+    # bounded recheck attributable and distinguishable from a worker-authored
+    # `paused:` at a glance.
+    rm -f "$STATE/.paused-$key"
+    throttle="$STATE/.ext-wait-resurfaced-$key"
+    detail="supervisor-declared external wait"
+    reason="supervisor-declared external wait ${EXT_WAIT_AGE}s, until ${EXT_WAIT_UNTIL}: ${EXT_WAIT_REASON} - declared by ${EXT_WAIT_BY}, rechecked on a long cadence not a wedge; confirm the wait still holds or clear the declaration"
+    declaration="ext-wait:$EXT_WAIT_SCOPE"
+    age=$EXT_WAIT_AGE
   else
     detail="paused, awaiting external"
     reason="paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds"
   fi
-  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age"
+  resurface_absorbed "$win" "$throttle" "$age" "stale: $win ($reason)" "$declaration" "$min_age"
   triage_log "absorbed stale ($detail, age ${age}s): $win"
 }
 
@@ -1104,7 +1194,8 @@ handle_paused_stale() {  # <window> <task> <hash>
 busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-file>
   local win=$1 task=$2 h=$3 since_file=$4 escalation_file=$5 key statusf declared
   statusf="$STATE/$task.status"
-  if status_is_paused_or_captain_held "$(last_status_line "$statusf")"; then
+  if status_is_paused_or_captain_held "$(last_status_line "$statusf")" \
+    || external_wait_declaration "$task"; then
     if afk_present; then
       # Away mode is daemon-owned, so this bound hands off the PLAIN wake identity
       # and lets the daemon classify the declaration itself - the undecorated
@@ -1128,6 +1219,17 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
       key=$(window_key "$win")
       rm -f "$since_file" "$escalation_file"
       clear_write_tracking "$key"
+      if ! status_is_paused_or_captain_held "$(last_status_line "$statusf")"; then
+        # Only a supervisor-declared external wait admitted this pane (the
+        # status line says nothing), and the away-mode daemon's pause vocabulary
+        # reads status lines this record cannot supply: handing it over would
+        # dress the wait up as an undeclared wedge. Absorb it here instead,
+        # exactly like the captain-held silence below - bounded by the
+        # declaration's own expiry, never open-ended.
+        printf '%s' "ext-wait:$EXT_WAIT_SCOPE" > "$STATE/.stale-$key"
+        triage_log "absorbed busy over-age pane (supervisor-declared external wait, until $EXT_WAIT_UNTIL): $win"
+        return 0
+      fi
       declared="declared:$(fm_wake_signal_sig "$statusf" || true)"
       if captain_held_silenced "$(last_status_line "$statusf")"; then
         printf '%s' "$declared" > "$STATE/.stale-$key"
@@ -1376,6 +1478,22 @@ surface_nonterminal_stale() {  # <window> <hash>
     else
       stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" && throttled=0
     fi
+  elif external_wait_declaration "$task"; then
+    # A supervisor-declared external wait (bin/fm-external-wait.sh owns the
+    # record): the pane is parked on something outside the worker's control and
+    # the supervisor already knows it, so first sight of each new hash is folded
+    # into the ordinary wedge timer instead of being surfaced as an inconclusive
+    # state. wedge_timer_check's declaration absorb then keeps that timer from
+    # ever alarming and re-surfaces the pane on the pause cadence, so the ONLY
+    # thing that restores escalation is the declaration expiring or being
+    # cleared. The pause flag is deliberately not written (no status line backs
+    # this wait) and no wedge-escalation count is inherited from before it.
+    printf '%s' "$h" > "$STATE/.stale-$key"
+    date +%s > "$STATE/.stale-since-$key"
+    rm -f "$STATE/.wedge-escalations-$key"
+    clear_write_tracking "$key"
+    external_wait_resurface "$win" "$key" "non-terminal stale"
+    return 0
   elif captain_call_stale_bound "$key" "$task"; then
     bounded=0
     throttled=0
@@ -2351,6 +2469,14 @@ EOF
           if captain_held_silenced "$last"; then
             printf '%s' "$h" > "$sf"
             triage_log "absorbed stale (captain-held, never rechecked while the away-posture record exists): $w"
+          elif external_wait_declaration "$task"; then
+            # A supervisor-declared external wait is never handed to the
+            # away-mode daemon either: the daemon's pause vocabulary reads
+            # status lines this record cannot supply, so the handoff would dress
+            # the declared wait up as an undeclared wedge. Absorbed here and
+            # bounded by the declaration's own expiry instead.
+            printf '%s' "$h" > "$sf"
+            triage_log "absorbed stale (supervisor-declared external wait, until $EXT_WAIT_UNTIL): $w"
           elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
             fm_wake_append stale "$w" "stale: $w" || exit 1
             printf '%s' "$h" > "$sf"
@@ -2372,7 +2498,20 @@ EOF
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
+            if external_wait_declaration "$task"; then
+              # A supervisor-declared external wait outranks the leftover
+              # terminal line's re-surface: the line already alarmed once, the
+              # supervisor recorded why the pane is parked, and a new STATUS
+              # event - the genuinely new outcome - still wakes through the
+              # signal path untouched. Fold the sighting into the wedge timer so
+              # the declaration absorb owns the ladder and its cadence, and its
+              # expiry alone restores escalation.
+              printf '%s' "$h" > "$sf"
+              date +%s > "$ssf"
+              rm -f "$ewf"
+              clear_write_tracking "$key"
+              external_wait_resurface "$w" "$key" "stale (terminal status under a supervisor-declared external wait)"
+            elif crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
               clear_write_tracking "$key"
