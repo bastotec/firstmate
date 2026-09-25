@@ -1,62 +1,67 @@
 #!/usr/bin/env bash
 # fm-lint.sh - the single owner of firstmate's lint definition.
 #
-# Runs its file set with ShellCheck's default severity, extended analysis,
-# ambient configuration disabled, and one exact ShellCheck version. CI and
-# no-mistakes both invoke this script with no arguments, so this owner selects
-# the context-appropriate rule set without duplicating lint configuration.
-# The explicit --fast mode is local-only and disables ShellCheck's extended
-# dataflow analysis while preserving ordinary shell lint checks and source
-# following. CI, main, and merge-base-less runs keep --norc --external-sources
-# with full dataflow over the whole canonical set. An ordinary local branch
-# (changed-file mode, including the no-mistakes lint step) drops
-# --external-sources, keeps dataflow, and excludes SC1091, SC2034, SC2153,
-# and SC2329, the codes that need library context. Those codes still run in
-# CI over the whole set. Explicit paths keep --external-sources with the
-# selected dataflow mode.
-# Tests stop source analysis at imported production modules because CI analyzes
-# every production shell separately as a canonical, source-aware root.
-# The default (no explicit-path) path also runs bin/fm-lint-workflows.sh so a
-# malformed GitHub workflow, including a self-broken ci.yml, fails locally
-# before merge instead of only failing to run as CI.
+# Canonical roots: bin/*.sh, bin/backends/*.sh, tests/*.sh.
+# ShellCheck uses its pinned version, default severity, --norc and full extended
+# analysis. Explicit paths and full/affected modes keep --external-sources and
+# every finding code. Tests may bound imported production analysis with their
+# source=/dev/null directives; each production module remains a canonical root.
+# Without explicit paths, always check backend purity and GitHub workflows too.
 #
-# With no explicit paths, the file set and source-following posture depend
-# on context:
-#   - In CI (GITHUB_ACTIONS=true or CI=true), on the main branch, or when no
-#     merge-base against origin/main (or local main) can be found, it lints
-#     the full canonical set: bin/*.sh bin/backends/*.sh tests/*.sh, with
-#     --external-sources and full dataflow. This is what CI always runs, so
-#     CI coverage never depends on a local diff.
-#   - Otherwise (an ordinary local branch with a real merge-base) it lints
-#     only the canonical-set files changed since that merge-base, including
-#     uncommitted local edits, via plain local `git diff` (no network, no
-#     `gh`). That local pass drops --external-sources and excludes SC1091,
-#     SC2034, SC2153, and SC2329. A branch with zero matching changed files
-#     skips ShellCheck and prints a "no changed lint targets" note, then
-#     still runs the backend-purity check and validates workflows.
-# Explicit paths always bypass this file-set selection and lint exactly the
-# given paths, matching the same config, without the workflow YAML check.
-# Explicit core bin/ and bin/backends/ scripts still receive the
-# backend-purity check. The backend-purity check rejects direct Beads CLI
-# invocations in the core bin/ and bin/backends/ scripts so every configured
-# backlog backend follows the same tasks-axi lifecycle path.
+# Selection:
+#   --full: all canonical roots, including on pushes to main.
+#   --changed <base>: changed shells and transitive referencing roots since the
+#     merge-base, including working edits, deletions and both sides of renames.
+#     CI supplies the PR base SHA with full checkout history. Missing history or
+#     an unreadable graph falls back to full lint. Filename references are
+#     conservative (including comments/commands); unresolved sources widen the
+#     set, and changes to this owner's implementation/data select all roots.
+#   No mode: full in CI, on main, or without a merge-base against origin/main
+#     (else main); otherwise the existing local changed-files-only pass, without
+#     source following and excluding SC1091, SC2034, SC2153 and SC2329.
+#   Explicit paths: exactly those roots, no workflow check.
+#   --fast: local-only, disables extended analysis but preserves source following.
+# Empty selections skip ShellCheck but still check backend purity and workflows.
+# Backend purity rejects direct Beads CLI use in core bin/ and bin/backends/.
 #
-# Canonical lint defaults to two bounded workers over two stable logical shards.
-# Each shard writes separate diagnostics, and the parent replays those outputs in
-# deterministic shard and root order after every worker finishes. FM_LINT_JOBS=1
-# runs the same shards serially with byte-identical diagnostics and exit selection.
+# Scheduling: one fresh process per root. Default concurrency is detected CPUs;
+# --jobs / FM_LINT_JOBS can lower it. FM_LINT_MEMORY_MIB defaults to 6144 MiB
+# and is an ADMISSION BUDGET for scheduling waves, not a process memory limit
+# and not a claim that any root's heap is bounded: no kernel or RTS cap is
+# applied to ShellCheck, and a root whose real RSS exceeds its reservation or
+# the whole budget still runs, alone, and can still be killed by an external
+# memory watchdog. bin/fm-lint-memory.tsv holds measured per-root RSS in KiB,
+# bound to a conservative source-closure SHA-256. Reservations pad measured RSS
+# by 50 percent plus 64 MiB. Roots with no usable measurement (zero
+# reservation), stale source graphs, or reservations above the budget are
+# UNKNOWN to the planner: an unknown reservation never silently means "the
+# whole budget is available" - it means the root runs alone in its own wave,
+# whatever the configured budget. Reservations above 3072 MiB are heavy: at
+# most one heavy root is admitted per wave, alongside light roots only if the
+# CPU and memory reservations fit. This remains true on machines with many CPUs
+# or a larger configured budget.
+# Refresh by timing each --full --list-files root separately with
+# Command: shellcheck --norc --external-sources -- "$root" (clear SHELLCHECK_OPTS).
+# Use /usr/bin/time -lp on macOS or -v on Linux, converting RSS to KiB, and join
+# it to `perl bin/fm-lint-plan.pl fingerprints '' <roots...>` output under the
+# version header. Never bind new fingerprints to unmeasured changed closures.
+# Diagnostics and first nonzero exit selection retain input-root order.
 #
-# Optional quiet telemetry writes one bounded TSV snapshot of content and source
-# graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
+# --telemetry / FM_LINT_TELEMETRY writes a TSV snapshot of identity, detected
+# resources, reservations, wall/CPU/max RSS and competing ShellCheck processes.
+# RSS maxima summed across roots are NOT a simultaneous aggregate memory peak.
+# Local measurements do not predict runner RSS; CI prints its own snapshot.
 #
 # Usage:
-#   fm-lint.sh                         lint the context-selected file set (see above)
-#   fm-lint.sh --fast [path]...       local lint with extended analysis disabled
-#   fm-lint.sh <path>...               lint explicit roots with the same config
-#   fm-lint.sh --jobs <1|2> [path]...  override bounded worker count
-#   fm-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
+#   fm-lint.sh                         lint the context-selected file set
+#   fm-lint.sh --full                  full canonical lint
+#   fm-lint.sh --changed <base>        source-aware affected-root lint
+#   fm-lint.sh --fast [path]...         local lint without extended analysis
+#   fm-lint.sh <path>...                lint explicit roots
+#   fm-lint.sh --jobs <count> [path]... lower CPU concurrency
+#   fm-lint.sh --telemetry <path> ...   write a quiet metrics snapshot
 #   fm-lint.sh --required-version      print the ShellCheck pin
-#   fm-lint.sh --list-files            print the file set that would be linted
+#   fm-lint.sh --list-files            print the selected roots without linting
 #   fm-lint.sh --help                  print this usage
 set -u
 
@@ -392,15 +397,37 @@ fm_lint_run_backend_purity() {
   }
 }
 
-JOBS=${FM_LINT_JOBS:-2}
+# CPU detection is local to the owner, never inferred from a runner label.
+CPU_COUNT=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || printf '1')
+case "$CPU_COUNT" in ''|*[!0-9]*|0) CPU_COUNT=1 ;; esac
+HOST_MEMORY_MIB=unavailable
+if [ -r /proc/meminfo ]; then
+  HOST_MEMORY_MIB=$(awk '/^MemTotal:/ {printf "%.0f", $2 / 1024}' /proc/meminfo)
+elif [ "$(uname)" = Darwin ]; then
+  HOST_MEMORY_MIB=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0f", $1 / 1048576}')
+fi
+JOBS=${FM_LINT_JOBS:-$CPU_COUNT}
+ADMISSION_BUDGET_MIB=${FM_LINT_MEMORY_MIB:-6144}
 TELEMETRY=${FM_LINT_TELEMETRY:-}
+SELECTION=auto
+CHANGE_BASE=
 FAST=0
 ANALYSIS_MODE=full
 LIST_FILES=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --full)
+      SELECTION=full
+      shift
+      ;;
+    --changed)
+      [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --changed requires a base commit.\n' >&2; exit 2; }
+      SELECTION=affected
+      CHANGE_BASE=$2
+      shift 2
+      ;;
     --jobs)
-      [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --jobs requires 1 or 2.\n' >&2; exit 2; }
+      [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --jobs requires a positive integer.\n' >&2; exit 2; }
       JOBS=$2
       shift 2
       ;;
@@ -438,10 +465,22 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-case "$JOBS" in
-  1|2) ;;
-  *) printf 'fm-lint.sh: jobs must be 1 or 2, got %s.\n' "$JOBS" >&2; exit 2 ;;
+case "$JOBS:$ADMISSION_BUDGET_MIB" in
+  *[!0-9:]*|:*|*:|0:*|*:0)
+    printf 'fm-lint.sh: jobs and FM_LINT_MEMORY_MIB must be positive integers.\n' >&2
+    exit 2
+    ;;
 esac
+# Prevent overflow and accidental process storms; an explicit override can use
+# fewer CPUs but cannot request more than the detected host provides.
+if [ "${#JOBS}" -gt 6 ] || [ "${#ADMISSION_BUDGET_MIB}" -gt 7 ]; then
+  printf 'fm-lint.sh: jobs and FM_LINT_MEMORY_MIB are too large; use smaller values.\n' >&2
+  exit 2
+fi
+JOBS=$((10#$JOBS))
+ADMISSION_BUDGET_MIB=$((10#$ADMISSION_BUDGET_MIB))
+[ "$JOBS" -gt 0 ] && [ "$ADMISSION_BUDGET_MIB" -gt 0 ] || exit 2
+[ "$JOBS" -le "$CPU_COUNT" ] || JOBS=$CPU_COUNT
 
 if [ "$FAST" -eq 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; }; then
   printf 'fm-lint.sh: --fast is local-only; CI uses full ShellCheck analysis.\n' >&2
@@ -488,11 +527,12 @@ EXPLICIT_PATHS=0
 FOLLOW_SOURCES=1
 EXCLUDE_CODES=
 if [ "$#" -gt 0 ]; then
+  [ "$SELECTION" = auto ] || { printf 'fm-lint.sh: selection modes do not accept explicit paths.\n' >&2; exit 2; }
   EXPLICIT_PATHS=1
   ROOTS=("$@")
 else
   full_lint=1
-  if [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CI:-}" != true ] \
+  if [ "$SELECTION" = auto ] && [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CI:-}" != true ] \
     && command -v git >/dev/null 2>&1 \
     && git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
     && [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" != main ]; then
@@ -502,7 +542,25 @@ else
     [ -z "$merge_base" ] || full_lint=0
   fi
 
-  if [ "$full_lint" -eq 1 ]; then
+  if [ "$SELECTION" = affected ]; then
+    # Explicit base is supplied as data, never interpolated into a shell command.
+    # Missing history or a failed selector falls back to full lint, not an empty pass.
+    ROOTS=(bin/*.sh bin/backends/*.sh tests/*.sh)
+    base_commit=$(git rev-parse --verify --end-of-options "${CHANGE_BASE}^{commit}" 2>/dev/null) || base_commit=
+    merge_base=
+    [ -z "$base_commit" ] || merge_base=$(git merge-base "$base_commit" HEAD 2>/dev/null) || merge_base=
+    selected=
+    if [ -n "$merge_base" ] && selected=$(perl "$SELF_DIR/fm-lint-plan.pl" changed "$merge_base" "${ROOTS[@]}"); then
+      ROOTS=()
+      while IFS= read -r changed_path; do
+        [ -n "$changed_path" ] || continue
+        ROOTS+=("$changed_path")
+      done <<< "$selected"
+      ANALYSIS_MODE=affected
+    else
+      printf 'fm-lint.sh: changed base/graph unavailable; using full canonical lint.\n' >&2
+    fi
+  elif [ "$full_lint" -eq 1 ]; then
     ROOTS=(bin/*.sh bin/backends/*.sh tests/*.sh)
   else
     CHANGED_MODE=1
@@ -556,7 +614,7 @@ else
   printf 'fm-lint.sh: full ShellCheck extended analysis enabled\n' >&2
 fi
 
-if [ "$CHANGED_MODE" -eq 1 ] && [ "$ROOT_COUNT" -eq 0 ]; then
+if [ "$ROOT_COUNT" -eq 0 ]; then
   printf 'fm-lint.sh: no changed lint targets\n'
   overall_rc=0
   fm_lint_run_backend_purity || overall_rc=$?
@@ -601,51 +659,64 @@ TAB=$(printf '\t')
 WEIGHTS="$TMP_ROOT/weights"
 OUTPUT_DIR="$TMP_ROOT/output"
 mkdir -p "$OUTPUT_DIR"
-SHARD_COUNT=2
+# One fresh ShellCheck process per root, rather than retaining a whole shard's
+# heap. Unknown/stale source graphs reserve the entire budget and run alone.
+SHARD_COUNT=$ROOT_COUNT
+if ! FM_LINT_PLAN_VERSION="$REQUIRED_SHELLCHECK" "$PERL_BIN" "$SELF_DIR/fm-lint-plan.pl" weights "$SELF_DIR/fm-lint-memory.tsv" "${ROOTS[@]}" > "$TMP_ROOT/measured" 2>"$TMP_ROOT/plan.err"; then
+  printf 'fm-lint.sh: the weights planner failed; all %d roots run alone.\n' "$ROOT_COUNT" >&2
+  cat "$TMP_ROOT/plan.err" >&2 2>/dev/null || true
+  : > "$TMP_ROOT/measured"
+  for path in "${ROOTS[@]}"; do printf '0\t%s\n' "$path" >> "$TMP_ROOT/measured"; done
+fi
+unknown_count=$(awk -F "$TAB" '$1 == 0 {n++} END {print n+0}' "$TMP_ROOT/measured")
+if [ "$unknown_count" -gt 0 ]; then
+  printf 'fm-lint.sh: %d of %d roots have no measured reservation; each will run alone.\n' \
+    "$unknown_count" "$ROOT_COUNT" >&2
+fi
 worker=0
-while [ "$worker" -lt "$SHARD_COUNT" ]; do
-  : > "$TMP_ROOT/manifest.$worker"
-  worker=$((worker + 1))
-done
-
-index=1
 : > "$WEIGHTS"
-for path in "${ROOTS[@]}"; do
+while IFS="$TAB" read -r rss path; do
   case "$path" in
     *"$TAB"*|*$'\n'*)
-      printf 'fm-lint.sh: paths containing tabs or newlines are not supported: %s\n' "$path" >&2
+      printf 'fm-lint.sh: paths containing tabs or newlines are not supported.\n' >&2
       exit 2
       ;;
   esac
-  if [ -f "$path" ]; then
-    weight=$(wc -c < "$path" 2>/dev/null | tr -d '[:space:]')
-  else
-    weight=1
+  # 50 percent headroom plus 64 MiB. Unknown or oversized roots reserve the
+  # whole budget; known heavy roots can share only with fitting light roots.
+  weight=$(((rss * 3 + 2047) / 2048 + 64))
+  heavy=0
+  [ "$weight" -le 3072 ] || heavy=1
+  if [ "$rss" -eq 0 ] || [ "$weight" -gt "$ADMISSION_BUDGET_MIB" ]; then
+    weight=$ADMISSION_BUDGET_MIB
+    heavy=1
   fi
-  case "$weight" in ''|*[!0-9]*) weight=1 ;; esac
-  printf '%s\t%s\t%s\n' "$weight" "$index" "$path" >> "$WEIGHTS"
-  index=$((index + 1))
-done
-
-# Largest-first deterministic greedy assignment keeps the two bounded workers
-# balanced without affecting replay order. Direct bytes are a stable portable
-# proxy after the expensive dynamic adapter source fan-out is cut.
-WORKER_LOADS=(0 0)
-LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n "$WEIGHTS" > "$WEIGHTS.sorted"
-while IFS="$TAB" read -r weight index path; do
-  worker=0
-  if [ "${WORKER_LOADS[1]}" -lt "${WORKER_LOADS[0]}" ]; then
-    worker=1
-  fi
-  printf '%s\t%s\n' "$index" "$path" >> "$TMP_ROOT/manifest.$worker"
-  WORKER_LOADS[worker]=$((WORKER_LOADS[worker] + weight))
-done < "$WEIGHTS.sorted"
-worker=0
-while [ "$worker" -lt "$SHARD_COUNT" ]; do
-  LC_ALL=C sort -t "$TAB" -k1,1n "$TMP_ROOT/manifest.$worker" > "$TMP_ROOT/manifest.$worker.sorted"
-  mv "$TMP_ROOT/manifest.$worker.sorted" "$TMP_ROOT/manifest.$worker"
+  printf '%s\t%s\t%s\t%s\n' "$weight" "$worker" "$path" "$heavy" >> "$WEIGHTS"
+  printf '%s\t%s\n' "$worker" "$path" > "$TMP_ROOT/manifest.$worker"
   worker=$((worker + 1))
-done
+done < "$TMP_ROOT/measured"
+[ "$worker" -eq "$ROOT_COUNT" ] || { printf 'fm-lint.sh: incomplete memory plan.\n' >&2; exit 2; }
+# First-fit decreasing fills spare capacity around long heavy roots without
+# ever pairing two heavy roots. Plan waves before launch, independent of timing.
+LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n "$WEIGHTS" > "$WEIGHTS.sorted"
+# An unknown or oversized reservation is not a size claim equal to the whole
+# budget: it means the root must run alone in its own wave regardless of how
+# large the configured budget is, so a light root is never packed beside it on
+# the strength of arithmetic that happens to fit. The weight cap alone owns
+# that guarantee: an unknown root's weight equals the whole admission budget,
+# so no other reservation can fit beside it in the same wave.
+awk -F '\t' -v jobs="$JOBS" -v budget="$ADMISSION_BUDGET_MIB" '
+  {
+    wave=0
+    while (count[wave] >= jobs || memory[wave] + $1 > budget || (heavy[wave] && $4)) wave++
+    count[wave]++
+    memory[wave]+=$1
+    heavy[wave]+=$4
+    rows[wave]=rows[wave] wave "\t" $0 "\n"
+    if (wave > last) last=wave
+  }
+  END { for (wave=0; wave<=last; wave++) printf "%s", rows[wave] }
+' "$WEIGHTS.sorted" > "$TMP_ROOT/schedule"
 
 fm_lint_shellcheck_count() {
   if command -v pgrep >/dev/null 2>&1; then
@@ -724,24 +795,25 @@ fm_lint_wait_workers() {
   done
 }
 
-if [ "$JOBS" -eq 1 ]; then
-  worker=0
-  while [ "$worker" -lt "$SHARD_COUNT" ]; do
-    fm_lint_start_worker "$worker"
+reserved=0
+peak_reserved=0
+peak_parallel=0
+current_wave=0
+while IFS="$TAB" read -r wave weight worker path heavy; do
+  if [ "$wave" -ne "$current_wave" ]; then
     fm_lint_wait_workers
-    worker=$((worker + 1))
-  done
-else
-  worker=0
-  while [ "$worker" -lt "$SHARD_COUNT" ]; do
-    fm_lint_start_worker "$worker"
-    worker=$((worker + 1))
-  done
-  fm_lint_wait_workers
-fi
+    reserved=0
+    current_wave=$wave
+  fi
+  fm_lint_start_worker "$worker"
+  reserved=$((reserved + weight))
+  [ "$reserved" -le "$peak_reserved" ] || peak_reserved=$reserved
+  [ "${#ACTIVE_PIDS[@]}" -le "$peak_parallel" ] || peak_parallel=${#ACTIVE_PIDS[@]}
+done < "$TMP_ROOT/schedule"
+fm_lint_wait_workers
 
-# Replay both stable shards in deterministic order and select the first nonzero
-# shard status. ShellCheck processes every root in a shard after earlier findings.
+# Replay in canonical/explicit root order and select the first nonzero result.
+# Every root runs even after earlier findings.
 overall_rc=0
 worker=0
 while [ "$worker" -lt "$SHARD_COUNT" ]; do
@@ -849,8 +921,11 @@ EOF
     printf 'source_boundary_directives\t%s\n' "$source_boundaries"
     printf 'source_followed_directives\t%s\n' "$source_followed"
     printf 'source_target_count\t%s\n' "$source_targets"
-    printf 'shard_1_weight_bytes\t%s\n' "${WORKER_LOADS[0]}"
-    printf 'shard_2_weight_bytes\t%s\n' "${WORKER_LOADS[1]:-0}"
+    printf 'detected_cpus\t%s\n' "$CPU_COUNT"
+    printf 'host_memory_mib\t%s\n' "$HOST_MEMORY_MIB"
+    printf 'admission_budget_mib\t%s\n' "$ADMISSION_BUDGET_MIB"
+    printf 'peak_reserved_mib\t%s\n' "$peak_reserved"
+    printf 'peak_parallel_roots\t%s\n' "$peak_parallel"
     printf 'wall_seconds\t%s\n' "$((TELEMETRY_END_EPOCH - TELEMETRY_START_EPOCH))"
     printf 'worker_wall_sum_seconds\t%s\n' "$timing_worker_wall"
     printf 'max_worker_wall_seconds\t%s\n' "$max_worker_wall"

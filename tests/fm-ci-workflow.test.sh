@@ -151,6 +151,42 @@ CAPS
   pass "the already-measured lane bounds are unchanged"
 }
 
+test_lint_event_modes_execute_the_owner() {
+  local tmp event args base
+  tmp=$(fm_test_tmproot fm-ci-lint-events)
+  mkdir -p "$tmp/bin"
+  cat > "$tmp/bin/fm-lint.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$RUNNER_TEMP/invocation"
+SH
+  chmod +x "$tmp/bin/fm-lint.sh"
+  # shellcheck disable=SC2016 # Resolve GitHub expressions in Ruby, not Bash.
+  ruby -ryaml -e '
+steps = YAML.load_file(ARGV[0]).fetch("jobs").fetch("lint").fetch("steps")
+checkout = steps.find { |s| s.fetch("uses", "").start_with?("actions/checkout@") }
+abort "affected lint needs history" unless checkout.fetch("with").fetch("fetch-depth") == 0
+lint = steps.last
+base = lint.fetch("env").fetch("LINT_BASE").gsub("${{ github.event.pull_request.base.sha }}", "abc123")
+File.write(ARGV[1], lint.fetch("run"))
+puts base
+' "$CI_WORKFLOW" "$tmp/step.sh" > "$tmp/base" || fail "could not resolve lint step"
+  base=$(cat "$tmp/base")
+  for event in pull_request push; do
+    (cd "$tmp" && GITHUB_EVENT_NAME="$event" LINT_BASE="$base" RUNNER_TEMP="$tmp" bash -e step.sh) \
+      || fail "lint workflow failed for $event"
+    args=$(cat "$tmp/invocation")
+    if [ "$event" = pull_request ]; then
+      [ "$args" = "--changed"$'\n'"abc123"$'\n'"--telemetry"$'\n'"$tmp/lint.tsv" ] \
+        || fail "PR did not select the owner's affected-root mode: $args"
+    else
+      [ "$args" = "--full"$'\n'"--telemetry"$'\n'"$tmp/lint.tsv" ] \
+        || fail "main push did not select full canonical lint: $args"
+    fi
+  done
+  pass "PR and main push steps execute affected and full owner modes with history"
+}
+
+test_lint_event_modes_execute_the_owner
 test_pr_pushes_supersede_within_one_pr
 test_separate_prs_do_not_cancel_each_other
 test_main_pushes_are_never_cancelled

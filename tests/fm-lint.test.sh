@@ -1188,8 +1188,8 @@ SH
   assert_contains "$out_fail_1" "SC1007" "the first failing root diagnostic was lost"
   assert_contains "$out_fail_1" "SC2086" "the later failing root diagnostic was lost"
   rc_bad_jobs=0
-  FM_LINT_JOBS=3 "$LINT" "$good" >/dev/null 2>&1 || rc_bad_jobs=$?
-  [ "$rc_bad_jobs" -eq 2 ] || fail "the lint owner must reject unbounded worker counts"
+  FM_LINT_JOBS=0 "$LINT" "$good" >/dev/null 2>&1 || rc_bad_jobs=$?
+  [ "$rc_bad_jobs" -eq 2 ] || fail "the lint owner must reject nonpositive worker counts"
 
   telemetry_out=$(FM_LINT_JOBS=2 FM_LINT_TELEMETRY="$telemetry" "$LINT" "$good" 2>&1) \
     || fail "telemetry-enabled clean lint failed"
@@ -1213,6 +1213,80 @@ SH
   [ -z "$(find "$cleanup_tmp" -mindepth 1 -maxdepth 1 -name 'fm-lint.*' -print -quit)" ] \
     || fail "bounded lint left temporary worker state behind"
   pass "jobs=1 and jobs=2 preserve deterministic diagnostics, failures, cleanup bounds, and quiet telemetry"
+}
+
+# One process per root means the wave shape, not the analysis, decides how
+# diagnostics are gathered. The check above lints roots that have no measured
+# reservation, so each of them runs alone and never exercises a concurrent
+# wave. This one drives the genuine pinned ShellCheck over measured light roots
+# that really do share a wave, and asserts the diagnostics stay complete,
+# byte-identical, and in canonical root order at every job count, with
+# telemetry proving the concurrency actually happened.
+test_concurrent_waves_keep_diagnostics_complete_and_ordered() {
+  if ! pinned_ready; then
+    pass "SKIP (ShellCheck $REQUIRED not resolved): concurrent-wave diagnostics parity check"
+    return
+  fi
+  local tmp repo fakebin order rc1 rc4 rc4b out1 out4 out4b peak1 peak4
+  tmp=$(fm_test_tmproot fm-lint-concurrent)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nclean_a() { printf "ok\\n"; }\n' > "$repo/bin/aaa-clean.sh"
+  printf '#!/bin/bash\nbbb_unused_assignment=1\n' > "$repo/bin/bbb-defect.sh"
+  printf '#!/bin/bash\nclean_c() { printf "ok\\n"; }\n' > "$repo/bin/ccc-clean.sh"
+  # shellcheck disable=SC2016 # The fixture's unquoted expansion is the defect.
+  printf '#!/bin/bash\nprintf "%%s" $ddd_unquoted_expansion\n' > "$repo/bin/ddd-defect.sh"
+  git -C "$repo" add . || fail "could not stage concurrent-wave fixture"
+  git -C "$repo" commit -qm concurrent-wave-fixture || fail "could not commit concurrent-wave fixture"
+  # Measured light reservations, produced by the planner itself, so these four
+  # roots pack into one wave instead of running alone as unknown roots.
+  (
+    cd "$repo" || exit 1
+    printf '# ShellCheck %s\n' "$REQUIRED" > bin/fm-lint-memory.tsv
+    perl bin/fm-lint-plan.pl fingerprints '' \
+      bin/aaa-clean.sh bin/bbb-defect.sh bin/ccc-clean.sh bin/ddd-defect.sh \
+      | awk -F '\t' '{print $0 "\t1024"}' >> bin/fm-lint-memory.tsv
+  ) || fail "could not prepare measured reservations for the concurrency fixture"
+  fakebin=$(fm_fakebin "$tmp")
+  cat > "$fakebin/getconf" <<'SH'
+#!/bin/bash
+printf '%s\n' 4
+SH
+  chmod +x "$fakebin/getconf"
+
+  rc1=0
+  out1=$(cd "$repo" && PATH="$fakebin:$PATH" FM_LINT_JOBS=1 bin/fm-lint.sh \
+    --telemetry "$tmp/telemetry-jobs1.tsv" \
+    bin/aaa-clean.sh bin/bbb-defect.sh bin/ccc-clean.sh bin/ddd-defect.sh \
+    2>"$tmp/err-jobs1") || rc1=$?
+  rc4=0
+  out4=$(cd "$repo" && PATH="$fakebin:$PATH" FM_LINT_JOBS=4 bin/fm-lint.sh \
+    --telemetry "$tmp/telemetry-jobs4.tsv" \
+    bin/aaa-clean.sh bin/bbb-defect.sh bin/ccc-clean.sh bin/ddd-defect.sh \
+    2>"$tmp/err-jobs4") || rc4=$?
+  rc4b=0
+  out4b=$(cd "$repo" && PATH="$fakebin:$PATH" FM_LINT_JOBS=4 bin/fm-lint.sh \
+    --telemetry "$tmp/telemetry-jobs4b.tsv" \
+    bin/aaa-clean.sh bin/bbb-defect.sh bin/ccc-clean.sh bin/ddd-defect.sh \
+    2>"$tmp/err-jobs4b") || rc4b=$?
+
+  [ "$rc1" -ne 0 ] && [ "$rc1" -eq "$rc4" ] && [ "$rc4" -eq "$rc4b" ] \
+    || fail "serial and concurrent waves disagreed on the failing result: $rc1/$rc4/$rc4b"
+  [ "$out1" = "$out4" ] && [ "$out4" = "$out4b" ] \
+    || fail "diagnostics are not byte-identical between serial and concurrent waves"$'\n'"--- jobs=1 ---"$'\n'"$out1"$'\n'"--- jobs=4 ---"$'\n'"$out4"
+  assert_contains "$out1" "SC2034" "the unused-assignment defect was lost in a concurrent wave"
+  assert_contains "$out1" "SC2086" "the unquoted-expansion defect was lost in a concurrent wave"
+  assert_no_grep "no measured reservation" "$tmp/err-jobs4" \
+    "the fixture roots ran as unknowns, so the wave proved no concurrency"
+  assert_grep $'root_count\t4' "$tmp/telemetry-jobs4.tsv" "the concurrent run did not analyze all four roots"
+  peak1=$(awk -F '\t' '$1 == "peak_parallel_roots" {print $2}' "$tmp/telemetry-jobs1.tsv")
+  peak4=$(awk -F '\t' '$1 == "peak_parallel_roots" {print $2}' "$tmp/telemetry-jobs4.tsv")
+  [ "$peak1" = 1 ] || fail "jobs=1 must run one root at a time, telemetry reports ${peak1:-none}"
+  [ "${peak4:-0}" -ge 2 ] || fail "jobs=4 never ran roots concurrently, telemetry reports ${peak4:-none}"
+  order=$(printf '%s\n' "$out1" | awk '/^In bin\// {print $2}')
+  [ "$order" = $'bin/bbb-defect.sh\nbin/ddd-defect.sh' ] \
+    || fail "diagnostic blocks left canonical root order: $order"
+  pass "measured roots share a wave and still emit complete diagnostics in canonical order"
 }
 
 test_worker_trees_stop_on_signal() {
@@ -1364,6 +1438,356 @@ SH
 
 test_help_reports_the_complete_interface
 test_list_files_reports_the_shell_inventory
+fm_lint_graph_fixture() {
+  local repo=$1
+  fm_git_identity
+  fm_git_init_commit "$repo"
+  mkdir -p "$repo/bin/backends" "$repo/tests"
+  cp "$LINT" "$ROOT/bin/fm-lint-plan.pl" "$repo/bin/"
+  printf '#!/bin/bash\nexit 0\n' > "$repo/bin/fm-lint-workflows.sh"
+  chmod +x "$repo/bin/fm-lint-workflows.sh"
+  printf '#!/bin/bash\nexit 0\n' > "$repo/bin/backends/noop.sh"
+  printf '#!/bin/bash\nexit 0\n' > "$repo/tests/noop.sh"
+}
+
+test_affected_roots_follow_transitive_sources() {
+  local tmp repo base listed full fakebin out log flags
+  tmp=$(fm_test_tmproot fm-lint-affected)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nvalue=before\n' > "$repo/bin/leaf.sh"
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\n# shellcheck source=bin/leaf.sh\n. "$DIR/leaf.sh"\n' > "$repo/bin/middle.sh"
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\n# shellcheck source=bin/middle.sh\n. "$DIR/middle.sh"\n' > "$repo/bin/root.sh"
+  git -C "$repo" add . || fail "could not stage graph fixture"
+  git -C "$repo" commit -qm fixture || fail "could not commit graph fixture"
+  base=$(git -C "$repo" rev-parse HEAD)
+  printf '#!/bin/bash\nvalue=after\n' > "$repo/bin/leaf.sh"
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files) || fail "affected selection failed"
+  [ "$listed" = $'bin/leaf.sh\nbin/middle.sh\nbin/root.sh' ] || fail "transitive roots were not selected: $listed"
+  full=$(CI=true "$repo/bin/fm-lint.sh" --full --list-files)
+  assert_contains "$full" 'bin/backends/noop.sh' "full lint omitted an unchanged root"
+  [ "$(CI=true "$repo/bin/fm-lint.sh" --changed nonexistent --list-files 2>/dev/null)" = "$full" ] \
+    || fail "missing history did not fall back to full lint"
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/roots.log"
+  flags="$tmp/flags.log"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+  out=$(PATH="$fakebin:$PATH" CI=true FM_TEST_FLAG_LOG="$flags" "$repo/bin/fm-lint.sh" --changed "$base" 2>&1) \
+    || fail "affected lint failed: $out"
+  fm_lint_assert_flag_log "$flags" yes none
+  [ "$(sort "$log")" = "$listed" ] || fail "affected invocation lost selected roots"
+  mv "$repo/bin/leaf.sh" "$repo/bin/renamed.sh"
+  git -C "$repo" add -A
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files)
+  [ "$listed" = $'bin/middle.sh\nbin/renamed.sh\nbin/root.sh' ] || fail "rename/deletion lost old importers: $listed"
+  git -C "$repo" reset --hard -q "$base"
+  [ -z "$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files)" ] || fail "empty diff selected roots"
+  printf '\n# changed lint policy\n' >> "$repo/bin/fm-lint.sh"
+  [ "$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files)" = "$full" ] || fail "owner change did not select full lint"
+  pass "affected mode follows transitive sources and renames, keeps all codes, and falls back safely"
+}
+
+test_memory_schedule_isolates_heavy_and_stale_roots() {
+  local tmp repo fakebin path events out jobs
+  tmp=$(fm_test_tmproot fm-lint-memory)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  for path in heavy-a heavy-b light-a light-b; do
+    printf '#!/bin/bash\nprintf ok\n' > "$repo/bin/$path.sh"
+  done
+  git -C "$repo" add . || fail "could not stage memory fixture"
+  git -C "$repo" commit -qm fixture || fail "could not commit memory fixture"
+  (
+    cd "$repo" || exit 1
+    printf '# ShellCheck 0.11.0\n' > bin/fm-lint-memory.tsv
+    perl bin/fm-lint-plan.pl fingerprints '' bin/heavy-a.sh bin/heavy-b.sh bin/light-a.sh bin/light-b.sh \
+      | awk -F '\t' '{print $0 "\t" ($1 ~ /heavy/ ? 5500000 : 1024)}' >> bin/fm-lint-memory.tsv
+  ) || fail "could not prepare memory estimates"
+  fakebin=$(fm_fakebin "$tmp")
+  cat > "$fakebin/getconf" <<'SH'
+#!/bin/bash
+printf '%s\n' "${FM_TEST_CPUS:-4}"
+SH
+  cat > "$fakebin/shellcheck" <<'SH'
+#!/bin/bash
+if [ "${1:-}" = --version ]; then printf 'version: 0.11.0\n'; exit 0; fi
+while [ "$1" != -- ]; do shift; done
+shift
+[ "$#" -eq 1 ] || exit 9
+printf 'start\t%s\n' "$1" >> "$FM_TEST_SCHEDULE"
+sleep 0.3
+printf 'end\t%s\n' "$1" >> "$FM_TEST_SCHEDULE"
+SH
+  chmod +x "$fakebin/getconf" "$fakebin/shellcheck"
+  events="$tmp/events"
+  for jobs in 1 4; do
+    : > "$events"
+    out=$(PATH="$fakebin:$PATH" FM_LINT_MEMORY_MIB=192 FM_TEST_SCHEDULE="$events" \
+      "$repo/bin/fm-lint.sh" --jobs "$jobs" bin/heavy-a.sh bin/heavy-b.sh bin/light-a.sh bin/light-b.sh 2>&1) \
+      || fail "memory schedule failed: $out"
+    awk -v jobs="$jobs" '
+      $1 == "start" { n++; if (n > peak) peak=n; if ($2 ~ /heavy/) heavy++; if ((heavy && n > 1) || n > jobs) bad=1 }
+      $1 == "end" { n--; if ($2 ~ /heavy/) heavy--; ended++ }
+      END { exit bad || n != 0 || ended != 4 || (jobs > 1 && peak < 2) }
+    ' "$events" || fail "heavy roots overlapped or light roots did not use available concurrency"
+  done
+  # A larger budget must not permit two heavy roots, even when both would fit.
+  : > "$events"
+  PATH="$fakebin:$PATH" FM_LINT_MEMORY_MIB=20000 FM_TEST_SCHEDULE="$events" \
+    "$repo/bin/fm-lint.sh" --jobs 4 bin/heavy-a.sh bin/heavy-b.sh bin/light-a.sh bin/light-b.sh > "$tmp/large.out" 2>&1 \
+    || fail "large-budget schedule failed"
+  awk '
+    $1 == "start" { n++; if (n > peak) peak=n; if ($2 ~ /heavy/) heavy++; if (heavy > 1) bad=1 }
+    $1 == "end" { n--; if ($2 ~ /heavy/) heavy-- }
+    END { exit bad || n || peak < 2 }
+  ' "$events" || fail "large budget paired heavy roots or failed to fill spare capacity"
+  # CPU detection and memory admission are independent bounds.
+  for jobs in cpu memory; do
+    : > "$events"
+    if [ "$jobs" = cpu ]; then
+      PATH="$fakebin:$PATH" FM_TEST_CPUS=1 FM_LINT_MEMORY_MIB=192 FM_TEST_SCHEDULE="$events" \
+        "$repo/bin/fm-lint.sh" --jobs 4 bin/light-a.sh bin/light-b.sh > "$tmp/bound.out" 2>&1
+    else
+      PATH="$fakebin:$PATH" FM_LINT_MEMORY_MIB=100 FM_TEST_SCHEDULE="$events" \
+        "$repo/bin/fm-lint.sh" --jobs 4 bin/light-a.sh bin/light-b.sh > "$tmp/bound.out" 2>&1
+    fi || fail "$jobs bound failed"
+    awk '$1 == "start" {n++; if(n>1) bad=1} $1 == "end" {n--} END {exit bad || n}' "$events" \
+      || fail "$jobs bound admitted too many roots"
+  done
+  # A source edit invalidates a reservation rather than trusting stale evidence.
+  printf '# changed\n' >> "$repo/bin/light-a.sh"
+  : > "$events"
+  PATH="$fakebin:$PATH" FM_LINT_MEMORY_MIB=192 FM_TEST_SCHEDULE="$events" \
+    "$repo/bin/fm-lint.sh" --jobs 4 bin/light-a.sh bin/light-b.sh > "$tmp/stale.out" 2>&1 \
+    || fail "stale schedule failed"
+  awk '$1 == "start" {n++; if(n>1) bad=1} $1 == "end" {n--} END {exit bad || n}' "$events" \
+    || fail "stale root ran beside another root"
+  pass "light roots fill spare capacity; heavy roots never pair and stale roots run alone"
+}
+
+# A PR touching one unrelated shell file must select only that root, not every
+# root whose graph holds an unresolved source somewhere. Regression: the
+# planner once widened selection to every uncertain root on any shell change,
+# selecting 221 of 424 roots for a one-file PR.
+test_affected_mode_does_not_select_unrelated_uncertain_roots() {
+  local tmp repo base listed
+  tmp=$(fm_test_tmproot fm-lint-narrow)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  # An unrelated root holding a fully variable source (never followed by the
+  # pinned ShellCheck): it must not be selected by an unrelated change, because
+  # an edge the linter never follows cannot make the root depend on the changed
+  # file.
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\nhelper() { . "$1"; }\n' > "$repo/bin/unresolved-holder.sh"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/unrelated.sh"
+  git -C "$repo" add . || fail "could not stage narrow fixture"
+  git -C "$repo" commit -qm narrow-fixture || fail "could not commit narrow fixture"
+  base=$(git -C "$repo" rev-parse HEAD)
+  printf '#!/bin/bash\nvalue=2\n' > "$repo/bin/unrelated.sh"
+  git -C "$repo" add . || true
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files) || fail "narrow selection failed"
+  [ "$listed" = bin/unrelated.sh ] \
+    || fail "an unrelated one-file PR selected more than its own root: $listed"
+  # A root that genuinely sources the changed file must still be selected:
+  # under-selection would open a lint gap. The holder sources the changed file
+  # through a literal annotation edge, proving a variable source elsewhere in
+  # the same file does not hide a demonstrated dependency.
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\n# shellcheck source=bin/unrelated.sh\n. "$DIR/unrelated.sh"\nhelper() { . "$1"; }\n' > "$repo/bin/unresolved-holder.sh"
+  git -C "$repo" add . || true
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files) || fail "holder selection failed"
+  printf '%s\n' "$listed" | grep -qx 'bin/unresolved-holder.sh' \
+    || fail "a root sourcing the changed file was not selected: $listed"
+  pass "affected mode selects demonstrated dependencies, not unrelated uncertain roots"
+}
+
+# A matching stored digest must never be discarded over the shape of the
+# closure's source references. Regression: the planner once zeroed the
+# reservation of every root whose closure touched an unresolvable source,
+# serializing 221 of 424 full-lint roots into solitary waves.
+test_matching_digest_is_not_uncertain() {
+  local tmp repo fakebin events out
+  tmp=$(fm_test_tmproot fm-lint-digest)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  # leaf holds a fully variable source (uncertain in its own right); holder
+  # sources leaf through a literal annotation and a variable-skeleton operand.
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\nhelper() { . "$1"; }\n' > "$repo/bin/leaf.sh"
+  # shellcheck disable=SC2016 # The generated source paths are runtime literals.
+  printf '#!/bin/bash\n# shellcheck source=bin/leaf.sh\n. "$DIR/leaf.sh"\n' > "$repo/bin/holder.sh"
+  git -C "$repo" add . || fail "could not stage digest fixture"
+  git -C "$repo" commit -qm digest-fixture || fail "could not commit digest fixture"
+  (
+    cd "$repo" || exit 1
+    printf '# ShellCheck 0.11.0\n' > bin/fm-lint-memory.tsv
+    perl bin/fm-lint-plan.pl fingerprints '' bin/holder.sh bin/leaf.sh \
+      | awk -F '\t' '{print $0 "\t1024"}' >> bin/fm-lint-memory.tsv
+  ) || fail "could not prepare matching digests"
+  fakebin=$(fm_fakebin "$tmp")
+  cat > "$fakebin/shellcheck" <<'SH'
+#!/bin/bash
+if [ "${1:-}" = --version ]; then printf 'version: 0.11.0\n'; exit 0; fi
+printf 'start\t%s\n' "$*" >> "$FM_TEST_SCHEDULE"
+sleep 0.3
+printf 'end\t%s\n' "$*" >> "$FM_TEST_SCHEDULE"
+SH
+  chmod +x "$fakebin/shellcheck"
+  events="$tmp/events"
+  PATH="$fakebin:$PATH" FM_TEST_SCHEDULE="$events" \
+    "$repo/bin/fm-lint.sh" --jobs 4 bin/holder.sh bin/leaf.sh > "$tmp/out" 2>&1 \
+    || fail "digest-matched schedule failed"
+  # Both roots carry matching stored digests: they must be admitted from their
+  # measurements rather than serialized as unknown, so with 4 jobs they share a
+  # wave. (leaf holds a fully variable source of its own, so only holder is
+  # asserted to overlap; a solitary holder would mean its digest was discarded.)
+  awk '$1 == "start" {n++; if (n > peak) peak=n} $1 == "end" {n--} END {exit !(peak >= 1)}' "$events" \
+    || fail "no roots ran"
+  grep -q 'start.*bin/holder.sh' "$events" \
+    || fail "holder root did not run"
+  # Direct planner assertion: the digest-matched holder must keep its measured
+  # reservation rather than reading as zero/unknown.
+  [ "$(cd "$repo" && FM_LINT_PLAN_VERSION=0.11.0 perl bin/fm-lint-plan.pl weights bin/fm-lint-memory.tsv bin/holder.sh | cut -f1)" = 1024 ] \
+    || fail "a matching stored digest was discarded"
+  pass "a digest matching the current fingerprint stays measured admission evidence"
+}
+
+# A zero or unknown reservation must never be treated as the whole budget:
+# it means the root runs alone, so a light root cannot be packed beside it no
+# matter how large the configured budget is.
+test_unknown_reservation_runs_alone_at_any_budget() {
+  local tmp repo fakebin events out
+  tmp=$(fm_test_tmproot fm-lint-unknown)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/unknown-root.sh"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/light-root.sh"
+  git -C "$repo" add . || fail "could not stage unknown fixture"
+  git -C "$repo" commit -qm unknown-fixture || fail "could not commit unknown fixture"
+  # No fm-lint-memory.tsv: both roots read as zero-reservation/unknown.
+  rm -f "$repo/bin/fm-lint-memory.tsv"
+  fakebin=$(fm_fakebin "$tmp")
+  cat > "$fakebin/shellcheck" <<'SH'
+#!/bin/bash
+if [ "${1:-}" = --version ]; then printf 'version: 0.11.0\n'; exit 0; fi
+while [ "$1" != -- ]; do shift; done
+shift
+printf 'start\t%s\n' "$1" >> "$FM_TEST_SCHEDULE"
+sleep 0.3
+printf 'end\t%s\n' "$1" >> "$FM_TEST_SCHEDULE"
+SH
+  chmod +x "$fakebin/shellcheck"
+  events="$tmp/events"
+  for budget in 192 20000; do
+    : > "$events"
+    PATH="$fakebin:$PATH" FM_LINT_MEMORY_MIB=$budget FM_TEST_SCHEDULE="$events" \
+      "$repo/bin/fm-lint.sh" --jobs 4 bin/unknown-root.sh bin/light-root.sh > "$tmp/out" 2>&1 \
+      || fail "unknown-reservation schedule failed at budget $budget"
+    # With both roots unknown, neither may share a wave with the other at any
+    # budget: two unknowns must never be packed together, and a huge budget
+    # must not turn an unknown reservation into spare capacity.
+    awk '
+      $1 == "start" {n++; if (n > 1) bad=1}
+      $1 == "end" {n--}
+      END {exit bad}
+    ' "$events" || fail "an unknown reservation was treated as spare budget at $budget"
+  done
+  pass "zero or unknown reservations run alone at any configured budget"
+}
+
+# A `# shellcheck source=/dev/null` directive bounds the analysis the lint
+# definition performs, so the planner must not build a dependency edge from
+# such an annotated call: changing the sourced module selects only its genuine
+# dependents, never a root that never analyzes it.
+test_devnull_directive_bounds_selection() {
+  local tmp repo base listed
+  tmp=$(fm_test_tmproot fm-lint-devnull)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/helper.sh"
+  printf '#!/bin/bash\n# shellcheck source=/dev/null\n. bin/helper.sh\n' > "$repo/bin/bounded.sh"
+  printf '#!/bin/bash\n. bin/helper.sh\n' > "$repo/bin/genuine.sh"
+  git -C "$repo" add . || fail "could not stage devnull fixture"
+  git -C "$repo" commit -qm devnull-fixture || fail "could not commit devnull fixture"
+  base=$(git -C "$repo" rev-parse HEAD)
+  printf '#!/bin/bash\nvalue=2\n' > "$repo/bin/helper.sh"
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files) || fail "devnull selection failed"
+  [ "$listed" = $'bin/genuine.sh\nbin/helper.sh' ] || fail "devnull boundary not honored: $listed"
+  pass "a source=/dev/null directive bounds dependency selection"
+}
+
+# The pinned ShellCheck resolves a source call from the whole comment block
+# above it, so a `source=` directive separated from the call by another
+# directive still owns a fully variable operand that matches no basename.
+# bin/fm-mail.sh:375-377 is the live two-line shape; without the edge, a PR
+# touching the sourced module would silently skip the root that analyzes it.
+test_directive_block_above_variable_source_selects_root() {
+  local tmp repo base listed
+  tmp=$(fm_test_tmproot fm-lint-directive-block)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/wake-lib.sh"
+  cat > "$repo/bin/mailer.sh" <<'SH'
+#!/bin/bash
+lib="bin/wake-lib.sh"
+if [ -f "$lib" ]; then
+  # shellcheck source=bin/wake-lib.sh
+  # shellcheck disable=SC1091
+  . "$lib"
+fi
+SH
+  cat > "$repo/bin/poller.sh" <<'SH'
+#!/bin/bash
+lib="bin/wake-lib.sh"
+if [ -f "$lib" ]; then
+  # shellcheck source=bin/wake-lib.sh disable=SC1091
+  . "$lib"
+fi
+SH
+  git -C "$repo" add . || fail "could not stage directive-block fixture"
+  git -C "$repo" commit -qm directive-block-fixture || fail "could not commit directive-block fixture"
+  base=$(git -C "$repo" rev-parse HEAD)
+  printf '#!/bin/bash\nvalue=2\n' > "$repo/bin/wake-lib.sh"
+  listed=$(CI=true "$repo/bin/fm-lint.sh" --changed "$base" --list-files) \
+    || fail "directive-block selection failed"
+  [ "$listed" = $'bin/mailer.sh\nbin/poller.sh\nbin/wake-lib.sh' ] \
+    || fail "a directive elsewhere in the comment block was ignored: $listed"
+  pass "a source= directive in the block above a variable source selects its root"
+}
+
+# A weights plan where every root reads as unmeasured must say so on stderr
+# rather than silently serializing the whole run: an operator hitting the CI
+# time tripwire needs the count in the log to explain it.
+test_all_unknown_plan_prints_diagnostic() {
+  local tmp repo out
+  tmp=$(fm_test_tmproot fm-lint-unknown-diag)
+  repo="$tmp/repo"
+  fm_lint_graph_fixture "$repo"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/plain-a.sh"
+  printf '#!/bin/bash\nvalue=1\n' > "$repo/bin/plain-b.sh"
+  git -C "$repo" add . || fail "could not stage unknown-diag fixture"
+  git -C "$repo" commit -qm unknown-diag-fixture || fail "could not commit unknown-diag fixture"
+  rm -f "$repo/bin/fm-lint-memory.tsv"
+  fakebin=$(fm_fakebin "$tmp")
+  fm_lint_stub_shellcheck "$fakebin" "$tmp/roots.log"
+  out=$(PATH="$fakebin:$PATH" CI=true FM_LINT_MEMORY_MIB=2048 \
+    "$repo/bin/fm-lint.sh" --full 2>&1) || fail "all-unknown full lint failed: $out"
+  assert_contains "$out" "fm-lint.sh: 6 of 6 roots have no measured reservation" \
+    "an all-unknown plan did not print its count"
+  pass "an all-unknown weights plan prints a counted diagnostic"
+}
+
+test_affected_roots_follow_transitive_sources
+test_devnull_directive_bounds_selection
+test_directive_block_above_variable_source_selects_root
+test_all_unknown_plan_prints_diagnostic
+test_memory_schedule_isolates_heavy_and_stale_roots
+test_affected_mode_does_not_select_unrelated_uncertain_roots
+test_matching_digest_is_not_uncertain
+test_unknown_reservation_runs_alone_at_any_budget
 test_fast_mode_disables_extended_analysis
 test_ci_defaults_to_full_analysis
 test_ci_rejects_explicit_fast_mode
@@ -1383,6 +1807,7 @@ test_rejects_direct_beads_cli_in_explicit_core_path
 test_ignores_ambient_shellcheck_opts
 test_clean_fixture_passes
 test_jobs_are_deterministic_and_complete
+test_concurrent_waves_keep_diagnostics_complete_and_ordered
 test_worker_trees_stop_on_signal
 test_seeded_module_boundary_parity
 test_changed_mode_lints_only_the_changed_file

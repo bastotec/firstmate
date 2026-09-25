@@ -44,6 +44,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Install pinned ShellCheck
         run: |
           set -eu
@@ -58,7 +60,16 @@ jobs:
       # and GitHub workflow lint). Do not re-spell the checks here; keep CI
       # and the pre-push gate on this script so a self-broken ci.yml still
       # fails locally before merge.
-      - run: bin/fm-lint.sh
+      - name: Lint affected roots on pull requests, all roots on main
+        env:
+          LINT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          trap 'test ! -f "$RUNNER_TEMP/lint.tsv" || cat "$RUNNER_TEMP/lint.tsv"' EXIT
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            bin/fm-lint.sh --changed "$LINT_BASE" --telemetry "$RUNNER_TEMP/lint.tsv"
+          else
+            bin/fm-lint.sh --full --telemetry "$RUNNER_TEMP/lint.tsv"
+          fi
 
   # Deterministic proof that portable parallel shards + portable serial + Herdr
   # equal the complete tests/*.test.sh inventory with no missing or duplicates,
