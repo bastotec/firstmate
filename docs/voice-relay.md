@@ -388,6 +388,7 @@ sending every row.
 | --- | --- |
 | Wire format between the two machines | `bin/fm_voice_frame.py` |
 | The relay, the model session, the tools | `bin/fm-voice-relay.py` |
+| The hybrid engine's fast routing layer | `bin/fm_voice_gate.py` |
 | The laptop end, capture and playback | `bin/fm-voice-client.py` |
 | What may be read, and queueing real work | `bin/fm_voice_records.py` |
 | The queue the handover writes to | `bin/fm-inbox.sh` |
