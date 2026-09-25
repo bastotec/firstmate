@@ -1,0 +1,10 @@
+### Base commit d5355a99 (feature absent) + target's test file
+not ok - seed did not deliver a stream token into the mate home
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=45888
+
+### Pre-review-fix commit 1282e591 + target's test file
+ok - stream mate seeding mints a fresh narrow-scoped token and never copies the primary's
+ok - stream mate credential seeding stays off for a home that hosts no stream hub
+ok - stream mate credential seeding stays off for a client home pointing at a remote hub
+not ok - a failed seed left the mate's class line in the hub token file
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=67988

@@ -1,0 +1,15 @@
+=== A. stale credential lock (dead pid, old mtime) is stale-stolen
+seed completed (expected)
+mate token delivered: r1R_IWdQ...
+class line present: yes
+exactly primary + mate lines: yes
+stale lock consumed: yes
+hub file mode: 600
+=== B. two concurrent seeds serialize on the credential lock
+seed 1 exit: 0  seed 2 exit: 0
+mate 1 token: DkMGCvUe...  mate 2 token: qR1qY4WN...  distinct: yes
+full-class lines: 3 (expect 3: primary + 2 mates)
+mate 1 line present: yes
+mate 2 line present: yes
+hub file mode: 600
+ADVERSARIAL DRIVES PASS

@@ -1,0 +1,8 @@
+hub up on 7792
+agent up (pid 84197), credential held in its environment: confirmed-by-ps
+endpoint registered: 03339cbe448f0b79d55e42867f0ebfaa
+{"delivered": "03339cbe448f0b79d55e42867f0ebfaa", "ok": true}
+crewmate shell executed the steering command
+FM_STREAM_TOKEN absent from the crewmate environment: PASS
+token value absent from the whole crewmate environment: PASS
+CREWMATE STRIP DRIVE PASS
