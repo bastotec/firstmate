@@ -1284,6 +1284,7 @@ PY
   # still pacing its rejoin. Freezing the agent makes that window deterministic,
   # and resuming it afterwards proves the mate the sweep declined to replace was
   # live the entire time.
+  sleep 2
   kill -STOP "$pid"
   restart_case_hub
   out=$(FM_BOOTSTRAP_NETWORK=only FM_BACKEND=tmux host_command fm-bootstrap.sh 2>&1) \
@@ -1299,7 +1300,25 @@ PY
   pass "stream: a restarted hub's registry gap licenses no secondmate respawn"
   # An idle interrupt must not leave control-key echo masquerading as input.
   # The earlier partial-input case proves this is not a blanket composer clear.
+  # The registry-gap restart above also emptied the hub's in-memory screen, and
+  # an idle Deck worker repaints its prompt only after a turn, so reading the
+  # composer here would otherwise race on whether the old prompt's bytes were
+  # still pty-buffered across the restart. Drive one fixture turn through the
+  # recovered endpoint and wait for the composer to read provably empty again,
+  # then interrupt that freshly rendered idle prompt.
   wait_for_agent_state "$recovered" alive
+  with_stream_env fm_backend_stream_send_literal "$recovered" 'fixture post-restart rerender' \
+    || fail "could not type the post-restart rerender turn"
+  with_stream_env fm_backend_send_key stream "$recovered" Enter \
+    || fail "could not submit the post-restart rerender turn"
+  waited=0
+  while [ "$(with_stream_env fm_backend_composer_state stream "$recovered")" != empty ] \
+    && [ "$waited" -lt 150 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$(with_stream_env fm_backend_composer_state stream "$recovered")" empty \
+    "the post-restart rerender turn never returned the host to a proven-empty idle composer"
   out=$(host_command fm-control.sh "$id" interrupt 2>&1) || fail "interrupt failed: $out"
   assert_contains "$out" interrupt-delivered "interrupt did not report its postcondition"
   out=$(host_command fm-control.sh "$id" exit 2>&1) || fail "post-interrupt exit failed: $out; capture: $(with_stream_env fm_backend_stream_composer_capture "$recovered")"
