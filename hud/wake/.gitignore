@@ -4,3 +4,4 @@ samples/
 models/sherpa-onnx-*/
 __pycache__/
 synth/
+passive/

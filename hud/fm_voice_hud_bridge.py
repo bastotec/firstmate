@@ -247,6 +247,17 @@ def main():
         on_notice=on_director_notice, spotter=spotter)
     holder["director"] = director
 
+    # Optional passive collection (config/voice-hud-passive = "on"): every
+    # idle-time utterance is saved and transcribed for the nightly retrain
+    # and as a searchable log. Never while muted, in a turn or speaking.
+    collector = None
+    passive_config = os.path.join(ROOT, "config", "voice-hud-passive")
+    if os.path.isfile(passive_config) and \
+            open(passive_config).read().strip().lower() in ("on", "yes", "1", "true"):
+        sys.path.insert(0, os.path.join(ROOT, "hud", "wake"))
+        from passive import PassiveCollector   # noqa: E402
+        collector = PassiveCollector(lambda: director.gate.floor)
+
     stop = threading.Event()
     # The panel's mute button: while set, no block reaches the wake gate,
     # the decoder or the relay, and the panel shows the mic as muted.
@@ -278,6 +289,8 @@ def main():
             if stop.is_set():
                 return
             if muted.is_set():
+                if collector is not None:
+                    collector.feed(block, False)
                 next_at += block_period
                 emit({"type": "mic", "level": 0.0, "gate": "muted"})
                 delay = next_at - time.monotonic()
@@ -288,6 +301,8 @@ def main():
                 # The HUD's own voice: never decoded, never a wake, and never
                 # counted as the captain's silence in the conversation window.
                 director.ziggy_speaking()
+                if collector is not None:
+                    collector.feed(block, False)
                 next_at += block_period
                 delay = next_at - time.monotonic()
                 if paced and delay > 0:
@@ -295,6 +310,8 @@ def main():
                 continue
             try:
                 director.feed(block, time.monotonic())
+                if collector is not None:
+                    collector.feed(block, director.phase == director.LISTENING)
             except engine_mod.EngineError as exc:
                 if engine.closed.is_set():
                     report_fault()
