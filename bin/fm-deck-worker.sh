@@ -15,10 +15,11 @@
 #     finished worker turn touches the task's turn-end notification file;
 #   - its `❯` prompt is the pane's composer, and it keeps that composer in the
 #     one shape the shared composer classifier (bin/fm-composer-lib.sh) proves
-#     empty: a bare prompt row under the cursor. A bare Enter, a Ctrl+C at the
-#     prompt, and any input line carrying the Ctrl+U clear byte all repaint the
-#     prompt on a fresh line (the clear byte's line is discarded whole, so the
-#     control plane's verified Ctrl+U + Enter clear can never submit anything);
+#     empty: a bare prompt row under the cursor. A bare Enter and any input
+#     line carrying the Ctrl+U clear byte both repaint the prompt on a fresh
+#     line (the clear byte's line is discarded whole, so the control plane's
+#     verified Ctrl+U + Enter clear can never submit anything); an interrupt
+#     preserves buffered partial input exactly as typed;
 #   - Deck's own hooks are attached on every run: `post_tool_use` refreshes the
 #     task's progress marker, and `pre_complete` refuses to let a turn finish
 #     until the worker has appended a worker-status line during that turn;
@@ -547,18 +548,6 @@ drive_turn "$PROMPT"
 input_seq=0
 show_prompt=1
 while :; do
-  if [ "$INTERRUPTED" = 1 ]; then
-    # A cancel while parked at the prompt (the control plane's interrupt lands
-    # here as SIGINT) can leave partial input echoed on the prompt row, and a
-    # cancelled turn can leave the cursor off it. Repaint the prompt on a fresh
-    # line so the pane always settles back into the one shape the shared
-    # composer classifier proves empty: a bare `❯` prompt row under the cursor.
-    # This is the supported clearing path that changes the pane's composer
-    # reading; without it an unproven reading can never become proven and the
-    # control plane's exit gate would have nothing to verify against.
-    INTERRUPTED=0
-    show_prompt=1
-  fi
   if [ "$SECONDMATE" = 1 ]; then
     watch_start || exit 1
     watch_maintain || exit 1
