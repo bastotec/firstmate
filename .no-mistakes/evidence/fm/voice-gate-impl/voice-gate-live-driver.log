@@ -1,0 +1,37 @@
+== enabled gate on the shipped hybrid pipeline (stubbed vendor) ==
+  [ok] resolve_settings built an enabled gate for the opted-in home
+  turn timings: 0.00s, 0.00s, 0.01s, 0.00s
+  shadow rows:
+    3063517f5c03 | shadow | heavy | cold-start | - | answered
+    c4b8e8c14cd6 | shadow | fast-handover | hand-over | Handing that to the first mate. It is queued. | answered
+    444ce8b86a22 | shadow | fast-handover | hand-over | Handing that to the first mate. It is queued. | hand_over_to_firstmate
+    00b814537c2a | shadow | heavy | helper-timeout | - | answered
+  usage rows:
+    1 | 713 | 112 | 360 | ok
+    1 | 713 | 112 | 360 | ok
+    1 | 0 | 0 | 2006 | error-timeout
+  [ok] four spoken turns wrote exactly four shadow rows
+  [ok] turn 1: cold-start routes up beside an answered heavy turn
+  [ok] turn 2: real work at 0.90 shadows fast-handover with the spoken line
+  [ok] turn 3: the handover tool turn joins the fast verdict to the tool name
+  [ok] turn 4: a helper past its bound routes up and the row still lands
+  [ok] the slow-helper turn answered in 0.00s, far under its 3s helper
+  [ok] exactly three helper calls: one per non-cold decision (3)
+  [ok] every helper call carried the caller's bound in milliseconds
+  [ok] the handover tool ran exactly once
+== inert home: no opt-in file, spoken turn unchanged ==
+  [ok] a home without the opt-in file keeps the gate disabled
+  [ok] the inert-gate turn still answered
+  [ok] the inert gate wrote no state at all
+  [ok] the inert gate reached no helper
+== real helper, real runtime, real network, synthetic key ==
+  [ok] the real-helper home has the gate on
+  [ok] first decision is the cold-start skip
+  real helper: route=heavy why=error-call-failed calls=1 took=0.87s
+  [ok] the real helper with a synthetic key must fail open to heavy
+  [ok] the caller's bound was respected by the real helper
+  [ok] the real-helper turn still answered
+  shadow rows: ['heavy error-call-failed answered']
+  usage rows: ['1 0 0 872 error-call-failed', '1 0 0 795 error-call-failed']
+  [ok] the real-helper turn's shadow row joined an answered heavy turn
+all driver checks passed

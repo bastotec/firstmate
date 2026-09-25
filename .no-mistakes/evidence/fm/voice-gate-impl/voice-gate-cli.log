@@ -1,0 +1,24 @@
+$ python3 bin/fm_voice_gate.py report --home /tmp/fm-vg-live/enabled
+turns=4
+  fast-handover: 2
+  heavy: 2
+route by heavy behavior:
+  fast-handover x answered: 1 diverge
+  fast-handover x hand_over_to_firstmate: 1 agree
+  heavy x answered: 2
+
+$ python3 bin/fm_voice_gate.py cost --home /tmp/fm-vg-live/enabled
+calls=3 input_tokens=1426 output_tokens=224
+per_decision_cost_usd mean=0.000019964 max=0.000029946
+ceiling_usd=0.0001 verdict=inside
+
+$ python3 bin/fm_voice_gate.py report --home /tmp/fm-vg-live/real
+turns=1
+  heavy: 1
+route by heavy behavior:
+  heavy x answered: 1
+
+$ python3 bin/fm_voice_gate.py cost --home /tmp/fm-vg-live/real
+calls=2 input_tokens=0 output_tokens=0
+per_decision_cost_usd mean=0.000000000 max=0.000000000
+ceiling_usd=0.0001 verdict=inside
