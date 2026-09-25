@@ -20,6 +20,7 @@ owns the wire, and bin/fm-voice-relay.py owns everything behind it.
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -40,6 +41,9 @@ import fm_voice_wake as wake_mod          # noqa: E402
 
 
 def emit(obj):
+    # Wall-clock stamp on every line, so a turn can be timed stage by stage
+    # from the event log (wake, thinking, first audio, reply end).
+    obj.setdefault("t", round(time.time(), 3))
     sys.stdout.write(json.dumps(obj, separators=(",", ":")) + "\n")
     sys.stdout.flush()
 
@@ -188,7 +192,10 @@ def main():
     spotter = None
     spotter_cmd = (os.environ.get("FM_VOICE_HUD_SPOTTER") or "").strip()
     spotter_config = os.path.join(ROOT, "config", "voice-hud-spotter")
-    if not spotter_cmd and os.path.isfile(spotter_config):
+    # A per-run decoder override (FM_VOICE_HUD_DECODER) outranks the spotter
+    # config file: that run asked for the decoder path.
+    if not spotter_cmd and not os.environ.get("FM_VOICE_HUD_DECODER") \
+            and os.path.isfile(spotter_config):
         with open(spotter_config) as handle:
             lines = [ln.strip() for ln in handle.read().splitlines()
                      if ln.strip() and not ln.strip().startswith("#")]
@@ -204,10 +211,21 @@ def main():
         decoder = mic_mod.NullDecoder()
         decoder.start()
 
+    # An instant sound on the wake word, before any model runs. Played by
+    # afplay on its own, not through the reply speaker, so the echo guard
+    # does not drop the start of the command said right after the name.
+    chime = os.path.join(ROOT, "hud", "assets", "wake-chime.wav")
+
+    def on_director_notice(event):
+        emit({"type": "notice", "event": event})
+        if event == "wake" and os.path.isfile(chime) \
+                and os.path.exists("/usr/bin/afplay"):
+            subprocess.Popen(["/usr/bin/afplay", chime],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     director = mic_mod.TurnDirector(
         engine, wake_mod.EnergyGate(), wake_mod.KeywordListener(), decoder,
-        on_notice=lambda event: emit({"type": "notice", "event": event}),
-        spotter=spotter)
+        on_notice=on_director_notice, spotter=spotter)
 
     stop = threading.Event()
     # The panel's mute button: while set, no block reaches the wake gate,

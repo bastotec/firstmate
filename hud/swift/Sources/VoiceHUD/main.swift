@@ -68,6 +68,98 @@ container.wantsLayer = true
 container.layer?.cornerRadius = 18
 container.layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.82).cgColor
 
+// ------------------------------------------------------------------ glow
+//
+// The whole panel lights up the instant the wake word is heard, and stays lit
+// while Ziggy works and talks: a rotating colour ring around the edge plus a
+// breathing halo. Idle listening and mute are dark, so a glow always means
+// "Ziggy is on it".
+
+enum GlowMode { case off, awake, speaking }
+
+final class Glow {
+    let ring = CAGradientLayer()
+    let mask = CAShapeLayer()
+    let halo = CALayer()
+    private(set) var mode: GlowMode = .off
+
+    init(on host: CALayer, size: CGSize, radius: CGFloat) {
+        host.masksToBounds = false
+        // The halo: a soft coloured shadow behind the panel.
+        halo.frame = CGRect(origin: .zero, size: size)
+        halo.cornerRadius = radius
+        halo.backgroundColor = NSColor(white: 0.08, alpha: 0.01).cgColor
+        halo.shadowRadius = 22
+        halo.shadowOffset = .zero
+        halo.shadowOpacity = 0
+        host.insertSublayer(halo, at: 0)
+        // The ring: a conic gradient, larger than the panel so it can spin,
+        // masked to a thin rounded stroke along the edge.
+        let side = max(size.width, size.height) * 1.6
+        ring.type = .conic
+        ring.startPoint = CGPoint(x: 0.5, y: 0.5)
+        ring.endPoint = CGPoint(x: 0.5, y: 0)
+        ring.frame = CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2,
+                            width: side, height: side)
+        let holder = CALayer()
+        holder.frame = CGRect(origin: .zero, size: size)
+        mask.path = CGPath(roundedRect: CGRect(origin: .zero, size: size).insetBy(dx: 1.5, dy: 1.5),
+                           cornerWidth: radius, cornerHeight: radius, transform: nil)
+        mask.fillColor = nil
+        mask.strokeColor = NSColor.white.cgColor
+        mask.lineWidth = 3
+        holder.mask = mask
+        holder.addSublayer(ring)
+        holder.opacity = 0
+        host.addSublayer(holder)
+        self.holder = holder
+    }
+    private var holder: CALayer!
+
+    func set(_ next: GlowMode) {
+        guard next != mode else { return }
+        mode = next
+        ring.removeAllAnimations()
+        halo.removeAllAnimations()
+        holder.removeAllAnimations()
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.duration = next == .off ? 0.45 : 0.12
+        fade.fromValue = holder.presentation()?.opacity ?? holder.opacity
+        let target: Float = next == .off ? 0 : 1
+        fade.toValue = target
+        holder.opacity = target
+        holder.add(fade, forKey: "fade")
+        if next == .off {
+            halo.shadowOpacity = 0
+            return
+        }
+        let colors: [NSColor] = next == .awake
+            ? [.systemPurple, .systemPink, .systemOrange, .systemBlue, .systemPurple]
+            : [.systemTeal, .systemBlue, .systemGreen, .systemCyan, .systemTeal]
+        ring.colors = colors.map { $0.cgColor }
+        halo.shadowColor = (next == .awake ? NSColor.systemPurple : NSColor.systemTeal).cgColor
+        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+        spin.fromValue = 0
+        spin.toValue = -2 * Double.pi
+        spin.duration = next == .awake ? 1.6 : 3.2
+        spin.repeatCount = .infinity
+        ring.add(spin, forKey: "spin")
+        let breathe = CABasicAnimation(keyPath: "shadowOpacity")
+        breathe.fromValue = 0.35
+        breathe.toValue = 0.95
+        breathe.duration = next == .awake ? 0.7 : 1.2
+        breathe.autoreverses = true
+        breathe.repeatCount = .infinity
+        halo.shadowOpacity = 0.6
+        halo.add(breathe, forKey: "breathe")
+    }
+}
+
+let glow = Glow(on: container.layer!, size: container.frame.size, radius: 18)
+// Set on the wake word, cleared once Ziggy has answered or the turn is over.
+var glowAwake = false
+var lastRenderedState: String = "listening"
+
 // ------------------------------------------------------------------ text
 
 func makeLabel(_ text: String, size: CGFloat, weight: NSFont.Weight) -> NSTextField {
@@ -201,6 +293,20 @@ func render() {
         case .speaking: dot.layer?.backgroundColor = NSColor.systemBlue.cgColor
         }
     }
+    let stateName = model.state.rawValue
+    if lastRenderedState == "speaking" && stateName == "listening" {
+        glowAwake = false
+    }
+    lastRenderedState = stateName
+    if model.micBlocked || muteToggler.muted {
+        glow.set(.off)
+    } else if model.state == .speaking {
+        glow.set(.speaking)
+    } else if glowAwake || model.state == .thinking {
+        glow.set(.awake)
+    } else {
+        glow.set(.off)
+    }
     gateLabel.stringValue = model.gate == .listening ? "" : "gate: \(model.gate.rawValue)"
     levelFillWidth.constant = levelTrackWidth * CGFloat(model.micLevel)
     transcriptLabel.isHidden = model.micBlocked
@@ -315,13 +421,14 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "mic: \(error ?? "capture status")"))
                 case "wake":
-                    // The gate's own news is visible too: the wake word
-                    // fired, so the pause-then-command contract is coached
-                    // right where the captain is looking.
+                    // The wake word fired: light the whole panel at once,
+                    // before any model has done anything.
+                    glowAwake = true
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "heard you"))
                 case "no-speech":
+                    glowAwake = false
                     // A wake into silence is named, never swallowed: the
                     // turn was never opened, so nothing was spent but the
                     // captain still learns the wake fired and died.
@@ -344,6 +451,7 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     model.applyState("listening")
                     model.clearTranscript()
                 case "turn-failed":
+                    glowAwake = false
                     model.applyState("listening")
                     var text = "that turn failed - ask again"
                     if let reason = error, !reason.isEmpty {
@@ -355,6 +463,7 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "the relay ended the session - ask again"))
                 case "turn-timeout":
+                    glowAwake = false
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "that turn got no reply - ask again"))
