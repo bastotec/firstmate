@@ -105,7 +105,7 @@ It differs from the steps above in exactly three places.
 
 #### A signed-out account slot with a missing terminal
 
-One combination cannot be brought back through either verb.
+One combination refuses on both verbs' unqualified paths.
 It happens when a worker was launched on an account slot, that slot's store no longer holds a usable credential - for example after signing out of that account under the store - and then the worker's terminal or its whole session is gone.
 
 - `recover-missing` refuses while resolving the recorded slot, before it reads the endpoint, reporting that the slot's store holds no vendor-managed credential.
@@ -116,7 +116,7 @@ The worker's local copy and its uncommitted work are untouched, and each verb st
 There are two ways out:
 
 1. Sign in again under that slot's store, so the recorded slot resolves, then run `recover-missing`.
-2. Remove the `account_slot=` line from the task's `state/<id>.meta` record by hand, then run `recover-missing`. The worker comes back on the harness's normal credentials instead of a slot.
+2. Run `recover-missing --account-slot default`: the recovery names the ambient account deliberately instead of guessing, the published record drops the `account_slot=` line, and the worker comes back on the harness's normal credentials instead of a slot.
 
 ### Failure and rollback
 
