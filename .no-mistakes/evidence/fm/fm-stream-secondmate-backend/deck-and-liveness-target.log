@@ -1,0 +1,63 @@
+FM_TEST_BEGIN 2026-09-25T00:11:04Z tests/fm-deck-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - Herdr Deck recovery proves driver identity; dead and non-Deck paths remain conservative
+ok - Herdr Deck recovery attributes a live driver across a spaced code root and state root
+ok - the steering doorbell rings a live remote Deck driver and skips an absent one
+ok - Deck idle Ctrl+C stays a signal, not fake input, while partial input remains visible
+ok - Deck host preserves handling-successor supervision without parent turn-end wakes
+ok - fm-deck-worker: a secondmate records a failed turn and waits at its prompt for the next wake
+ok - fm-deck-worker: a secondmate with no session repeats its launch brief on the next wake
+ok - fm-deck-worker: a secondmate that cannot open a session stops for the guarded relaunch
+ok - fm-deck-worker: a secondmate that cannot publish a failed turn stops instead of looping
+ok - fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model
+ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
+ok - fm-deck-worker: busy-state failures stop turns and publish status evidence
+ok - fm-deck-worker: turn-end publication refuses unsafe targets
+ok - fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported
+ok - fm-deck-worker: Deck stderr cannot break completion-blocked rendering
+ok - fm-deck-worker: Firstmate bookkeeping cannot satisfy worker evidence
+ok - fm-deck-worker: the finished-turn line carries the UTC completion time and degrades safely without it
+ok - fm-deck-worker: the idle prompt notes the UTC idle instant beside the bare ❯ prompt
+ok - fm-deck-worker: status evidence never follows symlinked or non-regular paths
+ok - fm-deck-worker: silent and failed turns gain status evidence before turn-end
+ok - fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt
+ok - fm-deck-worker: each completed turn leaves the next steer an idle baseline
+ok - Deck stop: physical aliases and spaced paths stop the active Deck process
+ok - Deck stop: stale secondmate drivers stop before replacement arming
+tests/fm-deck-harness.test.sh: line 586: 75237 Killed: 9               FM_DECK_READY="$dir/ready" FM_DECK_SIGNALLED="$dir/signalled" python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' "$WORKER" --id owned --state "$dir/state" --gen "$gen" --deck "$dir/deck" -- old-brief < /dev/null > "$dir/pane.out" 2>&1
+ok - Deck stop: exact task scope and bounded escalation remove survivors
+ok - liveness: the deck driver and binary are agents, unrelated names are not
+ok - tmux liveness: Deck's Linux comm and argv0 classify alive
+ok - control and busy-source tables carry Deck mechanics without rendered delivery evidence
+ok - Deck supervision autoarm remains scoped to secondmate launches
+ok - fm-spawn: ordinary Deck dispatch records only default effort
+ok - fm-spawn: Deck refuses unsupported effort before launch metadata
+fm-deck-harness: all cases passed
+FM_TEST_END 2026-09-25T00:14:16Z tests/fm-deck-harness.test.sh exit=0 duration_ms=191536 gate_skip=false
+FM_TEST_BEGIN 2026-09-25T00:14:16Z tests/fm-secondmate-liveness.test.sh family=secondmate expected_gate_skip=none
+ok - fm_backend_tmux_agent_state: separates live, dead, missing, ambiguous, and unreadable
+ok - fm_backend_tmux_agent_state: rejects malformed targets before probing tmux
+ok - posture verdict: read from the agent's own arguments, with nothing claimed when no agent can be read
+ok - fm_backend_herdr_agent_state: preserves missing/no-agent/live/unknown husk behavior
+ok - fm_backend_agent_state: routes tmux/Herdr and keeps Zellij unverified
+ok - sweep: a confirmed-dead secondmate endpoint is killed and respawned
+ok - sweep: an endpoint whose kill nothing confirmed is reported and not relaunched onto
+ok - sweep: an already-live secondmate is untouched and distinguishable in verbose diagnostics
+ok - sweep: a live secondmate without the configured Claude posture is reported, neither stopped nor relaunched
+ok - sweep: an authoritatively missing Pi secondmate window is relaunched
+ok - sweep: an authoritatively missing pi-signed secondmate window is relaunched
+ok - sweep: an existing ambiguous Pi process prevents duplicate recovery
+ok - sweep: transient target unreadability never licenses recovery
+ok - sweep: failed relaunch diagnostics distinguish a confidently missing endpoint
+ok - sweep: an unverified harness blocks recovery with a concrete diagnostic
+ok - sweep: a cursor secondmate with a dead endpoint stays unverified and untouched
+ok - sweep: a confirmed-dead deck secondmate endpoint is killed and respawned
+ok - sweep: idempotent by construction - a live secondmate is never re-touched on a later run
+ok - sweep: skipped entirely under FM_BOOTSTRAP_DETECT_ONLY=1, exactly like the other mutating sweeps
+ok - sweep: a silent no-op with no kind=secondmate meta present (a secondmate home's own natural scoping)
+# all fm-secondmate-liveness tests passed
+FM_TEST_END 2026-09-25T00:15:49Z tests/fm-secondmate-liveness.test.sh exit=0 duration_ms=93001 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=285951
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=191536 failed=0
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=93001 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-harness.test.sh duration_ms=191536
+FM_TEST_SLOWEST rank=2 script=tests/fm-secondmate-liveness.test.sh duration_ms=93001

@@ -1,0 +1,1 @@
+error: no firstmate home supplied or registered for mate-x
