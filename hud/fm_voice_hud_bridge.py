@@ -38,6 +38,7 @@ QUIT_DRAIN_TIMEOUT = 30.0
 import fm_voice_engine as engine_mod      # noqa: E402
 import fm_voice_mic as mic_mod            # noqa: E402
 import fm_voice_speaker as speaker_mod    # noqa: E402
+import fm_voice_aec as aec_mod            # noqa: E402
 import fm_voice_wake as wake_mod          # noqa: E402
 
 
@@ -79,13 +80,28 @@ def main():
     # with no output device keeps a working HUD - the transcript still
     # arrives - and says so on the wire rather than dying at startup.
     speaker = None
-    try:
-        speaker = speaker_mod.Speaker(
-            device=output_device_arg(),
-            gain=float(os.environ.get("FM_VOICE_HUD_GAIN", speaker_mod.OUT_GAIN)))
-    except Exception as exc:                  # noqa: BLE001
-        emit({"type": "notice", "event": "output-unavailable",
-              "error": "{}: {}".format(type(exc).__name__, exc)})
+    gain = float(os.environ.get("FM_VOICE_HUD_GAIN", speaker_mod.OUT_GAIN))
+    # Echo-cancelled microphone and speaker in one child (VoiceAudio), so the
+    # captain can talk over Ziggy. On by default when the helper is built;
+    # FM_VOICE_HUD_AEC=0 or a --mic-file run uses the plain devices.
+    voice_io = None
+    if not arg_after("--mic-file") and os.environ.get("FM_VOICE_HUD_AEC", "1") != "0" \
+            and os.path.isfile(aec_mod.helper_path()):
+        try:
+            voice_io = aec_mod.VoiceIO(gain=gain, on_silent=lambda: emit({
+                "type": "notice", "event": "mic-denied",
+                "error": "the microphone delivers digital silence - "
+                         "check microphone permission for this app"}))
+            speaker = voice_io
+        except Exception as exc:              # noqa: BLE001
+            emit({"type": "notice", "event": "aec-unavailable",
+                  "error": "{}: {}".format(type(exc).__name__, exc)})
+    if speaker is None:
+        try:
+            speaker = speaker_mod.Speaker(device=output_device_arg(), gain=gain)
+        except Exception as exc:              # noqa: BLE001
+            emit({"type": "notice", "event": "output-unavailable",
+                  "error": "{}: {}".format(type(exc).__name__, exc)})
 
     engine_fault = threading.Event()
     decoder_fault = threading.Event()
@@ -183,6 +199,8 @@ def main():
     mic_file = arg_after("--mic-file")
     if mic_file:
         mic = mic_mod.FileMic(mic_file)
+    elif voice_io is not None:
+        mic = voice_io
     else:
         # The microphone is the shipped end: a python3 without sounddevice
         # or a machine with no input device says so on the wire, never a
@@ -248,6 +266,10 @@ def main():
         engine, wake_mod.EnergyGate(), wake_mod.KeywordListener(), decoder,
         on_notice=on_director_notice, spotter=spotter)
     holder["director"] = director
+    # Live, the mic keeps listening while the reply is made (so the captain
+    # can cut in); offline checks keep the simpler blocking turn.
+    director.async_reply = not mic_file
+    director.speech_interrupts = voice_io is not None
 
     # Optional passive collection (config/voice-hud-passive = "on"): every
     # idle-time utterance is saved and transcribed for the nightly retrain
@@ -303,8 +325,14 @@ def main():
                 # The HUD's own voice: never decoded, never a wake, and never
                 # counted as the captain's silence in the conversation window.
                 director.ziggy_speaking()
-                if director.spot_over_reply(block):
-                    # "Ziggy, ..." over its own voice: stop talking, listen.
+                try:
+                    cut_in = director.hear_over_reply(block, time.monotonic())
+                except engine_mod.EngineError as exc:
+                    emit({"type": "notice", "event": "turn-timeout", "error": str(exc)})
+                    director.recover()
+                    cut_in = False
+                if cut_in:
+                    # The captain talked over Ziggy: stop talking, listen.
                     speaker.flush()
                     director.barge_in(time.monotonic())
                     continue

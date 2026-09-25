@@ -74,6 +74,11 @@ FOLLOW_UP_PREROLL_BLOCKS = 4
 # not a click, a cough or a door, which opened empty turns.
 FOLLOW_UP_MIN_LOUD_BLOCKS = 3
 
+# Talking over Ziggy (with echo cancellation on): this many loud blocks in a
+# row, 0.3 s of speech, cut the reply and open a turn. A cough or a click is
+# shorter than that.
+BARGE_IN_MIN_LOUD_BLOCKS = 3
+
 
 class DecoderError(Exception):
     """The decoder child stopped taking audio, so the HUD can never wake."""
@@ -298,6 +303,8 @@ class TurnDirector:
     IN_WAKE = "in-wake"
     IN_TURN = "in-turn"
     FOLLOW_UP = "follow-up"
+    # The turn has ended and the reply is being made; only with async_reply.
+    REPLYING = "replying"
 
     def __init__(self, engine, gate, keyword, decoder, on_notice=None,
                  speech_timeout=POST_WAKE_SPEECH_TIMEOUT, spotter=None):
@@ -316,6 +323,16 @@ class TurnDirector:
         self._follow_until = None
         self._stand_down = False
         self._loud_run = 0
+        # async_reply: end a turn without blocking the microphone while the
+        # reply is made, so the captain can cut in from its first word.
+        # speech_interrupts: any sustained speech over Ziggy's voice cuts it
+        # (only safe when the microphone is echo-cancelled); otherwise only
+        # its name does.
+        self.async_reply = False
+        self.speech_interrupts = False
+        self._barge_run = 0
+        self._reply_token = None
+        self._reply_result = None
         self.gate = gate
         self.keyword = keyword
         self.decoder = decoder
@@ -414,6 +431,12 @@ class TurnDirector:
 
     def _feed_spotted(self, block, now):
         """The spotter path: wake on the spot, stream the turn, end on quiet."""
+        self._settle_reply()
+        if self.phase == self.REPLYING:
+            # The reply is being made and none of it is playing yet.
+            if self.hear_over_reply(block, now):
+                self.barge_in(now)
+            return self.phase
         loud = wake_mod.block_energy(block) >= self.gate.floor
         channel = self.gate.feed(block, now)
         self.spotter.feed(block)
@@ -473,43 +496,87 @@ class TurnDirector:
             # Quiet past the hangover: end once the command was said, or
             # after the grace if only the name was said.
             if self._spoke_since_wake or now - self._wake_at >= SPOT_COMMAND_GRACE:
-                self.engine.end_turn()
                 self._wake_at = None
                 self._preroll = []
-                if self._stand_down or not self.follow_up_seconds:
-                    self._stand_down = False
-                    self.on_notice("stand-by")
-                    self.phase = self.LISTENING
-                else:
-                    # Ziggy has answered (end_turn waits for the reply): keep
-                    # listening without the wake word for the window.
-                    self.on_notice("follow-up")
-                    self.phase = self.FOLLOW_UP
-                    self._follow_until = None
+                if not self.async_reply:
+                    self.engine.end_turn()
+                    self._after_reply()
+                    return self.phase
+                # end_turn waits for the reply; wait for it off this thread.
+                token = object()
+                self._reply_token = token
+                self._barge_run = 0
+                self.phase = self.REPLYING
+
+                def wait_reply():
+                    try:
+                        self.engine.end_turn()
+                        self._reply_result = (token, None)
+                    except Exception as exc:          # noqa: BLE001
+                        self._reply_result = (token, exc)
+                threading.Thread(target=wait_reply, name="reply-wait", daemon=True).start()
         return self.phase
 
-    def spot_over_reply(self, block):
-        """While Ziggy talks, the spotter still listens for its name, so the
-        captain can cut in with "Ziggy, ...". Nothing else is heard. Returns
-        True when the name was spotted."""
-        if self.spotter is None or self.phase not in (self.LISTENING, self.FOLLOW_UP):
+    def _after_reply(self):
+        if self._stand_down or not self.follow_up_seconds:
+            self._stand_down = False
+            self.on_notice("stand-by")
+            self.phase = self.LISTENING
+        else:
+            # Ziggy has answered: keep listening without the wake word for
+            # the window.
+            self.on_notice("follow-up")
+            self.phase = self.FOLLOW_UP
+            self._follow_until = None
+
+    def _settle_reply(self):
+        """On the mic thread: act on a reply the waiter saw finish. A reply
+        for a turn the captain already cut into is dropped."""
+        result, self._reply_result = self._reply_result, None
+        if result is None:
+            return
+        token, exc = result
+        if token is not self._reply_token or self.phase != self.REPLYING:
+            return
+        self._reply_token = None
+        if exc is not None:
+            self.phase = self.LISTENING
+            raise exc
+        self._after_reply()
+
+    def hear_over_reply(self, block, now):
+        """While Ziggy talks (or is making its reply), listen for the captain
+        cutting in: its name always does; with speech_interrupts, so does
+        any sustained speech. Returns True when the captain cut in."""
+        self._settle_reply()
+        if self.spotter is None or self.phase not in (
+                self.LISTENING, self.FOLLOW_UP, self.REPLYING):
             return False
         self._preroll.append(block)
         if len(self._preroll) > SPOT_PREROLL_BLOCKS:
             del self._preroll[0]
         self.spotter.feed(block)
-        return bool(self.spotter.poll())
+        if self.spotter.poll():
+            return True
+        if not self.speech_interrupts:
+            return False
+        loud = wake_mod.block_energy(block) >= self.gate.floor
+        self._barge_run = self._barge_run + 1 if loud else 0
+        return self._barge_run >= BARGE_IN_MIN_LOUD_BLOCKS
 
     def barge_in(self, now):
-        """The captain interrupted Ziggy: open a wake turn right away."""
-        self.on_notice("wake")
-        self.engine.begin_turn(wake=True)
-        for held in self._preroll:
+        """The captain cut in: open a turn right away with what they said so
+        far. Not a wake turn - they may not have said the name."""
+        self._reply_token = None
+        self._barge_run = 0
+        self.on_notice("follow-up-turn")
+        self.engine.begin_turn()
+        for held in self._preroll[-(FOLLOW_UP_PREROLL_BLOCKS + BARGE_IN_MIN_LOUD_BLOCKS):]:
             self.engine.feed(held)
         self._preroll = []
         self.phase = self.IN_TURN
         self._wake_at = now
-        self._spoke_since_wake = False
+        self._spoke_since_wake = True
         self._follow_until = None
 
     def ziggy_speaking(self):
@@ -553,8 +620,9 @@ class TurnDirector:
         timeout): the relay's documented renewal is the next turn's start,
         so the director returns to listening and the next wake opens a
         fresh turn instead of feeding one that was already ended."""
-        if self.phase in (self.IN_TURN, self.FOLLOW_UP):
+        if self.phase in (self.IN_TURN, self.FOLLOW_UP, self.REPLYING):
             self.phase = self.LISTENING
+            self._reply_token = None
             self._wake_at = None
             self._preroll = []
             self._follow_until = None

@@ -205,10 +205,15 @@ class Engine:
         with self.lock:
             turn = self.turn_id
         self.up_q.put(frame.TALK_END)
-        if not self.reply_done.wait(timeout=timeout or self.turn_timeout):
-            raise EngineError(
-                "the reply did not complete within {}s".format(
-                    timeout or self.turn_timeout))
+        deadline = time.monotonic() + (timeout or self.turn_timeout)
+        while not self.reply_done.wait(timeout=0.1):
+            # The captain cut in and a newer turn began: this one is over.
+            if self.turn_id != turn:
+                return turn
+            if time.monotonic() >= deadline:
+                raise EngineError(
+                    "the reply did not complete within {}s".format(
+                        timeout or self.turn_timeout))
         return turn
 
     # ------------------------------------------------------------------ close

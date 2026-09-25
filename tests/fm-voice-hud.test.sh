@@ -14,6 +14,8 @@
 # stub proves the engine's side of the contract; it cannot prove the relay's,
 # which tests/fm-voice-relay.test.sh already owns.
 set -u
+# The echo-cancelling helper drives the real microphone; checks use stubs.
+export FM_VOICE_HUD_AEC=0
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -2167,3 +2169,75 @@ except subprocess.TimeoutExpired:
 check(rc == 0, "the bridge must exit zero on a clean quit")
 PY
 pass "the HUD's configuration carries no default endpoint and honors its one override"
+
+# --- the captain can cut in over Ziggy -----------------------------------------
+#
+# With async_reply the mic keeps listening while the reply is made; with
+# speech_interrupts (echo cancellation on) 0.3 s of speech over Ziggy opens a
+# new turn, and the cut-off turn's late completion is ignored. Without it,
+# only the name cuts in.
+python3 - "$ROOT" <<'PY' || fail "cut in"
+import os, struct, sys, threading, time
+sys.path.insert(0, os.path.join(sys.argv[1], "hud"))
+import fm_voice_mic as mic_mod
+import fm_voice_wake as wake_mod
+
+def check(cond, label):
+    if not cond:
+        sys.exit("cut in: " + label)
+
+class Engine:
+    def __init__(self):
+        self.began, self.release = [], threading.Event()
+    def begin_turn(self, wake=False):
+        self.began.append(wake)
+    def feed(self, pcm):
+        pass
+    def end_turn(self, timeout=None):
+        self.release.wait(5)
+
+class Spotter:
+    fire = False
+    def feed(self, block):
+        pass
+    def poll(self):
+        fired, Spotter.fire = Spotter.fire, False
+        return fired
+
+loud = struct.pack("<h", 12000) * (mic_mod.BLOCK // 2)
+quiet = bytes(mic_mod.BLOCK)
+
+def director(speech):
+    eng = Engine()
+    d = mic_mod.TurnDirector(eng, wake_mod.EnergyGate(), wake_mod.KeywordListener(),
+                             mic_mod.NullDecoder(), spotter=Spotter())
+    d.async_reply, d.speech_interrupts = True, speech
+    now = 100.0
+    Spotter.fire = True
+    d.feed(loud, now)                        # "Ziggy"
+    for i in range(1, 6):
+        d.feed(loud, now + i * 0.1)          # the command
+    for i in range(6, 20):
+        d.feed(quiet, now + i * 0.1)         # quiet: the turn ends
+    return d, eng
+
+d, eng = director(True)
+check(d.phase == d.REPLYING, "a finished turn must wait for its reply off the mic thread: " + d.phase)
+cut = [d.hear_over_reply(loud, 110 + i * 0.1) for i in range(3)]
+check(cut == [False, False, True], "0.3 s of speech over Ziggy must cut in: %r" % cut)
+d.barge_in(110.3)
+check(d.phase == d.IN_TURN and eng.began == [True, False],
+      "a cut-in opens a plain turn right away: %s %r" % (d.phase, eng.began))
+eng.release.set()
+time.sleep(0.3)
+d.feed(loud, 110.4)
+check(d.phase == d.IN_TURN, "the cut-off turn's late reply must not end the new turn: " + d.phase)
+
+d, eng = director(False)
+cut = [d.hear_over_reply(loud, 110 + i * 0.1) for i in range(5)]
+check(not any(cut), "without echo cancellation, speech alone must not cut in")
+Spotter.fire = True
+check(d.hear_over_reply(loud, 111), "the name must always cut in")
+eng.release.set()
+PY
+pass "the captain can cut in over Ziggy, and the cut-off reply is dropped"

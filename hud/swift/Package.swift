@@ -25,6 +25,9 @@ let package = Package(
                     "-Xlinker", "Info.plist",
                 ]),
             ]),
+        // The microphone and speaker in one voice-processing unit, for echo
+        // cancellation; the Python bridge runs it as a child.
+        .executableTarget(name: "VoiceAudio", path: "Sources/VoiceAudio"),
         .testTarget(name: "VoiceHUDTests", dependencies: ["VoiceHUD"],
                     path: "Tests/VoiceHUDTests"),
     ]

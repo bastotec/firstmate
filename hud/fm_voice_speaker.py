@@ -87,11 +87,7 @@ class Speaker:
             self._buffer += self._amplify(pcm)
 
     def _amplify(self, pcm):
-        if self.gain == 1.0 or len(pcm) < 2:
-            return pcm
-        import numpy                          # noqa: PLC0415
-        x = numpy.frombuffer(pcm[:len(pcm) // 2 * 2], dtype="<i2").astype(numpy.float32)
-        return numpy.clip(x * self.gain, -32768, 32767).astype("<i2").tobytes()
+        return amplify(pcm, self.gain)
 
     def flush(self):
         """Drop whatever is queued: the captain interrupted."""
@@ -143,3 +139,12 @@ class Speaker:
             self._stream.close()
         except Exception:                      # noqa: BLE001
             pass
+
+
+def amplify(pcm, gain):
+    """Scale s16le PCM by `gain`, clipped so a loud line cannot wrap around."""
+    if gain == 1.0 or len(pcm) < 2:
+        return pcm
+    import numpy                              # noqa: PLC0415
+    x = numpy.frombuffer(pcm[:len(pcm) // 2 * 2], dtype="<i2").astype(numpy.float32)
+    return numpy.clip(x * gain, -32768, 32767).astype("<i2").tobytes()
