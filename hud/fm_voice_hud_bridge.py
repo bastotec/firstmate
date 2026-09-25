@@ -187,6 +187,9 @@ def main():
         on_notice=lambda event: emit({"type": "notice", "event": event}))
 
     stop = threading.Event()
+    # The panel's mute button: while set, no block reaches the wake gate,
+    # the decoder or the relay, and the panel shows the mic as muted.
+    muted = threading.Event()
 
     def mic_level(block):
         # A 0..1 display level for the panel: full bar near the loudness of
@@ -208,6 +211,13 @@ def main():
         for block in mic.blocks():
             if stop.is_set():
                 return
+            if muted.is_set():
+                next_at += block_period
+                emit({"type": "mic", "level": 0.0, "gate": "muted"})
+                delay = next_at - time.monotonic()
+                if delay > 0:
+                    stop.wait(delay)
+                continue
             if speaker is not None and speaker.sounding():
                 # The HUD's own voice: never decoded, never a wake.
                 next_at += block_period
@@ -241,8 +251,15 @@ def main():
     try:
         # The main thread owns the quit signal; the mic thread owns blocks.
         for line in sys.stdin:
-            if line.strip() == "quit":
+            command = line.strip()
+            if command == "quit":
                 break
+            if command == "mute":
+                muted.set()
+                emit({"type": "notice", "event": "muted"})
+            elif command == "unmute":
+                muted.clear()
+                emit({"type": "notice", "event": "unmuted"})
     finally:
         stop.set()
         mic.close()

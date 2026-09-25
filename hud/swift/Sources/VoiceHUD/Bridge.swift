@@ -102,8 +102,13 @@ final class Bridge {
     }
 
     func quit() {
+        send("quit")
+    }
+
+    /// One control line to the bridge: "quit", "mute" or "unmute".
+    func send(_ line: String) {
         if let stdin = process.standardInput as? Pipe {
-            try? stdin.fileHandleForWriting.write(contentsOf: Data("quit\n".utf8))
+            try? stdin.fileHandleForWriting.write(contentsOf: Data((line + "\n").utf8))
         }
     }
 }

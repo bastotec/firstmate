@@ -120,7 +120,28 @@ settingsButton.font = .systemFont(ofSize: 11, weight: .medium)
 settingsButton.translatesAutoresizingMaskIntoConstraints = false
 settingsButton.isHidden = true
 
+// Mute: the microphone stops reaching the wake gate, the decoder and the
+// relay until unmuted, for meetings and calls. The bridge owns the effect;
+// the panel only says which way it is.
+final class MuteToggler: NSObject {
+    var muted = false
+    @objc func toggle(_ sender: NSButton) {
+        muted.toggle()
+        bridgeProcess.send(muted ? "mute" : "unmute")
+        sender.title = muted ? "unmute" : "mute"
+        dot.layer?.backgroundColor = muted
+            ? NSColor.systemGray.cgColor : NSColor.systemGreen.cgColor
+    }
+}
+let muteToggler = MuteToggler()
+let muteButton = NSButton(title: "mute", target: muteToggler, action: #selector(MuteToggler.toggle(_:)))
+muteButton.bezelStyle = .rounded
+muteButton.controlSize = .small
+muteButton.font = .systemFont(ofSize: 11, weight: .medium)
+muteButton.translatesAutoresizingMaskIntoConstraints = false
+
 container.addSubview(dot)
+container.addSubview(muteButton)
 container.addSubview(stateLabel)
 container.addSubview(gateLabel)
 container.addSubview(levelTrack)
@@ -141,8 +162,11 @@ NSLayoutConstraint.activate([
     stateLabel.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 10),
     stateLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
 
+    muteButton.centerYAnchor.constraint(equalTo: stateLabel.centerYAnchor),
+    muteButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+
     gateLabel.centerYAnchor.constraint(equalTo: stateLabel.centerYAnchor),
-    gateLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+    gateLabel.trailingAnchor.constraint(equalTo: muteButton.leadingAnchor, constant: -8),
 
     transcriptLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
     transcriptLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
@@ -296,7 +320,7 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     // right where the captain is looking.
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
-                        role: .assistant, text: "wake word heard - say the command"))
+                        role: .assistant, text: "heard you"))
                 case "no-speech":
                     // A wake into silence is named, never swallowed: the
                     // turn was never opened, so nothing was spent but the
