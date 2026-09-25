@@ -196,12 +196,16 @@ fm_external_wait_active() {  # <task> [state-dir]
   [ "$now" -lt "$until_epoch" ] || return 1
   FM_EXTERNAL_WAIT_AGE=$(( now - declared ))
   [ "$FM_EXTERNAL_WAIT_AGE" -ge 0 ] || FM_EXTERNAL_WAIT_AGE=0
+  # shellcheck disable=SC2034 # Output global, read by the sourcing caller (bin/fm-watch.sh).
   FM_EXTERNAL_WAIT_REASON=$(fm_external_wait_field "$record" reason)
+  # shellcheck disable=SC2034 # Output global, read by the sourcing caller (bin/fm-watch.sh).
   FM_EXTERNAL_WAIT_BY=$(fm_external_wait_field "$record" declared_by)
+  # shellcheck disable=SC2034 # Output global, read by the sourcing caller (bin/fm-watch.sh).
   FM_EXTERNAL_WAIT_UNTIL=$(fm_external_wait_field "$record" until)
   # The declaration identity a re-surface throttle binds to: any new declaration
   # replaces it, so a replacement starts its own cadence window instead of
   # inheriting the silence of the one it replaced.
+  # shellcheck disable=SC2034 # Output global, read by the sourcing caller (bin/fm-watch.sh).
   FM_EXTERNAL_WAIT_SCOPE="${task}:${declared}:${until_epoch}"
 }
 

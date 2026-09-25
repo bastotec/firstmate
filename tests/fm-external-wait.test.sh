@@ -125,7 +125,7 @@ test_declare_records_attribution_without_touching_the_status_log() {
 }
 
 test_declare_refuses_unbounded_or_malformed_input() {
-  local dir state rc
+  local dir state
   dir="$TMP_ROOT/declare-refusals"; state="$dir/state"; mkdir -p "$state"
   expect_refusal() {  # <label> <args...>
     local label=$1 code
