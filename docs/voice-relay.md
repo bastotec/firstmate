@@ -160,6 +160,7 @@ Use the same virtual environment as the relay interpreter when invoking the unch
 The gateway, key and model settings take effect at engine launch; restart the engine after changing them.
 
 The hybrid engine also carries an optional fast routing layer in front of the heavy model, inert until `voice-gate-key-var` names its secrets key variable.
+A configured layer still needs Node and its pinned runtime, installed from the tracked Firstmate root with `npm ci --prefix bin/voice-gate --omit=dev`; the resulting `bin/voice-gate/node_modules/` is local and gitignored, and with Node, the runtime or the named key missing, every decision fails open to the heavy model.
 One narrow-model fan-out call classifies each transcript, and code routes records reads, handovers and scripted lines away from the heavy model while everything uncertain reaches the model as before.
 This build ships shadow only: every route decision is logged beside what the heavy model actually did and acted on by nothing.
 The layer takes its deadline from the relay's one turn budget and contributes no timeout of its own, and `python3 bin/fm_voice_gate.py report` and `cost` read its `state/voice-gate/` records.
