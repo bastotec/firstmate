@@ -56,8 +56,7 @@ fm_model_chain__parse_stream() {
   # Reads the stored chain from stdin; prints "ok" and the entries, or a
   # diagnostic. Internal: the public wrappers own the plumbing.
   local line trimmed prefix separator bad byte
-  local -a seen=()
-  local entries=0
+  local -a chain_seen=()
   while IFS= read -r line || [ -n "$line" ]; do
     trimmed="${line#"${line%%[![:space:]]*}"}"
     trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
@@ -80,15 +79,14 @@ fm_model_chain__parse_stream() {
       printf 'invalid model chain line: %s\n' "$(printf '%s' "$line" | head -c 120)" >&2
       return 1
     fi
-    case " ${seen[*]-} " in
+    case " ${chain_seen[*]-} " in
       *" $line "*)
         printf 'duplicate model chain line: %s\n' "$(printf '%s' "$line" | head -c 120)" >&2
         return 1
         ;;
     esac
-    seen+=("$line")
+    chain_seen+=("$line")
     printf '%s|%s\n' "${line%%/*}" "${line#*/}"
-    entries=$((entries + 1))
   done
   return 0
 }

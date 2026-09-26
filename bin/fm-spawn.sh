@@ -498,12 +498,21 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-account-slot-lib.sh
 . "$SCRIPT_DIR/fm-account-slot-lib.sh"
+# Spawn-side model fallback chain (parsing, cooldowns, selection); used only
+# when the resolved model surface actually carries a chain.
+# shellcheck source=bin/fm-model-chain-lib.sh
+. "$SCRIPT_DIR/fm-model-chain-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
 # Skip the watcher guard when re-exec'd for one pair of a batch (FM_SPAWN_NO_GUARD is
 # set by the batch loop below), so the guard runs once for the batch, not once per pair.
 [ -n "${FM_SPAWN_NO_GUARD:-}" ] || "$FM_ROOT/bin/fm-guard.sh" || true
+# Model-chain lanes: a comma-separated model surface ("a/b,c/d") is a fallback
+# chain; the lane's cooldowns live under state/model-chain/<lane>.state. A bare
+# --model pin uses the task id, so an explicit captain pin can never silently
+# ride a lane another task's refusals put into cooldown.
+MODEL_CHAIN_LANE=
 KIND=ship
 KIND_SET=0
 HARNESS_ARG=
@@ -1952,6 +1961,36 @@ case "$HARNESS" in
     ;;
 esac
 
+# Spawn-side model fallback chains. A model surface holding one
+# "<provider>/<model-id>" label is an exact pin, byte-identical to the
+# pre-chain behavior. A comma-separated list of labels is a fallback chain in
+# preference order: one lane's cooldown state (state/model-chain/<lane>.state)
+# records which labels recent launches could not run, so this launch resolves
+# to the first ready label, each skipped label is disclosed on stderr, and an
+# exhausted chain refuses the spawn rather than substituting an out-of-chain
+# model. <lane> names the cooldown file's identity and <what> the spawn kind
+# for diagnostics; <model-surface> is the raw (possibly chained) surface.
+fm_model_chain_resolve_for_spawn() {  # <lane> <what> <model-surface>
+  local lane=$1 what=$2 surface=$3 state chosen
+  case "$surface" in
+    *,*)
+      fm_model_chain_is_chained "$surface" || {
+        echo "error: $what model chain '$surface' is not a comma-separated list of <provider>/<model-id> labels; refusing" >&2
+        return 1
+      }
+      state="$STATE/model-chain/$lane.state"
+      mkdir -p "$STATE/model-chain" 2>/dev/null || true
+      chosen=$(fm_model_chain_select "$state" "$(fm_model_chain_chain_to_lines "$surface")") || return 1
+      echo "model chain ($what, lane $lane): selected $chosen"
+      MODEL_CHAIN_LANE=$lane
+      printf '%s\n' "$chosen"
+      ;;
+    *)
+      printf '%s\n' "$surface"
+      ;;
+  esac
+}
+
 # config/secondmate-harness may carry optional model/effort tokens alongside the
 # harness ("<harness> [<model>] [<effort>]"). They apply only when this is a
 # --secondmate spawn and no explicit per-spawn harness/raw launch was supplied, so
@@ -1972,6 +2011,25 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
       esac
     fi
   fi
+fi
+# Resolve a fallback chain in the fully merged model surface (explicit --model,
+# a config/secondmate-harness pin, or a dispatch-profile model), so every model
+# source accepts chains exactly once, before any per-harness validation sees
+# it. A single-label surface is returned untouched: an exact pin never
+# resolves through a lane, never consults cooldowns, and never falls through.
+# A chained surface resolves through the lane's durable cooldown state, and a
+# chain whose every label is in cooldown refuses the spawn here, before any
+# worktree is provisioned or agent started.
+if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
+  case "$KIND/$RELAUNCH" in
+    secondmate/0) RESOLVE_LANE=secondmate ;;
+    secondmate/1) RESOLVE_LANE=secondmate-$ID ;;
+    */0)          RESOLVE_LANE=crew ;;
+    */1)          RESOLVE_LANE=crew-$ID ;;
+  esac
+  RESOLVED=$(fm_model_chain_resolve_for_spawn "$RESOLVE_LANE" \
+    "$([ "$RELAUNCH" -eq 1 ] && printf relaunch || printf spawn)" "$MODEL") || exit 1
+  MODEL=$RESOLVED
 fi
 # Ultra is an explicit native capability, never a Pi thinking-level alias.
 # Validate the fully resolved profile before worktree or endpoint provisioning.
