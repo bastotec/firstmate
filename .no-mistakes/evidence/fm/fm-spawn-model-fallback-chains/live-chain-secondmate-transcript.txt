@@ -1,0 +1,37 @@
+
+=== S2 spawn secondmate sm-shared-1: the pinned chain resolves on the shared secondmate lane ===
+model chain (spawn, lane secondmate): selected codex/gpt-6-luna
+warning: secondmate sm-shared-1 sync skipped before launch: primary default-branch commit cannot be resolved
+spawned sm-shared-1 harness=codex kind=secondmate mode=secondmate yolo=off window=firstmate:fm-sm-shared-1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-sm-live.0tHOOL/case/sm-shared-1
+PASS rc=0
+meta(sm-shared-1): kind=secondmate model=codex/gpt-6-luna model_chain_lane=secondmate 
+launch line: FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME='/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-sm-live.0tHOOL/case/home' FM_HOME='/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-sm-live.0tHOOL/case/sm-shared-1' FM_TRACE_CONTEXT=off FM_SUPERVISION_MODEL=persistent env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI codex --model 'codex/gpt-6-luna' --dangerously-bypass-approvals-and-sandbox "$('/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3E5XRPW39NK6FA1XGCDNB3R/bin/fm-operational-input.sh' encode launch-brief < '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-sm-live.0tHOOL/case/sm-shared-1/data/charter.md')"
+PASS shared secondmate lane disclosed
+PASS meta records the shared lane
+PASS launch carries the resolved head
+
+=== S2b record the head refusal on sm-shared-1 through the recorder ===
+recorded refusal of codex/gpt-6-luna on lane secondmate (state/model-chain/secondmate.state)
+PASS rc=0
+secondmate.state: codex/gpt-6-luna	1790406531	300
+
+=== S2c spawn secondmate sm-shared-2: the shared lane falls through to the second label ===
+chain skip: codex/gpt-6-luna in cooldown until 2026-09-26T07:08:51Z
+model chain (spawn, lane secondmate): selected zai/glm-5.3-flash
+warning: secondmate sm-shared-2 sync skipped before launch: primary default-branch commit cannot be resolved
+spawned sm-shared-2 harness=codex kind=secondmate mode=secondmate yolo=off window=firstmate:fm-sm-shared-2 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-sm-live.0tHOOL/case/sm-shared-2
+PASS rc=0
+PASS the other secondmate's refusal cooled the shared head
+PASS selected the second-mates chain's second label
+launch line: FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME='/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-sm-live.0tHOOL/case/home' FM_HOME='/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-sm-live.0tHOOL/case/sm-shared-2' FM_TRACE_CONTEXT=off FM_SUPERVISION_MODEL=persistent env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI codex --model 'zai/glm-5.3-flash' --dangerously-bypass-approvals-and-sandbox "$('/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3E5XRPW39NK6FA1XGCDNB3R/bin/fm-operational-input.sh' encode launch-brief < '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-sm-live.0tHOOL/case/sm-shared-2/data/charter.md')"
+meta(sm-shared-2): model=zai/glm-5.3-flash model_chain_lane=secondmate 
+
+=== S2d an explicit --model on a secondmate spawn uses the task lane instead (adversarial) ===
+model chain (spawn, lane secondmate-sm-explicit): selected codex/gpt-6-luna
+warning: secondmate sm-explicit sync skipped before launch: primary default-branch commit cannot be resolved
+spawned sm-explicit harness=codex kind=secondmate mode=secondmate yolo=off window=firstmate:fm-sm-explicit worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-sm-live.0tHOOL/case/sm-explicit
+PASS rc=0
+meta(sm-explicit): model=codex/gpt-6-luna model_chain_lane=secondmate-sm-explicit 
+PASS an explicit pin resolves on the task lane
+
+DONE

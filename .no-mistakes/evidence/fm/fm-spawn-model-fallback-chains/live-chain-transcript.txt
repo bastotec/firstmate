@@ -1,0 +1,73 @@
+
+=== S1 spawn lane-w1 with the workers chain ===
+model chain (spawn, lane crew-lane-w1): selected codex/gpt-6-luna
+warning: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/data/lane-w1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode direct-PR - confirm its definition of done matches
+notice: lane-w1 ships mode=direct-PR while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned lane-w1 harness=codex kind=ship mode=direct-PR yolo=off window=firstmate:fm-lane-w1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/wt
+PASS rc=0
+meta(lane-w1): kind=ship model=codex/gpt-6-luna model_chain_lane=crew-lane-w1 
+launch line: env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI codex --model 'codex/gpt-6-luna' --dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\",\"touch '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/state/lane-w1.turn-ended'\"]" "$('/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3E5XRPW39NK6FA1XGCDNB3R/bin/fm-operational-input.sh' encode launch-brief < '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/data/lane-w1/launch-brief.md')"
+
+=== S1b record the head refusal on lane-w1 through the recorder ===
+recorded refusal of codex/gpt-6-luna on lane crew-lane-w1 (state/model-chain/crew-lane-w1.state)
+PASS rc=0
+crew-lane-w1.state: codex/gpt-6-luna	1790406419	300
+
+=== S1c spawn lane-w2 with the same chain: its head must still be selected (per-lane isolation) ===
+model chain (spawn, lane crew-lane-w2): selected codex/gpt-6-luna
+warning: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/data/lane-w2/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode direct-PR - confirm its definition of done matches
+notice: lane-w2 ships mode=direct-PR while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned lane-w2 harness=codex kind=ship mode=direct-PR yolo=off window=firstmate:fm-lane-w2 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/wt
+PASS rc=0
+meta(lane-w2): model=codex/gpt-6-luna model_chain_lane=crew-lane-w2 
+launch line: env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI codex --model 'codex/gpt-6-luna' --dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\",\"touch '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/state/lane-w2.turn-ended'\"]" "$('/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3E5XRPW39NK6FA1XGCDNB3R/bin/fm-operational-input.sh' encode launch-brief < '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/data/lane-w2/launch-brief.md')"
+PASS w2 selected its own head
+
+=== S1d respawn lane-w1: must skip the refused head and launch the next label ===
+chain skip: codex/gpt-6-luna in cooldown until 2026-09-26T07:06:59Z
+model chain (spawn, lane crew-lane-w1): selected zai/glm-5.3
+warning: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/data/lane-w1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode direct-PR - confirm its definition of done matches
+notice: lane-w1 ships mode=direct-PR while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned lane-w1 harness=codex kind=ship mode=direct-PR yolo=off window=firstmate:fm-lane-w1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/wt
+PASS rc=0
+PASS head disclosed as skipped
+PASS fell through to zai/glm-5.3
+launch line: env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI codex --model 'zai/glm-5.3' --dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\",\"touch '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/state/lane-w1.turn-ended'\"]" "$('/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3E5XRPW39NK6FA1XGCDNB3R/bin/fm-operational-input.sh' encode launch-brief < '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/data/lane-w1/launch-brief.md')"
+PASS launch carries the resolved label only
+
+=== S2 spawn secondmate sm-shared-1 with the pinned secondmate chain (no --model) ===
+error: --mode applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture
+FAIL rc=1
+meta(sm-shared-1): 
+launch line: 
+FAIL no shared-lane disclosure
+
+=== S2b record the head refusal on sm-shared-1 and spawn sm-shared-2: shared lane must fall through ===
+error: no task record at /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/state/sm-shared-1.meta
+FAIL rc=1
+secondmate.state: 
+error: --mode applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture
+FAIL rc=1
+FAIL shared lane did not fall through
+FAIL wrong label
+launch line: 
+
+=== S3 spawn disp-1 with the hard chain exactly as the consultation passes it (--harness + --model) ===
+model chain (spawn, lane crew-disp-1): selected codex/gpt-5.6-sol
+warning: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/data/disp-1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode direct-PR - confirm its definition of done matches
+notice: disp-1 ships mode=direct-PR while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned disp-1 harness=codex kind=ship mode=direct-PR yolo=off window=firstmate:fm-disp-1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/wt
+PASS rc=0
+PASS the hard chain's head was selected on the task lane
+launch line: env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI codex --model 'codex/gpt-5.6-sol' --dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\",\"touch '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/state/disp-1.turn-ended'\"]" "$('/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3E5XRPW39NK6FA1XGCDNB3R/bin/fm-operational-input.sh' encode launch-brief < '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-live.DKfyvZ/case/home/data/disp-1/launch-brief.md')"
+
+=== S4 exhausted chain refuses and publishes nothing (adversarial) ===
+chain skip: codex/gpt-5.6-sol in cooldown until 2026-09-26T07:52:25Z
+chain skip: vercel/xiaomi/mimo-v2.6-pro in cooldown
+chain skip: zai/glm-5.3 in cooldown
+model chain exhausted: every entry is in cooldown; refusing rather than substituting an out-of-chain model
+PASS refused rc=1
+PASS exhaustion is the reported failure
+PASS no task record published
+
+DONE

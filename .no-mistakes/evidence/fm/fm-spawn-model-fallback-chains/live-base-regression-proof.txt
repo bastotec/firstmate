@@ -1,0 +1,10 @@
+=== base fm-spawn.sh with a chained --model (rc=0) ===
+warning: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-base.6Qsztf/case/home/data/base-1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode direct-PR - confirm its definition of done matches
+notice: base-1 ships mode=direct-PR while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned base-1 harness=codex kind=ship mode=direct-PR yolo=off window=firstmate:fm-base-1 worktree=/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-base.6Qsztf/case/wt
+--- launch line ---
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI codex --model 'codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash' --dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\",\"touch '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-base.6Qsztf/case/home/state/base-1.turn-ended'\"]" "$('/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3E5XRPW39NK6FA1XGCDNB3R/bin/fm-operational-input.sh' encode launch-brief < '/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-chain-base.6Qsztf/case/home/data/base-1/launch-brief.md')"
+--- meta model keys ---
+model=codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash
+--- state/model-chain ---
+(absent)
