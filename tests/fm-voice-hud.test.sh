@@ -139,12 +139,21 @@ check(gate.feed(room(), 4.2), "a dip inside speech is quiet, not speech")
 check(gate.active(4.2 + wake.HANGOVER_SECONDS / 2),
       "the hangover must hold the channel across a dip")
 
-# A room that quiets down must not stay deaf: after real silence, audio far
+# A room that quiets down must not stay deaf: after a quiet room, audio far
 # above ENERGY_FLOOR but below the loud room's threshold is speech again.
 for i in range(44, 64):
-    gate.feed(bytes(BLOCK), 0.1 * i)
+    gate.feed(room(rms=35), 0.1 * i)
 check(gate.feed(room(rms=80), 6.5),
       "a quieter room must re-open the gate's sensitivity")
+
+# But a moment of digital silence - the echo canceller suppressing the mic
+# right after Ziggy speaks - is not the room: it must not drop the floor, or
+# ordinary room tone reads as speech and the turn never ends.
+before = gate.floor
+for i in range(65, 68):
+    gate.feed(bytes(BLOCK), 0.1 * i)
+check(gate.floor >= before * 0.99,
+      "a near-silent dip must not lower the room floor: %.0f -> %.0f" % (before, gate.floor))
 
 # The lifecycle the gate exists for, in that same loud room: the wake opens
 # the turn and the RETURN OF ROOM TONE ends it - the end on quiet a fixed

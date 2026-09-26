@@ -329,7 +329,16 @@ TRANSCRIPT_TOOL = {"toolSpec": {
         "required": ["mode"],
     })},
 }}
-HYBRID_TOOLS = [ASK_TOOL, TIME_TOOL, SHELL_TOOL, MAC_TOOL, TRANSCRIPT_TOOL]
+STAND_DOWN_TOOL = {"toolSpec": {
+    "name": "stand_down",
+    "description": (
+        "End the conversation: stop listening without the wake word and go "
+        "back to waiting for \"Ziggy\". Call it when the captain is done - "
+        "\"stand down\", \"that's all\", \"thanks, that's it\", \"never mind\" - "
+        "and say a two-word goodbye."),
+    "inputSchema": {"json": json.dumps({"type": "object", "properties": {}, "required": []})},
+}}
+HYBRID_TOOLS = [ASK_TOOL, TIME_TOOL, SHELL_TOOL, MAC_TOOL, TRANSCRIPT_TOOL, STAND_DOWN_TOOL]
 
 # Files and folders run_command never reads: secrets and credentials.
 NEVER_READ = [os.path.expanduser(p) for p in (
@@ -1102,6 +1111,9 @@ class Session:
             elif name == "mac_control":
                 result = await asyncio.to_thread(
                     mac_control, arguments.get("program", ""), self.home)
+            elif name == "stand_down":
+                self.down.send_json(frame.NOTICE, {"event": "stand-down"})
+                result = {"status": "standing down; the captain wakes you with your name"}
             elif name == "firstmate_transcript":
                 if arguments.get("mode") == "search":
                     result = await asyncio.to_thread(

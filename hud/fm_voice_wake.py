@@ -47,6 +47,18 @@ NOISE_HEADROOM = 4.0
 # so the gate never stays deaf after the room calms down.
 NOISE_RISE_RATE = 0.02
 
+# How fast a quieter room lowers the tracked floor, per quiet block (0.3 is
+# about a second to mostly arrive). Not instant: the echo-cancelled
+# microphone dips to near digital silence for a moment after Ziggy speaks,
+# and adopting that dip as the room left the gate calling ordinary room tone
+# speech, so a turn never ended.
+NOISE_FALL_RATE = 0.3
+
+# Blocks quieter than this (mean square) are processing artefacts - the echo
+# canceller's suppression, digital silence - not the room, and never move the
+# tracked floor.
+ROOM_MIN_ENERGY = 1000.0
+
 # A cold start counts this many voiced blocks in a row before deciding
 # that sustained level is the room itself, not speech: room tone never
 # pauses, while speech from a cold start is the captain talking at the
@@ -148,9 +160,9 @@ class EnergyGate:
         else:
             self._run = 0
             self._run_min = None
-            if self._room is not None:
+            if self._room is not None and energy >= ROOM_MIN_ENERGY:
                 if energy < self._room:
-                    self._room = energy
+                    self._room += NOISE_FALL_RATE * (energy - self._room)
                 else:
                     self._room += NOISE_RISE_RATE * (energy - self._room)
         self.floor = self._threshold()

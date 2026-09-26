@@ -79,6 +79,10 @@ FOLLOW_UP_MIN_LOUD_BLOCKS = 3
 # shorter than that.
 BARGE_IN_MIN_LOUD_BLOCKS = 3
 
+# No turn stays open longer than this: whatever keeps the channel active
+# (a noisy room, a stuck gate), the turn ends and Ziggy answers what it has.
+MAX_TURN_SECONDS = 30.0
+
 
 class DecoderError(Exception):
     """The decoder child stopped taking audio, so the HUD can never wake."""
@@ -484,6 +488,9 @@ class TurnDirector:
                 self._follow_until = None
             return self.phase
 
+        if self.phase == self.IN_TURN and self._wake_at is not None \
+                and now - self._wake_at > MAX_TURN_SECONDS:
+            loud, channel, self._spoke_since_wake = False, False, True
         if self.phase == self.IN_TURN:
             if loud:
                 self.engine.feed(block)

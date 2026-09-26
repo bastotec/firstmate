@@ -153,7 +153,8 @@ def main():
             report_waiting()
         # A failed turn closes the conversation window: reopening it let
         # background noise start turn after empty turn.
-        if event in ("turn-failed", "session-ended", "not-for-me") and "director" in holder:
+        if event in ("turn-failed", "session-ended", "not-for-me", "stand-down") \
+                and "director" in holder:
             holder["director"].stand_down()
         if event == "engine-fault":
             report_fault()
