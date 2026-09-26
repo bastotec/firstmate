@@ -102,6 +102,16 @@ Cancelling the model picker cancels the whole command and changes neither choice
 Cancelling only the effort picker keeps the standing effort choice and still applies the model pick made in the same run, and the command's one closing message reports both choices as they will actually take effect.
 Both choices are local to each Firstmate home and are not part of secondmate inherited configuration, the same as the Pi Calm preference; a secondmate home pins its own supervision model and effort with its own `/supervision-model`.
 
+## Model fallback chains (spawn-side)
+
+Spawn-side model pins accept a fallback chain in every model surface: the `model` field of a `config/crew-dispatch.json` profile, the model pin in `config/secondmate-harness`, and `fm-spawn.sh --model` itself.
+A surface holding one `<provider>/<model-id>` label is an exact pin, byte-identical to the behavior before chains existed: it never consults cooldown state, never falls through, and never resolves through a lane, so an explicit captain pin always launches exactly that model or refuses.
+A surface holding a comma-separated list of labels, such as `codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash`, is a fallback chain resolved in preference order at spawn or relaunch time, with the same parsing and cooldown semantics as the supervision branch's model chain (`config/supervision-branch-model`): one label per preference, split at the first `/`, blank and comment lines impossible in this surface, and any malformed or duplicate label a loud refusal that names the label instead of a silent selection around it.
+When a worker's launch could not run a model - a quota refusal, a cooldown, or a repeated provider error - the refused model's label is recorded in that lane's cooldown state at `state/model-chain/<lane>.state` under the Firstmate home and sits out for five minutes, doubling to an hour on repeated failures.
+`bin/fm-record-model-refusal.sh <task-id> <provider/model>` records a refusal from the supervisor side after reading the refusal out of a worker's status or transcript, and clears the lane when the launch ultimately succeeded, so cooldown expiry restores the head of the chain on a later launch exactly as the branch restores its preferred model.
+Crew and secondmate defaults share one lane each (`crew` and `secondmate`), so a refusal by one launch cools that model for the next default-resolved launch too; every task-specific resolution (an explicit chained `--model`, any relaunch) gets its own task lane, so one task's refusals never cool down another task's chain head.
+Each spawn or relaunch discloses which label was selected and which chain entries were skipped and why, and a chain whose every label is in cooldown refuses the launch with that reason rather than substituting an out-of-chain model: exhausting the chain is a reported failure, never a guess.
+
 ## Backlog backend (.tasks.toml / config/backlog-backend)
 
 The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
@@ -382,6 +392,7 @@ When it is absent or contains `default`, crewmates mirror the firstmate's own ha
 The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.
 A bare `<harness>` preserves the previous behavior: harness only, with no model or effort launch flag.
 When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
+The model token may also be a fallback chain, one exact pin or a comma-separated label list, resolved per "Model fallback chains" above.
 `fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
 Changing this pin affects the next secondmate spawn or control-plane relaunch; the relaunch profile rules are owned by [`docs/agent-control.md`](agent-control.md#transactional-relaunch).
 An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
@@ -498,6 +509,8 @@ Every profile array is an implicit quota-aware choice resolved through `quota-ar
 If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.
 Except for `ultra`, which refuses unsupported profiles under the native-effort contract above, an effort value the chosen harness does not accept is recorded as `effort=` in task meta for traceability but omitted from the launch flags.
 Bootstrap reports unsupported harness/model/effort combinations as a `CREW_DISPATCH` diagnostic when they are visible in the file.
+A profile's `model` may also be a fallback chain: either one `<provider>/<model-id>` label, which is an exact pin exactly as before, or a comma-separated list of labels such as `codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash`, resolved in preference order at spawn time; "Model fallback chains" below owns the chain syntax, cooldowns, and refusal contract.
+The dispatch profile consultation resolves a concrete profile and passes it to `fm-spawn.sh` unchanged, so a chain rides in the `--model` value and no dispatch-side judgment substitutes a model outside the captain-approved order.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 That example uses no `accountSlots`; add them to a profile only after creating the matching slots in `config/account-slots.json`, because dispatch refuses a slotted profile when that registry is missing.
 When the file exists, bootstrap validates it with `jq`.
