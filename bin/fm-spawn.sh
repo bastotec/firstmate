@@ -2032,16 +2032,16 @@ if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
   case "$MODEL" in
     *,*)
       # Lane contract (docs/configuration.md "Model fallback chains"): the
-      # default-resolved surfaces (dispatch profiles, the secondmate-harness
-      # pin) share the crew or secondmate lane so one launch's refusal cools
-      # the model for the next default-resolved launch; an explicit chained
-      # --model and any relaunch resolve on the task's own lane, so one task's
-      # refusals never cool down another task's chain head.
+      # secondmate-harness pin shares the secondmate lane so one launch's
+      # refusal cools that model for the next default-resolved secondmate
+      # launch; every crew-side chain reaches fm-spawn as an explicit --model
+      # (a dispatch-profile chain rides --model unchanged), and any relaunch
+      # resolves on the task's own lane, so one task's refusals never cool
+      # down another task's chain head.
       case "$KIND/$RELAUNCH" in
         secondmate/0) RESOLVE_LANE=$([ "$MODEL_SET" -eq 1 ] && printf 'secondmate-%s' "$ID" || printf secondmate) ;;
-        secondmate/1) RESOLVE_LANE=secondmate-$ID ;;
-        */0)          RESOLVE_LANE=$([ "$MODEL_SET" -eq 1 ] && printf 'crew-%s' "$ID" || printf crew) ;;
-        */1)          RESOLVE_LANE=crew-$ID ;;
+        secondmate/*) RESOLVE_LANE=secondmate-$ID ;;
+        *)            RESOLVE_LANE=crew-$ID ;;
       esac
       RESOLVED=$(fm_model_chain_resolve_for_launch "$RESOLVE_LANE" \
         "$([ "$RELAUNCH" -eq 1 ] && printf relaunch || printf spawn)" "$MODEL") || exit 1

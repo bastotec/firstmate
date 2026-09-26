@@ -23,11 +23,6 @@
 #                                        "<provider>|<model-id>" line per
 #                                        entry, or print one diagnostic to
 #                                        stderr and return 1
-#   fm_model_chain_parse_file <path>     parse a chain file the same way; an
-#                                        absent file parses as empty
-#   fm_model_chain_head <text>           print the first entry's label, or
-#                                        nothing for an empty chain (parse
-#                                        errors still refuse)
 #   fm_model_chain_select <state-path> <text>
 #                                        print the first entry whose cooldown
 #                                        has expired, after one
@@ -93,30 +88,12 @@ fm_model_chain__parse_stream() {
   return 0
 }
 
-fm_model_chain_parse_file() {
-  local path=$1 out rc
-  if [ ! -f "$path" ]; then
-    return 0
-  fi
-  out=$(fm_model_chain__parse_stream < "$path")
-  rc=$?
-  [ "$rc" -eq 0 ] || return "$rc"
-  printf '%s' "$out"
-}
-
 fm_model_chain_parse() {
   local stored=$1 out rc
   out=$(printf '%s' "$stored" | fm_model_chain__parse_stream)
   rc=$?
   [ "$rc" -eq 0 ] || return "$rc"
   printf '%s' "$out"
-}
-
-fm_model_chain_head() {
-  local stored=$1 parsed
-  parsed=$(fm_model_chain_parse "$stored") || return 1
-  [ -n "$parsed" ] || return 0
-  printf '%s\n' "${parsed%%$'\n'*}" | tr '|' '/'
 }
 
 fm_model_chain__state_lookup() {

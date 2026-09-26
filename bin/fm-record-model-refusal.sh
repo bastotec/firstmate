@@ -55,9 +55,10 @@ meta_get() {  # <key>
   sed -n "s/^$1=//p" "$META" | tail -1
 }
 
-# fm-spawn's lane contract: default-resolution launches share the crew or
-# secondmate lane; relaunches and explicit chained --model pins resolve on a
-# task lane. The recorded spawn generation only proves which task is meant, so
+# fm-spawn's lane contract: a default-resolved secondmate surface shares the
+# secondmate lane; every crew-side chain (explicit chained --model pins,
+# dispatch-profile chains, relaunches) resolves on a task lane. The recorded
+# spawn generation only proves which task is meant, so
 # the lane defaults to the task lane (the conservative side: a stray record
 # cools one task's chain, never the shared default lane).
 KIND=$(meta_get kind)

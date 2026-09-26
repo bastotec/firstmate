@@ -61,15 +61,6 @@ out=$(fm_model_chain_parse $'onlyprovider/\n' 2>"$TMP_ROOT/err"); rc=$?
 
 out=$(fm_model_chain_parse $'has space/model\n' 2>"$TMP_ROOT/err"); rc=$?
 [ "$rc" -eq 1 ] || fail "a label with whitespace refuses"
-
-out=$(fm_model_chain_head "$CHAIN")
-assert_equals 'codex/gpt-6-luna' "$out" "head prints the first label"
-
-fm_model_chain_head '' > "$TMP_ROOT/head-empty"; rc=$?
-[ "$rc" -eq 0 ] && [ ! -s "$TMP_ROOT/head-empty" ] || fail "an empty chain has no head but does not refuse"
-
-fm_model_chain_parse_file "$TMP_ROOT/absent-chain" > "$TMP_ROOT/file-out"; rc=$?
-[ "$rc" -eq 0 ] && [ ! -s "$TMP_ROOT/file-out" ] || fail "an absent chain file parses as empty"
 pass "parsing follows the branch idiom including loud refusals"
 
 # --- B) Fall-through and the refusal recorder --------------------------------
