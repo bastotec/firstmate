@@ -34,6 +34,9 @@ sys.path.insert(0, os.path.join(ROOT, "bin"))
 # closes - the client's exit bound, so a quit right after an answer does not
 # cut the reply's tail off.
 QUIT_DRAIN_TIMEOUT = 30.0
+# A question the first mate has not answered in this long is no longer
+# shown as pending (its answer, if it ever comes, is still spoken).
+WAITING_GIVE_UP_S = 15 * 60
 
 import fm_voice_engine as engine_mod      # noqa: E402
 import fm_voice_mic as mic_mod            # noqa: E402
@@ -120,7 +123,32 @@ def main():
         decoder_fault.set()
         emit({"type": "notice", "event": "decoder-fault", "error": why})
 
+    # Questions handed to the first mate and not answered yet, by ticket,
+    # with when they were asked. The panel shows Ziggy waiting while any are
+    # open; a ticket older than WAITING_GIVE_UP_S is dropped so a lost
+    # answer cannot leave it waiting forever.
+    waiting = {}
+
+    def report_waiting():
+        now = time.monotonic()
+        for ticket in [t for t, at in waiting.items() if now - at > WAITING_GIVE_UP_S]:
+            del waiting[ticket]
+        emit({"type": "waiting", "count": len(waiting)})
+
+    def expire_waiting():
+        while True:
+            time.sleep(60)
+            if waiting:
+                report_waiting()
+    threading.Thread(target=expire_waiting, name="waiting-expiry", daemon=True).start()
+
     def on_engine_notice(event, obj):
+        if event == "asked" and obj.get("ticket") is not None:
+            waiting[obj["ticket"]] = time.monotonic()
+            report_waiting()
+        elif event == "answered" and obj.get("ticket") is not None:
+            waiting.pop(obj["ticket"], None)
+            report_waiting()
         # A failed turn closes the conversation window: reopening it let
         # background noise start turn after empty turn.
         if event in ("turn-failed", "session-ended", "not-for-me") and "director" in holder:

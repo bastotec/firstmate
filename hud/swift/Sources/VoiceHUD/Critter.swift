@@ -4,11 +4,13 @@
 // something that hears but isn't listening. When the wake word lands it perks
 // up and glows; thinking, its eyes drift up and around; speaking, its mouth
 // follows Ziggy's own voice level; muted, it closes its eyes under earmuffs.
+// Waiting on the first mate, it turns calm blue and watches little dots
+// orbit its head - one per question still out - in any mode but muted.
 // Drawn with Core Graphics at 30 fps, no assets.
 
 import AppKit
 
-enum CritterMode: Equatable { case idle, awake, thinking, speaking, muted, blocked }
+enum CritterMode: Equatable { case idle, awake, thinking, speaking, muted, blocked, waiting }
 
 final class CritterView: NSView {
     var mode: CritterMode = .idle
@@ -16,6 +18,8 @@ final class CritterView: NSView {
     var micLevel: Double = 0 { didSet { targetMic = min(1, micLevel * 1.6) } }
     /// Ziggy's own output level 0...1, set while it speaks.
     var outLevel: Double = 0 { didSet { targetOut = min(1, outLevel * 1.8) } }
+    /// Questions the first mate has not answered yet.
+    var waitingCount = 0
 
     private var targetMic = 0.0, mic = 0.0
     private var targetOut = 0.0, out = 0.0
@@ -56,6 +60,7 @@ final class CritterView: NSView {
         case .speaking: return NSColor(calibratedRed: 0.20, green: 0.74, blue: 0.70, alpha: 1)
         case .muted: return NSColor(calibratedWhite: 0.6, alpha: 1)
         case .blocked: return NSColor.systemRed
+        case .waiting: return NSColor(calibratedRed: 0.36, green: 0.62, blue: 0.95, alpha: 1)
         }
     }
 
@@ -107,7 +112,13 @@ final class CritterView: NSView {
         let blink = (t.truncatingRemainder(dividingBy: 3.7) < 0.12) ? 0.1 : 1.0
         var open = (0.62 + 0.38 * perk) * blink
         if mode == .muted { open = 0.08 }
-        let look = mode == .thinking ? sin(t * 2.2) * 7 : (mode == .idle ? sin(t * 0.7) * 2 : 0)
+        let look: Double
+        switch mode {
+        case .thinking: look = sin(t * 2.2) * 7
+        case .waiting: look = sin(t * 1.3) * 6      // watching the dots go round
+        case .idle: look = sin(t * 0.7) * 2
+        default: look = 0
+        }
         let lookUp = mode == .thinking ? -5.0 : 0.0
         let eyeY = cy - ry * 0.12 + lookUp
         let eyeDX = rx * 0.36
@@ -149,6 +160,22 @@ final class CritterView: NSView {
                 let r = CGFloat(3 + i * 2)
                 g.fillEllipse(in: CGRect(x: cx + rx * 0.9 + CGFloat(i) * 9 - r,
                                          y: cy - ry - CGFloat(phase) * 22 - r, width: r * 2, height: r * 2))
+            }
+        }
+
+        // Waiting on the first mate: one dot per open question orbits the head.
+        if waitingCount > 0 && mode != .muted && mode != .blocked {
+            let dots = min(waitingCount, 3)
+            let orbitX = rx + 16, orbitY = ry * 0.35
+            let blue = NSColor(calibratedRed: 0.36, green: 0.62, blue: 0.95, alpha: 1)
+            for i in 0..<dots {
+                let a = t * 1.6 + Double(i) * (2 * .pi / Double(dots))
+                let x = cx + orbitX * cos(a)
+                let y = cy - ry * 0.95 + orbitY * sin(a)
+                let behind = sin(a) < 0
+                g.setFillColor(blue.withAlphaComponent(behind ? 0.45 : 0.95).cgColor)
+                let r: CGFloat = behind ? 3.5 : 5
+                g.fillEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
             }
         }
 

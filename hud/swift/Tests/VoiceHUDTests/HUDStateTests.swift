@@ -91,6 +91,7 @@ final class BridgeEventTests: XCTestCase {
         XCTAssertEqual(
             Bridge.parse(line: #"{"type":"notice","event":"turn-failed","error":"RuntimeError: the model stream broke"}"#),
             .notice(event: "turn-failed", error: "RuntimeError: the model stream broke"))
+        XCTAssertEqual(Bridge.parse(line: #"{"type":"waiting","count":2}"#), .waiting(count: 2))
     }
 
     func testParseRejectsLinesThatAreNotBridgeEvents() {

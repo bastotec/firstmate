@@ -14,6 +14,8 @@ enum BridgeEvent: Equatable {
     case state(String)
     case transcript(role: String, text: String)
     case notice(event: String, error: String?)
+    /// Questions handed to the first mate and not answered yet.
+    case waiting(count: Int)
     case mic(level: Double, gate: String)
 }
 
@@ -92,6 +94,8 @@ final class Bridge {
         case "transcript":
             return .transcript(role: obj["role"] as? String ?? "user",
                                text: obj["text"] as? String ?? "")
+        case "waiting":
+            return .waiting(count: obj["count"] as? Int ?? 0)
         case "notice":
             return .notice(event: obj["event"] as? String ?? "",
                           error: obj["error"] as? String)

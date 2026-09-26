@@ -1071,8 +1071,14 @@ class Session:
     async def _ask_in_background(self, ticket, question):
         """Run the slow, smart answer off the conversation: a read-only agent
         over the first mate's home, whose reply is spoken when it lands."""
-        answer = await asyncio.to_thread(
-            records.ask_thinker, question, self.home, self.root)
+        try:
+            answer = await asyncio.to_thread(
+                records.ask_thinker, question, self.home, self.root)
+        except Exception as exc:                       # noqa: BLE001
+            # Said out loud rather than waited on forever: the panel shows
+            # the question as pending until this ticket is answered.
+            answer = "The first mate could not answer that ({}: {}).".format(
+                type(exc).__name__, exc)
         # Deliver through whichever session is live now: a renewal while the
         # first mate was thinking must not lose the answer.
         target = LIVE_SESSION.get("session") or self

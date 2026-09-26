@@ -2241,3 +2241,54 @@ check(d.hear_over_reply(loud, 111), "the name must always cut in")
 eng.release.set()
 PY
 pass "the captain can cut in over Ziggy, and the cut-off reply is dropped"
+
+# --- a question out with the first mate shows as waiting -------------------------
+#
+# The relay's "asked" and "answered" notices, by ticket, become a pending
+# count on the wire, so the panel can show Ziggy still waiting instead of
+# looking like it gave up.
+ASKSTUB="$TMP_ROOT/ask-stub-relay.py"
+cat > "$ASKSTUB" <<'STUBPY'
+import sys, time
+sys.path.insert(0, sys.argv[1])
+import fm_voice_frame as frame
+sys.stdout.buffer.write(frame.MAGIC)
+sys.stdout.buffer.flush()
+out = frame.Writer(sys.stdout.buffer)
+out.send_json(frame.NOTICE, {"event": "ready", "model": "stub", "read_scope": "counts"})
+out.send_json(frame.NOTICE, {"event": "asked", "ticket": 7, "question": "why?"})
+out.send_json(frame.NOTICE, {"event": "asked", "ticket": 8, "question": "and?"})
+time.sleep(0.5)
+out.send_json(frame.NOTICE, {"event": "answered", "ticket": 7})
+time.sleep(0.2)
+out.send_json(frame.NOTICE, {"event": "answered", "ticket": 8})
+reader = frame.Reader(sys.stdin.buffer)
+while reader.read() is not None:
+    pass
+STUBPY
+python3 - "$ROOT" "$ASKSTUB" "$TMP_ROOT" <<'PY' || fail "waiting on the first mate"
+import json, os, subprocess, sys, threading, time
+root, stub, tmp = sys.argv[1], sys.argv[2], sys.argv[3]
+silence = open(os.path.join(root, "tests/assets/voice-hud-silence.pcm"), "rb").read()
+mic_path = os.path.join(tmp, "waiting.pcm")
+open(mic_path, "wb").write(silence * 3)
+proc = subprocess.Popen(
+    [sys.executable, os.path.join(root, "hud", "fm_voice_hud_bridge.py"),
+     "--stub-relay", stub, "--mic-file", mic_path],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+counts = []
+def read_events():
+    for line in proc.stdout:
+        e = json.loads(line)
+        if e.get("type") == "waiting":
+            counts.append(e["count"])
+threading.Thread(target=read_events, daemon=True).start()
+deadline = time.monotonic() + 10
+while counts[-1:] != [0] and time.monotonic() < deadline:
+    time.sleep(0.1)
+proc.stdin.write("quit\n"); proc.stdin.flush()
+proc.wait(10)
+if counts != [1, 2, 1, 0]:
+    sys.exit("waiting on the first mate: the pending count must go 1, 2, 1, 0: %r" % counts)
+PY
+pass "questions out with the first mate reach the panel as a waiting count"

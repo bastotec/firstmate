@@ -349,6 +349,9 @@ func render() {
         critter.mode = .thinking
     } else if glowAwake {
         critter.mode = .awake
+    } else if critter.waitingCount > 0 {
+        // Not given up: the first mate still owes an answer.
+        critter.mode = .waiting
     } else {
         critter.mode = .idle
     }
@@ -438,6 +441,8 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     role: role == "user" ? .user : .assistant, text: text))
             case .mic(let level, let gate):
                 model.applyMic(level: level, gate: gate)
+            case .waiting(let count):
+                critter.waitingCount = count
             case .notice(let event, let error):
                 // Notices the HUD must show rather than just carry: a dead
                 // engine or an abandoned turn leaves the mic deaf, and a
