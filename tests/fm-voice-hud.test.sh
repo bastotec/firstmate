@@ -1167,6 +1167,19 @@ def load(name, relpath):
 wake = load("wake", "hud/fm_voice_wake.py")
 mic_mod = load("micmod", "hud/fm_voice_mic.py")
 
+# The clock the director arms its settle bound from, driven in lockstep
+# with this scenario's simulated block times: the bound must be
+# deterministic, and a real monotonic reading would sit an era above the
+# scenario's t and never close.
+class FakeClock:
+    def __init__(self):
+        self.t = 0.0
+    def monotonic(self):
+        return self.t
+
+clock = FakeClock()
+mic_mod.time = clock
+
 def check(cond, label):
     if not cond:
         sys.exit("echo guard: " + label)
@@ -1269,6 +1282,7 @@ director = mic_mod.TurnDirector(
 stream = mic.blocks()
 
 def step(block, t):
+    clock.t = t
     mic.push(block)
     director.feed(next(stream), t)
 
@@ -1364,6 +1378,202 @@ check(engine.begun == 2,
       + str(engine.begun))
 PY
 pass "the echo guard outlasts the reply's playback"
+
+# --- the settle window outlives a long reply wire ------------------------------
+#
+# The mic thread is held inside end_turn for the reply's whole wire wait,
+# and tens of seconds are legal inside the relay's turn budget. The settle
+# window's bound must be born when the window opens - after the hold
+# returns. Anchored on the closing block's arrival time instead, a 32s
+# wire wait would hand the guard 30-32 < 0 seconds of life: the first
+# post-reply block would close it and the buffered answer's echo would be
+# processed as fresh listening audio - transcribed, and able to arm a wake.
+
+python3 - "$ROOT" <<'PY' || fail "settle anchor"
+import importlib.util, math, os, queue, struct, sys
+root = sys.argv[1]
+
+def load(name, relpath):
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(root, relpath))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+wake = load("wake", "hud/fm_voice_wake.py")
+mic_mod = load("micmod", "hud/fm_voice_mic.py")
+
+def check(cond, label):
+    if not cond:
+        sys.exit("settle anchor: " + label)
+
+# The clock the bound is armed from, driven with the scenario's simulated
+# time: the arm point reads it after the hold returns, block times come
+# from the caller, and both tell the same story.
+class FakeClock:
+    def __init__(self):
+        self.t = 0.0
+    def monotonic(self):
+        return self.t
+
+clock = FakeClock()
+mic_mod.time = clock
+
+# A reply wire wait the relay's 40s turn budget allows, long enough that
+# an anchor taken before the hold is already expired when it returns.
+WIRE_WAIT = 32.0
+
+class QueueMic:
+    def __init__(self):
+        self.q = queue.SimpleQueue()
+        self.discarded = 0
+    def push(self, block):
+        self.q.put(block)
+    def blocks(self):
+        while True:
+            block = self.q.get()
+            if block is None:
+                return
+            yield block
+    def discard_pending(self):
+        while True:
+            try:
+                block = self.q.get_nowait()
+            except queue.Empty:
+                return 0
+            if block is None:
+                self.q.put(None)
+                return 0
+            self.discarded += 1
+    def close(self):
+        self.q.put(None)
+
+class StubSpeaker:
+    def __init__(self):
+        self.buffered = 0
+    def pending(self):
+        return self.buffered > 0
+
+class SlowWireEngine:
+    """end_turn holds the mic thread for the reply's wire wait: the clock
+    moves WIRE_WAIT before the mark releases, a few blocks pile up behind
+    the hold, and the whole answer lands in the buffer at once."""
+    def __init__(self, mic, speaker, echo):
+        self.mic = mic
+        self.speaker = speaker
+        self.echo = echo
+        self.begun = 0
+        self.ended = 0
+    def begin_turn(self):
+        self.begun += 1
+    def feed(self, pcm):
+        pass
+    def end_turn(self):
+        self.ended += 1
+        clock.t += WIRE_WAIT
+        for _ in range(4):
+            self.mic.push(self.echo)
+        self.speaker.buffered = 20
+
+class UtteranceDecoder:
+    def __init__(self, need=5):
+        self.need = need
+        self.fed = 0
+        self._run = 0
+    def start(self):
+        pass
+    def feed(self, block):
+        self.fed += 1
+        self._run += 1
+        return []
+    def poll_transcripts(self):
+        if self._run >= self.need:
+            self._run = 0
+            return ["Ziggy"]
+        return []
+    def close(self):
+        pass
+
+loud = b"".join(
+    struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * i / 16000)))
+    for i in range(1600)) * 2
+zero = bytes(3200)
+
+speaker = StubSpeaker()
+mic = QueueMic()
+engine = SlowWireEngine(mic, speaker, loud)
+decoder = UtteranceDecoder()
+notices = []
+director = mic_mod.TurnDirector(
+    engine, wake.EnergyGate(), wake.KeywordListener(), decoder,
+    on_notice=notices.append, mic=mic, reply_pending=speaker.pending)
+stream = mic.blocks()
+
+def step(block, t):
+    clock.t = t
+    mic.push(block)
+    director.feed(next(stream), t)
+
+# The wake utterance, then the turn with its speech.
+t = 0.0
+for _ in range(5):
+    step(loud, t)
+    t += 0.1
+check(director.phase == "in-wake", "the wake must arm: " + director.phase)
+for _ in range(4):
+    step(loud, t)
+    t += 0.1
+check(director.phase == "in-turn" and engine.begun == 1,
+      "the turn must be open: " + director.phase)
+check(decoder.fed == 5,
+      "turn speech must never reach the decoder: fed=" + str(decoder.fed))
+
+# Quiet past the hangover closes the turn: the thread is held WIRE_WAIT
+# inside end_turn, four blocks pile up behind the hold and are dropped,
+# and twenty blocks of answer land in the buffer at the mark.
+while engine.ended == 0:
+    step(zero, t)
+    t += 0.1
+    check(t < 6.0, "the turn must close on quiet")
+t = clock.t + 0.1
+check(engine.ended == 1 and director.phase == "listening",
+      "the turn must close after the hold: " + director.phase)
+check(mic.discarded == 4,
+      "every block captured during the hold must be dropped: "
+      + str(mic.discarded))
+
+# The playback tail right after the hold returns: thirty loud echo blocks
+# spanning the drain, arriving33s after the closing block - past any bound
+# anchored on its arrival time, inside the window's real lifetime. None
+# may reach the decoder, arm a wake, or open a turn.
+for i in range(30):
+    speaker.buffered = max(0, 20 - i)
+    step(loud, t)
+    t += 0.1
+check(decoder.fed == 5,
+      "the reply's echo after a long wire wait must never reach the "
+      "decoder: fed=" + str(decoder.fed))
+check(notices == ["wake"],
+      "the reply's echo must never arm a wake: " + repr(notices))
+check(engine.begun == 1,
+      "the reply's echo must never open a model turn: begun="
+      + str(engine.begun))
+
+# The window still closes on its own terms: the buffer drains, the tail
+# passes, and fresh speech is heard again.
+for _ in range(15):
+    step(zero, t)
+    t += 0.1
+for _ in range(2):
+    step(loud, t)
+    t += 0.1
+check(decoder.fed == 7,
+      "fresh speech after the window closes must be heard: fed="
+      + str(decoder.fed))
+check(engine.begun == 1,
+      "no turn may open on the fresh fragments: begun=" + str(engine.begun))
+PY
+pass "the settle window outlives a long reply wire"
 
 # --- the device mic end, against a stub sounddevice ---------------------------
 #

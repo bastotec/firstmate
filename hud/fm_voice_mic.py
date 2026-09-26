@@ -27,6 +27,7 @@ import select
 import subprocess
 import sys
 import threading
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -384,11 +385,17 @@ class TurnDirector:
                     # wake word cannot wake it. The discard runs on the
                     # timeout path too: those blocks are just as stale. The
                     # settle window then holds the same guard past the close
-                    # for as long as the answer is still playing.
+                    # for as long as the answer is still playing. The bound
+                    # is anchored on a fresh clock read taken here - after
+                    # end_turn returned - never on the block's arrival time:
+                    # this thread was held inside end_turn for the reply's
+                    # whole wire wait, and an anchor from before the hold
+                    # would be born already expired on a long reply.
                     if self.mic is not None:
                         self.mic.discard_pending()
                     if self._reply_pending is not None:
-                        self._echo_deadline = now + ECHO_SETTLE_TIMEOUT
+                        self._echo_deadline = \
+                            time.monotonic() + ECHO_SETTLE_TIMEOUT
                         self._quiet_since = None
                 self.phase = self.LISTENING
                 self._wake_at = None
