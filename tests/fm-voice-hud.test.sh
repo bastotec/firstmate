@@ -2301,3 +2301,45 @@ if counts != [1, 2, 1, 0]:
     sys.exit("waiting on the first mate: the pending count must go 1, 2, 1, 0: %r" % counts)
 PY
 pass "questions out with the first mate reach the panel as a waiting count"
+
+# --- "stand down" holds while the reply is still being made ----------------------
+python3 - "$ROOT" <<'PY' || fail "stand down during a reply"
+import os, struct, sys, threading
+sys.path.insert(0, os.path.join(sys.argv[1], "hud"))
+import fm_voice_mic as mic_mod
+import fm_voice_wake as wake_mod
+
+class Engine:
+    def __init__(self): self.began, self.release = [], threading.Event()
+    def begin_turn(self, wake=False): self.began.append(wake)
+    def feed(self, pcm): pass
+    def end_turn(self, timeout=None): self.release.wait(5)
+
+class Spotter:
+    fire = False
+    def feed(self, block): pass
+    def poll(self):
+        fired, Spotter.fire = Spotter.fire, False
+        return fired
+
+loud = struct.pack("<h", 12000) * (mic_mod.BLOCK // 2)
+quiet = bytes(mic_mod.BLOCK)
+eng = Engine()
+d = mic_mod.TurnDirector(eng, wake_mod.EnergyGate(), wake_mod.KeywordListener(),
+                         mic_mod.NullDecoder(), spotter=Spotter())
+d.async_reply, d.speech_interrupts = True, True
+Spotter.fire = True
+d.feed(loud, 100.0)
+for i in range(1, 6): d.feed(loud, 100 + i * 0.1)
+for i in range(6, 20): d.feed(quiet, 100 + i * 0.1)
+assert d.phase == d.REPLYING, d.phase
+d.stand_down()                       # the stand_down tool, mid-reply
+cut = [d.hear_over_reply(loud, 110 + i * 0.1) for i in range(6)]
+if any(cut):
+    sys.exit("stand down during a reply: talk in the room reopened the conversation")
+Spotter.fire = True
+if not d.hear_over_reply(loud, 111):
+    sys.exit("stand down during a reply: the name must still wake it")
+eng.release.set()
+PY
+pass "\"stand down\" holds while the reply is still being made; only the name reopens"

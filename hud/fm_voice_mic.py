@@ -451,6 +451,7 @@ class TurnDirector:
             if len(self._preroll) > SPOT_PREROLL_BLOCKS:
                 del self._preroll[0]
             if spotted:
+                self._stand_down = False
                 self.on_notice("wake")
                 self.engine.begin_turn(wake=True)
                 for held in self._preroll:
@@ -564,8 +565,12 @@ class TurnDirector:
             del self._preroll[0]
         self.spotter.feed(block)
         if self.spotter.poll():
+            # Saying the name re-engages even after "stand down".
+            self._stand_down = False
             return True
-        if not self.speech_interrupts:
+        # After "stand down", only the name cuts in: talk in the room must
+        # not reopen a conversation the captain just closed.
+        if not self.speech_interrupts or self._stand_down:
             return False
         loud = wake_mod.block_energy(block) >= self.gate.floor
         self._barge_run = self._barge_run + 1 if loud else 0
