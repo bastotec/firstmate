@@ -98,6 +98,17 @@ record=$(fm_model_chain__state_lookup "$STATEFILE" 'codex/gpt-6-luna')
 assert_equals "$((NOW + 40 + 3600)) 3600" "$record" "the backoff caps at one hour"
 pass "fall-through records refusals with the branch backoff"
 
+# The decode restores only the encoding pipe: a model id that itself contains
+# a pipe (or further slashes) round-trips byte-identical, never rewritten into
+# an out-of-chain label the captain never pinned.
+out=$(fm_model_chain_select "$TMP_ROOT/pipe.state" \
+  "$(fm_model_chain_chain_to_lines 'prov/a|b,vercel/xiaomi/mimo-v2.6-flash')" 2>/dev/null)
+assert_equals 'prov/a|b' "$out" "a label containing a pipe round-trips unchanged"
+out=$(fm_model_chain_select "$TMP_ROOT/pipe.state" \
+  "$(fm_model_chain_chain_to_lines 'vercel/xiaomi/mimo-v2.6-flash')" 2>/dev/null)
+assert_equals 'vercel/xiaomi/mimo-v2.6-flash' "$out" "a label containing slashes round-trips unchanged"
+pass "label decoding rewrites no bytes inside a model id"
+
 # An expired streak starts fresh at the base instead of doubling across it:
 # the first record for this label expired before the second refusal arrives,
 # so the second sits out the base again, not a doubled interval.
@@ -108,6 +119,18 @@ fm_model_chain_record_refusal "$STATEFILE" 'vercel/xiaomi/mimo-v2.6-flash' "$((N
 record=$(fm_model_chain__state_lookup "$STATEFILE" 'vercel/xiaomi/mimo-v2.6-flash')
 assert_equals "$((NOW - 90 + 300)) 300" "$record" "a refusal after expiry starts a fresh streak"
 pass "backoff streaks reset once a cooldown has expired"
+
+# The lock guards one lane's own file: a lock directory beside a lane's state
+# file makes that lane's record give up without writing, and recording
+# succeeds again the moment that lane's lock is gone.
+mkdir "$TMP_ROOT/held-lane.state.lock"
+fm_model_chain_record_refusal "$TMP_ROOT/held-lane.state" 'a/model' "$(date +%s)" 2>/dev/null \
+  && fail "a lane whose lock is held must not record"
+[ ! -s "$TMP_ROOT/held-lane.state" ] || fail "a locked-out lane must record nothing"
+rmdir "$TMP_ROOT/held-lane.state.lock"
+fm_model_chain_record_refusal "$TMP_ROOT/held-lane.state" 'a/model' "$(date +%s)" \
+  || fail "recording must succeed once the lane's lock is released"
+pass "the cooldown lock is per lane, beside that lane's state file"
 
 # --- C) Cooldown expiry restores the head ------------------------------------
 

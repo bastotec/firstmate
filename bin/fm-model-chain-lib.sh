@@ -119,7 +119,7 @@ fm_model_chain_select() {
   [ -n "$parsed" ] || return 1
   while IFS= read -r row_labels; do
     [ -n "$row_labels" ] || continue
-    label=$(printf '%s\n' "$row_labels" | tr '|' '/')
+    label="${row_labels%%|*}/${row_labels#*|}"
     lookup=$(fm_model_chain__state_lookup "$state" "$label")
     retry=${lookup%% *}
     if [ -n "$retry" ] && [ "$retry" -gt "$(date +%s)" ]; then
@@ -223,7 +223,7 @@ fm_model_chain_clear() {
 # cooldown file ("<lane>.state.lock" beside it); contention waits briefly and
 # then gives up, so a rare lost update costs one immediate retry at worst.
 fm_model_chain__state_lock() {
-  local dir="${1%/*}.lock" waited=0
+  local dir="$1.lock" waited=0
   mkdir "$dir" 2>/dev/null && return 0
   while ! mkdir "$dir" 2>/dev/null; do
     waited=$(( waited + 1 ))
@@ -233,7 +233,7 @@ fm_model_chain__state_lock() {
 }
 
 fm_model_chain__state_unlock() {
-  local dir="${1%/*}.lock"
+  local dir="$1.lock"
   rmdir "$dir" 2>/dev/null || true
 }
 
