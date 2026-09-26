@@ -185,6 +185,9 @@ run_chain_spawn() {
 }
 
 read_chain_record() {
+  # CASE_DIR is part of the record shape (and read for completeness) even
+  # though the cases that need only the home tree never reference it.
+  # shellcheck disable=SC2034
   IFS='|' read -r CASE_DIR HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR LAUNCH_LOG <<EOF
 $1
 EOF
@@ -302,7 +305,7 @@ test_chained_model_falls_through_after_recorded_refusal() {
 }
 
 test_exhausted_chain_refuses_the_spawn() {
-  local rec id out statefile
+  local rec id out statefile rc=0
   id=chain-exh-4d
   rec=$(make_chain_case chain-exhaust chain-exh-4d)
   read_chain_record "$rec"
@@ -312,8 +315,8 @@ test_exhausted_chain_refuses_the_spawn() {
   printf 'codex/gpt-6-luna\t%s\t300\nzai/glm-5.3\t%s\t300\n' \
     "$((now + 3000))" "$((now + 3000))" > "$statefile"
   out=$(run_chain_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
-    --model 'codex/gpt-6-luna,zai/glm-5.3')
-  [ "$?" -ne 0 ] || fail "an exhausted chain must refuse the spawn"
+    --model 'codex/gpt-6-luna,zai/glm-5.3') || rc=$?
+  [ "${rc:-0}" -ne 0 ] || fail "an exhausted chain must refuse the spawn"
   assert_contains "$out" "model chain exhausted" "the refusal says the chain is exhausted"
   [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "a refused spawn must not publish a task record"
   pass "an exhausted chain refuses the spawn before any record exists"
@@ -324,9 +327,10 @@ test_chain_parse_error_refuses_the_spawn() {
   id=chain-bad-5e
   rec=$(make_chain_case chain-bad chain-bad-5e)
   read_chain_record "$rec"
+  rc=0
   out=$(run_chain_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
-    --model 'codex/gpt-6-luna,noslash')
-  [ "$?" -ne 0 ] || fail "a malformed chain must refuse the spawn"
+    --model 'codex/gpt-6-luna,noslash') || rc=$?
+  [ "$rc" -ne 0 ] || fail "a malformed chain must refuse the spawn"
   assert_contains "$out" "not a comma-separated list" "the refusal names the malformed chain"
   [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "a parse-refused spawn must not publish a task record"
   pass "a malformed chained --model refuses the spawn loudly"
