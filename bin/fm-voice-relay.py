@@ -1046,7 +1046,10 @@ class Session:
                         "event": "asked", "ticket": ticket, "question": question})
                     result = {"status": "asked", "ticket": ticket,
                               "note": "The answer will arrive later as a [Background "
-                                      "answer] message. Do not wait for it."}
+                                      "answer] message. Do not wait for it. You already "
+                                      "told the captain you are asking; do not say it "
+                                      "again - say nothing more unless they asked "
+                                      "something else too."}
             elif name == "hand_over_to_firstmate":
                 request = (arguments.get("request") or "").strip()
                 result = await asyncio.to_thread(
