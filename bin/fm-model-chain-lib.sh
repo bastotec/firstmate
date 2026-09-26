@@ -230,10 +230,10 @@ fm_model_chain_clear() {
 }
 
 # Best-effort mkdir lock serializing the read-modify-write of one lane's
-# cooldown file; contention falls back to non-atomic rewrite only after the
-# wait, so a rare lost update costs one immediate retry at worst.
+# cooldown file ("<lane>.state.lock" beside it); contention waits briefly and
+# then gives up, so a rare lost update costs one immediate retry at worst.
 fm_model_chain__state_lock() {
-  local dir="${1%.tmp*}.lock" waited=0
+  local dir="${1%/*}.lock" waited=0
   mkdir "$dir" 2>/dev/null && return 0
   while ! mkdir "$dir" 2>/dev/null; do
     waited=$(( waited + 1 ))
@@ -243,6 +243,6 @@ fm_model_chain__state_lock() {
 }
 
 fm_model_chain__state_unlock() {
-  local dir="${1%.tmp*}.lock"
+  local dir="${1%/*}.lock"
   rmdir "$dir" 2>/dev/null || true
 }
