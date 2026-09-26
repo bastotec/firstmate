@@ -43,10 +43,12 @@
 #                                        drop <label>'s cooldown record so a
 #                                        later launch reads it ready again
 #
-# Cooldown state file, one record per line ("<label><TAB><retry-epoch>"):
-# written by fm_model_chain_record_refusal and fm_model_chain_clear under the
-# lock below, read by fm_model_chain_select. An entry whose retry epoch has
-# passed is simply ready again, exactly like the branch's in-memory cooldowns.
+# Cooldown state file, one record per line
+# ("<label><TAB><retry-epoch><TAB><cooldown-secs>"): written by
+# fm_model_chain_record_refusal and fm_model_chain_clear under the lock below,
+# read by fm_model_chain_select. An entry whose retry epoch has passed is
+# simply ready again, exactly like the branch's in-memory cooldowns; the
+# stored cooldown duration is what the next refusal of the same streak doubles.
 set -u
 
 FM_MODEL_CHAIN_COOLDOWN_BASE_SECS=$((5 * 60))
@@ -118,12 +120,16 @@ fm_model_chain_head() {
 }
 
 fm_model_chain__state_lookup() {
-  # Print the retry epoch recorded for $2 in the state file at $1, or nothing.
-  local state=$1 label=$2 row
+  # Print "<retry-epoch> <cooldown-secs>" recorded for $2 in the state file at
+  # $1, or nothing. An old two-field row simply has no stored cooldown.
+  local state=$1 label=$2 row rest
   [ -f "$state" ] || return 0
   while IFS= read -r row; do
     [ -n "$row" ] || continue
-    [ "${row%%$'\t'*}" = "$label" ] && { printf '%s\n' "${row#*$'\t'}"; return 0; }
+    [ "${row%%$'\t'*}" = "$label" ] || continue
+    rest=${row#*$'\t'}
+    printf '%s %s\n' "${rest%%$'\t'*}" "${rest#*$'\t'}"
+    return 0
   done < "$state"
 }
 
@@ -131,13 +137,14 @@ fm_model_chain_select() {
   # Print the label of the first entry that is not sitting out, after one
   # "chain skip:" line per entry passed over on stderr. Driven by the parsed
   # entries so the refusal contract stays single-owner in the parser.
-  local state=$1 stored=$2 parsed row_labels label retry skipped_first=1
+  local state=$1 stored=$2 parsed row_labels label lookup retry skipped_first=1
   parsed=$(fm_model_chain_parse "$stored") || return 1
   [ -n "$parsed" ] || return 1
   while IFS= read -r row_labels; do
     [ -n "$row_labels" ] || continue
     label=$(printf '%s\n' "$row_labels" | tr '|' '/')
-    retry=$(fm_model_chain__state_lookup "$state" "$label")
+    lookup=$(fm_model_chain__state_lookup "$state" "$label")
+    retry=${lookup%% *}
     if [ -n "$retry" ] && [ "$retry" -gt "$(date +%s)" ]; then
       if [ "$skipped_first" -eq 1 ]; then
         printf 'chain skip: %s in cooldown until %s\n' "$label" \
@@ -165,28 +172,36 @@ fm_model_chain__fmt_epoch() {
 
 fm_model_chain_record_refusal() {
   # Put <label> into cooldown with the branch backoff: five minutes on the
-  # first refusal of a streak, then each prior cooldown doubled, capped at an
-  # hour - the arithmetic of the branch's nextBranchModelCooldown. The stored
-  # retry epoch alone carries the streak: while the old entry is still in the
-  # future the failure is part of the same streak (doubling), while an expired
-  # or absent entry starts a fresh streak at the base. One label per line, so
-  # the newest record wins and older entries for the same label are pruned.
-  local state=$1 label=$2 now=$3 row epoch previous
+  # first refusal of a streak, then the previous cooldown doubled, capped at
+  # an hour - the arithmetic of the branch's nextBranchModelCooldown. The
+  # stored record carries the current cooldown duration beside the retry
+  # epoch, which is what doubles on the next refusal of the same streak;
+  # an expired or absent record starts a fresh streak at the base. One label
+  # per line, so the newest record wins and older entries are pruned.
+  local state=$1 label=$2 now=$3 row lookup previous retry cooldown
   [ -f "$state" ] || { : > "$state" || return 1; }
   previous=$(fm_model_chain__state_lookup "$state" "$label")
-  case "$previous" in
-    ''|*[!0-9]*) previous= ;;
-  esac
-  if [ -n "$previous" ] && [ "$previous" -gt "$now" ]; then
-    epoch=$(( previous + previous - now ))
-    [ "$epoch" -le $(( now + FM_MODEL_CHAIN_COOLDOWN_MAX_SECS )) ] || \
-      epoch=$(( now + FM_MODEL_CHAIN_COOLDOWN_MAX_SECS ))
-  else
-    epoch=$(( now + FM_MODEL_CHAIN_COOLDOWN_BASE_SECS ))
+  retry=
+  cooldown=
+  if [ -n "$previous" ]; then
+    retry=${previous%% *}
+    cooldown=${previous#* }
+    case "$cooldown" in ''|*[!0-9]*) cooldown= ;; esac
   fi
+  case "$retry" in
+    ''|*[!0-9]*) retry= ;;
+  esac
+  if [ -n "$retry" ] && [ "$retry" -gt "$now" ] && [ -n "$cooldown" ]; then
+    cooldown=$(( cooldown * 2 ))
+    [ "$cooldown" -le "$FM_MODEL_CHAIN_COOLDOWN_MAX_SECS" ] || \
+      cooldown=$FM_MODEL_CHAIN_COOLDOWN_MAX_SECS
+  else
+    cooldown=$FM_MODEL_CHAIN_COOLDOWN_BASE_SECS
+  fi
+  epoch=$(( now + cooldown ))
   fm_model_chain__state_lock "$state" || return 1
   if {
-    printf '%s\t%s\n' "$label" "$epoch"
+    printf '%s\t%s\t%s\n' "$label" "$epoch" "$cooldown"
     while IFS= read -r row; do
       [ -n "$row" ] || continue
       if [ "${row%%$'\t'*}" != "$label" ]; then
