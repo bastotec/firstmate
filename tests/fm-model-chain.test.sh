@@ -107,7 +107,12 @@ assert_equals 'prov/a|b' "$out" "a label containing a pipe round-trips unchanged
 out=$(fm_model_chain_select "$TMP_ROOT/pipe.state" \
   "$(fm_model_chain_chain_to_lines 'vercel/xiaomi/mimo-v2.6-flash')" 2>/dev/null)
 assert_equals 'vercel/xiaomi/mimo-v2.6-flash' "$out" "a label containing slashes round-trips unchanged"
-pass "label decoding rewrites no bytes inside a model id"
+out=$(fm_model_chain_select "$TMP_ROOT/pipe.state" \
+  "$(fm_model_chain_chain_to_lines 'a|b/c,zai/glm-5.3')" 2>"$TMP_ROOT/pipe.err"); rc=$?
+[ "$rc" -eq 1 ] || fail "a pipe in the provider part must refuse the chain"
+[ -z "$out" ] || fail "a provider-pipe chain must select no model, got: $out"
+assert_contains "$(cat "$TMP_ROOT/pipe.err")" "a|b/c" "the refusal names the provider-pipe label"
+pass "label decoding round-trips ids and refuses provider pipes"
 
 # An expired streak starts fresh at the base instead of doubling across it:
 # the first record for this label expired before the second refusal arrives,

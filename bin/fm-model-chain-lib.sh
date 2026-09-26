@@ -52,7 +52,7 @@ FM_MODEL_CHAIN_COOLDOWN_MAX_SECS=$((60 * 60))
 fm_model_chain__parse_stream() {
   # Reads the stored chain from stdin; prints "ok" and the entries, or a
   # diagnostic. Internal: the public wrappers own the plumbing.
-  local line trimmed prefix separator bad byte
+  local line trimmed prefix separator bad byte provider_pipe
   local -a chain_seen=()
   while IFS= read -r line || [ -n "$line" ]; do
     trimmed="${line#"${line%%[![:space:]]*}"}"
@@ -72,7 +72,9 @@ fm_model_chain__parse_stream() {
     done
     prefix=${line%%/*}
     separator=${#prefix}
-    if [ "$bad" -eq 1 ] || [ "$prefix" = "$line" ] || [ "$separator" -eq 0 ] || [ "$separator" -ge $(( ${#line} - 1 )) ]; then
+    provider_pipe=0
+    case "$prefix" in *'|'*) provider_pipe=1 ;; esac
+    if [ "$bad" -eq 1 ] || [ "$provider_pipe" -eq 1 ] || [ "$prefix" = "$line" ] || [ "$separator" -eq 0 ] || [ "$separator" -ge $(( ${#line} - 1 )) ]; then
       printf 'invalid model chain line: %s\n' "$(printf '%s' "$line" | head -c 120)" >&2
       return 1
     fi

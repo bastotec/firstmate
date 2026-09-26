@@ -17,8 +17,8 @@
 # The lane is read from state/<task-id>.meta: kind=secondmate relaunches and
 # secondmate-default resolutions use lane "secondmate(-<id>)", everything else
 # "crew(-<id>)", matching fm-spawn.sh's resolution. A task whose record is
-# missing, or whose recorded model holds no chain, reports that and exits 1
-# without touching any state.
+# missing or a symlink reports that and exits 1 without touching any state;
+# any single <provider>/<model-id> label records onto the lane.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
