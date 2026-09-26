@@ -79,6 +79,15 @@ FOLLOW_UP_MIN_LOUD_BLOCKS = 3
 # shorter than that.
 BARGE_IN_MIN_LOUD_BLOCKS = 3
 
+# Absolute loudness (mean square) a block needs before it can cut in or
+# reopen a conversation, whatever the tracked room floor says. Measured
+# 2026-09-26 with Voice Isolation on: room hum sits at 1-2e4 and the floor
+# had drifted below it, so hum alone reopened turns; near speech is 4e6+.
+SPEECH_MIN_ENERGY = 2e5
+# While Ziggy is audible, its own voice leaks past the echo canceller at up
+# to about 3.5e6 at sentence changes. Cutting in over it takes real speech.
+OVER_VOICE_MIN_ENERGY = 4e6
+
 # No turn stays open longer than this: whatever keeps the channel active
 # (a noisy room, a stuck gate), the turn ends and Ziggy answers what it has.
 MAX_TURN_SECONDS = 30.0
@@ -466,7 +475,8 @@ class TurnDirector:
             if self._follow_until is None:
                 # First block after the reply: the window starts now.
                 self._follow_until = now + self.follow_up_seconds
-            self._loud_run = self._loud_run + 1 if loud else 0
+            speech = loud and wake_mod.block_energy(block) >= SPEECH_MIN_ENERGY
+            self._loud_run = self._loud_run + 1 if speech else 0
             if spotted or self._loud_run >= FOLLOW_UP_MIN_LOUD_BLOCKS:
                 # The captain kept talking: the next turn, no wake word.
                 self._loud_run = 0
@@ -552,7 +562,7 @@ class TurnDirector:
             raise exc
         self._after_reply()
 
-    def hear_over_reply(self, block, now):
+    def hear_over_reply(self, block, now, ziggy_out=0.0):
         """While Ziggy talks (or is making its reply), listen for the captain
         cutting in: its name always does; with speech_interrupts, so does
         any sustained speech. Returns True when the captain cut in."""
@@ -572,7 +582,9 @@ class TurnDirector:
         # not reopen a conversation the captain just closed.
         if not self.speech_interrupts or self._stand_down:
             return False
-        loud = wake_mod.block_energy(block) >= self.gate.floor
+        energy = wake_mod.block_energy(block)
+        need = OVER_VOICE_MIN_ENERGY if ziggy_out > 0 else SPEECH_MIN_ENERGY
+        loud = energy >= max(self.gate.floor, need)
         self._barge_run = self._barge_run + 1 if loud else 0
         return self._barge_run >= BARGE_IN_MIN_LOUD_BLOCKS
 

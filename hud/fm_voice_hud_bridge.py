@@ -359,7 +359,8 @@ def main():
                 # counted as the captain's silence in the conversation window.
                 director.ziggy_speaking()
                 try:
-                    cut_in = director.hear_over_reply(block, time.monotonic())
+                    cut_in = director.hear_over_reply(block, time.monotonic(),
+                                                      ziggy_out=speaker.out_level)
                 except engine_mod.EngineError as exc:
                     emit({"type": "notice", "event": "turn-timeout", "error": str(exc)})
                     director.recover()
