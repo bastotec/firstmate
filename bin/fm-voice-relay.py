@@ -1176,12 +1176,6 @@ class Session:
         await target.deliver_background(question, answer)
 
 
-# The wake word and the ways the speech engine mishears it. A wake turn whose
-# transcript has none of these was a false wake and is dropped unanswered.
-WAKE_HEARD = re.compile(
-    r"\b(ziggy|ziggie|ziggi|zigy|ziggys|zeggy|zaggy|ziggle|diggy|siggy|zigg|zig)\b",
-    re.IGNORECASE)
-
 # The hybrid session currently serving the captain, for background answers
 # that outlive the session they were asked in.
 LIVE_SESSION = {}
@@ -1462,33 +1456,13 @@ class HybridSession(Session):
                     self.round_tools = []
                 if kind == "response.created" and self.turn.get("background"):
                     self.background_response = event.get("response", {}).get("id")
-                if kind == "response.created" and self.turn.get("rejected"):
-                    self.cancelled_response = event.get("response", {}).get("id")
-                    await self._send({"type": "response.cancel"})
-                    continue
-                if self.turn.get("rejected") and kind.startswith("response."):
-                    # Everything from the rejected turn's reply is dropped.
-                    continue
                 if kind == "conversation.item.input_audio_transcription.completed":
                     self._mark("transcribed")
                     heard = event.get("transcript", "")
-                    if self.turn.get("wake") and WAKE_HEARD.search(heard):
-                        # The engine revises a transcript while the captain
-                        # keeps talking ("did you hear me?" then "did you hear
-                        # me? Ziggy."): a later revision that says the name
-                        # clears an earlier rejection, and its reply is
-                        # spoken instead of cancelled.
-                        self.turn["named"] = True
-                        self.turn["rejected"] = False
-                    elif self.turn.get("wake") and not self.turn.get("named"):
-                        # A false wake: nobody said Ziggy. Answer nothing,
-                        # cancel the reply the engine starts, release the HUD.
-                        if not self.turn.get("rejected"):
-                            self.down.send_json(frame.NOTICE, {"event": "not-for-me"})
-                        self.turn["rejected"] = True
-                        await self._send({"type": "response.cancel"})
-                        self.turn_done.set()
-                        continue
+                    # No transcript check on wake turns: the engine's own VAD
+                    # drops a lone "Ziggy" followed by a pause (under its
+                    # 384 ms minimum), so the transcript usually starts after
+                    # the name. The spotter heard it; it is the authority.
                     self.down.send_json(frame.TEXT, {"role": "USER", "text": heard})
                 elif kind == "response.output_audio_transcript.done":
                     self.down.send_json(frame.TEXT, {
