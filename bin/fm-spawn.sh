@@ -719,6 +719,28 @@ spawn_remote_secondmate() {
       [ -n "$effort" ] || effort=-
     fi
   fi
+  # The remote spawn publishes its own record and returns before fm-spawn's
+  # main chain-resolution block, so the remote secondmate surface resolves
+  # here, under the same lanes and cooldown semantics (a default-resolved
+  # surface shares the secondmate lane; anything explicit uses the task lane).
+  # A chain whose every label is in cooldown refuses with nothing launched.
+  case "$model" in
+    -|''|default) ;;
+    *)
+      if [ "$MODEL_SET" -eq 0 ] && [ -z "$HARNESS_ARG" ] && [ -z "$positional" ]; then
+        RESOLVE_LANE=secondmate
+      else
+        RESOLVE_LANE=secondmate-$id
+      fi
+      RESOLVED=$(fm_model_chain_resolve_for_spawn "$RESOLVE_LANE" "remote-secondmate spawn" "$model") || {
+        fm_lock_release "$registry_lock" || true
+        fm_lock_release "$SPAWN_TASK_LOCK" || true
+        return 1
+      }
+      model=$RESOLVED
+      MODEL_CHAIN_LANE=$RESOLVE_LANE
+      ;;
+  esac
   # A remote second mate always runs on Herdr: its server belongs to the host's
   # own GUI login session, so the endpoint outlives every SSH connection that
   # supervises it. bin/fm-remote-doctor.sh gates that host on the same
@@ -1974,24 +1996,35 @@ esac
 # model. <lane> names the cooldown file's identity and <what> the spawn kind
 # for diagnostics; <model-surface> is the raw (possibly chained) surface.
 fm_model_chain_resolve_for_spawn() {  # <lane> <what> <model-surface>
+  # Resolves one model surface, on stdout, to a single "<provider>/<model-id>"
+  # label: a single-label surface is an exact pin and is returned untouched, a
+  # comma-separated surface is a fallback chain resolved through <lane>'s
+  # durable cooldown state, and a malformed chain is a loud refusal. Discloses
+  # on stderr (never stdout, which carries the resolved model) which label was
+  # selected and which entries were skipped and why; an exhausted chain refuses
+  # with that reason. The caller owns recording <lane> in the task's meta when
+  # the surface it passed was chained.
   local lane=$1 what=$2 surface=$3 state chosen
   case "$surface" in
-    *,*)
-      fm_model_chain_is_chained "$surface" || {
-        echo "error: $what model chain '$surface' is not a comma-separated list of <provider>/<model-id> labels; refusing" >&2
-        return 1
-      }
-      state="$STATE/model-chain/$lane.state"
-      mkdir -p "$STATE/model-chain" 2>/dev/null || true
-      chosen=$(fm_model_chain_select "$state" "$(fm_model_chain_chain_to_lines "$surface")") || return 1
-      echo "model chain ($what, lane $lane): selected $chosen"
-      MODEL_CHAIN_LANE=$lane
-      printf '%s\n' "$chosen"
-      ;;
-    *)
-      printf '%s\n' "$surface"
-      ;;
+    ''|default|*,*) : ;;
+    *) printf '%s\n' "$surface"; return 0 ;; # exact pin: no lane, no cooldowns
   esac
+  case "$surface" in
+    '') return 0 ;; # no model: the caller's default fills in unchanged
+    default) return 0 ;;
+  esac
+  fm_model_chain_is_chained "$surface" || {
+    echo "error: $what model chain '$surface' is not a comma-separated list of <provider>/<model-id> labels; refusing" >&2
+    return 1
+  }
+  state="$STATE/model-chain/$lane.state"
+  mkdir -p "$STATE/model-chain" 2>/dev/null || true
+  chosen=$(fm_model_chain_select "$state" "$(fm_model_chain_chain_to_lines "$surface")") || return 1
+  # The lane exists from its first use: an empty file records "nothing is
+  # cooling down yet", and the refusal recorder appends to this same path.
+  : >> "$state" 2>/dev/null || true
+  echo "model chain ($what, lane $lane): selected $chosen" >&2
+  printf '%s\n' "$chosen"
 }
 
 # config/secondmate-harness may carry optional model/effort tokens alongside the
@@ -2024,16 +2057,24 @@ fi
 # chain whose every label is in cooldown refuses the spawn here, before any
 # worktree is provisioned or agent started.
 if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
-  case "$KIND/$RELAUNCH" in
-    secondmate/0) RESOLVE_LANE=secondmate ;;
-    secondmate/1) RESOLVE_LANE=secondmate-$ID ;;
-    */0)          RESOLVE_LANE=crew ;;
-    */1)          RESOLVE_LANE=crew-$ID ;;
+  case "$MODEL" in
+    *,*)
+      case "$KIND/$RELAUNCH" in
+        secondmate/0) RESOLVE_LANE=secondmate ;;
+        secondmate/1) RESOLVE_LANE=secondmate-$ID ;;
+        */0)          RESOLVE_LANE=crew-$ID ;;
+        */1)          RESOLVE_LANE=crew-$ID ;;
+      esac
+      RESOLVED=$(fm_model_chain_resolve_for_spawn "$RESOLVE_LANE" \
+        "$([ "$RELAUNCH" -eq 1 ] && printf relaunch || printf spawn)" "$MODEL") || exit 1
+      MODEL=$RESOLVED
+      MODEL_CHAIN_LANE=$RESOLVE_LANE
+      ;;
   esac
-  RESOLVED=$(fm_model_chain_resolve_for_spawn "$RESOLVE_LANE" \
-    "$([ "$RELAUNCH" -eq 1 ] && printf relaunch || printf spawn)" "$MODEL") || exit 1
-  MODEL=$RESOLVED
 fi
+# An exact single-label pin never touches a lane, so it records no lane either;
+# only a chain that actually resolved names its lane for the refusal recorder.
+[ -n "${MODEL_CHAIN_LANE:-}" ] || MODEL_CHAIN_LANE=
 # Ultra is an explicit native capability, never a Pi thinking-level alias.
 # Validate the fully resolved profile before worktree or endpoint provisioning.
 if [ "$EFFORT" = ultra ]; then
@@ -4113,7 +4154,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort account_slot busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id stream_hub stream_endpoint_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort account_slot busy_gen spawn_gen model_chain_lane traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id stream_hub stream_endpoint_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -4166,6 +4207,10 @@ preserve_relaunch_meta() {
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
   fi
+  # Only a launch whose model actually resolved through a chain records its
+  # lane; an exact pin or bare default keeps the meta byte-identical to the
+  # pre-chain shape, and the refusal recorder falls back to the task lane.
+  [ -z "$MODEL_CHAIN_LANE" ] || echo "model_chain_lane=$MODEL_CHAIN_LANE"
   if [ "$RELAUNCH" -eq 1 ]; then
     preserve_relaunch_meta
   fi

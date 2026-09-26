@@ -259,3 +259,47 @@ fm_model_chain__state_unlock() {
   local dir="${1%/*}.lock"
   rmdir "$dir" 2>/dev/null || true
 }
+
+# A chained model surface ("a/b,c/d") must be a comma-separated list of
+# <provider>/<model-id> labels: no surrounding whitespace (the split below is
+# verbatim, the same no-trim rule the branch applies to raw lines), no empty
+# label from a leading, trailing, or doubled comma, and no second comma in any
+# label. The per-label well-formedness itself (first slash, no whitespace or
+# control characters, no duplicates) is the parser's refusal contract above.
+fm_model_chain_is_chained() {
+  local surface=$1 label
+  case "$surface" in
+    ,*|*,|*,,*) return 1 ;;
+    *,*) : ;;
+    *) return 1 ;;
+  esac
+  local oldIFS=$IFS
+  IFS=,
+  for label in $surface; do
+    IFS=$oldIFS
+    case "$label" in
+      */*) : ;;
+      *) return 1 ;;
+    esac
+    case "$label" in
+      *,*) return 1 ;;
+    esac
+  done
+  IFS=$oldIFS
+  return 0
+}
+
+# Render a chained surface as one <provider>/<model-id> per line, the stored
+# text shape fm_model_chain_parse consumes.
+fm_model_chain_chain_to_lines() {
+  local surface=$1 oldIFS=$IFS label first=1
+  IFS=,
+  for label in $surface; do
+    IFS=$oldIFS
+    [ "$first" -eq 1 ] || printf '\n'
+    first=0
+    printf '%s' "$label"
+  done
+  IFS=$oldIFS
+  printf '\n'
+}
