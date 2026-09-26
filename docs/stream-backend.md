@@ -52,10 +52,10 @@ A stream mate whose worker exited while its agent lived still reads `dead` from 
 `bin/fm-bootstrap.sh` owns secondmate recovery respawn, preserving the recorded backend rather than selecting a different backend from ambient configuration.
 `bin/fm-control.sh` owns interrupt, exit, and same-endpoint relaunch; its `recover-missing` verb remains tmux-only because stream cannot recreate a hub-assigned endpoint identity.
 
-A stream-hosted second mate launches, is steered, and reports its own lifecycle, but its isolated home holds no hub credential, so it cannot itself spawn or supervise on stream.
-`bin/fm-stream-agent.py` hands the hosted process the hub address and deliberately withholds the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`.
-Its first stream call therefore dies in `fm_backend_stream_token` (`bin/backends/stream.sh`) before any endpoint exists, and the remedy that refusal names does not work there: `bin/fm-stream.sh token --ensure` mints a fresh random token, which the fleet hub refuses.
-Only a credential that hub already accepts, written into the mate home's own `config/stream-token`, lets a stream-hosted mate drive stream; handing secondmate homes such a credential is separate, later work.
+A stream-hosted second mate launches, is steered, and reports its own lifecycle, but it cannot itself spawn or supervise on stream until the hub has restarted since its seeding wrote the home a credential.
+`bin/fm-stream-agent.py` hands the hosted process the hub address and deliberately withholds the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`, so the launch path still carries no credential.
+The credential arrives through seeding instead, and until that restart the seeded token is one the running hub has not loaded, so the home's first stream call is refused by the hub rather than dying in `fm_backend_stream_token` (`bin/backends/stream.sh`).
+[Security](#security) owns the seeding contract, including the homes it leaves without a credential; for those the first stream call still dies in `fm_backend_stream_token` before any endpoint exists, and the remedy that refusal names does not work there: `bin/fm-stream.sh token --ensure` mints a fresh random token, which the fleet hub refuses.
 
 ## Prerequisites
 
@@ -189,6 +189,11 @@ Tokens are class-scoped, and there are three classes:
 
 A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, so an operator credential is written `subscribe,control:<token>` and a home's own client credential, which both publishes and steers, is `publish,subscribe,control:<token>`.
 A bare token line grants `subscribe` alone, so the unqualified line is the read-only one.
+
+Seeding a secondmate home mints that home its own token rather than copying the primary's: `bin/fm-home-seed.sh` appends one `publish,subscribe,control:<token>` line to the hub host's `config/stream-hub-tokens` - the home hosting the hub is the one owning that file, since a client home's `config/stream-hub` names a remote hub its seeding must not touch - and writes the fresh token into the mate home's own `config/stream-token`, the same client-credential file any home reads (`bin/fm-stream-secondmate-credential-lib.sh`).
+A seeded token is INACTIVE until the hub restarts: the hub reads its token file once at serve start, so the credential the mate presents is refused until then.
+That restart is a planned quiet-boundary operation, not part of seeding - a restart clears terminal scrollback and empties Bridge-order reconciliation, the same cost [When the hub restarts](#when-the-hub-restarts) names, so it must not happen while an order is pending or may need a resend.
+The first real seeding gets one such planned restart; a supported token reload is separate queued work, because seeding recurs and every restart spends that fleet-wide cost again.
 A viewing token cannot register an endpoint, publish, or steer a worker: input, status, and close are all refused with 403.
 Command retrieval and result submission additionally require the endpoint's private `command_capability`, established by registration and carried in the `X-Endpoint-Capability` request header.
 A poll must name that endpoint; machine-wide command retrieval is refused.
@@ -357,6 +362,7 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
 - Experimental, with no dedicated real-backend CI lane.
   [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) is the live guard that proves each installed harness is still classified through the hub, and the command that refreshes the dated per-harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md).
   The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, `tests/fm-stream-claude-tail.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
+  The secondmate credential-seeding regressions from the Security section above ride `tests/fm-secondmate-safety.test.sh`.
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.
 - An unreachable agent and a dead worker are indistinguishable from the hub, so a stale read carries no liveness verdict at all.
   Only one of those two states authorizes recovery, and reporting silence as death is how a healthy worker gets torn down.
