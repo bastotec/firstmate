@@ -1472,11 +1472,20 @@ class HybridSession(Session):
                 if kind == "conversation.item.input_audio_transcription.completed":
                     self._mark("transcribed")
                     heard = event.get("transcript", "")
-                    if self.turn.get("wake") and not WAKE_HEARD.search(heard):
+                    if self.turn.get("wake") and WAKE_HEARD.search(heard):
+                        # The engine revises a transcript while the captain
+                        # keeps talking ("did you hear me?" then "did you hear
+                        # me? Ziggy."): a later revision that says the name
+                        # clears an earlier rejection, and its reply is
+                        # spoken instead of cancelled.
+                        self.turn["named"] = True
+                        self.turn["rejected"] = False
+                    elif self.turn.get("wake") and not self.turn.get("named"):
                         # A false wake: nobody said Ziggy. Answer nothing,
                         # cancel the reply the engine starts, release the HUD.
+                        if not self.turn.get("rejected"):
+                            self.down.send_json(frame.NOTICE, {"event": "not-for-me"})
                         self.turn["rejected"] = True
-                        self.down.send_json(frame.NOTICE, {"event": "not-for-me"})
                         await self._send({"type": "response.cancel"})
                         self.turn_done.set()
                         continue
