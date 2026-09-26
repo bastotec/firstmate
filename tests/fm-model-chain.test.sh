@@ -23,6 +23,10 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# The relaunch leg reuses fm-control-relaunch's hermetic case world (its tmux
+# stub, task fixture, and control runner) rather than duplicating it here.
+# shellcheck source=tests/fm-control-relaunch.test.sh
+FM_MODEL_CHAIN_TEST_SKIP_RUN=1 . "$(dirname "${BASH_SOURCE[0]}")/fm-control-relaunch.test.sh"
 
 LIB="$ROOT/bin/fm-model-chain-lib.sh"
 # shellcheck source=bin/fm-model-chain-lib.sh
@@ -199,6 +203,38 @@ test_exact_pin_is_byte_identical() {
   pass "a modelless spawn never touches a lane (exact-pin baseline)"
 }
 
+test_relaunch_resolves_a_chained_model_and_records_its_lane() {
+  local dir out rc model lane
+  dir=$(new_case chain-model rl61)
+  add_ship_task "$dir" rl61 claude
+  # A prior record naming a chain relaunches through the same chain, on the
+  # task lane; fm-control resolves before stopping the old agent, so the
+  # refusal recorder reads the same published record the prior launch left.
+  printf 'model=codex/gpt-6-luna,zai/glm-5.3\n' >> "$dir/home/state/rl61.meta"
+  out=$(run_control "$dir" rl61 relaunch --model 'codex/gpt-6-luna,zai/glm-5.3' --note "retrying the chain"); rc=$?
+  expect_code 0 "$rc" "a chained-model relaunch should succeed"$'\n'"$out"
+  assert_contains "$out" "model chain (relaunch, lane crew-rl61): selected codex/gpt-6-luna" \
+    "the relaunch discloses its selection on the task lane"
+  model=$(meta_field "$dir" rl61 model)
+  [ "$model" = "codex/gpt-6-luna" ] || fail "the relaunch record must carry the resolved model, got: $model"
+  lane=$(meta_field "$dir" rl61 model_chain_lane)
+  [ "$lane" = "crew-rl61" ] || fail "the relaunch must record the lane the refusal recorder reads, got: $lane"
+  [ -f "$dir/home/state/model-chain/crew-rl61.state" ] \
+    || fail "the relaunch must materialize the lane it resolved through"
+
+  # The fall-through side of the same transaction: the supervisor records the
+  # head's refusal, and the next relaunch both selects the next label and
+  # launches the replacement on it.
+  FM_HOME="$dir/home" "$ROOT/bin/fm-record-model-refusal.sh" rl61 codex/gpt-6-luna >/dev/null 2>&1
+  out=$(run_control "$dir" rl61 relaunch --model 'codex/gpt-6-luna,zai/glm-5.3' --note "after the refusal"); rc=$?
+  expect_code 0 "$rc" "a relaunch past a cooled-down head should succeed"$'\n'"$out"
+  assert_contains "$out" "chain skip: codex/gpt-6-luna" "the cooled-down head is disclosed as skipped"
+  assert_contains "$out" "selected zai/glm-5.3" "the next ready label is selected"
+  model=$(meta_field "$dir" rl61 model)
+  [ "$model" = "zai/glm-5.3" ] || fail "the fall-through model must land in the record, got: $model"
+  pass "fm-control relaunch: a chained model resolves, discloses, and records its lane"
+}
+
 test_exact_pin_creates_no_lane() {
   local rec id out meta
   id=chain-pin-0z
@@ -302,5 +338,6 @@ test_chained_model_resolves_head_and_records_lane
 test_chained_model_falls_through_after_recorded_refusal
 test_exhausted_chain_refuses_the_spawn
 test_chain_parse_error_refuses_the_spawn
+test_relaunch_resolves_a_chained_model_and_records_its_lane
 
 printf 'all fm-model-chain tests passed\n'

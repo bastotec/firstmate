@@ -732,7 +732,7 @@ spawn_remote_secondmate() {
       else
         RESOLVE_LANE=secondmate-$id
       fi
-      RESOLVED=$(fm_model_chain_resolve_for_spawn "$RESOLVE_LANE" "remote-secondmate spawn" "$model") || {
+      RESOLVED=$(fm_model_chain_resolve_for_launch "$RESOLVE_LANE" "remote-secondmate spawn" "$model") || {
         fm_lock_release "$registry_lock" || true
         fm_lock_release "$SPAWN_TASK_LOCK" || true
         return 1
@@ -1992,40 +1992,12 @@ esac
 # preference order: one lane's cooldown state (state/model-chain/<lane>.state)
 # records which labels recent launches could not run, so this launch resolves
 # to the first ready label, each skipped label is disclosed on stderr, and an
-# exhausted chain refuses the spawn rather than substituting an out-of-chain
-# model. <lane> names the cooldown file's identity and <what> the spawn kind
-# for diagnostics; <model-surface> is the raw (possibly chained) surface.
-fm_model_chain_resolve_for_spawn() {  # <lane> <what> <model-surface>
-  # Resolves one model surface, on stdout, to a single "<provider>/<model-id>"
-  # label: a single-label surface is an exact pin and is returned untouched, a
-  # comma-separated surface is a fallback chain resolved through <lane>'s
-  # durable cooldown state, and a malformed chain is a loud refusal. Discloses
-  # on stderr (never stdout, which carries the resolved model) which label was
-  # selected and which entries were skipped and why; an exhausted chain refuses
-  # with that reason. The caller owns recording <lane> in the task's meta when
-  # the surface it passed was chained.
-  local lane=$1 what=$2 surface=$3 state chosen
-  case "$surface" in
-    ''|default|*,*) : ;;
-    *) printf '%s\n' "$surface"; return 0 ;; # exact pin: no lane, no cooldowns
-  esac
-  case "$surface" in
-    '') return 0 ;; # no model: the caller's default fills in unchanged
-    default) return 0 ;;
-  esac
-  fm_model_chain_is_chained "$surface" || {
-    echo "error: $what model chain '$surface' is not a comma-separated list of <provider>/<model-id> labels; refusing" >&2
-    return 1
-  }
-  state="$STATE/model-chain/$lane.state"
-  mkdir -p "$STATE/model-chain" 2>/dev/null || true
-  chosen=$(fm_model_chain_select "$state" "$(fm_model_chain_chain_to_lines "$surface")") || return 1
-  # The lane exists from its first use: an empty file records "nothing is
-  # cooling down yet", and the refusal recorder appends to this same path.
-  : >> "$state" 2>/dev/null || true
-  echo "model chain ($what, lane $lane): selected $chosen" >&2
-  printf '%s\n' "$chosen"
-}
+# exhausted chain refuses the launch rather than substituting an out-of-chain
+# model. The launch resolver shared with fm-control.sh's relaunch and
+# recover-missing paths lives in fm-model-chain-launch-lib.sh, sourced below
+# beside the parser.
+# shellcheck source=bin/fm-model-chain-launch-lib.sh
+. "$SCRIPT_DIR/fm-model-chain-launch-lib.sh"
 
 # config/secondmate-harness may carry optional model/effort tokens alongside the
 # harness ("<harness> [<model>] [<effort>]"). They apply only when this is a
@@ -2059,13 +2031,19 @@ fi
 if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
   case "$MODEL" in
     *,*)
+      # Lane contract (docs/configuration.md "Model fallback chains"): the
+      # default-resolved surfaces (dispatch profiles, the secondmate-harness
+      # pin) share the crew or secondmate lane so one launch's refusal cools
+      # the model for the next default-resolved launch; an explicit chained
+      # --model and any relaunch resolve on the task's own lane, so one task's
+      # refusals never cool down another task's chain head.
       case "$KIND/$RELAUNCH" in
-        secondmate/0) RESOLVE_LANE=secondmate ;;
+        secondmate/0) RESOLVE_LANE=$([ "$MODEL_SET" -eq 1 ] && printf secondmate-$ID || printf secondmate) ;;
         secondmate/1) RESOLVE_LANE=secondmate-$ID ;;
-        */0)          RESOLVE_LANE=crew-$ID ;;
+        */0)          RESOLVE_LANE=$([ "$MODEL_SET" -eq 1 ] && printf crew-$ID || printf crew) ;;
         */1)          RESOLVE_LANE=crew-$ID ;;
       esac
-      RESOLVED=$(fm_model_chain_resolve_for_spawn "$RESOLVE_LANE" \
+      RESOLVED=$(fm_model_chain_resolve_for_launch "$RESOLVE_LANE" \
         "$([ "$RELAUNCH" -eq 1 ] && printf relaunch || printf spawn)" "$MODEL") || exit 1
       MODEL=$RESOLVED
       MODEL_CHAIN_LANE=$RESOLVE_LANE
