@@ -227,6 +227,15 @@ func micModeName(_ mode: AVCaptureDevice.MicrophoneMode) -> String {
     default: return "standard"
     }
 }
+// Whether macOS lets this app use the microphone. Voice Isolation outputs
+// exact zeros whenever nobody is speaking, so silence alone can't tell a
+// denied microphone from a quiet room; this can.
+switch AVCaptureDevice.authorizationStatus(for: .audio) {
+case .authorized: FileHandle.standardError.write("micauth authorized\n".data(using: .utf8)!)
+case .denied: FileHandle.standardError.write("micauth denied\n".data(using: .utf8)!)
+case .restricted: FileHandle.standardError.write("micauth restricted\n".data(using: .utf8)!)
+default: FileHandle.standardError.write("micauth notDetermined\n".data(using: .utf8)!)
+}
 var lastMicMode = ""
 Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
     let now = micModeName(AVCaptureDevice.activeMicrophoneMode)

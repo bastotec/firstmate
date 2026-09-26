@@ -46,6 +46,9 @@ class VoiceIO:
             raise FileNotFoundError(helper)
         self.gain = gain
         self._on_mic_mode = on_mic_mode
+        # "authorized" once the helper reports it: then a run of all-zero
+        # audio is Voice Isolation's silence, not a denied microphone.
+        self.mic_auth = None
         self._proc = subprocess.Popen(
             [helper], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
@@ -83,6 +86,8 @@ class VoiceIO:
             parts = line.decode(errors="replace").split()
             if len(parts) >= 2 and parts[0] == "micmode" and self._on_mic_mode is not None:
                 self._on_mic_mode(parts[1])
+            elif len(parts) >= 2 and parts[0] == "micauth":
+                self.mic_auth = parts[1]
 
     def _read_mic(self):
         zero_run, notified = 0, False
@@ -95,7 +100,8 @@ class VoiceIO:
                 zero_run, notified = 0, False
             else:
                 zero_run += 1
-                if zero_run >= self._silent_after and not notified:
+                if zero_run >= self._silent_after and not notified \
+                        and self.mic_auth != "authorized":
                     notified = True
                     if self._on_silent is not None:
                         self._on_silent()
