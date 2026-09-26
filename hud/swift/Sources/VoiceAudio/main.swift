@@ -91,6 +91,24 @@ var playLock = os_unfair_lock()
 var playQueue = [Float]()
 var playHead = 0
 var playedFrames = 0
+// Debug (VOICEAUDIO_TAP=<file>): everything rendered to the speaker, as raw
+// 48 kHz float32, plus a count of underruns - callbacks that ran out of reply
+// audio mid-stream - so playback glitches can be measured instead of guessed.
+let tapPath = ProcessInfo.processInfo.environment["VOICEAUDIO_TAP"]
+var tapped = [Float]()
+var underruns = 0
+
+// Jitter buffer: after running dry, playback waits until PREROLL frames are
+// queued (or the first queued audio has waited PREROLL_WAIT frames, for a
+// short last chunk) instead of starting on the first 21 ms chunk. Where it
+// starts or runs dry it ramps over FADE frames, so a late chunk makes a short
+// soft gap instead of a click.
+let PREROLL = Int(rate * 0.12)
+let PREROLL_WAIT = Int(rate * 0.25)
+let FADE = Int(rate * 0.005)
+var playing = false
+var waitedFrames = 0
+let underrunLog = ProcessInfo.processInfo.environment["VOICEAUDIO_LOG"]
 
 let renderCallback: AURenderCallback = { _, _, _, _, frames, ioData in
     guard let abl = UnsafeMutableAudioBufferListPointer(ioData) else { return noErr }
@@ -98,7 +116,16 @@ let renderCallback: AURenderCallback = { _, _, _, _, frames, ioData in
     let n = Int(frames)
     os_unfair_lock_lock(&playLock)
     let available = playQueue.count - playHead
-    let take = min(n, available)
+    var starting = false
+    if !playing && available > 0 {
+        waitedFrames += n
+        if available >= PREROLL || waitedFrames >= PREROLL_WAIT {
+            playing = true
+            starting = true
+            waitedFrames = 0
+        }
+    }
+    let take = playing ? min(n, available) : 0
     if take > 0 {
         playQueue.withUnsafeBufferPointer { src in
             out.update(from: src.baseAddress! + playHead, count: take)
@@ -110,8 +137,30 @@ let renderCallback: AURenderCallback = { _, _, _, _, frames, ioData in
             playHead = 0
         }
     }
+    // Ran dry: this callback used up everything queued (including when it
+    // ended exactly on the callback boundary), so fade its tail now.
+    let ranDry = playing && take == available
+    if ranDry {
+        playing = false
+        if take > 0 { underruns += 1 }
+        if let path = underrunLog, take > 0 {
+            let line = "\(Date().timeIntervalSince1970) dry\n"
+            if let h = FileHandle(forWritingAtPath: path) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); h.closeFile() }
+            else { FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8)) }
+        }
+    }
     os_unfair_lock_unlock(&playLock)
+    if starting {
+        for i in 0 ..< min(FADE, take) { out[i] *= Float(i) / Float(FADE) }
+    }
+    if ranDry && take > 0 {
+        let f = min(FADE, take)
+        for i in 0 ..< f { out[take - f + i] *= Float(f - i) / Float(f) }
+    }
     if take < n { (out + take).update(repeating: 0, count: n - take) }
+    if tapPath != nil && (take > 0 || !tapped.isEmpty) {
+        tapped.append(contentsOf: UnsafeBufferPointer(start: out, count: n))
+    }
     return noErr
 }
 var render = AURenderCallbackStruct(inputProc: renderCallback, inputProcRefCon: nil)
@@ -231,7 +280,11 @@ Thread.detachNewThread {
     }
     // Stdin closed: the bridge is gone.
     if ProcessInfo.processInfo.environment["VOICEAUDIO_DEBUG"] != nil {
-        FileHandle.standardError.write("played \(Double(playedFrames) / rate)s\n".data(using: .utf8)!)
+        FileHandle.standardError.write("played \(Double(playedFrames) / rate)s underruns \(underruns)\n".data(using: .utf8)!)
+    }
+    if let path = tapPath {
+        let data = tapped.withUnsafeBufferPointer { Data(buffer: $0) }
+        FileManager.default.createFile(atPath: path, contents: data)
     }
     AudioOutputUnitStop(unit)
     exit(0)
