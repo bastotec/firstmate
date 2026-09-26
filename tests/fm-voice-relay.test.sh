@@ -343,6 +343,56 @@ os.environ.pop("FM_VOICE_REGION", None)
 PY
 pass "the relay reads whose account to use from this home and refuses to guess"
 
+# --- Ziggy reads the first mate's transcript ------------------------------------
+python3 - "$ROOT" <<'PY' || fail "first mate transcript"
+import importlib.util, json, os, sys, tempfile
+sys.path.insert(0, os.path.join(sys.argv[1], "bin"))
+import fm_voice_transcript as t
+tmp = tempfile.mkdtemp()
+t.SESSIONS = tmp
+t.INDEX_DIR = os.path.join(tmp, "index")
+home = "/Users/x/Projects/firstmate"
+folder = t.session_dir(home)
+os.makedirs(folder)
+lines = [{"type": "session"}]
+said = [("user", "How is the printer calibration going?"),
+        ("assistant", "The Voron ringing tower is clean up to 4500."),
+        ("user", "<skill name=\"x\">injected</skill>"),
+        ("assistant", [{"type": "thinking", "thinking": "secret thoughts"},
+                       {"type": "text", "text": "Proxai budget is capped at 50 dollars a month."}]),
+        ("toolResult", "tool output never read")]
+for i, (role, content) in enumerate(said):
+    lines.append({"type": "message", "timestamp": "2026-09-25T17:0%d:00.000Z" % i,
+                  "message": {"role": role, "content": content}})
+open(os.path.join(folder, "s.jsonl"), "w").write("\n".join(json.dumps(l) for l in lines))
+def check(cond, label):
+    if not cond:
+        sys.exit("first mate transcript: " + label)
+recent = t.recent(home, 10)["messages"]
+check([m["who"] for m in recent] == ["captain", "first mate", "first mate"],
+      "only spoken user/assistant text, skills and tool output skipped: %r" % recent)
+check(all("secret" not in m["said"] for m in recent), "thinking must never be read")
+# Keyword-only ranking, and the hybrid path with a fake embedder.
+check(t.search(home, "proxai budget", embed=None)["hits"][0]["said"].startswith("Proxai"),
+      "keyword search must find the budget message")
+import numpy as np
+def fake(texts):
+    return np.array([[1.0, 0.0] if ("ringing" in x or "vibration" in x) else [0.0, 1.0] for x in texts])
+r = t.search(home, "vibration", embed=fake)
+check(r["ranking"] == "hybrid" and "ringing" in r["hits"][0]["said"],
+      "meaning ranking must find a paraphrase keyword search misses: %r" % r)
+spec = importlib.util.spec_from_file_location("relay", os.path.join(sys.argv[1], "bin", "fm-voice-relay.py"))
+relay = importlib.util.module_from_spec(spec); spec.loader.exec_module(relay)
+check(relay.similar_questions(
+    "Does this session have access to the first mate transcript?",
+    "Does the voice assistant in this session have direct access to the first mate transcript?"),
+    "a rephrased question must supersede the one still out")
+check(not relay.similar_questions("How is the CAD work going?", "Why did the build fail this morning?"),
+      "different questions must both be answered")
+PY
+pass "Ziggy reads the first mate's transcript and does not answer a question twice"
+
+
 set +e
 help_out=$(python3 "$ROOT/bin/fm-voice-relay.py" --help 2>&1)
 help_code=$?

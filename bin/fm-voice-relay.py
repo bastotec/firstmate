@@ -129,6 +129,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import fm_voice_frame as frame              # noqa: E402
 import fm_voice_records as records          # noqa: E402
+import fm_voice_transcript as transcript    # noqa: E402
 
 # A Bedrock voice id names nobody and costs nothing to inherit, so this one has a
 # default. The Bedrock region, model, and profile do not; see CONFIGURATION above.
@@ -182,6 +183,16 @@ SYSTEM_PROMPT = (
     "run_command for read-only checks on this Mac (disk, uptime, files, git "
     "status). Use them first for anything simple; never ask the first mate for "
     "the time or for something a quick command can show.\n"
+    "\n"
+    "Questions about you yourself - what you can do, see, access or remember, "
+    "how you work - are yours to answer directly; never ask the first mate "
+    "about them.\n"
+    "\n"
+    "You can read the first mate's own conversation with the captain with "
+    "firstmate_transcript: \"recent\" for the latest exchanges, \"search\" to "
+    "find what was said about something. Use it first for what the first mate "
+    "said, decided, is working on or was asked; ask the first mate only when "
+    "the transcript does not answer it.\n"
     "\n"
     "Never answer that you cannot answer, do not know, or that something is "
     "not available. Whatever you cannot answer yourself right now, ask the "
@@ -280,7 +291,25 @@ SHELL_TOOL = {"toolSpec": {
         "required": ["command"],
     })},
 }}
-HYBRID_TOOLS = [ASK_TOOL, TIME_TOOL, SHELL_TOOL]
+TRANSCRIPT_TOOL = {"toolSpec": {
+    "name": "firstmate_transcript",
+    "description": (
+        "Read the first mate's own conversation with the captain (its session "
+        "transcript), instantly. mode \"recent\" returns the latest things said; "
+        "mode \"search\" finds messages about something across its recent "
+        "sessions. Use this for what the first mate said, decided, is doing or "
+        "was asked - before asking the first mate."),
+    "inputSchema": {"json": json.dumps({
+        "type": "object",
+        "properties": {
+            "mode": {"type": "string", "enum": ["recent", "search"]},
+            "query": {"type": "string", "description": "What to look for (search)."},
+            "count": {"type": "integer", "description": "How many messages (default 8 recent, 5 search)."},
+        },
+        "required": ["mode"],
+    })},
+}}
+HYBRID_TOOLS = [ASK_TOOL, TIME_TOOL, SHELL_TOOL, TRANSCRIPT_TOOL]
 
 READ_ONLY_COMMANDS = {"date", "cal", "uptime", "df", "du", "ls", "pwd", "cat",
                       "head", "tail", "wc", "grep", "find", "ps", "sw_vers",
@@ -1031,6 +1060,14 @@ class Session:
             elif name == "run_command":
                 result = await asyncio.to_thread(
                     run_read_only, arguments.get("command", ""), self.home)
+            elif name == "firstmate_transcript":
+                if arguments.get("mode") == "search":
+                    result = await asyncio.to_thread(
+                        transcript.search, self.home, arguments.get("query") or "",
+                        arguments.get("count") or 5)
+                else:
+                    result = await asyncio.to_thread(
+                        transcript.recent, self.home, arguments.get("count") or 8)
             elif name == "ask_firstmate":
                 question = (arguments.get("question") or "").strip()
                 if not question:
@@ -1039,6 +1076,12 @@ class Session:
                     result = {"error": "background questions need the hybrid engine"}
                 else:
                     ticket = uuid.uuid4().hex[:8]
+                    # A rephrasing of a question still out replaces it: only
+                    # the newest answer is spoken, not both.
+                    for older, asked in list(OPEN_ASKS.items()):
+                        if similar_questions(asked, question):
+                            SUPERSEDED.add(older)
+                    OPEN_ASKS[ticket] = question
                     task = asyncio.create_task(self._ask_in_background(ticket, question))
                     self.background.add(task)
                     task.add_done_callback(self.background.discard)
@@ -1083,6 +1126,11 @@ class Session:
         # first mate was thinking must not lose the answer.
         target = LIVE_SESSION.get("session") or self
         target.down.send_json(frame.NOTICE, {"event": "answered", "ticket": ticket})
+        OPEN_ASKS.pop(ticket, None)
+        if ticket in SUPERSEDED:
+            SUPERSEDED.discard(ticket)
+            log(self.verbose, "background answer superseded: {}".format(question))
+            return
         await target.deliver_background(question, answer)
 
 
@@ -1095,6 +1143,21 @@ WAKE_HEARD = re.compile(
 # The hybrid session currently serving the captain, for background answers
 # that outlive the session they were asked in.
 LIVE_SESSION = {}
+
+# Background questions still out, by ticket, and the ones a rephrasing
+# replaced (their answers are not spoken).
+OPEN_ASKS = {}
+SUPERSEDED = set()
+_ASK_WORD = re.compile(r"[a-z0-9]+")
+_ASK_STOP = set("the a an and or of to in on for is are was were be it this that with as "
+                "at by from do does did can could please if so what how why when".split())
+
+
+def similar_questions(a, b):
+    """Whether two questions ask the same thing (content-word overlap)."""
+    wa = {w for w in _ASK_WORD.findall(a.lower()) if w not in _ASK_STOP}
+    wb = {w for w in _ASK_WORD.findall(b.lower()) if w not in _ASK_STOP}
+    return bool(wa and wb) and len(wa & wb) / min(len(wa), len(wb)) >= 0.6
 
 
 class HybridSession(Session):
@@ -1152,8 +1215,10 @@ class HybridSession(Session):
             await self._send({"type": "conversation.item.create", "item": {
                 "type": "message", "role": "user", "content": [{
                     "type": "input_text",
-                    "text": "[Background answer] to the captain's question \"{}\": {}".format(
-                        question, answer)}]}})
+                    "text": ("[Background answer] to the captain's question \"{}\": {}\n"
+                             "Tell the captain only what they have not already heard from "
+                             "you in this conversation; if it adds nothing new, say so in "
+                             "a few words.").format(question, answer)}]}})
             await self._send({"type": "response.create"})
             self.timeout_task = asyncio.create_task(self._deadline())
             turn = self.turn
@@ -1170,6 +1235,9 @@ class HybridSession(Session):
         self.background_response = None
         self.cancelled_response = None
         self.current_response = None
+        self.round_tools = []
+        # The first mate's transcript index, embedded off the loop.
+        transcript.warm(self.home)
         began = time.monotonic()
         try:
             # Optional: installed by the speech stack in its own virtualenv.
@@ -1349,6 +1417,7 @@ class HybridSession(Session):
                         event.get("error", {}).get("message", "unknown error")))
                 if kind == "response.created":
                     self.current_response = event.get("response", {}).get("id")
+                    self.round_tools = []
                 if kind == "response.created" and self.turn.get("background"):
                     self.background_response = event.get("response", {}).get("id")
                 if kind == "response.created" and self.turn.get("rejected"):
@@ -1387,6 +1456,7 @@ class HybridSession(Session):
                     if self.tool_calls > 8:
                         raise RuntimeError("hybrid engine exceeded the turn's tool limit")
                     self.tool_names.append(event.get("name", ""))
+                    self.round_tools.append(event.get("name", ""))
                     self._mark("tool_use")
                     result = await self._tool_result({
                         "toolName": event.get("name", ""),
@@ -1404,10 +1474,16 @@ class HybridSession(Session):
                         continue
                     if status != "completed":
                         raise RuntimeError("hybrid engine response did not complete")
-                    if self.pending_tools:
+                    if self.pending_tools and not (
+                            "first_audio" in self.turn and self.round_tools
+                            and all(t == "ask_firstmate" for t in self.round_tools)):
                         self.pending_tools = False
                         await self._send({"type": "response.create"})
                     else:
+                        # Also here: a round that only asked the first mate
+                        # after Ziggy already said so - asking for another
+                        # response only made it say so again.
+                        self.pending_tools = False
                         if "first_audio" not in self.turn:
                             raise RuntimeError("hybrid engine completed a turn without audio")
                         self._mark("reply_end")
