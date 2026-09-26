@@ -179,6 +179,9 @@ esac
 
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
+# Model-chain parsing for TARGET_MODEL surfaces (relaunch/recover-missing).
+# shellcheck source=bin/fm-model-chain-lib.sh
+. "$SCRIPT_DIR/fm-model-chain-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never
 # drive a crewmate's lifecycle (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -972,6 +975,19 @@ resolve_relaunch_profile() {
   if [ "$TARGET_HARNESS" = deck ] && [ "$TARGET_EFFORT" != default ]; then
     die "deck has no effort control; omit --effort or select a harness that supports it"
   fi
+  # A chained TARGET_MODEL (comma-separated labels, from an explicit --model or
+  # a re-resolved secondmate pin) resolves here, in the launch owner's own
+  # cooldown semantics, before the old agent is stopped: the relaunch
+  # transaction refuses on an exhausted chain with nothing touched. A single
+  # label is an exact pin and is returned untouched.
+  case "$TARGET_MODEL" in
+    ''|default) ;;
+    *)
+      RESOLVE_LANE=$([ "$KIND" = secondmate ] && printf secondmate || printf crew)-$ID
+      RESOLVED=$(fm_model_chain_resolve_for_spawn "$RESOLVE_LANE" "$VERB" "$TARGET_MODEL") || return 1
+      TARGET_MODEL=$RESOLVED
+      ;;
+  esac
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
   fi
