@@ -96,6 +96,8 @@ def main():
                 "error": "the microphone delivers digital silence - "
                          "check microphone permission for this app"}))
             speaker = voice_io
+            emit({"type": "notice", "event": "aec-ready",
+                  "error": "VoiceAudio up in {} s".format(voice_io.startup_seconds)})
         except Exception as exc:              # noqa: BLE001
             emit({"type": "notice", "event": "aec-unavailable",
                   "error": "{}: {}".format(type(exc).__name__, exc)})

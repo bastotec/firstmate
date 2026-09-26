@@ -26,7 +26,7 @@ import fm_voice_speaker as speaker_mod
 
 REPLY_RATE = 24000
 AUDIO, FLUSH = 1, 2
-READY_TIMEOUT = 5.0
+READY_TIMEOUT = 20.0     # voice processing can take several seconds to come up
 
 
 def helper_path():
@@ -48,6 +48,7 @@ class VoiceIO:
             [helper], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
         ready = []
+        began = time.monotonic()
         reader = threading.Thread(
             target=lambda: ready.append(self._proc.stderr.readline()), daemon=True)
         reader.start()
@@ -56,6 +57,7 @@ class VoiceIO:
             self._proc.kill()
             raise RuntimeError("VoiceAudio did not start: {!r}".format(
                 ready[0].decode(errors="replace").strip() if ready else "timeout"))
+        self.startup_seconds = round(time.monotonic() - began, 2)
         threading.Thread(target=self._drain_stderr, daemon=True).start()
         self._write_lock = threading.Lock()
         self._lock = threading.Lock()
