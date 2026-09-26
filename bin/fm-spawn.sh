@@ -2038,9 +2038,9 @@ if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
       # --model and any relaunch resolve on the task's own lane, so one task's
       # refusals never cool down another task's chain head.
       case "$KIND/$RELAUNCH" in
-        secondmate/0) RESOLVE_LANE=$([ "$MODEL_SET" -eq 1 ] && printf secondmate-$ID || printf secondmate) ;;
+        secondmate/0) RESOLVE_LANE=$([ "$MODEL_SET" -eq 1 ] && printf 'secondmate-%s' "$ID" || printf secondmate) ;;
         secondmate/1) RESOLVE_LANE=secondmate-$ID ;;
-        */0)          RESOLVE_LANE=$([ "$MODEL_SET" -eq 1 ] && printf crew-$ID || printf crew) ;;
+        */0)          RESOLVE_LANE=$([ "$MODEL_SET" -eq 1 ] && printf 'crew-%s' "$ID" || printf crew) ;;
         */1)          RESOLVE_LANE=crew-$ID ;;
       esac
       RESOLVED=$(fm_model_chain_resolve_for_launch "$RESOLVE_LANE" \
