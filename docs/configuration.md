@@ -1069,6 +1069,7 @@ The voice handover depends on `note`, so it keeps working in a home that has con
 | `config/voice-id` | `FM_VOICE_ID` | Output voice id, optional, `matthew` when unset. |
 | `config/voice-read-scope` | none | `counts` (the default, and what an absent file means) or `full`; see [`docs/voice-relay.md`](voice-relay.md) for what each scope may say. |
 | `config/voice-read-deny` | none | One plain case-insensitive substring per line; a matching open item is withheld from every list and reduced to a count. |
+| `config/voice-hud-decoder` | `FM_VOICE_HUD_DECODER` | The spoken HUD's local wake-word decoder command, run through the shell; absent means gate-only and the HUD never wakes; see [`docs/voice-relay.md`](voice-relay.md) for the HUD and its decoder contract. |
 | `config/inbox-region` | `FM_INBOX_REGION` | AWS region for `fm-inbox.sh say` and `ask`. |
 | `config/inbox-stt-model` | `FM_INBOX_STT_MODEL` | Speech-to-text model id, required by `fm-inbox.sh say`. |
 | `config/inbox-ask-model` | `FM_INBOX_ASK_MODEL` | Side-question model id, required by `fm-inbox.sh ask`. |

@@ -1170,6 +1170,18 @@ class HybridSession(Session):
 
     persistent = True
 
+    # Bounded ladder for a refused local-engine open. The engine serves one
+    # pipeline slot, and a fresh connect issued while the previous session is
+    # still unregistering is rejected outright ("Rejected connection: all 1
+    # pipeline slots in use") - the fast-retry race that ate a whole wake.
+    # One immediate attempt loses that race every time; waiting the ladder
+    # out is the queued reconnect from this side of the engine.
+    retry_delays = (0.5, 1.0, 2.0)
+
+    # Seconds the post-turn send-path check waits for its pong. Idle link,
+    # one frame each way: anything slower is a dead path, not a slow one.
+    link_verify_timeout = 5.0
+
     async def start(self):
         self.connect_seconds = 0
         self.timeout_task = None
@@ -1178,13 +1190,7 @@ class HybridSession(Session):
         try:
             # Optional: installed by the speech stack in its own virtualenv.
             # Bedrock-only homes never import it or any local model dependency.
-            from websockets.asyncio.client import connect
-            self.stream = await connect(self.options.local_url, open_timeout=10,
-                                        close_timeout=2, max_size=4 * 1024 * 1024,
-                                        proxy=None)
-            event = json.loads(await asyncio.wait_for(self.stream.recv(), 10))
-            if event.get("type") != "session.created":
-                raise RuntimeError("local engine did not create a session")
+            await self._open_stream()
             tools = []
             for entry in TOOLS["tools"]:
                 spec = entry["toolSpec"]
@@ -1212,6 +1218,63 @@ class HybridSession(Session):
 
     async def _send(self, obj):
         await asyncio.wait_for(self.stream.send(json.dumps(obj)), 10)
+
+    async def _open_stream(self):
+        """Connect to the local engine, retrying a refused open on the ladder.
+
+        The one-slot engine rejects a connect issued while the previous
+        session is still unregistering, so a single immediate attempt loses
+        the race every time. Each failed attempt closes whatever it opened
+        before the next one starts: this side never keeps holding the slot
+        its own retry needs (release before accept), and the ladder gives
+        the engine's unregister time to land instead of hammering it.
+        """
+        from websockets.asyncio.client import connect
+        last = None
+        for delay in (0.0,) + tuple(self.retry_delays):
+            if delay:
+                await asyncio.sleep(delay)
+            stream = None
+            try:
+                stream = await connect(self.options.local_url, open_timeout=10,
+                                       close_timeout=2, max_size=4 * 1024 * 1024,
+                                       proxy=None)
+                event = json.loads(await asyncio.wait_for(stream.recv(), 10))
+                if event.get("type") != "session.created":
+                    raise RuntimeError("local engine did not create a session")
+                self.stream = stream
+                return
+            except Exception as exc:                   # noqa: BLE001
+                last = exc
+                if stream is not None:
+                    await asyncio.gather(stream.close(), return_exceptions=True)
+        raise RuntimeError(
+            "local engine refused {} open attempts: {}: {}".format(
+                1 + len(self.retry_delays), type(last).__name__, last))
+
+    async def _verify_send_path(self):
+        """Ping the engine right after a completed reply, while the link is idle.
+
+        A reply proves the downlink worked once; it says nothing about the
+        uplink the next wake depends on. A send path that cannot answer this
+        ping would swallow the next turn's audio behind a socket that still
+        looks open - a wake eaten in silence. So a failed check marks the
+        session failed here: the next TALK_START renews through the bounded
+        ladder before a single frame of the captain's speech is spent, and
+        the engine-link notice tells the panel instead of the panel watching
+        listening forever.
+        """
+        try:
+            await asyncio.wait_for(self.stream.ping(), self.link_verify_timeout)
+        except Exception as exc:                       # noqa: BLE001
+            self.failed = True
+            try:
+                await asyncio.gather(self.stream.close(), return_exceptions=True)
+            finally:
+                self.down.send_json(frame.NOTICE, {
+                    "event": "engine-link",
+                    "error": "local engine link failed verification: {}: {}".format(
+                        type(exc).__name__, exc)})
 
     async def talk_start(self):
         if self.failed:
@@ -1388,6 +1451,10 @@ class HybridSession(Session):
                         self._settle_gate(
                             ",".join(n for n in self.tool_names if n) or "answered")
                         self.turn_done.set()
+                        # Post-turn liveness: the completed reply proves the
+                        # downlink once; verify the uplink the next wake
+                        # needs before this turn's session is left to idle.
+                        await self._verify_send_path()
             if not self.closing and not self.failed:
                 raise RuntimeError("local engine connection ended")
         except Exception as exc:
@@ -1892,8 +1959,21 @@ def start_engine(options):
                XDG_CACHE_HOME=os.path.join(cache, "cache"),
                NLTK_DATA=os.path.join(cache, "nltk_data"))
     key = records.read_setting(options.home, "voice-gateway-key", "FM_VOICE_GATEWAY_KEY")
+    if key is None:
+        # Loud by default: a key that cannot be read from this launch context
+        # (a shell $(cat ...) in a wrapper, an unset env var under
+        # LaunchServices) used to fall through as the literal "none" and only
+        # surfaced later as an opaque gateway refusal mid-conversation. The
+        # key belongs on the engine side: this home's config/voice-gateway-key
+        # or FM_VOICE_GATEWAY_KEY. The literal "none" stays a deliberate,
+        # written-in opt-out for a gateway that authenticates nothing.
+        raise records.RecordError(
+            "voice gateway key unreachable: set config/voice-gateway-key "
+            "(or FM_VOICE_GATEWAY_KEY) in this home - refusing to start the "
+            "engine half-configured (write the literal 'none' only for a "
+            "gateway that needs no key)")
     # Explicitly avoid inheriting a key for some unrelated OpenAI account.
-    env["OPENAI_API_KEY"] = key or "none"
+    env["OPENAI_API_KEY"] = key
     argv = [command, "serve", "--host", url.hostname, "--port", str(url.port),
             "--stt", "parakeet-tdt", "--parakeet_tdt_device", "mps",
             "--llm_backend", "chat-completions", "--model_name", options.model,

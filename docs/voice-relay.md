@@ -6,6 +6,7 @@ real work it says so out loud and queues the request rather than pretending to
 do it.
 
 This is a push-to-talk spoken round trip.
+Two fronts reach the same relay: the laptop's push-to-talk client over SSH, and the spoken HUD, a wake-word overlay on the Mac itself ([The spoken HUD on the Mac](#the-spoken-hud-on-the-mac)).
 The default Bedrock engine starts a fresh model session for every question, while the optional hybrid engine keeps conversational context as long as its local Realtime session remains healthy.
 Interrupting the agent mid-sentence remains unsupported, and [what this build does not do](#what-this-build-does-not-do) is explicit about the boundary.
 
@@ -27,6 +28,10 @@ speaker    <---------------------------------------------------      or local sp
 The two ends share one bidirectional byte stream over an SSH exec channel, so
 audio and control travel together and need framing. `bin/fm_voice_frame.py` is
 the owner of that format and is the only file both machines run.
+The spoken HUD replaces the laptop half with an always-on overlay on the same
+Mac: the microphone stays local behind the wake word, and the relay runs as a
+child of the HUD speaking that same wire, so the SSH hop is the only part of
+this picture it omits.
 
 The relay reads records and queues work. It never changes a project, and the
 queueing half is `bin/fm-inbox.sh note`, the same surface the captain's own
@@ -269,6 +274,55 @@ If the audio devices are not the ones you want, `--input-device` and `--output-d
 Neither the client nor this guide can yet tell you which device it resolved, so an unexpected device is diagnosed by trying the other name or index rather than by reading a log line.
 If it fails before any audio, add `--verbose` and look for the handshake: a chatty login shell on the desktop printing to stdout is the one failure that looks like a protocol error and is not.
 
+## The spoken HUD on the Mac
+
+The HUD is the spoken interface with the laptop half replaced by an overlay that
+is always on the screen: a borderless, always-on-top panel on every space that
+you drag anywhere, with no Dock icon and no focus stealing.
+While it listens the microphone stays local: a cheap energy gate and a local
+wake-word decoder decide that you said the wake word "Ziggy", and only then does
+a turn's audio cross into the relay child spawned on the same machine.
+The relay is unchanged behind it: the engine configuration above still decides
+Bedrock or hybrid, the same reading rules govern what an answer may say, and
+real work still queues through `fm-inbox.sh note`.
+
+Setup beyond the relay's own configuration is one dependency, one file and one
+command:
+
+- The bridge needs `sounddevice` in the `python3` on your path, exactly as the
+  laptop client does: `python3 -m pip install sounddevice`, with PortAudio from
+  `brew install portaudio` on macOS.
+- Write the local decoder command to `config/voice-hud-decoder`, or set
+  `FM_VOICE_HUD_DECODER` for one run: a command that reads 16 kHz mono 16-bit
+  PCM blocks on stdin and writes one final transcript line per utterance to
+  stdout, emitted only once the utterance's trailing silence has ended it.
+  `hud/fm_voice_mic.py`'s header owns that contract in full; without a decoder
+  the HUD is gate-only, hearing speech and never waking.
+  The live check drove `faster-whisper` at `base.en` on CPU
+  (`python3 -m pip install numpy faster-whisper`).
+- From the repo root, run `swift run --package-path hud/swift`: the panel hands
+  its working directory to the bridge as the repo root, so launch it from the
+  firstmate home you configured.
+  The first launch raises macOS's own microphone prompt, and the panel always
+  shows a live microphone level; a denied or silent microphone is a loud red
+  face with a button into System Settings, never a silent "listening".
+
+Say the wake word, pause briefly, then the command.
+The decoder finalizes each utterance only on its trailing silence, so the wake
+arms as your command's first speech arrives: the wake word needs its own
+utterance, and a wake word spoken in one breath with the command is heard as
+one utterance that never wakes the HUD.
+A wake into silence is named on the panel (`no-speech`, with the pause-then-command
+coaching) and re-arms without opening a turn, so it costs no model turn.
+Speech during an open turn belongs to the turn alone and can never arm a stale
+wake, and a failed or timed-out turn is named on the panel with its reason.
+
+The GUI panel and the physical microphone live on the captain's Mac: the
+offline checks drive the wiring, the wake gate, the engine and the panel's own
+state machine, and the opt-in live checks (`FM_VOICE_HUD_LIVE=1`) prove the
+real capture end and the live wake loop (`tests/fm-voice-hud-live-e2e.test.sh`,
+`tests/fm-voice-hud-live-wake.test.sh`).
+
 ## What it may read
 
 An unconfigured home gets the narrow scope: counts of what is in flight, what is waiting on the captain and what is open for review, with no identifier, title or link assembled at all.
@@ -390,6 +444,9 @@ sending every row.
 | The relay, the model session, the tools | `bin/fm-voice-relay.py` |
 | The hybrid engine's fast routing layer | `bin/fm_voice_gate.py` |
 | The laptop end, capture and playback | `bin/fm-voice-client.py` |
+| The spoken HUD's overlay panel | `hud/swift/Sources/VoiceHUD/` |
+| The spoken HUD's Python half: bridge, wake gate, mic, engine wiring, reply player | `hud/` |
+| The HUD as an executable check | `tests/fm-voice-hud.test.sh` |
 | What may be read, and queueing real work | `bin/fm_voice_records.py` |
 | The queue the handover writes to | `bin/fm-inbox.sh` |
 | The boundary as an executable check | `tests/fm-voice-relay.test.sh` |
