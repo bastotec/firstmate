@@ -91,7 +91,9 @@ def main():
     if not arg_after("--mic-file") and os.environ.get("FM_VOICE_HUD_AEC", "1") != "0" \
             and os.path.isfile(aec_mod.helper_path()):
         try:
-            voice_io = aec_mod.VoiceIO(gain=gain, on_silent=lambda: emit({
+            voice_io = aec_mod.VoiceIO(gain=gain, on_mic_mode=lambda mode: emit({
+                "type": "notice", "event": "mic-mode", "error": mode}),
+                on_silent=lambda: emit({
                 "type": "notice", "event": "mic-denied",
                 "error": "the microphone delivers digital silence - "
                          "check microphone permission for this app"}))

@@ -217,6 +217,25 @@ check(AudioUnitInitialize(unit), "AudioUnitInitialize")
 check(AudioOutputUnitStart(unit), "AudioOutputUnitStart")
 FileHandle.standardError.write("VoiceAudio ready aec=\(aec)\n".data(using: .utf8)!)
 
+// The system microphone mode (Control Center > Mic Mode: standard, voice
+// isolation, wide spectrum). Apps can read it, not set it; the panel asks the
+// captain once to pick Voice Isolation. Reported at start and on every change.
+func micModeName(_ mode: AVCaptureDevice.MicrophoneMode) -> String {
+    switch mode {
+    case .voiceIsolation: return "voiceIsolation"
+    case .wideSpectrum: return "wideSpectrum"
+    default: return "standard"
+    }
+}
+var lastMicMode = ""
+Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
+    let now = micModeName(AVCaptureDevice.activeMicrophoneMode)
+    if now != lastMicMode {
+        lastMicMode = now
+        FileHandle.standardError.write("micmode \(now) preferred \(micModeName(AVCaptureDevice.preferredMicrophoneMode))\n".data(using: .utf8)!)
+    }
+}.fire()
+
 // ------------------------------------------------------------------ stdin
 
 let replyIn = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: true)!
@@ -290,4 +309,4 @@ Thread.detachNewThread {
     exit(0)
 }
 
-dispatchMain()
+RunLoop.main.run()

@@ -39,11 +39,13 @@ def helper_path():
 
 
 class VoiceIO:
-    def __init__(self, helper=None, gain=speaker_mod.OUT_GAIN, on_silent=None):
+    def __init__(self, helper=None, gain=speaker_mod.OUT_GAIN, on_silent=None,
+                 on_mic_mode=None):
         helper = helper or helper_path()
         if not os.path.isfile(helper):
             raise FileNotFoundError(helper)
         self.gain = gain
+        self._on_mic_mode = on_mic_mode
         self._proc = subprocess.Popen(
             [helper], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
@@ -76,8 +78,11 @@ class VoiceIO:
     # ------------------------------------------------------------ microphone
 
     def _drain_stderr(self):
-        for _ in iter(self._proc.stderr.readline, b""):
-            pass
+        # "micmode <active> preferred <preferred>": the system Mic Mode.
+        for line in iter(self._proc.stderr.readline, b""):
+            parts = line.decode(errors="replace").split()
+            if len(parts) >= 2 and parts[0] == "micmode" and self._on_mic_mode is not None:
+                self._on_mic_mode(parts[1])
 
     def _read_mic(self):
         zero_run, notified = 0, False

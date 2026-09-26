@@ -251,6 +251,9 @@ final class CritterMenu: NSObject, NSMenuDelegate {
         super.init()
         muteItem.target = self
         menu.addItem(muteItem)
+        let micMode = NSMenuItem(title: "Microphone mode…", action: #selector(CritterMenu.micMode), keyEquivalent: "")
+        micMode.target = self
+        menu.addItem(micMode)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Ziggy", action: #selector(CritterMenu.quit), keyEquivalent: "q")
         quit.target = self
@@ -262,6 +265,8 @@ final class CritterMenu: NSObject, NSMenuDelegate {
     }
     @objc func mute() { muteToggler.toggle(muteButton); render() }
     @objc func quit() { NSApp.terminate(nil) }
+    /// macOS lets an app show the Mic Mode picker, never set the mode itself.
+    @objc func micMode() { AVCaptureDevice.showSystemUserInterface(.microphoneModes) }
 }
 let critterMenu = CritterMenu()
 muteButton.bezelStyle = .rounded
@@ -557,6 +562,16 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                     model.applyState("listening")
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "that turn got no reply - ask again"))
+                case "mic-mode":
+                    // Voice Isolation keeps only the nearest voice. Apps can't
+                    // set it, so ask once; macOS remembers the choice per app.
+                    let asked = UserDefaults.standard.bool(forKey: "askedMicMode")
+                    if error != "voiceIsolation" && !asked {
+                        UserDefaults.standard.set(true, forKey: "askedMicMode")
+                        AVCaptureDevice.showSystemUserInterface(.microphoneModes)
+                        model.transcriptLine(TranscriptLine(
+                            role: .assistant, text: "pick Voice Isolation for Ziggy"))
+                    }
                 case "output-unavailable":
                     model.transcriptLine(TranscriptLine(
                         role: .assistant, text: "no output device - replies are text only"))
