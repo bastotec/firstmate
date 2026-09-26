@@ -116,6 +116,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -170,19 +171,21 @@ SYSTEM_PROMPT = (
     "answer repeated from memory is a stale answer given confidently, which is "
     "worse than a slow one.\n"
     "\n"
-    "When the captain asks for actual work, anything that would change code, "
-    "open a pull request, investigate a bug, or start a job, you do not do it "
-    "and you do not pretend to. Say out loud that you are handing it to the "
-    "first mate, then call hand_over_to_firstmate with the captain's request in "
-    "their own words. Then confirm it is queued. Never say you have done, "
-    "started, fixed or built anything yourself.\n"
+    "You are a full agent on the captain's Mac. When they ask you to do "
+    "something, do it yourself with your tools: run_command for any shell "
+    "work (files, git, brew, scripts, apps), mac_control to see and operate "
+    "apps on screen. The captain decides what gets done; do what they ask. "
+    "Say briefly what you are about to do, then do it and report what "
+    "happened - never claim something you did not verify. Hand a job to the "
+    "first mate with hand_over_to_firstmate only when it is long-running "
+    "project work (a feature, a pull request, a multi-hour task) or the "
+    "captain asks for that.\n"
     "\n"
     "Speak in one or two short sentences. You are being listened to, not read.\n"
     "\n"
-    "You have quick tools of your own: get_time for the date and time, and "
-    "run_command for read-only checks on this Mac (disk, uptime, files, git "
-    "status). Use them first for anything simple; never ask the first mate for "
-    "the time or for something a quick command can show.\n"
+    "You also have get_time for the date and time. Use your own tools first "
+    "for anything you can do or check yourself; never ask the first mate for "
+    "the time or for something a command can show.\n"
     "\n"
     "Questions about you yourself - what you can do, see, access or remember, "
     "how you work - are yours to answer directly; never ask the first mate "
@@ -278,17 +281,34 @@ TIME_TOOL = {"toolSpec": {
 SHELL_TOOL = {"toolSpec": {
     "name": "run_command",
     "description": (
-        "Run one READ-ONLY command on this Mac and get its output, for quick "
-        "checks: date, cal, uptime, df -h, du -sh, ls, pwd, cat, head, tail, wc, "
-        "grep, find, ps, sw_vers, pmset -g batt, hostname, whoami, and git "
-        "status/log/diff/branch/show. No pipes, redirects or anything that "
-        "changes files; those are refused. The working directory is the first "
-        "mate's home."),
+        "Run a bash command line on the captain's Mac and get its output "
+        "(the last 4000 characters). Pipes, redirects, writes, git, brew, "
+        "open, osascript, anything - up to 120 seconds. The working directory "
+        "is the first mate's home. Secrets and credential files are refused."),
     "inputSchema": {"json": json.dumps({
         "type": "object",
         "properties": {"command": {"type": "string",
-                                   "description": "One command line, e.g. \"df -h /\"."}},
+                                   "description": "A bash command line, e.g. \"df -h / | tail -1\"."}},
         "required": ["command"],
+    })},
+}}
+MAC_TOOL = {"toolSpec": {
+    "name": "mac_control",
+    "description": (
+        "Control the captain's Mac with a short macos-harness Python program "
+        "(the `mac` object is preloaded). mac.see(app) takes a window screenshot "
+        "- its text comes back as screen_text, read on the Mac; mac.key(\"cmd+k\", "
+        "app=app), mac.type(text, app=app), mac.click(x, y, app=app) with "
+        "coordinates from the latest mac.see; mac.ax.query(...)/mac.ax.at(x, y, "
+        "app=app) and mac.ax.perform(index, \"AXPress\") for accessibility; "
+        "mac.script('tell application ...') for AppleScript. Input goes to an "
+        "already running app by PID without stealing focus. Bundle the steps of "
+        "one decision into one program, print what you need, verify once."),
+    "inputSchema": {"json": json.dumps({
+        "type": "object",
+        "properties": {"program": {"type": "string",
+                                   "description": "Python for macos-harness, e.g. print(mac.see(\"Spotify\"))."}},
+        "required": ["program"],
     })},
 }}
 TRANSCRIPT_TOOL = {"toolSpec": {
@@ -309,12 +329,8 @@ TRANSCRIPT_TOOL = {"toolSpec": {
         "required": ["mode"],
     })},
 }}
-HYBRID_TOOLS = [ASK_TOOL, TIME_TOOL, SHELL_TOOL, TRANSCRIPT_TOOL]
+HYBRID_TOOLS = [ASK_TOOL, TIME_TOOL, SHELL_TOOL, MAC_TOOL, TRANSCRIPT_TOOL]
 
-READ_ONLY_COMMANDS = {"date", "cal", "uptime", "df", "du", "ls", "pwd", "cat",
-                      "head", "tail", "wc", "grep", "find", "ps", "sw_vers",
-                      "pmset", "hostname", "whoami", "which", "file", "stat"}
-READ_ONLY_GIT = {"status", "log", "diff", "branch", "show", "remote", "rev-parse"}
 # Files and folders run_command never reads: secrets and credentials.
 NEVER_READ = [os.path.expanduser(p) for p in (
     "~/.secrets", "~/.ssh", "~/.aws", "~/.gnupg", "~/.netrc", "~/.config/gh",
@@ -322,47 +338,70 @@ NEVER_READ = [os.path.expanduser(p) for p in (
     "~/.local/share/cli-proxy-native", "~/.config/cli-proxy-native",
 )]
 NEVER_READ_IN_HOME = ("config/voice-gateway-key", "config/wake-gate-key-var")
-SHELL_METACHARACTERS = set(";|&<>`$\\\n")
+COMMAND_TIMEOUT = 120
 
 
-def run_read_only(command, cwd):
-    """Run one allowlisted read-only command without a shell; refuse the rest."""
-    import shlex
+def off_limits(text, cwd):
+    """The secrets list: a command or program naming one of these files or
+    folders is refused. Best effort - it reads the text, not what runs."""
+    denied = NEVER_READ + [os.path.join(cwd, p) for p in NEVER_READ_IN_HOME]
+    home = os.path.expanduser("~")
+    for deny in denied:
+        forms = {deny, deny.replace(home, "~", 1), deny.replace(home, "$HOME", 1)}
+        if deny.startswith(cwd + os.sep):
+            forms.add(os.path.relpath(deny, cwd))
+        if any(form in text for form in forms):
+            return True
+    return False
+
+
+def run_command(command, cwd):
+    """Run a shell command line for the captain: pipes, writes, anything but
+    the secrets list. Bounded in time; the output tail goes back to the model."""
     text = (command or "").strip()
-    if not text or any(ch in SHELL_METACHARACTERS for ch in text):
-        return {"refused": "only single read-only commands, no pipes or redirects; "
-                           "ask the first mate for anything else"}
+    if not text:
+        return {"error": "no command"}
+    if off_limits(text, cwd):
+        return {"refused": "that file is off limits to voice"}
     try:
-        argv = shlex.split(text)
-    except ValueError as exc:
-        return {"refused": "could not parse the command: {}".format(exc)}
-    # No shell runs this, so "~" is expanded here.
-    argv = [argv[0]] + [os.path.expanduser(a) for a in argv[1:]]
-    name = argv[0]
-    if name == "git":
-        if len(argv) < 2 or argv[1] not in READ_ONLY_GIT:
-            return {"refused": "git is limited to status, log, diff, branch, show, remote"}
-    elif name not in READ_ONLY_COMMANDS:
-        return {"refused": "{} is not on the read-only list; ask the first mate".format(name)}
-    if name == "find" and any(a in ("-delete", "-exec", "-execdir", "-ok") for a in argv):
-        return {"refused": "find may only list files here"}
-    # Output goes to the cloud voice model: never these files or folders.
-    for arg in argv[1:]:
-        if arg.startswith("-"):
-            continue
-        path = os.path.realpath(os.path.join(cwd, os.path.expanduser(arg)))
-        denied = NEVER_READ + [os.path.realpath(os.path.join(cwd, p)) for p in NEVER_READ_IN_HOME]
-        if any(path == deny or path.startswith(deny + os.sep) for deny in denied):
-            return {"refused": "that file is off limits to voice"}
-    try:
-        done = subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, timeout=8)
-    except FileNotFoundError:
-        return {"error": "{} is not installed".format(name)}
+        done = subprocess.run(["/bin/bash", "-c", text], cwd=cwd, capture_output=True,
+                              text=True, stdin=subprocess.DEVNULL, timeout=COMMAND_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return {"error": "the command took longer than 8 seconds"}
+        return {"error": "the command took longer than {} seconds".format(COMMAND_TIMEOUT)}
     out = (done.stdout or "") + (done.stderr or "")
-    return {"exit": done.returncode, "output": out[-2500:]}
+    return {"exit": done.returncode, "output": out[-4000:]}
+
+
+def mac_control(program, cwd):
+    """Run a macos-harness program (screenshots, keys, clicks, AX, AppleScript).
+    Every screenshot it takes is read back as text with on-device OCR, because
+    the voice model cannot take images."""
+    text = (program or "").strip()
+    if not text:
+        return {"error": "no program"}
+    if off_limits(text, cwd):
+        return {"refused": "that file is off limits to voice"}
+    harness = shutil.which("macos-harness") or os.path.expanduser("~/.local/bin/macos-harness")
+    try:
+        done = subprocess.run([harness], input=text, cwd=cwd, capture_output=True,
+                              text=True, timeout=COMMAND_TIMEOUT)
+    except FileNotFoundError:
+        return {"error": "macos-harness is not installed"}
+    except subprocess.TimeoutExpired:
+        return {"error": "the program took longer than {} seconds".format(COMMAND_TIMEOUT)}
+    out = (done.stdout or "") + (done.stderr or "")
+    result = {"exit": done.returncode, "output": out[-4000:]}
+    shots = list(dict.fromkeys(re.findall(r"/[^\s'\"]*macos-harness-[^\s'\"]*\.png", out)))[-2:]
+    ocr = os.environ.get("FM_VOICE_SCREEN_TEXT") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "hud", "swift", ".build", "release", "ScreenText")
+    if shots and os.path.isfile(ocr):
+        try:
+            seen = subprocess.run([ocr] + shots, capture_output=True, text=True, timeout=30)
+            result["screen_text"] = (seen.stdout or "")[:4000]
+        except subprocess.TimeoutExpired:
+            result["screen_text"] = "(reading the screenshot took too long)"
+    return result
 
 
 def log(enabled, message):
@@ -1059,7 +1098,10 @@ class Session:
                           "time_zone": time.strftime("%Z (UTC%z)", now)}
             elif name == "run_command":
                 result = await asyncio.to_thread(
-                    run_read_only, arguments.get("command", ""), self.home)
+                    run_command, arguments.get("command", ""), self.home)
+            elif name == "mac_control":
+                result = await asyncio.to_thread(
+                    mac_control, arguments.get("program", ""), self.home)
             elif name == "firstmate_transcript":
                 if arguments.get("mode") == "search":
                     result = await asyncio.to_thread(

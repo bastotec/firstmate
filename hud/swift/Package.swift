@@ -28,6 +28,8 @@ let package = Package(
         // The microphone and speaker in one voice-processing unit, for echo
         // cancellation; the Python bridge runs it as a child.
         .executableTarget(name: "VoiceAudio", path: "Sources/VoiceAudio"),
+        // On-device OCR of a screenshot, for Ziggy's mac_control tool.
+        .executableTarget(name: "ScreenText", path: "Sources/ScreenText"),
         .testTarget(name: "VoiceHUDTests", dependencies: ["VoiceHUD"],
                     path: "Tests/VoiceHUDTests"),
     ]
