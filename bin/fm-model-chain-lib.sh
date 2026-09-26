@@ -11,8 +11,8 @@
 # operator-facing format and the chain sources; the branch extension file
 # remains the origin of the idiom. The deliberate divergences are
 # shell-vs-TypeScript and the cooldowns living in durable home-local files
-# (state/model-chain-<lane>) instead of the branch's memory, so a refused
-# model is not retried immediately on the next launch.
+# (state/model-chain/<lane>.state) instead of the branch's memory, so a
+# refused model is not retried immediately on the next launch.
 #
 # The pure choice functions here print their results or one diagnostic line
 # and never mutate anything but their own cooldown state file; callers own

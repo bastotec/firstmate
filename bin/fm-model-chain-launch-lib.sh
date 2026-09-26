@@ -16,6 +16,7 @@
 # selected and which entries were skipped and why; an exhausted chain refuses
 # with that reason. The caller owns recording <lane> in the task's meta when
 # the surface it passed was chained.
+# shellcheck disable=SC2153  # STATE is the caller's state root; state is local
 fm_model_chain_resolve_for_launch() {  # <lane> <what> <model-surface>
   local lane=$1 what=$2 surface=$3 state chosen
   case "$surface" in
