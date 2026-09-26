@@ -179,6 +179,9 @@ esac
 
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
+# Model-chain parsing for TARGET_MODEL surfaces (relaunch/recover-missing).
+# shellcheck source=bin/fm-model-chain-lib.sh
+. "$SCRIPT_DIR/fm-model-chain-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never
 # drive a crewmate's lifecycle (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -192,6 +195,10 @@ fi
   exit 1
 }
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+# The launch-side chain resolver (fm_model_chain_resolve_for_launch) is owned
+# by the launch owner's lib and reads STATE, so it is sourced once STATE exists.
+# shellcheck source=bin/fm-model-chain-launch-lib.sh
+. "$SCRIPT_DIR/fm-model-chain-launch-lib.sh"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 [ -d "$STATE" ] || {
@@ -972,6 +979,24 @@ resolve_relaunch_profile() {
   if [ "$TARGET_HARNESS" = deck ] && [ "$TARGET_EFFORT" != default ]; then
     die "deck has no effort control; omit --effort or select a harness that supports it"
   fi
+  # A chained TARGET_MODEL (comma-separated labels, from an explicit --model or
+  # a re-resolved secondmate pin) resolves here, in the launch owner's own
+  # cooldown semantics, before the old agent is stopped: the relaunch
+  # transaction refuses on an exhausted chain with nothing touched. A single
+  # label is an exact pin and is returned untouched. The pre-flight answer
+  # gates and reports this transaction, while the ORIGINAL surface is what
+  # fm-spawn --relaunch receives: the launch owner resolves at launch time and
+  # records the lane itself, so the cooldown decision it acts on is its own.
+  TARGET_MODEL_SURFACE=
+  case "$TARGET_MODEL" in
+    ''|default) ;;
+    *)
+      RESOLVE_LANE=$([ "$KIND" = secondmate ] && printf secondmate || printf crew)-$ID
+      RESOLVED=$(fm_model_chain_resolve_for_launch "$RESOLVE_LANE" "$VERB" "$TARGET_MODEL") || return 1
+      TARGET_MODEL_SURFACE=$TARGET_MODEL
+      TARGET_MODEL=$RESOLVED
+      ;;
+  esac
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
   fi
@@ -1149,7 +1174,15 @@ do_relaunch() {
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
   journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
-  [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
+  # A chained surface was only pre-flighted above: the ORIGINAL chain is what
+  # the launch owner resolves and records the lane for, so its cooldown
+  # decision is made at launch time, not at pre-flight time. A single label
+  # (an exact pin, or a chain pre-flight that already picked one) passes
+  # through unchanged, and an exact pin never resolves through a lane.
+  case "$TARGET_MODEL_SURFACE" in
+    '') [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL") ;;
+    *)  spawn_args+=(--model "$TARGET_MODEL_SURFACE") ;;
+  esac
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
   if [ -n "$TARGET_ACCOUNT_SLOT" ]; then
     spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
@@ -1271,7 +1304,15 @@ do_recover_missing() {
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
   journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
-  [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
+  # A chained surface was only pre-flighted above: the ORIGINAL chain is what
+  # the launch owner resolves and records the lane for, so its cooldown
+  # decision is made at launch time, not at pre-flight time. A single label
+  # (an exact pin, or a chain pre-flight that already picked one) passes
+  # through unchanged, and an exact pin never resolves through a lane.
+  case "$TARGET_MODEL_SURFACE" in
+    '') [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL") ;;
+    *)  spawn_args+=(--model "$TARGET_MODEL_SURFACE") ;;
+  esac
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
   # A recovery continues the recorded runtime, and the account slot is part of
   # it: without this the replacement worker would come back on the ambient

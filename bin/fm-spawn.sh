@@ -50,7 +50,10 @@
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
-#   axes chosen by firstmate at intake. They are only threaded into harnesses whose
+#   axes chosen by firstmate at intake. --model may be a fallback chain
+#   (comma-separated <provider>/<model-id> labels; docs/configuration.md "Model
+#   fallback chains"); a single label stays an exact pin. They are only threaded
+#   into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed. Ultra is the explicit
 #   exception: bin/fm-harness.sh validate-native-effort owns its model scope;
@@ -498,12 +501,21 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-account-slot-lib.sh
 . "$SCRIPT_DIR/fm-account-slot-lib.sh"
+# Spawn-side model fallback chain (parsing, cooldowns, selection); used only
+# when the resolved model surface actually carries a chain.
+# shellcheck source=bin/fm-model-chain-lib.sh
+. "$SCRIPT_DIR/fm-model-chain-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
 # Skip the watcher guard when re-exec'd for one pair of a batch (FM_SPAWN_NO_GUARD is
 # set by the batch loop below), so the guard runs once for the batch, not once per pair.
 [ -n "${FM_SPAWN_NO_GUARD:-}" ] || "$FM_ROOT/bin/fm-guard.sh" || true
+# Model-chain lanes: a comma-separated model surface ("a/b,c/d") is a fallback
+# chain; the lane's cooldowns live under state/model-chain/<lane>.state. A bare
+# --model pin uses the task id, so an explicit captain pin can never silently
+# ride a lane another task's refusals put into cooldown.
+MODEL_CHAIN_LANE=
 KIND=ship
 KIND_SET=0
 HARNESS_ARG=
@@ -707,6 +719,28 @@ spawn_remote_secondmate() {
       [ -n "$effort" ] || effort=-
     fi
   fi
+  # The remote spawn publishes its own record and returns before fm-spawn's
+  # main chain-resolution block, so the remote secondmate surface resolves
+  # here, under the same lanes and cooldown semantics (a default-resolved
+  # surface shares the secondmate lane; anything explicit uses the task lane).
+  # A chain whose every label is in cooldown refuses with nothing launched.
+  case "$model" in
+    -|''|default) ;;
+    *)
+      if [ "$MODEL_SET" -eq 0 ] && [ -z "$HARNESS_ARG" ] && [ -z "$positional" ]; then
+        RESOLVE_LANE=secondmate
+      else
+        RESOLVE_LANE=secondmate-$id
+      fi
+      RESOLVED=$(fm_model_chain_resolve_for_launch "$RESOLVE_LANE" "remote-secondmate spawn" "$model") || {
+        fm_lock_release "$registry_lock" || true
+        fm_lock_release "$SPAWN_TASK_LOCK" || true
+        return 1
+      }
+      model=$RESOLVED
+      MODEL_CHAIN_LANE=$RESOLVE_LANE
+      ;;
+  esac
   # A remote second mate always runs on Herdr: its server belongs to the host's
   # own GUI login session, so the endpoint outlives every SSH connection that
   # supervises it. bin/fm-remote-doctor.sh gates that host on the same
@@ -1952,6 +1986,19 @@ case "$HARNESS" in
     ;;
 esac
 
+# Spawn-side model fallback chains. A model surface holding one
+# "<provider>/<model-id>" label is an exact pin, byte-identical to the
+# pre-chain behavior. A comma-separated list of labels is a fallback chain in
+# preference order: one lane's cooldown state (state/model-chain/<lane>.state)
+# records which labels recent launches could not run, so this launch resolves
+# to the first ready label, each skipped label is disclosed on stderr, and an
+# exhausted chain refuses the launch rather than substituting an out-of-chain
+# model. The launch resolver shared with fm-control.sh's relaunch and
+# recover-missing paths lives in fm-model-chain-launch-lib.sh, sourced below
+# beside the parser.
+# shellcheck source=bin/fm-model-chain-launch-lib.sh
+. "$SCRIPT_DIR/fm-model-chain-launch-lib.sh"
+
 # config/secondmate-harness may carry optional model/effort tokens alongside the
 # harness ("<harness> [<model>] [<effort>]"). They apply only when this is a
 # --secondmate spawn and no explicit per-spawn harness/raw launch was supplied, so
@@ -1973,6 +2020,39 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
     fi
   fi
 fi
+# Resolve a fallback chain in the fully merged model surface (explicit --model,
+# a config/secondmate-harness pin, or a dispatch-profile model), so every model
+# source accepts chains exactly once, before any per-harness validation sees
+# it. A single-label surface is returned untouched: an exact pin never
+# resolves through a lane, never consults cooldowns, and never falls through.
+# A chained surface resolves through the lane's durable cooldown state, and a
+# chain whose every label is in cooldown refuses the spawn here, before any
+# worktree is provisioned or agent started.
+if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
+  case "$MODEL" in
+    *,*)
+      # Lane contract (docs/configuration.md "Model fallback chains"): the
+      # secondmate-harness pin shares the secondmate lane so one launch's
+      # refusal cools that model for the next default-resolved secondmate
+      # launch; every crew-side chain reaches fm-spawn as an explicit --model
+      # (a dispatch-profile chain rides --model unchanged), and any relaunch
+      # resolves on the task's own lane, so one task's refusals never cool
+      # down another task's chain head.
+      case "$KIND/$RELAUNCH" in
+        secondmate/0) RESOLVE_LANE=$([ "$MODEL_SET" -eq 1 ] && printf 'secondmate-%s' "$ID" || printf secondmate) ;;
+        secondmate/*) RESOLVE_LANE=secondmate-$ID ;;
+        *)            RESOLVE_LANE=crew-$ID ;;
+      esac
+      RESOLVED=$(fm_model_chain_resolve_for_launch "$RESOLVE_LANE" \
+        "$([ "$RELAUNCH" -eq 1 ] && printf relaunch || printf spawn)" "$MODEL") || exit 1
+      MODEL=$RESOLVED
+      MODEL_CHAIN_LANE=$RESOLVE_LANE
+      ;;
+  esac
+fi
+# An exact single-label pin never touches a lane, so it records no lane either;
+# only a chain that actually resolved names its lane for the refusal recorder.
+[ -n "${MODEL_CHAIN_LANE:-}" ] || MODEL_CHAIN_LANE=
 # Ultra is an explicit native capability, never a Pi thinking-level alias.
 # Validate the fully resolved profile before worktree or endpoint provisioning.
 if [ "$EFFORT" = ultra ]; then
@@ -4052,7 +4132,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort account_slot busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id stream_hub stream_endpoint_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort account_slot busy_gen spawn_gen model_chain_lane traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id stream_hub stream_endpoint_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -4105,6 +4185,10 @@ preserve_relaunch_meta() {
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
   fi
+  # Only a launch whose model actually resolved through a chain records its
+  # lane; an exact pin or bare default keeps the meta byte-identical to the
+  # pre-chain shape, and the refusal recorder falls back to the task lane.
+  [ -z "$MODEL_CHAIN_LANE" ] || echo "model_chain_lane=$MODEL_CHAIN_LANE"
   if [ "$RELAUNCH" -eq 1 ]; then
     preserve_relaunch_meta
   fi
