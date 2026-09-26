@@ -240,6 +240,30 @@ final class MuteToggler: NSObject {
 }
 let muteToggler = MuteToggler()
 let muteButton = NSButton(title: "mute", target: muteToggler, action: #selector(MuteToggler.toggle(_:)))
+
+// Right-click on the critter: mute and quit. Quitting goes through the app's
+// terminate path, which tells the bridge to quit (it closes the mic, the
+// speaker helper and the relay) before the panel exits.
+final class CritterMenu: NSObject, NSMenuDelegate {
+    let menu = NSMenu()
+    let muteItem = NSMenuItem(title: "Mute", action: #selector(CritterMenu.mute), keyEquivalent: "")
+    override init() {
+        super.init()
+        muteItem.target = self
+        menu.addItem(muteItem)
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: "Quit Ziggy", action: #selector(CritterMenu.quit), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+        menu.delegate = self
+    }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        muteItem.title = muteToggler.muted ? "Unmute" : "Mute"
+    }
+    @objc func mute() { muteToggler.toggle(muteButton); render() }
+    @objc func quit() { NSApp.terminate(nil) }
+}
+let critterMenu = CritterMenu()
 muteButton.bezelStyle = .rounded
 muteButton.controlSize = .small
 muteButton.font = .systemFont(ofSize: 11, weight: .medium)
@@ -268,6 +292,8 @@ dot.isHidden = true
 stateLabel.isHidden = true
 transcriptLabel.isHidden = true
 muteButton.alphaValue = 0
+critter.menu = critterMenu.menu
+container.menu = critterMenu.menu
 container.onHover = { inside in
     NSAnimationContext.runAnimationGroup { context in
         context.duration = 0.18
