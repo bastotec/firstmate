@@ -2343,3 +2343,44 @@ if not d.hear_over_reply(loud, 111):
 eng.release.set()
 PY
 pass "\"stand down\" holds while the reply is still being made; only the name reopens"
+
+# --- with the VAD, hum can't hold a turn open or reopen a conversation -----------
+python3 - "$ROOT" <<'PY' || fail "vad turn end"
+import os, struct, sys, threading
+sys.path.insert(0, os.path.join(sys.argv[1], "hud"))
+import fm_voice_mic as mic_mod
+import fm_voice_wake as wake_mod
+
+class Engine:
+    def __init__(self): self.ended = threading.Event()
+    def begin_turn(self, wake=False): pass
+    def feed(self, pcm): pass
+    def end_turn(self, timeout=None): self.ended.set()
+
+class Spotter:
+    fire = False
+    def feed(self, block): pass
+    def poll(self):
+        fired, Spotter.fire = Spotter.fire, False
+        return fired
+
+speech = struct.pack("<h", 12000) * (mic_mod.BLOCK // 2)
+hum = struct.pack("<h", 9000) * (mic_mod.BLOCK // 2)     # loud, but not speech
+fake_vad = lambda block: 0.9 if block == speech else 0.05
+eng = Engine()
+d = mic_mod.TurnDirector(eng, wake_mod.EnergyGate(), wake_mod.KeywordListener(),
+                         mic_mod.NullDecoder(), spotter=Spotter())
+d.vad = fake_vad
+Spotter.fire = True
+d.feed(speech, 100.0)
+for i in range(1, 6): d.feed(speech, 100 + i * 0.1)
+for i in range(6, 30): d.feed(hum, 100 + i * 0.1)        # the room hums on
+if not eng.ended.is_set():
+    sys.exit("vad turn end: loud hum held the turn open")
+if d.phase != d.FOLLOW_UP:
+    sys.exit("vad turn end: expected the conversation window, got " + d.phase)
+for i in range(30, 40): d.feed(hum, 100 + i * 0.1)
+if d.phase == d.IN_TURN:
+    sys.exit("vad turn end: hum reopened the conversation")
+PY
+pass "with the VAD, hum can't hold a turn open or reopen the conversation"

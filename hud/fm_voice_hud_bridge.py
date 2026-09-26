@@ -42,6 +42,7 @@ import fm_voice_engine as engine_mod      # noqa: E402
 import fm_voice_mic as mic_mod            # noqa: E402
 import fm_voice_speaker as speaker_mod    # noqa: E402
 import fm_voice_aec as aec_mod            # noqa: E402
+import fm_voice_vad as vad_mod            # noqa: E402
 import fm_voice_wake as wake_mod          # noqa: E402
 
 
@@ -302,6 +303,10 @@ def main():
     # Live, the mic keeps listening while the reply is made (so the captain
     # can cut in); offline checks keep the simpler blocking turn.
     director.async_reply = not mic_file
+    if not mic_file:
+        director.vad = vad_mod.load()
+        emit({"type": "notice", "event": "vad",
+              "error": "silero" if director.vad is not None else "energy gate only"})
     director.speech_interrupts = voice_io is not None
 
     # Optional passive collection (config/voice-hud-passive = "on"): every

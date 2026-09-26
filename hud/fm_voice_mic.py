@@ -92,6 +92,9 @@ OVER_VOICE_MIN_ENERGY = 4e6
 # (a noisy room, a stuck gate), the turn ends and Ziggy answers what it has.
 MAX_TURN_SECONDS = 30.0
 
+# Silero VAD probability at or above which a block counts as speech.
+VAD_SPEECH_PROB = 0.5
+
 
 class DecoderError(Exception):
     """The decoder child stopped taking audio, so the HUD can never wake."""
@@ -343,6 +346,11 @@ class TurnDirector:
         # its name does.
         self.async_reply = False
         self.speech_interrupts = False
+        # Optional Silero VAD (fm_voice_vad): when set, "is the captain
+        # speaking" is a speech classifier's call, not just loudness - hum,
+        # clicks and echo stop counting. Without it, the energy rules apply.
+        self.vad = None
+        self._last_speech = None
         self._barge_run = 0
         self._reply_token = None
         self._reply_result = None
@@ -475,7 +483,7 @@ class TurnDirector:
             if self._follow_until is None:
                 # First block after the reply: the window starts now.
                 self._follow_until = now + self.follow_up_seconds
-            speech = loud and wake_mod.block_energy(block) >= SPEECH_MIN_ENERGY
+            speech = loud and self._is_speech(block, SPEECH_MIN_ENERGY)
             self._loud_run = self._loud_run + 1 if speech else 0
             if spotted or self._loud_run >= FOLLOW_UP_MIN_LOUD_BLOCKS:
                 # The captain kept talking: the next turn, no wake word.
@@ -502,6 +510,19 @@ class TurnDirector:
         if self.phase == self.IN_TURN and self._wake_at is not None \
                 and now - self._wake_at > MAX_TURN_SECONDS:
             loud, channel, self._spoke_since_wake = False, False, True
+        if self.phase == self.IN_TURN and self.vad is not None:
+            # The turn ends on the VAD's silence, not the loudness gate's:
+            # hum after Ziggy spoke kept the gate open and the turn with it.
+            loud = self.vad(block) >= VAD_SPEECH_PROB
+            if self._last_speech is None or (
+                    self._wake_at is not None and self._last_speech < self._wake_at):
+                self._last_speech = self._wake_at     # a new turn starts in speech
+            if loud:
+                self._last_speech = now
+            channel = self._last_speech is not None and \
+                now - self._last_speech <= wake_mod.HANGOVER_SECONDS
+            if self._wake_at is not None and now - self._wake_at > MAX_TURN_SECONDS:
+                loud, channel, self._spoke_since_wake = False, False, True
         if self.phase == self.IN_TURN:
             if loud:
                 self.engine.feed(block)
@@ -562,6 +583,13 @@ class TurnDirector:
             raise exc
         self._after_reply()
 
+    def _is_speech(self, block, min_energy):
+        """Speech by the VAD (when present) and at least min_energy loud."""
+        energy = wake_mod.block_energy(block)
+        if energy < max(self.gate.floor, min_energy):
+            return False
+        return self.vad is None or self.vad(block) >= VAD_SPEECH_PROB
+
     def hear_over_reply(self, block, now, ziggy_out=0.0):
         """While Ziggy talks (or is making its reply), listen for the captain
         cutting in: its name always does; with speech_interrupts, so does
@@ -582,9 +610,8 @@ class TurnDirector:
         # not reopen a conversation the captain just closed.
         if not self.speech_interrupts or self._stand_down:
             return False
-        energy = wake_mod.block_energy(block)
         need = OVER_VOICE_MIN_ENERGY if ziggy_out > 0 else SPEECH_MIN_ENERGY
-        loud = energy >= max(self.gate.floor, need)
+        loud = self._is_speech(block, need)
         self._barge_run = self._barge_run + 1 if loud else 0
         return self._barge_run >= BARGE_IN_MIN_LOUD_BLOCKS
 
