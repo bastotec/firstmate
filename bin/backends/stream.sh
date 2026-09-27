@@ -507,7 +507,14 @@ fm_backend_stream_composer_capture() {  # <target> [expected-label] -> "<cursor-
   out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT/screen?format=ansi") || return 1
   cursor=$(printf '%s' "$out" | jq -r '.cursor_row // empty' 2>/dev/null)
   case "$cursor" in
-    ''|*[!0-9]*) cursor=0 ;;
+    ''|*[!0-9]*)
+      # No cursor row was reported. Anchoring the read at row 0 (the top of the
+      # screen) could never prove the composer, which is bottom-anchored: pass
+      # the missing cursor through as EMPTY so the shared classifier uses its
+      # cursorless bottom-most-shape selection, the same rule herdr, zellij,
+      # cmux, and orca use for every read.
+      cursor=
+      ;;
   esac
   screen=$(printf '%s' "$out" | jq -r '.screen // empty' 2>/dev/null)
   # The cursor row and the screen are packed as "<cursor>\n|<screen>". The bar

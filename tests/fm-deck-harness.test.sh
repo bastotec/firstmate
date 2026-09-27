@@ -352,6 +352,53 @@ test_driver_backstops_silent_and_failed_turns() {
   pass "fm-deck-worker: silent and failed turns gain status evidence before turn-end"
 }
 
+test_idle_interrupt_does_not_echo_fake_input() {
+  local dir="$TMP_ROOT/idle-interrupt" gen
+  make_fake_deck "$dir"
+  mkdir -p "$dir/state"
+  gen=$("$BUSY_EVENT" arm "$dir/state" t1)
+  python3 - "$ROOT" "$dir" "$gen" <<'PY' || fail "idle terminal control-echo regression failed"
+import importlib.util, os, pathlib, select, sys, termios, time
+root, directory, gen = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+spec = importlib.util.spec_from_file_location('stream_agent', root / 'bin/fm-stream-agent.py')
+agent = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(agent)
+env = dict(os.environ, FM_TEST_STATUS=str(directory/'state/t1.status'), FM_TEST_EXTERNAL='')
+p = agent.Pty(str(directory), [str(root/'bin/fm-deck-worker.sh'), '--id', 't1',
+    '--state', str(directory/'state'), '--gen', gen, '--deck', str(directory/'deck'),
+    '--', 'write-status'], 40, 200, env)
+def read_ready():
+    return p.read() if select.select([p.master_fd], [], [], .1)[0] else b''
+try:
+    output = b''
+    for _ in range(100):
+        output += read_ready()
+        if '❯ '.encode() in output: break
+        time.sleep(.1)
+    assert '❯ '.encode() in output, repr(output)
+    flags = termios.tcgetattr(p.master_fd)[3]
+    assert flags & termios.ISIG, 'Ctrl+C must still deliver SIGINT'
+    assert flags & termios.ECHO, 'ordinary typed input must remain visible'
+    assert not flags & termios.ECHOCTL, 'control-key echo would masquerade as pending input'
+    p.write(b'\x03')
+    echoed = b''.join(read_ready() for _ in range(10))
+    assert b'^C' not in echoed, repr(echoed)
+    assert p.alive(), 'idle interrupt stopped the driver'
+    p.write(b'visible partial input')
+    echoed = b''
+    for _ in range(50):
+        echoed += read_ready()
+        if b'visible partial input' in echoed: break
+        time.sleep(.1)
+    assert b'visible partial input' in echoed, repr(echoed)
+finally:
+    p.close('TERM')
+    p.close('KILL')
+    p.release()
+PY
+  pass "Deck idle Ctrl+C stays a signal, not fake input, while partial input remains visible"
+}
+
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
   local dir="$TMP_ROOT/interrupt" gen pid sleeper ready=0 pgid
   make_fake_deck "$dir"
@@ -1535,6 +1582,7 @@ PYTHON
 test_herdr_deck_recovery
 test_herdr_deck_recovery_spaced_paths
 test_herdr_deck_ring_rings_live_driver
+test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_survives_a_failed_turn
 test_secondmate_repeats_its_launch_brief_after_a_session_less_failure

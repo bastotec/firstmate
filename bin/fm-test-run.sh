@@ -302,7 +302,7 @@ family_for_basename() {
     fm-tool-update-check.test.sh|\
     fm-mail.test.sh|fm-mail-check.test.sh|\
     fm-wake-queue.test.sh|fm-watch-arm.test.sh|fm-watch-checkpoint.test.sh|fm-watch-recovery-loop.test.sh|\
-    fm-watch-triage.test.sh|fm-task-inbox.test.sh|\
+    fm-watch-triage.test.sh|fm-external-wait.test.sh|fm-task-inbox.test.sh|\
     fm-watcher-lock.test.sh|fm-inactive-reconcile.test.sh)
       printf '%s\n' watcher-wake-lock
       ;;
@@ -703,6 +703,7 @@ tests/fm-cursor-primary-live-e2e.test.sh 21
 tests/fm-cursor-primary.test.sh 54947
 tests/fm-daemon.test.sh 26870
 tests/fm-documentation-audiences.test.sh 732
+tests/fm-external-wait.test.sh 22000
 tests/fm-extension-binding.test.sh 7398
 tests/fm-fleet-snapshot-view.test.sh 8547
 tests/fm-fleet-sync.test.sh 37749
@@ -806,9 +807,14 @@ tests/fm-trace-context-spawn.test.sh 44702
 tests/fm-turnend-guard.test.sh 42565
 tests/fm-update.test.sh 5212
 tests/fm-vendor-auth-probe.test.sh 43316
+# Locally measured seed for the new voice gate suite (three runs, worst
+# ~14s on the dev host); refresh from CI timing artifacts per
+# docs/fm-test-portable-shards.md.
+tests/fm-voice-gate.test.sh 14137
 tests/fm-voice-relay.test.sh 28699
 tests/fm-voice-hud.test.sh 42841
 tests/fm-voice-hud-live-e2e.test.sh 1161
+tests/fm-voice-hud-live-wake.test.sh 1161
 tests/fm-voice-hud-panel.test.sh 12078
 tests/fm-wake-daemon-lifecycle-e2e.test.sh 7381
 tests/fm-wake-drain-open-decisions-cursor.test.sh 20629

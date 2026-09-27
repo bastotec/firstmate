@@ -603,6 +603,49 @@ test_sweep_never_acts_on_unverified_harness_dead_reading() {
   pass "sweep: an unverified harness blocks recovery with a concrete diagnostic"
 }
 
+# Being spawnable as a secondmate is not the same as being authorized for
+# session-start recovery: cursor hosts secondmates, but nothing verified its
+# dead-endpoint recovery, so the sweep must leave it untouched.
+test_sweep_never_acts_on_cursor_secondmate_dead_reading() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-cursor-harness)
+  add_sm_home "$w" sm1 firstmate:fm-sm1 cursor
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: recorded harness 'cursor' is unverified for recovery" \
+    "a cursor secondmate's dead endpoint must not become actionable: $out"
+  [ ! -s "$log" ] || fail "a cursor secondmate must never be killed or respawned by the sweep: $(cat "$log")"
+  pass "sweep: a cursor secondmate with a dead endpoint stays unverified and untouched"
+}
+
+# Deck hosts secondmates on the stream backend, so a dead Deck endpoint is
+# recovery-authorized: the sweep kills the endpoint it proved agent-free and
+# relaunches the mate on its recorded harness.
+test_sweep_recovers_confirmed_dead_deck_secondmate() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-deck)
+  printf 'deck\n' > "$w/home/config/secondmate-harness"
+  add_sm_home "$w" sm1 firstmate:fm-sm1 deck
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  fm_fake_exit0 "$fb" deck
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+
+  assert_not_contains "$out" "unverified for recovery" \
+    "a recorded deck secondmate should be verified for recovery: $out"
+  assert_not_contains "$out" "respawn failed" \
+    "a confirmed-dead deck secondmate should be relaunched: $out"
+  assert_contains "$(cat "$log")" "kill-window -t =firstmate:=fm-sm1" \
+    "the dead deck endpoint must be killed before respawn"
+  assert_contains "$(cat "$log")" "new-window" \
+    "a confirmed-dead deck secondmate should actually be relaunched"
+  pass "sweep: a confirmed-dead deck secondmate endpoint is killed and respawned"
+}
+
 test_sweep_converges_no_retouch_once_alive() {
   local w fb tmuxfb log out1 out2
   w=$(new_world sweep-idempotent)
@@ -675,6 +718,8 @@ test_sweep_never_acts_on_ambiguous_existing_process
 test_sweep_never_acts_on_transient_unreadability
 test_sweep_reports_missing_endpoint_relaunch_failure
 test_sweep_never_acts_on_unverified_harness_dead_reading
+test_sweep_never_acts_on_cursor_secondmate_dead_reading
+test_sweep_recovers_confirmed_dead_deck_secondmate
 test_sweep_converges_no_retouch_once_alive
 test_sweep_skipped_under_detect_only
 test_sweep_noop_with_no_secondmate_meta

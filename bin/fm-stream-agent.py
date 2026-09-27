@@ -92,6 +92,10 @@ def _become_session_leader() -> None:
     liveness signal supervision reads, and a child with no controlling terminal
     has none. subprocess has already dup'd the pty slave onto fd 0 by now.
     """
+    # A background launcher may ignore SIGINT. Shells preserve that disposition
+    # across exec and cannot install their own interrupt trap, so normalize it
+    # only in the new PTY child, never in the publishing agent or its parent.
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
     os.setsid()
     try:
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)

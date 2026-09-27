@@ -13,6 +13,13 @@
 #   - it is the semantic busy source for the task: turn start and turn end are
 #     written through bin/fm-busy-event.sh with source `deck-wrapper`, and each
 #     finished worker turn touches the task's turn-end notification file;
+#   - its `❯` prompt is the pane's composer, and it keeps that composer in the
+#     one shape the shared composer classifier (bin/fm-composer-lib.sh) proves
+#     empty: a bare prompt row under the cursor. A bare Enter and any input
+#     line carrying the Ctrl+U clear byte both repaint the prompt on a fresh
+#     line (the clear byte's line is discarded whole, so the control plane's
+#     verified Ctrl+U + Enter clear can never submit anything); an interrupt
+#     preserves buffered partial input exactly as typed;
 #   - Deck's own hooks are attached on every run: `post_tool_use` refreshes the
 #     task's progress marker, and `pre_complete` refuses to let a turn finish
 #     until the worker has appended a worker-status line during that turn;
@@ -113,7 +120,10 @@ mkfifo "$TURN_PIPE" || exit 1
 TTY_SETTINGS=''
 [ ! -t 0 ] || TTY_SETTINGS=$(stty -g 2>/dev/null || true)
 tty_busy() { [ -z "$TTY_SETTINGS" ] || stty icanon 2>/dev/null || true; }
-tty_ready() { [ -z "$TTY_SETTINGS" ] || stty -icanon min 1 time 0 2>/dev/null || true; }
+# Keep signal delivery and ordinary input echo enabled, but do not render
+# control-key furniture (^C) as if it were pending input on an idle prompt.
+# Unlike repainting, this leaves genuinely buffered partial input visible.
+tty_ready() { [ -z "$TTY_SETTINGS" ] || stty -icanon -echoctl min 1 time 0 2>/dev/null || true; }
 cleanup() {
   if [ -n "$TURN_PID" ]; then
     kill -TERM "$TURN_PID" 2>/dev/null || true
@@ -588,7 +598,24 @@ while :; do
     exit 0
   fi
   case "$line" in
-    '') continue ;;
+    *$'\025'*)
+      # The control plane's composer clear: an input line carrying the Ctrl+U
+      # clear byte is discarded WHOLE and the prompt is repainted on a fresh
+      # line. Discarding the whole line is what makes the verified clear
+      # sequence (bin/fm-control-lib.sh's fm_control_composer_clear_keys, Ctrl+U
+      # then Enter) submit-safe: even when unproven text was already echoed
+      # into the pane, the concatenated line can never become a turn, and the
+      # repaint is what turns the composer reading back into provably empty.
+      show_prompt=1
+      continue
+      ;;
+    '')
+      # A bare Enter submits nothing; repaint so the cursor never parks on a
+      # blank row below the prompt, which the shared composer classifier can
+      # only read as unproven.
+      show_prompt=1
+      continue
+      ;;
     /quit)
       record_busy_event idle session-end || exit 1
       exit 0

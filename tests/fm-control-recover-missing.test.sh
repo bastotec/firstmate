@@ -15,10 +15,11 @@
 #      or carrying an unreadable claim. Uncommitted work is deliberately NOT
 #      among them: it is the normal state of a task worth rescuing, and the
 #      rescue must leave every such change exactly where it found it.
-#   3. The runtime is not switchable here: --harness/--model/--effort and
-#      --account-slot belong to `relaunch`, and recovery continues the recorded
-#      profile - including the subscription account the record names, so a
-#      rescue never quietly falls back to the ambient one.
+#   3. The runtime is switchable here only through an explicit replacement
+#      profile: --harness/--model/--effort/--account-slot name a replacement
+#      runtime in the same transaction, while an unqualified recovery continues
+#      the recorded profile - including the subscription account the record
+#      names, so a rescue never quietly falls back to the ambient one.
 #   4. The backends recovery refuses, and what it tells the operator when the
 #      launch handoff fails after the terminal is already back.
 set -u
@@ -716,17 +717,276 @@ test_recover_missing_refuses_a_basename_harness_without_naming_a_rejected_flag()
   expect_code 1 "$rc" "an unreconstructable recorded harness must refuse"$'\n'"$out"
   assert_contains "$out" "cannot be reconstructed from its recorded basename" \
     "the refusal should name why the recorded runtime cannot be continued"
-  case "$out" in
-    *"Pass an explicit --harness"*)
-      fail "recovery rejects --harness, so its refusal must not tell the operator to pass one" ;;
-  esac
+  assert_contains "$out" "Pass an explicit --harness" \
+    "the refusal should now name the replacement path this verb itself supports"
   assert_nothing_changed "$dir" rm15 "$meta_before" "$brief_before"
-  pass "fm-control recover-missing: an unreconstructable recorded harness refuses without naming a flag the verb rejects"
+  pass "fm-control recover-missing: an unreconstructable recorded harness points at the replacement this verb supports"
 }
 
-# --- 3. the runtime is not switchable here ----------------------------------
+test_recover_missing_accepts_an_explicit_replacement_harness() {
+  local dir out rc
+  dir=$(new_case switch rm-switch-1)
+  add_ship_task "$dir" rm-switch-1
+  printf 'codex' > "$dir/fake/becomes"
+  make_endpoint_missing "$dir"
 
-test_recover_missing_rejects_runtime_switch_flags() {
+  out=$(run_control "$dir" rm-switch-1 recover-missing --harness codex --note "move to a supported runtime"); rc=$?
+  expect_code 0 "$rc" "a recovery onto a named replacement runtime should succeed"$'\n'"$out"
+  assert_contains "$out" "recovered rm-switch-1 harness=codex from=claude" \
+    "the outcome should name the recorded runtime it came from and the replacement it launched"
+  [ "$(meta_field "$dir" rm-switch-1 harness)" = codex ] \
+    || fail "the durable record must name the replacement harness that actually launched"
+  [ "$(cat "$dir/fake/command")" = codex ] \
+    || fail "the replacement agent should be the named harness, not the recorded one"
+  assert_grep "fm-rm-switch-1" "$dir/fake/created-windows" \
+    "the missing terminal should still be recreated under its recorded name"
+  [ "$(journal_field "$dir" rm-switch-1 from_harness)" = claude ] \
+    || fail "the journal should record the runtime the task ran on"
+  [ "$(journal_field "$dir" rm-switch-1 to_harness)" = codex ] \
+    || fail "the journal should record the replacement runtime"
+  assert_grep "move to a supported runtime" "$dir/home/data/rm-switch-1/brief.md" \
+    "the progress note must still land in the instructions the replacement reads"
+  pass "fm-control recover-missing: an explicit replacement harness recovers a missing terminal in one transaction"
+}
+
+test_recover_missing_replacement_resets_unnamed_profile_axes() {
+  local dir out rc
+  dir=$(new_case switch-axes rm-switch-2)
+  add_ship_task "$dir" rm-switch-2
+  sed -i.bak 's/^model=default$/model=opus/; s/^effort=default$/effort=xhigh/' "$dir/home/state/rm-switch-2.meta"
+  rm -f "$dir/home/state/rm-switch-2.meta.bak"
+  printf 'codex' > "$dir/fake/becomes"
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" rm-switch-2 recover-missing --harness codex --note "move to a supported runtime"); rc=$?
+  expect_code 0 "$rc" "a replacement-profile recovery should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" rm-switch-2 model)" = default ] \
+    || fail "a model chosen for the recorded harness must not carry onto a replacement harness"
+  [ "$(meta_field "$dir" rm-switch-2 effort)" = default ] \
+    || fail "an effort chosen for the recorded harness must not carry onto a replacement harness"
+  pass "fm-control recover-missing: a replacement harness resets unnamed profile axes exactly as a relaunch does"
+}
+
+test_recover_missing_onto_deck_from_a_recorded_effort() {
+  local dir out rc
+  dir=$(new_case switch-deck rm-switch-3)
+  add_ship_task "$dir" rm-switch-3
+  sed -i.bak 's/^effort=default$/effort=xhigh/' "$dir/home/state/rm-switch-3.meta"
+  rm -f "$dir/home/state/rm-switch-3.meta.bak"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/deck"
+  chmod +x "$dir/fakebin/deck"
+  printf deck > "$dir/fake/becomes"
+  make_endpoint_missing "$dir"
+
+  # A recorded effort must not make a deck replacement refuse itself: the
+  # harness change resets the effort axis to default unless it is named too,
+  # so the rescue onto the one runtime with no effort control still goes
+  # through. Naming an effort for deck still refuses, below.
+  out=$(run_control "$dir" rm-switch-3 recover-missing --harness deck --note "move onto Deck"); rc=$?
+  expect_code 0 "$rc" "a recorded effort must not block a deck replacement recovery"$'\n'"$out"
+  [ "$(meta_field "$dir" rm-switch-3 harness)" = deck ] || fail "the record should name the deck replacement"
+  [ "$(meta_field "$dir" rm-switch-3 effort)" = default ] \
+    || fail "a recorded effort must be reset to default on a harness with no effort control"
+  [ "$(cat "$dir/fake/command")" = deck ] || fail "the deck replacement should have launched"
+  pass "fm-control recover-missing: a recorded effort resets to default on a deck replacement instead of refusing the rescue"
+}
+
+test_recover_missing_onto_deck_with_an_explicit_effort_refuses() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case deck-effort rm-switch-4)
+  add_ship_task "$dir" rm-switch-4
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/deck"
+  chmod +x "$dir/fakebin/deck"
+  printf deck > "$dir/fake/becomes"
+  make_endpoint_missing "$dir"
+  meta_before=$(cat "$dir/home/state/rm-switch-4.meta")
+  brief_before=$(cat "$dir/home/data/rm-switch-4/brief.md")
+
+  out=$(run_control "$dir" rm-switch-4 recover-missing --harness deck --effort high --note "move onto Deck"); rc=$?
+  expect_code 1 "$rc" "an explicit effort on a deck replacement must refuse"$'\n'"$out"
+  assert_contains "$out" "deck has no effort control" \
+    "the refusal should name the unsupported axis, exactly as a relaunch does"
+  assert_nothing_changed "$dir" rm-switch-4 "$meta_before" "$brief_before"
+  pass "fm-control recover-missing: an explicit effort for a deck replacement refuses before the terminal is recreated"
+}
+
+test_recover_missing_replacement_accepts_a_named_model_and_effort() {
+  local dir out rc
+  dir=$(new_case switch-named rm-switch-5)
+  add_ship_task "$dir" rm-switch-5
+  printf 'codex' > "$dir/fake/becomes"
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" rm-switch-5 recover-missing --harness codex --model gpt-5.6-luna --note "move with a named model"); rc=$?
+  expect_code 0 "$rc" "a named replacement model should be honoured"$'\n'"$out"
+  [ "$(meta_field "$dir" rm-switch-5 model)" = gpt-5.6-luna ] \
+    || fail "the named replacement model should be recorded"
+  [ "$(meta_field "$dir" rm-switch-5 effort)" = default ] \
+    || fail "an unnamed effort should still reset across the harness change"
+  pass "fm-control recover-missing: a replacement profile honours the axes the caller names"
+}
+
+test_recover_missing_replacement_clears_a_recorded_account_slot_on_a_harness_change() {
+  local dir out rc
+  dir=$(new_case switch-slot rm-switch-6)
+  add_ship_task "$dir" rm-switch-6
+  configure_recover_slots "$dir"
+  printf 'account_slot=claude-a\n' >> "$dir/home/state/rm-switch-6.meta"
+  printf 'codex' > "$dir/fake/becomes"
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" rm-switch-6 recover-missing --harness codex --note "move to a supported runtime"); rc=$?
+  expect_code 0 "$rc" "a harness-changing recovery should drop the old account's slot"$'\n'"$out"
+  [ "$(meta_field "$dir" rm-switch-6 account_slot)" = "" ] \
+    || fail "a slot chosen for the recorded harness must not carry onto a replacement harness"
+  pass "fm-control recover-missing: a harness-changing replacement clears a recorded account slot rather than rebinding it"
+}
+
+test_recover_missing_replacement_refuses_an_unverified_harness() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case switch-unverified rm-switch-7)
+  add_ship_task "$dir" rm-switch-7
+  make_endpoint_missing "$dir"
+  meta_before=$(cat "$dir/home/state/rm-switch-7.meta")
+  brief_before=$(cat "$dir/home/data/rm-switch-7/brief.md")
+
+  out=$(run_control "$dir" rm-switch-7 recover-missing --harness someagent --note "move"); rc=$?
+  expect_code 1 "$rc" "an unverified replacement harness must refuse"$'\n'"$out"
+  assert_contains "$out" "is not a verified harness" \
+    "the refusal should name the unverified adapter exactly as a relaunch does"
+  assert_nothing_changed "$dir" rm-switch-7 "$meta_before" "$brief_before"
+  pass "fm-control recover-missing: an unverified replacement harness refuses before anything is touched"
+}
+
+test_recover_missing_replacement_refuses_before_recreating_for_a_wrong_kind_adapter() {
+  local dir home out rc meta_before brief_before
+  dir=$(new_case switch-kind rm-switch-8)
+  home="$dir/home"
+  # A secondmate task: muse is a verified crewmate/scout adapter only, so the
+  # kind capability table must refuse the named replacement before the missing
+  # terminal is recreated.
+  mkdir -p "$home/data/rm-switch-8"
+  printf '# secondmate brief\n' > "$home/data/rm-switch-8/brief.md"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
+  printf 'rm-switch-8\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  git -C "$dir/smhome" add -A
+  git -C "$dir/smhome" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
+    commit --quiet -m "secondmate home" \
+    || fail "the secondmate home fixture could not be committed"
+  {
+    echo "window=fmses:fm-rm-switch-8"
+    echo "endpoint_task_id=rm-switch-8"
+    echo "worktree=$dir/smhome"
+    echo "project=$dir/smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "model=default"
+    echo "effort=default"
+    echo "home=$dir/smhome"
+  } > "$home/state/rm-switch-8.meta"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  make_endpoint_missing "$dir"
+  meta_before=$(cat "$dir/home/state/rm-switch-8.meta")
+  brief_before=$(cat "$dir/home/data/rm-switch-8/brief.md")
+
+  out=$(run_control "$dir" rm-switch-8 recover-missing --harness muse --note "move"); rc=$?
+  expect_code 1 "$rc" "a crewmate-only adapter must refuse for a secondmate task"$'\n'"$out"
+  assert_contains "$out" "is not verified to run a secondmate task" \
+    "the refusal should come from the kind capability table, before the terminal is recreated"
+  assert_contains "$out" "nothing was touched" \
+    "the refusal must state the recovery touched nothing"
+  assert_nothing_changed "$dir" rm-switch-8 "$meta_before" "$brief_before"
+  pass "fm-control recover-missing: a replacement the launch owner must refuse is refused before recreation"
+}
+
+test_recover_missing_held_backlog_row_still_refuses_a_replacement() {
+  local dir out rc meta_before brief_before
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  dir=$(new_case switch-held rm-switch-9)
+  add_ship_task "$dir" rm-switch-9
+  printf 'codex' > "$dir/fake/becomes"
+  make_endpoint_missing "$dir"
+  {
+    printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done'
+  } > "$dir/home/data/backlog.md"
+  tasks-axi add rm-switch-9 "held fixture task" --kind ship --file "$dir/home/data/backlog.md" >/dev/null
+  tasks-axi start rm-switch-9 --file "$dir/home/data/backlog.md" >/dev/null
+  tasks-axi hold rm-switch-9 --reason "captain decision pending" --kind captain \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  meta_before=$(cat "$dir/home/state/rm-switch-9.meta")
+  brief_before=$(cat "$dir/home/data/rm-switch-9/brief.md")
+
+  out=$(run_control "$dir" rm-switch-9 recover-missing --harness codex --note "move"); rc=$?
+  expect_code 1 "$rc" "a held backlog row must refuse a replacement recovery too"$'\n'"$out"
+  assert_contains "$out" "not eligible for relaunch" \
+    "the backlog eligibility predicate must gate a replacement recovery exactly as it gates an ordinary one"
+  assert_nothing_changed "$dir" rm-switch-9 "$meta_before" "$brief_before"
+  pass "fm-control recover-missing: a held backlog row still refuses, replacement profile or not"
+}
+
+test_recover_missing_replacement_rolls_back_to_the_recorded_runtime_on_failure() {
+  local dir out rc before
+  dir=$(new_case switch-fail rm-switch-10)
+  add_ship_task "$dir" rm-switch-10
+  printf 'codex' > "$dir/fake/becomes"
+  make_endpoint_missing "$dir"
+  before=$(cat "$dir/home/state/rm-switch-10.meta")
+  # The recreated shell reports a cwd outside the recorded local copy, so the
+  # launch owner refuses AFTER the terminal has already been recreated.
+  printf '%s' "$dir/proj" > "$dir/fake/cwd"
+
+  out=$(run_control "$dir" rm-switch-10 recover-missing --harness codex --note "carry this forward"); rc=$?
+  expect_code 1 "$rc" "a failed replacement handoff should fail closed"$'\n'"$out"
+  assert_grep "fm-rm-switch-10" "$dir/fake/created-windows" \
+    "the terminal should already have been recreated"
+  assert_contains "$out" "no agent was ever stopped" \
+    "the failure must not claim a recovery stopped an agent it never touched"
+  assert_contains "$out" "retry with 'relaunch'" \
+    "the failure should name the verb that acts on the bare shell it left behind"
+  [ "$(cat "$dir/home/state/rm-switch-10.meta")" = "$before" ] \
+    || fail "a failed replacement handoff must keep the prior durable record, runtime included"
+  assert_grep "carry this forward" "$dir/home/data/rm-switch-10/brief.md" \
+    "the progress note must survive the failed handoff so the retry still has it"
+  pass "fm-control recover-missing: a failed replacement handoff keeps the recorded runtime and never claims a stop"
+}
+
+test_recover_missing_basename_harness_names_the_replacement_path() {
+  local dir out rc meta_before brief_before
+  dir=$(new_case switch-basename rm-switch-11)
+  add_ship_task "$dir" rm-switch-11
+  make_endpoint_missing "$dir"
+  sed -i.bak 's|^harness=.*|harness=grok-2|' "$dir/home/state/rm-switch-11.meta"
+  rm -f "$dir/home/state/rm-switch-11.meta.bak"
+  printf 'grok-2' > "$dir/fake/becomes"
+  meta_before=$(cat "$dir/home/state/rm-switch-11.meta")
+  brief_before=$(cat "$dir/home/data/rm-switch-11/brief.md")
+
+  out=$(run_control "$dir" rm-switch-11 recover-missing --note "recover"); rc=$?
+  expect_code 1 "$rc" "an unreconstructable recorded harness must still refuse"$'\n'"$out"
+  assert_contains "$out" "cannot be reconstructed from its recorded basename" \
+    "the refusal should name why the recorded runtime cannot be continued"
+  assert_contains "$out" "Pass an explicit --harness" \
+    "the refusal should now name the replacement path this verb itself supports"
+
+  out=$(run_control "$dir" rm-switch-11 recover-missing --harness claude --note "recover onto a supported runtime"); rc=$?
+  expect_code 0 "$rc" "a basename-harness task should recover onto a named replacement"$'\n'"$out"
+  assert_contains "$out" "harness=claude from=grok-2" \
+    "the outcome should name the basename it came from and the replacement it launched"
+  [ "$(meta_field "$dir" rm-switch-11 harness)" = claude ] \
+    || fail "the record should name the replacement harness"
+  pass "fm-control recover-missing: a basename harness names --harness, and the named replacement recovers it"
+}
+
+# --- 3. profile-switch flags belong to relaunch and recover-missing only -----
+
+test_profile_switch_flags_are_rejected_on_other_verbs() {
   local dir out rc flag
   dir=$(new_case profile rm9)
   add_ship_task "$dir" rm9
@@ -734,12 +994,13 @@ test_recover_missing_rejects_runtime_switch_flags() {
 
   for flag in "--harness codex" "--model opus" "--effort high" "--account-slot claude-a"; do
     # shellcheck disable=SC2086 # the flag pair is deliberately split.
-    out=$(run_control "$dir" rm9 recover-missing --note "recover" $flag); rc=$?
-    expect_code 1 "$rc" "recover-missing must reject '$flag'"$'\n'"$out"
-    assert_contains "$out" "apply to 'relaunch' only" "the refusal should point at the relaunch verb"
+    out=$(run_control "$dir" rm9 exit $flag); rc=$?
+    expect_code 1 "$rc" "exit must reject '$flag'"$'\n'"$out"
+    assert_contains "$out" "apply to 'relaunch' and 'recover-missing' only" \
+      "the refusal should scope the flags to the verbs that own them"
   done
   [ ! -s "$dir/fake/created-windows" ] || fail "a rejected flag must not create a terminal"
-  pass "fm-control recover-missing: runtime-switch flags belong to relaunch and are refused here"
+  pass "fm-control: profile-switch flags belong to relaunch and recover-missing only"
 }
 
 test_recover_missing_requires_a_note_for_a_ship_task() {
@@ -990,6 +1251,17 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate
 test_recover_missing_preserves_uncommitted_work
 test_recover_missing_records_the_dirty_state_it_found
 test_recover_missing_recreates_the_terminal_and_launches_the_replacement
+test_recover_missing_accepts_an_explicit_replacement_harness
+test_recover_missing_replacement_resets_unnamed_profile_axes
+test_recover_missing_onto_deck_from_a_recorded_effort
+test_recover_missing_onto_deck_with_an_explicit_effort_refuses
+test_recover_missing_replacement_accepts_a_named_model_and_effort
+test_recover_missing_replacement_clears_a_recorded_account_slot_on_a_harness_change
+test_recover_missing_replacement_refuses_an_unverified_harness
+test_recover_missing_replacement_refuses_before_recreating_for_a_wrong_kind_adapter
+test_recover_missing_held_backlog_row_still_refuses_a_replacement
+test_recover_missing_replacement_rolls_back_to_the_recorded_runtime_on_failure
+test_recover_missing_basename_harness_names_the_replacement_path
 test_recover_missing_verified_deck_recreates_the_endpoint
 test_recover_missing_waits_for_the_recreated_shell_to_settle
 test_recover_missing_refuses_a_terminal_that_never_settles
@@ -1006,7 +1278,7 @@ test_launch_failure_never_claims_an_agent_was_stopped
 test_recover_missing_refuses_a_backend_it_cannot_recreate_on
 test_recover_missing_refusal_names_the_postcondition_it_cannot_prove
 test_recover_missing_refuses_a_basename_harness_without_naming_a_rejected_flag
-test_recover_missing_rejects_runtime_switch_flags
+test_profile_switch_flags_are_rejected_on_other_verbs
 test_recover_missing_requires_a_note_for_a_ship_task
 test_recover_missing_preserves_the_recorded_account_slot
 test_recover_missing_refuses_a_slot_its_home_no_longer_binds

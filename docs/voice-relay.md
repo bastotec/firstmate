@@ -116,7 +116,9 @@ The clip is headerless 16000 Hz mono signed 16-bit little-endian PCM and must en
 on speech, not silence. It prints one JSON line: what it heard, what it said, how
 long each stage took, whether it answered at all, and, in `relay_error`, what
 broke when a turn broke rather than merely going unanswered, so an
-infrastructure failure is not read as a slow answer. Feed it a clip that
+infrastructure failure is not read as a slow answer.
+Answered is counted from the speech after the turn's last tool call, so a spoken lead-in ahead of a handover keeps its seconds in the report but does not by itself answer the turn, and a model that goes silent after its tool fails the turn by name.
+Feed it a clip that
 already ends in silence and it will tell you the timings are measured from the
 wrong instant rather than printing a number that looks fast.
 
@@ -161,6 +163,13 @@ Ordinary relay startup never launches a server or installs dependencies.
 Only hybrid sessions import `websockets`, already installed in the external stack's virtual environment; Bedrock-only homes need no new dependency.
 Use the same virtual environment as the relay interpreter when invoking the unchanged laptop client.
 The gateway, key and model settings take effect at engine launch; restart the engine after changing them.
+
+The hybrid engine also carries an optional fast routing layer in front of the heavy model, inert until `voice-gate-key-var` names its secrets key variable.
+A configured layer still needs Node and its pinned runtime, installed from the tracked Firstmate root with `npm ci --prefix bin/voice-gate --omit=dev`; the resulting `bin/voice-gate/node_modules/` is local and gitignored, and with Node, the runtime or the named key missing, every decision fails open to the heavy model.
+One narrow-model fan-out call classifies each transcript, and code routes records reads, handovers and scripted lines away from the heavy model while everything uncertain reaches the model as before.
+This build ships shadow only: every route decision is logged beside what the heavy model actually did and acted on by nothing.
+The layer takes its deadline from the relay's one turn budget and contributes no timeout of its own, and `python3 bin/fm_voice_gate.py report` and `cost` read its `state/voice-gate/` records.
+`bin/fm_voice_gate.py`'s header owns the full contract.
 
 The interim text route defaults to `codex/gpt-6-astra`, which was verified with a real completion and the voice turns below.
 The requested `codex/gpt-6-luna` route was absent from the measured gateway's catalog.
@@ -433,6 +442,7 @@ sending every row.
 | --- | --- |
 | Wire format between the two machines | `bin/fm_voice_frame.py` |
 | The relay, the model session, the tools | `bin/fm-voice-relay.py` |
+| The hybrid engine's fast routing layer | `bin/fm_voice_gate.py` |
 | The laptop end, capture and playback | `bin/fm-voice-client.py` |
 | The spoken HUD's overlay panel | `hud/swift/Sources/VoiceHUD/` |
 | The spoken HUD's Python half: bridge, wake gate, mic, engine wiring, reply player | `hud/` |

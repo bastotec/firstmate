@@ -849,11 +849,19 @@ secondmate_liveness_one() {  # <meta> <id>
   [ -n "$target" ] || target="$window"
   agent_state=$(fm_backend_agent_state "$backend" "$target" 2>/dev/null) || agent_state=unreadable
   case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi|omp) ;;
+    claude|codex|opencode|pi|pi-signed|grok|kimi|omp|deck) ;;
     *)
       case "$agent_state" in dead|missing) agent_state=unverified-harness ;; esac
       ;;
   esac
+  # Only an absence read that is process-authoritative licenses a respawn
+  # without the kill gate. A stream `missing` is the hub's in-memory registry
+  # not knowing the endpoint, which an agent still pacing its rejoin after a
+  # hub restart also produces for the whole grace window
+  # (bin/backends/stream.sh owns that window and its cost).
+  if [ "$backend" = stream ] && [ "$agent_state" = missing ]; then
+    agent_state="registry-absent"
+  fi
   case "$agent_state" in
     alive)
       if [ "$harness" = claude ] && flag=$(fm_claude_permission_flag "$CONFIG" 2>/dev/null); then
@@ -879,7 +887,7 @@ secondmate_liveness_one() {  # <meta> <id>
       else
         cause="recorded endpoint confidently missing"
       fi
-      if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); then
+      if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate --backend "$backend" 2>&1); then
         secondmate_note_respawned "$id"
         report_relaunch "$id" "$cause" "backend=$backend"
       else
@@ -891,6 +899,9 @@ secondmate_liveness_one() {  # <meta> <id>
       ;;
     unreadable)
       echo "SECONDMATE_LIVENESS: secondmate $id: skipped: endpoint probe unreadable (backend=$backend)"
+      ;;
+    registry-absent)
+      echo "SECONDMATE_LIVENESS: secondmate $id: skipped: absence from the hub registry does not prove the agent is gone, so no relaunch was attempted (backend=$backend)"
       ;;
     unverified-harness)
       echo "SECONDMATE_LIVENESS: secondmate $id: skipped: recorded harness '$harness' is unverified for recovery (backend=$backend)"
@@ -1603,14 +1614,20 @@ detect_local_config() {
   detect_home_summary_publication
 }
 
-# Shadow-backlog check. When this home's data directory is not the code root's,
-# a code-root data/backlog.md or data/done-archive.md that is not this home's
-# own file is a queue a cwd-relative tasks-axi write has already forked; a link
-# into the home does not survive such a write (docs/configuration.md "Backlog
-# backend" owns why). Detect-only: neither copy is a safe winner, so nothing is
-# merged here.
+# Shadow-backlog check. Only a home that IS the code root may be diagnosed
+# against the code root's data directory: for every other home that directory
+# may be another home's live queue - a Deck second mate's driver runs from the
+# parent's code root while its FM_HOME sits elsewhere - so naming it would aim
+# the merge-and-move-aside remedy at the supervising home's own backlog. The
+# ownership guard runs first and considers nothing outside this home; only then
+# does the check compare the code root's data/backlog.md or data/done-archive.md
+# against this home's own file, reporting a queue a cwd-relative tasks-axi write
+# has already forked (a link into the home does not survive such a write,
+# docs/configuration.md "Backlog backend" owns why). Detect-only: neither copy
+# is a safe winner, so nothing is merged here.
 detect_code_root_backlog_fork() {
   local name root_copy
+  [ "$FM_ROOT" -ef "$FM_HOME" ] || return 0
   [ "$FM_ROOT/data" -ef "$DATA" ] && return 0
   for name in backlog.md done-archive.md; do
     root_copy="$FM_ROOT/data/$name"

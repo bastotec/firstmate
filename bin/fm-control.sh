@@ -9,6 +9,9 @@
 #                                         [--account-slot <id|default>]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> recover-missing
+#                                         [--harness <name>] [--model <name>]
+#                                         [--effort <level>]
+#                                         [--account-slot <id|default>]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -31,10 +34,13 @@
 #              state is never rewritten as proof of the action.
 #   exit       Stop the agent, preserving its terminal endpoint, worktree, and
 #              every uncommitted change. Interrupts first when the task reads
-#              busy, then submits the harness's exit command. Postcondition:
+#              busy, then submits the harness's exit command behind the
+#              verify-then-clear composer gate below. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
 #              For Deck, it also proves any task-bound residual driver process
-#              group stopped. Already-stopped is success (idempotent).
+#              group stopped. Already-stopped is success (idempotent), including
+#              when the agent is found gone while the composer gate was
+#              re-reading a state it could not prove.
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME endpoint and SAME worktree, on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
@@ -82,8 +88,24 @@
 #              It continues the SAME run, so the recorded harness, model, and
 #              effort carry through unchanged - nothing is re-resolved from
 #              configuration, including a secondmate's config/secondmate-harness
-#              pin - and only --note/--note-file apply; picking up a changed pin
-#              or choosing a different runtime is what `relaunch` is for.
+#              pin - and only --note/--note-file apply. Picking up a changed pin
+#              is what `relaunch` is for.
+#              The one deliberate exception is an explicit replacement profile:
+#              --harness/--model/--effort/--account-slot are accepted here too,
+#              with the identical precedence, axis-reset, and refusal semantics
+#              they carry on `relaunch`. This is the supported single-transaction
+#              route off a runtime whose endpoint is gone - under the 2026-09-22
+#              Deck-only coding-worker ruling, a stranded non-Deck task with no
+#              surviving terminal has no other: `relaunch` refuses a missing
+#              endpoint, so without this flag that task is unrecoverable through
+#              this plane. A replacement profile is a rescue onto a chosen
+#              runtime, never a config re-resolve: every axis still comes from
+#              the task's own durable record unless the caller names it.
+#              A recorded effort does not carry onto a replacement harness that
+#              has no effort control (deck), exactly as on `relaunch`: a harness
+#              change resets the effort axis to default unless it is named too,
+#              and naming it for such a harness still refuses with "deck has no
+#              effort control".
 #
 # Teardown and discard are NOT verbs here and never will be. `exit` stops an
 # agent and preserves everything else; removing a worktree, killing an
@@ -119,8 +141,15 @@
 #     proving a stop that never happened.
 #   - An ambiguous or unreadable endpoint state refuses; only a positively
 #     classified state acts.
-#   - A composer that visibly holds pending text refuses before an exit command
-#     is typed, so existing text is preserved instead of being concatenated.
+#   - A composer that VISIBLY holds pending text refuses before an exit command
+#     is typed, so proven existing text is preserved instead of being
+#     concatenated. A composer state the fleet cannot prove (`unknown`,
+#     `pending-unproven`, or an unreadable read) never refuses structurally:
+#     the exit path runs a bounded verify-then-clear sequence - deliver the
+#     harness's verified composer clear (bin/fm-control-lib.sh's
+#     fm_control_composer_clear_keys), re-read the state, retry - and an agent
+#     that is simply gone is reported stopped instead, because a dead endpoint
+#     is a respawn question, not a composer question.
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
@@ -130,6 +159,10 @@
 #                                terminal's shell to finish starting (30)
 #   FM_CONTROL_LAUNCH_WAIT       dead->alive wait after a relaunch (90)
 #   FM_CONTROL_EXIT_RETRIES      Enter retries for the exit command (3)
+#   FM_CONTROL_CLEAR_RETRIES     composer clear/re-read attempts in the exit
+#                                gate when the composer state is not proven (3)
+#   FM_CONTROL_CLEAR_WAIT        settle between one clear delivery and its
+#                                state re-read (1)
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -146,6 +179,9 @@ esac
 
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
+# Model-chain parsing for TARGET_MODEL surfaces (relaunch/recover-missing).
+# shellcheck source=bin/fm-model-chain-lib.sh
+. "$SCRIPT_DIR/fm-model-chain-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never
 # drive a crewmate's lifecycle (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -159,6 +195,10 @@ fi
   exit 1
 }
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+# The launch-side chain resolver (fm_model_chain_resolve_for_launch) is owned
+# by the launch owner's lib and reads STATE, so it is sourced once STATE exists.
+# shellcheck source=bin/fm-model-chain-launch-lib.sh
+. "$SCRIPT_DIR/fm-model-chain-launch-lib.sh"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 [ -d "$STATE" ] || {
@@ -188,6 +228,8 @@ SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
 EXIT_WAIT=${FM_CONTROL_EXIT_WAIT:-30}
 LAUNCH_WAIT=${FM_CONTROL_LAUNCH_WAIT:-90}
 EXIT_RETRIES=${FM_CONTROL_EXIT_RETRIES:-3}
+CLEAR_RETRIES=${FM_CONTROL_CLEAR_RETRIES:-3}
+CLEAR_WAIT=${FM_CONTROL_CLEAR_WAIT:-1}
 SETTLE_READS=3
 
 die() {  # <message>
@@ -293,17 +335,10 @@ if [ -n "$control_want_value" ]; then
 fi
 
 case "$VERB" in
-  relaunch) ;;
-  recover-missing)
-    # A recovery recreates the recorded terminal and continues the SAME run, so
-    # it carries the recorded harness, model, effort, and account slot through
-    # unchanged. Choosing a different runtime is what 'relaunch' is for.
-    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$ACCOUNT_SLOT_SET" = 0 ] \
-      || die "--harness, --model, --effort, and --account-slot apply to 'relaunch' only; 'recover-missing' continues the recorded runtime"
-    ;;
+  relaunch|recover-missing) ;;
   *)
     [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$ACCOUNT_SLOT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-      || die "--harness, --model, --effort, and --account-slot apply to 'relaunch' only, and --note to 'relaunch' or 'recover-missing' only"
+      || die "--harness, --model, --effort, and --account-slot apply to 'relaunch' and 'recover-missing' only, and --note to 'relaunch' or 'recover-missing' only"
     ;;
 esac
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
@@ -568,10 +603,69 @@ stop_deck_residual_drivers() {
     || die "the prior Deck driver has not been proved stopped; refusing replacement"
 }
 
+# gate_exit_composer: the composer gate in front of the exit command - the
+# verify-then-clear sequence. A proven `empty` composer passes immediately, and
+# proven `pending` text still refuses, so real typed input is never destroyed.
+# Every state the fleet cannot prove (`unknown`, `pending-unproven`, and any
+# future verdict) is cleared instead of structurally refused: deliver the
+# harness's verified composer clear (bin/fm-control-lib.sh's
+# fm_control_composer_clear_keys), settle, re-read the state, and retry on a
+# bounded budget (FM_CONTROL_CLEAR_RETRIES). An agent that is simply gone is
+# checked for before every clear and once more at the end of the budget and
+# reported through EXIT_COMPOSER_OUTCOME=agent-gone, because a dead endpoint is
+# a respawn question (relaunch / recover-missing), never a composer question -
+# clearing or refusing there would send the caller after the wrong remedy. If
+# the budget is spent and the composer is still unproven, the exit command is
+# typed anyway: this gate exists to prevent one specific concatenation, the
+# authoritative postcondition is do_exit's agent-state wait, and a restart that
+# stays blocked on a reading the fleet cannot prove is the defect this gate
+# replaces.
+# Sets EXIT_COMPOSER_OUTCOME=proceed (type the exit command) or `agent-gone`,
+# or dies on proven pending text or an undeliverable clear key.
+gate_exit_composer() {
+  local cmd=$1 composer_state clear_keys state attempt=0 key
+  EXIT_COMPOSER_OUTCOME=proceed
+  composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
+    || composer_state=unknown
+  clear_keys=$(fm_control_composer_clear_keys "$HARNESS" 2>/dev/null) || clear_keys=
+  while :; do
+    case "$composer_state" in
+      empty) return 0 ;;
+      pending)
+        die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'"
+        ;;
+    esac
+    state=$(agent_state 2>/dev/null) || state=unknown
+    case "$state" in
+      dead) EXIT_COMPOSER_OUTCOME=agent-gone; return 0 ;;
+    esac
+    [ "$attempt" -lt "$CLEAR_RETRIES" ] || break
+    attempt=$((attempt + 1))
+    if [ -n "$clear_keys" ]; then
+      while IFS= read -r key; do
+        [ -n "$key" ] || continue
+        fm_backend_send_key "$BACKEND" "$T" "$key" "$LABEL" \
+          || die "the composer-clear key $key was not delivered to task $ID on $BACKEND, so its '$composer_state' composer state cannot even be retried; refusing to type the $cmd exit command into it blind"
+      done <<EOF
+$clear_keys
+EOF
+    fi
+    sleep "$CLEAR_WAIT"
+    composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
+      || composer_state=unknown
+  done
+  state=$(agent_state 2>/dev/null) || state=unknown
+  case "$state" in
+    dead) EXIT_COMPOSER_OUTCOME=agent-gone; return 0 ;;
+  esac
+  echo "warning: task $ID's composer state stayed '$composer_state' after $attempt clear attempt(s); typing the $cmd exit command anyway, because restart must never be refused on a composer state the fleet cannot prove, and the agent-state wait below is the authoritative postcondition" >&2
+  return 0
+}
+
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped` or `stopped`.
 do_exit() {
-  local state cmd verdict composer_state cancel interrupt_result=not-needed
+  local state cmd verdict cancel interrupt_result=not-needed
   require_state_verified_backend exit "the agent actually stopped"
   state=$(agent_state)
   case "$state" in
@@ -603,17 +697,19 @@ do_exit() {
       ;;
   esac
   cmd=$(fm_control_exit_command "$HARNESS")
-  composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
-    || composer_state=unknown
-  case "$composer_state" in
-    empty) ;;
-    pending)
-      die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'"
-      ;;
-    *)
-      die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer, then retry '$VERB'"
-      ;;
-  esac
+  gate_exit_composer "$cmd"
+  if [ "$EXIT_COMPOSER_OUTCOME" = agent-gone ]; then
+    # The agent is gone: nothing may be typed at the endpoint, and the right
+    # remedy is a respawn (relaunch / recover-missing), not a composer clear.
+    stop_deck_residual_drivers
+    retire_busy_incarnation
+    if [ "$interrupt_result" = not-needed ]; then
+      printf 'already-stopped'
+    else
+      printf 'stopped'
+    fi
+    return 0
+  fi
   # The submit verdict is NOT the postcondition here: a successful exit command
   # destroys the composer the verdict is read from, so a post-exit read can
   # legitimately report anything. Only a hard transport failure aborts; the
@@ -657,6 +753,10 @@ RELAUNCH_AGENT_CONFIRMED=0
 RELAUNCH_TX=
 RELAUNCH_BRIEF=
 RELAUNCH_PAST_TENSE=relaunched
+RELAUNCH_NOUN=relaunch
+if [ "$VERB" = recover-missing ]; then
+  RELAUNCH_NOUN=recovery
+fi
 PRIOR_HARNESS=$HARNESS
 PRIOR_RECORDED_HARNESS=$RECORDED_HARNESS
 CONFIG_HARNESS=
@@ -804,10 +904,7 @@ resolve_relaunch_profile() {
   [ -n "$PRIOR_EFFORT" ] || PRIOR_EFFORT=default
   if [ "$HARNESS_SET" = 0 ] \
      && [ "$PRIOR_RECORDED_HARNESS" != "$PRIOR_HARNESS" ]; then
-    if [ "$VERB" = recover-missing ]; then
-      die "task $ID records harness '$PRIOR_RECORDED_HARNESS', whose original launch command cannot be reconstructed from its recorded basename; recovery continues the recorded runtime and would have to substitute the canonical adapter '$PRIOR_HARNESS' for the command actually running, so it refuses rather than bringing the terminal back on a different runtime than the record names"
-    fi
-    die "task $ID records harness '$PRIOR_RECORDED_HARNESS', whose original launch command cannot be reconstructed from its recorded basename; relaunching without --harness would substitute the canonical adapter '$PRIOR_HARNESS' for the command actually running. Pass an explicit --harness to choose the replacement runtime deliberately"
+    die "task $ID records harness '$PRIOR_RECORDED_HARNESS', whose original launch command cannot be reconstructed from its recorded basename; this ${RELAUNCH_NOUN} without --harness would substitute the canonical adapter '$PRIOR_HARNESS' for the command actually running. Pass an explicit --harness to choose the replacement runtime deliberately"
   fi
   CONFIG_HARNESS=
   CONFIG_MODEL=
@@ -823,10 +920,10 @@ resolve_relaunch_profile() {
     #
     # recover-missing resolves NOTHING here, for any kind. It continues the
     # same run in the same terminal, so every identity axis comes from the
-    # task's own durable record - which is what its header, its refusal of
-    # --harness/--model/--effort, and docs/agent-control.md all already
-    # promise. Re-resolving the pin here would silently move a secondmate onto
-    # a different runtime, and reset its model and effort, during a rescue.
+    # task's own durable record unless the caller names a replacement profile
+    # explicitly - which is what its header and docs/agent-control.md promise.
+    # Re-resolving the pin here would silently move a secondmate onto a
+    # different runtime, and reset its model and effort, during a rescue.
     CONFIG_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" secondmate 2>/dev/null || true)
     CONFIG_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
     CONFIG_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
@@ -840,7 +937,7 @@ resolve_relaunch_profile() {
   fi
   if [ "$HARNESS_SET" = 1 ]; then
     fm_control_harness_supported "$NEW_HARNESS" \
-      || die "'$NEW_HARNESS' is not a verified harness; fm-control refuses to relaunch onto an adapter with no verified control or launch mechanics"
+      || die "'$NEW_HARNESS' is not a verified harness; fm-control refuses this ${RELAUNCH_NOUN} onto an adapter with no verified control or launch mechanics"
     TARGET_HARNESS=$NEW_HARNESS
   elif [ "$HARNESS_SET" = 0 ] && [ -n "$CONFIG_HARNESS" ]; then
     fm_control_harness_supported "$CONFIG_HARNESS" \
@@ -858,8 +955,7 @@ resolve_relaunch_profile() {
       die "'$TARGET_HARNESS' is not verified to run a $KIND task, so recovering $ID would recreate its terminal for a launch that must be refused; its endpoint is missing and nothing was touched, so its work is preserved at $WT until this adapter is verified for this kind"
     fi
     die "'$TARGET_HARNESS' is not verified to run a $KIND task, so relaunching $ID onto it would stop the running agent for a launch that must be refused; choose an adapter verified for this kind"
-  fi
-  # A model or effort chosen for the previous harness does not transfer to a
+  fi  # A model or effort chosen for the previous harness does not transfer to a
   # different one, so an explicit harness change resets both axes unless the
   # caller names them too.
   if [ "$MODEL_SET" = 1 ]; then
@@ -883,6 +979,24 @@ resolve_relaunch_profile() {
   if [ "$TARGET_HARNESS" = deck ] && [ "$TARGET_EFFORT" != default ]; then
     die "deck has no effort control; omit --effort or select a harness that supports it"
   fi
+  # A chained TARGET_MODEL (comma-separated labels, from an explicit --model or
+  # a re-resolved secondmate pin) resolves here, in the launch owner's own
+  # cooldown semantics, before the old agent is stopped: the relaunch
+  # transaction refuses on an exhausted chain with nothing touched. A single
+  # label is an exact pin and is returned untouched. The pre-flight answer
+  # gates and reports this transaction, while the ORIGINAL surface is what
+  # fm-spawn --relaunch receives: the launch owner resolves at launch time and
+  # records the lane itself, so the cooldown decision it acts on is its own.
+  TARGET_MODEL_SURFACE=
+  case "$TARGET_MODEL" in
+    ''|default) ;;
+    *)
+      RESOLVE_LANE=$([ "$KIND" = secondmate ] && printf secondmate || printf crew)-$ID
+      RESOLVED=$(fm_model_chain_resolve_for_launch "$RESOLVE_LANE" "$VERB" "$TARGET_MODEL") || return 1
+      TARGET_MODEL_SURFACE=$TARGET_MODEL
+      TARGET_MODEL=$RESOLVED
+      ;;
+  esac
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
   fi
@@ -1060,7 +1174,15 @@ do_relaunch() {
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
   journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
-  [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
+  # A chained surface was only pre-flighted above: the ORIGINAL chain is what
+  # the launch owner resolves and records the lane for, so its cooldown
+  # decision is made at launch time, not at pre-flight time. A single label
+  # (an exact pin, or a chain pre-flight that already picked one) passes
+  # through unchanged, and an exact pin never resolves through a lane.
+  case "$TARGET_MODEL_SURFACE" in
+    '') [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL") ;;
+    *)  spawn_args+=(--model "$TARGET_MODEL_SURFACE") ;;
+  esac
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
   if [ -n "$TARGET_ACCOUNT_SLOT" ]; then
     spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
@@ -1182,12 +1304,26 @@ do_recover_missing() {
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
   journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
-  [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
+  # A chained surface was only pre-flighted above: the ORIGINAL chain is what
+  # the launch owner resolves and records the lane for, so its cooldown
+  # decision is made at launch time, not at pre-flight time. A single label
+  # (an exact pin, or a chain pre-flight that already picked one) passes
+  # through unchanged, and an exact pin never resolves through a lane.
+  case "$TARGET_MODEL_SURFACE" in
+    '') [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL") ;;
+    *)  spawn_args+=(--model "$TARGET_MODEL_SURFACE") ;;
+  esac
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
   # A recovery continues the recorded runtime, and the account slot is part of
   # it: without this the replacement worker would come back on the ambient
-  # account instead of the subscription the record names.
-  [ -z "$TARGET_ACCOUNT_SLOT" ] || spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
+  # account instead of the subscription the record names. An explicit
+  # --account-slot default clears it, and a replacement harness drops it, with
+  # the same arguments `relaunch` passes the launch owner.
+  if [ -n "$TARGET_ACCOUNT_SLOT" ]; then
+    spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
+  elif [ "$ACCOUNT_SLOT_SET" = 1 ] || [ -n "$PRIOR_ACCOUNT_SLOT" ]; then
+    spawn_args+=(--account-slot default)
+  fi
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1

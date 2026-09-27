@@ -142,6 +142,16 @@ wait_for_capture() {  # <target> <needle>
   return 1
 }
 
+wait_for_agent_state() {  # <target> <state> [budget-secs]
+  local target=$1 expected=$2 budget=${3:-60} state="" start=$SECONDS
+  while [ $((SECONDS - start)) -lt "$budget" ]; do
+    state=$(with_stream_env fm_backend_agent_state stream "$target")
+    [ "$state" != "$expected" ] || return 0
+    sleep 0.1
+  done
+  fail "endpoint state did not settle to $expected within ${budget}s (last state: ${state:-none})"
+}
+
 test_create_yields_a_hub_bound_target_the_dispatcher_can_read() {
   local target tag endpoint
   start_case_hub create
@@ -1120,6 +1130,7 @@ test_a_missing_dependency_refuses_and_names_the_tool() {
   mkdir -p "$CASE_DIR/home/config"
   without_jq=$(fm_test_base_path_sans "$BASE_PATH" jq)
   err=$( (
+    # shellcheck disable=SC2030,SC2031 # deliberate: hiding the tool must not outlive the call
     PATH="$without_jq"
     export PATH
     # shellcheck source=bin/fm-backend.sh
@@ -1155,13 +1166,188 @@ test_a_missing_token_reports_it_without_crashing() {
   pass "stream: a missing token is reported rather than crashing the caller"
 }
 
-test_spawn_refuses_a_secondmate_on_stream() {
-  local err
-  err=$(FM_BACKEND=stream "$ROOT/bin/fm-spawn.sh" --secondmate mate-x 2>&1) \
-    && fail "a stream secondmate spawn should be refused"
-  assert_contains "$err" "does not support --secondmate" \
-    "the refusal should say secondmate spawns are not supported on stream"
-  pass "stream: a secondmate spawn is refused until its launch semantics exist"
+test_spawn_hosts_a_deck_secondmate() {
+  local id="host-$$" home code fakebin target out pid
+  start_case_hub secondmate
+  home="$CASE_DIR/isolated-home"
+  code="$CASE_DIR/code"
+  fakebin="$CASE_DIR/fakebin"
+  mkdir -p "$code" "$fakebin" "$home/data" "$home/state" "$home/config" "$home/projects"
+  cp -R "$ROOT/bin" "$code/bin"
+  fm_git_init_commit "$home"
+  mkdir -p "$home/bin"
+  printf '%s\n' "$id" > "$home/.fm-secondmate-home"
+  printf '# Fixture home\n' > "$home/AGENTS.md"
+  printf 'fixture charter\n' > "$home/data/charter.md"
+  mkdir -p "$CASE_DIR/home/data"
+  printf 'deck\n' > "$CASE_DIR/home/config/secondmate-harness"
+  printf 'manual\n' > "$CASE_DIR/home/config/backlog-backend"
+  # The real host driver and stream transport run; only startup diagnostics,
+  # watcher timing, and model calls are shimmed. No shared runtime is touched.
+  cat > "$code/bin/fm-session-start.sh" <<'SH'
+#!/usr/bin/env bash
+"$(dirname "$0")/fm-lock.sh" || exit
+cat "$FM_HOME/state/.lock" > "$FM_HOME/state/.session-start-complete"
+printf 'fixture startup\n'
+SH
+  cat > "$code/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != --handling-delivered ] || exit 0
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+while :; do sleep 1; done
+SH
+  cat > "$fakebin/deck" <<'PY'
+#!/usr/bin/env python3
+import json, os, pathlib, sys, time
+home = pathlib.Path(os.environ['FM_HOME'])
+with (home / 'turns').open('a') as log:
+    log.write(json.dumps(sys.argv[2]) + '\n')
+print(json.dumps({'type': 'run_started', 'session': 'fixture-session'}), flush=True)
+print(json.dumps({'type': 'text_delta', 'text': 'FIXTURE-TURN-DELIVERED'}), flush=True)
+print(json.dumps({'type': 'run_finished', 'output': 'ready', 'turns': 1}), flush=True)
+PY
+  chmod +x "$fakebin/deck"
+  fm_fake_exit0 "$fakebin" gh gh-axi
+  # Use the isolated copied code root so Deck's startup cannot start an actual
+  # supervisor; all dispatch/control/inbox implementations remain unchanged.
+  host_command() (
+    # shellcheck disable=SC2030,SC2031 # other cases deliberately isolate PATH changes
+    with_stream_env env PATH="$fakebin:$PATH" SHELL=/bin/bash \
+      FM_ROOT_OVERRIDE="$code" FM_SPAWN_NO_GUARD=1 \
+      FM_SKIP_SECONDMATE_SYNC=1 FM_SKIP_SECONDMATE_INHERIT=1 \
+      "$code/bin/$1" "${@:2}"
+  )
+  out=$(host_command fm-spawn.sh "$id" "$home" --secondmate --harness deck --backend stream 2>&1) \
+    || fail "stream secondmate spawn failed: $out"
+  pid=$(agent_pid_for "fm-$id")
+  fm_test_track_helper_pid "$pid"
+  target=$(sed -n 's/^window=//p' "$CASE_DIR/home/state/$id.meta")
+  assert_grep 'kind=secondmate' "$CASE_DIR/home/state/$id.meta" "spawn lost the secondmate kind"
+  assert_grep "home=$home" "$CASE_DIR/home/state/$id.meta" "spawn lost the isolated home"
+  wait_for_capture "$target" FIXTURE-TURN-DELIVERED || fail "spawn never ran the Deck charter turn"
+  # Output can arrive before the next heartbeat publishes the new foreground
+  # process. Wait for that protocol observation, not an arbitrary sleep.
+  wait_for_agent_state "$target" alive
+  out=$(host_command fm-send.sh "$id" 'fixture durable instruction' 2>&1) \
+    || fail "secondmate send failed: $out"
+  assert_present "$CASE_DIR/home/state/$id.inbox/001.msg" "unacknowledged steer must remain durable"
+  assert_grep 'fixture durable instruction' "$CASE_DIR/home/state/$id.inbox/001.msg" "steer body was lost"
+  local waited=0
+  while ! grep -q 'Firstmate instruction waiting:' "$home/turns" && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_grep 'Firstmate instruction waiting:' "$home/turns" "doorbell did not become a serialized Deck turn"
+  # Genuine, unsubmitted input must still prevent lifecycle command injection.
+  assert_equals "$(with_stream_env fm_backend_composer_state stream "$target")" empty "idle Deck composer must be empty"
+  with_stream_env fm_backend_stream_send_literal "$target" 'fixture pending input' || fail "could not type pending input"
+  wait_for_capture "$target" 'fixture pending input' || fail "pending input was not rendered"
+  out=$(host_command fm-control.sh "$id" interrupt 2>&1) || fail "pending-input interrupt failed: $out"
+  assert_equals "$(with_stream_env fm_backend_composer_state stream "$target")" pending "interrupt concealed partial input"
+  out=$(host_command fm-control.sh "$id" exit 2>&1) && fail "exit accepted genuine pending input"
+  assert_contains "$out" 'composer visibly holds pending text' "exit did not preserve its pending-input guard"
+  assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" alive "refused exit stopped the host"
+  with_stream_env fm_backend_send_key stream "$target" Enter || fail "could not submit fixture input"
+  waited=0
+  while [ "$waited" -lt 100 ]; do
+    if grep -q '"fixture pending input"' "$home/turns" && [ "$(with_stream_env fm_backend_composer_state stream "$target")" = empty ]; then
+      break
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_grep '"fixture pending input"' "$home/turns" "fixture input was never handled"
+  # The exit gate's verified composer clear, consumed by the REAL driver: the
+  # same adapter calls the gate makes (bin/fm-control.sh gate_exit_composer via
+  # fm_control_composer_clear_keys deck), delivered onto a pane holding echoed
+  # but unsubmitted text. The driver must discard the whole line carrying the
+  # Ctrl+U clear byte - so the concatenated text can never become a turn - and
+  # repaint its prompt, turning the reading back into a proven-empty composer
+  # that the exit command can then be typed into without concatenating.
+  with_stream_env fm_backend_stream_send_literal "$target" 'fixture gate clear text' \
+    || fail "could not type the gate-clear partial input"
+  wait_for_capture "$target" 'fixture gate clear text' || fail "gate-clear input was not rendered"
+  for key in C-u Enter; do
+    with_stream_env fm_backend_send_key stream "$target" "$key" \
+      || fail "could not deliver the gate's clear key $key"
+  done
+  waited=0
+  while [ "$(with_stream_env fm_backend_composer_state stream "$target")" != empty ] \
+    && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$(with_stream_env fm_backend_composer_state stream "$target")" empty \
+    "the gate's C-u + Enter clear must return the driver to a provably empty composer"
+  assert_no_grep 'fixture gate clear text' "$home/turns" \
+    "the cleared line must be discarded whole, never submitted as a Deck turn"
+  out=$(host_command fm-control.sh "$id" exit 2>&1) || fail "idle exit failed: $out"
+  pass "stream: idle Deck exits; genuine pending text refuses without stopping the host"
+  assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" dead "exit must leave no agent"
+  assert_present "$CASE_DIR/home/state/$id.inbox/001.msg" "exit discarded an unacknowledged steer"
+  out=$(host_command fm-control.sh "$id" relaunch 2>&1) || fail "relaunch failed: $out"
+  assert_equals "$(sed -n 's/^window=//p' "$CASE_DIR/home/state/$id.meta")" "$target" "relaunch changed endpoints"
+  assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" alive "relaunch did not restore the host"
+  host_command fm-control.sh "$id" exit >/dev/null 2>&1 || fail "host exit before recovery failed"
+  # Recovery uses the existing secondmate sweep, not a stream-specific rule.
+  # An ambient tmux selection must not move the replacement off stream.
+  out=$(FM_BOOTSTRAP_NETWORK=only FM_BACKEND=tmux host_command fm-bootstrap.sh 2>&1) \
+    || fail "recovery sweep failed: $out"
+  assert_contains "$out" 'relaunched after confirmed agent absence' "dead Deck host was not recovered: $out"
+  local recovered
+  recovered=$(sed -n 's/^window=//p' "$CASE_DIR/home/state/$id.meta")
+  [ "$recovered" != "$target" ] || fail "recovery did not replace the closed endpoint"
+  assert_grep 'backend=stream' "$CASE_DIR/home/state/$id.meta" "recovery used the ambient backend"
+  pid=$(agent_pid_for "fm-$id")
+  fm_test_track_helper_pid "$pid"
+  wait_for_capture "$recovered" FIXTURE-TURN-DELIVERED || fail "recovered host never ran its charter"
+  assert_present "$CASE_DIR/home/state/$id.inbox/001.msg" "recovery discarded an unacknowledged steer"
+  pass "stream: Deck launch, alive classification, durable steering, exit, relaunch and recovery"
+  # A hub restart empties its in-memory registry, so every probe of this mate's
+  # endpoint 404s for the classifier's whole grace window while its agent is
+  # still pacing its rejoin. Freezing the agent makes that window deterministic,
+  # and resuming it afterwards proves the mate the sweep declined to replace was
+  # live the entire time.
+  sleep 2
+  kill -STOP "$pid"
+  restart_case_hub
+  out=$(FM_BOOTSTRAP_NETWORK=only FM_BACKEND=tmux host_command fm-bootstrap.sh 2>&1) \
+    || fail "the registry-gap sweep failed: $out"
+  kill -CONT "$pid"
+  assert_contains "$out" "secondmate $id: skipped: absence from the hub registry" \
+    "a live mate the restarted hub forgot was not reported as unlicensed for respawn: $out"
+  assert_not_contains "$out" 'relaunched after confirmed agent absence' \
+    "the sweep claimed an agent absence its registry read never proved: $out"
+  assert_equals "$(sed -n 's/^window=//p' "$CASE_DIR/home/state/$id.meta")" "$recovered" \
+    "the sweep moved a live mate off its endpoint"
+  wait_for_agent_state "$recovered" alive
+  pass "stream: a restarted hub's registry gap licenses no secondmate respawn"
+  # An idle interrupt must not leave control-key echo masquerading as input.
+  # The earlier partial-input case proves this is not a blanket composer clear.
+  # The registry-gap restart above also emptied the hub's in-memory screen, and
+  # an idle Deck worker repaints its prompt only after a turn, so reading the
+  # composer here would otherwise race on whether the old prompt's bytes were
+  # still pty-buffered across the restart. Drive one fixture turn through the
+  # recovered endpoint and wait for the composer to read provably empty again,
+  # then interrupt that freshly rendered idle prompt.
+  wait_for_agent_state "$recovered" alive
+  with_stream_env fm_backend_stream_send_literal "$recovered" 'fixture post-restart rerender' \
+    || fail "could not type the post-restart rerender turn"
+  with_stream_env fm_backend_send_key stream "$recovered" Enter \
+    || fail "could not submit the post-restart rerender turn"
+  waited=0
+  while [ "$(with_stream_env fm_backend_composer_state stream "$recovered")" != empty ] \
+    && [ "$waited" -lt 150 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$(with_stream_env fm_backend_composer_state stream "$recovered")" empty \
+    "the post-restart rerender turn never returned the host to a proven-empty idle composer"
+  out=$(host_command fm-control.sh "$id" interrupt 2>&1) || fail "interrupt failed: $out"
+  assert_contains "$out" interrupt-delivered "interrupt did not report its postcondition"
+  out=$(host_command fm-control.sh "$id" exit 2>&1) || fail "post-interrupt exit failed: $out; capture: $(with_stream_env fm_backend_stream_composer_capture "$recovered")"
+  with_stream_env fm_backend_kill stream "$recovered" || fail "fixture endpoint cleanup failed"
+  pass "stream: Deck interrupt preserves a usable idle composer for exit"
 }
 
 test_cleanup_validation_binds_a_record_to_the_hub_that_made_it() {
@@ -1229,6 +1415,7 @@ test_the_key_vocabulary_is_only_what_the_control_plane_permits() {
   pass "stream: the key vocabulary is exactly the control plane's four keys"
 }
 
+test_spawn_hosts_a_deck_secondmate
 test_create_yields_a_hub_bound_target_the_dispatcher_can_read
 test_send_reaches_the_endpoint_and_capture_reads_it_back
 test_capture_is_bounded_by_the_requested_line_count
@@ -1260,6 +1447,5 @@ test_a_rejected_token_refuses_instead_of_retrying_unauthenticated
 test_a_hub_speaking_another_protocol_is_refused
 test_a_missing_dependency_refuses_and_names_the_tool
 test_a_missing_token_reports_it_without_crashing
-test_spawn_refuses_a_secondmate_on_stream
 test_cleanup_validation_binds_a_record_to_the_hub_that_made_it
 test_the_key_vocabulary_is_only_what_the_control_plane_permits

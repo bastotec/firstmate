@@ -102,6 +102,17 @@ Cancelling the model picker cancels the whole command and changes neither choice
 Cancelling only the effort picker keeps the standing effort choice and still applies the model pick made in the same run, and the command's one closing message reports both choices as they will actually take effect.
 Both choices are local to each Firstmate home and are not part of secondmate inherited configuration, the same as the Pi Calm preference; a secondmate home pins its own supervision model and effort with its own `/supervision-model`.
 
+## Model fallback chains (spawn-side)
+
+Spawn-side model pins accept a fallback chain in every model surface: the `model` field of a `config/crew-dispatch.json` profile, the model pin in `config/secondmate-harness`, and `fm-spawn.sh --model` itself.
+A surface holding one `<provider>/<model-id>` label is an exact pin, byte-identical to the behavior before chains existed: it never consults cooldown state, never falls through, and never resolves through a lane, so an explicit captain pin always launches exactly that model or refuses.
+A surface holding a comma-separated list of labels, such as `codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash`, is a fallback chain resolved in preference order at spawn or relaunch time, with the same parsing and cooldown semantics as the supervision branch's model chain (`config/supervision-branch-model`): one label per preference, split at the first `/`, blank and comment lines impossible in this surface, and any malformed or duplicate label a loud refusal that names the label instead of a silent selection around it.
+The three captain-approved orders (2026-09-25) are the canonical chains to pin into those surfaces: workers default `codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash`, second mates `codex/gpt-6-luna,zai/glm-5.3-flash,vercel/xiaomi/mimo-v2.6-flash`, and hard tasks `codex/gpt-5.6-sol,vercel/xiaomi/mimo-v2.6-pro,zai/glm-5.3`.
+When a worker's launch could not run a model - a quota refusal, a cooldown, or a repeated provider error - the refused model's label is recorded in that lane's cooldown state at `state/model-chain/<lane>.state` under the Firstmate home and sits out for five minutes, doubling to an hour on repeated failures.
+`bin/fm-record-model-refusal.sh <task-id> <provider/model>` records a refusal from the supervisor side after reading the refusal out of a worker's status or transcript, and clears the lane when the launch ultimately succeeded, so cooldown expiry restores the head of the chain on a later launch exactly as the branch restores its preferred model.
+Secondmate defaults share the `secondmate` lane, so a refusal by one secondmate launch cools that model for the next default-resolved secondmate launch; every crew-side chain resolves on its own task lane - an explicit chained `--model`, a dispatch-profile chain (which the consultation passes through `--model` unchanged), and any relaunch - so one task's refusals never cool down another task's chain head, and an exact single-label pin never resolves through a lane at all.
+Each spawn or relaunch discloses which label was selected and which chain entries were skipped and why, and a chain whose every label is in cooldown refuses the launch with that reason rather than substituting an out-of-chain model: exhausting the chain is a reported failure, never a guess.
+
 ## Backlog backend (.tasks.toml / config/backlog-backend)
 
 The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
@@ -131,7 +142,8 @@ On the default markdown adapter, tasks-axi and manual edits produce the same `##
 
 The tracked `.tasks.toml` paths resolve against the directory tasks-axi runs in, not `FM_HOME`, so a bare `tasks-axi` run from the code root addresses the code root's `data/` whenever the home lives elsewhere.
 tasks-axi writes by renaming a temp file over its target, which replaces a symlink with a regular file, so linking the code-root copy into the home forks the queue on the first such write rather than keeping the two in step.
-Every routine firstmate backlog command therefore runs through [`bin/fm-tasks-axi.sh`](../bin/fm-tasks-axi.sh), which addresses this home's backlog and archive from any working directory exactly as lifecycle transitions do, and bootstrap reports a code-root `data/backlog.md` or `data/done-archive.md` that is not this home's own file as a `BACKLOG_RECONCILE: code-root ...` line even in a read-only session.
+Every routine firstmate backlog command therefore runs through [`bin/fm-tasks-axi.sh`](../bin/fm-tasks-axi.sh), which addresses this home's backlog and archive from any working directory exactly as lifecycle transitions do, and for a home whose `FM_HOME` is the code root bootstrap reports a code-root `data/backlog.md` or `data/done-archive.md` that is not this home's own file as a `BACKLOG_RECONCILE: code-root ...` line even in a read-only session.
+A home whose `FM_HOME` is elsewhere is never pointed at the code root's data files, because there they may be the code-root home's own live queue rather than a fork of this home's.
 
 ## Runtime backend (config/backend / FM_BACKEND)
 
@@ -146,7 +158,7 @@ See [`docs/cmux-backend.md`](cmux-backend.md#runtime-detection) for why cmux can
 Auto-detected herdr or cmux prints a stderr notice naming `config/backend` and `--backend tmux` as opt-outs; auto-detected tmux stays silent to preserve existing default behavior.
 Zellij, Orca, and stream are never auto-detected; select them by putting the name in a local `config/backend` file, by exporting `FM_BACKEND=<name>`, or by telling the first mate in chat.
 Any value other than `tmux`, `herdr`, `zellij`, `orca`, `cmux`, or `stream` is rejected until another adapter is implemented and verified.
-`fm-spawn.sh` accepts `tmux`, `herdr`, `zellij`, `orca`, `cmux`, and `stream` for ship and scout tasks; only `tmux`, `herdr`, and `zellij` additionally accept `--secondmate`, because `backend=orca`, `backend=cmux`, and `backend=stream` all still refuse it until secondmate launch semantics are designed for each.
+`fm-spawn.sh` accepts `tmux`, `herdr`, `zellij`, `orca`, `cmux`, and `stream` for ship and scout tasks; `tmux`, `herdr`, `zellij`, and `stream` additionally accept `--secondmate`, because `backend=orca` and `backend=cmux` still refuse it until secondmate launch semantics are designed for each.
 `codex-app` is not an accepted runtime backend yet; [`docs/codex-app-backend.md`](codex-app-backend.md) owns the Codex App boundary.
 The session-start secondmate liveness sweep uses the recovery-grade `fm_backend_agent_state` classifier where verified.
 The comment above that function in `bin/fm-backend.sh` is the single owner of its detailed state contract and recovery authorization.
@@ -381,6 +393,7 @@ When it is absent or contains `default`, crewmates mirror the firstmate's own ha
 The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.
 A bare `<harness>` preserves the previous behavior: harness only, with no model or effort launch flag.
 When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
+The model token may also be a fallback chain, one exact pin or a comma-separated label list, resolved per "Model fallback chains" above.
 `fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
 Changing this pin affects the next secondmate spawn or control-plane relaunch; the relaunch profile rules are owned by [`docs/agent-control.md`](agent-control.md#transactional-relaunch).
 An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
@@ -497,6 +510,8 @@ Every profile array is an implicit quota-aware choice resolved through `quota-ar
 If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.
 Except for `ultra`, which refuses unsupported profiles under the native-effort contract above, an effort value the chosen harness does not accept is recorded as `effort=` in task meta for traceability but omitted from the launch flags.
 Bootstrap reports unsupported harness/model/effort combinations as a `CREW_DISPATCH` diagnostic when they are visible in the file.
+A profile's `model` may also be a fallback chain: either one `<provider>/<model-id>` label, which is an exact pin exactly as before, or a comma-separated list of labels such as `codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash`, resolved in preference order at spawn time; "Model fallback chains" above owns the chain syntax, cooldowns, and refusal contract.
+The dispatch profile consultation resolves a concrete profile and passes it to `fm-spawn.sh` unchanged, so a chain rides in the `--model` value and no dispatch-side judgment substitutes a model outside the captain-approved order.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 That example uses no `accountSlots`; add them to a profile only after creating the matching slots in `config/account-slots.json`, because dispatch refuses a slotted profile when that registry is missing.
 When the file exists, bootstrap validates it with `jq`.
@@ -1046,6 +1061,8 @@ The voice handover depends on `note`, so it keeps working in a home that has con
 | `config/voice-gateway-key` | `FM_VOICE_GATEWAY_KEY` | Optional hybrid gateway key, passed to the external server environment, never its command line; protect this file as a credential. |
 | `config/voice-local-command` | `FM_VOICE_LOCAL_COMMAND` | Required only by `--start-engine`: absolute path to the external stack's executable in its own virtual environment. |
 | `config/voice-local-cache` | `FM_VOICE_LOCAL_CACHE` | Required only by `--start-engine`: existing absolute directory for the external engine's home and caches. |
+| `config/voice-gate-key-var` | `FM_VOICE_GATE_KEY_VAR` | Opt-in for the hybrid engine's fast routing layer: first line names the secrets variable holding the gateway key, which is read at call time and never logged; absent, the fast layer is inert and the relay behaves exactly as before. |
+| `config/voice-gate-mode` | `FM_VOICE_GATE_MODE` | Fast-layer mode; `shadow` (the default when absent) logs every route decision beside what the heavy model actually did and acts on none, while `act` refuses in this build. |
 | `config/voice-region` | `FM_VOICE_REGION` | Bedrock region for the relay's bidirectional session, required when the engine is `bedrock`. |
 | `config/voice-model` | `FM_VOICE_MODEL` | Speech-to-speech model id, required when the engine is `bedrock`. |
 | `config/voice-profile` | `FM_VOICE_PROFILE` | AWS profile the relay exports credentials from; absent, or an explicitly empty variable, means it uses only credentials already in its environment. |
@@ -1176,7 +1193,7 @@ FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|read
 FM_CLASSIFY_PAUSED_VERB=paused     # leading status verb for a declared external wait; excluded from FM_CAPTAIN_RE and distinct from blocked
 FM_STALE_ESCALATE_SECS=240         # idle seconds before an unbounded provably-working stale pane escalates; stale panes whose crew is not provably working surface immediately unless admitted directly to the declared-wait cadence, while a declared wait or proven ordinary-crew backlog captain call bounds later due alarms without suppressing the captain call's first sight; an absent, unreadable, or incompatible backlog leaves alarms unchanged
 FM_BUSY_TURN_MAX_SECS=3600         # maximum age without a completed turn or explicit native-harness progress (bin/fm-watch.sh owns marker selection), before the same wedge escalation used for a provably-working non-busy stale takes over; inspection-only, never an automatic interrupt or restart; a declared external wait, attended verified captain-held transfer, or proven ordinary-crew backlog captain call bounds due alarms through FM_PAUSE_RESURFACE_SECS instead
-FM_PAUSE_RESURFACE_SECS=14400      # four hours between bounded rechecks of a declared external wait or verified captain-held transfer, and between repeated new-hash or due possible-wedge alarms for an ordinary crew task with an open backlog captain call; a structured until time can make an external-wait recheck occur sooner but cannot extend this bound; this includes a live idle pane after its first inconclusive stale wake and a live busy pane past FM_BUSY_TURN_MAX_SECS, while the away-mode daemon uses the same setting and ages its window against the crew's own latest status line rather than pane busy state; a captain-held transfer is never rechecked while the away-posture record exists
+FM_PAUSE_RESURFACE_SECS=14400      # four hours between bounded rechecks of a declared external wait or verified captain-held transfer, and between repeated new-hash or due possible-wedge alarms for an ordinary crew task with an open backlog captain call; a structured until time can make a status-declared external wait's recheck occur sooner but cannot extend this bound; this includes a live idle pane after its first inconclusive stale wake and a live busy pane past FM_BUSY_TURN_MAX_SECS, while the away-mode daemon uses the same setting and ages its window against the crew's own latest status line rather than pane busy state; a captain-held transfer is never rechecked while the away-posture record exists
 FM_SECONDMATE_WAKE_STALL_SECS=180  # minimum interval with no change of the oldest actionable foreign wake-queue row (it advances as the mate drains, and a queue reprovisioned under the same task id starts a fresh interval at whatever sequence it restarts) before an endpoint-recorded local secondmate produces one durable parent wake-loop-stall notification for that no-progress episode; a mate that is provably inside an active turn (an exact busy verdict, bounded by the same FM_BUSY_TURN_MAX_SECS above) never escalates whatever this interval says, declared external-wait pause rows are excluded, and zero or invalid values use 180
 FM_WEDGE_DEMAND_INSPECT_COUNT=3    # consecutive provably-working stale escalations on the same unchanged pane before demand-deep-inspection is added
 FM_WORKTREE_WRITE_PRUNE='.git node_modules .venv venv __pycache__ .mypy_cache .pytest_cache .ruff_cache .tox target dist build .next .cache vendor'   # directory names the wedge detector's task-worktree write probe skips; the default keeps .git out so a supervisor's own read-only git command can never look like crew progress; set it to the empty string to prune nothing, which widens the probe to the whole depth-bounded tree rather than disabling it
@@ -1232,6 +1249,8 @@ FM_VOICE_GATEWAY_MODEL= # overrides config/voice-gateway-model; interim default 
 FM_VOICE_GATEWAY_KEY=   # overrides config/voice-gateway-key; never place it in a URL or command line
 FM_VOICE_LOCAL_COMMAND= # overrides config/voice-local-command for --start-engine
 FM_VOICE_LOCAL_CACHE=   # overrides config/voice-local-cache for --start-engine
+FM_VOICE_GATE_KEY_VAR=  # overrides config/voice-gate-key-var; the fast layer's whole opt-in
+FM_VOICE_GATE_MODE=     # overrides config/voice-gate-mode; shadow when neither is set
 FM_VOICE_REGION=        # overrides config/voice-region for one Bedrock relay run
 FM_VOICE_MODEL=         # overrides config/voice-model for one Bedrock relay run
 FM_VOICE_PROFILE=       # overrides config/voice-profile; explicitly empty forces ambient credentials

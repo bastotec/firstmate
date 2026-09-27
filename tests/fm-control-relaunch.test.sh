@@ -425,24 +425,26 @@ test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text() {
   pass "fm-control relaunch: pending composer text refuses before the exit command is typed"
 }
 
-test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven() {
+test_relaunch_verify_then_clears_an_unproven_composer_before_exit() {
   local dir out rc
   dir=$(new_case unproven-exit rl44)
   add_ship_task "$dir" rl44 claude
 
-  out=$(FM_FAKE_COMPOSER_READ_FAIL=1 \
-    run_control "$dir" rl44 relaunch --note "preserve on an unreadable composer"); rc=$?
+  out=$(FM_FAKE_COMPOSER_READ_FAIL=1 FM_CONTROL_CLEAR_WAIT=0.01 \
+    run_control "$dir" rl44 relaunch --note "verify-then-clear an unreadable composer"); rc=$?
 
-  expect_code 1 "$rc" "a relaunch must refuse before typing an exit command when the composer state cannot be proven empty"
-  assert_contains "$out" "not proven empty" \
-    "the refusal should name the unproven composer state, not claim pending text"
+  expect_code 0 "$rc" "a relaunch must never be refused on a composer state it cannot prove"$'\n'"$out"
+  assert_contains "$out" "composer state stayed" \
+    "the exit gate should spend its bounded re-read budget and warn before typing"
   assert_not_contains "$out" "visibly holds pending text" \
     "an unreadable composer is not the same claim as observed pending text"
+  assert_no_grep "C-u" "$dir/fake/keys" \
+    "claude has no verified composer clear, so no clear key may be delivered"
+  assert_grep "/exit" "$dir/fake/literal" \
+    "the exit command must be typed once the clear budget is spent"
   [ "$(cat "$dir/fake/command")" = claude ] \
-    || fail "an unproven composer refusal must leave the old agent running"
-  assert_no_grep "/exit" "$dir/fake/literal" \
-    "the exit command must not be typed when the composer state is not proven empty"
-  pass "fm-control relaunch: an unreadable composer fails safe before the exit command is typed"
+    || fail "the relaunch must stop the old agent and launch its replacement"
+  pass "fm-control relaunch: an unreadable composer is verify-then-cleared, never a structural refusal"
 }
 
 test_relaunch_from_linked_home_preserves_recorded_worktree() {
@@ -2160,7 +2162,7 @@ test_direct_spawn_relaunch_refuses_secondmate_account_slot_after_metadata_load()
 test_secondmate_relaunch_onto_deck
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
-test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
+test_relaunch_verify_then_clears_an_unproven_composer_before_exit
 test_relaunch_from_linked_home_preserves_recorded_worktree
 test_relaunch_preserves_durable_task_metadata
 test_relaunch_keeps_an_armed_merge_poll_authenticated

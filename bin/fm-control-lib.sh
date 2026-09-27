@@ -162,6 +162,33 @@ fm_control_interrupt_clear_key() {  # <harness>
   esac
 }
 
+# The verified key sequence that CLEARS a composer holding input the fleet
+# cannot prove, for the verify-then-clear gate in front of fm-control.sh's exit
+# command (that script's gate_exit_composer owns the sequence and its budget).
+# This is a different question from fm_control_interrupt_clear_key above: that
+# one names the key an interrupt must be FOLLOWED by so a cancelled prompt is
+# never left behind, while this one names what the control plane may deliver to
+# CHANGE a composer reading - it is the supported clearing path, so `unknown`
+# stops being a structural dead end. Prints one key per line; an empty result
+# means no verified clear exists for that harness and the gate falls back to
+# bounded re-reads only. A harness with unverified mechanics returns nonzero
+# rather than receiving a guessed key.
+#   muse  Ctrl+U, its verified composer clear.
+#   deck  Ctrl+U then Enter, which the pane driver (bin/fm-deck-worker.sh)
+#         consumes as ONE input line carrying its clear byte: the driver
+#         discards that line whole and repaints its prompt, so the pair can
+#         never submit anything even when unproven text was already echoed
+#         into the pane, and the repaint is what turns the reading back into a
+#         provably empty prompt row.
+fm_control_composer_clear_keys() {  # <harness>
+  case "${1-}" in
+    muse) printf 'C-u\n' ;;
+    deck) printf 'C-u\nEnter\n' ;;
+    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy) ;;
+    *) return 1 ;;
+  esac
+}
+
 fm_control_interrupt_ack_source() {  # <harness>
   case "${1-}" in
     muse) printf 'muse-session-terminal' ;;

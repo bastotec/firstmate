@@ -89,6 +89,7 @@ Release happens only on explicit retirement or seed rollback, never on routine r
 
 `bin/fm-home-seed.sh` copies the charter into the secondmate home as `data/charter.md`.
 It also writes the gitignored `.fm-secondmate-parent` durable binding before the required `.fm-secondmate-home` identity marker; the parser header in [`bin/fm-secondmate-parent-lib.sh`](../../../bin/fm-secondmate-parent-lib.sh) owns the record contract, and both files must remain in place.
+When the seeding home hosts the fleet's stream hub, the seed also mints the mate home its own stream credential, rolled back with the rest of the seed on failure; [`docs/stream-backend.md`](../../../docs/stream-backend.md) owns that contract.
 `bin/fm-spawn.sh --secondmate` launches it through the secondmate harness path, resolving `config/secondmate-harness` -> `config/crew-harness` -> the primary's own harness unless an explicit per-spawn harness override is passed.
 
 `config/secondmate-harness` may also pin a concrete model and effort for the secondmate agent, in the SAME file rather than a new one: the format is a single whitespace-separated line `<harness> [<model>] [<effort>]`, with only the first non-empty, non-comment line parsed.
@@ -236,10 +237,10 @@ Do not hand off `local-only` items.
 For local `kind=secondmate` meta with no window, treat the secondmate as a dead persistent direct report and respawn it with:
 
 ```sh
-bin/fm-spawn.sh <id> --secondmate
+bin/fm-spawn.sh <id> --secondmate --backend <recorded-backend>
 ```
 
-Use the recorded `home=` in meta.
+Use the recorded `home=` in meta and pass its recorded `backend=` the same way, with an absent `backend=` meaning tmux, so the replacement stays on the mate's own backend rather than the ambient selection, exactly as the session-start liveness sweep's respawn does.
 If meta is missing but `data/secondmates.md` still registers the secondmate, respawn from the registry entry and its persistent home.
 For a remote route, the same command probes and relaunches only on the configured host.
 An SSH transport failure or unreadable remote endpoint remains unknown and must be reconciled on that host; never launch a local replacement.
