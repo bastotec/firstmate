@@ -1578,7 +1578,12 @@ scan_signals() {
 # and re-announcement, drain-time deduplication, and the handled acknowledgement
 # keep their existing owners untouched.
 procevent_surfaced_marker() {  # <queue-key>
-  printf '%s/.seen-procevent-%s' "$STATE" "$(printf '%s' "$1" | LC_ALL=C od -An -tx1 | tr -d ' \n')"
+  local kind=procevent
+  # A captain inbox note (bin/fm-inbox.sh note) is surfaced the same way: it is
+  # the captain talking, and nothing else in the watcher would ever wake main
+  # for it, so it sat on the queue until an unrelated event closed a cycle.
+  case "$1" in inbox:*) kind=inbox ;; esac
+  printf '%s/.seen-%s-%s' "$STATE" "$kind" "$(printf '%s' "$1" | LC_ALL=C od -An -tx1 | tr -d ' \n')"
 }
 
 procevent_surface_after_output() {
@@ -1598,14 +1603,15 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted=""
+  local key reason captured="" stranded="" unstarted="" notes=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
   while IFS= read -r key; do
-    case "$key" in procevent:*) ;; *) continue ;; esac
+    case "$key" in procevent:*|inbox:*) ;; *) continue ;; esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
     PROCEVENT_SURFACED="$PROCEVENT_SURFACED $key"
+    case "$key" in inbox:*) notes="$notes ${key#inbox:}"; continue ;; esac
     # A stranded source or one whose launch never proved itself is the opposite
     # of a captured result: nothing is collecting for it. Headlining either as
     # a capture would present it as healthy, which is the shape of defect
@@ -1621,7 +1627,11 @@ procevent_surface_queued() {
     return 0
   fi
   reason="check:"
-  [ -z "$captured" ] || reason="$reason process-event result captured:$captured"
+  [ -z "$notes" ] || reason="$reason captain inbox note:$notes"
+  if [ -n "$captured" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason process-event result captured:$captured"
+  fi
   if [ -n "$stranded" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason process-event source stranded:$stranded"
@@ -1832,6 +1842,30 @@ heartbeat_scan_finds_actionable() {
 # loop is the permanent fail-closed backstop). This preserves the single live
 # supervision cycle: the reader is a short-lived subprocess of THIS watcher, not
 # a second watcher, so every guard/beacon/arm/turn-end mechanism is unchanged.
+# poll_sleep: the blind POLL sleep, cut short when the wake queue grows, so a
+# row appended between cycles - a captain inbox note above all - is seen by
+# the next cycle within about a second instead of up to POLL later. It only
+# ever shortens the wait, and an early return just runs the next cycle, so the
+# beacon never ages past POLL.
+wake_queue_size() {
+  if [ -e "$FM_WAKE_QUEUE" ]; then wc -c < "$FM_WAKE_QUEUE" | tr -d ' '; else echo 0; fi
+}
+
+poll_sleep() {
+  local start now waited=0
+  case "$POLL" in
+    ''|*[!0-9]*|0|1) sleep "$POLL"; return ;;  # sub-second or 1 s: nothing to cut short
+  esac
+  start=$(wake_queue_size)
+  while [ "$waited" -lt "$POLL" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    now=$(wake_queue_size)
+    [ "$now" -gt "$start" ] && return 0
+    start=$now
+  done
+}
+
 event_wait_or_sleep() {
   local w b session first_backend="" first_session="" rec rc
   local windows=()
@@ -1855,7 +1889,7 @@ event_wait_or_sleep() {
   done < <(recorded_windows)
 
   if [ "${#windows[@]}" -eq 0 ]; then
-    sleep "$POLL"
+    poll_sleep
     return
   fi
 
@@ -1871,7 +1905,7 @@ event_wait_or_sleep() {
     _event_cap_fails=0
   fi
   if [ "$_event_cap_ok" != 1 ]; then
-    sleep "$POLL"
+    poll_sleep
     return
   fi
 
@@ -1888,7 +1922,7 @@ event_wait_or_sleep() {
       # pure polling for the rest of this watcher process.
       _event_cap_fails=$((_event_cap_fails + 1))
       [ "$_event_cap_fails" -ge "$EVENT_CAP_FAIL_MAX" ] && _event_cap_ok=0
-      sleep "$POLL"
+      poll_sleep
       ;;
     *)
       # 1: a clean full-budget wait with no actionable edge - the reader already
