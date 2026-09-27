@@ -41,26 +41,7 @@ export class PiTerminalResponseInputFilter {
       return;
     }
     if (this.pending) {
-      let candidate = this.pending;
-      for (let offset = 0; offset < data.length; offset += 1) {
-        const next = candidate + data[offset];
-        if (OSC_PALETTE_RESPONSE.test(next)) {
-          this.clearTimer();
-          this.pending = "";
-          const remainder = data.slice(offset + 1);
-          if (remainder) this.forward(remainder);
-          return;
-        }
-        if (this.isPaletteResponsePrefix(next)) {
-          candidate = next;
-          continue;
-        }
-        this.clearTimer();
-        this.pending = "";
-        this.forward(data.slice(offset));
-        return;
-      }
-      this.pending = candidate;
+      this.consumePaletteCandidate(this.pending, data);
       return;
     }
     if (this.isPaletteResponsePrefix(data)) {
@@ -68,13 +49,44 @@ export class PiTerminalResponseInputFilter {
       this.scheduleFlush();
       return;
     }
-    if (data.startsWith(`${ESC}]4`)) return;
+    if (data.startsWith(`${ESC}]4`)) {
+      this.consumePaletteCandidate(`${ESC}]`, data.slice(2), true);
+      if (this.pending) this.scheduleFlush();
+      return;
+    }
     this.forward(data);
   }
 
   dispose(): void {
     this.clearTimer();
     this.pending = "";
+  }
+
+  private consumePaletteCandidate(
+    candidate: string,
+    data: string,
+    discardMalformedControl = false,
+  ): void {
+    for (let offset = 0; offset < data.length; offset += 1) {
+      const next = candidate + data[offset];
+      if (OSC_PALETTE_RESPONSE.test(next)) {
+        this.clearTimer();
+        this.pending = "";
+        const remainder = data.slice(offset + 1);
+        if (remainder) this.forward(remainder);
+        return;
+      }
+      if (this.isPaletteResponsePrefix(next)) {
+        candidate = next;
+        continue;
+      }
+      this.clearTimer();
+      this.pending = "";
+      if (discardMalformedControl && (data.includes("\x07") || data.includes(`${ESC}\\`))) return;
+      this.forward(data.slice(offset));
+      return;
+    }
+    this.pending = candidate;
   }
 
   private isPaletteResponsePrefix(data: string): boolean {

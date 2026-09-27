@@ -1011,6 +1011,20 @@ const makeFilter = (timeout = 30) => {
   editor.events = [];
   editor.text = "";
   renders = 0;
+  const preflushCommandStdin = new StdinBuffer({ timeout: 10, escapeTimeout: 2 });
+  preflushCommandStdin.on("data", dispatch);
+  preflushCommandStdin.process(`${ESC}]4;38;`);
+  for (const character of "/quit\r") preflushCommandStdin.process(character);
+  await sleep(30);
+  assert.deepEqual(editor.events, ["/quit\r"]);
+  assert.equal(editor.text, "/quit\r");
+  assert.equal(renders, 1);
+  assert.equal(pasteCalls, 0);
+  preflushCommandStdin.destroy();
+
+  editor.events = [];
+  editor.text = "";
+  renders = 0;
   dispatch(`${ESC}]4;38;`);
   dispatch("r");
   dispatch("gb:");
