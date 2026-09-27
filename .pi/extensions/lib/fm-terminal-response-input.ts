@@ -50,7 +50,7 @@ export class PiTerminalResponseInputFilter {
       return;
     }
     if (data.startsWith(`${ESC}]4`)) {
-      this.consumePaletteCandidate(`${ESC}]`, data.slice(2), true);
+      this.consumePaletteCandidate(`${ESC}]`, data.slice(2));
       if (this.pending) this.scheduleFlush();
       return;
     }
@@ -62,11 +62,7 @@ export class PiTerminalResponseInputFilter {
     this.pending = "";
   }
 
-  private consumePaletteCandidate(
-    candidate: string,
-    data: string,
-    discardMalformedControl = false,
-  ): void {
+  private consumePaletteCandidate(candidate: string, data: string): void {
     for (let offset = 0; offset < data.length; offset += 1) {
       const next = candidate + data[offset];
       if (OSC_PALETTE_RESPONSE.test(next)) {
@@ -82,7 +78,6 @@ export class PiTerminalResponseInputFilter {
       }
       this.clearTimer();
       this.pending = "";
-      if (discardMalformedControl && (data.includes("\x07") || data.includes(`${ESC}\\`))) return;
       this.forward(data.slice(offset));
       return;
     }
