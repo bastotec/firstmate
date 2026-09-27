@@ -1051,6 +1051,7 @@ The Bedrock engine and the model-backed subcommands of `bin/fm-inbox.sh` reach a
 Each is one line in a local, gitignored `config/` file, with an environment variable that overrides it for a single run, and a missing required value refuses with the path to write rather than falling back to a value that belongs to another home.
 That configuration is the whole opt-in: an unconfigured home cannot start the relay and cannot run `fm-inbox.sh say` or `ask`, while `note`, `status`, `list` and `drain` need no configuration at all because they make no model call.
 The voice handover depends on `note`, so it keeps working in a home that has configured nothing.
+In a live Pi session on the polling path, the watcher surfaces each unseen captain note once and reacts within a few seconds rather than waiting for the full `FM_POLL`; Herdr's native event wait is unchanged.
 
 | File | Environment | Holds |
 | --- | --- | --- |

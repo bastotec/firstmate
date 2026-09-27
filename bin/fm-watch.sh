@@ -1567,16 +1567,14 @@ scan_signals() {
   return 0
 }
 
-# Deliver a durably queued process-event result to firstmate. Publication is
-# owned by bin/fm-procevent.sh - by the runner at capture time and by reconcile's
-# re-announcement - so this decides only whether a queued check record has been
-# surfaced yet, then reports it through the same actionable exit every other wake
-# uses. Without it a captured result sits on the queue until something else
-# happens to wake firstmate, which is exactly the missed delivery this repairs.
+# Deliver a durably queued process-event result or captain inbox note to
+# firstmate. Each producer owns publication and acknowledgement, while this
+# decides only whether its queued check record has been surfaced yet, then
+# reports it through the same actionable exit every other wake uses. Without
+# this path the row sits on the queue until something else wakes firstmate.
 # Dedup uses the same .seen-* discipline as scan_signals: the durable record is
 # always written before its marker, so nothing is suppressed before it is queued,
-# and re-announcement, drain-time deduplication, and the handled acknowledgement
-# keep their existing owners untouched.
+# and each producer's re-announcement and acknowledgement contract stays intact.
 procevent_surfaced_marker() {  # <queue-key>
   local kind=procevent
   # A captain inbox note (bin/fm-inbox.sh note) is surfaced the same way: it is
@@ -1842,9 +1840,9 @@ heartbeat_scan_finds_actionable() {
 # loop is the permanent fail-closed backstop). This preserves the single live
 # supervision cycle: the reader is a short-lived subprocess of THIS watcher, not
 # a second watcher, so every guard/beacon/arm/turn-end mechanism is unchanged.
-# poll_sleep: the blind POLL sleep, cut short when the wake queue grows, so a
-# row appended between cycles - a captain inbox note above all - is seen by
-# the next cycle within about a second instead of up to POLL later. It only
+# poll_sleep: the blind POLL sleep, cut short for an unsurfaced captain inbox
+# note or when the wake queue grows, so a row appended between cycles is seen
+# by the next cycle within about a second instead of up to POLL later. It only
 # ever shortens the wait, and an early return just runs the next cycle, so the
 # beacon never ages past POLL.
 wake_queue_size() {
@@ -2213,8 +2211,8 @@ while :; do
   if [ -d "$STATE/procevent" ]; then
     FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" reconcile >/dev/null 2>&1 || true
   fi
-  # Then deliver any queued-but-unsurfaced result, including one a runner
-  # published while this watcher was between cycles.
+  # Then deliver any queued-but-unsurfaced process-event result or captain
+  # inbox note, including one published while this watcher was between cycles.
   procevent_surface_queued
 
   # A process-event result carries richer adapter-owned wake context than the
