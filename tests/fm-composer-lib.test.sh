@@ -874,9 +874,9 @@ const makeFilter = (timeout = 30) => {
 }
 {
   const { filter, forwarded } = makeFilter();
-  const malformed = `${ESC}]4;38;not-a-color${BEL}`;
-  filter.handleInput(malformed);
-  assert.deepEqual(forwarded, []);
+  const malformedTail = `not-a-color${BEL}`;
+  filter.handleInput(`${ESC}]4;38;${malformedTail}`);
+  assert.deepEqual(forwarded, [malformedTail]);
   filter.dispose();
 }
 {
@@ -980,10 +980,14 @@ const makeFilter = (timeout = 30) => {
   assert.deepEqual(editor.events, []);
   assert.equal(editor.text, "");
 
-  dispatch(`${ESC}]4;38;not-a-color${BEL}`);
-  assert.deepEqual(editor.events, []);
-  assert.equal(editor.text, "");
+  const malformedTail = `not-a-color${BEL}`;
+  dispatch(`${ESC}]4;38;${malformedTail}`);
+  assert.deepEqual(editor.events, [malformedTail]);
+  assert.equal(editor.text, malformedTail);
 
+  editor.events = [];
+  editor.text = "";
+  renders = 0;
   dispatch(`${ESC}]4;38`);
   dispatch("x");
   assert.deepEqual(editor.events, ["x"]);
@@ -1021,6 +1025,22 @@ const makeFilter = (timeout = 30) => {
   assert.equal(renders, 1);
   assert.equal(pasteCalls, 0);
   preflushCommandStdin.destroy();
+
+  editor.events = [];
+  editor.text = "";
+  renders = 0;
+  const terminatedTail = `rgb:0000/afaf/d7d7${BEL}`;
+  const interleavedInput = `/quit\r${terminatedTail}`;
+  const terminatedPreflushStdin = new StdinBuffer({ timeout: 10, escapeTimeout: 2 });
+  terminatedPreflushStdin.on("data", dispatch);
+  terminatedPreflushStdin.process(`${ESC}]4;38;`);
+  for (const character of interleavedInput) terminatedPreflushStdin.process(character);
+  await sleep(30);
+  assert.deepEqual(editor.events, [interleavedInput]);
+  assert.equal(editor.text, interleavedInput);
+  assert.equal(renders, 1);
+  assert.equal(pasteCalls, 0);
+  terminatedPreflushStdin.destroy();
 
   editor.events = [];
   editor.text = "";
