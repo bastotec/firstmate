@@ -1874,6 +1874,7 @@ poll_sleep() {
   while [ "$waited" -lt "$POLL" ]; do
     sleep 1
     waited=$((waited + 1))
+    unsurfaced_inbox_note && return 0
     now=$(wake_queue_size)
     [ "$now" -gt "$start" ] && return 0
     start=$now
