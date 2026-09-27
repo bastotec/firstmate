@@ -4195,6 +4195,62 @@ test_procevent_captured_result_surfaces_proactively() {
   pass "a captured process-event result wakes a healthy watcher proactively, with no manual drain"
 }
 
+# A captain inbox note (bin/fm-inbox.sh note) wakes a healthy watcher mid-sleep,
+# within a few seconds, and only once. Before this, nothing in the watcher read
+# an inbox row: it sat on the queue until an unrelated event closed a cycle,
+# which on a quiet fleet was hours.
+test_inbox_note_wakes_the_watcher_promptly() {
+  local dir state out drain_out pid began took first_note
+  dir=$(make_case inbox-note); state="$dir/state"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"
+  dir=$(cd "$dir" && pwd -P)
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_POLL=30 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  # Let the first cycle finish and settle into its 30 s sleep.
+  for _ in $(seq 1 100); do [ -e "$state/.last-watcher-beat" ] && break; sleep 0.1; done
+  sleep 2
+  is_live_non_zombie "$pid" || fail "the watcher exited before any note was queued: $(cat "$out")"
+  began=$(date +%s)
+  FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "what is blocking the release" >/dev/null 2>&1 \
+    || fail "the inbox note could not be queued"
+  wait_for_exit "$pid" 100 || fail "a queued inbox note did not wake the sleeping watcher: $(cat "$out")"
+  took=$(( $(date +%s) - began ))
+  [ "$took" -le 5 ] || fail "the inbox note took ${took}s to wake a watcher sleeping 30 s"
+  grep -F "check: captain inbox note:" "$out" >/dev/null \
+    || fail "the wake did not name the captain inbox note: $(cat "$out")"
+  first_note=$(sed -n 's/.*check: captain inbox note: *\([^ ;]*\).*/\1/p' "$out" | head -1)
+  [ -n "$first_note" ] || fail "the wake did not name the note id: $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the inbox wake failed"
+  grep -F "captain inbox note" "$drain_out" >/dev/null \
+    || fail "the note was not in the drain that follows the wake: $(cat "$drain_out")"
+
+  # A note already on the queue when the sleep begins - appended after the
+  # cycle's scan, before its baseline - still wakes it at once, not after POLL.
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1/bin/fm-wake-lib.sh"
+    fm_wake_append check "inbox:raced" "check: captain inbox note raced - fixture"' _ "$ROOT" \
+    || fail "could not queue the raced note"
+  took=$(FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_POLL=30 bash -c '
+    set -e; . "$1/bin/fm-wake-lib.sh"
+    eval "$(sed -n "/^procevent_surfaced_marker()/,/^}/p;/^wake_queue_size()/,/^}/p;/^unsurfaced_inbox_note()/,/^}/p;/^poll_sleep()/,/^}/p" "$1/bin/fm-watch.sh")"
+    POLL=30; began=$(date +%s); poll_sleep; echo $(( $(date +%s) - began ))' _ "$ROOT") \
+    || fail "poll_sleep could not run against the raced note"
+  [ "$took" -le 2 ] || fail "a note queued before the sleep's baseline waited ${took}s"
+
+  # Surfaced once: the next watcher does not wake again for the same note.
+  : > "$out"
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    grep -F "$first_note" "$out" >/dev/null \
+      && fail "an already-surfaced inbox note woke the watcher again: $(cat "$out")"
+  fi
+  reap "$pid"
+  pass "a captain inbox note wakes a sleeping watcher within seconds, once"
+}
+
 test_procevent_unacknowledged_result_redrains_until_handled() {
   local dir state out replay_out replay_err pid before after sequence generation
   dir=$(make_case procevent-redrain); state="$dir/state"
@@ -5005,6 +5061,7 @@ test_timer_repair_drops_a_finished_write_deferral_chain
 test_terminal_first_sight_drops_a_finished_write_deferral_chain
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_procevent_captured_result_surfaces_proactively
+test_inbox_note_wakes_the_watcher_promptly
 test_procevent_unacknowledged_result_redrains_until_handled
 test_procevent_marker_keys_are_injective
 test_procevent_headlines_classify_queue_keys
