@@ -1,0 +1,82 @@
+From c812c05ea202ca514e32f177ed7d10b99a964d6f Mon Sep 17 00:00:00 2001
+From: Bruno Basto <bruno.basto@docana.com>
+Date: Sat, 26 Sep 2026 22:54:44 -0300
+Subject: [PATCH 3/3] Kokoro TTS: opt-in keep-warm synthesis while idle
+ (S2S_TTS_KEEPWARM_S)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/speech_to_speech/TTS/kokoro_handler.py | 41 ++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+diff --git a/src/speech_to_speech/TTS/kokoro_handler.py b/src/speech_to_speech/TTS/kokoro_handler.py
+index 46e2372..545b06a 100644
+--- a/src/speech_to_speech/TTS/kokoro_handler.py
++++ b/src/speech_to_speech/TTS/kokoro_handler.py
+@@ -150,6 +150,7 @@ class KokoroTTSHandler(BaseHandler[TTSIn, TTSOut]):
+         self._initial_lang_code = self.lang_code
+ 
+         self.warmup()
++        self._start_keep_warm()
+ 
+     def _setup_mlx(self, model_name: str) -> None:
+         """Setup for Apple Silicon using mlx-audio."""
+@@ -212,6 +213,42 @@ class KokoroTTSHandler(BaseHandler[TTSIn, TTSOut]):
+                 except Exception as e:
+                     logger.warning(f"Failed to preload voice {voice}: {e}")
+ 
++    def _start_keep_warm(self) -> None:
++        """Opt-in (S2S_TTS_KEEPWARM_S): while no reply is being synthesized, run
++        one tiny throwaway synthesis every N seconds so the model stays resident
++        and the GPU state hot. Nothing is played. Without it, the first sentence
++        after a few idle minutes took 14-44 s instead of under one."""
++        import os
++        import threading
++        import time as _time
++
++        raw = os.environ.get("S2S_TTS_KEEPWARM_S", "").strip()
++        if not raw or self.backend != "mlx":
++            return
++        interval = max(10.0, float(raw))
++        self._tts_last_active = _time.monotonic()
++
++        def loop() -> None:
++            while True:
++                _time.sleep(interval / 3)
++                if _time.monotonic() - self._tts_last_active < interval:
++                    continue
++                began = _time.monotonic()
++                try:
++                    # Never make a real reply wait: skip if the lock is taken.
++                    with MLXLockContext(handler_name="KokoroKeepWarm", timeout=0.05) as acquired:
++                        if acquired:
++                            for _ in self.model.generate(text="Okay.", voice=self.voice,
++                                                         speed=self.speed, lang_code=self.lang_code):
++                                pass
++                    logger.debug("Kokoro keep-warm took %.2fs", _time.monotonic() - began)
++                except Exception as exc:  # noqa: BLE001
++                    logger.debug("Kokoro keep-warm failed: %s", exc)
++                self._tts_last_active = _time.monotonic()
++
++        threading.Thread(target=loop, name="kokoro-keep-warm", daemon=True).start()
++        logger.info("Kokoro keep-warm every %.0fs while idle", interval)
++
+     def warmup(self) -> None:
+         """Warm up the model with a dummy inference."""
+         logger.info(f"Warming up {self.__class__.__name__}")
+@@ -274,8 +311,12 @@ class KokoroTTSHandler(BaseHandler[TTSIn, TTSOut]):
+         if voice:
+             self.voice = voice
+ 
++        import time as _time
++
++        self._tts_last_active = _time.monotonic()
+         if self.backend == "mlx":
+             yield from self._process_mlx(text, language_code)
++            self._tts_last_active = _time.monotonic()
+         else:
+             yield from self._process_kokoro(text, language_code)
+ 
+-- 
+2.50.1 (Apple Git-155)
+

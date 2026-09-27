@@ -1,0 +1,78 @@
+From 5d21590456460a952ebe3ce4f673e6cc58cc3418 Mon Sep 17 00:00:00 2001
+From: Bruno Basto <bruno.basto@docana.com>
+Date: Fri, 25 Sep 2026 16:56:37 -0300
+Subject: [PATCH 2/3] Qwen3-TTS: opt-in keep-warm synthesis while idle
+ (S2S_TTS_KEEPWARM_S)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/speech_to_speech/TTS/qwen3_tts_handler.py | 46 +++++++++++++++++++
+ 1 file changed, 46 insertions(+)
+
+diff --git a/src/speech_to_speech/TTS/qwen3_tts_handler.py b/src/speech_to_speech/TTS/qwen3_tts_handler.py
+index f87a127..f48819e 100644
+--- a/src/speech_to_speech/TTS/qwen3_tts_handler.py
++++ b/src/speech_to_speech/TTS/qwen3_tts_handler.py
+@@ -209,6 +209,42 @@ class Qwen3TTSHandler(BaseHandler[TTSIn, TTSOut]):
+         self._initial_ref_rvq = self.ref_rvq
+ 
+         self.warmup()
++        self._start_keep_warm()
++
++    def _start_keep_warm(self) -> None:
++        """Opt-in (S2S_TTS_KEEPWARM_S): while no reply is being synthesized, run
++        one tiny throwaway synthesis every N seconds so macOS keeps the model
++        resident and the GPU state hot. Nothing is played; the audio is
++        discarded. Without it, the first reply after ~20 idle minutes spent
++        11-15 s reloading the model."""
++        import os
++        import threading
++        import time as _time
++
++        raw = os.environ.get("S2S_TTS_KEEPWARM_S", "").strip()
++        if not raw:
++            return
++        interval = max(10.0, float(raw))
++        self._tts_busy = False
++        self._tts_last_active = _time.monotonic()
++
++        def loop() -> None:
++            while True:
++                _time.sleep(interval / 3)
++                if self._tts_busy or _time.monotonic() - self._tts_last_active < interval:
++                    continue
++                try:
++                    began = _time.monotonic()
++                    for _ in self._warmup_process("Okay."):
++                        if self._tts_busy:
++                            break
++                    logger.debug("Qwen3-TTS keep-warm took %.2fs", _time.monotonic() - began)
++                except Exception as exc:  # noqa: BLE001
++                    logger.debug("Qwen3-TTS keep-warm failed: %s", exc)
++                self._tts_last_active = _time.monotonic()
++
++        threading.Thread(target=loop, name="qwen3-tts-keep-warm", daemon=True).start()
++        logger.info("Qwen3-TTS keep-warm every %.0fs while idle", interval)
+ 
+     def _setup_faster(self, model_name: str, dtype: Any, attn_implementation: str, backend: str) -> None:
+         try:
+@@ -810,6 +846,16 @@ class Qwen3TTSHandler(BaseHandler[TTSIn, TTSOut]):
+         return combined_text, language_code
+ 
+     def process(self, tts_input: TTSIn) -> Iterator[TTSOut]:
++        import time as _time
++
++        self._tts_busy = True
++        try:
++            yield from self._process_reply(tts_input)
++        finally:
++            self._tts_busy = False
++            self._tts_last_active = _time.monotonic()
++
++    def _process_reply(self, tts_input: TTSIn) -> Iterator[TTSOut]:
+         speculative_turns = getattr(self, "speculative_turns", None)
+         if isinstance(tts_input, EndOfResponse):
+             if speculative_turns and not speculative_turns.is_latest_after_reopen_grace(
+-- 
+2.50.1 (Apple Git-155)
+

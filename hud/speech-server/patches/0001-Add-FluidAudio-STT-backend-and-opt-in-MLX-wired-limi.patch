@@ -1,0 +1,222 @@
+From ed7f292c4637bd0b3c572df515f2fb872303142e Mon Sep 17 00:00:00 2001
+From: Bruno Basto <bruno.basto@docana.com>
+Date: Fri, 25 Sep 2026 16:18:30 -0300
+Subject: [PATCH 1/3] Add FluidAudio STT backend and opt-in MLX wired limit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../STT/fluidaudio_handler.py                 | 110 ++++++++++++++++++
+ .../fluidaudio_stt_arguments.py               |  17 +++
+ src/speech_to_speech/backend_registry.py      |  12 ++
+ src/speech_to_speech/cli.py                   |  20 ++++
+ 4 files changed, 159 insertions(+)
+ create mode 100644 src/speech_to_speech/STT/fluidaudio_handler.py
+ create mode 100644 src/speech_to_speech/arguments_classes/fluidaudio_stt_arguments.py
+
+diff --git a/src/speech_to_speech/STT/fluidaudio_handler.py b/src/speech_to_speech/STT/fluidaudio_handler.py
+new file mode 100644
+index 0000000..4fc91c0
+--- /dev/null
++++ b/src/speech_to_speech/STT/fluidaudio_handler.py
+@@ -0,0 +1,110 @@
++"""Speech to text through FluidAudio's fluidaudio-cli daemon (Parakeet TDT on
++CoreML / the Neural Engine). It keeps the GPU and the MLX lock free for TTS,
++transcribes a short utterance in about 0.1 s, and uses a few MB of RAM, so a
++quiet spell never costs a cold model reload."""
++from __future__ import annotations
++
++import json
++import logging
++import os
++import struct
++import subprocess
++import tempfile
++import threading
++import wave
++
++import numpy as np
++from rich.console import Console
++
++from speech_to_speech.pipeline.handler_types import STTIn, STTOut
++from speech_to_speech.pipeline.messages import PartialTranscription, Transcription
++from speech_to_speech.STT.base_stt_handler import BaseSTTHandler
++
++console = Console()
++logger = logging.getLogger(__name__)
++
++
++class FluidAudioSTTHandler(BaseSTTHandler):
++    def setup(self, cli: str, model_dir: str, asr_version: str = "v3", **_unused) -> None:
++        self.argv = [cli, "--daemon", "--asr-model-dir", os.path.expanduser(model_dir),
++                     "--asr-version", asr_version]
++        self.lock = threading.Lock()
++        self.counter = 0
++        self._start()
++        self.warmup()
++
++    def _start(self) -> None:
++        self.proc = subprocess.Popen(self.argv, stdin=subprocess.PIPE,
++                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
++        while True:
++            line = self.proc.stdout.readline()
++            if not line:
++                raise RuntimeError("fluidaudio-cli exited before it was ready")
++            if json.loads(line).get("type") == "ready":
++                return
++
++    def _send(self, obj: dict) -> None:
++        body = json.dumps(obj).encode()
++        self.proc.stdin.write(b"\x01" + struct.pack("<I", len(body)) + body)
++        self.proc.stdin.flush()
++
++    def _transcribe(self, audio: np.ndarray) -> str:
++        pcm = audio
++        if pcm.dtype != np.int16:
++            pcm = (np.clip(pcm, -1.0, 1.0) * 32767).astype(np.int16)
++        handle, path = tempfile.mkstemp(suffix=".wav", prefix="fluidaudio-")
++        os.close(handle)
++        with wave.open(path, "wb") as out:
++            out.setnchannels(1)
++            out.setsampwidth(2)
++            out.setframerate(16000)
++            out.writeframes(pcm.tobytes())
++        with self.lock:
++            if self.proc.poll() is not None:
++                self._start()
++            self.counter += 1
++            rid = f"t{self.counter}"
++            self._send({"id": rid, "type": "transcribe", "filePath": path,
++                        "timestamps": False, "cleanup": True})
++            while True:
++                line = self.proc.stdout.readline()
++                if not line:
++                    raise RuntimeError("fluidaudio-cli exited mid-transcription")
++                msg = json.loads(line)
++                if msg.get("id") == rid:
++                    if msg.get("type") == "error":
++                        raise RuntimeError(msg.get("message", "fluidaudio error"))
++                    return (msg.get("text") or "").strip()
++
++    def warmup(self) -> None:
++        logger.info("Warming up FluidAudioSTTHandler")
++        self._transcribe(np.zeros(16000, dtype=np.int16))
++
++    def process(self, vad_audio: STTIn):
++        text = self._transcribe(np.asarray(vad_audio.audio))
++        if getattr(vad_audio, "mode", None) == "progressive":
++            # A live, in-progress chunk of the utterance: shown, never sent on
++            # as a finished sentence (the final item carries the whole turn).
++            if text:
++                yield PartialTranscription(
++                    text=text,
++                    turn_id=vad_audio.turn_id,
++                    turn_revision=vad_audio.turn_revision,
++                )
++            return
++        if True:
++            console.print(f"[yellow]USER: {text}")
++            yield Transcription(
++                text=text,
++                turn_id=vad_audio.turn_id,
++                turn_revision=vad_audio.turn_revision,
++                speech_stopped_at_s=vad_audio.created_at_s,
++            )
++
++    def cleanup(self) -> None:
++        logger.info("Stopping FluidAudioSTTHandler")
++        try:
++            self._send({"id": "quit", "type": "quit"})
++            self.proc.wait(timeout=3)
++        except Exception:  # noqa: BLE001
++            self.proc.kill()
+diff --git a/src/speech_to_speech/arguments_classes/fluidaudio_stt_arguments.py b/src/speech_to_speech/arguments_classes/fluidaudio_stt_arguments.py
+new file mode 100644
+index 0000000..152543a
+--- /dev/null
++++ b/src/speech_to_speech/arguments_classes/fluidaudio_stt_arguments.py
+@@ -0,0 +1,17 @@
++from dataclasses import dataclass, field
++
++
++@dataclass
++class FluidAudioSTTHandlerArguments:
++    fluidaudio_cli: str = field(
++        default="/Applications/Vowen.app/Contents/Resources/bin/fluidaudio-cli",
++        metadata={"help": "The fluidaudio-cli binary (FluidAudio, CoreML on the Neural Engine)."},
++    )
++    fluidaudio_model_dir: str = field(
++        default="~/Library/Application Support/vowen/models/parakeet-tdt-0.6b-v3",
++        metadata={"help": "The Parakeet TDT CoreML model directory."},
++    )
++    fluidaudio_asr_version: str = field(
++        default="v3",
++        metadata={"help": "Parakeet version for fluidaudio-cli: v2, v3, ja or zh-cn."},
++    )
+diff --git a/src/speech_to_speech/backend_registry.py b/src/speech_to_speech/backend_registry.py
+index 73cc7fa..d35ba2a 100644
+--- a/src/speech_to_speech/backend_registry.py
++++ b/src/speech_to_speech/backend_registry.py
+@@ -14,6 +14,7 @@ from speech_to_speech.arguments_classes.chat_completions_language_model_argument
+ )
+ from speech_to_speech.arguments_classes.chat_tts_arguments import ChatTTSHandlerArguments
+ from speech_to_speech.arguments_classes.facebookmms_tts_arguments import FacebookMMSTTSHandlerArguments
++from speech_to_speech.arguments_classes.fluidaudio_stt_arguments import FluidAudioSTTHandlerArguments
+ from speech_to_speech.arguments_classes.faster_whisper_stt_arguments import (
+     FasterWhisperSTTHandlerArguments,
+ )
+@@ -340,6 +341,17 @@ STT_BACKENDS = build_backend_registry(
+             config_prefix="faster_whisper_stt",
+             required_extra="faster-whisper",
+         ),
++        BackendSpec(
++            "fluidaudio",
++            "stt",
++            FluidAudioSTTHandlerArguments,
++            _simple_handler_factory(
++                "speech_to_speech.STT.fluidaudio_handler",
++                "FluidAudioSTTHandler",
++                attach_speculative_turns=True,
++            ),
++            config_prefix="fluidaudio",
++        ),
+         BackendSpec(
+             "parakeet-tdt",
+             "stt",
+diff --git a/src/speech_to_speech/cli.py b/src/speech_to_speech/cli.py
+index b48efcf..23d8f79 100644
+--- a/src/speech_to_speech/cli.py
++++ b/src/speech_to_speech/cli.py
+@@ -159,10 +159,30 @@ def main() -> None:
+         run_realtime_audio_client(parse_talk_arguments(command_args))
+         return
+ 
++    _pin_models_if_asked()
+     from speech_to_speech.s2s_pipeline import run_pipeline_command
+ 
+     run_pipeline_command(command, command_args)
+ 
+ 
++def _pin_models_if_asked() -> None:
++    """Opt-in (S2S_WIRED_LIMIT_GB): keep up to that much MLX memory wired, so
++    macOS cannot page the STT and TTS weights out while the server idles. A
++    paged-out model costs ~11 s to come back on the next turn."""
++    import os
++
++    raw = os.environ.get("S2S_WIRED_LIMIT_GB", "").strip()
++    if not raw:
++        return
++    try:
++        import mlx.core as mx
++
++        limit = int(float(raw) * (1 << 30))
++        mx.set_wired_limit(limit)
++        print(f"speech-to-speech: MLX wired limit set to {raw} GB", flush=True)
++    except Exception as exc:  # noqa: BLE001
++        print(f"speech-to-speech: could not set the MLX wired limit: {exc}", flush=True)
++
++
+ if __name__ == "__main__":
+     main()
+-- 
+2.50.1 (Apple Git-155)
+
