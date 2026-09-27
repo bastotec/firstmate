@@ -833,10 +833,12 @@ test_pi_terminal_response_input_filter() {
   ln -s "$pi_package/node_modules/@earendil-works/pi-tui" "$tmp/node_modules/@earendil-works/pi-tui"
   cp "$ROOT/.pi/extensions/lib/fm-terminal-response-input.ts" "$tmp/filter.ts"
   printf '{"type":"module"}\n' > "$tmp/package.json"
-  FILTER="$tmp/filter.ts" TUI="$tmp/node_modules/@earendil-works/pi-tui/dist/index.js" \
+  FILTER="$tmp/filter.ts" PI_PACKAGE="$tmp/node_modules/@earendil-works/pi-coding-agent/dist/index.js" \
+    TUI="$tmp/node_modules/@earendil-works/pi-tui/dist/index.js" \
     node --experimental-strip-types --input-type=module <<'JS' \
     || fail "Pi terminal-response input filter regression failed"
 import assert from "node:assert/strict";
+const { CustomEditor } = await import(process.env.PI_PACKAGE);
 const { StdinBuffer } = await import(process.env.TUI);
 const { default: registerGuard, PiTerminalResponseInputFilter } = await import(process.env.FILTER);
 const ESC = "\x1b";
@@ -915,30 +917,22 @@ const makeFilter = (timeout = 30) => {
   filter.dispose();
 }
 {
-  let factory;
   let terminalInput;
   let subscribed = false;
-  let activeEditor;
   let pasteCalls = 0;
-  let renders = 0;
+  const submissions = [];
   const handlers = new Map();
-  const editor = {
-    events: [],
-    text: "",
-    handleInput(data) {
-      this.events.push(data);
-      if (data.startsWith(`${ESC}[200~`) && data.endsWith(`${ESC}[201~`)) {
-        const pasted = data.slice(6, -6).replace(/[\x00-\x1f\x7f]/g, "");
-        this.text += pasted;
-      } else if (!data.startsWith(ESC)) {
-        this.text += data;
-      }
-      renders += 1;
-    },
+  const editor = new CustomEditor(
+    { requestRender() {} },
+    { borderColor: (text) => text, selectList: {} },
+    { matches: () => false },
+  );
+  editor.onSubmit = (text) => submissions.push(text);
+  const resetEditor = () => {
+    editor.setText("");
+    submissions.length = 0;
+    pasteCalls = 0;
   };
-  const priorFactory = () => ({ handleInput() {} });
-  const laterFactory = () => editor;
-  factory = priorFactory;
   const ctx = {
     mode: "tui",
     ui: {
@@ -949,86 +943,66 @@ const makeFilter = (timeout = 30) => {
       },
       pasteToEditor(data) {
         pasteCalls += 1;
-        activeEditor.handleInput(`${ESC}[200~${data}${ESC}[201~`);
+        editor.handleInput(`${ESC}[200~${data}${ESC}[201~`);
       },
-      getEditorComponent: () => factory,
-      setEditorComponent: (next) => { factory = next; },
     },
   };
   const dispatch = (data) => {
     if (!subscribed) {
-      activeEditor.handleInput(data);
+      editor.handleInput(data);
       return;
     }
     const result = terminalInput(data);
-    if (!result?.consume) activeEditor.handleInput(result?.data ?? data);
+    if (!result?.consume) editor.handleInput(result?.data ?? data);
   };
   registerGuard({ on(event, handler) { handlers.set(event, handler); } });
   handlers.get("session_start")({}, ctx);
-  ctx.ui.setEditorComponent(laterFactory);
-  activeEditor = factory({}, {}, {});
 
   dispatch(`${ESC}]4;38;rgb:0000/afaf/d7d7${BEL}`);
-  assert.deepEqual(editor.events, []);
-  assert.equal(editor.text, "");
+  assert.equal(editor.getText(), "");
   assert.equal(pasteCalls, 0);
 
   dispatch(`${ESC}]`);
   dispatch("4;38;");
   dispatch("rgb:0000/afaf/d7d7");
   dispatch(BEL);
-  assert.deepEqual(editor.events, []);
-  assert.equal(editor.text, "");
+  assert.equal(editor.getText(), "");
 
   const malformedTail = `not-a-color${BEL}`;
   dispatch(`${ESC}]4;38;${malformedTail}`);
-  assert.deepEqual(editor.events, [malformedTail]);
-  assert.equal(editor.text, malformedTail);
+  assert.equal(editor.getText(), malformedTail);
 
-  editor.events = [];
-  editor.text = "";
-  renders = 0;
+  resetEditor();
   dispatch(`${ESC}]4;38`);
   dispatch("x");
-  assert.deepEqual(editor.events, ["x"]);
-  assert.equal(editor.text, "x");
-  assert.equal(renders, 1);
+  assert.equal(editor.getText(), "x");
   assert.equal(pasteCalls, 0);
   await sleep(650);
 
-  editor.events = [];
-  editor.text = "";
-  renders = 0;
+  resetEditor();
   const commandStdin = new StdinBuffer({ timeout: 10, escapeTimeout: 2 });
   commandStdin.on("data", dispatch);
   commandStdin.process(`${ESC}]4;38;`);
   await sleep(30);
   for (const character of "/quit") commandStdin.process(character);
   await sleep(10);
-  assert.equal(editor.events.join(""), "/quit");
-  assert.equal(editor.text, "/quit");
-  assert.equal(renders, 5);
+  assert.equal(editor.getText(), "/quit");
   assert.equal(pasteCalls, 0);
   commandStdin.destroy();
   await sleep(650);
 
-  editor.events = [];
-  editor.text = "";
-  renders = 0;
+  resetEditor();
   const preflushCommandStdin = new StdinBuffer({ timeout: 10, escapeTimeout: 2 });
   preflushCommandStdin.on("data", dispatch);
   preflushCommandStdin.process(`${ESC}]4;38;`);
   for (const character of "/quit\r") preflushCommandStdin.process(character);
   await sleep(30);
-  assert.deepEqual(editor.events, ["/quit\r"]);
-  assert.equal(editor.text, "/quit\r");
-  assert.equal(renders, 1);
-  assert.equal(pasteCalls, 0);
+  assert.deepEqual(submissions, ["/quit"]);
+  assert.equal(editor.getText(), "");
+  assert.equal(pasteCalls, 1);
   preflushCommandStdin.destroy();
 
-  editor.events = [];
-  editor.text = "";
-  renders = 0;
+  resetEditor();
   const terminatedTail = `rgb:0000/afaf/d7d7${BEL}`;
   const interleavedInput = `/quit\r${terminatedTail}`;
   const terminatedPreflushStdin = new StdinBuffer({ timeout: 10, escapeTimeout: 2 });
@@ -1036,43 +1010,29 @@ const makeFilter = (timeout = 30) => {
   terminatedPreflushStdin.process(`${ESC}]4;38;`);
   for (const character of interleavedInput) terminatedPreflushStdin.process(character);
   await sleep(30);
-  assert.deepEqual(editor.events, [interleavedInput]);
-  assert.equal(editor.text, interleavedInput);
-  assert.equal(renders, 1);
-  assert.equal(pasteCalls, 0);
+  assert.deepEqual(submissions, ["/quit"]);
+  assert.equal(editor.getText(), "rgb:0000/afaf/d7d7");
+  assert.equal(pasteCalls, 2);
   terminatedPreflushStdin.destroy();
 
-  editor.events = [];
-  editor.text = "";
-  renders = 0;
+  resetEditor();
   dispatch(`${ESC}]4;38;`);
   dispatch("r");
   dispatch("gb:");
   dispatch("a");
   dispatch("bee");
-  assert.deepEqual(editor.events, []);
-  assert.equal(editor.text, "");
-  assert.equal(renders, 0);
+  assert.equal(editor.getText(), "");
   assert.equal(pasteCalls, 0);
   await sleep(650);
-  assert.deepEqual(editor.events, []);
-  assert.equal(editor.text, "");
-  assert.equal(renders, 0);
+  assert.equal(editor.getText(), "");
   dispatch("z");
-  assert.deepEqual(editor.events, ["z"]);
-  assert.equal(editor.text, "z");
-  assert.equal(renders, 1);
+  assert.equal(editor.getText(), "z");
 
   handlers.get("session_shutdown")();
   assert.equal(subscribed, false);
-  assert.equal(factory, laterFactory);
-  editor.events = [];
-  editor.text = "";
-  renders = 0;
+  resetEditor();
   dispatch("q");
-  assert.deepEqual(editor.events, ["q"]);
-  assert.equal(editor.text, "q");
-  assert.equal(renders, 1);
+  assert.equal(editor.getText(), "q");
 }
 JS
   pass "Pi input filter consumes fragmented palette replies under the accepted worker-input policy"

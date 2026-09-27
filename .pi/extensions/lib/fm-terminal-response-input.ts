@@ -18,7 +18,7 @@ const isDecimalDigit = (value: string | undefined): boolean =>
 const isHexDigit = (value: string | undefined): boolean =>
   value !== undefined && /^[0-9a-f]$/i.test(value);
 
-type InputForwarder = (data: string) => void;
+type InputForwarder = (data: string, recovered?: boolean) => void;
 
 export class PiTerminalResponseInputFilter {
   private pending = "";
@@ -69,7 +69,7 @@ export class PiTerminalResponseInputFilter {
         this.clearTimer();
         this.pending = "";
         const remainder = data.slice(offset + 1);
-        if (remainder) this.forward(remainder);
+        if (remainder) this.forward(remainder, true);
         return;
       }
       if (this.isPaletteResponsePrefix(next)) {
@@ -78,7 +78,7 @@ export class PiTerminalResponseInputFilter {
       }
       this.clearTimer();
       this.pending = "";
-      this.forward(data.slice(offset));
+      this.forward(data.slice(offset), true);
       return;
     }
     this.pending = candidate;
@@ -145,8 +145,18 @@ export function installPiTerminalResponseInputGuard(ctx: ExtensionContext): () =
   if (ctx.mode !== "tui") return () => {};
   let handlingInput = false;
   let forwardedInput: string | undefined;
-  const filter = new PiTerminalResponseInputFilter((data) => {
-    if (handlingInput) forwardedInput = data;
+  const filter = new PiTerminalResponseInputFilter((data, recovered = false) => {
+    if (!handlingInput) return;
+    const submitOffset = recovered ? data.indexOf("\r") : -1;
+    if (submitOffset === -1) {
+      forwardedInput = data;
+      return;
+    }
+    const text = data.slice(0, submitOffset);
+    const remainder = data.slice(submitOffset + 1);
+    if (text) ctx.ui.pasteToEditor(text);
+    if (remainder) queueMicrotask(() => ctx.ui.pasteToEditor(remainder));
+    forwardedInput = "\r";
   });
   const unsubscribe = ctx.ui.onTerminalInput((data) => {
     forwardedInput = undefined;
