@@ -4453,6 +4453,70 @@ test_watcher_reloads_changed_code_in_place() {
   pass "a changed watcher re-execs in place: same pid and lock, one watcher, live loop"
 }
 
+test_watcher_reloads_code_changed_during_startup() {
+  local dir state copy out startup_bin gate real_uname pid i duplicate_out reloads orphan
+  dir=$(make_case code-reload-during-startup); state="$dir/state"
+  dir=$(cd "$dir" && pwd -P)
+  copy="$dir/fmroot"
+  startup_bin="$dir/startup-bin"
+  gate="$dir/startup-gate"
+  out="$dir/watch.out"
+  duplicate_out="$dir/duplicate.out"
+  real_uname=$(command -v uname)
+  mkdir -p "$copy" "$startup_bin"
+  rsync -a --exclude node_modules --exclude __pycache__ "$ROOT/bin" "$copy/" || fail "could not copy bin/"
+  cat > "$startup_bin/uname" <<'SH'
+#!/usr/bin/env bash
+if mkdir "${FM_TEST_STARTUP_GATE}.once" 2>/dev/null; then
+  : > "${FM_TEST_STARTUP_GATE}.entered"
+  i=0
+  while [ ! -e "${FM_TEST_STARTUP_GATE}.release" ] && [ "$i" -lt 200 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -e "${FM_TEST_STARTUP_GATE}.release" ] || exit 1
+fi
+exec "$FM_TEST_REAL_UNAME" "$@"
+SH
+  chmod +x "$startup_bin/uname"
+
+  PATH="$startup_bin:$dir/fakebin:$PATH" FM_TEST_STARTUP_GATE="$gate" FM_TEST_REAL_UNAME="$real_uname" \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_WATCH_CODE_SETTLE=0 "$copy/bin/fm-watch.sh" > "$out" 2>&1 &
+  pid=$!
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -e "${gate}.entered" ]; do sleep 0.05; i=$((i + 1)); done
+  [ -e "${gate}.entered" ] || { reap "$pid"; fail "the watcher never reached the startup gate: $(cat "$out")"; }
+  [ ! -e "$state/.watch.lock" ] && [ ! -L "$state/.watch.lock" ] \
+    || { reap "$pid"; fail "the startup gate did not precede singleton-lock acquisition"; }
+  sleep 1.1
+  touch "$copy/bin/fm-inbox.sh"
+  : > "${gate}.release"
+
+  i=0
+  while [ "$i" -lt 200 ]; do
+    grep -F 're-executing in place' "$state/.watch-triage.log" >/dev/null 2>&1 \
+      && [ -e "$state/.last-watcher-beat" ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.05
+    i=$((i + 1))
+  done
+  is_live_non_zombie "$pid" || { reap "$pid"; fail "the watcher exited instead of reloading its startup-overlapping change: $(cat "$out")"; }
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null)" = "$pid" ] \
+    || { reap "$pid"; fail "the startup-overlap reload did not retain pid $pid"; }
+  reloads=$(grep -Fc 're-executing in place' "$state/.watch-triage.log" 2>/dev/null || true)
+  [ "$reloads" = 1 ] || { reap "$pid"; fail "the startup-overlapping change caused $reloads reloads"; }
+
+  PATH="$startup_bin:$dir/fakebin:$PATH" FM_TEST_STARTUP_GATE="$gate" FM_TEST_REAL_UNAME="$real_uname" \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_HOME="$dir" "$copy/bin/fm-watch.sh" > "$duplicate_out" 2>&1 \
+    || { reap "$pid"; fail "the duplicate watcher did not exit cleanly"; }
+  orphan=$(find "$state" -maxdepth 1 -name '.watch-code-start-*' -print -quit)
+  [ -z "$orphan" ] || { reap "$pid"; fail "an early watcher exit left its code-start reference: $orphan"; }
+  reap "$pid"
+  pass "a watcher reloads code changed during startup and cleans early-exit references"
+}
+
 test_procevent_unacknowledged_result_redrains_until_handled() {
   local dir state out replay_out replay_err pid before after sequence generation
   dir=$(make_case procevent-redrain); state="$dir/state"
@@ -5267,6 +5331,7 @@ test_inbox_note_wakes_the_watcher_promptly
 test_unread_inbox_note_survives_acknowledgement
 test_unread_inbox_note_resurfaces_a_bounded_number_of_times
 test_watcher_reloads_changed_code_in_place
+test_watcher_reloads_code_changed_during_startup
 test_procevent_unacknowledged_result_redrains_until_handled
 test_procevent_marker_keys_are_injective
 test_procevent_headlines_classify_queue_keys

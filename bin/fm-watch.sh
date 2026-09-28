@@ -135,6 +135,18 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 mkdir -p "$STATE"
 
+WATCH_CODE_REF="$STATE/.watch-code-ref"
+WATCH_CODE_START_REF=
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  WATCH_CODE_START_REF="$STATE/.watch-code-start-${BASHPID:-$$}"
+  trap '[ -z "$WATCH_CODE_START_REF" ] || rm -f -- "$WATCH_CODE_START_REF" 2>/dev/null || true' EXIT
+  trap 'exit 1' HUP INT TERM
+  if ! touch "$WATCH_CODE_START_REF" 2>/dev/null; then
+    echo "watcher: FAILED - cannot create code-start reference $WATCH_CODE_START_REF" >&2
+    exit 1
+  fi
+fi
+
 # The native event fast-path and only its true dependencies have one narrow
 # production owner. The Herdr event-wait smoke test consumes this same owner
 # without sourcing the entire watcher graph.
@@ -2052,6 +2064,11 @@ elif ! fm_lock_try_acquire "$WATCH_LOCK"; then
   fi
   exit 0
 fi
+if ! mv -f -- "$WATCH_CODE_START_REF" "$WATCH_CODE_REF" 2>/dev/null; then
+  echo "watcher: FAILED - cannot publish code-start reference $WATCH_CODE_REF" >&2
+  exit 1
+fi
+WATCH_CODE_START_REF=
 WATCHER_RECOVERY_PENDING=0
 # A code reload (watch_code_reload_if_changed below) is the same cycle
 # continuing in the same process, not a new down stretch, so it skips the
@@ -2238,10 +2255,8 @@ resurface_after_downtime() {
 # settled for WATCH_CODE_SETTLE seconds (a checkout can be mid-write), re-exec
 # this script in place. The pid, the singleton lock and the arm's wait all carry
 # over, so no wake is dropped and there is never a second watcher.
-WATCH_CODE_REF="$STATE/.watch-code-ref"
 WATCH_CODE_SETTLE=${FM_WATCH_CODE_SETTLE:-2}
 case "$WATCH_CODE_SETTLE" in ''|*[!0-9]*) WATCH_CODE_SETTLE=2 ;; esac
-touch "$WATCH_CODE_REF" 2>/dev/null || true
 
 watch_code_reload_if_changed() {
   local changed f
