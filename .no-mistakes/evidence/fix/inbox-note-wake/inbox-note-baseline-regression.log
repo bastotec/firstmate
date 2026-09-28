@@ -1,0 +1,2 @@
+not ok - a queued inbox note did not wake the sleeping watcher: 
+baseline_exit=1
