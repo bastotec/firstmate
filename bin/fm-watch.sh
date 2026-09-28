@@ -2275,8 +2275,12 @@ resurface_after_downtime() {
 WATCH_CODE_SETTLE=${FM_WATCH_CODE_SETTLE:-2}
 case "$WATCH_CODE_SETTLE" in ''|*[!0-9]*) WATCH_CODE_SETTLE=2 ;; esac
 
+watch_code_tree_snapshot() {
+  LC_ALL=C cksum "$SCRIPT_DIR"/*.sh 2>/dev/null
+}
+
 watch_code_reload_if_changed() {
-  local changed f reference_mtime file_mtime
+  local changed f reference_mtime file_mtime snapshot settled_snapshot exec_snapshot
   [ -e "$WATCH_CODE_REF" ] || return 0
   reference_mtime=$(fm_path_mtime "$WATCH_CODE_REF") || return 0
   changed=
@@ -2292,20 +2296,23 @@ $f"
     fi
   done
   [ -n "$changed" ] || return 0
-  while IFS= read -r f; do
-    [ "$(fm_path_age "$f")" -ge "$WATCH_CODE_SETTLE" ] || return 0
-  done <<< "$changed"
+  snapshot=$(watch_code_tree_snapshot) || return 0
+  [ "$WATCH_CODE_SETTLE" -eq 0 ] || sleep "$WATCH_CODE_SETTLE"
+  settled_snapshot=$(watch_code_tree_snapshot) || return 0
+  [ "$snapshot" = "$settled_snapshot" ] || return 0
   if ! bash -n "$WATCH_PATH" 2>/dev/null; then
     # Keep supervising with the code that works; a later change retries.
     touch "$WATCH_CODE_REF" 2>/dev/null || true
     triage_log "watcher code changed but $WATCH_PATH does not parse; kept the running code"
     return 0
   fi
-  triage_log "watcher code changed under pid $WATCHER_PID; re-executing in place"
   pr_poll_control_release || true
   fm_active_check_stop || true
   fm_check_output_cleanup
   fm_custom_check_snapshot_cleanup
+  exec_snapshot=$(watch_code_tree_snapshot) || return 0
+  [ "$settled_snapshot" = "$exec_snapshot" ] || return 0
+  triage_log "watcher code changed under pid $WATCHER_PID; re-executing in place"
   trap - EXIT HUP INT TERM
   shopt -s execfail
   FM_WATCH_CODE_RELOAD=1 FM_WATCH_RECOVERY_PENDING="$WATCHER_RECOVERY_PENDING" exec "$WATCH_PATH"

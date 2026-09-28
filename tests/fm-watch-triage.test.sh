@@ -4518,6 +4518,88 @@ SH
   pass "a watcher reloads code changed during startup and cleans early-exit references"
 }
 
+test_watcher_waits_for_full_code_tree_to_settle() {
+  local dir state copy out parse_bin gate real_bash pid i lock_pid
+  dir=$(make_case code-reload-tree-settle); state="$dir/state"
+  dir=$(cd "$dir" && pwd -P)
+  copy="$dir/fmroot"
+  parse_bin="$dir/parse-bin"
+  gate="$dir/parse-gate"
+  out="$dir/watch.out"
+  real_bash=$(command -v bash)
+  mkdir -p "$copy" "$parse_bin"
+  rsync -a --exclude node_modules --exclude __pycache__ "$ROOT/bin" "$copy/" || fail "could not copy bin/"
+  cat > "$parse_bin/bash" <<'SH'
+#!/bin/sh
+if [ "$1" = -n ] && [ "$2" = "$FM_TEST_WATCH_PATH" ] \
+  && mkdir "${FM_TEST_PARSE_GATE}.once" 2>/dev/null; then
+  : > "${FM_TEST_PARSE_GATE}.entered"
+  i=0
+  while [ ! -e "${FM_TEST_PARSE_GATE}.release" ] && [ "$i" -lt 200 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -e "${FM_TEST_PARSE_GATE}.release" ] || exit 1
+  "$FM_TEST_REAL_BASH" "$@"
+  rc=$?
+  : > "${FM_TEST_PARSE_GATE}.parsed"
+  exit "$rc"
+fi
+exec "$FM_TEST_REAL_BASH" "$@"
+SH
+  chmod +x "$parse_bin/bash"
+
+  PATH="$parse_bin:$dir/fakebin:$PATH" FM_TEST_WATCH_PATH="$copy/bin/fm-watch.sh" \
+    FM_TEST_PARSE_GATE="$gate" FM_TEST_REAL_BASH="$real_bash" FM_WATCH_HANDLING_SUCCESSOR=1 \
+    FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WATCH_CODE_SETTLE=1 \
+    "$real_bash" "$copy/bin/fm-watch.sh" > "$out" 2>&1 &
+  pid=$!
+  for _ in $(seq 1 100); do
+    [ -e "$state/.last-watcher-beat" ] && [ "$(cat "$state/.watch.lock/pid" 2>/dev/null)" = "$pid" ] && break
+    sleep 0.1
+  done
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null)" = "$pid" ] \
+    || { reap "$pid"; fail "the settle fixture watcher did not acquire its lock: $(cat "$out")"; }
+
+  perl -0pi -e 's/^(WATCHER_PID=\$\{BASHPID:-\$\$\}\n)/$1echo "\$WATCHER_PID" > "\$STATE\/\.test-reloaded"\n/m' \
+    "$copy/bin/fm-watch.sh"
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -e "${gate}.entered" ]; do sleep 0.05; i=$((i + 1)); done
+  [ -e "${gate}.entered" ] || { reap "$pid"; fail "the watcher never reached its pre-exec parse gate: $(cat "$out")"; }
+  printf '\n' >> "$copy/bin/fm-inbox.sh"
+  : > "${gate}.release"
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -e "${gate}.parsed" ]; do sleep 0.05; i=$((i + 1)); done
+  [ -e "${gate}.parsed" ] || { reap "$pid"; fail "the watcher never completed its gated parse"; }
+
+  i=0
+  while [ "$i" -lt 15 ]; do
+    printf '\n' >> "$copy/bin/fm-inbox.sh"
+    sleep 0.1
+    ! grep -F 're-executing in place' "$state/.watch-triage.log" >/dev/null 2>&1 \
+      || { reap "$pid"; fail "the watcher re-executed while the shell tree was still changing"; }
+    i=$((i + 1))
+  done
+
+  i=0
+  while [ "$i" -lt 100 ]; do
+    [ -s "$state/.test-reloaded" ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$(cat "$state/.test-reloaded" 2>/dev/null)" = "$pid" ] \
+    || { reap "$pid"; fail "the watcher did not reload after the full shell tree settled: $(cat "$out")"; }
+  lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null)
+  if [ "$lock_pid" != "$pid" ] || ! is_live_non_zombie "$pid"; then
+    reap "$pid"
+    fail "the settled reload did not retain its live watcher and lock"
+  fi
+  reap "$pid"
+  pass "a watcher reloads only after the full shell tree remains unchanged"
+}
+
 test_procevent_unacknowledged_result_redrains_until_handled() {
   local dir state out replay_out replay_err pid before after sequence generation
   dir=$(make_case procevent-redrain); state="$dir/state"
@@ -5333,6 +5415,7 @@ test_unread_inbox_note_survives_acknowledgement
 test_unread_inbox_note_resurfaces_a_bounded_number_of_times
 test_watcher_reloads_changed_code_in_place
 test_watcher_reloads_code_changed_during_startup
+test_watcher_waits_for_full_code_tree_to_settle
 test_procevent_unacknowledged_result_redrains_until_handled
 test_procevent_marker_keys_are_injective
 test_procevent_headlines_classify_queue_keys
