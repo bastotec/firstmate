@@ -4409,7 +4409,6 @@ test_watcher_reloads_changed_code_in_place() {
   # Change the code under the running watcher; the new image records itself.
   perl -0pi -e 's/^(WATCHER_PID=\$\{BASHPID:-\$\$\}\n)/$1echo "\$WATCHER_PID" > "\$STATE\/.test-reloaded"\n/m' \
     "$copy/bin/fm-watch.sh"
-  grep -F '.test-reloaded' "$copy/bin/fm-watch.sh" >/dev/null || { reap "$arm"; fail "the fixture edit did not apply"; }
   for _ in $(seq 1 100); do [ -s "$state/.test-reloaded" ] && break; sleep 0.1; done
   [ "$(cat "$state/.test-reloaded" 2>/dev/null)" = "$pid" ] \
     || { reap "$arm"; fail "the watcher did not re-exec in place after its code changed"; }
@@ -4428,12 +4427,13 @@ test_watcher_reloads_changed_code_in_place() {
   grep -F "re-executing in place" "$state/.watch-triage.log" >/dev/null \
     || { reap "$arm"; fail "the reload was not logged"; }
 
-  # The reloaded loop is live and its wake still reaches the arm.
-  FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "are you there" >/dev/null 2>&1 \
-    || { reap "$arm"; fail "the inbox note could not be queued"; }
-  wait_for_exit "$arm" 100 || fail "the reloaded watcher's wake did not end the arm: $(cat "$out")"
-  grep -F "check: captain inbox note:" "$out" >/dev/null \
-    || fail "the arm did not relay the reloaded watcher's wake: $(cat "$out")"
+  append_wake "$state" check startup-network "check: startup-network fixture after reload" \
+    || { reap "$arm"; fail "the generic recovery row could not be queued"; }
+  wait_for_exit "$arm" 100 || fail "the reloaded watcher's generic recovery wake did not end the arm: $(cat "$out")"
+  grep -F "check: rearm-resurface" "$out" >/dev/null \
+    || fail "the reloaded watcher did not relay the generic durable wake: $(cat "$out")"
+  grep -F "startup-network fixture after reload" "$state/.wake-queue" >/dev/null \
+    || fail "the generic recovery row was not durable after delivery"
 
   # A change that does not parse keeps the running code.
   rm -f "$state/.test-reloaded" "$state/.last-watcher-beat"

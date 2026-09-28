@@ -2079,11 +2079,17 @@ if ! mv -f -- "$WATCH_CODE_START_REF" "$WATCH_CODE_REF" 2>/dev/null; then
   exit 1
 fi
 WATCH_CODE_START_REF=
-WATCHER_RECOVERY_PENDING=0
-# A code reload (watch_code_reload_if_changed below) is the same cycle
-# continuing in the same process, not a new down stretch, so it skips the
-# recovery bookkeeping a fresh arm does.
-if [ "$WATCH_CODE_RELOADED" != 1 ]; then
+if [ "$WATCH_CODE_RELOADED" = 1 ]; then
+  WATCHER_RECOVERY_PENDING=${FM_WATCH_RECOVERY_PENDING:-0}
+  case "$WATCHER_RECOVERY_PENDING" in
+    0|1) ;;
+    *)
+      echo "watcher: FAILED - code reload carried invalid recovery state" >&2
+      exit 1
+      ;;
+  esac
+else
+  WATCHER_RECOVERY_PENDING=0
   if [ -n "${FM_LOCK_RECOVERED_PID:-}" ]; then
     WATCHER_RECOVERY_PENDING=1
   fi
@@ -2103,6 +2109,8 @@ if [ "$WATCH_CODE_RELOADED" != 1 ]; then
     WATCHER_RECOVERY_PENDING=1
   fi
 fi
+unset FM_WATCH_RECOVERY_PENDING
+WATCH_CODE_RELOADED=0
 # Side-band ledger publication, detached from the poll loop.
 #
 # The poll loop owns the liveness beacon below, and fm-guard.sh reads that
@@ -2242,8 +2250,7 @@ resurface_after_downtime() {
   # Handling successors already have a predecessor-delivered wake on the way.
   # Re-announcing from this cycle is what turned a lost handshake into an
   # unbounded recovery loop; stay in the poll loop and supervise instead.
-  # A reloaded watcher is the same cycle, so it has nothing to re-announce.
-  if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ] || [ "$WATCH_CODE_RELOADED" = 1 ]; then
+  if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ]; then
     return 0
   fi
   if [ "$WATCHER_RECOVERY_PENDING" -ne 1 ]; then
@@ -2301,7 +2308,7 @@ $f"
   fm_custom_check_snapshot_cleanup
   trap - EXIT HUP INT TERM
   shopt -s execfail
-  FM_WATCH_CODE_RELOAD=1 exec "$WATCH_PATH"
+  FM_WATCH_CODE_RELOAD=1 FM_WATCH_RECOVERY_PENDING="$WATCHER_RECOVERY_PENDING" exec "$WATCH_PATH"
   shopt -u execfail
   trap watcher_cleanup EXIT
   trap 'exit 1' HUP INT TERM
