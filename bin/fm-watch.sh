@@ -78,6 +78,9 @@
 #                          successful attempts never wake firstmate
 #                          (bin/fm-task-inbox-lib.sh owns the ladder policy)
 #   check: <script>: <out> authenticated check output, always actionable
+#   check: captain inbox note: <ids>
+#                          a durable captain note is queued and has not been
+#                          surfaced yet; bin/fm-inbox.sh owns acknowledgement
 #   check: process-event result captured: <keys>
 #                          a durably captured process-to-event result is queued
 #                          and has not been surfaced yet; reported once per
@@ -97,7 +100,7 @@
 #                          (bin/fm-procevent.sh reconcile queues it once per
 #                          failure episode, and a later cycle that finds the
 #                          source owned closes that episode); the queued
-#                          payload names what to check. These three kinds are
+#                          payload names what to check. These four kinds are
 #                          joined with `;` when more than one surfaces in a cycle
 #   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
@@ -215,7 +218,7 @@ fi
 # markers, while bin/fm-wake-lib.sh owns their wake-facing routing, the legacy
 # turn-ended signature, annotation staleness checks, and guarded bookkeeping writes.
 
-POLL=${FM_POLL:-15}                   # seconds between cycles
+POLL=${FM_POLL:-15}                   # maximum terminal wait between cycles
 # The liveness beacon is touched once per cycle, immediately before the
 # terminal wait below (event_wait_or_sleep) as well as at the top of the next
 # one, so a healthy cycle's beacon can legitimately age up to POLL seconds
@@ -1834,14 +1837,14 @@ heartbeat_scan_finds_actionable() {
 # bounded wait on the backend's native transition stream, so a crew going
 # `blocked` wakes the supervisor sub-second instead of after the stale-pane
 # wedge timer. For every other home - no push-capable window, backend not
-# capable, or the event path proven unreliable this process - it sleeps POLL,
-# byte-for-byte today's behavior. The poll loop above still runs every cycle, so
-# this only ever SHORTENS latency; it can never drop an escalation (the poll
+# capable, or the event path proven unreliable this process - it uses the
+# polling fallback below. The poll loop above still runs every cycle, so this
+# only ever SHORTENS latency; it can never drop an escalation (the poll
 # loop is the permanent fail-closed backstop). This preserves the single live
 # supervision cycle: the reader is a short-lived subprocess of THIS watcher, not
 # a second watcher, so every guard/beacon/arm/turn-end mechanism is unchanged.
-# poll_sleep: the blind POLL sleep, cut short for an unsurfaced captain inbox
-# note or when the wake queue grows, so a row appended between cycles is seen
+# poll_sleep: the ordinary POLL wait, cut short for an unsurfaced captain inbox
+# note or net wake-queue growth. A captain note appended between cycles is seen
 # by the next cycle within about a second instead of up to POLL later. It only
 # ever shortens the wait, and an early return just runs the next cycle, so the
 # beacon never ages past POLL.
@@ -1866,7 +1869,8 @@ poll_sleep() {
   esac
   # Baseline first, then look: a note appended after this cycle's scan but
   # before the baseline is already counted in it, so it would never read as
-  # growth - catch it here instead, and anything later reads as growth.
+  # growth. Recheck after every tick too, because an acknowledgement can shrink
+  # the queue while a shorter new note arrives and hides byte growth.
   start=$(wake_queue_size)
   unsurfaced_inbox_note && return 0
   while [ "$waited" -lt "$POLL" ]; do
@@ -2741,6 +2745,6 @@ EOF
   fi
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),
-  # else the blind poll sleep. See event_wait_or_sleep.
+  # else the queue-aware polling fallback. See event_wait_or_sleep.
   event_wait_or_sleep
 done
