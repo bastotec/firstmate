@@ -4302,12 +4302,9 @@ SH
 }
 
 # An acknowledgement must not consume the wake of a captain note nobody read.
-# On 2026-09-28 firstmate ran the drain piped through grep for the
-# WAKE_ACK_REQUIRED line: the drain printed a fresh voice question and a cutoff
-# that covered it, the acknowledgement deleted the row, and the question was
-# only answered after the captain complained. The row now stays until
-# `fm-inbox.sh drain --ack` proves the note was read, the acknowledgement says so
-# on its last line, and the next watcher cycle surfaces the note again at once.
+# The row stays until `fm-inbox.sh drain --ack` proves the note was read, the
+# acknowledgement says so on its last line, and the next watcher cycle surfaces
+# the note again at once.
 test_unread_inbox_note_survives_acknowledgement() {
   local dir state out drain_out drain_err ack_err pid id
   dir=$(make_case inbox-unread-ack); state="$dir/state"
@@ -4382,12 +4379,11 @@ test_unread_inbox_note_resurfaces_a_bounded_number_of_times() {
   pass "an unread captain note re-surfaces a bounded number of times"
 }
 
-# bash parses the watcher loop once, so a merge that changed bin/ left a live
-# watcher on its start-time code: on 2026-09-27 a watcher started four hours
-# before the captain inbox wake landed kept running without it for eighteen
-# hours. A changed bin/*.sh now re-execs the watcher in place: same pid, same
-# lock, the arm still waiting on it, one watcher for the home, and the new loop
-# live. A change that does not parse keeps the running code.
+# bash parses the watcher loop once, so a changed bin/ tree otherwise leaves a
+# live watcher on its start-time code. A changed bin/*.sh now re-execs the
+# watcher in place: same pid, same lock, the arm still waiting on it, one watcher
+# for the home, and the new loop live. A change that does not parse keeps the
+# running code.
 test_watcher_reloads_changed_code_in_place() {
   local dir state copy out pid arm lock_pid lock_owner count ref_mtime
   dir=$(make_case code-reload); state="$dir/state"

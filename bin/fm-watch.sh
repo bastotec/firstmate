@@ -1615,8 +1615,8 @@ procevent_surfaced_marker() {  # <queue-key>
 
 # Whether a queued inbox row should wake firstmate now. Surfacing is not proof
 # that firstmate read the note - only `fm-inbox.sh drain --ack` is - so a row
-# whose note is still unread is due again once its marker is gone (the drain
-# removes it when an acknowledgement had to keep the row) or has aged past
+# whose note is still unread is due again once its marker is absent or backdated
+# by an acknowledgement that kept the row, or once it has aged past
 # INBOX_RESURFACE_SECS, at most INBOX_RESURFACE_MAX times. A read note never
 # wakes anything, even while its row waits for the next acknowledgement.
 INBOX_RESURFACE_SECS=${FM_INBOX_RESURFACE_SECS:-300}
@@ -2263,15 +2263,12 @@ resurface_after_downtime() {
   wake "check: rearm-resurface"
 }
 
-# Code reload. bash parses this loop once, when the watcher starts, so a merge
-# that changes bin/ leaves a running watcher supervising with the code it
-# started with until something else ends its cycle. On a quiet fleet that was
-# eighteen hours: a watcher started before the captain inbox wake existed never
-# read an inbox row, and the captain's questions sat on the queue all day.
-# When any bin/*.sh is newer than this watcher's start and the change has
-# settled for WATCH_CODE_SETTLE seconds (a checkout can be mid-write), re-exec
-# this script in place. The pid, the singleton lock and the arm's wait all carry
-# over, so no wake is dropped and there is never a second watcher.
+# Code reload. bash parses this loop once, so a checkout that changes bin/
+# otherwise leaves a running watcher supervising with its start-time code until
+# that cycle ends. When any bin/*.sh is newer than this watcher's start and the
+# complete tree stays unchanged for WATCH_CODE_SETTLE seconds, re-exec this
+# script in place. The pid, singleton lock, arm wait, and pending recovery state
+# carry over, so no wake is dropped and there is never a second watcher.
 WATCH_CODE_SETTLE=${FM_WATCH_CODE_SETTLE:-2}
 case "$WATCH_CODE_SETTLE" in ''|*[!0-9]*) WATCH_CODE_SETTLE=2 ;; esac
 

@@ -166,13 +166,10 @@ if [ -n "$tangle_branch" ]; then
   } >&2
 fi
 
-# A captain inbox note unread past FM_INBOX_OVERDUE_SECS is a delivery failure
-# whatever the watcher's health says: on 2026-09-28 a live watcher with a fresh
-# beacon ran code that never read inbox rows, so eight voice questions sat for a
-# day behind a quiet guard. This alarm keys on the note record itself
-# (bin/fm-wake-lib.sh fm_inbox_overdue_notes), is independent of supervision
-# need, and is never deduplicated. The supervision branch cannot answer the
-# captain, so it stays silent there.
+# An overdue captain inbox note is a delivery failure independent of watcher
+# health or supervision need. The note record itself drives this alarm, which is
+# never deduplicated. The supervision branch cannot answer the captain, so it
+# stays silent there.
 if [ "$GUARD_ACTOR" != branch ]; then
   overdue_notes=$(fm_inbox_overdue_notes "$STATE" "${FM_INBOX_OVERDUE_SECS:-$FM_INBOX_OVERDUE_DEFAULT}")
   if [ -n "$overdue_notes" ]; then

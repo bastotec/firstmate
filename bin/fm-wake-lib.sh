@@ -1902,14 +1902,9 @@ fm_wake_queued_keys_locked() {
 }
 
 # --- Captain inbox note delivery ---------------------------------------------
-# bin/fm-inbox.sh owns the note record: a note is unread while
-# state/inbox/<id>.note exists, and `fm-inbox.sh drain --ack <id>` moving it to
-# handled/ is the only proof that firstmate read it. Its `inbox:<id>` wake row
-# therefore must not be consumed before that proof (bin/fm-wake-drain.sh keeps
-# it), the watcher re-surfaces a kept row (bin/fm-watch.sh), and a note left
-# unread past FM_INBOX_OVERDUE_SECS is a delivery failure that bin/fm-guard.sh
-# and bin/fm-inbox.sh note both say out loud. The voice relay gives an ask 900 s
-# before its reply ticket expires, so the default stays well inside that.
+# docs/configuration.md owns the operator contract. These shared helpers define
+# unread-note identity, watcher marker paths, and overdue-note age for the drain,
+# watcher, guard, and inbox command.
 FM_INBOX_OVERDUE_DEFAULT=600
 
 fm_inbox_note_unread() {  # <state> <queue-key-or-note-id>
@@ -1918,8 +1913,8 @@ fm_inbox_note_unread() {  # <state> <queue-key-or-note-id>
   [ -f "$1/inbox/$id.note" ]
 }
 
-# The watcher's once-surfaced marker for an inbox row. The drain removes it when
-# it keeps a row whose note is still unread, so the next cycle surfaces it again.
+# The watcher's surfaced marker for an inbox row. The drain backdates it when it
+# keeps a row whose note is still unread, so the next cycle surfaces it again.
 fm_inbox_surfaced_marker() {  # <state> <queue-key>
   printf '%s/.seen-inbox-%s' "$1" "$(printf '%s' "$2" | LC_ALL=C od -An -tx1 | tr -d ' \n')"
 }

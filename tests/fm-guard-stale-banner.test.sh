@@ -308,11 +308,9 @@ test_queued_wake_warning_stays_independent() {
   pass "fm-guard stale banner: queued-wake warning remains independent"
 }
 
-# A captain note left unread is a delivery failure the guard must say out loud
-# even while the watcher looks healthy: on 2026-09-28 a live watcher with a
-# fresh beacon ran code that never read inbox rows, and eight voice questions
-# sat for a day behind a quiet guard. The alarm keys on the note record, repeats
-# on every call, and stays off for a fresh note and for the supervision branch.
+# An unread captain note is a delivery failure even while the watcher looks
+# healthy. The alarm keys on the note record, repeats on every call, and stays
+# off for a fresh note and for the supervision branch.
 test_overdue_captain_note_is_loud_whatever_the_watcher_says() {
   local dir home out
   dir=$(make_guard_case overdue-note)

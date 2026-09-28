@@ -194,13 +194,11 @@ presented_max_row() { # <rows-file>
 }
 
 # An acknowledgement never consumes a captain inbox row whose note is still
-# unread: surfacing a row, or printing it here, is not proof firstmate read it,
-# and on 2026-09-28 a drain piped through grep printed a fresh captain question
-# and the WAKE_ACK_REQUIRED cutoff that covered it, so the ack deleted a wake
-# nobody saw. `fm-inbox.sh drain --ack <id>` is that proof. A kept row is marked
-# due so the watcher surfaces it again on its next cycle; its surfacing count is
-# preserved, so a note that is never acknowledged stops re-waking after the
-# watcher's bounded repeats and fm-guard.sh reports it overdue instead.
+# unread: surfacing or printing the row is not proof firstmate read it;
+# `fm-inbox.sh drain --ack <id>` is that proof. A kept row is marked due so the
+# watcher surfaces it again on its next cycle; its surfacing count is preserved,
+# so a note that is never acknowledged stops re-waking after the watcher's
+# bounded repeats and fm-guard.sh reports it overdue instead.
 INBOX_KEPT_SEQS=
 INBOX_KEPT_IDS=
 collect_unread_inbox_rows_locked() { # <cutoff>
