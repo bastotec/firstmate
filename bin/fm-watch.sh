@@ -78,6 +78,9 @@
 #                          successful attempts never wake firstmate
 #                          (bin/fm-task-inbox-lib.sh owns the ladder policy)
 #   check: <script>: <out> authenticated check output, always actionable
+#   check: captain inbox note: <ids>
+#                          a durable captain note is queued and has not been
+#                          surfaced yet; bin/fm-inbox.sh owns acknowledgement
 #   check: process-event result captured: <keys>
 #                          a durably captured process-to-event result is queued
 #                          and has not been surfaced yet; reported once per
@@ -97,7 +100,7 @@
 #                          (bin/fm-procevent.sh reconcile queues it once per
 #                          failure episode, and a later cycle that finds the
 #                          source owned closes that episode); the queued
-#                          payload names what to check. These three kinds are
+#                          payload names what to check. These four kinds are
 #                          joined with `;` when more than one surfaces in a cycle
 #   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
@@ -215,7 +218,7 @@ fi
 # markers, while bin/fm-wake-lib.sh owns their wake-facing routing, the legacy
 # turn-ended signature, annotation staleness checks, and guarded bookkeeping writes.
 
-POLL=${FM_POLL:-15}                   # seconds between cycles
+POLL=${FM_POLL:-15}                   # maximum terminal wait between cycles
 # The liveness beacon is touched once per cycle, immediately before the
 # terminal wait below (event_wait_or_sleep) as well as at the top of the next
 # one, so a healthy cycle's beacon can legitimately age up to POLL seconds
@@ -1567,18 +1570,21 @@ scan_signals() {
   return 0
 }
 
-# Deliver a durably queued process-event result to firstmate. Publication is
-# owned by bin/fm-procevent.sh - by the runner at capture time and by reconcile's
-# re-announcement - so this decides only whether a queued check record has been
-# surfaced yet, then reports it through the same actionable exit every other wake
-# uses. Without it a captured result sits on the queue until something else
-# happens to wake firstmate, which is exactly the missed delivery this repairs.
+# Deliver a durably queued process-event result or captain inbox note to
+# firstmate. Each producer owns publication and acknowledgement, while this
+# decides only whether its queued check record has been surfaced yet, then
+# reports it through the same actionable exit every other wake uses. Without
+# this path the row sits on the queue until something else wakes firstmate.
 # Dedup uses the same .seen-* discipline as scan_signals: the durable record is
 # always written before its marker, so nothing is suppressed before it is queued,
-# and re-announcement, drain-time deduplication, and the handled acknowledgement
-# keep their existing owners untouched.
+# and each producer's re-announcement and acknowledgement contract stays intact.
 procevent_surfaced_marker() {  # <queue-key>
-  printf '%s/.seen-procevent-%s' "$STATE" "$(printf '%s' "$1" | LC_ALL=C od -An -tx1 | tr -d ' \n')"
+  local kind=procevent
+  # A captain inbox note (bin/fm-inbox.sh note) is surfaced the same way: it is
+  # the captain talking, and nothing else in the watcher would ever wake main
+  # for it, so it sat on the queue until an unrelated event closed a cycle.
+  case "$1" in inbox:*) kind=inbox ;; esac
+  printf '%s/.seen-%s-%s' "$STATE" "$kind" "$(printf '%s' "$1" | LC_ALL=C od -An -tx1 | tr -d ' \n')"
 }
 
 procevent_surface_after_output() {
@@ -1598,14 +1604,15 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted=""
+  local key reason captured="" stranded="" unstarted="" notes=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
   while IFS= read -r key; do
-    case "$key" in procevent:*) ;; *) continue ;; esac
+    case "$key" in procevent:*|inbox:*) ;; *) continue ;; esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
     PROCEVENT_SURFACED="$PROCEVENT_SURFACED $key"
+    case "$key" in inbox:*) notes="$notes ${key#inbox:}"; continue ;; esac
     # A stranded source or one whose launch never proved itself is the opposite
     # of a captured result: nothing is collecting for it. Headlining either as
     # a capture would present it as healthy, which is the shape of defect
@@ -1621,7 +1628,11 @@ procevent_surface_queued() {
     return 0
   fi
   reason="check:"
-  [ -z "$captured" ] || reason="$reason process-event result captured:$captured"
+  [ -z "$notes" ] || reason="$reason captain inbox note:$notes"
+  if [ -n "$captured" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason process-event result captured:$captured"
+  fi
   if [ -n "$stranded" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason process-event source stranded:$stranded"
@@ -1826,12 +1837,52 @@ heartbeat_scan_finds_actionable() {
 # bounded wait on the backend's native transition stream, so a crew going
 # `blocked` wakes the supervisor sub-second instead of after the stale-pane
 # wedge timer. For every other home - no push-capable window, backend not
-# capable, or the event path proven unreliable this process - it sleeps POLL,
-# byte-for-byte today's behavior. The poll loop above still runs every cycle, so
-# this only ever SHORTENS latency; it can never drop an escalation (the poll
+# capable, or the event path proven unreliable this process - it uses the
+# polling fallback below. The poll loop above still runs every cycle, so this
+# only ever SHORTENS latency; it can never drop an escalation (the poll
 # loop is the permanent fail-closed backstop). This preserves the single live
 # supervision cycle: the reader is a short-lived subprocess of THIS watcher, not
 # a second watcher, so every guard/beacon/arm/turn-end mechanism is unchanged.
+# poll_sleep: the ordinary POLL wait, cut short for an unsurfaced captain inbox
+# note or net wake-queue growth. A captain note appended between cycles is seen
+# by the next cycle within about a second instead of up to POLL later. It only
+# ever shortens the wait, and an early return just runs the next cycle, so the
+# beacon never ages past POLL.
+wake_queue_size() {
+  if [ -e "$FM_WAKE_QUEUE" ]; then wc -c < "$FM_WAKE_QUEUE" | tr -d ' '; else echo 0; fi
+}
+
+unsurfaced_inbox_note() {
+  local key
+  [ -s "$FM_WAKE_QUEUE" ] || return 1
+  while IFS= read -r key; do
+    case "$key" in inbox:*) ;; *) continue ;; esac
+    [ -e "$(procevent_surfaced_marker "$key")" ] || return 0
+  done < <(fm_wake_queued_keys check)
+  return 1
+}
+
+poll_sleep() {
+  local start now waited=0
+  case "$POLL" in
+    ''|*[!0-9]*|0|1) sleep "$POLL"; return ;;  # sub-second or 1 s: nothing to cut short
+  esac
+  # Baseline first, then look: a note appended after this cycle's scan but
+  # before the baseline is already counted in it, so it would never read as
+  # growth. Recheck after every tick too, because an acknowledgement can shrink
+  # the queue while a shorter new note arrives and hides byte growth.
+  start=$(wake_queue_size)
+  unsurfaced_inbox_note && return 0
+  while [ "$waited" -lt "$POLL" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    unsurfaced_inbox_note && return 0
+    now=$(wake_queue_size)
+    [ "$now" -gt "$start" ] && return 0
+    start=$now
+  done
+}
+
 event_wait_or_sleep() {
   local w b session first_backend="" first_session="" rec rc
   local windows=()
@@ -1855,7 +1906,7 @@ event_wait_or_sleep() {
   done < <(recorded_windows)
 
   if [ "${#windows[@]}" -eq 0 ]; then
-    sleep "$POLL"
+    poll_sleep
     return
   fi
 
@@ -1871,7 +1922,7 @@ event_wait_or_sleep() {
     _event_cap_fails=0
   fi
   if [ "$_event_cap_ok" != 1 ]; then
-    sleep "$POLL"
+    poll_sleep
     return
   fi
 
@@ -1888,7 +1939,7 @@ event_wait_or_sleep() {
       # pure polling for the rest of this watcher process.
       _event_cap_fails=$((_event_cap_fails + 1))
       [ "$_event_cap_fails" -ge "$EVENT_CAP_FAIL_MAX" ] && _event_cap_ok=0
-      sleep "$POLL"
+      poll_sleep
       ;;
     *)
       # 1: a clean full-budget wait with no actionable edge - the reader already
@@ -2164,8 +2215,8 @@ while :; do
   if [ -d "$STATE/procevent" ]; then
     FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" reconcile >/dev/null 2>&1 || true
   fi
-  # Then deliver any queued-but-unsurfaced result, including one a runner
-  # published while this watcher was between cycles.
+  # Then deliver any queued-but-unsurfaced process-event result or captain
+  # inbox note, including one published while this watcher was between cycles.
   procevent_surface_queued
 
   # A process-event result carries richer adapter-owned wake context than the
@@ -2694,6 +2745,6 @@ EOF
   fi
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),
-  # else the blind poll sleep. See event_wait_or_sleep.
+  # else the queue-aware polling fallback. See event_wait_or_sleep.
   event_wait_or_sleep
 done

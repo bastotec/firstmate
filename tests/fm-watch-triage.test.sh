@@ -4195,6 +4195,107 @@ test_procevent_captured_result_surfaces_proactively() {
   pass "a captured process-event result wakes a healthy watcher proactively, with no manual drain"
 }
 
+# A captain inbox note (bin/fm-inbox.sh note) wakes a healthy watcher mid-sleep,
+# within a few seconds, and only once. Before this, nothing in the watcher read
+# an inbox row: it sat on the queue until an unrelated event closed a cycle,
+# which on a quiet fleet was hours.
+test_inbox_note_wakes_the_watcher_promptly() {
+  local dir state out drain_out drain_err pid began took first_note long_note before after sleep_state
+  dir=$(make_case inbox-note); state="$dir/state"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; drain_err="$dir/drain.err"
+  dir=$(cd "$dir" && pwd -P)
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_POLL=30 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  # Let the first cycle finish and settle into its 30 s sleep.
+  for _ in $(seq 1 100); do [ -e "$state/.last-watcher-beat" ] && break; sleep 0.1; done
+  sleep 2
+  is_live_non_zombie "$pid" || fail "the watcher exited before any note was queued: $(cat "$out")"
+  began=$(date +%s)
+  printf -v long_note 'what is blocking the release %02048d' 0
+  FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "$long_note" >/dev/null 2>&1 \
+    || fail "the inbox note could not be queued"
+  wait_for_exit "$pid" 100 || fail "a queued inbox note did not wake the sleeping watcher: $(cat "$out")"
+  took=$(( $(date +%s) - began ))
+  [ "$took" -le 5 ] || fail "the inbox note took ${took}s to wake a watcher sleeping 30 s"
+  grep -F "check: captain inbox note:" "$out" >/dev/null \
+    || fail "the wake did not name the captain inbox note: $(cat "$out")"
+  first_note=$(sed -n 's/.*check: captain inbox note: *\([^ ;]*\).*/\1/p' "$out" | head -1)
+  [ -n "$first_note" ] || fail "the wake did not name the note id: $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" \
+    || fail "drain after the inbox wake failed"
+  grep -F "captain inbox note" "$drain_out" >/dev/null \
+    || fail "the note was not in the drain that follows the wake: $(cat "$drain_out")"
+
+  sleep_state="$dir/poll-sleep"
+  cat > "$dir/fakebin/sleep" <<'SH'
+#!/usr/bin/env bash
+count=$(cat "$FM_TEST_SLEEP_STATE.count" 2>/dev/null || echo 0)
+count=$((count + 1))
+printf '%s\n' "$count" > "$FM_TEST_SLEEP_STATE.count"
+if [ "$count" -eq 1 ]; then
+  : > "$FM_TEST_SLEEP_STATE.ready"
+  while [ ! -e "$FM_TEST_SLEEP_STATE.release" ]; do /bin/sleep 0.01; done
+  exit 0
+fi
+exec /bin/sleep "$@"
+SH
+  chmod +x "$dir/fakebin/sleep"
+  : > "$out"
+  PATH="$dir/fakebin:$PATH" FM_TEST_SLEEP_STATE="$sleep_state" FM_WATCH_HANDLING_SUCCESSOR=1 \
+    FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=30 \
+    FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  for _ in $(seq 1 100); do
+    [ -e "$sleep_state.ready" ] && break
+    is_live_non_zombie "$pid" || break
+    sleep 0.1
+  done
+  [ -e "$sleep_state.ready" ] \
+    || { reap "$pid"; fail "the successor watcher did not reach its poll sleep: $(cat "$out")"; }
+  before=$(size_of "$state/.wake-queue")
+  FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "x" >/dev/null 2>&1 \
+    || { reap "$pid"; fail "the replacement inbox note could not be queued"; }
+  ack_drain_err "$state" "$drain_err" >/dev/null \
+    || { reap "$pid"; fail "the older surfaced note could not be acknowledged"; }
+  after=$(size_of "$state/.wake-queue")
+  [ "$after" -lt "$before" ] \
+    || { reap "$pid"; fail "the concurrent replacement did not shrink the queue ($before to $after bytes)"; }
+  : > "$sleep_state.release"
+  wait_for_exit "$pid" 50 \
+    || fail "an inbox note hidden by concurrent queue shrink waited for the full poll: $(cat "$out")"
+  [ "$(cat "$sleep_state.count")" = 1 ] \
+    || fail "the queue-shrink note needed more than one poll tick to wake the watcher"
+  grep -F "check: captain inbox note:" "$out" >/dev/null \
+    || fail "the queue-shrink wake did not name the captain inbox note: $(cat "$out")"
+  rm -f "$dir/fakebin/sleep"
+
+  # A note already on the queue when the sleep begins - appended after the
+  # cycle's scan, before its baseline - still wakes it at once, not after POLL.
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1/bin/fm-wake-lib.sh"
+    fm_wake_append check "inbox:raced" "check: captain inbox note raced - fixture"' _ "$ROOT" \
+    || fail "could not queue the raced note"
+  took=$(FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_POLL=30 bash -c '
+    set -e
+    . "$1/bin/fm-watch.sh"
+    began=$(date +%s); poll_sleep; echo $(( $(date +%s) - began ))' _ "$ROOT") \
+    || fail "poll_sleep could not run against the raced note"
+  [ "$took" -le 2 ] || fail "a note queued before the sleep's baseline waited ${took}s"
+
+  # Surfaced once: the next watcher does not wake again for the same note.
+  : > "$out"
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    grep -F "$first_note" "$out" >/dev/null \
+      && fail "an already-surfaced inbox note woke the watcher again: $(cat "$out")"
+  fi
+  reap "$pid"
+  pass "a captain inbox note wakes a sleeping watcher within seconds, once"
+}
+
 test_procevent_unacknowledged_result_redrains_until_handled() {
   local dir state out replay_out replay_err pid before after sequence generation
   dir=$(make_case procevent-redrain); state="$dir/state"
@@ -5005,6 +5106,7 @@ test_timer_repair_drops_a_finished_write_deferral_chain
 test_terminal_first_sight_drops_a_finished_write_deferral_chain
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_procevent_captured_result_surfaces_proactively
+test_inbox_note_wakes_the_watcher_promptly
 test_procevent_unacknowledged_result_redrains_until_handled
 test_procevent_marker_keys_are_injective
 test_procevent_headlines_classify_queue_keys
