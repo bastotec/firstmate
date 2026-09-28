@@ -1,0 +1,2 @@
+not ok - the acknowledgement consumed the wake of a note nobody read
+baseline_exit=1

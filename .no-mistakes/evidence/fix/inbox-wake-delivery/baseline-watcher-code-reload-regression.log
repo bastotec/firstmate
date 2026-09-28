@@ -1,0 +1,2 @@
+not ok - the watcher did not re-exec in place after its code changed
+baseline_exit=1
