@@ -2017,7 +2017,23 @@ if ! fm_procevent_launch_confirm_seconds >/dev/null; then
   exit 1
 fi
 
-if ! fm_lock_try_acquire "$WATCH_LOCK"; then
+# This watcher's own pid, as recorded in the lock by fm_lock_claim (which writes
+# ${BASHPID:-$$} from this same main shell). Read directly, never via a command
+# substitution, so it matches the stored holder pid for the self-eviction check.
+WATCHER_PID=${BASHPID:-$$}
+WATCH_CODE_RELOADED=${FM_WATCH_CODE_RELOAD:-0}
+unset FM_WATCH_CODE_RELOAD
+if [ "$WATCH_CODE_RELOADED" = 1 ]; then
+  reload_lock_pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
+  reload_lock_home=$(cat "$WATCH_LOCK/fm-home" 2>/dev/null || true)
+  reload_lock_path=$(cat "$WATCH_LOCK/watcher-path" 2>/dev/null || true)
+  if [ "$reload_lock_pid" != "$WATCHER_PID" ] \
+    || [ "$reload_lock_home" != "$FM_HOME" ] \
+    || [ "$reload_lock_path" != "$WATCH_PATH" ]; then
+    echo "watcher: FAILED - code reload could not verify the existing same-pid lock for $FM_HOME" >&2
+    exit 1
+  fi
+elif ! fm_lock_try_acquire "$WATCH_LOCK"; then
   BEAT="$STATE/.last-watcher-beat"
   if [ -n "${FM_LOCK_HELD_PID:-}" ]; then
     if [ -e "$BEAT" ]; then
@@ -2040,8 +2056,6 @@ WATCHER_RECOVERY_PENDING=0
 # A code reload (watch_code_reload_if_changed below) is the same cycle
 # continuing in the same process, not a new down stretch, so it skips the
 # recovery bookkeeping a fresh arm does.
-WATCH_CODE_RELOADED=${FM_WATCH_CODE_RELOAD:-0}
-unset FM_WATCH_CODE_RELOAD
 if [ "$WATCH_CODE_RELOADED" != 1 ]; then
   if [ -n "${FM_LOCK_RECOVERED_PID:-}" ]; then
     WATCHER_RECOVERY_PENDING=1
@@ -2166,10 +2180,6 @@ watcher_cleanup() {
 }
 trap watcher_cleanup EXIT
 trap 'exit 1' HUP INT TERM
-# This watcher's own pid, as recorded in the lock by fm_lock_claim (which writes
-# ${BASHPID:-$$} from this same main shell). Read directly, never via a command
-# substitution, so it matches the stored holder pid for the self-eviction check.
-WATCHER_PID=${BASHPID:-$$}
 printf '%s\n' "$FM_HOME" > "$WATCH_LOCK/fm-home" || true
 printf '%s\n' "$WATCH_PATH" > "$WATCH_LOCK/watcher-path" || true
 # shellcheck disable=SC2034 # Consumed by wake() in the separately linted transition owner.

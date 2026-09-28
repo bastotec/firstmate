@@ -4389,7 +4389,7 @@ test_unread_inbox_note_resurfaces_a_bounded_number_of_times() {
 # lock, the arm still waiting on it, one watcher for the home, and the new loop
 # live. A change that does not parse keeps the running code.
 test_watcher_reloads_changed_code_in_place() {
-  local dir state copy out pid arm lock_pid count
+  local dir state copy out pid arm lock_pid lock_owner count
   dir=$(make_case code-reload); state="$dir/state"
   dir=$(cd "$dir" && pwd -P)
   copy="$dir/fmroot"
@@ -4403,6 +4403,8 @@ test_watcher_reloads_changed_code_in_place() {
   for _ in $(seq 1 100); do grep -q '^watcher: started pid=' "$out" && break; sleep 0.1; done
   pid=$(sed -n 's/^watcher: started pid=\([0-9]*\).*/\1/p' "$out")
   [ -n "$pid" ] || { reap "$arm"; fail "the arm did not start a watcher: $(cat "$out")"; }
+  lock_owner=$(readlink "$state/.watch.lock")
+  [ -n "$lock_owner" ] || { reap "$arm"; fail "the watcher did not publish its singleton lock owner"; }
 
   # Change the code under the running watcher; the new image records itself.
   perl -0pi -e 's/^(WATCHER_PID=\$\{BASHPID:-\$\$\}\n)/$1echo "\$WATCHER_PID" > "\$STATE\/.test-reloaded"\n/m' \
@@ -4414,6 +4416,8 @@ test_watcher_reloads_changed_code_in_place() {
   is_live_non_zombie "$pid" || { reap "$arm"; fail "the reloaded watcher is not running"; }
   lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null)
   [ "$lock_pid" = "$pid" ] || { reap "$arm"; fail "the reload changed the lock holder ($lock_pid, not $pid)"; }
+  [ "$(readlink "$state/.watch.lock")" = "$lock_owner" ] \
+    || { reap "$arm"; fail "the reload replaced the singleton lock instead of adopting it"; }
   # Count watcher processes whose parent is not itself a watcher: bash
   # command-substitution subshells carry the same command line.
   count=$(ps -axo pid=,ppid=,command= | awk -v path="$copy/bin/fm-watch.sh" '

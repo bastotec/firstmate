@@ -788,12 +788,23 @@ test_slow_annotation_does_not_block_append_and_deleted_file_fails_open() {
 # own eligible snapshot, no matter that row's sequence number relative to
 # what the actor presents or acks itself. Do not regress it.
 test_branch_actor_scoped_ack_never_swallows_a_main_owned_row() {
-  local dir state out err sequence generation count
+  local dir state out err sequence generation count id marker marker_mtime ack_err
   dir=$(make_case actor-scope)
   state="$dir/state"
 
-  append_wake "$state" check "some-poll.check.sh" "check: some-poll.check.sh: merged" \
-    || fail "main-only append failed"
+  id=$(FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "main must read this" 2>/dev/null \
+    | sed -n 's/^queued //p')
+  [ -n "$id" ] || fail "main-only inbox append failed"
+  marker=$(FM_HOME="$dir" FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_inbox_surfaced_marker "$2" "$3"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$state" "inbox:$id")
+  printf '1\n' > "$marker"
+  if [ "$(uname)" = Darwin ]; then
+    marker_mtime=$(/usr/bin/stat -f %m "$marker")
+  else
+    marker_mtime=$(stat -c %Y "$marker")
+  fi
   append_wake "$state" signal "task-a.status" "signal: task-a" || fail "signal append failed"
   append_wake "$state" stale "fm-window" "stale: fm-window" || fail "stale append failed"
 
@@ -809,20 +820,32 @@ test_branch_actor_scoped_ack_never_swallows_a_main_owned_row() {
     || fail "branch-scoped drain failed: $(cat "$err")"
   grep -Fq "$(printf '\tsignal\ttask-a.status\t')" "$out" || fail "branch drain omitted its eligible signal row"
   grep -Fq "$(printf '\tstale\tfm-window\t')" "$out" || fail "branch drain omitted its eligible stale row"
-  grep -Fq "$(printf '\tcheck\tsome-poll.check.sh\t')" "$out" && fail "branch drain presented the main-owned row"
+  grep -Fq "$(printf '\tcheck\tinbox:%s\t' "$id")" "$out" && fail "branch drain presented the main-owned inbox row"
 
   sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$err")
   generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$err")
   [ -n "$sequence" ] && [ -n "$generation" ] || fail "branch drain omitted its acknowledgement boundary"
   [ "$sequence" -eq 3 ] || fail "branch ack cutoff must be the max ELIGIBLE seq (3), got $sequence"
 
+  ack_err="$dir/branch-ack.err"
   FM_STATE_OVERRIDE="$state" FM_SUPERVISION_ACTOR=branch "$DRAIN" --ack-through "$sequence" --recovery-generation "$generation" \
-    || fail "branch-scoped ack failed"
+    2> "$ack_err" || fail "branch-scoped ack failed"
 
-  # The core no-swallow property: the main-only row - seq 1, BELOW the
-  # branch's own ack cutoff of 3 - must still be there.
-  grep -Fq "$(printf '\tcheck\tsome-poll.check.sh\t')" "$state/.wake-queue" \
-    || fail "branch's scoped ack swallowed a main-owned row below its own cutoff"
+  # The core no-swallow property: the main-only inbox row - seq 1, BELOW the
+  # branch's own ack cutoff of 3 - stays entirely main-owned. The branch neither
+  # consumes it nor mutates its re-surface marker or prints main's unread notice.
+  grep -Fq "$(printf '\tcheck\tinbox:%s\t' "$id")" "$state/.wake-queue" \
+    || fail "branch's scoped ack swallowed a main-owned inbox row below its own cutoff"
+  [ -f "$state/inbox/$id.note" ] || fail "branch acknowledgement marked the captain note read"
+  if [ "$(uname)" = Darwin ]; then
+    [ "$(/usr/bin/stat -f %m "$marker")" = "$marker_mtime" ] \
+      || fail "branch acknowledgement backdated the main-owned inbox marker"
+  else
+    [ "$(stat -c %Y "$marker")" = "$marker_mtime" ] \
+      || fail "branch acknowledgement backdated the main-owned inbox marker"
+  fi
+  ! grep -Fq 'NOT acknowledged - captain inbox note(s) still unread' "$ack_err" \
+    || fail "branch acknowledgement printed main's captain-inbox notice"
   grep -Fq "$(printf '\tsignal\ttask-a.status\t')" "$state/.wake-queue" \
     && fail "branch's own eligible signal row was not consumed"
   grep -Fq "$(printf '\tstale\tfm-window\t')" "$state/.wake-queue" \
@@ -834,15 +857,17 @@ test_branch_actor_scoped_ack_never_swallows_a_main_owned_row() {
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" 2> "$err" || fail "main drain failed: $(cat "$err")"
   count=$(awk -F '\t' 'NF == 5 { count++ } END { print count + 0 }' "$out")
   [ "$count" -eq 1 ] || fail "main's later drain should see exactly the one remaining main-owned row: $(cat "$out")"
-  grep -Fq "$(printf '\tcheck\tsome-poll.check.sh\t')" "$out" || fail "main's later drain lost the main-owned row"
+  grep -Fq "$(printf '\tcheck\tinbox:%s\t' "$id")" "$out" || fail "main's later drain lost the main-owned inbox row"
   sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$err")
   generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$err")
   [ -n "$sequence" ] && [ -n "$generation" ] || fail "main's drain omitted its acknowledgement boundary"
+  FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" drain --ack "$id" >/dev/null \
+    || fail "main could not mark its captain note read"
   FM_STATE_OVERRIDE="$state" "$DRAIN" --ack-through "$sequence" --recovery-generation "$generation" \
     || fail "main's ack failed"
   [ ! -s "$state/.wake-queue" ] || fail "the main-owned row survived main's own ack"
 
-  pass "a branch-actor scoped ack never swallows an unacked main-owned row, and main's later drain sees exactly what remains"
+  pass "a branch-actor scoped ack leaves main's unread inbox ownership untouched"
 }
 
 test_main_drain_excludes_rows_already_granted_to_branch() {
