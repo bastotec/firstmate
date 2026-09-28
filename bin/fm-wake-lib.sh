@@ -1901,6 +1901,49 @@ fm_wake_queued_keys_locked() {
     "$FM_WAKE_QUEUE" 2>/dev/null || true
 }
 
+# --- Captain inbox note delivery ---------------------------------------------
+# bin/fm-inbox.sh owns the note record: a note is unread while
+# state/inbox/<id>.note exists, and `fm-inbox.sh drain --ack <id>` moving it to
+# handled/ is the only proof that firstmate read it. Its `inbox:<id>` wake row
+# therefore must not be consumed before that proof (bin/fm-wake-drain.sh keeps
+# it), the watcher re-surfaces a kept row (bin/fm-watch.sh), and a note left
+# unread past FM_INBOX_OVERDUE_SECS is a delivery failure that bin/fm-guard.sh
+# and bin/fm-inbox.sh note both say out loud. The voice relay gives an ask 900 s
+# before its reply ticket expires, so the default stays well inside that.
+FM_INBOX_OVERDUE_DEFAULT=600
+
+fm_inbox_note_unread() {  # <state> <queue-key-or-note-id>
+  local id=${2#inbox:}
+  case "$id" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  [ -f "$1/inbox/$id.note" ]
+}
+
+# The watcher's once-surfaced marker for an inbox row. The drain removes it when
+# it keeps a row whose note is still unread, so the next cycle surfaces it again.
+fm_inbox_surfaced_marker() {  # <state> <queue-key>
+  printf '%s/.seen-inbox-%s' "$1" "$(printf '%s' "$2" | LC_ALL=C od -An -tx1 | tr -d ' \n')"
+}
+
+# Print "<id>\t<age-seconds>" for every unread note at least <seconds> old,
+# oldest first. A note id starts with its creation epoch; the file mtime is the
+# fallback for an id that does not.
+fm_inbox_overdue_notes() {  # <state> <seconds>
+  local state=$1 limit=$2 now f id epoch age
+  case "$limit" in ''|*[!0-9]*) limit=$FM_INBOX_OVERDUE_DEFAULT ;; esac
+  [ -d "$state/inbox" ] || return 0
+  now=$(date +%s)
+  for f in "$state/inbox"/*.note; do
+    [ -f "$f" ] || continue
+    id=${f##*/}
+    id=${id%.note}
+    epoch=${id%%-*}
+    case "$epoch" in ''|*[!0-9]*) epoch=$(fm_path_mtime "$f") || continue ;; esac
+    age=$((now - epoch))
+    [ "$age" -ge "$limit" ] && printf '%s\t%s\n' "$id" "$age"
+  done
+  return 0
+}
+
 fm_wake_secondmate_progress_marker_write() { # <task> <observed-at> <oldest-row-key>
   local task=$1 observed_at=$2 oldest_row_key=$3 marker tmp
   case "$task" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac

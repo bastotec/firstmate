@@ -308,6 +308,40 @@ test_queued_wake_warning_stays_independent() {
   pass "fm-guard stale banner: queued-wake warning remains independent"
 }
 
+# A captain note left unread is a delivery failure the guard must say out loud
+# even while the watcher looks healthy: on 2026-09-28 a live watcher with a
+# fresh beacon ran code that never read inbox rows, and eight voice questions
+# sat for a day behind a quiet guard. The alarm keys on the note record, repeats
+# on every call, and stays off for a fresh note and for the supervision branch.
+test_overdue_captain_note_is_loud_whatever_the_watcher_says() {
+  local dir home out
+  dir=$(make_guard_case overdue-note)
+  home=$(case_home "$dir")
+  rm -f "$home/state/task.meta"
+  mkdir -p "$home/state/inbox"
+  printf 'id=%s-fresh1\n--\nstill fresh\n' "$(date +%s)" > "$home/state/inbox/$(date +%s)-fresh1.note"
+  out=$(run_guard_case "$dir")
+  assert_not_contains "$out" "CAPTAIN INBOX NOT READ" "a fresh note must not raise the overdue alarm: $out"
+
+  printf 'id=1000-old001\n--\nwhat are you doing\n' > "$home/state/inbox/1000-old001.note"
+  out=$(run_guard_case "$dir")
+  assert_contains "$out" "CAPTAIN INBOX NOT READ - 1 note(s) unread, oldest 1000-old001" \
+    "an overdue note with no supervision need did not raise the alarm: $out"
+  assert_contains "$out" "bin/fm-inbox.sh drain --ack <id>" "the alarm did not say how to clear it: $out"
+  out=$(run_guard_case "$dir")
+  assert_contains "$out" "CAPTAIN INBOX NOT READ" "the overdue alarm must repeat, not deduplicate: $out"
+  out=$(FM_INBOX_OVERDUE_SECS=9999999999 run_guard_case "$dir")
+  assert_not_contains "$out" "CAPTAIN INBOX NOT READ" "FM_INBOX_OVERDUE_SECS was not honoured: $out"
+  out=$(FM_SUPERVISION_ACTOR=branch run_guard_case "$dir")
+  assert_not_contains "$out" "CAPTAIN INBOX NOT READ" "the supervision branch cannot answer the captain: $out"
+
+  mkdir -p "$home/state/inbox/handled"
+  mv "$home/state/inbox/1000-old001.note" "$home/state/inbox/handled/"
+  out=$(run_guard_case "$dir")
+  assert_not_contains "$out" "CAPTAIN INBOX NOT READ" "an acknowledged note still raised the alarm: $out"
+  pass "fm-guard: an overdue captain note is loud whatever the watcher says"
+}
+
 test_read_only_before_writable_does_not_consume_full_banner() {
   local dir home marker lock out_ro out_rw
   dir=$(make_guard_case read-only-before-writable)
@@ -919,6 +953,7 @@ test_healthy_recovery_rearms_next_stale_episode
 test_concurrent_same_episode_prints_one_full_banner
 test_home_isolation
 test_queued_wake_warning_stays_independent
+test_overdue_captain_note_is_loud_whatever_the_watcher_says
 test_read_only_before_writable_does_not_consume_full_banner
 test_read_only_during_episode_observes_without_mutating_marker
 test_healthy_read_only_does_not_clear_marker

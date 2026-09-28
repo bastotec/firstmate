@@ -80,7 +80,10 @@
 #   check: <script>: <out> authenticated check output, always actionable
 #   check: captain inbox note: <ids>
 #                          a durable captain note is queued and has not been
-#                          surfaced yet; bin/fm-inbox.sh owns acknowledgement
+#                          surfaced yet, or is still unread after an
+#                          acknowledgement kept its row or its re-surface
+#                          interval passed (inbox_row_due); bin/fm-inbox.sh
+#                          owns acknowledgement
 #   check: process-event result captured: <keys>
 #                          a durably captured process-to-event result is queued
 #                          and has not been surfaced yet; reported once per
@@ -1579,20 +1582,52 @@ scan_signals() {
 # always written before its marker, so nothing is suppressed before it is queued,
 # and each producer's re-announcement and acknowledgement contract stays intact.
 procevent_surfaced_marker() {  # <queue-key>
-  local kind=procevent
   # A captain inbox note (bin/fm-inbox.sh note) is surfaced the same way: it is
   # the captain talking, and nothing else in the watcher would ever wake main
   # for it, so it sat on the queue until an unrelated event closed a cycle.
-  case "$1" in inbox:*) kind=inbox ;; esac
-  printf '%s/.seen-%s-%s' "$STATE" "$kind" "$(printf '%s' "$1" | LC_ALL=C od -An -tx1 | tr -d ' \n')"
+  case "$1" in
+    inbox:*) fm_inbox_surfaced_marker "$STATE" "$1" ;;
+    *) printf '%s/.seen-procevent-%s' "$STATE" "$(printf '%s' "$1" | LC_ALL=C od -An -tx1 | tr -d ' \n')" ;;
+  esac
+}
+
+# Whether a queued inbox row should wake firstmate now. Surfacing is not proof
+# that firstmate read the note - only `fm-inbox.sh drain --ack` is - so a row
+# whose note is still unread is due again once its marker is gone (the drain
+# removes it when an acknowledgement had to keep the row) or has aged past
+# INBOX_RESURFACE_SECS, at most INBOX_RESURFACE_MAX times. A read note never
+# wakes anything, even while its row waits for the next acknowledgement.
+INBOX_RESURFACE_SECS=${FM_INBOX_RESURFACE_SECS:-300}
+INBOX_RESURFACE_MAX=${FM_INBOX_RESURFACE_MAX:-3}
+case "$INBOX_RESURFACE_SECS" in ''|*[!0-9]*|0) INBOX_RESURFACE_SECS=300 ;; esac
+case "$INBOX_RESURFACE_MAX" in ''|*[!0-9]*) INBOX_RESURFACE_MAX=3 ;; esac
+inbox_row_due() {  # <queue-key>
+  local marker count
+  fm_inbox_note_unread "$STATE" "$1" || return 1
+  marker=$(procevent_surfaced_marker "$1")
+  [ -e "$marker" ] || return 0
+  [ "$(fm_path_age "$marker")" -ge "$INBOX_RESURFACE_SECS" ] || return 1
+  count=$(cat "$marker" 2>/dev/null || true)
+  case "$count" in ''|*[!0-9]*) count=1 ;; esac
+  [ "$count" -le "$INBOX_RESURFACE_MAX" ]
 }
 
 procevent_surface_after_output() {
-  local output_status=$1 key marker tmp status=0
+  local output_status=$1 key marker tmp count status=0
   if [ "$output_status" -eq 0 ]; then
     for key in $PROCEVENT_SURFACED; do
       marker=$(procevent_surfaced_marker "$key")
       tmp=$(umask 077; mktemp "$STATE/.seen-procevent.XXXXXX") || { status=1; continue; }
+      case "$key" in
+        inbox:*)
+          # The marker counts surfacings so a note nobody acknowledges stops
+          # re-waking after INBOX_RESURFACE_MAX repeats; fm-guard.sh keeps
+          # saying it is overdue.
+          count=$(cat "$marker" 2>/dev/null || true)
+          case "$count" in ''|*[!0-9]*) count=0 ;; esac
+          printf '%s\n' "$((count + 1))" > "$tmp" || true
+          ;;
+      esac
       if ! mv -f -- "$tmp" "$marker"; then
         rm -f -- "$tmp"
         status=1
@@ -1609,10 +1644,18 @@ procevent_surface_queued() {
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
   while IFS= read -r key; do
-    case "$key" in procevent:*|inbox:*) ;; *) continue ;; esac
+    case "$key" in
+      inbox:*)
+        inbox_row_due "$key" || continue
+        PROCEVENT_SURFACED="$PROCEVENT_SURFACED $key"
+        notes="$notes ${key#inbox:}"
+        continue
+        ;;
+      procevent:*) ;;
+      *) continue ;;
+    esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
     PROCEVENT_SURFACED="$PROCEVENT_SURFACED $key"
-    case "$key" in inbox:*) notes="$notes ${key#inbox:}"; continue ;; esac
     # A stranded source or one whose launch never proved itself is the opposite
     # of a captured result: nothing is collecting for it. Headlining either as
     # a capture would present it as healthy, which is the shape of defect
@@ -1857,7 +1900,7 @@ unsurfaced_inbox_note() {
   [ -s "$FM_WAKE_QUEUE" ] || return 1
   while IFS= read -r key; do
     case "$key" in inbox:*) ;; *) continue ;; esac
-    [ -e "$(procevent_surfaced_marker "$key")" ] || return 0
+    inbox_row_due "$key" && return 0
   done < <(fm_wake_queued_keys check)
   return 1
 }
@@ -1994,23 +2037,30 @@ if ! fm_lock_try_acquire "$WATCH_LOCK"; then
   exit 0
 fi
 WATCHER_RECOVERY_PENDING=0
-if [ -n "${FM_LOCK_RECOVERED_PID:-}" ]; then
-  WATCHER_RECOVERY_PENDING=1
-fi
-if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ]; then
-  if ! fm_recovery_marker_reopen_announced "$WATCHER_DOWNTIME_MARKER"; then
-    echo "watcher: recovery state could not be reopened safely; retaining stale lock evidence" >&2
+# A code reload (watch_code_reload_if_changed below) is the same cycle
+# continuing in the same process, not a new down stretch, so it skips the
+# recovery bookkeeping a fresh arm does.
+WATCH_CODE_RELOADED=${FM_WATCH_CODE_RELOAD:-0}
+unset FM_WATCH_CODE_RELOAD
+if [ "$WATCH_CODE_RELOADED" != 1 ]; then
+  if [ -n "${FM_LOCK_RECOVERED_PID:-}" ]; then
+    WATCHER_RECOVERY_PENDING=1
+  fi
+  if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ]; then
+    if ! fm_recovery_marker_reopen_announced "$WATCHER_DOWNTIME_MARKER"; then
+      echo "watcher: recovery state could not be reopened safely; retaining stale lock evidence" >&2
+      exit 1
+    fi
+  fi
+  if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER"; then
+    echo "watcher: recovery state could not be consumed safely; retaining stale lock evidence" >&2
     exit 1
   fi
-fi
-if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER"; then
-  echo "watcher: recovery state could not be consumed safely; retaining stale lock evidence" >&2
-  exit 1
-fi
-if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ]; then
-  WATCHER_RECOVERY_PENDING=0
-elif [ "$FM_RECOVERY_MARKER_ACTION" = recover ]; then
-  WATCHER_RECOVERY_PENDING=1
+  if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ]; then
+    WATCHER_RECOVERY_PENDING=0
+  elif [ "$FM_RECOVERY_MARKER_ACTION" = recover ]; then
+    WATCHER_RECOVERY_PENDING=1
+  fi
 fi
 # Side-band ledger publication, detached from the poll loop.
 #
@@ -2155,7 +2205,8 @@ resurface_after_downtime() {
   # Handling successors already have a predecessor-delivered wake on the way.
   # Re-announcing from this cycle is what turned a lost handshake into an
   # unbounded recovery loop; stay in the poll loop and supervise instead.
-  if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ]; then
+  # A reloaded watcher is the same cycle, so it has nothing to re-announce.
+  if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ] || [ "$WATCH_CODE_RELOADED" = 1 ]; then
     return 0
   fi
   if [ "$WATCHER_RECOVERY_PENDING" -ne 1 ]; then
@@ -2168,6 +2219,49 @@ resurface_after_downtime() {
   wake "check: rearm-resurface"
 }
 
+# Code reload. bash parses this loop once, when the watcher starts, so a merge
+# that changes bin/ leaves a running watcher supervising with the code it
+# started with until something else ends its cycle. On a quiet fleet that was
+# eighteen hours: a watcher started before the captain inbox wake existed never
+# read an inbox row, and the captain's questions sat on the queue all day.
+# When any bin/*.sh is newer than this watcher's start and the change has
+# settled for WATCH_CODE_SETTLE seconds (a checkout can be mid-write), re-exec
+# this script in place. The pid, the singleton lock and the arm's wait all carry
+# over, so no wake is dropped and there is never a second watcher.
+WATCH_CODE_REF="$STATE/.watch-code-ref"
+WATCH_CODE_SETTLE=${FM_WATCH_CODE_SETTLE:-2}
+case "$WATCH_CODE_SETTLE" in ''|*[!0-9]*) WATCH_CODE_SETTLE=2 ;; esac
+touch "$WATCH_CODE_REF" 2>/dev/null || true
+
+watch_code_reload_if_changed() {
+  local changed f
+  [ -e "$WATCH_CODE_REF" ] || return 0
+  changed=$(find "$SCRIPT_DIR" -maxdepth 1 -type f -name '*.sh' -newer "$WATCH_CODE_REF" 2>/dev/null) || return 0
+  [ -n "$changed" ] || return 0
+  while IFS= read -r f; do
+    [ "$(fm_path_age "$f")" -ge "$WATCH_CODE_SETTLE" ] || return 0
+  done <<< "$changed"
+  if ! bash -n "$WATCH_PATH" 2>/dev/null; then
+    # Keep supervising with the code that works; a later change retries.
+    touch "$WATCH_CODE_REF" 2>/dev/null || true
+    triage_log "watcher code changed but $WATCH_PATH does not parse; kept the running code"
+    return 0
+  fi
+  triage_log "watcher code changed under pid $WATCHER_PID; re-executing in place"
+  pr_poll_control_release || true
+  fm_active_check_stop || true
+  fm_check_output_cleanup
+  fm_custom_check_snapshot_cleanup
+  trap - EXIT HUP INT TERM
+  shopt -s execfail
+  FM_WATCH_CODE_RELOAD=1 exec "$WATCH_PATH"
+  shopt -u execfail
+  trap watcher_cleanup EXIT
+  trap 'exit 1' HUP INT TERM
+  touch "$WATCH_CODE_REF" 2>/dev/null || true
+  triage_log "watcher re-exec failed; kept the running code"
+}
+
 while :; do
   # Self-eviction: if the singleton lock no longer names this process, a second
   # watcher has taken over (e.g. a transient duplicate from a racy arm). Stand
@@ -2178,6 +2272,8 @@ while :; do
   if [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" != "$WATCHER_PID" ]; then
     exit 0
   fi
+
+  watch_code_reload_if_changed
 
   # Liveness beacon for fm-guard.sh: a fresh mtime here means a watcher is
   # alive. Supervision scripts warn when this goes stale with tasks in flight.

@@ -4256,6 +4256,9 @@ SH
   before=$(size_of "$state/.wake-queue")
   FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "x" >/dev/null 2>&1 \
     || { reap "$pid"; fail "the replacement inbox note could not be queued"; }
+  # Read the older note first: its wake is not acknowledged while it is unread.
+  FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" drain --ack "$first_note" >/dev/null \
+    || { reap "$pid"; fail "the older note could not be acknowledged"; }
   ack_drain_err "$state" "$drain_err" >/dev/null \
     || { reap "$pid"; fail "the older surfaced note could not be acknowledged"; }
   after=$(size_of "$state/.wake-queue")
@@ -4272,6 +4275,8 @@ SH
 
   # A note already on the queue when the sleep begins - appended after the
   # cycle's scan, before its baseline - still wakes it at once, not after POLL.
+  mkdir -p "$state/inbox"
+  printf 'id=raced\n--\nraced\n' > "$state/inbox/raced.note"
   FM_STATE_OVERRIDE="$state" bash -c '
     . "$1/bin/fm-wake-lib.sh"
     fm_wake_append check "inbox:raced" "check: captain inbox note raced - fixture"' _ "$ROOT" \
@@ -4294,6 +4299,154 @@ SH
   fi
   reap "$pid"
   pass "a captain inbox note wakes a sleeping watcher within seconds, once"
+}
+
+# An acknowledgement must not consume the wake of a captain note nobody read.
+# On 2026-09-28 firstmate ran the drain piped through grep for the
+# WAKE_ACK_REQUIRED line: the drain printed a fresh voice question and a cutoff
+# that covered it, the acknowledgement deleted the row, and the question was
+# only answered after the captain complained. The row now stays until
+# `fm-inbox.sh drain --ack` proves the note was read, the acknowledgement says so
+# on its last line, and the next watcher cycle surfaces the note again at once.
+test_unread_inbox_note_survives_acknowledgement() {
+  local dir state out drain_out drain_err ack_err pid id
+  dir=$(make_case inbox-unread-ack); state="$dir/state"
+  dir=$(cd "$dir" && pwd -P)
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; drain_err="$dir/drain.err"; ack_err="$dir/ack.err"
+  id=$(FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "which customer is the document fix for" 2>/dev/null \
+    | sed -n 's/^queued //p')
+  [ -n "$id" ] || fail "the inbox note could not be queued"
+
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "the queued note did not wake the watcher: $(cat "$out")"
+  grep -F "$id" "$out" >/dev/null || fail "the wake did not name the note: $(cat "$out")"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" || fail "the drain failed"
+  grep -F "inbox:$id" "$drain_out" >/dev/null || fail "the drain did not present the note row: $(cat "$drain_out")"
+  ack_drain_err "$state" "$drain_err" 2> "$ack_err" || fail "the acknowledgement failed: $(cat "$ack_err")"
+  grep -F "inbox:$id" "$state/.wake-queue" >/dev/null \
+    || fail "the acknowledgement consumed the wake of a note nobody read"
+  tail -1 "$ack_err" | grep -F "NOT acknowledged - captain inbox note(s) still unread: $id" >/dev/null \
+    || fail "the acknowledgement did not end by naming the unread note: $(cat "$ack_err")"
+
+  # The kept row wakes the next cycle at once, not after the re-surface window.
+  : > "$out"
+  PATH="$dir/fakebin:$PATH" FM_WATCH_HANDLING_SUCCESSOR=1 FM_HOME="$dir" \
+    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 50 || fail "the kept note did not wake the next watcher cycle: $(cat "$out")"
+  grep -F "captain inbox note: $id" "$out" >/dev/null \
+    || fail "the next wake did not name the kept note: $(cat "$out")"
+
+  # Read and acknowledged: the row is consumed and the note never wakes again.
+  FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" drain --ack "$id" >/dev/null || fail "the note could not be acknowledged"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" || fail "the second drain failed"
+  ack_drain_err "$state" "$drain_err" 2> "$ack_err" || fail "the second acknowledgement failed: $(cat "$ack_err")"
+  grep -F "inbox:$id" "$state/.wake-queue" >/dev/null \
+    && fail "the row of a read note survived its acknowledgement"
+  grep -F "NOT acknowledged" "$ack_err" >/dev/null && fail "a read note was still reported unread: $(cat "$ack_err")"
+  pass "a captain note's wake is not acknowledged until the note is read, and is surfaced again meanwhile"
+}
+
+# A note nobody acknowledges is surfaced again after FM_INBOX_RESURFACE_SECS, at
+# most FM_INBOX_RESURFACE_MAX more times; after that fm-guard.sh reports it
+# overdue instead of the watcher re-waking forever.
+test_unread_inbox_note_resurfaces_a_bounded_number_of_times() {
+  local dir state out pid id n
+  dir=$(make_case inbox-resurface); state="$dir/state"
+  dir=$(cd "$dir" && pwd -P)
+  out="$dir/watch.out"
+  id=$(FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "status please" 2>/dev/null | sed -n 's/^queued //p')
+  [ -n "$id" ] || fail "the inbox note could not be queued"
+  for n in 1 2 3; do
+    : > "$out"
+    PATH="$dir/fakebin:$PATH" FM_WATCH_HANDLING_SUCCESSOR=1 FM_HOME="$dir" \
+      FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+      FM_INBOX_RESURFACE_SECS=1 FM_INBOX_RESURFACE_MAX=1 "$WATCH" > "$out" &
+    pid=$!
+    if [ "$n" -lt 3 ]; then
+      wait_for_exit "$pid" 50 || fail "surfacing $n of the unread note did not wake the watcher: $(cat "$out")"
+      grep -F "captain inbox note: $id" "$out" >/dev/null || fail "surfacing $n did not name the note: $(cat "$out")"
+      sleep 1.2
+    else
+      if ! wait_poll_cycle "$state" "$pid"; then
+        grep -F "$id" "$out" >/dev/null && fail "the note woke the watcher past FM_INBOX_RESURFACE_MAX: $(cat "$out")"
+      fi
+      reap "$pid"
+    fi
+  done
+  pass "an unread captain note re-surfaces a bounded number of times"
+}
+
+# bash parses the watcher loop once, so a merge that changed bin/ left a live
+# watcher on its start-time code: on 2026-09-27 a watcher started four hours
+# before the captain inbox wake landed kept running without it for eighteen
+# hours. A changed bin/*.sh now re-execs the watcher in place: same pid, same
+# lock, the arm still waiting on it, one watcher for the home, and the new loop
+# live. A change that does not parse keeps the running code.
+test_watcher_reloads_changed_code_in_place() {
+  local dir state copy out pid arm lock_pid count
+  dir=$(make_case code-reload); state="$dir/state"
+  dir=$(cd "$dir" && pwd -P)
+  copy="$dir/fmroot"
+  mkdir -p "$copy"
+  rsync -a --exclude node_modules --exclude __pycache__ "$ROOT/bin" "$copy/" || fail "could not copy bin/"
+  out="$dir/arm.out"
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WATCH_CODE_SETTLE=0 \
+    "$copy/bin/fm-watch-arm.sh" > "$out" 2>&1 &
+  arm=$!
+  for _ in $(seq 1 100); do grep -q '^watcher: started pid=' "$out" && break; sleep 0.1; done
+  pid=$(sed -n 's/^watcher: started pid=\([0-9]*\).*/\1/p' "$out")
+  [ -n "$pid" ] || { reap "$arm"; fail "the arm did not start a watcher: $(cat "$out")"; }
+
+  # Change the code under the running watcher; the new image records itself.
+  perl -0pi -e 's/^(WATCHER_PID=\$\{BASHPID:-\$\$\}\n)/$1echo "\$WATCHER_PID" > "\$STATE\/.test-reloaded"\n/m' \
+    "$copy/bin/fm-watch.sh"
+  grep -F '.test-reloaded' "$copy/bin/fm-watch.sh" >/dev/null || { reap "$arm"; fail "the fixture edit did not apply"; }
+  for _ in $(seq 1 100); do [ -s "$state/.test-reloaded" ] && break; sleep 0.1; done
+  [ "$(cat "$state/.test-reloaded" 2>/dev/null)" = "$pid" ] \
+    || { reap "$arm"; fail "the watcher did not re-exec in place after its code changed"; }
+  is_live_non_zombie "$pid" || { reap "$arm"; fail "the reloaded watcher is not running"; }
+  lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null)
+  [ "$lock_pid" = "$pid" ] || { reap "$arm"; fail "the reload changed the lock holder ($lock_pid, not $pid)"; }
+  # Count watcher processes whose parent is not itself a watcher: bash
+  # command-substitution subshells carry the same command line.
+  count=$(ps -axo pid=,ppid=,command= | awk -v path="$copy/bin/fm-watch.sh" '
+    { cmd = $0; sub(/^ *[0-9]+ +[0-9]+ +/, "", cmd) }
+    cmd == "bash " path { pid[$1] = $2 }
+    END { n = 0; for (p in pid) if (!(pid[p] in pid)) n++; print n }')
+  [ "$count" = 1 ] || { reap "$arm"; fail "the reload left $count watchers for one home"; }
+  grep -F "re-executing in place" "$state/.watch-triage.log" >/dev/null \
+    || { reap "$arm"; fail "the reload was not logged"; }
+
+  # The reloaded loop is live and its wake still reaches the arm.
+  FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "are you there" >/dev/null 2>&1 \
+    || { reap "$arm"; fail "the inbox note could not be queued"; }
+  wait_for_exit "$arm" 100 || fail "the reloaded watcher's wake did not end the arm: $(cat "$out")"
+  grep -F "check: captain inbox note:" "$out" >/dev/null \
+    || fail "the arm did not relay the reloaded watcher's wake: $(cat "$out")"
+
+  # A change that does not parse keeps the running code.
+  rm -f "$state/.test-reloaded" "$state/.last-watcher-beat"
+  : > "$out"
+  PATH="$dir/fakebin:$PATH" FM_WATCH_HANDLING_SUCCESSOR=1 FM_HOME="$dir" \
+    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WATCH_CODE_SETTLE=0 \
+    FM_INBOX_RESURFACE_SECS=999999 "$copy/bin/fm-watch.sh" > "$out" 2>&1 &
+  pid=$!
+  for _ in $(seq 1 100); do [ -e "$state/.last-watcher-beat" ] && [ "$(cat "$state/.watch.lock/pid" 2>/dev/null)" = "$pid" ] && break; sleep 0.1; done
+  printf 'if then fi {\n' >> "$copy/bin/fm-watch.sh"
+  for _ in $(seq 1 50); do grep -qF "does not parse" "$state/.watch-triage.log" && break; sleep 0.1; done
+  grep -F "does not parse; kept the running code" "$state/.watch-triage.log" >/dev/null \
+    || { reap "$pid"; fail "a change that does not parse was not refused: $(cat "$out"; tail -3 "$state/.watch-triage.log")"; }
+  wait_poll_cycle "$state" "$pid" || fail "the watcher died on a change that does not parse: $(cat "$out")"
+  reap "$pid"
+  pass "a changed watcher re-execs in place: same pid and lock, one watcher, live loop"
 }
 
 test_procevent_unacknowledged_result_redrains_until_handled() {
@@ -5107,6 +5260,9 @@ test_terminal_first_sight_drops_a_finished_write_deferral_chain
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_procevent_captured_result_surfaces_proactively
 test_inbox_note_wakes_the_watcher_promptly
+test_unread_inbox_note_survives_acknowledgement
+test_unread_inbox_note_resurfaces_a_bounded_number_of_times
+test_watcher_reloads_changed_code_in_place
 test_procevent_unacknowledged_result_redrains_until_handled
 test_procevent_marker_keys_are_injective
 test_procevent_headlines_classify_queue_keys

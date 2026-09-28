@@ -26,8 +26,8 @@
 # the beacon mtime, which a healthy between-turns watcher advances every poll);
 # later guarded commands in the same episode print a one-line reminder instead.
 # Episode state lives only under state/.guard-watcher-stale-banner (volatile,
-# bounded). Independent alarms (queued wakes, worktree tangle) are never
-# suppressed by that dedup. Normal wake handling (watcher briefly down between a
+# bounded). Independent alarms (queued wakes, worktree tangle, captain inbox
+# notes unread past FM_INBOX_OVERDUE_SECS) are never suppressed by that dedup. Normal wake handling (watcher briefly down between a
 # wake and the next supervision resume) stays inside the grace window and stays
 # silent. The queued-wakes warning counts only the rows the calling actor can
 # itself present or retire (fm_wake_actor_pending_count), so it is never an
@@ -164,6 +164,34 @@ if [ -n "$tangle_branch" ]; then
     fi
     printf '●%s\n' "$trule"
   } >&2
+fi
+
+# A captain inbox note unread past FM_INBOX_OVERDUE_SECS is a delivery failure
+# whatever the watcher's health says: on 2026-09-28 a live watcher with a fresh
+# beacon ran code that never read inbox rows, so eight voice questions sat for a
+# day behind a quiet guard. This alarm keys on the note record itself
+# (bin/fm-wake-lib.sh fm_inbox_overdue_notes), is independent of supervision
+# need, and is never deduplicated. The supervision branch cannot answer the
+# captain, so it stays silent there.
+if [ "$GUARD_ACTOR" != branch ]; then
+  overdue_notes=$(fm_inbox_overdue_notes "$STATE" "${FM_INBOX_OVERDUE_SECS:-$FM_INBOX_OVERDUE_DEFAULT}")
+  if [ -n "$overdue_notes" ]; then
+    overdue_count=$(printf '%s\n' "$overdue_notes" | awk 'END { print NR }')
+    IFS=$'\t' read -r overdue_oldest overdue_age <<< "$(printf '%s\n' "$overdue_notes" | head -1)"
+    rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    {
+      printf '●%s\n' "$rule"
+      printf '●  CAPTAIN INBOX NOT READ - %s note(s) unread, oldest %s for %s min.\n' \
+        "$overdue_count" "$overdue_oldest" "$((overdue_age / 60))"
+      if [ "$READ_ONLY" -eq 1 ]; then
+        printf '●  This read-only session should report the unread notes, not handle them.\n'
+      else
+        printf '●  Read them with bin/fm-inbox.sh list, answer each, then bin/fm-inbox.sh drain --ack <id>.\n'
+      fi
+      printf '●  %s\n' "$CONTINUE_LINE"
+      printf '●%s\n' "$rule"
+    } >&2
+  fi
 fi
 
 # Compute supervision need and watcher-beacon freshness via the shared

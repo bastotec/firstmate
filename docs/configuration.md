@@ -1052,6 +1052,9 @@ Each is one line in a local, gitignored `config/` file, with an environment vari
 That configuration is the whole opt-in: an unconfigured home cannot start the relay and cannot run `fm-inbox.sh say` or `ask`, while `note`, `status`, `list` and `drain` need no configuration at all because they make no model call.
 The voice handover depends on `note`, so it keeps working in a home that has configured nothing.
 In a live Pi session using the polling fallback, an unseen captain note cuts short the idle wait, is surfaced once, and normally reaches the session within a few seconds instead of after the full `FM_POLL`; Herdr's native event wait is unchanged.
+A note stays unread until `fm-inbox.sh drain --ack <id>` moves it to `state/inbox/handled/`, and `fm-wake-drain.sh --ack-through` never consumes the `inbox:<id>` wake row of an unread note: it keeps the row, says so on its last line, and marks it so the next watcher cycle surfaces the note again.
+An unread note is also surfaced again every `FM_INBOX_RESURFACE_SECS` (default 300), at most `FM_INBOX_RESURFACE_MAX` (default 3) more times.
+Once a note has been unread for `FM_INBOX_OVERDUE_SECS` (default 600, inside the voice relay's 900-second ask window), `bin/fm-guard.sh` prints a `CAPTAIN INBOX NOT READ` banner on every guarded command and drain, and every later `fm-inbox.sh note` prints a `delivery: degraded` line that the voice handover passes on to the captain as `delivery_warning`.
 
 | File | Environment | Holds |
 | --- | --- | --- |
