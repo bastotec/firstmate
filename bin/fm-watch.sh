@@ -151,7 +151,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   trap 'exit 1' HUP INT TERM
   if ! touch "$WATCH_CODE_START_REF" 2>/dev/null \
     || ! perl -e 'utime $ARGV[0], $ARGV[0], $ARGV[1] or exit 1' \
-      "$WATCH_START_EPOCH" "$WATCH_CODE_START_REF"; then
+      "$((WATCH_START_EPOCH - 1))" "$WATCH_CODE_START_REF"; then
     echo "watcher: FAILED - cannot create code-start reference $WATCH_CODE_START_REF" >&2
     exit 1
   fi
@@ -2279,22 +2279,15 @@ watch_code_tree_snapshot() {
   LC_ALL=C cksum "$SCRIPT_DIR"/*.sh 2>/dev/null
 }
 
+watch_code_ref_advance() {
+  perl -e 'utime time - 1, time - 1, $ARGV[0] or exit 1' "$WATCH_CODE_REF" 2>/dev/null
+}
+
 watch_code_reload_if_changed() {
-  local changed f reference_mtime file_mtime snapshot settled_snapshot exec_snapshot
+  local changed snapshot settled_snapshot exec_snapshot
   [ -e "$WATCH_CODE_REF" ] || return 0
-  reference_mtime=$(fm_path_mtime "$WATCH_CODE_REF") || return 0
-  changed=
-  for f in "$SCRIPT_DIR"/*.sh; do
-    [ -f "$f" ] || continue
-    file_mtime=$(fm_path_mtime "$f") || continue
-    [ "$file_mtime" -ge "$reference_mtime" ] || continue
-    if [ -z "$changed" ]; then
-      changed=$f
-    else
-      changed="$changed
-$f"
-    fi
-  done
+  changed=$(find "$SCRIPT_DIR" -maxdepth 1 -type f -name '*.sh' \
+    -newer "$WATCH_CODE_REF" -print -quit 2>/dev/null) || return 0
   [ -n "$changed" ] || return 0
   snapshot=$(watch_code_tree_snapshot) || return 0
   [ "$WATCH_CODE_SETTLE" -eq 0 ] || sleep "$WATCH_CODE_SETTLE"
@@ -2302,7 +2295,7 @@ $f"
   [ "$snapshot" = "$settled_snapshot" ] || return 0
   if ! bash -n "$WATCH_PATH" 2>/dev/null; then
     # Keep supervising with the code that works; a later change retries.
-    touch "$WATCH_CODE_REF" 2>/dev/null || true
+    watch_code_ref_advance || true
     triage_log "watcher code changed but $WATCH_PATH does not parse; kept the running code"
     return 0
   fi
@@ -2319,7 +2312,7 @@ $f"
   shopt -u execfail
   trap watcher_cleanup EXIT
   trap 'exit 1' HUP INT TERM
-  touch "$WATCH_CODE_REF" 2>/dev/null || true
+  watch_code_ref_advance || true
   triage_log "watcher re-exec failed; kept the running code"
 }
 

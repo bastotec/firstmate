@@ -4389,7 +4389,7 @@ test_unread_inbox_note_resurfaces_a_bounded_number_of_times() {
 # lock, the arm still waiting on it, one watcher for the home, and the new loop
 # live. A change that does not parse keeps the running code.
 test_watcher_reloads_changed_code_in_place() {
-  local dir state copy out pid arm lock_pid lock_owner count
+  local dir state copy out pid arm lock_pid lock_owner count ref_mtime
   dir=$(make_case code-reload); state="$dir/state"
   dir=$(cd "$dir" && pwd -P)
   copy="$dir/fmroot"
@@ -4409,6 +4409,8 @@ test_watcher_reloads_changed_code_in_place() {
   # Change the code under the running watcher; the new image records itself.
   perl -0pi -e 's/^(WATCHER_PID=\$\{BASHPID:-\$\$\}\n)/$1echo "\$WATCHER_PID" > "\$STATE\/.test-reloaded"\n/m' \
     "$copy/bin/fm-watch.sh"
+  ref_mtime=$(file_mtime "$state/.watch-code-ref")
+  set_mtime "$((ref_mtime + 1))" "$copy/bin/fm-watch.sh"
   for _ in $(seq 1 100); do [ -s "$state/.test-reloaded" ] && break; sleep 0.1; done
   [ "$(cat "$state/.test-reloaded" 2>/dev/null)" = "$pid" ] \
     || { reap "$arm"; fail "the watcher did not re-exec in place after its code changed"; }
