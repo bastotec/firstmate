@@ -126,6 +126,7 @@
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
 # no-op through the watcher singleton lock.
+printf -v WATCH_START_EPOCH '%(%s)T' -1 2>/dev/null || WATCH_START_EPOCH=
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -138,10 +139,19 @@ mkdir -p "$STATE"
 WATCH_CODE_REF="$STATE/.watch-code-ref"
 WATCH_CODE_START_REF=
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  if [ -z "$WATCH_START_EPOCH" ]; then
+    WATCH_START_NOW=$(date +%s) || {
+      echo "watcher: FAILED - cannot capture code-start time" >&2
+      exit 1
+    }
+    WATCH_START_EPOCH=$((WATCH_START_NOW - SECONDS - 1))
+  fi
   WATCH_CODE_START_REF="$STATE/.watch-code-start-${BASHPID:-$$}"
   trap '[ -z "$WATCH_CODE_START_REF" ] || rm -f -- "$WATCH_CODE_START_REF" 2>/dev/null || true' EXIT
   trap 'exit 1' HUP INT TERM
-  if ! touch "$WATCH_CODE_START_REF" 2>/dev/null; then
+  if ! touch "$WATCH_CODE_START_REF" 2>/dev/null \
+    || ! perl -e 'utime $ARGV[0], $ARGV[0], $ARGV[1] or exit 1' \
+      "$WATCH_START_EPOCH" "$WATCH_CODE_START_REF"; then
     echo "watcher: FAILED - cannot create code-start reference $WATCH_CODE_START_REF" >&2
     exit 1
   fi
@@ -2259,9 +2269,21 @@ WATCH_CODE_SETTLE=${FM_WATCH_CODE_SETTLE:-2}
 case "$WATCH_CODE_SETTLE" in ''|*[!0-9]*) WATCH_CODE_SETTLE=2 ;; esac
 
 watch_code_reload_if_changed() {
-  local changed f
+  local changed f reference_mtime file_mtime
   [ -e "$WATCH_CODE_REF" ] || return 0
-  changed=$(find "$SCRIPT_DIR" -maxdepth 1 -type f -name '*.sh' -newer "$WATCH_CODE_REF" 2>/dev/null) || return 0
+  reference_mtime=$(fm_path_mtime "$WATCH_CODE_REF") || return 0
+  changed=
+  for f in "$SCRIPT_DIR"/*.sh; do
+    [ -f "$f" ] || continue
+    file_mtime=$(fm_path_mtime "$f") || continue
+    [ "$file_mtime" -ge "$reference_mtime" ] || continue
+    if [ -z "$changed" ]; then
+      changed=$f
+    else
+      changed="$changed
+$f"
+    fi
+  done
   [ -n "$changed" ] || return 0
   while IFS= read -r f; do
     [ "$(fm_path_age "$f")" -ge "$WATCH_CODE_SETTLE" ] || return 0
