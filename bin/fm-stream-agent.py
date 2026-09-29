@@ -57,6 +57,7 @@ import base64
 import errno
 import fcntl
 import json
+import math
 import os
 import random
 import re
@@ -453,6 +454,8 @@ POLL_BACKOFF_MIN = 2.0
 POLL_BACKOFF_MAX = 60.0
 RESULT_POST_TIMEOUT_SECS = 15.0
 RESULT_RETRY_SHUTDOWN_SECS = 900.0
+STEERING_APPLY_POLL_SECS = 0.1
+STEERING_RECONCILE_SECS = 5.0
 REREGISTER_BACKOFF_MIN = 2.0
 REREGISTER_BACKOFF_MAX = 60.0
 REREGISTER_JITTER = 0.25
@@ -849,7 +852,7 @@ class Agent:
         state, filename = os.path.split(self.status_path)
         return Receiver(state, filename.removesuffix('.status'), self.endpoint_id)
 
-    def apply_command(self, command: dict) -> tuple:
+    def apply_command(self, command: dict, reconcile_only: bool = False) -> tuple:
         kind = command.get("kind")
         payload = command.get("payload") or {}
         if kind == "steer":
@@ -859,9 +862,12 @@ class Agent:
             if receiver is not None:
                 result = receiver.apply(str(payload.get('order_id') or command['command_id']),
                                         str(payload.get('execution_id') or ''),
-                                        str(payload.get('text') or ''), self.pty.alive)
+                                        str(payload.get('text') or ''), self.pty.alive,
+                                        reconcile_only=reconcile_only)
                 if result is not None:
                     return result
+            if reconcile_only:
+                return None, 'native steering binding unavailable; application unconfirmed'
             # A Deck wrapper whose interface has not registered must never
             # fall back to typing a steer into a later turn's stdin.
             for process in self.pty.foreground_processes():
@@ -991,7 +997,12 @@ class Agent:
             # one about to be made.
             self._poll_wake.clear()
             try:
-                poll_path = path.rsplit('=', 1)[0] + '=0' if pending else path
+                wait = int(self.options.poll_secs)
+                if pending:
+                    delay = min(due for _, due, _ in pending.values()) - time.monotonic()
+                    wait = (0 if any(live for _, _, live in pending.values())
+                            else min(max(1, wait), max(1, math.ceil(delay))))
+                poll_path = path.rsplit('=', 1)[0] + '=%d' % wait
                 answer = self.hub.call("GET", poll_path, timeout=self.options.poll_secs + 15)
             except Superseded as exc:
                 self.give_up(exc)
@@ -1013,29 +1024,33 @@ class Agent:
                     self._backoff = POLL_BACKOFF_MIN
                 continue
             self._backoff = POLL_BACKOFF_MIN
-            commands = list(pending.values()) + (answer.get("commands") or [])
-            pending.clear()
-            for command in commands:
+            now = time.monotonic()
+            commands = []
+            for command_id, (command, due, _) in list(pending.items()):
+                if due <= now:
+                    commands.append((command, True))
+                    pending.pop(command_id)
+            commands.extend((command, False) for command in answer.get("commands") or [])
+            for command, reconcile_only in commands:
                 ok, error = False, "the agent could not apply the command"
                 try:
-                    ok, error = self.apply_command(command)
+                    ok, error = self.apply_command(command, reconcile_only=reconcile_only)
                 except Exception as exc:  # noqa: BLE001 - application is unconfirmed
                     sys.stderr.write("fm-stream-agent: command application unconfirmed: %s\n" % exc)
                     if command.get('kind') == 'steer':
-                        receiver = self.deck_receiver()
-                        payload = command.get('payload') or {}
-                        if receiver is not None and receiver.find(
-                                str(payload.get('order_id') or command['command_id'])):
-                            pending[command['command_id']] = command
+                        pending[command['command_id']] = (
+                            command, time.monotonic() + STEERING_RECONCILE_SECS, False)
                     continue
                 if ok is None:
-                    pending[command['command_id']] = command
+                    live = error == 'Deck application pending'
+                    delay = STEERING_APPLY_POLL_SECS if live else STEERING_RECONCILE_SECS
+                    pending[command['command_id']] = (command, time.monotonic() + delay, live)
                     # Taken is not accepted: leave uncertain results unresolved
                     # in the existing hub journal, never fabricate a refusal.
                     continue
                 self.acknowledge_command(command, ok, error)
-            if pending:
-                self.stop.wait(0.1)
+            if any(live for _, _, live in pending.values()):
+                self.stop.wait(STEERING_APPLY_POLL_SECS)
 
     # --- lifecycle --------------------------------------------------------
 

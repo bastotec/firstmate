@@ -110,7 +110,7 @@ class Receiver:
         sync_dir(record.parent)
         return record
 
-    def apply(self, order_id, execution, text, alive):
+    def apply(self, order_id, execution, text, alive, reconcile_only=False):
         """None means this is not a Deck driver; all other answers are final facts.
 
         Unknown application is returned honestly as unconfirmed, never as an
@@ -125,6 +125,8 @@ class Receiver:
                 if original != text or binding['execution'] != execution:
                     return False, 'steering idempotency conflict'
             else:
+                if reconcile_only:
+                    return None, 'Deck binding unavailable; application unconfirmed'
                 active = self.active()
                 if active is None or not active['active']:
                     return None

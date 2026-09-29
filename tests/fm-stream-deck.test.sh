@@ -92,15 +92,39 @@ assert agent.apply_command(command('too-large', long_text))[0] is False
 assert len(agent.pty.writes) == 2
 r.end()
 
+class LoopClock:
+    def __init__(self): self.now = 0.0
+    def monotonic(self): return self.now
+    def advance(self, seconds): self.now += seconds
+
+class LoopStop(threading.Event):
+    def __init__(self, clock):
+        super().__init__()
+        self.clock = clock
+    def wait(self, timeout=None):
+        if not self.is_set():
+            self.clock.advance(timeout)
+        return self.is_set()
+
+def run_loop(agent, hub):
+    hub.clock = LoopClock()
+    agent.stop = LoopStop(hub.clock)
+    agent.stood_down = threading.Event()
+    agent._poll_wake = threading.Event()
+    agent.options = SimpleNamespace(poll_secs=25)
+    agent.machine = 'test'
+    agent.hub = hub
+    monotonic = module.time.monotonic
+    module.time.monotonic = hub.clock.monotonic
+    try:
+        agent.command_loop()
+    finally:
+        module.time.monotonic = monotonic
+
 for successor in (False, True):
     agent.status_path = str(lab/('retry-%s.status' % successor))
     receiver = agent.deck_receiver()
     original = pathlib.Path(receiver.start('original', True))
-    agent.stop = threading.Event()
-    agent.stood_down = threading.Event()
-    agent._poll_wake = threading.Event()
-    agent.options = SimpleNamespace(poll_secs=1)
-    agent.machine = 'test'
     retry_command = command('retry-%s' % successor)
     results = []
     writes_before = list(agent.pty.writes)
@@ -120,6 +144,7 @@ for successor in (False, True):
             assert self.polls <= 4, 'source-backed command was dropped'
             if self.polls == 1:
                 return {'commands': [retry_command]}
+            self.clock.advance(int(path.rsplit('=', 1)[1]))
             found = receiver.find(retry_command['command_id'])
             assert found is not None and faults
             message = original/(str(int(found[0].stem)) + '.msg')
@@ -136,18 +161,132 @@ for successor in (False, True):
                 handled.mkdir()
                 (handled/message.name).write_text('handled proof')
             return {'commands': []}
-    agent.hub = PollHub()
     def acknowledge(cmd, ok, error):
         results.append((cmd['command_id'], ok, error))
         agent.stop.set()
     agent.acknowledge_command = acknowledge
     try:
-        agent.command_loop()
+        run_loop(agent, PollHub())
     finally:
         deck.atomic_write = publish
     assert results == [(retry_command['command_id'], True, '')]
     assert len(list(receiver.inbox.glob('*.msg'))) == 1
     assert agent.pty.writes == writes_before
+
+for has_source, successor in ((True, False), (True, True), (False, True)):
+    agent.status_path = str(lab/('read-%s-%s.status' % (has_source, successor)))
+    receiver = agent.deck_receiver()
+    original = pathlib.Path(receiver.start('original', True))
+    retry_command = command('read-%s-%s' % (has_source, successor))
+    record = (receiver.enqueue({'execution':agent.endpoint_id, 'turn':'original',
+                               'order_id':retry_command['command_id']}, 'change course')
+              if has_source else None)
+    results = []
+    faults = []
+    writes_before = list(agent.pty.writes)
+    class ReadHub:
+        polls = 0
+        def call(self, method, path, timeout):
+            assert method == 'GET'
+            self.polls += 1
+            assert self.polls <= 4, 'read failure lost the reconciliation command'
+            if self.polls == 1:
+                return {'commands': [retry_command]}
+            self.clock.advance(int(path.rsplit('=', 1)[1]))
+            if self.polls == 2:
+                if successor:
+                    receiver.end()
+                    receiver.start('successor', True)
+                return {'commands': [{'kind':'input', 'command_id':'unrelated',
+                                      'payload':{'text':'unrelated input'}}]}
+            if self.polls == 4:
+                if has_source:
+                    message = original/(str(int(record.stem)) + '.msg')
+                    assert message.exists() != successor
+                    (original/'handled').mkdir()
+                    (original/'handled'/message.name).write_text('handled proof')
+                else:
+                    agent.stop.set()
+            return {'commands': []}
+    hub = ReadHub()
+    glob = pathlib.Path.glob
+    def unreadable_inbox(path, pattern):
+        if path == receiver.inbox and hub.clock.now < 10:
+            faults.append(hub.clock.now)
+            raise OSError(errno.EIO, 'temporary inbox read failure')
+        return glob(path, pattern)
+    def acknowledge(cmd, ok, error):
+        results.append((cmd['command_id'], ok, error))
+        if cmd['command_id'] == retry_command['command_id']:
+            agent.stop.set()
+    agent.acknowledge_command = acknowledge
+    pathlib.Path.glob = unreadable_inbox
+    try:
+        run_loop(agent, hub)
+    finally:
+        pathlib.Path.glob = glob
+    assert len(faults) == 2
+    assert results == [('unrelated', True, '')] + (
+        [(retry_command['command_id'], True, '')] if has_source else [])
+    assert agent.pty.writes == writes_before + [b'unrelated input']
+    assert len(list(receiver.inbox.glob('*.msg'))) == int(has_source)
+    if successor:
+        assert not list((receiver.root/'successor').glob('*.msg'))
+
+agent.status_path = str(lab/'cadence.status')
+receiver = agent.deck_receiver()
+original = pathlib.Path(receiver.start('original', True))
+ended_command = command('ended')
+attempts = []
+results = []
+waits = []
+apply = agent.apply_command
+class CadenceHub:
+    polls = 0
+    def call(self, method, path, timeout):
+        assert method == 'GET'
+        self.polls += 1
+        assert self.polls < 60, 'late original-turn acknowledgement was lost'
+        waits.append(int(path.rsplit('=', 1)[1]))
+        if self.polls == 1:
+            return {'commands':[ended_command]}
+        if self.polls == 2:
+            receiver.end()
+            receiver.start('successor', True)
+        else:
+            self.clock.advance(0.25)
+        if self.clock.now >= 6:
+            message = next(original.glob('*.msg'), None)
+            if message is not None:
+                (original/'handled').mkdir()
+                message.rename(original/'handled'/message.name)
+        return {'commands':[{'kind':'input', 'command_id':'ordinary-%s' % self.polls,
+                             'payload':{'text':'ordinary'}}]}
+hub = CadenceHub()
+def observe(cmd, reconcile_only=False):
+    if cmd['command_id'] == ended_command['command_id']:
+        attempts.append(hub.clock.now)
+    return apply(cmd, reconcile_only=reconcile_only)
+def acknowledge(cmd, ok, error):
+    results.append((cmd['command_id'], ok, error))
+    if cmd['command_id'] == ended_command['command_id']:
+        agent.stop.set()
+agent.apply_command = observe
+agent.acknowledge_command = acknowledge
+try:
+    run_loop(agent, hub)
+finally:
+    del agent.apply_command
+assert len(attempts) == 4, attempts
+assert attempts[1] - attempts[0] == module.STEERING_APPLY_POLL_SECS
+assert all(right - left >= module.STEERING_RECONCILE_SECS
+           for left, right in zip(attempts[1:], attempts[2:])), attempts
+assert all(wait >= 1 for wait in waits[2:]), waits
+assert results.count(('ended', True, '')) == 1
+assert len(results) > 30
+assert not list((receiver.root/'successor').glob('*.msg'))
+assert len(list(receiver.inbox.glob('*.msg'))) == 1
+print('PASS guarded read failures, reconciliation-only uncertainty, continued command delivery, and bounded ended-turn reconciliation')
 
 spec = importlib.util.spec_from_file_location('stream_hub', root/'bin/fm-stream-hub.py')
 hub_module = importlib.util.module_from_spec(spec); spec.loader.exec_module(hub_module)
