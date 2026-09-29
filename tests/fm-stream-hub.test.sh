@@ -14,8 +14,6 @@
 # port being free and no case can see another's endpoints.
 # FM_TEST_STREAM_HUB_BINARY selects an isolated Rust hub for HTTP cases;
 # the Python-only accelerated retention case still exercises the reference.
-# FM_STREAM_HUB_TEST_CASES optionally selects space-separated test function names
-# for focused reproduction; absent runs the complete suite below.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -2603,16 +2601,6 @@ if [ "$#" -gt 0 ]; then
       *) fail "invalid case: $selected" ;;
     esac
     "$selected"
-  done
-  exit 0
-fi
-
-if [ -n "${FM_STREAM_HUB_TEST_CASES:-}" ]; then
-  # shellcheck disable=SC2086
-  for selected_test in $FM_STREAM_HUB_TEST_CASES; do
-    case "$selected_test" in test_*) ;; *) fail "invalid selected test: $selected_test" ;; esac
-    declare -F "$selected_test" >/dev/null || fail "unknown selected test: $selected_test"
-    "$selected_test"
   done
   exit 0
 fi
