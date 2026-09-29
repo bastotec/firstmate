@@ -95,6 +95,7 @@ pub struct Screen {
     saved: (usize, usize, Attrs),
     state: &'static str,
     buf: String,
+    buf_len: usize,
     utf8: Vec<u8>,
 }
 impl Screen {
@@ -135,6 +136,7 @@ impl Screen {
             saved: (0, 0, Attrs::default()),
             state: "text",
             buf: String::new(),
+            buf_len: 0,
             utf8: Vec::new(),
         })
     }
@@ -170,12 +172,16 @@ impl Screen {
         }
         self.utf8.drain(..offset);
     }
+    fn clear_buf(&mut self) {
+        self.buf.clear();
+        self.buf_len = 0;
+    }
     fn character(&mut self, c: char) {
         match self.state {
             "text" => match c {
                 '\x1b' => {
                     self.state = "esc";
-                    self.buf.clear();
+                    self.clear_buf();
                 }
                 '\r' => self.cx = 0,
                 '\n' | '\x0b' | '\x0c' => self.linefeed(),
@@ -189,15 +195,15 @@ impl Screen {
                 match c {
                     '[' => {
                         self.state = "csi";
-                        self.buf.clear();
+                        self.clear_buf();
                     }
                     ']' => {
                         self.state = "osc";
-                        self.buf.clear();
+                        self.clear_buf();
                     }
                     'P' | 'X' | '^' | '_' => {
                         self.state = "dcs";
-                        self.buf.clear();
+                        self.clear_buf();
                     }
                     '(' | ')' | '*' | '+' | '%' => self.state = "charset",
                     '7' => self.saved = (self.cy, self.cx, self.attrs.clone()),
@@ -229,11 +235,13 @@ impl Screen {
             "csi" => {
                 if ('\x40'..='\x7e').contains(&c) {
                     let b = std::mem::take(&mut self.buf);
+                    self.buf_len = 0;
                     self.csi(&b, c);
                     self.state = "text";
                 } else {
                     self.buf.push(c);
-                    if self.buf.chars().count() > 64 {
+                    self.buf_len += 1;
+                    if self.buf_len > 64 {
                         self.state = "text";
                     }
                 }
@@ -248,10 +256,11 @@ impl Screen {
                     } else {
                         "dcs-esc"
                     };
-                } else if self.buf.chars().count() > 4096 {
+                } else if self.buf_len > 4096 {
                     self.state = "text";
                 } else {
                     self.buf.push(c);
+                    self.buf_len += 1;
                 }
             }
             _ => {
@@ -537,6 +546,44 @@ mod tests {
             );
             assert_eq!(screen.cy, 1);
         }
+    }
+
+    #[test]
+    fn control_strings_preserve_character_limits_and_reset_for_csi() {
+        for kind in [']', 'P', 'X', '^', '_'] {
+            for terminator in ["\x07", "\x1b\\"] {
+                for length in [0, 1, 64, 65, 4000, 4096, 4097, 4098, 4099] {
+                    let mut screen = Screen::new(2, 20);
+                    let input = format!(
+                        "start\x1b{kind}{}{terminator} \x1b[31mok\x1b[0m",
+                        "é".repeat(length)
+                    );
+                    for chunk in input.as_bytes().chunks(31) {
+                        screen.feed(chunk);
+                    }
+                    let visible = if length > 4098 { "starté" } else { "start" };
+                    assert_eq!(
+                        screen.lines(false),
+                        vec![format!("{visible} ok"), String::new()]
+                    );
+                    assert_eq!(
+                        screen.lines(true),
+                        vec![format!("{visible} \x1b[31mok\x1b[0m"), String::new()]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_large_control_strings_never_leak_payloads() {
+        let mut screen = Screen::new(2, 120);
+        let payload = "x".repeat(4000);
+        for _ in 0..100 {
+            screen.feed(format!("\x1b]52;{payload}\x07\x1bP{payload}\x1b\\+").as_bytes());
+        }
+        assert_eq!(screen.lines(false), vec!["+".repeat(100), String::new()]);
+        assert_eq!(screen.cy, 0);
     }
 
     #[test]

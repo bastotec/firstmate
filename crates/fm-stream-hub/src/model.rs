@@ -146,6 +146,7 @@ impl Endpoint {
 pub struct Command {
     pub id: String,
     pub endpoint: String,
+    pub endpoint_created: f64,
     pub kind: String,
     pub payload: Value,
     pub taken: f64,
@@ -486,6 +487,27 @@ impl Hub {
         let e = &s.endpoints[&eid];
         Ok(json!({"ok":true,"endpoint":e.describe(),"command_capability":e.capability}))
     }
+    pub fn delete(&self, eid: &str) -> Result<Value> {
+        let (created, machine) = {
+            let s = self.state.lock().unwrap();
+            let e = Self::get(&s, eid)?;
+            (e.created, e.machine.clone())
+        };
+        let delivered =
+            match self.submit_to(eid, "kill", json!({"signal":"TERM"}), None, Some(created)) {
+                Ok(()) => true,
+                Err(error) if error.code == "no_agent_ack" => {
+                    let mut s = self.state.lock().unwrap();
+                    if let Some(e) = s.endpoints.get_mut(eid).filter(|e| e.created == created) {
+                        e.close(Value::Null, "hub");
+                        self.wake.notify_all();
+                    }
+                    false
+                }
+                Err(error) => return Err(error),
+            };
+        Ok(json!({"ok":true,"closed":eid,"machine":machine,"delivered":delivered}))
+    }
     pub fn submit(
         &self,
         eid: &str,
@@ -493,8 +515,25 @@ impl Hub {
         payload: Value,
         order: Option<&Arc<Mutex<Order>>>,
     ) -> Result<()> {
+        self.submit_to(eid, kind, payload, order, None)
+    }
+    fn submit_to(
+        &self,
+        eid: &str,
+        kind: &str,
+        payload: Value,
+        order: Option<&Arc<Mutex<Order>>>,
+        expected: Option<f64>,
+    ) -> Result<()> {
         let mut s = self.state.lock().unwrap();
         let e = Self::get(&s, eid)?;
+        if expected.is_some_and(|created| created != e.created) {
+            return Err(Error::new(
+                409,
+                "endpoint_changed",
+                "the endpoint registration changed before command delivery",
+            ));
+        }
         if e.closed > 0. {
             return Err(Error::new(
                 409,
@@ -503,6 +542,7 @@ impl Hub {
             ));
         }
         let machine = e.machine.clone();
+        let endpoint_created = e.created;
         let cid = id();
         if !s.machines.contains_key(&machine) {
             return Err(Error::new(
@@ -514,6 +554,7 @@ impl Hub {
         let command = Arc::new(Mutex::new(Command {
             id: cid.clone(),
             endpoint: eid.into(),
+            endpoint_created,
             kind: kind.into(),
             payload,
             taken: 0.,
@@ -582,11 +623,13 @@ impl Hub {
         let mut result = vec![];
         loop {
             Self::authorize(Self::get(&s, eid)?, machine, cap)?;
+            let created = Self::get(&s, eid)?.created;
             let pos = s.machines.get(machine).and_then(|m| {
                 m.queue.iter().position(|cid| {
-                    s.commands
-                        .get(cid)
-                        .is_some_and(|c| c.lock().unwrap().endpoint == eid)
+                    s.commands.get(cid).is_some_and(|c| {
+                        let c = c.lock().unwrap();
+                        c.endpoint == eid && c.endpoint_created == created
+                    })
                 })
             });
             if let Some(pos) = pos {
@@ -638,7 +681,15 @@ impl Hub {
             .retain(|_, c| c.2 >= now() - 900.);
         let m = &s.machines[machine];
         if let Some(eid) = m.pending.get(cid).cloned() {
-            Self::authorize(Self::get(&s, &eid)?, machine, cap)?;
+            let endpoint = Self::get(&s, &eid)?;
+            Self::authorize(endpoint, machine, cap)?;
+            if s.commands[cid].lock().unwrap().endpoint_created != endpoint.created {
+                return Err(Error::new(
+                    403,
+                    "endpoint_unauthorized",
+                    "a valid endpoint command capability is required",
+                ));
+            }
             s.machines.get_mut(machine).unwrap().pending.remove(cid);
             let command = s.commands.remove(cid).unwrap();
             let mut c = command.lock().unwrap();
