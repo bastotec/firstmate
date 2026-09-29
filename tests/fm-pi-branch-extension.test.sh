@@ -83,13 +83,18 @@ export function keyHint(_keybinding, description) {
 }
 
 export class ToolExecutionComponent {
+  constructor(name) { this.name = name; }
+  markExecutionStarted() {}
+  setArgsComplete() {}
+  setExpanded(expanded) { this.expanded = expanded; }
+  invalidate() {}
   updateResult(result) {
     this.result = result;
   }
   render() {
-    return (this.result?.content ?? [])
+    return ["", this.name, ...(this.result?.content ?? [])
       .filter((item) => item.type === "text")
-      .flatMap((item) => item.text.split("\n"));
+      .flatMap((item) => item.text.split("\n"))];
   }
 }
 
@@ -817,28 +822,8 @@ const renderContext = { state: {}, isError: false, isPartial: false };
 const stockResult = { content: [{ type: "text", text: "OUTCOME_DUMP" }] };
 const calmOffCall = outcomesTool.renderCall({}, renderTheme, renderContext);
 const calmOffResult = outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext);
-if (calmOffCall.constructor.name !== "Box" || calmOffCall.paddingX !== 1 || calmOffCall.paddingY !== 1) {
-  throw new Error("fm_branch_outcomes changed its ordinary shell rendering");
-}
-if (calmOffResult.constructor.name !== "Container" || calmOffCall.children[0]?.text !== "fm_branch_outcomes" || calmOffCall.children[1]?.text !== "OUTCOME_DUMP") {
-  throw new Error("fm_branch_outcomes changed its ordinary call or result rendering");
-}
-const legacyStockResult = {
-  content: [{
-    type: "text",
-    text: Array.from({ length: 12 }, (_, index) => `LEGACY_OUTCOME_${String(index + 1).padStart(2, "0")}`).join("\n"),
-  }],
-};
-const legacyRenderContext = { state: {}, isError: false, isPartial: false };
-const legacyCall = outcomesTool.renderCall({}, renderTheme, legacyRenderContext);
-outcomesTool.renderResult(legacyStockResult, { expanded: false, isPartial: false }, renderTheme, legacyRenderContext);
-const collapsedLegacyText = legacyCall.children[1]?.text;
-if (!collapsedLegacyText?.includes("LEGACY_OUTCOME_12") || collapsedLegacyText.includes("more lines")) {
-  throw new Error("legacy all-line stock capability did not preserve collapsed Calm-off output");
-}
-outcomesTool.renderResult(legacyStockResult, { expanded: true, isPartial: false }, renderTheme, legacyRenderContext);
-if (legacyCall.children[1]?.text !== collapsedLegacyText) {
-  throw new Error("legacy all-line stock capability changed expanded Calm-off output");
+if (calmOffResult.constructor.name !== "Container" || calmOffCall.render(100).join("\n") !== "fm_branch_outcomes\nOUTCOME_DUMP") {
+  throw new Error("fm_branch_outcomes did not delegate its visible row to the stock consumer");
 }
 pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: false });
 const calmOnCall = outcomesTool.renderCall({}, renderTheme, renderContext);
@@ -847,7 +832,9 @@ if (calmOnCall.constructor.name !== "Container" || calmOnCall.render(100).length
   throw new Error("fm_branch_outcomes remained visible while Calm was on");
 }
 pi.events.emit("firstmate:calm-presentation", { active: false, stockExportRendering: false });
-if (outcomesTool.renderCall({}, renderTheme, renderContext).constructor.name !== "Box" || outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext).constructor.name !== "Container") {
+const restoredCall = outcomesTool.renderCall({}, renderTheme, renderContext);
+outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext);
+if (restoredCall.render(100).join("\n") !== "fm_branch_outcomes\nOUTCOME_DUMP") {
   throw new Error("fm_branch_outcomes did not restore ordinary rendering when Calm was turned off");
 }
 pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: true });
@@ -5050,6 +5037,14 @@ for (const row of [stockRow, actualRow]) {
   row.setArgsComplete();
   row.updateResult(result);
 }
+// Pending calls must also remain byte-for-byte stock before a result exists.
+const pendingStock = new ToolExecutionComponent("fm_branch_outcomes", "pending-stock", args, { showImages: false }, stockDefinition, ui, process.cwd());
+const pendingActual = new ToolExecutionComponent("fm_branch_outcomes", "pending-actual", args, { showImages: false }, actualDefinition, ui, process.cwd());
+for (const width of [30, 100]) {
+  if (JSON.stringify(pendingActual.render(width)) !== JSON.stringify(pendingStock.render(width))) {
+    throw new Error("pending Calm-off tool arguments differ from Pi stock");
+  }
+}
 const collapsedStock = stockRow.render(100);
 const collapsedActual = actualRow.render(100);
 if (JSON.stringify(collapsedActual) !== JSON.stringify(collapsedStock)) {
@@ -5068,6 +5063,14 @@ if (JSON.stringify(expandedActual) !== JSON.stringify(expandedStock)) {
 }
 if (!expandedStock.join("\n").includes("OUTCOME_TWELVE") || JSON.stringify(expandedStock) === JSON.stringify(collapsedStock)) {
   throw new Error("stock rendering fixture did not exercise expanded output");
+}
+for (const isError of [true, false]) {
+  for (const row of [stockRow, actualRow]) row.updateResult({ ...result, isError });
+  for (const width of [30, 100]) {
+    if (JSON.stringify(actualRow.render(width)) !== JSON.stringify(stockRow.render(width))) {
+      throw new Error(`Calm-off result framing differs from Pi stock (error=${isError}, width=${width})`);
+    }
+  }
 }
 pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: false });
 actualRow.invalidate();
