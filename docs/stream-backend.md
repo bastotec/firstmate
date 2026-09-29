@@ -119,6 +119,7 @@ The Cargo workspace shares the protocol handshake and heartbeat wire mapping in 
 The bridge uses Tokio, Hyper, and rustls for HTTP and HTTPS access and Serde JSON for parsing, without an LLM framework.
 It follows HTTP redirects and accepts argparse-style unique long-option abbreviations.
 Epochs remain limited to signed 64-bit integers, unlike Python's arbitrary-precision values.
+The shared Rust JSON compatibility scanner bounds nesting at 128 containers before recursive scanning, so deeply nested documents accepted by Python can be refused by either Rust binary.
 `tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
 Live comparisons exclude process-local clocks; help presentation, top-level command choices, and transport-library error details are not byte contracts.
 
@@ -128,7 +129,8 @@ The opt-in `fm-stream-hub` workspace binary implements the hub HTTP surfaces alo
 `bin/fm-stream.sh` still starts the Python hub; building the Rust crate does not select, stop, replace, or restart the central service.
 Rust 1.96 or newer is required to build it.
 The binary's `--help` owns its CLI flags, and it shares the protocol constant and identity validation with `fm-stream-wire`.
-It listens over HTTP only, like the Python hub, with the same TLS-terminator requirement when accessed across machines.
+[Security](#security) applies to both hubs, including the plain-HTTP transport boundary.
+Rust query integers (`wait` and `lines`) must fit signed 64-bit values before clamping, unlike Python's arbitrary-precision query parsing.
 
 Run an isolated pilot with a newly created token file, an ephemeral loopback port, and ready/pid paths belonging only to that pilot:
 
@@ -147,9 +149,9 @@ The existing hub and bridge suites accept `FM_TEST_STREAM_HUB_BINARY` for HTTP c
 
 Replacing the central hub is a separate, explicitly approved quiet-window operation, not part of this pilot.
 Before replacement, require green compatibility checks, a pilot against the deployed agent/bridge versions, the same protocol and token-class configuration, verified endpoint capability rejoin, an unchanged external URL/TLS termination, and an available Python rollback command.
-Drain or resolve every queued, taken-but-unacknowledged, or otherwise unconfirmed command/order before stopping either hub; neither implementation persists its journal, generation, registry, terminal history, or result records across a restart.
-Plan and verify agent re-registration after replacement without interpreting a temporarily empty registry or a timed-out read as a worker-gone verdict.
-Rollback also requires a quiet window because it resets those same in-memory records.
+Drain or resolve every queued, taken-but-unacknowledged, or otherwise unconfirmed command/order before stopping either hub; [Command path](#command-path) and [When the hub restarts](#when-the-hub-restarts) own the in-memory reconciliation and rejoin contracts.
+Plan and verify agent re-registration after replacement under those contracts.
+Rollback also requires a quiet window because it incurs the same restart losses.
 
 ## Tail adapters
 

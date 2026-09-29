@@ -397,6 +397,118 @@ async fn live_stream_keeps_output_published_after_response_headers() {
         .unwrap();
 }
 
+#[tokio::test]
+async fn idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable() {
+    let server = std::sync::Arc::new(Server::start_with_ack("5"));
+    let eid = "9".repeat(32);
+    let (status, registered) = server.api(
+        "POST",
+        "/v1/agent/endpoints",
+        &json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker"}).to_string(),
+        "",
+    );
+    assert_eq!(status, 201);
+    let cap = registered["command_capability"].as_str().unwrap().to_owned();
+    // Exceed the default blocking executor's 512 slots through the workspace
+    // binary, not a server configured with an artificially smaller pool.
+    let (started_tx, mut started_rx) = tokio::sync::mpsc::channel(513);
+    let (result_tx, mut result_rx) = tokio::sync::mpsc::channel(513);
+    let mut polls = Vec::new();
+    let closing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    for _ in 0..513 {
+        let address = server.address.clone();
+        let eid = eid.clone();
+        let cap = cap.clone();
+        let started_tx = started_tx.clone();
+        let result_tx = result_tx.clone();
+        let closing = closing.clone();
+        // Establish connections serially so this checks executor saturation,
+        // not the operating system's small incoming TCP backlog.
+        let socket = tokio::net::TcpStream::connect(&address).await.unwrap();
+        let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(socket))
+            .await
+            .unwrap();
+        let connection = tokio::spawn(connection);
+        polls.push(tokio::spawn(async move {
+            let request = hyper::Request::builder()
+                .uri(format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=25"))
+                .header("Host", &address)
+                .header("Authorization", "Bearer test")
+                .header("X-Endpoint-Capability", cap)
+                .header("Connection", "close")
+                .body(Full::new(Bytes::new()))
+                .unwrap();
+            let response = sender.send_request(request);
+            started_tx.send(()).await.unwrap();
+            let response = response.await.unwrap();
+            let status = response.status();
+            let value: Value =
+                serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
+            if status == 403 {
+                // A request still entering the handler after close sees the
+                // endpoint capability revoked rather than an empty poll.
+                assert!(closing.load(std::sync::atomic::Ordering::SeqCst));
+                assert_eq!(value["error"], "endpoint_unauthorized");
+            } else {
+                assert_eq!(status, 200, "{value}");
+                result_tx.send(value).await.unwrap();
+            }
+            drop(sender);
+            connection.await.unwrap().unwrap();
+        }));
+    }
+    for _ in 0..513 {
+        started_rx.recv().await.unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let health = server.api("GET", "/v1/health", "", "");
+    assert_eq!(health.0, 200);
+    let published = server.api(
+        "POST",
+        "/v1/agent/frames",
+        &json!({"machine":"box","frames":[{"endpoint_id":eid,"b64":STANDARD.encode(b"still responsive")}]}).to_string(),
+        "",
+    );
+    assert_eq!(published.0, 200);
+    let control_server = server.clone();
+    let control_eid = eid.clone();
+    let input = tokio::task::spawn_blocking(move || {
+        control_server.api(
+            "POST",
+            &format!("/v1/tasks/{control_eid}/input"),
+            &json!({"text":"hello","submit":true}).to_string(),
+            "",
+        )
+    });
+    let taken = tokio::time::timeout(Duration::from_secs(5), result_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let cid = taken["commands"][0]["command_id"].as_str().unwrap();
+    let result = server.api(
+        "POST",
+        "/v1/agent/results",
+        &json!({"machine":"box","command_id":cid,"ok":true}).to_string(),
+        &cap,
+    );
+    assert_eq!(result.0, 200);
+    let delivered = input.await.unwrap();
+    assert_eq!(delivered.0, 200);
+    println!(
+        "513 idle polls: health={:?}; frame={:?}; acknowledgement={:?}; input={:?}",
+        health, published, result, delivered
+    );
+    closing.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(server.api("POST", "/v1/agent/frames", &json!({"machine":"box","frames":[{"endpoint_id":eid,"closed":true,"exit_code":0}]}).to_string(), "").0, 200);
+    for poll in polls {
+        tokio::time::timeout(Duration::from_secs(5), poll)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
+
 #[test]
 fn protocol_and_version_are_top_level_only() {
     for (option, expected) in [("--protocol", "3"), ("--version", "2.0.0")] {
