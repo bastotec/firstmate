@@ -1,19 +1,19 @@
-//! A scanner that renders CPython's exact `json.JSONDecodeError` messages.
+//! A bounded compatibility scanner for CPython's `json.JSONDecodeError` messages.
 //!
 //! `serde_json` and CPython disagree on both messages and the set of accepted
 //! documents (Python takes `NaN`/`Infinity` literals and lone surrogate
 //! escapes), and the adapters surface those messages verbatim (`line %d is
 //! not JSON: %s`, `cannot read the feed %s: %s`).  So when `serde_json`
-//! rejects a line, this scanner either produces Python's own refusal, byte
-//! for byte, or - when it finds the line Python-valid - says `None`, and the
-//! caller knows the failure is one of Python's non-standard extensions.
+//! rejects a document, this scanner produces Python's own refusal within its
+//! supported nesting, or says `None` when Python would accept the document.
+//! The nesting guard rejects deeper input before recursive scanning to protect
+//! callers from stack exhaustion; that refusal is not CPython's wording.
 //!
 //! Positions are character-based, like Python's, and `lineno`/`colno` follow
-//! CPython's arithmetic even though the call sites always hand over a single
-//! line.
+//! CPython's arithmetic, including for multiline hub request bodies.
 
-/// Python's error message for a rejected document, or `None` when Python's
-/// parser would have accepted it.
+/// Python's error message, or a safety refusal above 128 nested containers.
+/// Returns `None` when the bounded scan finds a Python-valid document.
 pub fn python_json_error(text: &str) -> Option<String> {
     let mut depth: usize = 0;
     let mut quoted = false;
@@ -63,6 +63,9 @@ pub fn python_reparse(text: &str) -> Result<serde_json::Value, ()> {
     reparse(text, "null")
 }
 
+/// Reparse with non-finite values represented by a truthy number instead of null.
+/// Use only to recover consumed boolean fields: this is not a numeric-value
+/// representation and must not replace the bridge's null-based reparse.
 pub fn python_reparse_truthy(text: &str) -> Result<serde_json::Value, ()> {
     reparse(text, "1")
 }
@@ -124,7 +127,7 @@ fn reparse(text: &str, nonfinite: &str) -> Result<serde_json::Value, ()> {
         }
         if ch == '-' || ch.is_ascii_digit() || ch == 'N' || ch == 'I' {
             // A bare number or non-standard literal outside strings: replace
-            // the ones serde cannot hold with null, copy the rest through.
+            // the ones serde cannot hold with the caller's sentinel.
             let start = index;
             if ch == '-' {
                 index += 1;

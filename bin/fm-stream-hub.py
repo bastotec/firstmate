@@ -10,8 +10,8 @@ per-machine design from ever being central.
 So the hub is a registry, a bounded frame history, a fan-out, and a command
 router:
 
-  * a durable endpoint registry, keyed by endpoint id and carrying the machine
-    that owns it, so one page can group every worker in the fleet by machine;
+  * an in-memory endpoint registry, keyed by stable endpoint id and carrying
+    the machine that owns it, so one page can group workers by machine;
   * a bounded per-endpoint ring of raw output frames, which is what lets a
     viewer that arrives late still see recent scroll-back;
   * fan-out to any number of subscribers over SSE;

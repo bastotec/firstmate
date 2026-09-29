@@ -1808,6 +1808,7 @@ The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
 
 Measured 2026-09-29 on macOS with Rust 1.96.0 and Python 3.9.6 against Hub 2.0.0, protocol 3.
 The Rust binary was a debug build; these single-run observations describe an isolated loopback pilot, not a production capacity guarantee or target budget.
+These measurements precede the parser, lifecycle, and request-executor hardening now covered by the regressions below; rerun the commands for current-build evidence.
 The driver measures ready-file startup, `ps -o rss=` resident KiB before frame traffic, and 100 sequential 4096-byte published frames through the HTTP and screen-rendering path.
 
 ```sh
@@ -1827,8 +1828,10 @@ FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=24419
 FM_TEST_SLOWEST rank=1 script=tests/fm-stream-hub-rust.test.sh duration_ms=24236
 ```
 
-The workspace test run reports 19 bridge tests, six hub tests, and ten wire tests passing.
-The hub tests exercise expiry boundaries, capability revocation, authoritative close preservation, late-result uncertainty, and an active order whose id is evicted from the bounded journal.
+The hub crate's tests cover expiry boundaries, capability revocation, authoritative close preservation, late-result uncertainty, and an active order whose id is evicted from the bounded journal.
+`crates/fm-stream-hub/tests/cli.rs` covers executable-level JSON compatibility, allocation refusals, terminal parameters, live SSE output, and request liveness with idle command polls.
+The HTTP regressions in `crates/fm-stream-hub/src/main.rs` cover deletion across reap/re-registration and SSE endpoint-incarnation binding.
+The differential driver's terminal cases compare Unicode width, ANSI rendering, oversized CSI integers, and OSC/DCS boundaries against the Python reference.
 The existing bridge suite also passes with `FM_TEST_STREAM_HUB_BINARY="$PWD/target/debug/fm-stream-hub" bin/fm-test-run.sh tests/fm-stream-bridge.test.sh`.
 A complete hub-suite invocation on this host stops at the existing shell-died-at-birth refusal case documented below, after the earlier HTTP/body, stream, capture, registry, and state-read cases pass against Rust.
 This is not a claim that every stream suite passes on macOS: the backend suite requires `setsid`, and the existing Rust-bridge HTTPS fixture cannot validate its generated certificate with this host's Python trust store.

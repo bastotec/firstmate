@@ -85,9 +85,15 @@ class Pilot:
         request = urllib.request.Request(self.url + path, data=data, headers=headers,
                                          method=method)
         try:
-            response = urllib.request.urlopen(request, timeout=15)
+            # This is a client-side fixture deadline, not a hub liveness budget.
+            # Bulk screen updates can take longer on heavily loaded test hosts.
+            response = urllib.request.urlopen(request, timeout=60)
         except urllib.error.HTTPError as exc:
             response = exc
+        except TimeoutError as exc:
+            raise AssertionError(
+                f"{self.directory.name}: {method} {path} timed out after 60s"
+            ) from exc
         with response:
             raw = response.read()
             if response.headers.get("Content-Type", "").startswith("application/json"):
@@ -144,6 +150,41 @@ class Pilot:
         self.stop()
 
 
+def terminal_compatibility(p):
+    """Exercise terminal parser boundaries through the public frame/read APIs."""
+    records = []
+    eid = "e" * 32
+    records.append(p.register(eid, label="terminal", rows=4, cols=8))
+    frames = [
+        "ab\u17d8cd", "ab\u2e3acd", "ab\u2e3bcd", "ab中cd",
+        "\x1b[31mab\u0301\x1b[0m中\x1b[2mc  \x1b[0m",
+        "\x1b[3;4H\x1b[-9223372036854775808Gx",
+        "\x1b[3;4H\x1b[9223372036854775808Gx",
+        "\x1b[3;4H\x1b[9223372036854775808;9223372036854775808Hx",
+    ]
+    for kind in ("]", "P", "X", "^", "_"):
+        for length in (65, 4098, 4099):
+            frames.append("start\x1b" + kind + "é" * length + "\x1b\\ ok")
+    frames.append(("\x1b]52;" + "x" * 4000 + "\x07\x1bP" + "x" * 4000 + "\x1b\\+") * 100)
+    for frame in frames:
+        assert p.frame(eid, b"\x1bc")[0] == 200
+        data = frame.encode()
+        # Include split UTF-8/control sequences rather than only whole strings.
+        split = min(31, len(data))
+        assert p.frame(eid, data[:split])[0] == 200
+        assert p.frame(eid, data[split:])[0] == 200
+        for suffix in ("screen", "screen?format=ansi", "capture?format=ansi"):
+            records.append(p.api("GET", "/v1/tasks/" + eid + "/" + suffix))
+        health = p.api("GET", "/v1/health", token="pub")
+        assert health[0] == 200
+    narrow = "f" * 32
+    records.append(p.register(narrow, label="narrow", rows=3, cols=1))
+    for frame in ("中\u0301", "\x08x"):
+        assert p.frame(narrow, frame.encode())[0] == 200
+        records.append(p.api("GET", "/v1/tasks/" + narrow + "/screen"))
+    return [normalized(record) for record in records]
+
+
 def exercise(p):
     records = []
     def save(answer):
@@ -189,6 +230,7 @@ def exercise(p):
     for tail in ("screen", "screen?format=ansi", "capture", "capture?format=ansi",
                  "processes", "cwd"):
         save(p.api("GET", "/v1/tasks/" + a + "/" + tail))
+    records.extend(terminal_compatibility(p))
     save(p.register(b))  # A speaking agent contests a duplicate label.
     save(p.register(b, label="sibling"))
     save(p.take(b))
@@ -385,18 +427,23 @@ def measure(p):
                 frame_mib_per_second=round(100 * 4096 / 1048576 / (time.monotonic() - start), 2))
 
 
-with tempfile.TemporaryDirectory(prefix="fm-hub-differential-") as tmp:
-    pilots = [Pilot([sys.executable, str(ROOT / "bin/fm-stream-hub.py")], Path(tmp) / "python"),
-              Pilot([str(RUST)], Path(tmp) / "rust")]
-    try:
-        observations = [exercise(p) for p in pilots]
-        assert len(observations[0]) == len(observations[1])
-        for index, (python, rust) in enumerate(zip(*observations)):
-            assert python == rust, (index, python, rust)
-        peer_records = [peers(p) for p in pilots]
-        assert peer_records[0] == peer_records[1], peer_records
-        print("differential: %d HTTP/stream observations and Python agent/bridge lifecycle match" % len(observations[0]))
-        print("measurements: " + json.dumps(dict(zip(("python", "rust"), [measure(p) for p in pilots])), sort_keys=True))
-    finally:
-        for p in pilots:
-            p.close()
+def main():
+    with tempfile.TemporaryDirectory(prefix="fm-hub-differential-") as tmp:
+        pilots = [Pilot([sys.executable, str(ROOT / "bin/fm-stream-hub.py")], Path(tmp) / "python"),
+                  Pilot([str(RUST)], Path(tmp) / "rust")]
+        try:
+            observations = [exercise(p) for p in pilots]
+            assert len(observations[0]) == len(observations[1])
+            for index, (python, rust) in enumerate(zip(*observations)):
+                assert python == rust, (index, python, rust)
+            peer_records = [peers(p) for p in pilots]
+            assert peer_records[0] == peer_records[1], peer_records
+            print("differential: %d HTTP/stream observations and Python agent/bridge lifecycle match" % len(observations[0]))
+            print("measurements: " + json.dumps(dict(zip(("python", "rust"), [measure(p) for p in pilots])), sort_keys=True))
+        finally:
+            for p in pilots:
+                p.close()
+
+
+if __name__ == "__main__":
+    main()
