@@ -31,7 +31,10 @@ pub fn decode(bytes: &[u8], command_response: bool) -> Result<Response, serde_js
     let mut normalized = Vec::with_capacity(bytes.len());
     let mut nonfinite = HashMap::new();
     let mut prefix = String::from("100000000000000000000");
-    while bytes.windows(prefix.len()).any(|part| part == prefix.as_bytes()) {
+    while bytes
+        .windows(prefix.len())
+        .any(|part| part == prefix.as_bytes())
+    {
         prefix.push('0');
     }
     let mut quoted = false;

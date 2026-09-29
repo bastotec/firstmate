@@ -217,7 +217,11 @@ impl Options {
             ("state-interval", o.state_interval),
             ("poll-secs", o.poll_secs),
         ] {
-            let timer_seconds = if name == "poll-secs" { number + 15.0 } else { number };
+            let timer_seconds = if name == "poll-secs" {
+                number + 15.0
+            } else {
+                number
+            };
             if !number.is_finite()
                 || number < 0.0
                 || Duration::try_from_secs_f64(timer_seconds)
@@ -420,10 +424,7 @@ impl Agent {
             "input" => {
                 let mut bytes = Vec::new();
                 if !payload["text"].is_null() {
-                    bytes.extend_from_slice(
-                        response.python_str(&payload["text"])
-                            .as_bytes(),
-                    );
+                    bytes.extend_from_slice(response.python_str(&payload["text"]).as_bytes());
                 }
                 if payload["submit"].as_bool().unwrap_or(false) {
                     bytes.push(b'\r');

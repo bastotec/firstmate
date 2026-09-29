@@ -16,7 +16,10 @@ fn python_repr(value: &Value, nonfinite: &HashMap<String, &'static str>) -> Stri
         Value::Bool(false) => "False".into(),
         Value::Number(number) if !number.is_f64() => {
             let token = number.to_string();
-            nonfinite.get(&token).map(|value| (*value).to_owned()).unwrap_or(token)
+            nonfinite
+                .get(&token)
+                .map(|value| (*value).to_owned())
+                .unwrap_or(token)
         }
         Value::Number(number) => {
             let float = number.as_f64().unwrap_or_else(|| {
