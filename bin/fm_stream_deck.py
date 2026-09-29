@@ -2,7 +2,8 @@
 """Deck's stream-order application seam, not a second transport or command store.
 
 The ordinary task inbox is the durable message source. Per-order reservations
-bind unpublished messages to their original turn. Deck's per-turn inbox is
+bind unpublished messages to their original turn and retain hub command IDs
+and bounded result-retry metadata. Deck's per-turn inbox is
 only its required plain-text/canonical-sequence projection.
 An endpoint-scoped lifecycle lock serializes publication with driver start/end.
 No projection is ever carried into the next turn. Only Deck's handled file
@@ -84,13 +85,13 @@ class Receiver:
         for directory in (self.inbox, self.inbox / 'handled'):
             for record in directory.glob('*.msg'):
                 try:
-                    body = record.read_text().split('\n--\n', 1)[1]
+                    body = record.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
                 except FileNotFoundError:
                     # The ordinary worker may acknowledge concurrently.
                     record = self.inbox / 'handled' / record.name
                     if not record.exists():
                         continue
-                    body = record.read_text().split('\n--\n', 1)[1]
+                    body = record.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
                 if not body.startswith('[stream-order '):
                     continue
                 binding = json.loads(body.split('\n', 1)[0][14:-1])
@@ -112,8 +113,52 @@ class Receiver:
         sync_dir(record.parent)
         return record
 
+    def order_path(self, order_id):
+        return self.root / ('order-' + hashlib.sha256(
+            order_id.encode('utf-8')).hexdigest() + '.json')
+
+    def save_result(self, order_id, command_id, result):
+        with self.locked():
+            path = self.order_path(order_id)
+            try:
+                stored = json.loads(path.read_text())
+            except FileNotFoundError:
+                stored = {}
+            results = stored.setdefault('results', {})
+            previous = results.get(command_id)
+            if previous and previous['result'] != result['result']:
+                raise ValueError('command result idempotency conflict')
+            results[command_id] = {key: value for key, value in result.items()
+                                   if not key.startswith('_')}
+            atomic_write(path, json.dumps(stored))
+
+    def recover(self):
+        commands, results = [], {}
+        with self.locked():
+            for path in self.root.glob('order-*.json'):
+                stored = json.loads(path.read_text())
+                saved = stored.get('results', {})
+                results.update(saved)
+                binding = stored.get('binding')
+                if not binding or binding['execution'] != self.endpoint:
+                    continue
+                outstanding = [command_id for command_id in stored.get('command_ids', [])
+                               if command_id not in saved]
+                if not outstanding:
+                    continue
+                found = self.find(binding['order_id'])
+                if not found:
+                    continue
+                for command_id in outstanding:
+                    commands.append({
+                        'command_id': command_id, 'endpoint_id': self.endpoint, 'kind': 'steer',
+                        'payload': {'order_id': binding['order_id'],
+                                    'execution_id': self.endpoint, 'text': found[2]},
+                        '_native_prepared': True, '_steering_reservation': stored})
+        return commands, results
+
     def apply(self, order_id, execution, text, alive, reconcile_only=False,
-              reservation=None):
+              reservation=None, command_id=None, reserve_only=False):
         """None means this is not a Deck driver; all other answers are final facts.
 
         Unknown application is returned honestly as unconfirmed, never as an
@@ -124,37 +169,43 @@ class Receiver:
         if reservation is None:
             reservation = {}
         with self.locked():
-            if not reservation and not reconcile_only:
+            if not reservation.get('binding') and not reconcile_only:
                 active = self.active()
                 if active and active['active'] and active['supported']:
                     reservation.update({
                         'binding': {'order_id': order_id, 'execution': execution,
                                     'turn': active['turn']},
                         'text_sha256': hashlib.sha256(text.encode('utf-8')).hexdigest()})
-            reserved_path = self.root / ('order-' + hashlib.sha256(
-                order_id.encode('utf-8')).hexdigest() + '.json')
+            reserved_path = self.order_path(order_id)
             try:
                 stored = json.loads(reserved_path.read_text())
             except FileNotFoundError:
                 stored = None
             if stored:
-                reservation.clear()
                 reservation.update(stored)
-            elif reservation:
-                atomic_write(reserved_path, json.dumps(reservation))
+            if reservation.get('binding'):
+                changed = reservation != stored
+                if command_id and command_id not in reservation.setdefault('command_ids', []):
+                    reservation['command_ids'].append(command_id)
+                    changed = True
+                if changed:
+                    atomic_write(reserved_path, json.dumps(reservation))
             found = self.find(order_id)
             if found:
                 record, binding, original = found
                 canonical = {'binding': binding, 'text_sha256': hashlib.sha256(
                     original.encode('utf-8')).hexdigest()}
-                if reservation != canonical:
-                    reservation.clear()
-                    reservation.update(canonical)
+                changed = any(reservation.get(key) != value for key, value in canonical.items())
+                reservation.update(canonical)
+                if command_id and command_id not in reservation.setdefault('command_ids', []):
+                    reservation['command_ids'].append(command_id)
+                    changed = True
+                if changed:
                     atomic_write(reserved_path, json.dumps(reservation))
                 if original != text or binding['execution'] != execution:
                     return False, 'steering idempotency conflict'
             else:
-                if not reservation:
+                if not reservation.get('binding'):
                     if reconcile_only:
                         return None, 'Deck binding unavailable; application unconfirmed'
                     active = self.active()
@@ -167,15 +218,20 @@ class Receiver:
                             text.encode('utf-8')).hexdigest()):
                     return False, 'steering idempotency conflict'
                 active = self.active()
-                if (not active or not active['active'] or active['turn'] != binding['turn']
-                        or not alive()):
+                if (not reserve_only and (not active or not active['active']
+                        or active['turn'] != binding['turn'] or not alive())):
                     return None, 'original Deck turn ended; application unconfirmed'
                 limit = 65536 - 2 * len(str(self.inbox).encode('utf-8')) - 400
                 if not text.strip() or len(text.encode('utf-8')) > limit:
                     return False, 'Deck steering is blank or exceeds interface size with source reference'
-                if not active['supported']:
+                if active and active['turn'] == binding['turn'] and not active['supported']:
                     return False, 'Deck has no --steer-dir interface; no PTY fallback'
                 record = self.enqueue(binding, text)
+            if reserve_only:
+                with record.open('rb') as stream:
+                    os.fsync(stream.fileno())
+                sync_dir(record.parent)
+                return None, 'Deck application reserved'
             seq = str(int(record.stem))
             projection = self.root / binding['turn']
             message = projection / (seq + '.msg')
@@ -193,7 +249,7 @@ class Receiver:
                 for directory in (self.inbox, self.inbox / 'handled'):
                     for source in directory.glob('*.msg'):
                         try:
-                            body = source.read_text().split('\n--\n', 1)[1]
+                            body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
                         except FileNotFoundError:
                             continue
                         if body.startswith('[stream-order '):
