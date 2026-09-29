@@ -5,7 +5,9 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+# An isolated code snapshot allows all fixture homes to remain inside a gate
+# worktree without overlapping the entrypoint's configured code root.
+ROOT=${FM_REMOTE_REPLY_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}
 TMP_ROOT=$(fm_test_tmproot fm-remote-reply)
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
@@ -131,6 +133,12 @@ assert_present "$PARENT/state/procevent-inbox/$SID.1.handled" \
 assert_present "$PARENT/state/procevent/$SID.source" \
   "applying the capture left the relay unarmed for the next delta"
 pass "a captured delta is applied, acknowledged, and re-armed without a handler"
+printf '\nREMOTE REPLY EVIDENCE (real scripts and worker; SSH transport is stubbed)\n'
+cat "$TMP_ROOT/start-one.out"
+printf 'Captured delta protocol:\n'; cat "$RESULT"
+printf 'Mirrored status stream:\n'; cat "$PARENT/state/ios.status"
+printf 'Committed cursor protocol:\n'; cat "$PARENT/state/remote-replies/ios.cursor"
+printf 'Durable handled marker present and next source re-armed.\n'
 
 # Now the handler's own retry path, from the state a crash between applying and
 # acknowledging leaves behind: the acknowledgement is gone and re-arming fails.
