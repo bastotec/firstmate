@@ -116,26 +116,27 @@ impl Screen {
     }
     pub fn feed(&mut self, data: &[u8]) {
         self.utf8.extend_from_slice(data);
+        let mut offset = 0;
         loop {
-            match std::str::from_utf8(&self.utf8) {
+            match std::str::from_utf8(&self.utf8[offset..]) {
                 Ok(s) => {
                     let s = s.to_owned();
-                    self.utf8.clear();
+                    offset = self.utf8.len();
                     for c in s.chars() {
                         self.character(c);
                     }
                     break;
                 }
                 Err(e) => {
-                    let n = e.valid_up_to();
-                    let s = String::from_utf8_lossy(&self.utf8[..n]).into_owned();
+                    let end = offset + e.valid_up_to();
+                    let s = String::from_utf8_lossy(&self.utf8[offset..end]).into_owned();
                     let bad = e.error_len();
-                    self.utf8.drain(..n);
+                    offset = end;
                     for c in s.chars() {
                         self.character(c);
                     }
                     if let Some(len) = bad {
-                        self.utf8.drain(..len);
+                        offset += len;
                         self.character('\u{fffd}');
                     } else {
                         break;
@@ -143,6 +144,7 @@ impl Screen {
                 }
             }
         }
+        self.utf8.drain(..offset);
     }
     fn character(&mut self, c: char) {
         match self.state {
@@ -482,6 +484,36 @@ mod tests {
             screen.feed(b"e");
             assert_eq!(screen.cy, 1);
             assert_eq!(screen.lines(false), vec![format!("ab{c}cd{c}"), "e".into()]);
+        }
+    }
+
+    #[test]
+    fn binary_chunks_preserve_replacements_and_incomplete_suffixes() {
+        let mut screen = Screen::new(2, 256);
+        screen.feed(&vec![0xff; 65_536]);
+        let row = "\u{fffd}".repeat(256);
+        assert_eq!(screen.lines(false), vec![row.clone(), row.clone()]);
+        screen.feed(b"\xe4\xb8");
+        assert_eq!(screen.lines(false), vec![row.clone(), row.clone()]);
+        screen.feed(b"\xad\xffx");
+        assert_eq!(screen.lines(false), vec![row, "中\u{fffd}x".into()]);
+        assert_eq!(screen.cy, 1);
+    }
+
+    #[test]
+    fn malformed_utf8_decodes_consistently_across_frame_boundaries() {
+        for data in [
+            &b"A\xf0\x90\x80B\xc0\xafC\xe4\xb8\xadD"[..],
+            &b"A\xffB\xed\xa0\x80C\xe2\x82D\xf4\x90\x80\x80E"[..],
+        ] {
+            let expected = String::from_utf8_lossy(data).into_owned();
+            for split in 0..=data.len() {
+                let mut screen = Screen::new(2, 80);
+                screen.feed(&data[..split]);
+                screen.feed(&data[split..]);
+                assert_eq!(screen.lines(false), vec![expected.clone(), String::new()]);
+                assert_eq!(screen.cy, 0);
+            }
         }
     }
 

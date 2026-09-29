@@ -505,64 +505,62 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
 }
 type HttpBody = BoxBody<Bytes, Infallible>;
 fn stream(h: Arc<Hub>, eid: String, replay: bool) -> HttpBody {
+    let mut offset = {
+        let s = h.state.lock().unwrap();
+        if replay {
+            0
+        } else {
+            s.endpoints.get(&eid).map(|e| e.end).unwrap_or(0)
+        }
+    };
     let (tx, rx) = tokio::sync::mpsc::channel(1);
-    std::thread::spawn(move || {
-        let mut offset = {
-            let s = h.state.lock().unwrap();
-            if replay {
-                0
-            } else {
-                s.endpoints.get(&eid).map(|e| e.end).unwrap_or(0)
-            }
-        };
+    std::thread::spawn(move || loop {
+        let mut s = h.state.lock().unwrap();
+        let deadline = now() + 15.;
         loop {
-            let mut s = h.state.lock().unwrap();
-            let deadline = now() + 15.;
-            loop {
-                let Some(e) = s.endpoints.get(&eid) else {
-                    return;
-                };
-                if e.end > offset || e.closed > 0. || now() >= deadline || tx.is_closed() {
-                    break;
-                }
-                s = h
-                    .wake
-                    .wait_timeout(s, Duration::from_secs_f64((deadline - now()).clamp(0., 1.)))
-                    .unwrap()
-                    .0;
-            }
-            if tx.is_closed() {
-                return;
-            }
             let Some(e) = s.endpoints.get(&eid) else {
                 return;
             };
-            let (start, data) = e.bytes(offset);
-            let closed = e.closed > 0.;
-            let terminal = closed && data.is_empty();
-            let record = if !data.is_empty() {
-                offset = start + data.len() as u64;
-                format!(
-                    "data: {{\"offset\": {offset}, \"machine\": {}, \"b64\": {}}}\n\n",
-                    encode(&json!(e.machine)),
-                    encode(&json!(STANDARD.encode(data)))
-                )
-            } else if closed {
-                format!(
-                    "data: {{\"offset\": {offset}, \"closed\": true, \"exit_code\": {}}}\n\n",
-                    encode(&e.exit)
-                )
-            } else {
-                ": keepalive\n\n".into()
-            };
-            drop(s);
-            if tx
-                .blocking_send(Ok(Frame::data(Bytes::from(record))))
-                .is_err()
-                || terminal
-            {
-                return;
+            if e.end > offset || e.closed > 0. || now() >= deadline || tx.is_closed() {
+                break;
             }
+            s = h
+                .wake
+                .wait_timeout(s, Duration::from_secs_f64((deadline - now()).clamp(0., 1.)))
+                .unwrap()
+                .0;
+        }
+        if tx.is_closed() {
+            return;
+        }
+        let Some(e) = s.endpoints.get(&eid) else {
+            return;
+        };
+        let (start, data) = e.bytes(offset);
+        let closed = e.closed > 0.;
+        let terminal = closed && data.is_empty();
+        let record = if !data.is_empty() {
+            offset = start + data.len() as u64;
+            format!(
+                "data: {{\"offset\": {offset}, \"machine\": {}, \"b64\": {}}}\n\n",
+                encode(&json!(e.machine)),
+                encode(&json!(STANDARD.encode(data)))
+            )
+        } else if closed {
+            format!(
+                "data: {{\"offset\": {offset}, \"closed\": true, \"exit_code\": {}}}\n\n",
+                encode(&e.exit)
+            )
+        } else {
+            ": keepalive\n\n".into()
+        };
+        drop(s);
+        if tx
+            .blocking_send(Ok(Frame::data(Bytes::from(record))))
+            .is_err()
+            || terminal
+        {
+            return;
         }
     });
     StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx)).boxed()
@@ -729,11 +727,11 @@ fn main() {
 }
 fn run() -> std::result::Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args.iter().any(|s| s == "--protocol") {
+    if args.first().is_some_and(|s| s == "--protocol") {
         println!("{HUB_PROTOCOL}");
         return Ok(());
     }
-    if args.iter().any(|s| s == "--version") {
+    if args.first().is_some_and(|s| s == "--version") {
         println!("{VERSION}");
         return Ok(());
     }
