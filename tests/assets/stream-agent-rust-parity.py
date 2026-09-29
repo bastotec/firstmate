@@ -243,6 +243,11 @@ def command_values(executable, name):
             18446744073709551615,
             18446744073709551617,
             -18446744073709551617,
+            float("nan"),
+            float("inf"),
+            -float("inf"),
+            [float("nan"), float("inf"), -float("inf")],
+            {"NaN": "NaN Infinity -Infinity \\\"", "nested": [{"nan": float("nan"), "positive": float("inf"), "negative": -float("inf")}], "integers": [10**20, 10**21, 10**22, -(10**20)], "escaped": '\\"NaN\\" \\\\Infinity'},
             {"z": True, "attempt": [None, False, {"text": "it's a quote", "both": "'\"", "escapes": "\\\n\t\r\x00\x1b\u00a0\u200b\ue000\U000f0000", "utf8": "é-中-😀"}], "a": 9223372036854775809},
             [1.0, -0.0, 1e-5, 1e16, True, None, ["nested", {"unsigned": 18446744073709551615}]],
             False,
@@ -278,6 +283,47 @@ def command_values(executable, name):
         return expected, received.read_bytes()
     finally:
         rig.close()
+
+
+def intervals(executable, name):
+    outcomes = []
+    for index, extra in enumerate((
+            ("--state-interval", "90000"),
+            ("--poll-secs", "90000"),
+            ("--state-interval", "0"),
+            ("--poll-secs", "0"))):
+        rig = Rig(f"{name}-{index}")
+        try:
+            proc, endpoint, status = rig.agent(executable, extra=extra)
+            rig.remember_worker(endpoint)
+            code, body = call(rig.url, "POST", f"/v1/tasks/{endpoint}/status", {"state": "working", "note": "interval accepted"})
+            assert code == 200, (extra, code, body)
+            assert status.read_text() == "working: interval accepted\n"
+            rig.marker(endpoint, "INTERVAL-PTY-ACTIVE")
+            code, body = call(rig.url, "DELETE", f"/v1/tasks/{endpoint}")
+            assert code == 200 and body["delivered"], (extra, code, body)
+            proc.wait(timeout=15)
+            task = rig.task(endpoint)
+            assert task["closed_by"] == "agent", (extra, task)
+            outcomes.append(status.read_text())
+        finally:
+            rig.close()
+    return outcomes
+
+
+def unsafe_intervals():
+    rig = Rig("unsafe-intervals-rust")
+    try:
+        for option in ("--state-interval", "--poll-secs"):
+            for index, value in enumerate(("-1", "NaN", "Infinity", "-Infinity", "1e300", "1e19")):
+                ready = rig.dir / f"ready-{option}-{index}"
+                completed = subprocess.run(AGENTS[1] + ["serve", "--hub", rig.url, "--token-file", str(rig.dir / "token"), "--label", "unsafe", "--cwd", str(rig.dir), "--ready-file", str(ready), option, value], env=ENV, capture_output=True, timeout=15)
+                assert completed.returncode == 1 and not ready.exists(), (option, value, completed)
+                assert PUB.encode() not in completed.stderr
+                assert call(rig.url, "GET", "/v1/tasks")[1]["tasks"] == []
+    finally:
+        rig.close()
+    print("ok: unsafe intervals refused before endpoint creation", flush=True)
 
 
 def concurrent_status(executable, name):
@@ -497,8 +543,10 @@ def refusals(executable, name):
     return outputs
 
 
-for function in (command_values, concurrent_status, generation_refusal, lifecycle, lost_result, lost_kill_result, final_rejoin, contest, refusals):
+for function in (command_values, intervals, concurrent_status, generation_refusal, lifecycle, lost_result, lost_kill_result, final_rejoin, contest, refusals):
     python = function(AGENTS[0], function.__name__ + "-python")
     rust = function(AGENTS[1], function.__name__ + "-rust")
     assert python == rust, (function.__name__, python, rust)
     print("ok:", function.__name__, "Python/Rust observable parity", flush=True)
+
+unsafe_intervals()

@@ -1,19 +1,23 @@
 use serde_json::Value;
+use std::collections::HashMap;
 use unicode_general_category::{get_general_category, GeneralCategory};
 
-pub fn python_str(value: &Value) -> String {
+pub fn python_str(value: &Value, nonfinite: &HashMap<String, &'static str>) -> String {
     match value {
         Value::String(text) => text.clone(),
-        other => python_repr(other),
+        other => python_repr(other, nonfinite),
     }
 }
 
-fn python_repr(value: &Value) -> String {
+fn python_repr(value: &Value, nonfinite: &HashMap<String, &'static str>) -> String {
     match value {
         Value::Null => "None".into(),
         Value::Bool(true) => "True".into(),
         Value::Bool(false) => "False".into(),
-        Value::Number(number) if !number.is_f64() => number.to_string(),
+        Value::Number(number) if !number.is_f64() => {
+            let token = number.to_string();
+            nonfinite.get(&token).map(|value| (*value).to_owned()).unwrap_or(token)
+        }
         Value::Number(number) => {
             let float = number.as_f64().unwrap_or_else(|| {
                 if number.to_string().starts_with('-') {
@@ -33,13 +37,19 @@ fn python_repr(value: &Value) -> String {
         Value::String(text) => string_repr(text),
         Value::Array(items) => format!(
             "[{}]",
-            items.iter().map(python_repr).collect::<Vec<_>>().join(", ")
+            items
+                .iter()
+                .map(|item| python_repr(item, nonfinite))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         Value::Object(items) => format!(
             "{{{}}}",
             items
                 .iter()
-                .map(|(key, value)| format!("{}: {}", string_repr(key), python_repr(value)))
+                .map(|(key, value)| {
+                    format!("{}: {}", string_repr(key), python_repr(value, nonfinite))
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
         ),

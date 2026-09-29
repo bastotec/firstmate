@@ -1,5 +1,6 @@
 //! Independent pilot port. The Python deployment remains the default.
 mod command_value;
+mod hub_json;
 mod pty;
 use base64::Engine;
 use fm_stream_wire::{is_machine_name, protocol_of_health, HUB_PROTOCOL};
@@ -55,7 +56,7 @@ impl Hub {
         path: &str,
         body: Option<&Value>,
         timeout: Duration,
-    ) -> Result<Value, Error> {
+    ) -> Result<hub_json::Response, Error> {
         let timeout = match *self.deadline.lock().unwrap() {
             Some(until) => timeout.min(
                 until
@@ -83,12 +84,11 @@ impl Hub {
         let bytes = answer
             .bytes()
             .map_err(|_| Error::Other("hub response incomplete".into()))?;
-        let answer: Value = if bytes.is_empty() {
-            json!({})
-        } else {
-            serde_json::from_slice(&bytes)
-                .map_err(|_| Error::Other("hub returned malformed JSON".into()))?
-        };
+        let answer = hub_json::decode(
+            if bytes.is_empty() { b"{}" } else { &bytes },
+            status.is_success() && method == "GET" && path.starts_with("/v1/agent/commands?"),
+        )
+        .map_err(|_| Error::Other("hub returned malformed JSON".into()))?;
         if !status.is_success() {
             return Err(match answer["error"].as_str().unwrap_or("") {
                 "endpoint_superseded" | "duplicate_label" => Error::Superseded,
@@ -217,9 +217,16 @@ impl Options {
             ("state-interval", o.state_interval),
             ("poll-secs", o.poll_secs),
         ] {
-            if !number.is_finite() || number <= 0.0 || number > 86400.0 {
+            let timer_seconds = if name == "poll-secs" { number + 15.0 } else { number };
+            if !number.is_finite()
+                || number < 0.0
+                || Duration::try_from_secs_f64(timer_seconds)
+                    .ok()
+                    .and_then(|duration| Instant::now().checked_add(duration))
+                    .is_none()
+            {
                 return Err(Error::Other(format!(
-                    "--{name} must be finite and in (0, 86400]"
+                    "--{name} must be finite, nonnegative, and fit a monotonic timer"
                 )));
             }
         }
@@ -407,14 +414,14 @@ impl Agent {
             }
         }
     }
-    fn apply(&self, command: &Value) -> Result<(), Error> {
+    fn apply(&self, command: &Value, response: &hub_json::Response) -> Result<(), Error> {
         let payload = &command["payload"];
         match command["kind"].as_str().unwrap_or("") {
             "input" => {
                 let mut bytes = Vec::new();
                 if !payload["text"].is_null() {
                     bytes.extend_from_slice(
-                        command_value::python_str(&payload["text"])
+                        response.python_str(&payload["text"])
                             .as_bytes(),
                     );
                 }
@@ -472,7 +479,7 @@ impl Agent {
                 let note = if payload["note"].is_null() {
                     String::new()
                 } else {
-                    command_value::python_str(&payload["note"])
+                    response.python_str(&payload["note"])
                 };
                 let note = note
                     .split(|ch: char| ch.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&ch))
@@ -549,7 +556,7 @@ impl Agent {
                     backoff = 2.0;
                     if let Some(commands) = answer["commands"].as_array() {
                         for command in commands {
-                            self.acknowledge(command, self.apply(command));
+                            self.acknowledge(command, self.apply(command, &answer));
                         }
                     }
                 }
