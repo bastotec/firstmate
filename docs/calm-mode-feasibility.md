@@ -17,7 +17,7 @@ Pi 0.81.1 was installed when Calm was first built, and Pi 0.82.0 was the later r
 The inspected Pi CHANGELOG shows no relevant presentation API introduced at either version, so those versions remain verification evidence rather than compatibility bounds.
 The exported classes used by the adapters (`AssistantMessageComponent` and `InteractiveMode`) are undocumented internals with no stated version guarantee.
 `tests/fm-calm-pi-extension.test.sh` records the installed Pi version as evidence without gating on it and covers both newer synthetic versions and an unavailable adapter seam.
-This host tracks Pi latest, so the version the evidence is pinned to moves; the [2026-09-07 record](#2026-09-07-pi-0851-renderer-and-export-dom-verification) owns the currently pinned version and the renderer comparison behind it.
+The [2026-09-29 record](#2026-09-29-primary-pi-0991-export-visibility-verification) owns the current primary Pi end-to-end export verification; the [2026-09-07 record](#2026-09-07-pi-0851-renderer-and-export-dom-verification) retains the earlier renderer comparison.
 
 ### Built-in tool override constraints
 
@@ -611,3 +611,33 @@ ok - Pi Calm working ship moves on a slow independent cadence over faster fixed-
 ok - the rendered-export-DOM guard renders in one pass, retries a bounded number of Chrome start-up failures, and reports the Chrome binary, Chrome version, Pi version, exit status, and Chrome diagnostic when every attempt fails
 ok - Pi calm native E2E replaces the stock working row with a moving, resize-clamped working ship that freezes and resumes across two working periods in one Pi session, clears on abort, keeps captain turns visible, hides exact operational user rows without changing persistence, restores stock rendering Calm-off, survives restart, and preserves export plus Ctrl+O behavior
 ```
+
+## 2026-09-29 primary Pi 0.99.1 export visibility verification
+
+Verified the complete Calm suite against Pi 0.99.1 on macOS Darwin 27 arm64 with Node 26.5.0, Chrome 154.0.8037.58, and tmux 3.6a, and on Debian 12 arm64 with Node 22.23.3, Chromium 154.0.8037.57, and tmux 3.3a.
+This is evidence for the supported primary Firstmate presentation surface, not worker or secondmate adapter support.
+The suite binds every interactive and restart launch to the absolute Pi executable selected before its version probe, so a tmux shell's PATH cannot silently select a different version.
+
+Pi 0.99.0 introduced a stock HTML `H` toggle for custom messages marked `display: false`.
+Those messages remain absent from the initial visible conversation but now exist as CSS-hidden DOM nodes; the complete session data and provenance tree remain intact.
+The real-browser regression measures computed display and client rectangles in a scratch export, checks positive visibility of genuine conversation and current operational user markers, verifies reveal/re-hide through `H` where exposed, and rejects a deliberately visible synthetic node.
+It does not change the exported product artifact, persisted session, or Calm's presentation policy.
+
+Refresh this evidence with matching executable and package installs:
+
+```sh
+PATH="<pi-install>/node_modules/.bin:$PATH" \
+  FM_PI_PACKAGE_DIR="<pi-install>/node_modules/@earendil-works/pi-coding-agent" \
+  bin/fm-test-run.sh tests/fm-calm-pi-extension.test.sh
+```
+
+Both platforms reported:
+
+```text
+ok - tmux uses the probed Pi executable even when its shell PATH resolves bare pi to a decoy
+export visibility: 2 hidden entries; H toggle verified
+ok - export visibility rejects a deliberately visible synthetic message while preserving hidden provenance and genuine conversation
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
+```
+
+Measured full-suite wall time was 51.3 seconds on macOS and 39.2 seconds on Debian; the summary above omits its varying `duration_ms` field.
