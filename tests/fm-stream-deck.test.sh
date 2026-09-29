@@ -64,7 +64,7 @@ for number, text in enumerate(('first\r\nsecond', 'first\rsecond\r', 'α\r\nβ\n
     cmd = command('bytes-%s' % number, text)
     assert agent.apply_command(cmd)[0] is None
     source, binding, persisted = r.find(cmd['command_id'])
-    assert persisted == text
+    assert persisted == text, ('durable source changed steering bytes', persisted, text)
     projected = newer/(str(int(source.stem))+'.msg')
     assert projected.read_bytes().startswith(text.encode('utf-8') + b'\n\nAfter handling')
     (newer/'handled').mkdir(exist_ok=True)
@@ -72,6 +72,9 @@ for number, text in enumerate(('first\r\nsecond', 'first\rsecond\r', 'α\r\nβ\n
     source.rename(r.inbox/'handled'/source.name)
     assert agent.apply_command(cmd) == (True, '')
     assert r.find(cmd['command_id'])[2] == text
+    print(json.dumps({'order_id': cmd['command_id'], 'source_text': r.find(cmd['command_id'])[2],
+                      'handled_projection': projected.name,
+                      'duplicate_result': agent.apply_command(cmd)}, ensure_ascii=False))
 print('PASS active-turn delivery, duplicate/lost-ack reconciliation, stale execution, finish race, ordered recovery, byte-exact sources, and untouched evidence')
 
 for executable in ('fm-stream-bridge.py', 'fm-test-run.sh'):

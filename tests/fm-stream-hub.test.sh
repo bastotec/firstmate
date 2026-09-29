@@ -22,7 +22,7 @@ command -v curl >/dev/null 2>&1 || { echo "skip: curl not found (required by the
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (required by the stream backend)"; exit 0; }
 
 TMP_ROOT=$(fm_test_tmproot fm-stream-hub-tests)
-HUB="$ROOT/bin/fm-stream-hub.py"
+HUB="${FM_TEST_STREAM_HUB:-$ROOT/bin/fm-stream-hub.py}"
 AGENT="$ROOT/bin/fm-stream-agent.py"
 PUBLISH_TOKEN="pub-$$"
 VIEW_TOKEN="view-$$"
@@ -1591,8 +1591,10 @@ test_revoked_result_capability_does_not_delay_the_closing_frame() {
     --status-path "$status" --ready-file "$ready" --state-interval 1 --poll-secs 1 \
     > "$log" 2>&1 <<'PY' &
 import importlib.util
+import pathlib
 import sys
 
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent))
 spec = importlib.util.spec_from_file_location("fm_stream_agent", sys.argv[1])
 agent = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(agent)
@@ -1638,8 +1640,10 @@ test_an_exiting_endpoint_keeps_retrying_its_applied_command_result() {
     --status-path "$status" --ready-file "$ready" --state-interval 1 --poll-secs 1 \
     > "$log" 2>&1 <<'PY' &
 import importlib.util
+import pathlib
 import sys
 
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent))
 spec = importlib.util.spec_from_file_location("fm_stream_agent", sys.argv[1])
 agent = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(agent)
@@ -1656,7 +1660,7 @@ PY
     sleep 0.1
     waited=$((waited + 1))
   done
-  [ "$waited" -lt 150 ] || fail "the agent never applied the command and posted its result"
+  [ "$waited" -lt 150 ] || fail "the agent never applied the command and posted its result: $(cat "$log" 2>/dev/null)"
   pkill -KILL -P "$pid" 2>/dev/null || fail "could not end the worker during result retry"
   waited=0
   while [ "$waited" -lt 50 ] && ! worker_ended "$pid"; do
@@ -2148,6 +2152,8 @@ test_an_order_reaches_the_worker_its_leaf_names() {
   assert_equals "$(printf '%s' "$out" | jq -r '.execution_id')" "$endpoint" \
     "the answer should name the execution that received it"
   wait_for_capture "$endpoint" ORDER-LANDED || fail "the worker never ran the order"
+  printf 'order response: %s\n' "$out"
+  printf 'worker capture:\n%s\n' "$(view GET "/v1/tasks/$endpoint/capture?lines=5")"
   pass "hub: an order addressed by leaf reaches that leaf's worker"
 }
 
@@ -2172,6 +2178,7 @@ test_an_order_aimed_at_a_replaced_execution_never_reaches_the_replacement() {
     "a refused order is one the hub can say did not arrive"
   assert_equals "$(printf '%s' "$out" | jq -r '.execution_id')" "$second" \
     "the refusal should name the execution the leaf is on now"
+  printf 'superseded execution response: %s\n' "$out"
   # The replacement is perfectly steerable - the refusal is about the aim, not
   # about the worker.
   order "$leaf" "$second" "echo RIGHT-WORKER" >/dev/null
@@ -2391,6 +2398,8 @@ test_a_resend_that_overtakes_a_placement_in_flight_is_answered_not_retyped() {
   [ -s "$CASE_DIR/raced-count" ] || fail "the worker never ran the first order"
   assert_equals "$(wc -l < "$CASE_DIR/raced-count" | tr -d '[:space:]')" 1 \
     "an identical resend that overtook placement must not execute twice"
+  printf 'first placement response: %s\nresend response: %s\n' "$first" "$second"
+  printf 'worker-written execution ledger:\n%s\n' "$(cat "$CASE_DIR/raced-count")"
   pass "hub: a resend overtaking a placement in flight is answered, not retyped"
 }
 
@@ -2551,6 +2560,18 @@ s.close()')
     FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-stream.sh" hub stop >/dev/null 2>&1 || true
   pass "fm-stream.sh: a second hub for the same home is refused rather than started"
 }
+
+# Optional named cases keep targeted validation from walking unrelated surfaces.
+if [ "$#" -gt 0 ]; then
+  for selected in "$@"; do
+    case "$selected" in
+      test_*) declare -F "$selected" >/dev/null || fail "unknown case: $selected" ;;
+      *) fail "invalid case: $selected" ;;
+    esac
+    "$selected"
+  done
+  exit 0
+fi
 
 test_endpoint_command_capabilities_protect_delivery_and_results
 test_every_data_route_requires_a_token
