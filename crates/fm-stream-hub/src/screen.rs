@@ -271,7 +271,7 @@ impl Screen {
                 self.cells[self.cy][self.cx + i] = (String::new(), String::new());
             }
         }
-        self.cx += width;
+        self.cx = (self.cx + width).min(self.cols);
     }
     fn linefeed(&mut self) {
         if self.cy == self.bot {
@@ -515,6 +515,17 @@ mod tests {
                 assert_eq!(screen.cy, 0);
             }
         }
+    }
+
+    #[test]
+    fn one_column_wide_glyph_accepts_backspace_and_combining_marks() {
+        let mut screen = Screen::new(3, 1);
+        screen.feed("中\u{301}".as_bytes());
+        assert_eq!(screen.lines(false), vec!["", "中\u{301}", ""]);
+        assert_eq!(screen.cy, 1);
+        screen.feed(b"\x08x");
+        assert_eq!(screen.lines(false), vec!["", "x", ""]);
+        assert_eq!(screen.cy, 1);
     }
 
     #[test]

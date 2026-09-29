@@ -95,8 +95,32 @@ fn body(r: &mut Request) -> Result<Value> {
                 format!("malformed JSON body: {error}"),
             ));
         }
-        fm_stream_wire::python_json::python_reparse(text)
-            .map_err(|_| Error::new(400, "bad_json", "malformed JSON body: invalid JSON"))
+        let mut parsed = fm_stream_wire::python_json::python_reparse(text)
+            .map_err(|_| Error::new(400, "bad_json", "malformed JSON body: invalid JSON"))?;
+        let truthy = fm_stream_wire::python_json::python_reparse_truthy(text)
+            .map_err(|_| Error::new(400, "bad_json", "malformed JSON body: invalid JSON"))?;
+        for field in ["submit", "ok"] {
+            if let Some(value) = truthy.get(field) {
+                parsed[field] = value.clone();
+            }
+        }
+        if let (Some(frames), Some(truthy_frames)) = (
+            parsed.get_mut("frames").and_then(Value::as_array_mut),
+            truthy.get("frames").and_then(Value::as_array),
+        ) {
+            for (frame, truthy_frame) in frames.iter_mut().zip(truthy_frames) {
+                if let Some(value) = truthy_frame.get("closed") {
+                    frame["closed"] = value.clone();
+                }
+                if let Some(value) = truthy_frame
+                    .get("state")
+                    .and_then(|state| state.get("alive"))
+                {
+                    frame["state"]["alive"] = value.clone();
+                }
+            }
+        }
+        Ok(parsed)
     })?;
     if !p.is_object() {
         return Err(Error::new(

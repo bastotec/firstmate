@@ -354,11 +354,19 @@ impl Hub {
                 .cmp(&b.machine)
                 .then(a.created.total_cmp(&b.created))
         });
+        let mut groups: BTreeMap<(&str, &str), Vec<&Endpoint>> = BTreeMap::new();
+        for e in &es {
+            groups.entry((&e.machine, &e.label)).or_default().push(e);
+        }
+        let current: BTreeMap<_, _> = groups
+            .into_iter()
+            .map(|(leaf, members)| (leaf, Self::current(&members).unwrap().id.as_str()))
+            .collect();
         es.iter()
             .map(|e| {
                 let mut record = e.describe();
-                record["current_execution"] = json!(Self::current(&Self::members(s, &e.leaf()))
-                    .is_some_and(|current| current.id == e.id));
+                record["current_execution"] =
+                    json!(current[&(e.machine.as_str(), e.label.as_str())] == e.id);
                 record
             })
             .collect()
@@ -918,6 +926,72 @@ mod tests {
         let result=hub.register(&json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker","capabilities":["idempotent_command_results"]}),"").unwrap();
         let capability = result["command_capability"].as_str().unwrap().to_owned();
         (hub, eid, capability)
+    }
+    #[test]
+    fn listing_selects_current_execution_once_per_retained_leaf() {
+        let hub = Hub::new(vec![], 30., 0.01);
+        for index in 0..2000 {
+            hub.register(
+                &json!({"protocol":3,"endpoint_id":format!("{index:032x}"),
+                    "machine":format!("box-{}", (index / 4) % 2),
+                    "label":format!("worker-{}", index / 4),"rows":1,"cols":1}),
+                "",
+            )
+            .unwrap();
+        }
+        let mut s = hub.state.lock().unwrap();
+        let created = now();
+        for index in 0..2000 {
+            let member = index % 4;
+            let group = index / 4;
+            let e = s.endpoints.get_mut(&format!("{index:032x}")).unwrap();
+            e.created = created + index as f64;
+            e.heard = match group % 4 {
+                0 => member == 0,
+                3 => member == 0 || member == 2,
+                _ => false,
+            };
+            if group % 4 == 2 || group % 4 < 2 && member == 3 {
+                e.close(json!(0), "agent");
+            }
+        }
+        let records = Hub::listing(&s);
+        assert_eq!(records.len(), 2000);
+        let current: Vec<_> = records
+            .iter()
+            .filter(|r| r["current_execution"] == true)
+            .collect();
+        assert_eq!(current.len(), 500);
+        for record in current {
+            let group: usize = record["label"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("worker-")
+                .unwrap()
+                .parse()
+                .unwrap();
+            let member = match group % 4 {
+                0 => 0,
+                1 | 3 => 2,
+                _ => 3,
+            };
+            assert_eq!(
+                record["endpoint_id"],
+                format!("{:032x}", group * 4 + member)
+            );
+        }
+        for pair in records.windows(2) {
+            let machine = pair[0]["machine"]
+                .as_str()
+                .unwrap()
+                .cmp(pair[1]["machine"].as_str().unwrap());
+            assert!(
+                machine.is_lt()
+                    || machine.is_eq()
+                        && pair[0]["created_at"].as_f64().unwrap()
+                            <= pair[1]["created_at"].as_f64().unwrap()
+            );
+        }
     }
     #[test]
     fn silence_releases_identity_without_claiming_worker_gone() {

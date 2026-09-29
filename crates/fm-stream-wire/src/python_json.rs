@@ -15,6 +15,32 @@
 /// Python's error message for a rejected document, or `None` when Python's
 /// parser would have accepted it.
 pub fn python_json_error(text: &str) -> Option<String> {
+    let mut depth: usize = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for byte in text.bytes() {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                quoted = false;
+            }
+        } else {
+            match byte {
+                b'"' => quoted = true,
+                b'[' | b'{' => {
+                    depth += 1;
+                    if depth > 128 {
+                        return Some("maximum JSON nesting depth exceeded".into());
+                    }
+                }
+                b']' | b'}' => depth = depth.saturating_sub(1),
+                _ => (),
+            }
+        }
+    }
     let chars: Vec<char> = text.chars().collect();
     match scan_value(&chars, skip_ws(&chars, 0)) {
         Ok(mut pos) => {
@@ -32,10 +58,16 @@ pub fn python_json_error(text: &str) -> Option<String> {
 /// `NaN`/`Infinity`/-`Infinity` tokens and numbers whose value overflows a
 /// finite f64 become `null`, and unpaired surrogate escapes inside strings
 /// become `\uFFFD`, so a Python-valid document that `serde_json` rejected
-/// can be re-parsed.  Downstream, `null` reaches the same refusals Python's
-/// non-finite values reach (`must be a finite, non-negative number`, the
-/// not-an-int exit-code reading), which is what makes the rewrite safe.
+/// can be re-parsed.
 pub fn python_reparse(text: &str) -> Result<serde_json::Value, ()> {
+    reparse(text, "null")
+}
+
+pub fn python_reparse_truthy(text: &str) -> Result<serde_json::Value, ()> {
+    reparse(text, "1")
+}
+
+fn reparse(text: &str, nonfinite: &str) -> Result<serde_json::Value, ()> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut index = 0;
@@ -79,6 +111,12 @@ pub fn python_reparse(text: &str) -> Result<serde_json::Value, ()> {
                         }
                     }
                 }
+                if c == '\\' && index + 1 < chars.len() {
+                    out.push(c);
+                    out.push(chars[index + 1]);
+                    index += 2;
+                    continue;
+                }
                 out.push(c);
                 index += 1;
             }
@@ -95,7 +133,7 @@ pub fn python_reparse(text: &str) -> Result<serde_json::Value, ()> {
                 while index < chars.len() && chars[index].is_ascii_alphabetic() {
                     index += 1;
                 }
-                out.push_str("null");
+                out.push_str(nonfinite);
                 continue;
             }
             while index < chars.len()
@@ -107,9 +145,7 @@ pub fn python_reparse(text: &str) -> Result<serde_json::Value, ()> {
             let token: String = chars[start..index].iter().collect();
             match token.parse::<f64>() {
                 Ok(value) if value.is_finite() => out.push_str(&token),
-                // Overflow beyond f64: Python holds inf, every consumer of
-                // it refuses it as non-finite, null reaches the same words.
-                _ => out.push_str("null"),
+                _ => out.push_str(nonfinite),
             }
             continue;
         }
@@ -451,9 +487,55 @@ mod tests {
     }
 
     #[test]
+    fn nesting_is_bounded_without_counting_string_contents() {
+        let nested = format!("{}0{}", "[".repeat(200_000), "]".repeat(200_000));
+        assert_eq!(
+            python_json_error(&nested).as_deref(),
+            Some("maximum JSON nesting depth exceeded")
+        );
+        let mixed = format!("{}0{}", "{\"x\":[".repeat(100), "]}".repeat(100));
+        assert!(python_json_error(&mixed).is_some());
+        let quoted =
+            serde_json::json!({"text": format!("\\\"{}", "[".repeat(200_000))}).to_string();
+        assert_eq!(python_json_error(&quoted), None);
+        let bounded = format!("{}NaN{}", "[".repeat(64), "]".repeat(64));
+        assert_eq!(python_json_error(&bounded), None);
+        assert!(python_reparse(&bounded).is_ok());
+    }
+
+    #[test]
+    fn reparse_preserves_literal_escapes_and_escaped_quotes() {
+        let text =
+            r#"{"text":"\\ud800 \\udfff \\ud83d\\ude00 \\\"NaN Infinity","keys":["\ud800"]}"#;
+        assert_eq!(python_json_error(text), None);
+        let value = python_reparse(text).unwrap();
+        assert_eq!(
+            value["text"],
+            "\\ud800 \\udfff \\ud83d\\ude00 \\\"NaN Infinity"
+        );
+        assert_eq!(value["keys"][0], "\u{fffd}");
+        let escaped_quote = r#"{"text":"a\"NaN Infinity b","unused":NaN}"#;
+        let value = python_reparse(escaped_quote).unwrap();
+        assert_eq!(value["text"], "a\"NaN Infinity b");
+    }
+
+    #[test]
+    fn truthy_reparse_does_not_change_bridge_nonfinite_conversion() {
+        let text = "[NaN, Infinity, -Infinity, 1e999, -1e999, 0, 1e-999]";
+        let bridge = python_reparse(text).unwrap();
+        let truthy = python_reparse_truthy(text).unwrap();
+        for index in 0..5 {
+            assert!(bridge[index].is_null());
+            assert_eq!(truthy[index], 1);
+        }
+        for index in 5..7 {
+            assert_eq!(bridge[index].as_f64(), Some(0.));
+            assert_eq!(truthy[index].as_f64(), Some(0.));
+        }
+    }
+
+    #[test]
     fn reparse_holds_pythons_nonstandard_documents() {
-        // Non-finite literals become null, which every consumer refuses the
-        // same way Python's finite check refuses the original.
         let value = python_reparse("{\"at_ms\": NaN}").unwrap();
         assert_eq!(value["at_ms"], serde_json::Value::Null);
         let value = python_reparse("[Infinity, -Infinity]").unwrap();
