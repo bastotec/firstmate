@@ -193,6 +193,39 @@ presented_max_row() { # <rows-file>
   fi
 }
 
+# An acknowledgement never consumes a captain inbox row whose note is still
+# unread: surfacing or printing the row is not proof firstmate read it;
+# `fm-inbox.sh drain --ack <id>` is that proof. A kept row is marked due so the
+# watcher surfaces it again on its next cycle; its surfacing count is preserved,
+# so a note that is never acknowledged stops re-waking after the watcher's
+# bounded repeats and fm-guard.sh reports it overdue instead.
+INBOX_KEPT_SEQS=
+INBOX_KEPT_IDS=
+collect_unread_inbox_rows_locked() { # <cutoff>
+  local cutoff=$1 epoch seq kind key payload
+  INBOX_KEPT_SEQS=
+  INBOX_KEPT_IDS=
+  [ -f "$FM_WAKE_QUEUE" ] || return 0
+  while IFS=$'\t' read -r epoch seq kind key payload; do
+    [ "$kind" = check ] || continue
+    case "$key" in inbox:*) ;; *) continue ;; esac
+    case "$seq" in ''|*[!0-9]*) continue ;; esac
+    [ "$seq" -le "$cutoff" ] || continue
+    fm_inbox_note_unread "$STATE" "$key" || continue
+    INBOX_KEPT_SEQS="$INBOX_KEPT_SEQS $seq"
+    case " $INBOX_KEPT_IDS " in *" ${key#inbox:} "*) ;; *) INBOX_KEPT_IDS="$INBOX_KEPT_IDS ${key#inbox:}" ;; esac
+  done < "$FM_WAKE_QUEUE"
+}
+
+mark_kept_inbox_rows_due() {
+  local id marker
+  for id in $INBOX_KEPT_IDS; do
+    marker=$(fm_inbox_surfaced_marker "$STATE" "inbox:$id")
+    [ -e "$marker" ] || continue
+    touch -t 200001010000 "$marker" 2>/dev/null || rm -f -- "$marker"
+  done
+}
+
 case "${1:-}" in
   '') ;;
   --ack-through)
@@ -695,6 +728,9 @@ if [ -n "$ACK_THROUGH" ]; then
   DRAIN_LOCK_HELD=true
   DRAIN_TMP=$(mktemp "$STATE/.wake-queue.ack.XXXXXX") || exit 1
   chmod 0600 "$DRAIN_TMP" || exit 1
+  if [ "$ACTOR" = main ]; then
+    collect_unread_inbox_rows_locked "$ACK_THROUGH"
+  fi
   if [ "$ACTOR" = branch ]; then
     require_branch_eligible_rows || exit 1
     # Delete a row only when its sequence is <= cutoff AND it is named in the
@@ -705,9 +741,12 @@ if [ -n "$ACK_THROUGH" ]; then
       NF < 5 || $2 !~ /^[0-9]+$/ || $2 > cutoff || !($2 in keep) { print }
     ' "$FM_WAKE_QUEUE" > "$DRAIN_TMP" || exit 1
   else
-    awk -F '\t' -v cutoff="$ACK_THROUGH" -v seqs="$MAIN_ROWS_FILE" '
-      BEGIN { while ((getline line < seqs) > 0) owned[line]=1 }
-      NF < 5 || $2 !~ /^[0-9]+$/ || $2 > cutoff || !($2 in owned) { print }
+    awk -F '\t' -v cutoff="$ACK_THROUGH" -v seqs="$MAIN_ROWS_FILE" -v unread="$INBOX_KEPT_SEQS" '
+      BEGIN {
+        while ((getline line < seqs) > 0) owned[line]=1
+        n = split(unread, u, " "); for (i = 1; i <= n; i++) hold[u[i]] = 1
+      }
+      NF < 5 || $2 !~ /^[0-9]+$/ || $2 > cutoff || !($2 in owned) || ($2 in hold) { print }
     ' "$FM_WAKE_QUEUE" > "$DRAIN_TMP" || exit 1
     fm_wake_commit_secondmate_stall_receipts_through "$ACK_THROUGH" "$MAIN_ROWS_FILE" || {
       echo "wake drain: secondmate stall receipt could not be recorded safely" >&2
@@ -743,6 +782,9 @@ if [ -n "$ACK_THROUGH" ]; then
   else
     consume_actor_rows_locked "$MAIN_ROWS_FILE" "$ACK_THROUGH" || exit 1
   fi
+  if [ "$ACTOR" = main ]; then
+    mark_kept_inbox_rows_due
+  fi
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
   if [ "$ACK_REMOVED" -eq 0 ] && [ "$PRESENTED_MAX" -gt "$ACK_THROUGH" ]; then
@@ -766,6 +808,11 @@ if [ -n "$ACK_THROUGH" ]; then
   elif [ "$RECOVERY_ACK_MOVED" = true ]; then
     printf 'wake drain: acknowledged wakes through %s (%s row(s) consumed), but a newer recovery episode is pending; re-run bin/fm-wake-drain.sh and use the new WAKE_ACK_REQUIRED command\n' \
       "$ACK_THROUGH" "$ACK_REMOVED" >&2
+  fi
+  if [ "$ACTOR" = main ] && [ -n "$INBOX_KEPT_IDS" ]; then
+    # One line, printed last, so even a caller that keeps only the tail sees it.
+    printf 'wake drain: NOT acknowledged - captain inbox note(s) still unread:%s. Read each with bin/fm-inbox.sh list/drain, answer it, run bin/fm-inbox.sh drain --ack <id>, then acknowledge again.\n' \
+      "$INBOX_KEPT_IDS" >&2
   fi
   exit 0
 fi

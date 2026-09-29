@@ -3686,6 +3686,22 @@ assert_contains "$paired" '"captain_notes_waiting": 1' \
   "the reader should count the note the handover just queued"
 pass "handover queues the request for firstmate and wakes it exactly once"
 
+# A handover while earlier notes sit unread must not promise a prompt pickup:
+# the captain hears that firstmate is not reading its inbox instead of waiting
+# out an ask nobody is going to answer.
+assert_not_contains "$handed" 'delivery_warning' \
+  "a handover with nothing overdue should carry no delivery warning"
+warn_home="$TMP_ROOT/overdue-home"
+mkdir -p "$warn_home/state/inbox" "$warn_home/data"
+printf 'id=1000-old001\n--\nwhat are you doing\n' > "$warn_home/state/inbox/1000-old001.note"
+warned=$(FM_HOME="$warn_home" python3 "$ROOT/bin/fm_voice_records.py" queue \
+  "Why are the second mates idle" --home "$warn_home") || fail "handover with an overdue note failed"
+assert_contains "$warned" '"queued": true' "an overdue inbox must not stop the handover"
+assert_contains "$warned" '"delivery_warning": "1 earlier captain note(s) still unread, oldest 1000-old001' \
+  "the handover did not pass on the overdue warning: $warned"
+assert_contains "$warned" 'Tell the captain' "the handover still promised a prompt pickup: $warned"
+pass "a handover says so when firstmate has left earlier captain notes unread"
+
 # The same pairing when the state directory is moved. bin/fm-inbox.sh resolves
 # ${FM_STATE_OVERRIDE:-$FM_HOME/state} and the handover queues through it with
 # the ambient environment, so a reader that ignored the override would count

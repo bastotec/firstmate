@@ -529,17 +529,27 @@ def queue_request(text, home=None, root=None):
         raise RecordError("fm-inbox.sh note failed: {}".format(
             (done.stderr or done.stdout).strip()))
     note_id = ""
+    delivery_warning = ""
     for line in done.stdout.splitlines():
-        if line.startswith("queued "):
+        if line.startswith("queued ") and not note_id:
             note_id = line.split(None, 1)[1].strip()
-            break
-    return {
+        elif line.startswith("delivery: degraded"):
+            delivery_warning = line.split(" - ", 1)[-1].strip()
+    result = {
         "queued": True,
         "note_id": note_id,
         "queued_text": body,
         "handover": "Firstmate now owns this request and will pick it up at "
                     "its next check. You did not do the work yourself.",
     }
+    if delivery_warning:
+        # fm-inbox.sh found earlier notes nobody has read: tell the captain
+        # rather than promise a pickup that is not happening.
+        result["delivery_warning"] = delivery_warning
+        result["handover"] = ("The request is queued, but firstmate has not read "
+                              "earlier notes ({}), so it may not pick this up soon. "
+                              "Tell the captain.".format(delivery_warning))
+    return result
 
 
 def main(argv):

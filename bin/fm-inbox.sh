@@ -163,6 +163,21 @@ wake_for() {
   fm_wake_append check "inbox:$id" "check: captain inbox note $id - $summary"
 }
 
+# Say so when firstmate is not reading its inbox: an earlier note still unread
+# past FM_INBOX_OVERDUE_SECS means this one will not be picked up promptly
+# either. The voice relay passes this line on (bin/fm_voice_records.py), so the
+# captain hears it instead of waiting out an ask that nobody is going to answer.
+delivery_health() {  # <new-note-id>
+  local overdue count oldest age
+  overdue=$(fm_inbox_overdue_notes "$STATE" "${FM_INBOX_OVERDUE_SECS:-$FM_INBOX_OVERDUE_DEFAULT}" \
+    | awk -F '\t' -v skip="$1" '$1 != skip')
+  [ -n "$overdue" ] || return 0
+  count=$(printf '%s\n' "$overdue" | awk 'END { print NR }')
+  IFS=$'\t' read -r oldest age <<< "$(printf '%s\n' "$overdue" | head -1)"
+  printf 'delivery: degraded - %s earlier captain note(s) still unread, oldest %s for %s min; firstmate may not be reading its inbox\n' \
+    "$count" "$oldest" "$((age / 60))"
+}
+
 queue_note() {
   local source=$1 body=$2 extra=${3:-}
   [ -n "${body//[[:space:]]/}" ] || die "refusing to queue an empty note"
@@ -190,6 +205,7 @@ queue_note() {
   printf '  %s\n' "$summary"
   if wake_for "$id" "$summary"; then
     printf '  firstmate will pick this up at its next check.\n'
+    delivery_health "$id"
   else
     die "note $id is saved at $INBOX/$id.note but firstmate was NOT woken"
   fi

@@ -4256,6 +4256,9 @@ SH
   before=$(size_of "$state/.wake-queue")
   FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "x" >/dev/null 2>&1 \
     || { reap "$pid"; fail "the replacement inbox note could not be queued"; }
+  # Read the older note first: its wake is not acknowledged while it is unread.
+  FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" drain --ack "$first_note" >/dev/null \
+    || { reap "$pid"; fail "the older note could not be acknowledged"; }
   ack_drain_err "$state" "$drain_err" >/dev/null \
     || { reap "$pid"; fail "the older surfaced note could not be acknowledged"; }
   after=$(size_of "$state/.wake-queue")
@@ -4272,6 +4275,8 @@ SH
 
   # A note already on the queue when the sleep begins - appended after the
   # cycle's scan, before its baseline - still wakes it at once, not after POLL.
+  mkdir -p "$state/inbox"
+  printf 'id=raced\n--\nraced\n' > "$state/inbox/raced.note"
   FM_STATE_OVERRIDE="$state" bash -c '
     . "$1/bin/fm-wake-lib.sh"
     fm_wake_append check "inbox:raced" "check: captain inbox note raced - fixture"' _ "$ROOT" \
@@ -4294,6 +4299,303 @@ SH
   fi
   reap "$pid"
   pass "a captain inbox note wakes a sleeping watcher within seconds, once"
+}
+
+# An acknowledgement must not consume the wake of a captain note nobody read.
+# The row stays until `fm-inbox.sh drain --ack` proves the note was read, the
+# acknowledgement says so on its last line, and the next watcher cycle surfaces
+# the note again at once.
+test_unread_inbox_note_survives_acknowledgement() {
+  local dir state out drain_out drain_err ack_err pid id
+  dir=$(make_case inbox-unread-ack); state="$dir/state"
+  dir=$(cd "$dir" && pwd -P)
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; drain_err="$dir/drain.err"; ack_err="$dir/ack.err"
+  id=$(FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "which customer is the document fix for" 2>/dev/null \
+    | sed -n 's/^queued //p')
+  [ -n "$id" ] || fail "the inbox note could not be queued"
+
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "the queued note did not wake the watcher: $(cat "$out")"
+  grep -F "$id" "$out" >/dev/null || fail "the wake did not name the note: $(cat "$out")"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" || fail "the drain failed"
+  grep -F "inbox:$id" "$drain_out" >/dev/null || fail "the drain did not present the note row: $(cat "$drain_out")"
+  ack_drain_err "$state" "$drain_err" 2> "$ack_err" || fail "the acknowledgement failed: $(cat "$ack_err")"
+  grep -F "inbox:$id" "$state/.wake-queue" >/dev/null \
+    || fail "the acknowledgement consumed the wake of a note nobody read"
+  tail -1 "$ack_err" | grep -F "NOT acknowledged - captain inbox note(s) still unread: $id" >/dev/null \
+    || fail "the acknowledgement did not end by naming the unread note: $(cat "$ack_err")"
+
+  # The kept row wakes the next cycle at once, not after the re-surface window.
+  : > "$out"
+  PATH="$dir/fakebin:$PATH" FM_WATCH_HANDLING_SUCCESSOR=1 FM_HOME="$dir" \
+    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 50 || fail "the kept note did not wake the next watcher cycle: $(cat "$out")"
+  grep -F "captain inbox note: $id" "$out" >/dev/null \
+    || fail "the next wake did not name the kept note: $(cat "$out")"
+
+  # Read and acknowledged: the row is consumed and the note never wakes again.
+  FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" drain --ack "$id" >/dev/null || fail "the note could not be acknowledged"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" || fail "the second drain failed"
+  ack_drain_err "$state" "$drain_err" 2> "$ack_err" || fail "the second acknowledgement failed: $(cat "$ack_err")"
+  grep -F "inbox:$id" "$state/.wake-queue" >/dev/null \
+    && fail "the row of a read note survived its acknowledgement"
+  grep -F "NOT acknowledged" "$ack_err" >/dev/null && fail "a read note was still reported unread: $(cat "$ack_err")"
+  pass "a captain note's wake is not acknowledged until the note is read, and is surfaced again meanwhile"
+}
+
+# A note nobody acknowledges is surfaced again after FM_INBOX_RESURFACE_SECS, at
+# most FM_INBOX_RESURFACE_MAX more times; after that fm-guard.sh reports it
+# overdue instead of the watcher re-waking forever.
+test_unread_inbox_note_resurfaces_a_bounded_number_of_times() {
+  local dir state out pid id n
+  dir=$(make_case inbox-resurface); state="$dir/state"
+  dir=$(cd "$dir" && pwd -P)
+  out="$dir/watch.out"
+  id=$(FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "status please" 2>/dev/null | sed -n 's/^queued //p')
+  [ -n "$id" ] || fail "the inbox note could not be queued"
+  for n in 1 2 3; do
+    : > "$out"
+    PATH="$dir/fakebin:$PATH" FM_WATCH_HANDLING_SUCCESSOR=1 FM_HOME="$dir" \
+      FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+      FM_INBOX_RESURFACE_SECS=1 FM_INBOX_RESURFACE_MAX=1 "$WATCH" > "$out" &
+    pid=$!
+    if [ "$n" -lt 3 ]; then
+      wait_for_exit "$pid" 50 || fail "surfacing $n of the unread note did not wake the watcher: $(cat "$out")"
+      grep -F "captain inbox note: $id" "$out" >/dev/null || fail "surfacing $n did not name the note: $(cat "$out")"
+      sleep 1.2
+    else
+      if ! wait_poll_cycle "$state" "$pid"; then
+        grep -F "$id" "$out" >/dev/null && fail "the note woke the watcher past FM_INBOX_RESURFACE_MAX: $(cat "$out")"
+      fi
+      reap "$pid"
+    fi
+  done
+  pass "an unread captain note re-surfaces a bounded number of times"
+}
+
+# bash parses the watcher loop once, so a changed bin/ tree otherwise leaves a
+# live watcher on its start-time code. A changed bin/*.sh now re-execs the
+# watcher in place: same pid, same lock, the arm still waiting on it, one watcher
+# for the home, and the new loop live. A change that does not parse keeps the
+# running code.
+test_watcher_reloads_changed_code_in_place() {
+  local dir state copy out pid arm lock_pid lock_owner count ref_mtime
+  dir=$(make_case code-reload); state="$dir/state"
+  dir=$(cd "$dir" && pwd -P)
+  copy="$dir/fmroot"
+  mkdir -p "$copy"
+  rsync -a --exclude node_modules --exclude __pycache__ "$ROOT/bin" "$copy/" || fail "could not copy bin/"
+  out="$dir/arm.out"
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WATCH_CODE_SETTLE=0 \
+    "$copy/bin/fm-watch-arm.sh" > "$out" 2>&1 &
+  arm=$!
+  for _ in $(seq 1 100); do grep -q '^watcher: started pid=' "$out" && break; sleep 0.1; done
+  pid=$(sed -n 's/^watcher: started pid=\([0-9]*\).*/\1/p' "$out")
+  [ -n "$pid" ] || { reap "$arm"; fail "the arm did not start a watcher: $(cat "$out")"; }
+  lock_owner=$(readlink "$state/.watch.lock")
+  [ -n "$lock_owner" ] || { reap "$arm"; fail "the watcher did not publish its singleton lock owner"; }
+
+  # Change the code under the running watcher; the new image records itself.
+  perl -0pi -e 's/^(WATCHER_PID=\$\{BASHPID:-\$\$\}\n)/$1echo "\$WATCHER_PID" > "\$STATE\/.test-reloaded"\n/m' \
+    "$copy/bin/fm-watch.sh"
+  ref_mtime=$(file_mtime "$state/.watch-code-ref")
+  set_mtime "$((ref_mtime + 1))" "$copy/bin/fm-watch.sh"
+  for _ in $(seq 1 100); do [ -s "$state/.test-reloaded" ] && break; sleep 0.1; done
+  [ "$(cat "$state/.test-reloaded" 2>/dev/null)" = "$pid" ] \
+    || { reap "$arm"; fail "the watcher did not re-exec in place after its code changed"; }
+  is_live_non_zombie "$pid" || { reap "$arm"; fail "the reloaded watcher is not running"; }
+  lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null)
+  [ "$lock_pid" = "$pid" ] || { reap "$arm"; fail "the reload changed the lock holder ($lock_pid, not $pid)"; }
+  [ "$(readlink "$state/.watch.lock")" = "$lock_owner" ] \
+    || { reap "$arm"; fail "the reload replaced the singleton lock instead of adopting it"; }
+  # Count watcher processes whose parent is not itself a watcher: bash
+  # command-substitution subshells carry the same command line.
+  count=$(ps -axo pid=,ppid=,command= | awk -v path="$copy/bin/fm-watch.sh" '
+    { cmd = $0; sub(/^ *[0-9]+ +[0-9]+ +/, "", cmd) }
+    cmd == "bash " path { pid[$1] = $2 }
+    END { n = 0; for (p in pid) if (!(pid[p] in pid)) n++; print n }')
+  [ "$count" = 1 ] || { reap "$arm"; fail "the reload left $count watchers for one home"; }
+  grep -F "re-executing in place" "$state/.watch-triage.log" >/dev/null \
+    || { reap "$arm"; fail "the reload was not logged"; }
+
+  append_wake "$state" check startup-network "check: startup-network fixture after reload" \
+    || { reap "$arm"; fail "the generic recovery row could not be queued"; }
+  wait_for_exit "$arm" 100 || fail "the reloaded watcher's generic recovery wake did not end the arm: $(cat "$out")"
+  grep -F "check: rearm-resurface" "$out" >/dev/null \
+    || fail "the reloaded watcher did not relay the generic durable wake: $(cat "$out")"
+  grep -F "startup-network fixture after reload" "$state/.wake-queue" >/dev/null \
+    || fail "the generic recovery row was not durable after delivery"
+
+  # A change that does not parse keeps the running code.
+  rm -f "$state/.test-reloaded" "$state/.last-watcher-beat"
+  : > "$out"
+  PATH="$dir/fakebin:$PATH" FM_WATCH_HANDLING_SUCCESSOR=1 FM_HOME="$dir" \
+    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WATCH_CODE_SETTLE=0 \
+    FM_INBOX_RESURFACE_SECS=999999 "$copy/bin/fm-watch.sh" > "$out" 2>&1 &
+  pid=$!
+  for _ in $(seq 1 100); do [ -e "$state/.last-watcher-beat" ] && [ "$(cat "$state/.watch.lock/pid" 2>/dev/null)" = "$pid" ] && break; sleep 0.1; done
+  printf 'if then fi {\n' >> "$copy/bin/fm-watch.sh"
+  for _ in $(seq 1 50); do grep -qF "does not parse" "$state/.watch-triage.log" && break; sleep 0.1; done
+  grep -F "does not parse; kept the running code" "$state/.watch-triage.log" >/dev/null \
+    || { reap "$pid"; fail "a change that does not parse was not refused: $(cat "$out"; tail -3 "$state/.watch-triage.log")"; }
+  wait_poll_cycle "$state" "$pid" || fail "the watcher died on a change that does not parse: $(cat "$out")"
+  reap "$pid"
+  pass "a changed watcher re-execs in place: same pid and lock, one watcher, live loop"
+}
+
+test_watcher_reloads_code_changed_during_startup() {
+  local dir state copy out startup_bin gate real_dirname pid i duplicate_out reloads orphan
+  dir=$(make_case code-reload-during-startup); state="$dir/state"
+  dir=$(cd "$dir" && pwd -P)
+  copy="$dir/fmroot"
+  startup_bin="$dir/startup-bin"
+  gate="$dir/startup-gate"
+  out="$dir/watch.out"
+  duplicate_out="$dir/duplicate.out"
+  real_dirname=$(command -v dirname)
+  mkdir -p "$copy" "$startup_bin"
+  rsync -a --exclude node_modules --exclude __pycache__ "$ROOT/bin" "$copy/" || fail "could not copy bin/"
+  cat > "$startup_bin/dirname" <<'SH'
+#!/usr/bin/env bash
+if mkdir "${FM_TEST_STARTUP_GATE}.once" 2>/dev/null; then
+  : > "${FM_TEST_STARTUP_GATE}.entered"
+  i=0
+  while [ ! -e "${FM_TEST_STARTUP_GATE}.release" ] && [ "$i" -lt 200 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -e "${FM_TEST_STARTUP_GATE}.release" ] || exit 1
+fi
+exec "$FM_TEST_REAL_DIRNAME" "$@"
+SH
+  chmod +x "$startup_bin/dirname"
+
+  PATH="$startup_bin:$dir/fakebin:$PATH" FM_TEST_STARTUP_GATE="$gate" FM_TEST_REAL_DIRNAME="$real_dirname" \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_WATCH_CODE_SETTLE=0 "$copy/bin/fm-watch.sh" > "$out" 2>&1 &
+  pid=$!
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -e "${gate}.entered" ]; do sleep 0.05; i=$((i + 1)); done
+  [ -e "${gate}.entered" ] || { reap "$pid"; fail "the watcher never reached the startup gate: $(cat "$out")"; }
+  [ ! -e "$state/.watch.lock" ] && [ ! -L "$state/.watch.lock" ] \
+    || { reap "$pid"; fail "the startup gate did not precede singleton-lock acquisition"; }
+  orphan=$(find "$state" -maxdepth 1 -name '.watch-code-start-*' -print -quit)
+  [ -z "$orphan" ] || { reap "$pid"; fail "the code-start reference was created before path resolution finished: $orphan"; }
+  touch "$copy/bin/fm-inbox.sh"
+  : > "${gate}.release"
+
+  i=0
+  while [ "$i" -lt 200 ]; do
+    grep -F 're-executing in place' "$state/.watch-triage.log" >/dev/null 2>&1 \
+      && [ -e "$state/.last-watcher-beat" ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.05
+    i=$((i + 1))
+  done
+  is_live_non_zombie "$pid" || { reap "$pid"; fail "the watcher exited instead of reloading its startup-overlapping change: $(cat "$out")"; }
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null)" = "$pid" ] \
+    || { reap "$pid"; fail "the startup-overlap reload did not retain pid $pid"; }
+  reloads=$(grep -Fc 're-executing in place' "$state/.watch-triage.log" 2>/dev/null || true)
+  [ "$reloads" -ge 1 ] || { reap "$pid"; fail "the startup-overlapping change caused no reload"; }
+
+  PATH="$startup_bin:$dir/fakebin:$PATH" FM_TEST_STARTUP_GATE="$gate" FM_TEST_REAL_DIRNAME="$real_dirname" \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_HOME="$dir" "$copy/bin/fm-watch.sh" > "$duplicate_out" 2>&1 \
+    || { reap "$pid"; fail "the duplicate watcher did not exit cleanly"; }
+  orphan=$(find "$state" -maxdepth 1 -name '.watch-code-start-*' -print -quit)
+  [ -z "$orphan" ] || { reap "$pid"; fail "an early watcher exit left its code-start reference: $orphan"; }
+  reap "$pid"
+  pass "a watcher reloads code changed during startup and cleans early-exit references"
+}
+
+test_watcher_waits_for_full_code_tree_to_settle() {
+  local dir state copy out parse_bin gate real_bash pid i lock_pid
+  dir=$(make_case code-reload-tree-settle); state="$dir/state"
+  dir=$(cd "$dir" && pwd -P)
+  copy="$dir/fmroot"
+  parse_bin="$dir/parse-bin"
+  gate="$dir/parse-gate"
+  out="$dir/watch.out"
+  real_bash=$(command -v bash)
+  mkdir -p "$copy" "$parse_bin"
+  rsync -a --exclude node_modules --exclude __pycache__ "$ROOT/bin" "$copy/" || fail "could not copy bin/"
+  cat > "$parse_bin/bash" <<'SH'
+#!/bin/sh
+if [ "$1" = -n ] && [ "$2" = "$FM_TEST_WATCH_PATH" ] \
+  && mkdir "${FM_TEST_PARSE_GATE}.once" 2>/dev/null; then
+  : > "${FM_TEST_PARSE_GATE}.entered"
+  i=0
+  while [ ! -e "${FM_TEST_PARSE_GATE}.release" ] && [ "$i" -lt 200 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -e "${FM_TEST_PARSE_GATE}.release" ] || exit 1
+  "$FM_TEST_REAL_BASH" "$@"
+  rc=$?
+  : > "${FM_TEST_PARSE_GATE}.parsed"
+  exit "$rc"
+fi
+exec "$FM_TEST_REAL_BASH" "$@"
+SH
+  chmod +x "$parse_bin/bash"
+
+  PATH="$parse_bin:$dir/fakebin:$PATH" FM_TEST_WATCH_PATH="$copy/bin/fm-watch.sh" \
+    FM_TEST_PARSE_GATE="$gate" FM_TEST_REAL_BASH="$real_bash" FM_WATCH_HANDLING_SUCCESSOR=1 \
+    FM_HOME="$dir" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WATCH_CODE_SETTLE=1 \
+    "$real_bash" "$copy/bin/fm-watch.sh" > "$out" 2>&1 &
+  pid=$!
+  for _ in $(seq 1 100); do
+    [ -e "$state/.last-watcher-beat" ] && [ "$(cat "$state/.watch.lock/pid" 2>/dev/null)" = "$pid" ] && break
+    sleep 0.1
+  done
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null)" = "$pid" ] \
+    || { reap "$pid"; fail "the settle fixture watcher did not acquire its lock: $(cat "$out")"; }
+
+  perl -0pi -e 's/^(WATCHER_PID=\$\{BASHPID:-\$\$\}\n)/$1echo "\$WATCHER_PID" > "\$STATE\/\.test-reloaded"\n/m' \
+    "$copy/bin/fm-watch.sh"
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -e "${gate}.entered" ]; do sleep 0.05; i=$((i + 1)); done
+  [ -e "${gate}.entered" ] || { reap "$pid"; fail "the watcher never reached its pre-exec parse gate: $(cat "$out")"; }
+  printf '\n' >> "$copy/bin/fm-inbox.sh"
+  : > "${gate}.release"
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -e "${gate}.parsed" ]; do sleep 0.05; i=$((i + 1)); done
+  [ -e "${gate}.parsed" ] || { reap "$pid"; fail "the watcher never completed its gated parse"; }
+
+  i=0
+  while [ "$i" -lt 15 ]; do
+    printf '\n' >> "$copy/bin/fm-inbox.sh"
+    sleep 0.1
+    ! grep -F 're-executing in place' "$state/.watch-triage.log" >/dev/null 2>&1 \
+      || { reap "$pid"; fail "the watcher re-executed while the shell tree was still changing"; }
+    i=$((i + 1))
+  done
+
+  i=0
+  while [ "$i" -lt 100 ]; do
+    [ -s "$state/.test-reloaded" ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$(cat "$state/.test-reloaded" 2>/dev/null)" = "$pid" ] \
+    || { reap "$pid"; fail "the watcher did not reload after the full shell tree settled: $(cat "$out")"; }
+  lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null)
+  if [ "$lock_pid" != "$pid" ] || ! is_live_non_zombie "$pid"; then
+    reap "$pid"
+    fail "the settled reload did not retain its live watcher and lock"
+  fi
+  reap "$pid"
+  pass "a watcher reloads only after the full shell tree remains unchanged"
 }
 
 test_procevent_unacknowledged_result_redrains_until_handled() {
@@ -5107,6 +5409,11 @@ test_terminal_first_sight_drops_a_finished_write_deferral_chain
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_procevent_captured_result_surfaces_proactively
 test_inbox_note_wakes_the_watcher_promptly
+test_unread_inbox_note_survives_acknowledgement
+test_unread_inbox_note_resurfaces_a_bounded_number_of_times
+test_watcher_reloads_changed_code_in_place
+test_watcher_reloads_code_changed_during_startup
+test_watcher_waits_for_full_code_tree_to_settle
 test_procevent_unacknowledged_result_redrains_until_handled
 test_procevent_marker_keys_are_injective
 test_procevent_headlines_classify_queue_keys
