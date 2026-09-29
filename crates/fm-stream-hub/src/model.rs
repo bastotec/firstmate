@@ -417,6 +417,8 @@ impl Hub {
                 .clone()
         };
         let retry = caps.iter().any(|c| c == "idempotent_command_results");
+        let screen = Screen::try_new(rows, cols)
+            .map_err(|_| Error::new(500, "internal", "cannot allocate endpoint screen"))?;
         let mut s = self.state.lock().unwrap();
         Self::reap(&mut s);
         if let Some(e) = s.endpoints.get(&eid) {
@@ -450,10 +452,6 @@ impl Hub {
                     ));
                 }
             }
-            // Reject unrepresentable dimensions before indexing or allocation.
-            // The reference likewise cannot allocate a screen of this size.
-            rows.checked_mul(cols)
-                .ok_or_else(|| Error::new(500, "internal", ""))?;
             s.endpoints.insert(
                 eid.clone(),
                 Endpoint {
@@ -478,7 +476,7 @@ impl Hub {
                     seen: now(),
                     state: json!({}),
                     received: 0.,
-                    screen: Screen::new(rows, cols),
+                    screen,
                     ring: VecDeque::new(),
                     end: 0,
                 },

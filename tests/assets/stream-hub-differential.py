@@ -298,12 +298,24 @@ def exercise(p):
 
 def peers(p):
     ready = p.directory / "agent-ready"
+    home = p.directory / "peer-home"
+    home.mkdir()
+    startup = home / "startup-sentinel"
+    history = home / ".bash_history"
+    startup.write_bytes(b"startup untouched\n")
+    history.write_bytes(b"history untouched\n")
+    for name in (".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile"):
+        home.joinpath(name).write_text("printf 'startup ran\\n' > \"$HOME/startup-sentinel\"\n")
+    env = os.environ.copy()
+    env.update(HOME=str(home), SHELL="/bin/bash", HISTFILE="/dev/null")
+    for name in ("BASH_ENV", "ENV", "ZDOTDIR"):
+        env.pop(name, None)
     log = open(p.directory / "agent.log", "wb")
     process = subprocess.Popen([sys.executable, str(ROOT / "bin/fm-stream-agent.py"),
         "serve", "--hub", p.url, "--token-file", str(p.directory / "pub"),
         "--machine", "peers", "--label", "python", "--cwd", str(p.directory),
         "--ready-file", str(ready), "--state-interval", "0.1", "--poll-secs", "1"],
-        stdout=log, stderr=log)
+        stdout=log, stderr=log, env=env)
     p.processes.append(process)
     for _ in range(300):
         if ready.exists() and ready.stat().st_size:
@@ -315,11 +327,12 @@ def peers(p):
     eid = ready.read_text().strip().split()[1]
     assert len(eid) == 32 and all(c in "0123456789abcdef" for c in eid)
     result = p.api("POST", "/v1/tasks/" + eid + "/input",
-                   dict(text="printf 'PYTHON-PEER-OK\\n'", submit=True))
+                   dict(text="printf 'PYTHON-PEER-OK:%s:%s:%s\\n' \"$HOME\" \"$SHELL\" \"$HISTFILE\"", submit=True))
     assert result[0] == 200, result
+    expected = ("PYTHON-PEER-OK:%s:/bin/bash:/dev/null" % home).encode()
     for _ in range(200):
         capture = p.api("GET", "/v1/tasks/" + eid + "/capture")[1]
-        if b"PYTHON-PEER-OK" in capture:
+        if expected in capture:
             break
         time.sleep(.02)
     else:
@@ -354,6 +367,9 @@ def peers(p):
     else:
         raise AssertionError("Python agent did not publish final close")
     assert task["exit_code"] == 0
+    process.wait(timeout=8)
+    assert startup.read_bytes() == b"startup untouched\n", "peer loaded operator startup files"
+    assert history.read_bytes() == b"history untouched\n", "peer modified operator history"
     log.close()
     return out
 

@@ -529,20 +529,28 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
 }
 type HttpBody = BoxBody<Bytes, Infallible>;
 fn stream(h: Arc<Hub>, eid: String, replay: bool) -> HttpBody {
-    let mut offset = {
+    let (incarnation, mut offset) = {
         let s = h.state.lock().unwrap();
-        if replay {
-            0
-        } else {
-            s.endpoints.get(&eid).map(|e| e.end).unwrap_or(0)
-        }
+        let endpoint = s.endpoints.get(&eid);
+        (
+            endpoint.map(|e| e.created),
+            if replay {
+                0
+            } else {
+                endpoint.map(|e| e.end).unwrap_or(0)
+            },
+        )
     };
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     std::thread::spawn(move || loop {
         let mut s = h.state.lock().unwrap();
         let deadline = now() + 15.;
         loop {
-            let Some(e) = s.endpoints.get(&eid) else {
+            let Some(e) = s
+                .endpoints
+                .get(&eid)
+                .filter(|e| Some(e.created) == incarnation)
+            else {
                 return;
             };
             if e.end > offset || e.closed > 0. || now() >= deadline || tx.is_closed() {
@@ -557,7 +565,11 @@ fn stream(h: Arc<Hub>, eid: String, replay: bool) -> HttpBody {
         if tx.is_closed() {
             return;
         }
-        let Some(e) = s.endpoints.get(&eid) else {
+        let Some(e) = s
+            .endpoints
+            .get(&eid)
+            .filter(|e| Some(e.created) == incarnation)
+        else {
             return;
         };
         let (start, data) = e.bytes(offset);
@@ -650,12 +662,13 @@ async fn handle(
     }
     let owned_path = path.to_owned();
     let route_h = h.clone();
-    let answer = tokio::task::spawn_blocking(move || {
-        route(&route_h, &mut r, &owned_path, &q)
-            .unwrap_or_else(|e| Answer::Json(e.status, e.body()))
-    })
-    .await
-    .unwrap_or_else(|_| {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let spawned = std::thread::Builder::new().spawn(move || {
+        let answer = route(&route_h, &mut r, &owned_path, &q)
+            .unwrap_or_else(|e| Answer::Json(e.status, e.body()));
+        let _ = tx.send(answer);
+    });
+    let answer = if spawned.is_ok() { rx.await.ok() } else { None }.unwrap_or_else(|| {
         Answer::Json(
             500,
             json!({"ok":false,"error":"internal","message":"request handler failed"}),
@@ -858,4 +871,166 @@ fn run() -> std::result::Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn server(h: Arc<Hub>) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                let h = h.clone();
+                tokio::spawn(async move {
+                    let service = hyper::service::service_fn(move |r| handle(h.clone(), r));
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(hyper_util::rt::TokioIo::new(socket), service)
+                        .await;
+                });
+            }
+        });
+        (address, task)
+    }
+
+    async fn request(
+        address: std::net::SocketAddr,
+        method: &str,
+        path: &str,
+        body: Value,
+        cap: &str,
+    ) -> Response<Incoming> {
+        let socket = tokio::net::TcpStream::connect(address).await.unwrap();
+        let (mut sender, connection) =
+            hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket))
+                .await
+                .unwrap();
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        sender
+            .send_request(
+                hyper::Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("Host", address.to_string())
+                    .header("Authorization", "Bearer test")
+                    .header("X-Endpoint-Capability", cap)
+                    .header("Connection", "close")
+                    .body(Full::new(Bytes::from(body.to_string())))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn json_response(response: Response<Incoming>) -> (u16, Value) {
+        let status = response.status().as_u16();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    fn fixture() -> (Arc<Hub>, String, String) {
+        let h = Hub::new(
+            vec![(
+                "test".into(),
+                vec!["publish".into(), "subscribe".into(), "control".into()],
+            )],
+            30.,
+            3.,
+        );
+        let eid = "a".repeat(32);
+        let registered = h.register(&json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker","rows":2,"cols":8}), "").unwrap();
+        let cap = registered["command_capability"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        (h, eid, cap)
+    }
+
+    #[test]
+    fn idle_polls_do_not_block_frames_health_or_acknowledgements() {
+        tokio::runtime::Builder::new_current_thread().enable_all().max_blocking_threads(1).build().unwrap().block_on(async {
+            let (h, eid, cap) = fixture();
+            let (address, server) = server(h).await;
+            let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+            let mut polls = vec![];
+            for _ in 0..16 {
+                let tx = tx.clone();
+                let cap = cap.clone();
+                let path = format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=3");
+                polls.push(tokio::spawn(async move {
+                    let response = json_response(request(address, "GET", &path, json!({}), &cap).await).await;
+                    tx.send(response).await.unwrap();
+                }));
+            }
+            drop(tx);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let health = tokio::time::timeout(Duration::from_secs(1), request(address, "GET", "/v1/health", json!({}), "")).await.unwrap();
+            assert_eq!(health.status(), 200);
+            let frames = json!({"machine":"box","frames":[{"endpoint_id":eid,"b64":STANDARD.encode(b"live")}]});
+            let frame = tokio::time::timeout(Duration::from_secs(1), request(address, "POST", "/v1/agent/frames", frames, "")).await.unwrap();
+            assert_eq!(frame.status(), 200);
+            let path = format!("/v1/tasks/{eid}/input");
+            let input = tokio::spawn(async move { request(address, "POST", &path, json!({"text":"hello","submit":true}), "").await });
+            let (status, taken) = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await.unwrap().unwrap();
+            assert_eq!(status, 200);
+            let cid = taken["commands"][0]["command_id"].as_str().unwrap();
+            let result = tokio::time::timeout(Duration::from_secs(1), request(address, "POST", "/v1/agent/results", json!({"machine":"box","command_id":cid,"ok":true}), &cap)).await.unwrap();
+            assert_eq!(result.status(), 200);
+            assert_eq!(tokio::time::timeout(Duration::from_secs(1), input).await.unwrap().unwrap().status(), 200);
+            assert_eq!(request(address, "POST", "/v1/agent/frames", json!({"machine":"box","frames":[{"endpoint_id":eid,"closed":true,"exit_code":0}]}), "").await.status(), 200);
+            for poll in polls { tokio::time::timeout(Duration::from_secs(1), poll).await.unwrap().unwrap(); }
+            server.abort();
+        });
+    }
+
+    #[tokio::test]
+    async fn stream_never_reads_a_replacement_incarnation() {
+        let (h, eid, _) = fixture();
+        h.state
+            .lock()
+            .unwrap()
+            .endpoints
+            .get_mut(&eid)
+            .unwrap()
+            .feed(&[b'x'; 1024]);
+        let (address, server) = server(h.clone()).await;
+        let response = request(
+            address,
+            "GET",
+            &format!("/v1/tasks/{eid}/stream"),
+            json!({}),
+            "",
+        )
+        .await;
+        assert_eq!(response.status(), 200);
+        let (replacement_hub, _, _) = fixture();
+        let mut replacement = replacement_hub
+            .state
+            .lock()
+            .unwrap()
+            .endpoints
+            .remove(&eid)
+            .unwrap();
+        replacement.feed(b"new output");
+        replacement.close(json!(0), "agent");
+        {
+            let mut state = h.state.lock().unwrap();
+            replacement.created = state.endpoints[&eid].created + 3601.;
+            state.endpoints.insert(eid, replacement);
+        }
+        h.wake.notify_all();
+        let bytes = tokio::time::timeout(Duration::from_secs(2), response.into_body().collect())
+            .await
+            .unwrap()
+            .unwrap()
+            .to_bytes();
+        assert!(
+            bytes.is_empty(),
+            "replacement bytes or obsolete close event: {bytes:?}"
+        );
+        server.abort();
+    }
 }
