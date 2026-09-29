@@ -789,6 +789,9 @@ tests/fm-stow-cascade.test.sh 3101
 # ~8s on the dev host); refresh from CI timing artifacts per the doc below.
 tests/fm-stream-bridge-rust.test.sh 31489
 tests/fm-stream-claude-tail.test.sh 9000
+# Completed measurements from run 36642742794's green serial shards 1 and 2.
+tests/fm-stream-deck-live-e2e.test.sh 79
+tests/fm-stream-deck.test.sh 4208
 tests/fm-stream-opencode-tail.test.sh 17476
 tests/fm-subagent-pretool-check.test.sh 1030
 tests/fm-supervision-events.test.sh 719

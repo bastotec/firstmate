@@ -89,6 +89,8 @@ bin/fm-test-run.sh --check-coverage
 
 A timed-out shard uploads no artifact, so pick runs where every serial shard is green or the lane's slowest scripts go unmeasured in exactly the shard that needs them most.
 Measure native-Windows-only scripts through the focused Git Bash runner and retain that `duration_ms` separately, because the portable CI shards skip them.
+The two stream Deck suites use completed measurements from the green serial shards 1 and 2 of [run 36642742794](https://github.com/bastotec/firstmate/actions/runs/36642742794): 4208 ms for `tests/fm-stream-deck.test.sh` and 79 ms for `tests/fm-stream-deck-live-e2e.test.sh`.
+The latter measures the credential-free CI opt-in skip, not native Deck execution.
 
 ## Coverage guard
 
