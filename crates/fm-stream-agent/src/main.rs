@@ -1,4 +1,5 @@
 //! Independent pilot port. The Python deployment remains the default.
+mod command_value;
 mod pty;
 use base64::Engine;
 use fm_stream_wire::{is_machine_name, protocol_of_health, HUB_PROTOCOL};
@@ -413,10 +414,7 @@ impl Agent {
                 let mut bytes = Vec::new();
                 if !payload["text"].is_null() {
                     bytes.extend_from_slice(
-                        payload["text"]
-                            .as_str()
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| fm_stream_wire::python_repr_value(&payload["text"]))
+                        command_value::python_str(&payload["text"])
                             .as_bytes(),
                     );
                 }
@@ -474,19 +472,19 @@ impl Agent {
                 let note = if payload["note"].is_null() {
                     String::new()
                 } else {
-                    payload["note"]
-                        .as_str()
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| fm_stream_wire::python_repr_value(&payload["note"]))
+                    command_value::python_str(&payload["note"])
                 };
-                let note = note.split_whitespace().collect::<Vec<_>>().join(" ");
-                writeln!(
-                    OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&self.options.status_path)?,
-                    "{state}: {note}"
-                )?;
+                let note = note
+                    .split(|ch: char| ch.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&ch))
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let record = format!("{state}: {note}\n");
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&self.options.status_path)?
+                    .write_all(record.as_bytes())?;
                 Ok(())
             }
             kind => Err(Error::Other(format!("unknown command kind {kind:?}"))),

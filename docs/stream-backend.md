@@ -139,7 +139,7 @@ Do not use a deployed fleet's label or hub for this test: no backend launcher is
 The port uses the shared wire protocol with Reqwest/rustls, Serde JSON, POSIX PTYs, and signal-hook; it needs no Python interpreter at runtime.
 HTTP redirects are refused rather than forwarding endpoint credentials to a redirect target; point directly at the final HTTP or HTTPS hub URL.
 Option names are full names rather than argparse abbreviations, geometry is bounded to the kernel's unsigned 16-bit values, and heartbeat/poll intervals must be finite, positive, and at most one day.
-`tests/fm-stream-agent-rust.test.sh` compares both executable agents against disposable Python hubs for PTY input/output, local status writes, result-response loss, restart/rejoin, private capability refusal, stand-down contests, child exits, and signal shutdown.
+`tests/fm-stream-agent-rust.test.sh` compares both executable agents against disposable Python hubs for PTY input/output, Python command-value conversion, concurrent complete local status records, result-response loss, restart/rejoin, stale hub-generation order refusal, revoked private capability refusal, stand-down contests, child exits, and signal shutdown.
 `cargo test -p fm-stream-agent` covers the process-group signal ownership boundary with real child processes.
 Production replacement still requires launcher selection, installed-harness liveness verification through the Rust publisher, and parity with any subsequent Python protocol changes before changing the default.
 

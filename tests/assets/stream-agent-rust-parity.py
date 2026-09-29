@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shlex
 import subprocess
 import sys
 import threading
@@ -202,7 +203,7 @@ def lifecycle(executable, name):
         rig.marker(endpoint, "AFTER-INTERRUPT")
         # Private capability must not be inferable from endpoint identity.
         path = f"/v1/agent/commands?machine=pilot&endpoint={endpoint}&wait=0"
-        code, body = call(rig.url, "GET", path, token=PUB, capability="stale-generation")
+        code, body = call(rig.url, "GET", path, token=PUB, capability="invalid-capability")
         assert code == 403 and body["error"] == "endpoint_unauthorized", (code, body)
         rig.restart()
         wait(lambda: rig.task(endpoint).get("state_age_secs") is not None, "same-id restart/rejoin", 300)
@@ -227,6 +228,148 @@ def lifecycle(executable, name):
         task3 = wait(lambda: rig.task(endpoint3) if rig.task(endpoint3).get("closed_by") == "agent" else None, "signal close")
         assert task3["exit_code"] == -signal.SIGTERM, task3
         return (status.read_text(), task["closed_by"], task["exit_code"], task2["exit_code"], task3["exit_code"])
+    finally:
+        rig.close()
+
+
+def command_values(executable, name):
+    rig = Rig(name)
+    try:
+        proc, endpoint, status = rig.agent(executable)
+        rig.remember_worker(endpoint)
+        values = [
+            "ordinary 'quoted' UTF8-é-中 \\",
+            9223372036854775809,
+            18446744073709551615,
+            18446744073709551617,
+            -18446744073709551617,
+            {"z": True, "attempt": [None, False, {"text": "it's a quote", "both": "'\"", "escapes": "\\\n\t\r\x00\x1b\u00a0\u200b\ue000\U000f0000", "utf8": "é-中-😀"}], "a": 9223372036854775809},
+            [1.0, -0.0, 1e-5, 1e16, True, None, ["nested", {"unsigned": 18446744073709551615}]],
+            False,
+            0,
+            [],
+            {},
+        ]
+        expected = ""
+        for value in values + [None, "one\n  local\t record", "python\x1c\x1d\x1e\x1f separators"]:
+            code, body = call(rig.url, "POST", f"/v1/tasks/{endpoint}/status", {"state": "working", "note": value})
+            assert code == 200, body
+            delivered_value = json.loads(json.dumps(value, sort_keys=True))
+            expected += "working: " + " ".join(str(delivered_value or "").split()) + "\n"
+            assert status.read_text() == expected, (value, status.read_text(), expected)
+        receiver_ready = rig.dir / "receiver-ready"
+        received = rig.dir / "received-input"
+        receiver = ("import base64,sys; from pathlib import Path; "
+                    "Path(sys.argv[1]).touch(); "
+                    "out=open(sys.argv[2],'ab',buffering=0); "
+                    f"[(out.write(base64.b64encode(sys.stdin.buffer.readline().removesuffix(b'\\n'))+b'\\n')) for _ in range({len(values)})]")
+        rig.input(endpoint, f"{shlex.quote(sys.executable)} -c {shlex.quote(receiver)} {shlex.quote(str(receiver_ready))} {shlex.quote(str(received))}")
+        wait(receiver_ready.exists, "real PTY input receiver")
+        typed = []
+        for value in values:
+            rig.input(endpoint, value)
+            delivered_value = json.loads(json.dumps(value, sort_keys=True))
+            typed.append(base64.b64encode(str(delivered_value).encode()))
+            wait(lambda: received.exists() and len(received.read_bytes().splitlines()) == len(typed), "converted PTY bytes")
+            assert received.read_bytes().splitlines() == typed, value
+        rig.marker(endpoint, "CONVERSION-COMPLETE")
+        proc.terminate()
+        proc.wait(timeout=15)
+        return expected, received.read_bytes()
+    finally:
+        rig.close()
+
+
+def concurrent_status(executable, name):
+    rig = Rig(name)
+    try:
+        proc, endpoint, status = rig.agent(executable)
+        rig.remember_worker(endpoint)
+        stop, count = rig.dir / "writer-stop", rig.dir / "writer-count"
+        writer_code = (
+            "import os,sys,time\nfrom pathlib import Path\n"
+            "fd=os.open(sys.argv[1],os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)\n"
+            "i=0\n"
+            "while not Path(sys.argv[2]).exists():\n"
+            " os.write(fd,('done: direct-%d\\n'%i).encode()); i+=1\n"
+            " if i%128==0: time.sleep(0.001)\n"
+            "os.close(fd)\nPath(sys.argv[3]).write_text(str(i))\n"
+        )
+        writer = rig.spawn([sys.executable, "-c", writer_code, str(status), str(stop), str(count)])
+        wait(lambda: status.exists() and status.stat().st_size > 0, "direct status writer")
+        expected = [f"working: agent-{i}-" + "x" * 128 for i in range(80)]
+        before = status.stat().st_size
+        for line in expected:
+            code, body = call(rig.url, "POST", f"/v1/tasks/{endpoint}/status", {"state": "working", "note": line.removeprefix("working: ")})
+            assert code == 200, body
+        assert writer.poll() is None and status.stat().st_size > before
+        stop.touch()
+        writer.wait(timeout=5)
+        assert writer.returncode == 0
+        raw = status.read_bytes()
+        assert raw.endswith(b"\n")
+        lines = raw.decode().splitlines()
+        direct_count = int(count.read_text())
+        assert direct_count >= 128
+        assert [line for line in lines if line.startswith("working: ")] == expected
+        assert [line for line in lines if line.startswith("done: ")] == [f"done: direct-{i}" for i in range(direct_count)]
+        assert len(lines) == direct_count + len(expected), "interleaved status records"
+        proc.terminate()
+        proc.wait(timeout=15)
+        return expected
+    finally:
+        rig.close()
+
+
+def generation_refusal(executable, name):
+    rig = Rig(name)
+    try:
+        proc, endpoint, status = rig.agent(executable)
+        rig.remember_worker(endpoint)
+        rig.marker(endpoint, "BEFORE-GENERATION-CHANGE")
+        code, health = call(rig.url, "GET", "/v1/health")
+        assert code == 200 and health["generation"]
+        old_generation = health["generation"]
+        rig.restart()
+        wait(lambda: rig.task(endpoint).get("state_age_secs") is not None, "generation refusal same-id rejoin", 300)
+        rig.marker(endpoint, "AFTER-GENERATION-CHANGE")
+        code, health = call(rig.url, "GET", "/v1/health")
+        assert code == 200 and health["generation"] != old_generation
+        code, body = call(rig.url, "POST", f"/v1/tasks/{endpoint}/status", {"state": "working", "note": "generation baseline"})
+        assert code == 200, body
+        capture_before, status_before = rig.capture(endpoint), status.read_bytes()
+        effect = rig.dir / "order-executed"
+        order = {"leaf_worker_id": "pilot/worker", "execution_id": endpoint,
+                 "order_id": "generation-refusal", "hub_generation": old_generation,
+                 "text": f"printf 'ORDER-EXECUTED\\n'; touch {shlex.quote(str(effect))}; printf 'done: generation-order\\n' >> {shlex.quote(str(status))}",
+                 "submit": True}
+        code, body = call(rig.url, "POST", "/v1/orders", order)
+        assert code == 409 and body["error"] == "hub_generation_changed", (code, body)
+        time.sleep(0.3)
+        assert proc.poll() is None and not effect.exists()
+        assert rig.capture(endpoint) == capture_before and status.read_bytes() == status_before
+        order["hub_generation"] = health["generation"]
+        code, body = call(rig.url, "POST", "/v1/orders", order)
+        assert code == 200, body
+        rig.marker(endpoint, "CURRENT-GENERATION-ORDER-DRAINED")
+        assert effect.exists() and "\nORDER-EXECUTED\n" in rig.capture(endpoint)
+        assert status.read_bytes() == status_before + b"done: generation-order\n"
+        private_endpoint = "e" * 32
+        registration = {"endpoint_id": private_endpoint, "machine": "pilot", "label": "revocable", "cwd": str(rig.dir), "protocol": 3, "capabilities": ["idempotent_command_results"]}
+        code, body = call(rig.url, "POST", "/v1/agent/endpoints", registration, token=PUB)
+        assert code == 201, body
+        capability = body["command_capability"]
+        assert capability
+        path = f"/v1/agent/commands?machine=pilot&endpoint={private_endpoint}&wait=0"
+        code, body = call(rig.url, "GET", path, token=PUB, capability=capability)
+        assert code == 200 and body["commands"] == [], body
+        code, body = call(rig.url, "POST", "/v1/agent/frames", {"machine": "pilot", "frames": [{"endpoint_id": private_endpoint, "closed": True, "exit_code": 0}]}, token=PUB, capability=capability)
+        assert code == 200, body
+        code, body = call(rig.url, "GET", path, token=PUB, capability=capability)
+        assert code == 403 and body["error"] == "endpoint_unauthorized", (code, body)
+        proc.terminate()
+        proc.wait(timeout=15)
+        return status.read_bytes()
     finally:
         rig.close()
 
@@ -354,7 +497,7 @@ def refusals(executable, name):
     return outputs
 
 
-for function in (lifecycle, lost_result, lost_kill_result, final_rejoin, contest, refusals):
+for function in (command_values, concurrent_status, generation_refusal, lifecycle, lost_result, lost_kill_result, final_rejoin, contest, refusals):
     python = function(AGENTS[0], function.__name__ + "-python")
     rust = function(AGENTS[1], function.__name__ + "-rust")
     assert python == rust, (function.__name__, python, rust)
