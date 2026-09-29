@@ -408,7 +408,10 @@ async fn idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgea
         "",
     );
     assert_eq!(status, 201);
-    let cap = registered["command_capability"].as_str().unwrap().to_owned();
+    let cap = registered["command_capability"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     // Exceed the default blocking executor's 512 slots through the workspace
     // binary, not a server configured with an artificially smaller pool.
     let (started_tx, mut started_rx) = tokio::sync::mpsc::channel(513);
@@ -431,7 +434,9 @@ async fn idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgea
         let connection = tokio::spawn(connection);
         polls.push(tokio::spawn(async move {
             let request = hyper::Request::builder()
-                .uri(format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=25"))
+                .uri(format!(
+                    "/v1/agent/commands?machine=box&endpoint={eid}&wait=25"
+                ))
                 .header("Host", &address)
                 .header("Authorization", "Bearer test")
                 .header("X-Endpoint-Capability", cap)
