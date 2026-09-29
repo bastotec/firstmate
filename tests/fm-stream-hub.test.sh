@@ -2104,8 +2104,9 @@ order() {  # <leaf> <execution> <text> [order-id]
 
 test_orderability_follows_the_endpoint_registration_capability() {
   start_hub order-capability --command-ack-secs 1
-  local legacy capable out registration_reply API_CAPABILITY=""
+  local legacy retained capable out registration_reply API_CAPABILITY=""
   legacy=$(python3 -c 'import os; print(os.urandom(16).hex())')
+  retained=$(python3 -c 'import os; print(os.urandom(16).hex())')
   capable=$(python3 -c 'import os; print(os.urandom(16).hex())')
   registration_reply=$(publish POST /v1/agent/endpoints "$(jq -nc --arg id "$legacy" \
     '{endpoint_id: $id, machine: "legacy", label: "recovering", cwd: "/tmp"}')")
@@ -2125,6 +2126,31 @@ test_orderability_follows_the_endpoint_registration_capability() {
     "the refusal should name the missing endpoint capability"
   assert_equals "$(printf '%s' "$out" | jq -r '.delivered')" false \
     "an order refused before routing must be known undelivered"
+  # A retained protocol-3 client already knows result retries, but not steer.
+  API_CAPABILITY=""
+  registration_reply=$(publish POST /v1/agent/endpoints "$(jq -nc --arg id "$retained" \
+    '{endpoint_id: $id, machine: "retained", label: "recovering", cwd: "/tmp",
+      capabilities: ["idempotent_command_results"]}')")
+  assert_equals "$(api_code)" 201 "a retained result-capable client should register"
+  API_CAPABILITY=$(printf '%s' "$registration_reply" | jq -r .command_capability)
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$retained" \
+    '{endpoint_id: $id, machine: "retained", label: "recovering", cwd: "/tmp",
+      capabilities: ["idempotent_command_results"]}')" >/dev/null
+  assert_equals "$(api_code)" 201 "the retained client should re-register unchanged"
+  out=$(order retained/recovering "$retained" "echo RETAINED-MUST-NOT-RUN" retained-native-contract)
+  printf 'retained-client order response: %s\n' "$out"
+  assert_equals "$(api_code)" 409 "result retries alone must not authorize native steering"
+  assert_equals "$(printf '%s' "$out" | jq -r '.reason')" endpoint_not_orderable \
+    "a retained client must be refused before command routing"
+  assert_equals "$(printf '%s' "$out" | jq -r '.delivered')" false \
+    "the retained client's order must be known undelivered"
+  out=$(publish GET "/v1/agent/commands?machine=retained&endpoint=$retained&wait=0")
+  assert_equals "$(printf '%s' "$out" | jq -r '.commands | length')" 0 \
+    "refusing native steering must leave no unsupported command for the retained client"
+  publish POST /v1/agent/endpoints "$(jq -nc --arg id "$retained" \
+    '{endpoint_id: $id, machine: "retained", label: "recovering", cwd: "/tmp",
+      capabilities: ["idempotent_command_results", "native_steering_receiver"]}')" >/dev/null
+  assert_equals "$(api_code)" 409 "a retained endpoint cannot upgrade its receiver contract in place"
   API_CAPABILITY=""
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$capable" \
     '{endpoint_id: $id, machine: "capable", label: "recovering", cwd: "/tmp",
