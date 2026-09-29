@@ -122,6 +122,35 @@ Epochs remain limited to signed 64-bit integers, unlike Python's arbitrary-preci
 `tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
 Live comparisons exclude process-local clocks; help presentation, top-level command choices, and transport-library error details are not byte contracts.
 
+## Rust hub pilot
+
+The opt-in `fm-stream-hub` workspace binary implements the hub HTTP surfaces alongside the Python reference.
+`bin/fm-stream.sh` still starts the Python hub; building the Rust crate does not select, stop, replace, or restart the central service.
+Rust 1.96 or newer is required to build it.
+The binary's `--help` owns its CLI flags, and it shares the protocol constant and identity validation with `fm-stream-wire`.
+It listens over HTTP only, like the Python hub, with the same TLS-terminator requirement when accessed across machines.
+
+Run an isolated pilot with a newly created token file, an ephemeral loopback port, and ready/pid paths belonging only to that pilot:
+
+```sh
+cargo build --release --locked -p fm-stream-hub
+target/release/fm-stream-hub serve --bind 127.0.0.1 --port 0 \
+  --token-file /path/to/pilot-only-tokens \
+  --ready-file /path/to/pilot-only-ready --pid-file /path/to/pilot-only-pid
+```
+
+Point only disposable Python agents and a separate Python bridge process at the address in the pilot ready file.
+Do not redirect live agents, reuse the fleet's ready/pid files, or mirror control requests from production: an order is an action on a worker, not passive shadow traffic.
+`tests/fm-stream-hub-rust.test.sh` drives isolated Rust and Python hubs from equivalent state, compares HTTP/stream records and lifecycle outcomes, exercises the deployed Python peers, and prints observational startup/RSS/frame-throughput measurements without enforcing a budget.
+The existing hub and bridge suites accept `FM_TEST_STREAM_HUB_BINARY` for HTTP compatibility runs; the hub suite's accelerated Python-retention fixture remains reference-only, with Rust expiry boundaries covered by the crate's tests.
+[Runtime verification](verification/runtime-backends.md#stream) records current evidence and host-specific gaps.
+
+Replacing the central hub is a separate, explicitly approved quiet-window operation, not part of this pilot.
+Before replacement, require green compatibility checks, a pilot against the deployed agent/bridge versions, the same protocol and token-class configuration, verified endpoint capability rejoin, an unchanged external URL/TLS termination, and an available Python rollback command.
+Drain or resolve every queued, taken-but-unacknowledged, or otherwise unconfirmed command/order before stopping either hub; neither implementation persists its journal, generation, registry, terminal history, or result records across a restart.
+Plan and verify agent re-registration after replacement without interpreting a temporarily empty registry or a timed-out read as a worker-gone verdict.
+Rollback also requires a quiet window because it resets those same in-memory records.
+
 ## Tail adapters
 
 The agent owns a pseudoterminal, so it can only publish a worker whose harness firstmate runs through the runtime backend.

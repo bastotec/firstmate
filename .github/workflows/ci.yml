@@ -24,17 +24,20 @@ concurrency:
 
 jobs:
   rust-stream:
-    name: Rust stream bridge parity
+    name: Rust stream parity
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --component rustfmt
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
       - name: Check and test the locked workspace
         run: |
           cargo +stable fmt --all --check
           cargo +stable test --workspace --locked
+          cargo +stable clippy -p fm-stream-hub --all-targets --no-deps -- -D warnings
+      - name: Compare isolated hubs with deployed Python peers
+        run: bin/fm-test-run.sh tests/fm-stream-hub-rust.test.sh
 
   lint:
     name: Lint
