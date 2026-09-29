@@ -549,8 +549,7 @@ The real renderer comparison exercised twelve outcome lines and reported collaps
 
 ## 2026-09-07 Pi 0.85.1 renderer and export-DOM verification
 
-This host tracks Pi latest, so the version this contract's evidence is pinned to moves.
-The renderer and lifecycle evidence below was taken against installed `@earendil-works/pi-coding-agent` 0.85.1 with `@earendil-works/pi-server` 0.85.0 also installed globally.
+The earlier renderer and lifecycle evidence below was taken against installed `@earendil-works/pi-coding-agent` 0.85.1 with `@earendil-works/pi-server` 0.85.0 also installed globally.
 
 Calm's rendered rows are unchanged across 0.84.4, 0.85.0, and 0.85.1.
 `FM_PI_PACKAGE_DIR` points `tests/fm-calm-pi-extension.test.sh` at an isolated install, so each comparison ran against its own temporary dependency tree and never mutated the globally installed packages.
@@ -622,7 +621,7 @@ This is evidence for the supported primary Firstmate presentation surface, not w
 The suite binds every interactive and restart launch to the absolute Pi executable selected before its version probe, so a tmux shell's PATH cannot silently select a different version.
 
 Pi 0.99.0 introduced a stock HTML `H` toggle for custom messages marked `display: false`.
-Those messages remain absent from the initial visible conversation but now exist as CSS-hidden DOM nodes; the complete session data and provenance tree remain intact.
+The Pi 0.99.1 exports exercised here retain those messages as CSS-hidden DOM nodes with complete session data and provenance in the tree; [`calm.md`](calm.md) owns the user-facing export behavior.
 The real-browser regression measures computed display and client rectangles in a scratch export, checks positive visibility of genuine conversation and current operational user markers, verifies reveal/re-hide through `H` where exposed, and rejects a deliberately visible synthetic node.
 It does not change the exported product artifact, persisted session, or Calm's presentation policy.
 

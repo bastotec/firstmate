@@ -4079,6 +4079,12 @@ JS
       boat_water_changed=1
       break
     fi
+    # Compare consecutive observed frames: the geometry/color assertions above
+    # can outlast a boat step, so its original column may already be behind us.
+    if [ -n "$boat_water_line" ] && [ -n "$boat_column_two" ]; then
+      boat_column_one=$boat_column_two
+      boat_water_first=$boat_water_line
+    fi
     sleep 0.05
     active_screen_wait=$((active_screen_wait + 1))
   done
