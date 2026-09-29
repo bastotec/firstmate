@@ -75,6 +75,7 @@ import urllib.request
 AGENT_VERSION = "2.1.0"
 AGENT_PROTOCOL = 3
 IDEMPOTENT_RESULT_CAPABILITY = "idempotent_command_results"
+NATIVE_STEERING_CAPABILITY = "native_steering_receiver"
 
 STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
                  "failed", "resolved")
@@ -494,7 +495,7 @@ def registration(options: argparse.Namespace, endpoint_id: str) -> dict:
         "cwd": options.cwd,
         "rows": options.rows,
         "cols": options.cols,
-        "capabilities": [IDEMPOTENT_RESULT_CAPABILITY],
+        "capabilities": [IDEMPOTENT_RESULT_CAPABILITY, NATIVE_STEERING_CAPABILITY],
         "protocol": AGENT_PROTOCOL,
     }
 
@@ -841,16 +842,21 @@ class Agent:
 
     # --- commands ---------------------------------------------------------
 
+    def deck_receiver(self):
+        if not self.status_path:
+            return None
+        from fm_stream_deck import Receiver
+        state, filename = os.path.split(self.status_path)
+        return Receiver(state, filename.removesuffix('.status'), self.endpoint_id)
+
     def apply_command(self, command: dict) -> tuple:
         kind = command.get("kind")
         payload = command.get("payload") or {}
         if kind == "steer":
             if command.get("endpoint_id") != self.endpoint_id:
                 return (False, "stale execution; steer was not applied")
-            if self.status_path:
-                from fm_stream_deck import Receiver
-                state, filename = os.path.split(self.status_path)
-                receiver = Receiver(state, filename.removesuffix('.status'), self.endpoint_id)
+            receiver = self.deck_receiver()
+            if receiver is not None:
                 result = receiver.apply(str(payload.get('order_id') or command['command_id']),
                                         str(payload.get('execution_id') or ''),
                                         str(payload.get('text') or ''), self.pty.alive)
@@ -1014,10 +1020,16 @@ class Agent:
                 try:
                     ok, error = self.apply_command(command)
                 except Exception as exc:  # noqa: BLE001 - application is unconfirmed
-                    ok, error = None, str(exc)
+                    sys.stderr.write("fm-stream-agent: command application unconfirmed: %s\n" % exc)
+                    if command.get('kind') == 'steer':
+                        receiver = self.deck_receiver()
+                        payload = command.get('payload') or {}
+                        if receiver is not None and receiver.find(
+                                str(payload.get('order_id') or command['command_id'])):
+                            pending[command['command_id']] = command
+                    continue
                 if ok is None:
-                    if error == 'Deck application pending':
-                        pending[command['command_id']] = command
+                    pending[command['command_id']] = command
                     # Taken is not accepted: leave uncertain results unresolved
                     # in the existing hub journal, never fabricate a refusal.
                     continue

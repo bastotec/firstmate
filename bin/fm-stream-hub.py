@@ -122,6 +122,7 @@ HUB_VERSION = "2.0.0"
 HUB_PROTOCOL = 3
 RESULT_RETRY_CAPABILITY = "idempotent_command_results"
 ORDERABLE_ENDPOINT_CAPABILITY = "result_retry_orderability"
+NATIVE_STEERING_CAPABILITY = "native_steering_receiver"
 HUB_CAPABILITIES = ("current_execution", RESULT_RETRY_CAPABILITY,
                     ORDERABLE_ENDPOINT_CAPABILITY, "endpoint_command_auth",
                     "deck_midturn_orders")
@@ -953,7 +954,8 @@ class Endpoint:
 
     def __init__(self, endpoint_id: str, machine: str, label: str, cwd: str,
                  rows: int, cols: int, ring_bytes: int, scrollback: int,
-                 result_retry: bool = False, command_capability: str = "") -> None:
+                 result_retry: bool = False, command_capability: str = "",
+                 native_steering: bool = False) -> None:
         self.endpoint_id = endpoint_id
         self.machine = machine
         self.label = label
@@ -961,6 +963,7 @@ class Endpoint:
         self.rows = rows
         self.cols = cols
         self.result_retry = result_retry
+        self.native_steering = native_steering
         self.command_capability = command_capability or secrets.token_urlsafe(32)
         self.created_at = _now()
         self.closed_at = 0.0
@@ -1269,6 +1272,7 @@ class Hub:
             raise HubError(HTTPStatus.BAD_REQUEST, "bad_capabilities",
                            "capabilities must be an array of strings")
         result_retry = RESULT_RETRY_CAPABILITY in capabilities
+        native_steering = NATIVE_STEERING_CAPABILITY in capabilities
         # A label is only claimed by an endpoint that still has an agent, so
         # the silence check runs before the claim is tested rather than waiting
         # for the next listing call to notice.
@@ -1283,7 +1287,8 @@ class Hub:
                     raise HubError(HTTPStatus.CONFLICT, "endpoint_owned_elsewhere",
                                    "endpoint %s is registered to machine %s"
                                    % (endpoint_id, existing.machine))
-                if existing.result_retry != result_retry:
+                if (existing.result_retry != result_retry
+                        or existing.native_steering != native_steering):
                     raise HubError(HTTPStatus.CONFLICT, "endpoint_capabilities_changed",
                                    "endpoint %s cannot change its registered capabilities"
                                    % endpoint_id)
@@ -1310,7 +1315,8 @@ class Hub:
             endpoint = Endpoint(endpoint_id, machine, label, cwd, rows, cols,
                                 DEFAULT_RING_BYTES, DEFAULT_SCROLLBACK,
                                 result_retry=result_retry,
-                                command_capability=capability)
+                                command_capability=capability,
+                                native_steering=native_steering)
             self.endpoints[endpoint_id] = endpoint
             self.touch_machine(machine)
             return endpoint
@@ -1656,6 +1662,13 @@ class Hub:
                     order, HTTPStatus.CONFLICT, "endpoint_not_orderable",
                     "execution %s did not advertise reliable result acknowledgement, so "
                     "the order was not delivered" % current.endpoint_id)
+
+            if not current.native_steering:
+                self._refuse_order(
+                    order, HTTPStatus.CONFLICT, "endpoint_not_orderable",
+                    "execution %s has no native steering receiver; retained agents remain "
+                    "available for input, status and kill, but this order was not delivered; "
+                    "upgrade the agent at a safe worker boundary" % current.endpoint_id)
 
             try:
                 self.submit_command(current, "steer", {

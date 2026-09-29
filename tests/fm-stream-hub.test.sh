@@ -2124,10 +2124,10 @@ test_orderability_follows_the_endpoint_registration_capability() {
   API_CAPABILITY=""
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$capable" \
     '{endpoint_id: $id, machine: "capable", label: "recovering", cwd: "/tmp",
-      capabilities: ["idempotent_command_results"]}')" >/dev/null
+      capabilities: ["idempotent_command_results", "native_steering_receiver"]}')" >/dev/null
   out=$(order capable/recovering "$capable" "echo STILL-NEVER" capable-result-contract)
   assert_equals "$(api_code)" 504 \
-    "advertising result retries should make the endpoint eligible for routing"
+    "advertising result retries and a native receiver should make the endpoint eligible for routing"
   assert_equals "$(printf '%s' "$out" | jq -r '.reason')" no_agent_ack \
     "the capable endpoint should reach command routing rather than capability refusal"
   pass "hub: endpoint registration controls Bridge orderability"
@@ -2279,7 +2279,7 @@ test_an_order_no_agent_took_is_refused_rather_than_left_in_doubt() {
   endpoint=$(python3 -c 'import os; print(os.urandom(16).hex())')
   publish POST /v1/agent/endpoints "$(jq -nc --arg id "$endpoint" \
     '{endpoint_id: $id, machine: "ghost", label: "unattended", cwd: "/tmp",
-      capabilities: ["idempotent_command_results"]}')" >/dev/null
+      capabilities: ["idempotent_command_results", "native_steering_receiver"]}')" >/dev/null
   assert_equals "$(api_code)" 201 "the unattended endpoint should register"
   out=$(order ghost/unattended "$endpoint" "echo NEVER")
   assert_equals "$(api_code)" 504 "an order no agent acknowledged must not be reported accepted"

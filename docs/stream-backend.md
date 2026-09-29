@@ -164,7 +164,8 @@ The Deck receiver's publication, turn binding, reconciliation, and refusal mecha
 A Deck driver requires a build supporting `deck run --steer-dir`; an unavailable interface is refused without changing the running turn.
 The owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership or application produces no record and remains pending.
 Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
-The PTY agent advertises that capability back on every endpoint registration, and the hub places Bridge orders only for endpoints that do.
+The PTY agent advertises both reliable result acknowledgement and `native_steering_receiver` on every endpoint registration, and the hub requires both per-endpoint capabilities before placing Bridge orders.
+Retained protocol-3 agents without the receiver capability can re-register and retain input, status, and kill support, but Bridge orders are refused before routing rather than sent through legacy PTY input; upgrade those agents only at a safe worker boundary.
 Protocol-2 agents cannot register, while protocol-3 tail publishers remain visible but non-orderable.
 Each internal HTTP order carries the hub generation returned by compatibility negotiation; a replacement hub rejects a stale generation before placement, the adapter renegotiates before retrying, and the Bridge `command`, `command_ack`, and `command_nack` records do not change.
 

@@ -17,7 +17,6 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import time
 
 
 def atomic_write(path, body):
@@ -111,7 +110,7 @@ class Receiver:
         sync_dir(record.parent)
         return record
 
-    def apply(self, order_id, execution, text, alive, wait_secs=0):
+    def apply(self, order_id, execution, text, alive):
         """None means this is not a Deck driver; all other answers are final facts.
 
         Unknown application is returned honestly as unconfirmed, never as an
@@ -119,9 +118,6 @@ class Receiver:
         """
         if execution != self.endpoint:
             return False, 'stale execution; steer was not applied'
-        limit = 65536 - 2 * len(str(self.inbox).encode('utf-8')) - 400
-        if not text.strip() or len(text.encode('utf-8')) > limit:
-            return False, 'Deck steering is blank or exceeds interface size with source reference'
         with self.locked():
             found = self.find(order_id)
             if found:
@@ -130,11 +126,14 @@ class Receiver:
                     return False, 'steering idempotency conflict'
             else:
                 active = self.active()
-                if active is None:
+                if active is None or not active['active']:
                     return None
+                limit = 65536 - 2 * len(str(self.inbox).encode('utf-8')) - 400
+                if not text.strip() or len(text.encode('utf-8')) > limit:
+                    return False, 'Deck steering is blank or exceeds interface size with source reference'
                 if not active['supported']:
                     return False, 'Deck has no --steer-dir interface; no PTY fallback'
-                if not active['active'] or not alive():
+                if not alive():
                     return False, 'no active Deck turn; steer was not applied'
                 binding = {'order_id': order_id, 'execution': execution,
                            'turn': active['turn']}
@@ -173,22 +172,17 @@ class Receiver:
                         if len(guidance.encode('utf-8')) > 65536:
                             return False, 'Deck steering exceeds interface size after source reference'
                         atomic_write(projection / name, guidance)
-        deadline = time.monotonic() + wait_secs
-        while True:
+        if handled.is_file():
+            return True, ''
+        if rejected.is_file():
+            return False, 'Deck rejected the steering message'
+        active = self.active()
+        if (not active or not active['active'] or active['turn'] != binding['turn']
+                or not alive()):
             if handled.is_file():
                 return True, ''
-            if rejected.is_file():
-                return False, 'Deck rejected the steering message'
-            active = self.active()
-            if (not active or not active['active'] or active['turn'] != binding['turn']
-                    or not alive()):
-                # Close the finish/ack race with a final authoritative read.
-                if handled.is_file():
-                    return True, ''
-                return None, 'Deck application unconfirmed for original turn; retained in task inbox'
-            if time.monotonic() >= deadline:
-                return None, 'Deck application pending'
-            time.sleep(0.1)
+            return None, 'Deck application unconfirmed for original turn; retained in task inbox'
+        return None, 'Deck application pending'
 
 
 def main():
