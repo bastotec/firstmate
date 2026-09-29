@@ -1,0 +1,46 @@
+FM_TEST_BEGIN 2026-09-29T19:51:27Z tests/fm-procevent.test.sh family=standalone expected_gate_skip=none
+
+SCENARIO: claim confirmation under source-lock contention
+fm-procevent reconcile (exit=0): reconciled: published=0 started=2 stopped=0 uncertain=0 failed=0
+SOURCE                       ADAPTER      OWNER      PENDING
+aa-own-src                   lavish       live       0
+zz-stall-src                 lavish       live       0
+Published claim protocol:
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/fm-procevent-tests.QlWSTx/hoc
+5588
+.claim.AwG0lW-5588
+Tue Sep 29 16:51:28 2026     bash /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh _start aa-own-src
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/fm-procevent-tests.QlWSTx/hoc/state/procevent
+16777233:528884975
+active
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/fm-procevent-tests.QlWSTx/hoc/state
+16777233
+528884961
+501
+755
+Launch-failure episode absent; both registrations run /bin/sleep 120.
+ok - a live claim is confirmed even while the source lock is contended
+
+SCENARIO: malformed claim remains uncertain
+Claim protocol: torn
+fm-procevent reconcile (exit=0): reconciled: published=0 started=0 stopped=0 uncertain=1 failed=0
+SOURCE                       ADAPTER      OWNER      PENDING
+torn-src                     lavish       uncertain  0
+Lock-free claim observation returned uncertain (exit=2).
+ok - an unreadable claim record confirms nothing and is preserved as uncertain
+
+SCENARIO: genuine launch failure and repair
+fm-procevent reconcile damaged argv (exit=1): reconciled: published=0 started=0 stopped=0 uncertain=0 failed=1
+check: process-event source cleanup-src is registered but its launch did not prove it took the source's claim within FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS, so nothing is confirmed to be collecting from it; reconcile reports that as failed= and keeps launching it every supervision cycle. If it stays that way, check the source command and the adapter binary the registration names, and run an attached bin/fm-procevent.sh start cleanup-src to reproduce a refusal on its stderr - the detached launch discards it, and a hand-run reconcile only counts it as failed=. A later cycle that finds the source owned ends this episode on its own, so a runner that was merely slow to claim needs nothing from you.
+No claim, runner marker, or staged output remains. Failure episode protocol:
+16777233-528885354 2042616043
+fm-procevent reconcile repaired argv: reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0
+SOURCE                       ADAPTER      OWNER      PENDING
+cleanup-src                  lavish       live       0
+Repair confirmed ownership and cleared the launch-failure episode.
+ok - a failed launch leaves no litter and a repaired source re-arms cleanly
+ALL HANDSHAKE SCENARIOS PASSED
+FM_TEST_END 2026-09-29T19:51:37Z tests/fm-procevent.test.sh exit=0 duration_ms=10362 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=10775
+FM_TEST_SUMMARY_FAMILY family=standalone count=1 duration_ms=10362 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-procevent.test.sh duration_ms=10362

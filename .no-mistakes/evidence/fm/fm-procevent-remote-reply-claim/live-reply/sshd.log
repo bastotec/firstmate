@@ -1,0 +1,131 @@
+Server listening on 127.0.0.1 port 50493.
+Connection from 127.0.0.1 port 50549 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 50549 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 50549 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 5314
+Starting session: command for bastotecnologia from 127.0.0.1 port 50549 id 0
+Received disconnect from 127.0.0.1 port 50549:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 50549
+Connection from 127.0.0.1 port 56656 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 56656 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 56656 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 90294
+Starting session: command for bastotecnologia from 127.0.0.1 port 56656 id 0
+Received disconnect from 127.0.0.1 port 56656:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 56656
+Connection from 127.0.0.1 port 56698 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 56698 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 56698 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 91808
+Starting session: command for bastotecnologia from 127.0.0.1 port 56698 id 0
+Received disconnect from 127.0.0.1 port 56698:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 56698
+Connection from 127.0.0.1 port 57735 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 57735 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 57735 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 96737
+Starting session: command for bastotecnologia from 127.0.0.1 port 57735 id 0
+Received disconnect from 127.0.0.1 port 57735:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 57735
+Connection from 127.0.0.1 port 63217 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 63217 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 63217 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 78549
+Starting session: command for bastotecnologia from 127.0.0.1 port 63217 id 0
+Received disconnect from 127.0.0.1 port 63217:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 63217
+Connection from 127.0.0.1 port 63219 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 63219 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 63219 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 80059
+Starting session: command for bastotecnologia from 127.0.0.1 port 63219 id 0
+Received disconnect from 127.0.0.1 port 63219:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 63219
+Connection from 127.0.0.1 port 63227 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 63227 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 63227 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 88841
+Starting session: command for bastotecnologia from 127.0.0.1 port 63227 id 0
+Received disconnect from 127.0.0.1 port 63227:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 63227
+Connection from 127.0.0.1 port 63236 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 63236 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 63236 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 93277
+Starting session: command for bastotecnologia from 127.0.0.1 port 63236 id 0
+Received disconnect from 127.0.0.1 port 63236:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 63236
+Connection from 127.0.0.1 port 64868 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 64868 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 64868 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 2472
+Starting session: command for bastotecnologia from 127.0.0.1 port 64868 id 0
+Received disconnect from 127.0.0.1 port 64868:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 64868
+Connection from 127.0.0.1 port 64878 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 64878 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 64878 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 2906
+Starting session: command for bastotecnologia from 127.0.0.1 port 64878 id 0
+Received disconnect from 127.0.0.1 port 64878:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 64878
+Connection from 127.0.0.1 port 64889 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 64889 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 64889 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 6600
+Starting session: command for bastotecnologia from 127.0.0.1 port 64889 id 0
+Received disconnect from 127.0.0.1 port 64889:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 64889
+Connection from 127.0.0.1 port 64900 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 64900 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 64900 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 13803
+Starting session: command for bastotecnologia from 127.0.0.1 port 64900 id 0
+Received disconnect from 127.0.0.1 port 64900:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 64900
+Connection from 127.0.0.1 port 64902 on 127.0.0.1 port 50493
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Postponed publickey for bastotecnologia from 127.0.0.1 port 64902 ssh2 [preauth]
+Accepted key ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII found at /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key.pub:1
+Accepted publickey for bastotecnologia from 127.0.0.1 port 64902 ssh2: ED25519 SHA256:qc5CJ2nmuBe3t2VYC6KQmzYsRPCDj/VZOQCcUP4SOII
+BSM audit: bsm_audit_session_setup: setaudit_addr failed: Operation not permitted
+User child is on pid 14154
+Starting session: command for bastotecnologia from 127.0.0.1 port 64902 id 0
+Received disconnect from 127.0.0.1 port 64902:11: disconnected by user
+Disconnected from user bastotecnologia 127.0.0.1 port 64902

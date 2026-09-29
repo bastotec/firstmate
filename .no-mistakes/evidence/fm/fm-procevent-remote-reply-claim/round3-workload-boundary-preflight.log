@@ -1,0 +1,13 @@
+Real SSH isolation preflight (read-only; performed this round)
+Command:
+ssh -o BatchMode=yes -o ConnectTimeout=10 -o ControlMaster=no -o ControlPath=none -o UpdateHostKeys=no workload 'printf "SSH transport: "; uname -s; printf "Remote identity: "; id -un; p=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T; if [ -d "$p" ]; then printf "Permitted worktree exists: "; ls -ld "$p"; else printf "Permitted worktree absent: %s\n" "$p"; fi; command -v fm-remote-entrypoint.sh || true'
+Exit status: 0
+Exact stdout:
+SSH transport: Linux
+Remote identity: bruno
+Permitted worktree absent: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T
+/usr/local/bin/fm-remote-entrypoint.sh
+
+Authentication is available; credentials are not the blocker. The required isolated remote home, append-only source, code snapshot, and remote-job worker state cannot be created within the current worktree because that worktree is absent on workload. Intentional synthetic remote-state writes are not incidental development-toolchain cache/temp writes. No remote mutation was attempted, no remote worker or source was started, and no production mate, record, credential, permission, or shared configuration was changed.
+
+The real-SSH claim/capture/mirror/acknowledgement/re-arm scenario is untested. Unblocking requires an explicit exception to the current write boundary authorizing a dedicated synthetic remote directory and isolated worker state on workload, or an already-available SSH endpoint accessing this exact worktree. The local suite's stubbed-SSH success is supporting behavior evidence only, not a pass for real transport.

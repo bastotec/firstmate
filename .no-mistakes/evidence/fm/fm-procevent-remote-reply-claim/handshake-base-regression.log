@@ -1,0 +1,27 @@
+FM_TEST_BEGIN 2026-09-29T19:51:54Z tests/fm-procevent.test.sh family=standalone expected_gate_skip=none
+
+SCENARIO: claim confirmation under source-lock contention
+fm-procevent reconcile (exit=1): reconciled: published=0 started=1 stopped=0 uncertain=0 failed=1
+SOURCE                       ADAPTER      OWNER      PENDING
+aa-own-src                   lavish       live       0
+zz-stall-src                 lavish       live       0
+Published claim protocol:
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/fm-procevent-tests.z66pgo/hoc
+44909
+.claim.S9hrPG-44909
+Tue Sep 29 16:51:56 2026     bash /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/base/bin/fm-procevent.sh _start aa-own-src
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/fm-procevent-tests.z66pgo/hoc/state/procevent
+16777233:528886714
+active
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/fm-procevent-tests.z66pgo/hoc/state
+16777233
+528886681
+501
+755
+not ok - a live claim hidden behind a held source lock lost its launch: reconciled: published=0 started=1 stopped=0 uncertain=0 failed=1 (missing: 'started=2')
+--- output ---
+reconciled: published=0 started=1 stopped=0 uncertain=0 failed=1
+FM_TEST_END 2026-09-29T19:52:04Z tests/fm-procevent.test.sh exit=1 duration_ms=9602 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=10029
+FM_TEST_SUMMARY_FAMILY family=standalone count=1 duration_ms=9602 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-procevent.test.sh duration_ms=9602

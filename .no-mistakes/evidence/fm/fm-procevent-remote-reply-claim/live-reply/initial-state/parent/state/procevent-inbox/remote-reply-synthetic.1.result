@@ -1,0 +1,12 @@
+schema=fm-remote-delta.v1
+status=delta
+path=state/parent-replies.status
+from_offset=0
+to_offset=70
+from_prefix_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+to_prefix_sha256=4573c65e3a7a2f1af118ae77a4968e735860feb65734d987340af28499444bd2
+payload_sha256=4573c65e3a7a2f1af118ae77a4968e735860feb65734d987340af28499444bd2
+payload_bytes=70
+reason=
+
+done [corr=0123456789abcdef]: live first reply (data/reply/report.md)

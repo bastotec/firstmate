@@ -1,0 +1,64 @@
+{
+  "verdict": "pass",
+  "tested_head_sha": "02a3e259484850cfc5c3e813c5ef2bc585dc4ca4",
+  "summary": "All four requested scenarios were driven through running product executables using isolated homes and claims; remote reply capture and application used authenticated real OpenSSH and the real remote entrypoint and job worker.",
+  "scope": {
+    "transport": "Dedicated unprivileged loopback sshd with worktree-local disposable host/client keys, strict pinned host verification, no global SSH configuration changes, no production credentials",
+    "remote_actor": "Dedicated synthetic mate whose append-only log was written by separate authenticated SSH sessions, not an LLM mate or an existing production mate",
+    "worker": "Real remote job worker using FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux and a worktree-local FM_REMOTE_JOB_STATE_ROOT to avoid touching macOS LaunchAgents; native LaunchAgent provisioning was not tested",
+    "code": "Primary executables from the target worktree; remote executables copied from git archive HEAD into an isolated tracked code root, because remote root/home must not overlap",
+    "boundaries": "No production homes, mate records, permissions, credentials, shared configuration, packages, or LaunchAgents were modified; no linters or broad test suites were run"
+  },
+  "scenarios": [
+    {
+      "name": "Claim confirmation while a source lock remains contended",
+      "result": "pass",
+      "live": true,
+      "evidence": "scenarios.log, SCENARIO 1 through PASS scenario 1",
+      "observed": "reconciled: published=0 started=2 stopped=0 uncertain=0 failed=0; lock-free observation confirmed pid 72701 live while the claim's source lock was held; list subsequently showed both sources live; no launch-failure episode existed",
+      "construction": "Real /bin/sleep long-poll sources, real source locks held by independent processes; planted pacing stamp and 20-second launch floor keep the claim as the only confirmation signal"
+    },
+    {
+      "name": "Unreadable claim remains uncertain rather than confirming ownership",
+      "result": "pass",
+      "live": true,
+      "evidence": "scenarios.log, SCENARIO 2 through PASS scenario 2",
+      "observed": "Malformed serialized claim produced lock-free observation rc=2; reconcile started=0 uncertain=1 failed=0; list reported uncertain and the claim's original bytes were preserved",
+      "construction": "Unreadable means an invalid/truncated serialized claim, not a permission-denied file; no production permissions were changed"
+    },
+    {
+      "name": "Unstartable source cleans up and closes its failure episode after repair",
+      "result": "pass",
+      "live": true,
+      "evidence": "scenarios.log, SCENARIO 3 through PASS scenario 3; initial-state/failure/state/.wake-queue",
+      "observed": "An isolated registration with no executable argv yielded exit 1 and failed=1, a durable launch-failed wake and episode, but no claim, runner record, or staged output; public re-registration repaired it, then reconcile started=1 failed=0 and removed the failure episode"
+    },
+    {
+      "name": "SSH remote reply claims, captures, mirrors, acknowledges and re-arms",
+      "result": "pass",
+      "live": true,
+      "evidence": "remote-pass.log; sshd.log; final-state/parent/state/procevent-inbox; final-state/parent/state/remote-replies/synthetic.cursor; final-state/remote/state/parent-replies.status",
+      "observed": "Two separate SSH-appended replies each produced a claim and a durable captured result and handled marker; parent status contained exactly two mirrored lines, the remote log retained exactly two original lines, the fetched markdown document was byte-identical, the cursor advanced to 118 bytes, the source re-registered after each reply, each reconcile reported started=1 failed=0, and no launch-failure episode existed"
+    }
+  ],
+  "verification_failures": [
+    {
+      "evidence": "scenarios.log, initial-state/parent",
+      "cause": "Evidence-driver assertion error: wait_path used -s for an intentionally zero-byte handled marker, although the product had already captured, mirrored, and acknowledged the first reply",
+      "fix": "Observe marker existence with -e; rerun only scenario 4"
+    },
+    {
+      "evidence": "remote-reverify.log, second-attempt-parent",
+      "cause": "Evidence-driver lifecycle error: its sole second reconcile ran before the previous capturing runner released its claim, so it correctly reported started=0; unlike a live watcher, the driver had no later periodic cycle",
+      "fix": "Wait for the previous claim's release before the next watcher-equivalent reconcile and require started=1; focused scenario 4 re-verification exited 0"
+    }
+  ],
+  "source_changes": "None required: target product behavior passed. Only transient evidence-driver assertions were corrected, and their final executable driver and transport wrapper are attached as evidence.",
+  "commands": [
+    "bash -x .no-mistakes/live-reply-isolation/drive-live.sh > scenarios.log 2>&1 (scenarios 1-3 passed; scenario 4 exposed an evidence-driver assertion error)",
+    "bash -x .no-mistakes/live-reply-isolation/drive-live.sh remote > remote-reverify.log 2>&1 (first reply passed; exposed an evidence-driver lifecycle error)",
+    "bash -x .no-mistakes/live-reply-isolation/drive-live.sh remote > remote-pass.log 2>&1 (exit 0, both reply generations passed)"
+  ],
+  "attachments": ["drive-live.sh", "ssh-transport.sh", "sshd.conf", "sshd.log", "scenarios.log", "remote-reverify.log", "remote-pass.log", "initial-state/", "second-attempt-parent/", "final-state/"],
+  "cleanup": "Each driver invocation swept only its four isolated homes and stopped its dedicated remote worker tree; the dedicated sshd and remaining transient files are retired separately, with cleanup.log recording final verification. Disposable private keys are not attached."
+}

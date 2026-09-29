@@ -1,0 +1,8 @@
+READ-ONLY REAL-TRANSPORT PREFLIGHT
+Server host key pinned from /etc/ssh/ssh_host_ed25519_key.pub in an isolated known_hosts file.
+Command: ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o UserKnownHostsFile="$PWD/.test-tmp/known_hosts" localhost true
+bastotecnologia@localhost: Permission denied (publickey,password,keyboard-interactive).
+SSH exit=255
+Command: ssh-add -l
+The agent has no identities.
+No authorized_keys, credentials, production registry, or system service was modified. Remote mutation was not attempted.

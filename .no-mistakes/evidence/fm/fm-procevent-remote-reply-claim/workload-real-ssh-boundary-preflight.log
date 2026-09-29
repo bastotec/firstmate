@@ -1,0 +1,17 @@
+Remaining scenario: real-SSH remote reply claim, capture, mirror, acknowledgement, and re-arm.
+Verdict: blocked before mutation; not a product test pass.
+
+Read-only targeted preflight executed from the assigned worktree:
+ssh -o BatchMode=yes -o ConnectTimeout=5 -o UpdateHostKeys=no -o ForwardAgent=no -o ClearAllForwardings=yes -o 'SendEnv=-*' workload 'printf "AUTHENTICATED\n"; uname -s; if [ -d /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T ]; then printf "EXACT_WORKTREE_PRESENT\n"; else printf "EXACT_WORKTREE_ABSENT\n"; fi'
+Exit status: 0
+Exact stdout:
+AUTHENTICATED
+Linux
+EXACT_WORKTREE_ABSENT
+
+The workload SSH route authenticates successfully without interactive credentials. The prior localhost authentication failure does not apply to this route.
+The exact authorized worktree directory is absent on workload. A synthetic remote home, append-only reply source, code snapshot, and isolated remote-job worker state would require intentional writes outside the current worktree. The workspace boundary allows only incidental toolchain temp/cache writes and explicitly requested evidence files outside the worktree; intentional remote fixture writes are neither.
+Isolation within the authorized workspace cannot be established with this route. Per the stop-before-mutation requirement, no remote fixtures were created, no remote executable was staged, no remote worker was started, and no production permissions, credentials, configuration, mate records, or sources were modified.
+Claim, capture, mirror, acknowledgement, and re-arm through this real SSH route remain untested. The successful authentication preflight is not evidence for those behaviors.
+Unblocking requires explicit authorization for a dedicated synthetic remote directory and worker state on workload, or a real SSH endpoint accessing this exact worktree.
+No source/test changes were made in this iteration; earlier iterations' intentional test changes were preserved.

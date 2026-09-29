@@ -1,0 +1,131 @@
+FM_TEST_BEGIN 2026-09-29T20:57:39Z tests/fm-remote-reply.test.sh family=secondmate expected_gate_skip=none
+REMOTE INVENTORY BEFORE: /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T absent
+/usr/bin/bash
+/usr/bin/git
+/usr/bin/perl
+/usr/bin/python3
+REMOTE ROOT MODE: 700
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+Remote product snapshot is byte-identical; only bash wrapper supplies isolated TMPDIR.
+registered: remote-reply-synthetic (remote-reply)
+armed: remote-reply-synthetic offset=0
+
+REAL SSH GENERATION 1
+fm-procevent reconcile: reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0
+Claim protocol:
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-test-tmp/fm-remote-reply-ssh.DxjGUT/parent
+98394
+.claim.oRlAX3-98394
+Tue Sep 29 17:57:44 2026     bash /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh _start remote-reply-synthetic
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-test-tmp/fm-remote-reply-ssh.DxjGUT/parent/state/procevent
+16777233:529136769
+active
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-test-tmp/fm-remote-reply-ssh.DxjGUT/parent/state
+16777233
+529136428
+501
+755
+SOURCE                       ADAPTER      OWNER      PENDING
+remote-reply-synthetic       remote-reply live       0
+Real remote job running: /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/jobs/job-OF4rRS
+Remote job argv: fm-remote-delta-read.sh state/parent-replies.status 0 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 30 
+2892250 2892151 2892151 /bin/bash /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-job-worker.sh --serve
+not ok - real-SSH delta was not automatically applied and acknowledged
+
+REMOTE INVENTORY BEFORE CLEANUP (only authorized tree):
+444 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/00/b2f173ac339838184233e2f74e32a41b26ba08
+444 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/0f/ed1e3efa5b8584a15a87a2d2133f09e30d5b87
+444 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/2b/be61f0cbc014a8a01d281b17d34f3a7a197e5b
+444 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/31/887ac27baba4fd2b1f1a046d797286f7eac0ea
+444 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/31/9fe6272bdf2cbae59f81c63f5fe934f05dddd7
+444 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/42/6fe75d27272fac2b3f300b3720381b47ca6d47
+444 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/57/445c52ba08e8cf898b9a154b0b53c0d4e6cd82
+444 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/98/aa3e50d6ddd77f8fe2308966a3ae3e8a865c19
+444 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/d4/c26bd66971ac406ac52cadc96915257d98015e
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/seq
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims-reaped
+644 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/._AGENTS.md
+644 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/AGENTS.md
+664 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/config
+664 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/description
+664 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/HEAD
+664 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/index
+664 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/info/exclude
+664 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/data/reply/report.md
+664 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/state/parent-replies.status
+664 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/logs/dev.firstmate.remote-job.log
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/jobs
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/logs
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims/1
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims/2
+755 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code
+755 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/._.
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/._bin
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/._bash
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/bash
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/._fm-remote-delta-read.sh
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-delta-read.sh
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/._fm-remote-entrypoint.sh
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-entrypoint.sh
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-file.sh
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/._fm-remote-file.sh
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/._fm-remote-job-lib.sh
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-job-lib.sh
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-job-worker.sh
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/._fm-remote-job-worker.sh
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-wake-lib.sh
+755 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/._fm-wake-lib.sh
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/info
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/00
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/0f
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/2b
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/31
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/42
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/57
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/98
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/d4
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/info
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/pack
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/refs
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/refs/heads
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/refs/tags
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/data
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/data/reply
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/state
+775 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/tmp
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/applypatch-msg.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/commit-msg.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/fsmonitor-watchman.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/post-update.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-applypatch.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-commit.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-merge-commit.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/prepare-commit-msg.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-push.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-rebase.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-receive.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/push-to-checkout.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/sendemail-validate.sample
+775 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/update.sample
+REMOTE INVENTORY AFTER CLEANUP: /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T absent; no synthetic processes remain.
+FM_TEST_END 2026-09-29T20:59:36Z tests/fm-remote-reply.test.sh exit=1 duration_ms=116678 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=116975
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=116678 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-remote-reply.test.sh duration_ms=116678

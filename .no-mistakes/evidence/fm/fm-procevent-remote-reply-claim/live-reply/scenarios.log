@@ -1,0 +1,1247 @@
++ set -euo pipefail
++ ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T
++ D=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation
++ R=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime
++ export TMPDIR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/tmp FM_PROCEVENT_CLAIM_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims
++ TMPDIR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/tmp
++ FM_PROCEVENT_CLAIM_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims
++ mkdir -p /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended/state /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/uncertain/state /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure/state /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/data /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/remote/data/reply /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/remote/state
++ trap cleanup EXIT
++ printf 'SCENARIO 1: real reconcile, sleeping long-poll processes, held source locks\n'
+SCENARIO 1: real reconcile, sleeping long-poll processes, held source locks
++ pe contended register lavish aa-live -- /bin/sleep 120
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh register lavish aa-live -- /bin/sleep 120
+registered: aa-live (lavish)
++ pe contended register lavish zz-live -- /bin/sleep 120
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh register lavish zz-live -- /bin/sleep 120
+registered: zz-live (lavish)
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
+++ bash -c '
+  . "$1/bin/fm-pr-lib.sh"; . "$1/bin/fm-wake-lib.sh"; . "$1/bin/fm-procevent-lib.sh"
+  identity=$(fm_pr_file_identity "$2/state/procevent/aa-live.source")
+  fm_procevent_launch_floor_stamp_path "$2/state" aa-live "$identity"
+' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ stamp=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended/state/procevent/aa-live.16777233-528849175.last-launch
++ perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'print clock_gettime(CLOCK_MONOTONIC), "\n"'
++ hold zz-live
++ HOLDER=68953
++ ZZ=68953
++ wait_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.ready
++ local p=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.ready
++ (( i=0 ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.ready ']'
++ sleep 0.05
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ bash -c '
+    . "$1/bin/fm-pr-lib.sh"; . "$1/bin/fm-wake-lib.sh"; . "$1/bin/fm-procevent-lib.sh"
+    fm_procevent_source_lock_acquire "$2" || exit 1
+    trap "fm_procevent_source_lock_release \"$2\"" EXIT
+    printf "ready\n" > "$3"
+    for ((i=0;i<1200;i++)); do [ -e "$4" ] && exit 0; sleep 0.05; done
+    exit 1
+  ' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T zz-live /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.ready /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.release
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.ready ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.ready ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.ready ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.ready ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.ready ']'
++ return 0
++ REC=71345
++ wait_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim
++ local p=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim
++ (( i=0 ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=4
++ FM_PROCEVENT_LAUNCH_FLOOR_SECONDS=20
++ pe contended reconcile
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/aa-live.claim ']'
++ return 0
++ hold aa-live
++ HOLDER=74413
++ AA=74413
++ wait_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/aa-live.ready
++ local p=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/aa-live.ready
++ (( i=0 ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/aa-live.ready ']'
++ sleep 0.05
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ bash -c '
+    . "$1/bin/fm-pr-lib.sh"; . "$1/bin/fm-wake-lib.sh"; . "$1/bin/fm-procevent-lib.sh"
+    fm_procevent_source_lock_acquire "$2" || exit 1
+    trap "fm_procevent_source_lock_release \"$2\"" EXIT
+    printf "ready\n" > "$3"
+    for ((i=0;i<1200;i++)); do [ -e "$4" ] && exit 0; sleep 0.05; done
+    exit 1
+  ' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T aa-live /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/aa-live.ready /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/aa-live.release
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/aa-live.ready ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/aa-live.ready ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/aa-live.ready ']'
++ return 0
++ touch /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.release
++ wait 71345
++ out='+ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
+reconciled: published=0 started=2 stopped=0 uncertain=0 failed=0'
++ printf '%s\n' '+ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
+reconciled: published=0 started=2 stopped=0 uncertain=0 failed=0'
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
+reconciled: published=0 started=2 stopped=0 uncertain=0 failed=0
++ contains '+ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
+reconciled: published=0 started=2 stopped=0 uncertain=0 failed=0' started=2
++ [[ + FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
+reconciled: published=0 started=2 stopped=0 uncertain=0 failed=0 == *\s\t\a\r\t\e\d\=\2* ]]
++ contains '+ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
+reconciled: published=0 started=2 stopped=0 uncertain=0 failed=0' failed=0
++ [[ + FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
+reconciled: published=0 started=2 stopped=0 uncertain=0 failed=0 == *\f\a\i\l\e\d\=\0* ]]
++ '[' '!' -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended/state/procevent/.aa-live.launch-failed ']'
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ bash -c '
+  . "$1/bin/fm-pr-lib.sh"; . "$1/bin/fm-wake-lib.sh"; . "$1/bin/fm-procevent-lib.sh"
+  fm_procevent_claim_state_observed aa-live
+  printf "observed-live pid=%s\n" "$FM_PROCEVENT_CLAIM_PID"
+  kill -0 "$FM_PROCEVENT_CLAIM_PID"
+' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T
+observed-live pid=72701
++ touch /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/aa-live.release
++ wait 74413
++ wait 68953
+++ pe contended list
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
+++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh list
++ out='SOURCE                       ADAPTER      OWNER      PENDING
+aa-live                      lavish       live       0
+zz-live                      lavish       live       0'
++ printf '%s\n' 'SOURCE                       ADAPTER      OWNER      PENDING
+aa-live                      lavish       live       0
+zz-live                      lavish       live       0'
+SOURCE                       ADAPTER      OWNER      PENDING
+aa-live                      lavish       live       0
+zz-live                      lavish       live       0
++ contains 'SOURCE                       ADAPTER      OWNER      PENDING
+aa-live                      lavish       live       0
+zz-live                      lavish       live       0' live
++ [[ SOURCE                       ADAPTER      OWNER      PENDING
+aa-live                      lavish       live       0
+zz-live                      lavish       live       0 == *\l\i\v\e* ]]
++ pe contended sweep-home
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh sweep-home
+retired: aa-live
+retired: zz-live
+swept: attempted=2
++ printf 'PASS scenario 1\n'
+PASS scenario 1
++ printf 'SCENARIO 2: unreadable serialized claim, no guessed ownership\n'
+SCENARIO 2: unreadable serialized claim, no guessed ownership
++ pe uncertain register lavish unreadable-live -- /bin/sleep 120
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/uncertain
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh register lavish unreadable-live -- /bin/sleep 120
+registered: unreadable-live (lavish)
++ printf 'torn\n'
++ chmod 600 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/unreadable-live.claim
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/uncertain
++ bash -c '
+  . "$1/bin/fm-pr-lib.sh"; . "$1/bin/fm-wake-lib.sh"; . "$1/bin/fm-procevent-lib.sh"
+  fm_procevent_claim_state_observed unreadable-live; rc=$?
+  printf "lock-free observation rc=%s\n" "$rc"
+  [ "$rc" -eq 2 ]
+' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T
+lock-free observation rc=2
+++ pe uncertain reconcile
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/uncertain
+++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
++ out='reconciled: published=0 started=0 stopped=0 uncertain=1 failed=0'
++ printf '%s\n' 'reconciled: published=0 started=0 stopped=0 uncertain=1 failed=0'
+reconciled: published=0 started=0 stopped=0 uncertain=1 failed=0
++ contains 'reconciled: published=0 started=0 stopped=0 uncertain=1 failed=0' started=0
++ [[ reconciled: published=0 started=0 stopped=0 uncertain=1 failed=0 == *\s\t\a\r\t\e\d\=\0* ]]
++ contains 'reconciled: published=0 started=0 stopped=0 uncertain=1 failed=0' uncertain=1
++ [[ reconciled: published=0 started=0 stopped=0 uncertain=1 failed=0 == *\u\n\c\e\r\t\a\i\n\=\1* ]]
++ contains 'reconciled: published=0 started=0 stopped=0 uncertain=1 failed=0' failed=0
++ [[ reconciled: published=0 started=0 stopped=0 uncertain=1 failed=0 == *\f\a\i\l\e\d\=\0* ]]
+++ pe uncertain list
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/uncertain
+++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh list
++ out='SOURCE                       ADAPTER      OWNER      PENDING
+unreadable-live              lavish       uncertain  0'
++ printf '%s\n' 'SOURCE                       ADAPTER      OWNER      PENDING
+unreadable-live              lavish       uncertain  0'
+SOURCE                       ADAPTER      OWNER      PENDING
+unreadable-live              lavish       uncertain  0
++ contains 'SOURCE                       ADAPTER      OWNER      PENDING
+unreadable-live              lavish       uncertain  0' uncertain
++ [[ SOURCE                       ADAPTER      OWNER      PENDING
+unreadable-live              lavish       uncertain  0 == *\u\n\c\e\r\t\a\i\n* ]]
++ '[' torn = torn ']'
++ rm /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/unreadable-live.claim
++ pe uncertain sweep-home
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/uncertain
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh sweep-home
+retired: unreadable-live
+swept: attempted=1
++ printf 'PASS scenario 2\n'
+PASS scenario 2
++ printf 'SCENARIO 3: unstartable registration, failure cleanup, repair\n'
+SCENARIO 3: unstartable registration, failure cleanup, repair
++ pe failure register lavish broken-live -- /bin/sleep 120
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh register lavish broken-live -- /bin/sleep 120
+registered: broken-live (lavish)
++ source=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure/state/procevent/broken-live.source
++ awk '/^argv:$/ { print; exit } { print }' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure/state/procevent/broken-live.source
++ mv /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure/state/procevent/broken-live.source.tmp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure/state/procevent/broken-live.source
++ chmod 600 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure/state/procevent/broken-live.source
++ rc=0
+++ FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=2
+++ pe failure reconcile
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure
+++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
++ out='reconciled: published=0 started=0 stopped=0 uncertain=0 failed=1'
++ rc=1
++ printf 'rc=%s %s\n' 1 'reconciled: published=0 started=0 stopped=0 uncertain=0 failed=1'
+rc=1 reconciled: published=0 started=0 stopped=0 uncertain=0 failed=1
++ '[' 1 -ne 0 ']'
++ contains 'reconciled: published=0 started=0 stopped=0 uncertain=0 failed=1' failed=1
++ [[ reconciled: published=0 started=0 stopped=0 uncertain=0 failed=1 == *\f\a\i\l\e\d\=\1* ]]
++ '[' '!' -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/broken-live.claim ']'
++ '[' '!' -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure/state/procevent/broken-live.runner ']'
+++ find /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure/state/procevent -name '.broken-live.*.output' -print
++ '[' -z '' ']'
++ '[' -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure/state/procevent/.broken-live.launch-failed ']'
++ cat /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure/state/.wake-queue
+1790710991	1	check	procevent:broken-live:launch-failed:16777233-528850892-2124421795	check: process-event source broken-live is registered but its launch did not prove it took the source's claim within FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS, so nothing is confirmed to be collecting from it; reconcile reports that as failed= and keeps launching it every supervision cycle. If it stays that way, check the source command and the adapter binary the registration names, and run an attached bin/fm-procevent.sh start broken-live to reproduce a refusal on its stderr - the detached launch discards it, and a hand-run reconcile only counts it as failed=. A later cycle that finds the source owned ends this episode on its own, so a runner that was merely slow to claim needs nothing from you.
++ pe failure register lavish broken-live -- /bin/sleep 120
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh register lavish broken-live -- /bin/sleep 120
+registered: broken-live (lavish)
+++ pe failure reconcile
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure
+++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
++ out='reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0'
++ printf '%s\n' 'reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0'
+reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0
++ contains 'reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0' started=1
++ [[ reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0 == *\s\t\a\r\t\e\d\=\1* ]]
++ contains 'reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0' failed=0
++ [[ reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0 == *\f\a\i\l\e\d\=\0* ]]
++ '[' '!' -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure/state/procevent/.broken-live.launch-failed ']'
++ pe failure list
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh list
+SOURCE                       ADAPTER      OWNER      PENDING
+broken-live                  lavish       live       0
++ pe failure sweep-home
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh sweep-home
+retired: broken-live
+swept: attempted=1
++ printf 'PASS scenario 3\n'
+PASS scenario 3
++ printf 'SCENARIO 4: dedicated synthetic mate via real authenticated OpenSSH\n'
+SCENARIO 4: dedicated synthetic mate via real authenticated OpenSSH
++ printf -- '- synthetic - live reply validation (host: live-synthetic; root: %s; home: %s; scope: synthetic only; projects: none; added 2026-08-13)\n' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/code /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/remote
++ printf '# Synthetic answer\n\nLive SSH transport verified.\n'
++ :
++ export FM_SSH_BIN=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/ssh-transport.sh FM_REMOTE_REPLY_WAIT_SECONDS=30
++ FM_SSH_BIN=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/ssh-transport.sh
++ FM_REMOTE_REPLY_WAIT_SECONDS=30
++ remote /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent-remote-reply.sh arm synthetic
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent-remote-reply.sh arm synthetic
+registered: remote-reply-synthetic (remote-reply)
+armed: remote-reply-synthetic offset=0
+++ remote /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent
+++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh reconcile
++ out='reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0'
++ printf '%s\n' 'reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0'
+reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0
++ contains 'reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0' started=1
++ [[ reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0 == *\s\t\a\r\t\e\d\=\1* ]]
++ contains 'reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0' failed=0
++ [[ reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0 == *\f\a\i\l\e\d\=\0* ]]
++ wait_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/remote-reply-synthetic.claim
++ local p=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/remote-reply-synthetic.claim
++ (( i=0 ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/remote-reply-synthetic.claim ']'
++ return 0
++ cat /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/claims/remote-reply-synthetic.claim
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent
+88927
+.claim.6Sc9gu-88927
+Tue Sep 29 16:43:14 2026     bash /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh _start remote-reply-synthetic
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent
+16777233:528851213
+active
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state
+16777233
+528849146
+501
+755
++ PORT=50493
++ ssh_remote 'printf '\''%s\n'\'' '\''done [corr=0123456789abcdef]: live first reply (data/reply/report.md)'\'' >> '\''/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/remote/state/parent-replies.status'\'''
++ /usr/bin/ssh -F /dev/null -p 50493 -i /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/client-key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/known_hosts -o GlobalKnownHostsFile=/dev/null -o UpdateHostKeys=no -o ControlMaster=no -o ControlPath=none -- bastotecnologia@127.0.0.1 'printf '\''%s\n'\'' '\''done [corr=0123456789abcdef]: live first reply (data/reply/report.md)'\'' >> '\''/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/remote/state/parent-replies.status'\'''
++ wait_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled
++ local p=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled
++ (( i=0 ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled ']'
++ sleep 0.05
++ (( i++ ))
++ (( i<200 ))
++ echo 'FAIL waiting for /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled'
+FAIL waiting for /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent/state/procevent-inbox/remote-reply-synthetic.1.handled
++ return 1
++ cleanup
++ touch /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/aa-live.release /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/zz-live.release
++ for h in contended uncertain failure parent
++ pe contended sweep-home
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/contended
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh sweep-home
+swept: attempted=0
++ for h in contended uncertain failure parent
++ pe uncertain sweep-home
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/uncertain
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh sweep-home
+swept: attempted=0
++ for h in contended uncertain failure parent
++ pe failure sweep-home
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/failure
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh sweep-home
+swept: attempted=0
++ for h in contended uncertain failure parent
++ pe parent sweep-home
++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/parent
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh sweep-home
+retired: remote-reply-synthetic
+swept: attempted=1
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-reply-isolation/runtime/jobs/worker.pid ']'
++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-remote-job-lib.sh
+++ FM_REMOTE_JOB_LABEL=dev.firstmate.remote-job
+++ FM_REMOTE_JOB_MAX_BYTES=1048576
+++ FM_REMOTE_JOB_QUEUE_TIMEOUT=360
+++ FM_REMOTE_JOB_TIMEOUT=360
+++ FM_REMOTE_JOB_WAIT_GRACE=30
+++ FM_REMOTE_JOB_POLL_SECONDS=0.05
+++ FM_REMOTE_JOB_REAP_SECONDS=3600
+++ FM_REMOTE_JOB_STAGE_REAP_SECONDS=600
+++ FM_REMOTE_JOB_SEQ_CLAIM_REAP_SECONDS=86400
+++ FM_REMOTE_JOB_SEQ_CLAIM_REAP_INTERVAL=3600
+++ FM_REMOTE_JOB_PREEMPTED_EXIT=76
+++ FM_REMOTE_JOB_OPERATOR_PATH=
+++ FM_REMOTE_JOB_CHILD_PATH=
+++ FM_REMOTE_JOB_STATE=
+++ FM_REMOTE_JOB_JOBS=
+++ FM_REMOTE_JOB_SEQ_CLAIMS=
+++ FM_REMOTE_JOB_ID=
+++ FM_REMOTE_JOB_STDOUT=
+++ FM_REMOTE_JOB_STDERR=
+++ FM_REMOTE_JOB_EXIT=
+++ FM_REMOTE_JOB_ERROR=
+++ FM_REMOTE_JOB_REPAIRED=0
++ fm_remote_job_stop_worker_tree 92519
++ local pid=92519 pgid i=0
++ case "$pid" in
++ '[' 92519 -gt 1 ']'
+++ fm_remote_job_worker_process_group 92519
++ pgid=92328
++ '[' -n 92328 ']'
++ kill -TERM -- -92328
++ '[' -n 92328 ']'
++ kill -0 -- -92328
++ kill -0 92519
++ '[' 0 -lt 50 ']'
++ i=1
++ sleep 0.1
++ '[' -n 92328 ']'
++ kill -0 -- -92328
++ '[' -z 92328 ']'
++ '[' -n 92328 ']'
++ kill -0 -- -92328
++ return 0

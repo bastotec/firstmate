@@ -1,0 +1,216 @@
+FM_TEST_BEGIN 2026-09-29T21:02:15Z tests/fm-remote-reply.test.sh family=secondmate expected_gate_skip=none
+REMOTE INVENTORY BEFORE: /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T absent
+/usr/bin/bash
+/usr/bin/git
+/usr/bin/perl
+/usr/bin/python3
+REMOTE ROOT MODE: 700
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+Remote product snapshot is byte-identical; only bash wrapper supplies isolated TMPDIR.
+registered: remote-reply-synthetic (remote-reply)
+armed: remote-reply-synthetic offset=0
+
+REAL SSH GENERATION 1
+fm-procevent reconcile: reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0
+Claim protocol:
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-test-tmp/fm-remote-reply-ssh.ip7pQ2/parent
+96049
+.claim.Y0tyrb-96049
+Tue Sep 29 18:02:20 2026     bash /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh _start remote-reply-synthetic
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-test-tmp/fm-remote-reply-ssh.ip7pQ2/parent/state/procevent
+16777233:529153615
+active
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-test-tmp/fm-remote-reply-ssh.ip7pQ2/parent/state
+16777233
+529153304
+501
+755
+SOURCE                       ADAPTER      OWNER      PENDING
+remote-reply-synthetic       remote-reply live       0
+Real remote job running: /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/jobs/job-AhQsu5
+Remote job argv: fm-remote-delta-read.sh state/parent-replies.status 0 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 30 
+3182103 3181886 3181886 /bin/bash /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-job-worker.sh --serve
+Captured delta protocol:
+schema=fm-remote-delta.v1
+status=delta
+path=state/parent-replies.status
+from_offset=0
+to_offset=79
+from_prefix_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+to_prefix_sha256=a9d1188cb034fd359ba69796cdedbd4f9d8411dae5215f36eca2d4ff15c40128
+payload_sha256=a9d1188cb034fd359ba69796cdedbd4f9d8411dae5215f36eca2d4ff15c40128
+payload_bytes=79
+reason=
+
+done [corr=0123456789abcde1]: SSH generation 1 verified (data/reply/report.md)
+Mirrored status stream:
+done [corr=0123456789abcde1]: SSH generation 1 verified (data/remote-secondmates/synthetic/data/reply/report.md)
+Durable empty handled-marker contract:
+-rw-------@ 1 bastotecnologia  staff  0 Sep 29 18:02 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-test-tmp/fm-remote-reply-ssh.ip7pQ2/parent/state/procevent-inbox/remote-reply-synthetic.1.handled
+Committed cursor protocol:
+schema=fm-remote-reply-cursor.v1
+offset=79
+prefix_sha256=a9d1188cb034fd359ba69796cdedbd4f9d8411dae5215f36eca2d4ff15c40128
+Re-armed registration protocol:
+adapter=remote-reply
+argc=3
+argv:
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent-remote-reply.sh
+source
+synthetic
+Source bytes preserved, document byte-identical, acknowledgement durable, next registration present, launch-failure episode absent.
+Idempotent handler confirmation after automatic application and re-arm:
+ingested: synthetic appended=0 offset=79
+registered: remote-reply-synthetic (remote-reply)
+armed: remote-reply-synthetic offset=79
+already-handled: remote-reply-synthetic 1
+
+REAL SSH GENERATION 2
+fm-procevent reconcile: reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0
+Claim protocol:
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-test-tmp/fm-remote-reply-ssh.ip7pQ2/parent
+19052
+.claim.DtMNID-19052
+Tue Sep 29 18:02:34 2026     bash /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh _start remote-reply-synthetic
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-test-tmp/fm-remote-reply-ssh.ip7pQ2/parent/state/procevent
+16777233:529154881
+active
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-test-tmp/fm-remote-reply-ssh.ip7pQ2/parent/state
+16777233
+529153304
+501
+755
+SOURCE                       ADAPTER      OWNER      PENDING
+remote-reply-synthetic       remote-reply live       0
+Real remote job running: /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/jobs/job-8voiMC
+Remote job argv: fm-remote-delta-read.sh state/parent-replies.status 79 a9d1188cb034fd359ba69796cdedbd4f9d8411dae5215f36eca2d4ff15c40128 30 
+3182103 3181886 3181886 /bin/bash /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-job-worker.sh --serve
+Captured delta protocol:
+schema=fm-remote-delta.v1
+status=delta
+path=state/parent-replies.status
+from_offset=79
+to_offset=158
+from_prefix_sha256=a9d1188cb034fd359ba69796cdedbd4f9d8411dae5215f36eca2d4ff15c40128
+to_prefix_sha256=faeadaea0638e3bf65f7d581cf1cf9499d9d5acb6a58185f71b83bfe4c9a30f7
+payload_sha256=cfb4650122f298fe525a0f27d8c1dcc9de3b61c19a214039f15f0cbb587c3764
+payload_bytes=79
+reason=
+
+done [corr=0123456789abcde2]: SSH generation 2 verified (data/reply/report.md)
+Mirrored status stream:
+done [corr=0123456789abcde1]: SSH generation 1 verified (data/remote-secondmates/synthetic/data/reply/report.md)
+done [corr=0123456789abcde2]: SSH generation 2 verified (data/remote-secondmates/synthetic/data/reply/report.md)
+Durable empty handled-marker contract:
+-rw-------@ 1 bastotecnologia  staff  0 Sep 29 18:02 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.no-mistakes/live-test-tmp/fm-remote-reply-ssh.ip7pQ2/parent/state/procevent-inbox/remote-reply-synthetic.2.handled
+Committed cursor protocol:
+schema=fm-remote-reply-cursor.v1
+offset=158
+prefix_sha256=faeadaea0638e3bf65f7d581cf1cf9499d9d5acb6a58185f71b83bfe4c9a30f7
+Re-armed registration protocol:
+adapter=remote-reply
+argc=3
+argv:
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent-remote-reply.sh
+source
+synthetic
+Source bytes preserved, document byte-identical, acknowledgement durable, next registration present, launch-failure episode absent.
+Idempotent handler confirmation after automatic application and re-arm:
+ingested: synthetic appended=0 offset=158
+registered: remote-reply-synthetic (remote-reply)
+armed: remote-reply-synthetic offset=158
+already-handled: remote-reply-synthetic 2
+ok - real SSH claims, non-destructive captures, mirrors, acknowledges, and re-arms for a second reply
+
+REMOTE INVENTORY BEFORE CLEANUP (only authorized tree):
+400 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/00/b2f173ac339838184233e2f74e32a41b26ba08
+400 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/0f/ed1e3efa5b8584a15a87a2d2133f09e30d5b87
+400 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/2b/be61f0cbc014a8a01d281b17d34f3a7a197e5b
+400 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/31/887ac27baba4fd2b1f1a046d797286f7eac0ea
+400 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/31/9fe6272bdf2cbae59f81c63f5fe934f05dddd7
+400 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/57/445c52ba08e8cf898b9a154b0b53c0d4e6cd82
+400 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/98/aa3e50d6ddd77f8fe2308966a3ae3e8a865c19
+400 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/d4/c26bd66971ac406ac52cadc96915257d98015e
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/AGENTS.md
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/config
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/description
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/HEAD
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/index
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/info/exclude
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/data/reply/report.md
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/state/parent-replies.status
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/seq
+600 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims-reaped
+664 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/logs/dev.firstmate.remote-job.log
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/info
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/00
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/0f
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/2b
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/31
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/57
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/98
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/d4
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/info
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/objects/pack
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/refs
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/refs/heads
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/refs/tags
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/data
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/data/reply
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/state
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/jobs
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/logs
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims/1
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims/2
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims/3
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims/4
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims/5
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims/6
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims/7
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/.seq-claims/8
+700 d /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/tmp
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/bash
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-delta-read.sh
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-entrypoint.sh
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-file.sh
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-job-lib.sh
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-job-worker.sh
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-wake-lib.sh
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/applypatch-msg.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/commit-msg.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/fsmonitor-watchman.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/post-update.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-applypatch.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-commit.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-merge-commit.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/prepare-commit-msg.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-push.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-rebase.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/pre-receive.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/push-to-checkout.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/sendemail-validate.sample
+700 f /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/.git/hooks/update.sample
+REMOTE INVENTORY AFTER CLEANUP: /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T absent; no synthetic processes remain.
+FM_TEST_END 2026-09-29T21:02:46Z tests/fm-remote-reply.test.sh exit=0 duration_ms=30805 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=31145
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=30805 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-remote-reply.test.sh duration_ms=30805
+Independent final check: authorized synthetic remote tree absent.

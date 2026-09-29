@@ -1,0 +1,50 @@
+{
+  "verdict": "pass",
+  "tested_head_sha": "b7e1b1063f32db820995a97d212eace2e040e4c8",
+  "changes_required": false,
+  "testing_summary": "Completed the remaining real-SSH remote-reply scenario using the expressly authorized synthetic workload tree and isolated local registration, claims, and parent home; retained previously verified three-scenario and base-regression evidence without rerunning unrelated checks.",
+  "root_cause": "The original product failure was launch confirmation contending for the same source lock that publishes the runner claim, hiding healthy ownership. The target already fixes that with read-only claim observation. The outstanding finding was a validation setup/authorization blocker, resolved by the captain's exact synthetic remote-tree exception, not another product defect.",
+  "command": "bash .test-tmp/round4/live-remote-reply.sh",
+  "transport": "Actual /usr/bin/ssh to workload using existing BatchMode authentication and host-key configuration. A fixture-only launcher substitutes the isolated entrypoint location and queue/TMPDIR environment while preserving fm-on's encoded protocol. No SSH response or remote worker is stubbed. The minimal remote snapshot uses byte-identical product executables; its fixture-only mktemp shim confines worker child staging because the worker intentionally removes TMPDIR from child environments.",
+  "scenarios": [
+    {
+      "name": "Contended source lock does not hide healthy claimed runners",
+      "result": "pass",
+      "live": true,
+      "evidence": "round3-handshake-target.log",
+      "observation": "started=2, failed=0, both sources live, no launch-failure episode",
+      "regression_evidence": "round3-handshake-baseline.log reproduces started=1, failed=1 while both sources are live on the base commit"
+    },
+    {
+      "name": "Unreadable claim remains uncertain",
+      "result": "pass",
+      "live": true,
+      "evidence": "round3-handshake-target.log",
+      "observation": "started=0, uncertain=1, failed=0; claim observation exits 2"
+    },
+    {
+      "name": "Genuine failed launch leaves no litter and repairs cleanly",
+      "result": "pass",
+      "live": true,
+      "evidence": "round3-handshake-target.log",
+      "observation": "Damaged argv fails with no claim, runner, or staged-output litter; repaired registration launches and clears its failure episode"
+    },
+    {
+      "name": "Remote reply claims, captures, mirrors, acknowledges, and re-arms over real SSH",
+      "result": "pass",
+      "live": true,
+      "evidence": "round4-live-remote-reply.log",
+      "driver": "round4-live-remote-reply-driver.sh",
+      "observation": "Both reconciliations report started=1, failed=0 and live ownership. Real remote worker jobs block at offsets 0 and 68 before replies are appended via SSH. Captured deltas commit offsets 68 and 128 with matching source hashes. Status lines mirror once, the referenced document is copied byte-identically, both private handled markers exist, replay reports already-handled with appended=0, and the next registration exists. No duplicate process-event or launch-failure wake appears. Source SHA-256 is unchanged after capture and application. Final cursor equals remote byte count and SHA-256."
+    }
+  ],
+  "isolation": {
+    "remote_tree": "/tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T",
+    "mode": "0700",
+    "before_inventory": "Authorized tree absent",
+    "after_inventory": "Authorized tree absent; no synthetic worker/command processes survive",
+    "cleanup": "EXIT trap sweeps only the synthetic local source, inventories the remote tree, stops its identity-verified worker tree with the product helper, verifies no matching processes, removes only the exact authorized remote tree, and proves it absent. Local transient fixture artifacts are removed separately.",
+    "production": "No production mate, record, credential, permission, shared service configuration, installed entrypoint, or account job queue was modified."
+  },
+  "scope": "Focused Local Test only; no full suite, lint, formatter, static analysis, pipeline control, push, PR, or CI commands executed. Broad remote CI remains mandatory."
+}

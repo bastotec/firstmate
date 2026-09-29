@@ -1,0 +1,12 @@
+schema=fm-remote-delta.v1
+status=delta
+path=state/parent-replies.status
+from_offset=70
+to_offset=118
+from_prefix_sha256=4573c65e3a7a2f1af118ae77a4968e735860feb65734d987340af28499444bd2
+to_prefix_sha256=cfd9300c1437a8c1dd277dcbebe8abb46d0be5884f0559ffb6522ed4f52f7495
+payload_sha256=12956fd542baaf56b401fd5e8d5eb92f975fd851eace61936422d41fcd2fdb25
+payload_bytes=48
+reason=
+
+done [corr=fedcba9876543210]: live second reply

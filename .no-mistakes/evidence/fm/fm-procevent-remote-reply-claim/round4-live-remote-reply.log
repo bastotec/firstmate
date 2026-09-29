@@ -1,0 +1,240 @@
+HEAD=b7e1b1063f32db820995a97d212eace2e040e4c8
+Real SSH preflight:
+Before inventory: authorized tree absent
+Linux
+uid=1000(bruno) gid=1000(bruno) groups=1000(bruno),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users),101(lxd)
+/usr/bin/bash
+/usr/bin/git
+/usr/bin/python3
+/usr/bin/perl
+/usr/bin/tar
+/usr/bin/mktemp
+fixture mode=700
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+Minimal snapshot hashes:
+64e530ed018090181385510bb9a24c1de60942f0bfb63bf28d42e88d6ca7d4fb  /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-delta-read.sh
+d65f88fe37ee2f65eb1f79df8ae8b1525b2a7bca63220a2f95d499262d6ebad8  /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-entrypoint.sh
+26b2ba2ba93cc92869d06a509013b799bf7f589f6e435a3dd4edb4c20f8da821  /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-file.sh
+18c95f31f4301514fa26aed5ace4844a57b4d3826cbaa7131d0a495ca92a3a4f  /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-job-lib.sh
+6f17f4e1c5f32328d0bd144b1610a5b2f06464aa00df26377767f8bba5d7638c  /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-remote-job-worker.sh
+b6114b8a4dafd5e1fb13ae1650c636d1c36e382c018bfb029b2603d900c9858a  /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code/bin/fm-wake-lib.sh
+registered: remote-reply-synthetic (remote-reply)
+armed: remote-reply-synthetic offset=0
+
+GENERATION 1: launch handshake
+reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0
+SOURCE                       ADAPTER      OWNER      PENDING
+remote-reply-synthetic       remote-reply live       0
+Durable claim protocol:
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/round4/parent
+33935
+.claim.2gkR73-33935
+Tue Sep 29 17:52:06 2026     bash /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh _start remote-reply-synthetic
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/round4/parent/state/procevent
+16777233:529115288
+active
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/round4/parent/state
+16777233
+529115190
+501
+755
+Remote running job /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/jobs/job-3FAkem
+running
+/tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home
+/tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code
+fm-remote-delta-read.sh
+state/parent-replies.status
+0
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+60
+Remote worker PID: 2571417
+Captured delta protocol:
+schema=fm-remote-delta.v1
+status=delta
+path=state/parent-replies.status
+from_offset=0
+to_offset=68
+from_prefix_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+to_prefix_sha256=035d277bbb571959b098889c7493301c705a7102fc923fb7647c02c2625a0f80
+payload_sha256=035d277bbb571959b098889c7493301c705a7102fc923fb7647c02c2625a0f80
+payload_bytes=68
+reason=
+
+done [corr=0123456789abcdef]: build verified (data/reply/report.md)
+Mirrored status stream:
+done [corr=0123456789abcdef]: build verified (data/remote-secondmates/synthetic/data/reply/report.md)
+Committed cursor:
+schema=fm-remote-reply-cursor.v1
+offset=68
+prefix_sha256=035d277bbb571959b098889c7493301c705a7102fc923fb7647c02c2625a0f80
+Handled acknowledgement:
+-rw-------@ 1 bastotecnologia  staff  0 Sep 29 17:52 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/round4/parent/state/procevent-inbox/remote-reply-synthetic.1.handled
+Next re-armed source registration:
+adapter=remote-reply
+argc=3
+argv:
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent-remote-reply.sh
+source
+synthetic
+Non-destructive source hash unchanged:
+035d277bbb571959b098889c7493301c705a7102fc923fb7647c02c2625a0f80  /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/state/parent-replies.status
+already-handled: remote-reply-synthetic 1
+ingested: synthetic appended=0 offset=68
+registered: remote-reply-synthetic (remote-reply)
+armed: remote-reply-synthetic offset=68
+already-handled: remote-reply-synthetic 1
+
+GENERATION 2: launch handshake
+reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0
+SOURCE                       ADAPTER      OWNER      PENDING
+remote-reply-synthetic       remote-reply live       0
+Durable claim protocol:
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/round4/parent
+43139
+.claim.NxnTZA-43139
+Tue Sep 29 17:52:14 2026     bash /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent.sh _start remote-reply-synthetic
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/round4/parent/state/procevent
+16777233:529115686
+active
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/round4/parent/state
+16777233
+529115190
+501
+755
+Remote running job /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/jobs/jobs/job-hh0OVY
+running
+/tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home
+/tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/code
+fm-remote-delta-read.sh
+state/parent-replies.status
+68
+035d277bbb571959b098889c7493301c705a7102fc923fb7647c02c2625a0f80
+60
+Remote worker PID: 2571417
+Captured delta protocol:
+schema=fm-remote-delta.v1
+status=delta
+path=state/parent-replies.status
+from_offset=68
+to_offset=128
+from_prefix_sha256=035d277bbb571959b098889c7493301c705a7102fc923fb7647c02c2625a0f80
+to_prefix_sha256=84295bc3c6f097cc0a8883778b7f43a90b117a471f19fc3b9d6361862d94eb0b
+payload_sha256=5550aa886492820c0c048c1718b3a4f50ac5cb269641986a10ea5f8dd8a8e999
+payload_bytes=60
+reason=
+
+working [corr=1111111111111111]: second real SSH generation
+Mirrored status stream:
+done [corr=0123456789abcdef]: build verified (data/remote-secondmates/synthetic/data/reply/report.md)
+working [corr=1111111111111111]: second real SSH generation
+Committed cursor:
+schema=fm-remote-reply-cursor.v1
+offset=128
+prefix_sha256=84295bc3c6f097cc0a8883778b7f43a90b117a471f19fc3b9d6361862d94eb0b
+Handled acknowledgement:
+-rw-------@ 1 bastotecnologia  staff  0 Sep 29 17:52 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/.test-tmp/round4/parent/state/procevent-inbox/remote-reply-synthetic.2.handled
+Next re-armed source registration:
+adapter=remote-reply
+argc=3
+argv:
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3Q2CVXNFM8FR64YHCHYYB7T/bin/fm-procevent-remote-reply.sh
+source
+synthetic
+Non-destructive source hash unchanged:
+84295bc3c6f097cc0a8883778b7f43a90b117a471f19fc3b9d6361862d94eb0b  /tmp/fm-procevent-live-01M3Q2CVXNFM8FR64YHCHYYB7T/home/state/parent-replies.status
+already-handled: remote-reply-synthetic 2
+ingested: synthetic appended=0 offset=128
+registered: remote-reply-synthetic (remote-reply)
+armed: remote-reply-synthetic offset=128
+already-handled: remote-reply-synthetic 2
+done [corr=0123456789abcdef]: build verified (data/remote-secondmates/synthetic/data/reply/report.md)
+PASS: committed cursor equals remote source byte count and SHA-256
+
+PASS: real SSH claim, capture, mirror, document fetch, acknowledgement, non-destructive retry, and second-generation re-arm
+
+CLEANUP (scenario exit=0)
+retired: remote-reply-synthetic
+swept: attempted=1
+Remote inventory before cleanup:
+444 f code/.git/objects/00/b2f173ac339838184233e2f74e32a41b26ba08
+444 f code/.git/objects/2b/be61f0cbc014a8a01d281b17d34f3a7a197e5b
+444 f code/.git/objects/31/887ac27baba4fd2b1f1a046d797286f7eac0ea
+444 f code/.git/objects/31/9fe6272bdf2cbae59f81c63f5fe934f05dddd7
+444 f code/.git/objects/34/3ee981919b933b6db8f23413faa450a7c02d68
+444 f code/.git/objects/42/6fe75d27272fac2b3f300b3720381b47ca6d47
+444 f code/.git/objects/57/445c52ba08e8cf898b9a154b0b53c0d4e6cd82
+444 f code/.git/objects/98/aa3e50d6ddd77f8fe2308966a3ae3e8a865c19
+444 f code/.git/objects/d4/c26bd66971ac406ac52cadc96915257d98015e
+600 f jobs/seq
+600 f jobs/.seq-claims-reaped
+600 f jobs/worker.identity
+600 f jobs/worker.lock/command
+600 f jobs/worker.lock/pid
+600 f jobs/worker.lock/start
+600 f jobs/worker.pid
+600 f jobs/worker.ready
+644 f code/._AGENTS.md
+644 f code/AGENTS.md
+664 f code/.git/config
+664 f code/.git/HEAD
+664 f code/.git/index
+664 f home/data/reply/report.md
+664 f home/state/parent-replies.status
+664 f jobs/logs/dev.firstmate.remote-job.log
+700 d 
+700 d code
+700 d home
+700 d home/data
+700 d home/data/reply
+700 d home/state
+700 d jobs
+700 d jobs/jobs
+700 d jobs/logs
+700 d jobs/.seq-claims
+700 d jobs/.seq-claims/1
+700 d jobs/.seq-claims/2
+700 d jobs/.seq-claims/3
+700 d jobs/worker.lock
+700 d tmp
+755 d code/bin
+755 f code/._bin
+755 f code/bin/fm-remote-delta-read.sh
+755 f code/bin/._fm-remote-delta-read.sh
+755 f code/bin/._fm-remote-entrypoint.sh
+755 f code/bin/fm-remote-entrypoint.sh
+755 f code/bin/._fm-remote-file.sh
+755 f code/bin/fm-remote-file.sh
+755 f code/bin/fm-remote-job-lib.sh
+755 f code/bin/._fm-remote-job-lib.sh
+755 f code/bin/fm-remote-job-worker.sh
+755 f code/bin/._fm-remote-job-worker.sh
+755 f code/bin/fm-wake-lib.sh
+755 f code/bin/._fm-wake-lib.sh
+755 f code/bin/mktemp
+755 f code/bin/._mktemp
+775 d code/.git
+775 d code/.git/objects
+775 d code/.git/objects/00
+775 d code/.git/objects/2b
+775 d code/.git/objects/31
+775 d code/.git/objects/34
+775 d code/.git/objects/42
+775 d code/.git/objects/57
+775 d code/.git/objects/98
+775 d code/.git/objects/d4
+775 d code/.git/objects/info
+775 d code/.git/objects/pack
+775 d code/.git/refs
+775 d code/.git/refs/heads
+775 d code/.git/refs/tags
+Synthetic worker/command processes: none
+After inventory: authorized tree absent
+Final verification: synthetic remote tree absent
