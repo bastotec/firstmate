@@ -210,6 +210,46 @@ fn compatibility_input_preserves_literal_text_and_nonfinite_boolean_fields() {
 }
 
 #[test]
+fn unallocatable_screens_leave_registry_and_command_routes_healthy() {
+    let server = Server::start();
+    let eid = "f".repeat(32);
+    for (rows, cols) in [(1, i64::MAX), (i64::MAX, 1), (i64::MAX, i64::MAX)] {
+        let (status, failed) = server.api("POST", "/v1/agent/endpoints", &json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker","rows":rows,"cols":cols}).to_string(), "");
+        assert_eq!(status, 500, "{failed}");
+        let (status, health) = server.api("GET", "/v1/health", "", "");
+        assert_eq!(status, 200);
+        assert_eq!(health["endpoints"], 0);
+        let (status, machines) = server.api("GET", "/v1/machines", "", "");
+        assert_eq!(status, 200);
+        assert_eq!(machines["machines"], json!([]));
+    }
+    let (status, registered) = server.api(
+        "POST",
+        "/v1/agent/endpoints",
+        &json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker","rows":2,"cols":8})
+            .to_string(),
+        "",
+    );
+    assert_eq!(status, 201);
+    let cap = registered["command_capability"].as_str().unwrap();
+    assert_eq!(server.api("POST", "/v1/agent/frames", &json!({"machine":"box","frames":[{"endpoint_id":eid,"b64":STANDARD.encode(b"ok")}]}).to_string(), "").0, 200);
+    assert_eq!(
+        server
+            .api(
+                "GET",
+                &format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=0"),
+                "",
+                cap
+            )
+            .0,
+        200
+    );
+    let (status, screen) = server.api("GET", &format!("/v1/tasks/{eid}/screen"), "", "");
+    assert_eq!(status, 200);
+    assert_eq!(screen["screen"], "ok\n");
+}
+
+#[test]
 fn extreme_negative_csi_parameters_preserve_screen_and_fleet_state() {
     let server = Server::start();
     let eid = "e".repeat(32);
@@ -223,7 +263,22 @@ fn extreme_negative_csi_parameters_preserve_screen_and_fleet_state() {
     assert_eq!(status, 201);
     let cap = registered["command_capability"].as_str().unwrap();
     let min = i64::MIN;
+    let large = "9223372036854775808";
     for (csi, row, col) in [
+        (format!("{large}G"), 2, 7),
+        (format!("+{large}`"), 2, 7),
+        (format!("-{large}G"), 2, 0),
+        (format!(" {large} G"), 2, 7),
+        (format!("{large}d"), 3, 3),
+        (format!("{large};{large}H"), 3, 7),
+        (format!("3;{large}f"), 2, 7),
+        (format!("{large};4r"), 2, 3),
+        (format!("2;{large}r"), 1, 0),
+        (format!("{large}C"), 2, 7),
+        (format!("{large}B"), 3, 3),
+        ("1.5G".into(), 2, 0),
+        ("--1G".into(), 2, 0),
+        ("1-2G".into(), 2, 0),
         (format!("{min}G"), 2, 0),
         (format!("{min}`"), 2, 0),
         (format!("{min}d"), 0, 3),

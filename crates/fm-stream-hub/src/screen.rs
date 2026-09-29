@@ -1,8 +1,9 @@
 //! The reference hub's deliberately small VT model (not a full emulator).
+use east_asian_width::east_asian_width;
+use std::alloc::Layout;
 use std::collections::VecDeque;
 use unicode_general_category::{get_general_category, GeneralCategory};
 use unicode_normalization::char::canonical_combining_class;
-use unicode_width::UnicodeWidthChar;
 
 type Cell = (String, String);
 type Row = Vec<Cell>;
@@ -97,11 +98,34 @@ pub struct Screen {
     utf8: Vec<u8>,
 }
 impl Screen {
+    #[cfg(test)]
     pub fn new(rows: usize, cols: usize) -> Self {
-        Self {
+        Self::try_new(rows, cols).expect("screen allocation")
+    }
+    pub fn try_new(rows: usize, cols: usize) -> Result<Self, ()> {
+        if rows == 0 || cols == 0 {
+            return Err(());
+        }
+        let count = rows.checked_mul(cols).ok_or(())?;
+        Layout::array::<Cell>(count).map_err(|_| ())?;
+        Layout::array::<Row>(rows).map_err(|_| ())?;
+        let mut cells = Vec::new();
+        cells.try_reserve_exact(rows).map_err(|_| ())?;
+        for _ in 0..rows {
+            let mut row = Vec::new();
+            row.try_reserve_exact(cols).map_err(|_| ())?;
+            for _ in 0..cols {
+                let mut glyph = String::new();
+                glyph.try_reserve_exact(1).map_err(|_| ())?;
+                glyph.push(' ');
+                row.push((glyph, String::new()));
+            }
+            cells.push(row);
+        }
+        Ok(Self {
             rows,
             cols,
-            cells: vec![blank(cols); rows],
+            cells,
             history: VecDeque::new(),
             cy: 0,
             cx: 0,
@@ -112,7 +136,7 @@ impl Screen {
             state: "text",
             buf: String::new(),
             utf8: Vec::new(),
-        }
+        })
     }
     pub fn feed(&mut self, data: &[u8]) {
         self.utf8.extend_from_slice(data);
@@ -253,7 +277,7 @@ impl Screen {
             ) {
             0
         } else {
-            c.width().unwrap_or(1).max(1)
+            east_asian_width(c as u32).as_usize()
         };
         if width == 0 {
             if self.cx > 0 && self.cx <= self.cols {
@@ -320,7 +344,24 @@ impl Screen {
         let num = |i: usize, d: i64| {
             raw.get(i)
                 .and_then(|s| s.split(':').next())
-                .and_then(|s| s.parse::<i64>().ok())
+                .and_then(|s| {
+                    let s = s.trim();
+                    match s.parse::<i64>() {
+                        Ok(n) => Some(n),
+                        Err(_) => {
+                            let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
+                            if !digits.is_empty() && digits.bytes().all(|c| c.is_ascii_digit()) {
+                                Some(if s.starts_with('-') {
+                                    i64::MIN
+                                } else {
+                                    i64::MAX
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                })
                 .unwrap_or(d)
         };
         let n = num(0, 1).max(1) as usize;
@@ -465,6 +506,38 @@ impl Screen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allocation_layout_failures_are_fallible() {
+        assert!(Screen::try_new(1, usize::MAX / 2).is_err());
+        assert!(Screen::try_new(usize::MAX / 2, 1).is_err());
+        assert!(Screen::try_new(usize::MAX / 2, usize::MAX / 2).is_err());
+        assert!(Screen::try_new(0, 1).is_err());
+    }
+
+    #[test]
+    fn widths_follow_east_asian_categories_without_terminal_exceptions() {
+        for c in [
+            '\u{17d8}', '\u{2e3a}', '\u{2e3b}', '\u{a1}', '\u{1160}', '\u{ff61}',
+        ] {
+            let mut screen = Screen::new(3, 4);
+            screen.feed(format!("ab{c}cd").as_bytes());
+            assert_eq!(
+                screen.lines(false),
+                vec![format!("ab{c}c"), "d".into(), String::new()]
+            );
+            assert_eq!(screen.cy, 1);
+        }
+        for c in ['中', '\u{ff21}', '\u{115f}'] {
+            let mut screen = Screen::new(3, 4);
+            screen.feed(format!("ab{c}cd").as_bytes());
+            assert_eq!(
+                screen.lines(false),
+                vec![format!("ab{c}"), "cd".into(), String::new()]
+            );
+            assert_eq!(screen.cy, 1);
+        }
+    }
 
     #[test]
     fn zero_width_marks_and_format_characters_do_not_wrap() {
