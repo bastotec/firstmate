@@ -2279,8 +2279,8 @@ test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldow
   PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
 const prelude = process.env.DRIVER_PRELUDE;
-await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatch, fire, settle, home, realRoot, mainUserMessages, sentToMain }; })()`);
-const { pi, makeOffer, dispatch, fire, settle, home, realRoot, mainUserMessages, sentToMain } = globalThis.__t;
+await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatch, fire, home, realRoot, mainUserMessages, sentToMain }; })()`);
+const { pi, makeOffer, dispatch, fire, home, realRoot, mainUserMessages, sentToMain } = globalThis.__t;
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
@@ -2321,6 +2321,8 @@ globalThis.__fmInitialBranchMessages = Array.from({ length: 100 }, (_, index) =>
 }));
 let attempt = 0;
 let releaseFailedProbe;
+let markFailedProbeReady;
+const failedProbeReady = new Promise((resolve) => { markFailedProbeReady = resolve; });
 globalThis.__fmOnBranchPrompt = async ({ session }) => {
   attempt += 1;
   if (attempt === 1) {
@@ -2330,6 +2332,9 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
     ];
   }
   if (attempt === 2 || attempt === 6 || attempt === 8) {
+    // A healthy provider may take longer than the driver's 2.5-second poll
+    // budget. Completion, not that budget, must govern the report assertion.
+    if (attempt === 8) await new Promise((resolve) => setTimeout(resolve, 3000));
     await runBranchDrain(session);
     const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
     const summary = attempt === 2
@@ -2364,7 +2369,10 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
       {},
     );
     if (recorded.isError) throw new Error(`pre-error report failed: ${JSON.stringify(recorded)}`);
-    await new Promise((resolve) => { releaseFailedProbe = resolve; });
+    await new Promise((resolve) => {
+      releaseFailedProbe = resolve;
+      markFailedProbeReady();
+    });
   }
   if (attempt === 9 || attempt === 10) {
     await runBranchDrain(session);
@@ -2411,7 +2419,7 @@ if (existsSync(`${home}/state/.branch-eligible-rows`)) {
 const healthy = dispatch("signal: healthy branch turn");
 if (!healthy.accepted) throw new Error("one provider error latched the branch prematurely");
 await healthy.settlement;
-await settle(() => attempt === 2 && sentToMain.length === 1, "healthy branch report");
+if (attempt !== 2 || sentToMain.length !== 1) throw new Error("healthy branch report was not delivered");
 if (mainUserMessages.length !== 0) throw new Error("a healthy reported turn fell back to main");
 
 const third = dispatch("signal: provider error after reset");
@@ -2448,7 +2456,13 @@ if (dispatch("signal: still inside first cooldown").accepted) {
 now += 1;
 const failedProbe = dispatch("signal: first cooldown probe");
 if (!failedProbe.accepted) throw new Error("the branch did not accept one probe after its cooldown elapsed");
-await settle(() => attempt === 5 && typeof releaseFailedProbe === "function", "in-flight failed cooldown probe");
+await Promise.race([
+  failedProbeReady,
+  failedProbe.settlement.then(() => { throw new Error("failed cooldown probe settled before reaching its in-flight gate"); }),
+]);
+if (attempt !== 5 || typeof releaseFailedProbe !== "function") {
+  throw new Error("failed cooldown probe did not reach its in-flight gate");
+}
 if (sentToMain.some((sent) => sent.message.content.includes("Supervision branch recovered after a successful cooldown probe"))) {
   throw new Error("a durable report cleared the latch before its prompt settled");
 }
@@ -2493,10 +2507,12 @@ if (dispatch("signal: inside extended cooldown").accepted) {
 now += 5 * 60 * 1000;
 const recoveryProbe = dispatch("signal: recovery probe after extended cooldown");
 if (!recoveryProbe.accepted) throw new Error("the branch did not re-probe after the extended cooldown elapsed");
-await settle(() => attempt === 6 && sentToMain.some((sent) => sent.message.content.includes("cooldown probe recovered the branch")), "successful recovery probe");
-// The recovery note is emitted when the wake SETTLES, which is after the
-// report note the condition above waits for.
+// Reports and the recovery note are guaranteed by settlement, not by a
+// short polling deadline while the real fleet-record subprocesses run.
 await recoveryProbe.settlement;
+if (attempt !== 6 || !sentToMain.some((sent) => sent.message.content.includes("cooldown probe recovered the branch"))) {
+  throw new Error("successful recovery probe did not deliver its report");
+}
 if (mainUserMessages.length !== 0) throw new Error("a successful recovery probe also fell back to main");
 const recoveryNotes = sentToMain.filter((sent) => sent.message.content.includes("Supervision branch recovered after a successful cooldown probe"));
 if (recoveryNotes.length !== 1 || recoveryNotes[0].message.content.includes("\n")) {
@@ -2518,8 +2534,10 @@ if (existsSync(`${home}/state/.branch-eligible-rows`)) {
 }
 const afterRecoveryHealthy = dispatch("signal: healthy turn after one post-recovery error");
 if (!afterRecoveryHealthy.accepted) throw new Error("the successful probe did not clear the provider-error streak");
-await settle(() => attempt === 8 && sentToMain.some((sent) => sent.message.content.includes("post-recovery report proved")), "post-recovery healthy report");
 await afterRecoveryHealthy.settlement;
+if (attempt !== 8 || !sentToMain.some((sent) => sent.message.content.includes("post-recovery report proved"))) {
+  throw new Error("post-recovery healthy report was not delivered");
+}
 
 function dispatchTwoRowGrant(label) {
   writeFileSync(
