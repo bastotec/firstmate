@@ -53,7 +53,11 @@ start_hub() {
   chmod 600 "$CASE_DIR/tokens" "$CASE_DIR/view-token" "$CASE_DIR/publish-token" \
     "$CASE_DIR/control-token"
   ready="$CASE_DIR/ready"
-  python3 "$HUB" serve --bind 127.0.0.1 --port 0 \
+  local hub_command=(python3 "$HUB")
+  if [ -n "${FM_TEST_STREAM_HUB_BINARY:-}" ]; then
+    hub_command=("$FM_TEST_STREAM_HUB_BINARY")
+  fi
+  "${hub_command[@]}" serve --bind 127.0.0.1 --port 0 \
     --token-file "$CASE_DIR/tokens" --ready-file "$ready" > "$CASE_DIR/log" 2>&1 &
   pid=$!
   disown "$pid" 2>/dev/null || true

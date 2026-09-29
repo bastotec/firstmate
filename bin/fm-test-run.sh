@@ -788,6 +788,9 @@ tests/fm-stow-cascade.test.sh 3101
 # Locally measured seed for the new Claude tail shim suite (three runs, worst
 # ~8s on the dev host); refresh from CI timing artifacts per the doc below.
 tests/fm-stream-bridge-rust.test.sh 31489
+# Rust hub parity seed measured locally on 2026-09-29; verification/runtime-backends.md
+# records the command and output. Refresh from green CI timing artifacts.
+tests/fm-stream-hub-rust.test.sh 24236
 tests/fm-stream-claude-tail.test.sh 9000
 # Completed measurements from run 36642742794's green serial shards 1 and 2.
 tests/fm-stream-deck-live-e2e.test.sh 79

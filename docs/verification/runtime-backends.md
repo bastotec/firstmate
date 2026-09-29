@@ -1804,6 +1804,36 @@ The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
 
 ## stream
 
+### Rust hub isolated compatibility
+
+Measured 2026-09-29 on macOS with Rust 1.96.0 and Python 3.9.6 against Hub 2.0.0, protocol 3.
+The Rust binary was a debug build; these single-run observations describe an isolated loopback pilot, not a production capacity guarantee or target budget.
+The driver measures ready-file startup, `ps -o rss=` resident KiB before frame traffic, and 100 sequential 4096-byte published frames through the HTTP and screen-rendering path.
+
+```sh
+bin/fm-test-run.sh tests/fm-stream-hub-rust.test.sh
+cargo fmt --all --check
+cargo clippy -p fm-stream-hub --all-targets --no-deps -- -D warnings
+cargo test --workspace --locked
+```
+
+Observed parity output:
+
+```text
+differential: 84 HTTP/stream observations and Python agent/bridge lifecycle match
+measurements: {"python": {"frame_mib_per_second": 0.52, "rss_kib": 22816, "startup_ms": 136.79}, "rust": {"frame_mib_per_second": 1.18, "rss_kib": 6064, "startup_ms": 15.86}}
+ok - Rust hub: HTTP, stream, order and Python peer compatibility
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=24419
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-hub-rust.test.sh duration_ms=24236
+```
+
+The workspace test run reports 19 bridge tests, six hub tests, and ten wire tests passing.
+The hub tests exercise expiry boundaries, capability revocation, authoritative close preservation, late-result uncertainty, and an active order whose id is evicted from the bounded journal.
+The existing bridge suite also passes with `FM_TEST_STREAM_HUB_BINARY="$PWD/target/debug/fm-stream-hub" bin/fm-test-run.sh tests/fm-stream-bridge.test.sh`.
+A complete hub-suite invocation on this host stops at the existing shell-died-at-birth refusal case documented below, after the earlier HTTP/body, stream, capture, registry, and state-read cases pass against Rust.
+This is not a claim that every stream suite passes on macOS: the backend suite requires `setsid`, and the existing Rust-bridge HTTPS fixture cannot validate its generated certificate with this host's Python trust store.
+The pilot and replacement prerequisites remain owned by [the stream guide](../stream-backend.md#rust-hub-pilot).
+
 ### Deck home-host lifecycle
 
 Measured 2026-09-24 on macOS with Bash 3.2.57 and Python 3.14.2 using the portable fixtures, not live model calls.
