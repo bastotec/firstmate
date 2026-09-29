@@ -381,7 +381,8 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
 
 ## Limits
 
-- Experimental, with no dedicated real-backend CI lane.
+- Experimental; CI's Rust agent parity step exercises disposable Python hubs and real PTYs, not installed harnesses.
+  [Rust PTY agent pilot](#rust-pty-agent-pilot) owns the opt-in port's verification coverage and production-replacement requirements.
   [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) is the live guard that proves each installed harness is still classified through the hub, and the command that refreshes the dated per-harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md).
   The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, `tests/fm-stream-claude-tail.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
   The secondmate credential-seeding regressions from the Security section above ride `tests/fm-secondmate-safety.test.sh`.
