@@ -9,6 +9,8 @@
 #   - the launch brief is the first turn; every later line typed at the `❯`
 #     prompt (a steer, the steering-inbox doorbell) is the next turn of the SAME
 #     Deck session (`--session`), so context carries across steers;
+#   - stream Bridge orders bypass stdin through bin/fm_stream_deck.py's native
+#     receiver; docs/stream-backend.md "Command path" owns compatibility and limits;
 #   - each turn's events render as readable text in the pane (fm-peek reads it);
 #   - it is the semantic busy source for the task: turn start and turn end are
 #     written through bin/fm-busy-event.sh with source `deck-wrapper`, and each
@@ -61,6 +63,8 @@
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
 #   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600)
+#   FM_STREAM_ENDPOINT_ID  set by the owning stream agent, enabling receiver
+#                           start/end registration for each driver turn
 #   PROXAI_BASE_URL, PROXAI_MODEL, PROXAI_API_KEY_FILE, PROXAI_API_KEY
 #                           Deck's own endpoint settings, passed through. When
 #                           neither key variable is set and

@@ -158,8 +158,8 @@ CMD (default the fm-crew-state.sh beside this script), --fleet-id.
 
 Live subcommands negotiate protocol 3 and the hub's `current_execution`
 capability before doing work; `command` additionally requires
-`idempotent_command_results`, `result_retry_orderability`, and
-`endpoint_command_auth`, and binds each
+`idempotent_command_results`, `result_retry_orderability`,
+`endpoint_command_auth`, and `deck_midturn_orders`, and binds each
 order to the generation returned by that negotiation.  An older running hub is
 refused with a diagnostic
 to restart or upgrade it; offline `translate` needs no hub negotiation.

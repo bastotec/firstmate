@@ -930,7 +930,7 @@ No ambient `herdr server stop` command is a supported test operation.
 
 ### Deck native mid-turn steering over stream
 
-Verified on 2026-09-29 on macOS with Python 3.9.6 and Deck 0.1.0 built from the merged native-steering interface in `bastotec/deck`.
+The initial same-turn correction check was verified on 2026-09-29 on macOS with Python 3.9.6 and Deck 0.1.0 built from the merged native-steering interface in `bastotec/deck`.
 The isolated live guard exercised the real Bridge command adapter, authenticated loopback hub, PTY agent, Deck driver, and model turn; `bin/fm_stream_deck.py` owns the receiver mechanics.
 Run the guard with a Deck build whose `run --help` advertises `--steer-dir`:
 
@@ -938,16 +938,17 @@ Run the guard with a Deck build whose `run --help` advertises `--steer-dir`:
 FM_DECK_LIVE=1 bin/fm-test-run.sh tests/fm-stream-deck-live-e2e.test.sh
 ```
 
-`FM_DECK_LIVE_BINARY` selects a non-default Deck build for the same guard.
-Observed output:
+`FM_DECK_LIVE_BINARY` selects a non-default Deck build for the same guard; the version string alone is insufficient because builds reporting `deck 0.1.0` can lack `--steer-dir`.
+The guard inherits gateway configuration by reference and isolates Deck state and all hub, agent, and worker records in its test lab.
+The current guard extends that check through seven live receiver scenarios: original-turn reservation and duplicate reconciliation, storage-failure recovery without successor delivery, delayed destructive takes, independent result-post retries, byte-exact CRLF/carriage-return/Unicode persistence, retained-agent compatibility with native-only size limits, and Bridge course correction with unchanged turn evidence.
+It emits per-scenario JSON evidence before this success marker:
 
 ```text
-deck 0.1.0
-PASS real Deck mid-turn correction through Bridge/hub/agent, execution-bound ack, one turn, and no false evidence/failure
+PASS all seven native live receiver scenarios
 ```
 
 The portable application regressions run with `bin/fm-test-run.sh tests/fm-stream-deck.test.sh`.
-Other harnesses retain their existing PTY order path, and other runtime backends do not invoke this stream receiver.
+Current operator behavior and supported limits are owned by [`../stream-backend.md`](../stream-backend.md#command-path).
 
 ### Deck endpoint recovery (shim-based)
 

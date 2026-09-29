@@ -159,10 +159,12 @@ class Receiver:
 
     def apply(self, order_id, execution, text, alive, reconcile_only=False,
               reservation=None, command_id=None, reserve_only=False):
-        """None means this is not a Deck driver; all other answers are final facts.
+        """Observe once; the agent's command_loop owns waiting and retry cadence.
 
-        Unknown application is returned honestly as unconfirmed, never as an
-        acceptance. Retrying the same id reconciles its original turn only.
+        Bare None leaves driver detection to the caller. Tuple ok=True/False
+        is a confirmed result; ok=None is reserved, pending or unconfirmed,
+        never acceptance. Retrying the same id reconciles its original turn
+        only, including handled/rejected proof after that turn ends.
         """
         if execution != self.endpoint:
             return False, 'stale execution; steer was not applied'

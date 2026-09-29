@@ -982,7 +982,19 @@ class Agent:
             return False
 
     def command_loop(self) -> None:
-        """Own local application and durable results with separate bounded HTTP work."""
+        """Keep take, local application and result posting independent in one process.
+
+        A take destructively removes hub commands: keep its full HTTP timeout,
+        and durably reserve native commands before starting another take.
+        Local reconciliation must progress even while either network call is
+        unavailable; it never borrows a successor turn (fm_stream_deck.py).
+        Only live-original-turn pending application polls at 100 ms; ended
+        turns and transient storage failures reconcile at a five-second cadence.
+        Result posts are single bounded attempts; with a status path their retry
+        state is durable in the receiver's existing per-order records, not a
+        second command store. Retry rejection or expiry ends posting, not the
+        worker's turn. tests/fm-stream-deck.test.sh pins these safety boundaries.
+        """
         path = ("/v1/agent/commands?machine=%s&endpoint=%s&wait=%d"
                 % (urllib.parse.quote(self.machine), self.endpoint_id,
                    int(self.options.poll_secs)))
