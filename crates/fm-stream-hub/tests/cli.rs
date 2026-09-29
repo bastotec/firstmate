@@ -1,3 +1,7 @@
+use base64::{engine::general_purpose::STANDARD, Engine};
+use http_body_util::{BodyExt, Full};
+use hyper::body::Bytes;
+use hyper_util::rt::TokioIo;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -102,6 +106,106 @@ fn malformed_input_is_rejected_and_python_valid_extensions_still_reparse() {
     assert_eq!(status, 504);
     assert_eq!(response["error"], "no_agent_ack");
     assert_eq!(response["taken"], false);
+}
+
+#[tokio::test]
+async fn live_stream_keeps_output_published_after_response_headers() {
+    let server = Server::start();
+    let eid = "b".repeat(32);
+    let (status, _) = server.api(
+        "POST",
+        "/v1/agent/endpoints",
+        &json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker"}).to_string(),
+        "",
+    );
+    assert_eq!(status, 201);
+    let (status, _) = server.api(
+        "POST",
+        "/v1/agent/frames",
+        &json!({"machine":"box","frames":[{"endpoint_id":eid,"b64":STANDARD.encode(b"before")}]})
+            .to_string(),
+        "",
+    );
+    assert_eq!(status, 200);
+    let socket = tokio::net::TcpStream::connect(&server.address)
+        .await
+        .unwrap();
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(socket))
+        .await
+        .unwrap();
+    let connection = tokio::spawn(async move { connection.await.unwrap() });
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        sender.send_request(
+            hyper::Request::builder()
+                .uri(format!("/v1/tasks/{eid}/stream"))
+                .header("Host", &server.address)
+                .header("Authorization", "Bearer test")
+                .body(Full::new(Bytes::new()))
+                .unwrap(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["Content-Type"], "text/event-stream");
+    let final_output = b"final output\r\n";
+    let (status, _) = server.api(
+        "POST",
+        "/v1/agent/frames",
+        &json!({"machine":"box","frames":[{"endpoint_id":eid,"b64":STANDARD.encode(final_output),"closed":true,"exit_code":0}]}).to_string(),
+        "",
+    );
+    assert_eq!(status, 200);
+    let bytes = tokio::time::timeout(Duration::from_secs(5), response.into_body().collect())
+        .await
+        .unwrap()
+        .unwrap()
+        .to_bytes();
+    let events: Vec<Value> = std::str::from_utf8(&bytes)
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(
+        STANDARD.decode(events[0]["b64"].as_str().unwrap()).unwrap(),
+        final_output
+    );
+    assert_eq!(events[0]["offset"], 6 + final_output.len());
+    assert_eq!(events[1]["offset"], events[0]["offset"]);
+    assert_eq!(events[1]["closed"], true);
+    assert_eq!(events[1]["exit_code"], 0);
+    drop(sender);
+    tokio::time::timeout(Duration::from_secs(5), connection)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[test]
+fn protocol_and_version_are_top_level_only() {
+    for (option, expected) in [("--protocol", "3"), ("--version", "2.0.0")] {
+        let output = hub().arg(option).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), expected);
+        let output = hub().args(["serve", option]).output().unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8(output.stderr)
+            .unwrap()
+            .contains(&format!("unrecognized or incomplete argument {option}")));
+        let output = hub()
+            .args(["serve", "--state-max-age-secs", option])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap().trim(),
+            "fm-stream-hub: invalid state-max-age-secs"
+        );
+    }
 }
 
 #[test]
