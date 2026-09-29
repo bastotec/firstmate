@@ -209,6 +209,62 @@ fn compatibility_input_preserves_literal_text_and_nonfinite_boolean_fields() {
     assert_eq!(endpoint["task"]["closed_by"], "agent");
 }
 
+#[test]
+fn extreme_negative_csi_parameters_preserve_screen_and_fleet_state() {
+    let server = Server::start();
+    let eid = "e".repeat(32);
+    let (status, registered) = server.api(
+        "POST",
+        "/v1/agent/endpoints",
+        &json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker","rows":4,"cols":8})
+            .to_string(),
+        "",
+    );
+    assert_eq!(status, 201);
+    let cap = registered["command_capability"].as_str().unwrap();
+    let min = i64::MIN;
+    for (csi, row, col) in [
+        (format!("{min}G"), 2, 0),
+        (format!("{min}`"), 2, 0),
+        (format!("{min}d"), 0, 3),
+        (format!("{min};4H"), 0, 3),
+        (format!("3;{min}H"), 2, 0),
+        (format!("{min};{min}H"), 0, 0),
+        (format!("{min};4f"), 0, 3),
+        (format!("3;{min}f"), 2, 0),
+        (format!("{min};{min}f"), 0, 0),
+        (format!("{min};4r"), 0, 0),
+        (format!("2;{min}r"), 2, 3),
+        (format!("{min};{min}r"), 2, 3),
+    ] {
+        let terminal = format!("\x1bc\x1b[3;4H\x1b[{csi}x");
+        let (status, published) = server.api(
+            "POST",
+            "/v1/agent/frames",
+            &json!({"machine":"box","frames":[{"endpoint_id":eid,"b64":STANDARD.encode(terminal)}]}).to_string(),
+            "",
+        );
+        assert_eq!(status, 200, "{csi}: {published}");
+        let (status, screen) = server.api("GET", &format!("/v1/tasks/{eid}/screen"), "", "");
+        assert_eq!(status, 200, "{csi}: {screen}");
+        let mut expected = vec![String::new(); 4];
+        expected[row] = " ".repeat(col) + "x";
+        assert_eq!(screen["screen"], expected.join("\n"), "{csi}");
+        assert_eq!(screen["cursor_row"], row, "{csi}");
+        let (status, health) = server.api("GET", "/v1/health", "", "");
+        assert_eq!(status, 200);
+        assert_eq!(health["endpoints"], 1);
+        let (status, commands) = server.api(
+            "GET",
+            &format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=0"),
+            "",
+            cap,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(commands["commands"], json!([]));
+    }
+}
+
 #[tokio::test]
 async fn live_stream_keeps_output_published_after_response_headers() {
     let server = Server::start();

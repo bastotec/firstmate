@@ -338,11 +338,11 @@ impl Screen {
                 self.cy = self.cy.saturating_sub(n).max(self.top);
                 self.cx = 0;
             }
-            'G' | '`' => self.cx = (num(0, 1) - 1).max(0) as usize % usize::MAX,
-            'd' => self.cy = ((num(0, 1) - 1).max(0) as usize).min(self.rows - 1),
+            'G' | '`' => self.cx = (num(0, 1).saturating_sub(1).max(0) as usize).min(self.cols - 1),
+            'd' => self.cy = (num(0, 1).saturating_sub(1).max(0) as usize).min(self.rows - 1),
             'H' | 'f' => {
-                self.cy = ((num(0, 1) - 1).max(0) as usize).min(self.rows - 1);
-                self.cx = ((num(1, 1) - 1).max(0) as usize).min(self.cols - 1);
+                self.cy = (num(0, 1).saturating_sub(1).max(0) as usize).min(self.rows - 1);
+                self.cx = (num(1, 1).saturating_sub(1).max(0) as usize).min(self.cols - 1);
             }
             'J' => {
                 let mode = num(0, 0);
@@ -397,8 +397,10 @@ impl Screen {
             }
             'S' | 'T' => self.scroll(c == 'S', n),
             'r' => {
-                let top = (num(0, 1) - 1).max(0) as usize;
-                let bot = (num(1, self.rows as i64) - 1).min(self.rows as i64 - 1);
+                let top = num(0, 1).saturating_sub(1).max(0) as usize;
+                let bot = num(1, self.rows as i64)
+                    .saturating_sub(1)
+                    .min(self.rows as i64 - 1);
                 if bot >= 0 && top < bot as usize {
                     self.top = top;
                     self.bot = bot as usize;
@@ -411,9 +413,6 @@ impl Screen {
             _ => (),
         }
         self.cx = self.cx.min(self.cols);
-        if c == 'G' || c == '`' {
-            self.cx = self.cx.min(self.cols - 1);
-        }
     }
     fn render(row: &Row, ansi: bool) -> String {
         let plain: String = row.iter().map(|c| c.0.as_str()).collect();
@@ -424,8 +423,9 @@ impl Screen {
         let mut out = String::new();
         let mut current = "";
         let mut used = 0;
+        let plain_len = plain.chars().count();
         for (glyph, sgr) in row {
-            if used >= plain.chars().count() {
+            if used >= plain_len {
                 break;
             }
             if sgr != current {
@@ -526,6 +526,28 @@ mod tests {
         screen.feed(b"\x08x");
         assert_eq!(screen.lines(false), vec!["", "x", ""]);
         assert_eq!(screen.cy, 1);
+    }
+
+    #[test]
+    fn ansi_rendering_preserves_styles_unicode_and_trimmed_spaces() {
+        let mut screen = Screen::new(3, 12);
+        screen.feed("\x1b[31mab\u{301}\x1b[0m中\x1b[2mc  \x1b[0m\r\n\x1b[44m   ".as_bytes());
+        let ansi = "\x1b[31mab\u{301}\x1b[0m中\x1b[2mc\x1b[0m";
+        assert_eq!(screen.lines(false), vec!["ab\u{301}中c", "", ""]);
+        assert_eq!(screen.lines(true), vec![ansi, "", ""]);
+        assert_eq!(screen.tail(3, true), vec![ansi]);
+    }
+
+    #[test]
+    fn ansi_capture_preserves_full_width_retained_rows() {
+        let mut screen = Screen::new(2, 200);
+        let plain = "x\u{301}".repeat(200);
+        let ansi = format!("\x1b[1;31m{plain}\x1b[0m");
+        for _ in 0..2001 {
+            screen.feed(format!("{ansi}\r\n").as_bytes());
+        }
+        assert_eq!(screen.tail(2000, true), vec![ansi; 2000]);
+        assert_eq!(screen.tail(2000, false), vec![plain; 2000]);
     }
 
     #[test]
