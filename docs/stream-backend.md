@@ -122,6 +122,27 @@ Epochs remain limited to signed 64-bit integers, unlike Python's arbitrary-preci
 `tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
 Live comparisons exclude process-local clocks; help presentation, top-level command choices, and transport-library error details are not byte contracts.
 
+### Rust PTY agent pilot
+
+The opt-in Rust agent builds with `cargo build --release --locked -p fm-stream-agent` (Rust 1.96 or newer).
+Run `target/release/fm-stream-agent serve` instead of `bin/fm-stream-agent.py serve` only for a disposable pilot endpoint, with an explicit isolated hub URL, private publish token file, machine, label, absolute cwd, status-path, and ready-file.
+Its `--help` owns the full option surface; the ready file has the same `machine endpoint_id` format as the Python agent.
+For example, with a disposable Python hub already started according to `bin/fm-stream-hub.py serve --help`, use:
+
+```sh
+target/release/fm-stream-agent serve --hub "$PILOT_HUB" \
+  --token-file "$PILOT_TOKEN_FILE" --machine pilot --label rust-worker \
+  --cwd "$PILOT_CWD" --status-path "$PILOT_STATUS" --ready-file "$PILOT_READY"
+```
+
+Do not use a deployed fleet's label or hub for this test: no backend launcher is switched, and the Python agent remains deployed and available.
+The port uses the shared wire protocol with Reqwest/rustls, Serde JSON, POSIX PTYs, and signal-hook; it needs no Python interpreter at runtime.
+HTTP redirects are refused rather than forwarding endpoint credentials to a redirect target; point directly at the final HTTP or HTTPS hub URL.
+Option names are full names rather than argparse abbreviations, geometry is bounded to the kernel's unsigned 16-bit values, and heartbeat/poll intervals must be finite, positive, and at most one day.
+`tests/fm-stream-agent-rust.test.sh` compares both executable agents against disposable Python hubs for PTY input/output, local status writes, result-response loss, restart/rejoin, private capability refusal, stand-down contests, child exits, and signal shutdown.
+`cargo test -p fm-stream-agent` covers the process-group signal ownership boundary with real child processes.
+Production replacement still requires launcher selection, installed-harness liveness verification through the Rust publisher, and parity with any subsequent Python protocol changes before changing the default.
+
 ## Tail adapters
 
 The agent owns a pseudoterminal, so it can only publish a worker whose harness firstmate runs through the runtime backend.
