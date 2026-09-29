@@ -23,8 +23,12 @@ struct Server {
 
 impl Server {
     fn start() -> Self {
+        Self::start_with_ack("0")
+    }
+
+    fn start_with_ack(ack: &str) -> Self {
         let mut child = hub()
-            .args(["serve", "--port", "0", "--command-ack-secs", "0"])
+            .args(["serve", "--port", "0", "--command-ack-secs", ack])
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
@@ -106,6 +110,103 @@ fn malformed_input_is_rejected_and_python_valid_extensions_still_reparse() {
     assert_eq!(status, 504);
     assert_eq!(response["error"], "no_agent_ack");
     assert_eq!(response["taken"], false);
+}
+
+#[test]
+fn deeply_nested_requests_are_refused_without_losing_hub_state() {
+    let server = Server::start();
+    let eid = "c".repeat(32);
+    assert_eq!(
+        server
+            .api(
+                "POST",
+                "/v1/agent/endpoints",
+                &json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker"})
+                    .to_string(),
+                ""
+            )
+            .0,
+        201
+    );
+    let raw = format!(
+        "{{\"text\":\"echo ok\",\"unused\":{}0{}}}",
+        "[".repeat(200_000),
+        "]".repeat(200_000)
+    );
+    let (status, response) = server.api("POST", &format!("/v1/tasks/{eid}/input"), &raw, "");
+    assert_eq!(status, 400);
+    assert_eq!(response["error"], "bad_json");
+    let (status, health) = server.api("GET", "/v1/health", "", "");
+    assert_eq!(status, 200);
+    assert_eq!(health["endpoints"], 1);
+    let (status, tasks) = server.api("GET", "/v1/tasks", "", "");
+    assert_eq!(status, 200);
+    assert_eq!(tasks["tasks"][0]["endpoint_id"], eid);
+}
+
+#[test]
+fn compatibility_input_preserves_literal_text_and_nonfinite_boolean_fields() {
+    let server = Server::start_with_ack("5");
+    let eid = "d".repeat(32);
+    let (status, registered) = server.api(
+        "POST",
+        "/v1/agent/endpoints",
+        &json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker"}).to_string(),
+        "",
+    );
+    assert_eq!(status, 201);
+    let cap = registered["command_capability"].as_str().unwrap();
+    for literal in ["NaN", "Infinity", "-Infinity", "1e999", "-1e999"] {
+        let raw = format!(r#"{{"text":"\\ud800","keys":["\ud800"],"submit":{literal}}}"#);
+        std::thread::scope(|scope| {
+            let input =
+                scope.spawn(|| server.api("POST", &format!("/v1/tasks/{eid}/input"), &raw, ""));
+            let (status, taken) = server.api(
+                "GET",
+                &format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=3"),
+                "",
+                cap,
+            );
+            assert_eq!(status, 200);
+            let command = &taken["commands"][0];
+            assert_eq!(command["payload"]["text"], "\\ud800");
+            assert_eq!(command["payload"]["keys"][0], "\u{fffd}");
+            assert_eq!(command["payload"]["submit"], true);
+            let cid = command["command_id"].as_str().unwrap();
+            let result = format!(
+                r#"{{"machine":"box","command_id":"{cid}","ok":{literal},"unused":"\ud800"}}"#
+            );
+            assert_eq!(server.api("POST", "/v1/agent/results", &result, cap).0, 200);
+            assert_eq!(input.join().unwrap().0, 200);
+            let conflicting = json!({"machine":"box","command_id":cid,"ok":false}).to_string();
+            assert_eq!(
+                server.api("POST", "/v1/agent/results", &conflicting, cap).0,
+                409
+            );
+        });
+        let frame = format!(
+            r#"{{"machine":"box","frames":[{{"endpoint_id":"{eid}","state":{{"alive":{literal}}}}}],"unused":"\ud800"}}"#
+        );
+        assert_eq!(server.api("POST", "/v1/agent/frames", &frame, "").0, 200);
+        let (status, processes) = server.api("GET", &format!("/v1/tasks/{eid}/processes"), "", "");
+        assert_eq!(status, 200);
+        assert_eq!(processes["alive"], true);
+    }
+    let (_, health) = server.api("GET", "/v1/health", "", "");
+    let order = format!(
+        r#"{{"leaf_worker_id":"box/worker","execution_id":"{eid}","order_id":"strict","text":"echo ok","submit":NaN,"hub_generation":{}}}"#,
+        health["generation"]
+    );
+    let (status, refused) = server.api("POST", "/v1/orders", &order, "");
+    assert_eq!(status, 400);
+    assert_eq!(refused["error"], "bad_submit");
+    let frame = format!(
+        r#"{{"machine":"box","frames":[{{"endpoint_id":"{eid}","closed":NaN,"exit_code":0}}]}}"#
+    );
+    assert_eq!(server.api("POST", "/v1/agent/frames", &frame, "").0, 200);
+    let (status, endpoint) = server.api("GET", &format!("/v1/tasks/{eid}"), "", "");
+    assert_eq!(status, 200);
+    assert_eq!(endpoint["task"]["closed_by"], "agent");
 }
 
 #[tokio::test]
