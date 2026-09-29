@@ -1,0 +1,4 @@
+{"baseline_commit": "961f1c95", "sha256": "f4edf672db39385f81bfaa45c5893eb3d8b57439e8d7262dde7e54e902cfc0bf"}
+{"scenario": "command_values", "regression": "reproduced", "failure": "(9223372036854775809, \"working: ordinary 'quoted' UTF8-\u00e9-\u4e2d \\\\\\nworking: 9.223372036854776e+18\\n\", \"working: ordinary 'quoted' UTF8-\u00e9-\u4e2d \\\\\\nworking: 9223372036854775809\\n\")"}
+{"scenario": "concurrent_status", "regression": "reproduced", "failure": ""}
+{"scenario": "intervals", "regression": "reproduced", "failure": "agent readiness"}

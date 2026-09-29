@@ -1,0 +1,10 @@
+   Compiling fm-stream-agent v2.1.0 (/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC0491JZVSJPKN0N84B8DR/crates/fm-stream-agent)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.47s
+     Running unittests src/main.rs (target/debug/deps/fm_stream_agent-f3c4dafb5833dafe)
+
+running 2 tests
+test pty::tests::own_group_and_session_are_refused ... ok
+test pty::tests::reaped_child_cannot_signal_a_bystander ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
