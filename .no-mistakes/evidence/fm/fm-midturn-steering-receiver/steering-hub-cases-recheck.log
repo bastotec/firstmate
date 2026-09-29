@@ -1,0 +1,12 @@
+ok - hub: endpoint capabilities prevent command theft, remain idempotent, and revoke
+ok - hub: an agent retains and retries a successful command result
+ok - hub: a terminal result rejection does not wedge command polling
+ok - hub: result capability revocation does not delay the closing frame
+ok - hub: shutdown wakes result backoff for a final attempt
+ok - hub: shutdown drains the command poll already in flight
+ok - hub: a worker whose hub restarted comes back under its own endpoint id and steers again
+ok - hub: endpoint registration controls Bridge orderability
+ok - hub: an order addressed by leaf reaches that leaf's worker
+ok - hub: an order aimed at a replaced execution is refused and never lands in its replacement
+ok - hub: an unconfirmed order reconciles through a resend after its acknowledgement lands
+ok - hub: an order id deduplicates identical payloads and refuses conflicts

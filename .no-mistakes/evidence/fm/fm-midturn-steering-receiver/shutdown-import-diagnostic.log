@@ -1,0 +1,1 @@
+not ok - the agent never applied the command and posted its result: fm-stream-agent 2.1.0 endpoint 6b79e258a5f670c4db6fd79748e44738 on box-a -> http://127.0.0.1:60339

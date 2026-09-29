@@ -1,0 +1,5 @@
+first placement response: {"delivered": true, "execution_id": "3d7f83c2b9f31ea260cd38826b6f1f69", "leaf_worker_id": "box-a/racing-67873", "ok": true, "order_id": "sent-while-placing", "outcome": "accepted", "requested_at": 1790718375.619371, "requested_execution_id": "3d7f83c2b9f31ea260cd38826b6f1f69", "worker_gone": false}
+resend response: {"delivered": true, "execution_id": "3d7f83c2b9f31ea260cd38826b6f1f69", "leaf_worker_id": "box-a/racing-67873", "ok": true, "order_id": "sent-while-placing", "outcome": "accepted", "requested_at": 1790718375.619371, "requested_execution_id": "3d7f83c2b9f31ea260cd38826b6f1f69", "worker_gone": false}
+worker-written execution ledger:
+landed
+ok - hub: a resend overtaking a placement in flight is answered, not retyped

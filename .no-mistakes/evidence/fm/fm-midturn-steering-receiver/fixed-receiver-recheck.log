@@ -1,0 +1,26 @@
+FM_TEST_BEGIN 2026-09-29T21:44:33Z tests/fm-stream-deck.test.sh family=unclassified expected_gate_skip=none
+fm-stream-agent: command application unconfirmed: [Errno 28] source storage temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 28] source storage temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 5] source reads temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 5] source reads temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 28] temporary projection failure
+fm-stream-agent: could not acknowledge: result connection temporarily unavailable
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result capability revoked
+fm-stream-agent: could not acknowledge: late taken result needs a final shutdown attempt
+fm-stream-agent: could not acknowledge: late taken result needs a final shutdown attempt
+PASS active-turn delivery, duplicate/lost-ack reconciliation, stale execution, finish race, ordered recovery, byte-exact sources, and untouched evidence
+PASS durable take barriers, full-timeout delayed destructive HTTP, independent application/take/result responsibilities, bounded retry expiry, shutdown drain, and durable recovery
+PASS executable entry points, per-endpoint negotiation, retained-agent compatibility, and native-only text limits
+FM_TEST_END 2026-09-29T21:44:47Z tests/fm-stream-deck.test.sh exit=0 duration_ms=12833 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=13827
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=12833 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-deck.test.sh duration_ms=12833

@@ -1,0 +1,150 @@
+FM_TEST_BEGIN 2026-09-29T22:46:41Z tests/fm-stream-deck-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+deck 0.1.0
+{"scenario": "reservation-and-lookup-fault", "binding": {"order_id": "native-A", "execution": "21796c7ee07b89b777f8d23a53a13664", "turn": "6d7483f7b10c4c439ff520f2906350a9"}, "takes_while_unpublished": 3}
+{"scenario": "delayed-destructive-take", "original_turn": "6d7483f7b10c4c439ff520f2906350a9", "native_A_published": true, "B_response_still_in_flight": true, "held_seconds": 4.19092074999935}
+{"scenario": "byte-exact-native-persistence", "order_id": "native-A", "source_text": "Change course: never write ORIGINAL. Execute: printf CORRECTED > result.txt; echo A >> applications; touch applied-A; sleep 1. Use a separate tool call to acknowledge the ordinary source as the native guidance says. Next use a separate tool call to execute: touch awaiting-finish; for i in $(seq 1 1000); do [ ! -f a-gate ] || break; sleep 0.1; done; test -f a-gate. Honor any further native instructions after that tool returns. Do not combine their application/source acknowledgement with the final wait. Finally, in a separate tool call execute: touch ready-to-finish; for i in $(seq 1 1000); do [ ! -f finish-gate ] || break; sleep 0.1; done; test -f finish-gate. Only then append done: verified to /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.no-mistakes/test-tmp/fm-stream-deck-live.Ljwlpi/scenarios/state/worker.status and finish. Payload byte probe follows; it is not a shell command:\r\nα\rβ\n\n", "projection": "1.msg", "binding": {"execution": "21796c7ee07b89b777f8d23a53a13664", "order_id": "native-A", "turn": "6d7483f7b10c4c439ff520f2906350a9"}}
+{"scenario": "byte-exact-native-persistence", "order_id": "native-B", "source_text": "Runtime test instruction B: execute echo B >> applications. Acknowledge this source as instructed; preserve CORRECTED and keep the earlier finish-gate requirement.\r\nfirst\rsecond\n", "projection": "2.msg", "binding": {"execution": "21796c7ee07b89b777f8d23a53a13664", "order_id": "native-B", "turn": "6d7483f7b10c4c439ff520f2906350a9"}}
+{"scenario": "byte-exact-native-persistence", "order_id": "native-C", "source_text": "Runtime test instruction C: execute echo C >> applications. Acknowledge this source as instructed; preserve CORRECTED and keep the earlier finish-gate requirement. Unicode: café λ.\r\n", "projection": "3.msg", "binding": {"execution": "21796c7ee07b89b777f8d23a53a13664", "order_id": "native-C", "turn": "6d7483f7b10c4c439ff520f2906350a9"}}
+{"scenario": "same-turn-correction-and-duplicates", "execution_id": "21796c7ee07b89b777f8d23a53a13664", "turn": "6d7483f7b10c4c439ff520f2906350a9", "result": "CORRECTED", "applications": ["A", "B", "C"], "busy_state_unchanged": true, "no_turn_end": true, "no_manufactured_status": true}
+{"scenario": "bridge-answer", "record": "command_ack", "command_id": "native-too-large", "leaf_worker_id": "lab/worker", "state": "refused", "received_at_utc": "2026-09-29T22:47:49Z", "reason": "agent_refused: Deck steering is blank or exceeds interface size with source reference", "requested_execution": "21796c7ee07b89b777f8d23a53a13664"}
+{"scenario": "original-turn-only-recovery", "reserved_turn": "6d7483f7b10c4c439ff520f2906350a9", "successor": "253e93b73b7741fc946df8d2d46e8182", "source_binding": {"execution": "21796c7ee07b89b777f8d23a53a13664", "order_id": "native-ended", "turn": "6d7483f7b10c4c439ff520f2906350a9"}, "successor_messages": 0, "fabricated_result": false}
+{"scenario": "independent-result-retry", "pending_result": {"order_id": "native-A", "result": {"machine": "lab", "command_id": "e1415c299ae14797beced9f323311c7b", "ok": true, "error": ""}, "expires_at": 1790722985.140779, "retry_at": 1790722085.140779, "backoff": 2.0, "settled": false}, "attempts": 1, "native_D_and_E_reserved": true, "native_D_and_E_published": true, "result_connection_unavailable": true}
+{"scenario": "bridge-answer", "record": "command_ack", "command_id": "native-A", "leaf_worker_id": "lab/worker", "state": "accepted", "received_at_utc": "2026-09-29T22:48:17Z", "requested_execution": "21796c7ee07b89b777f8d23a53a13664"}
+{"scenario": "bridge-answer", "record": "command_ack", "command_id": "native-A", "leaf_worker_id": "lab/worker", "state": "accepted", "received_at_utc": "2026-09-29T22:48:17Z", "requested_execution": "21796c7ee07b89b777f8d23a53a13664"}
+{"scenario": "bridge-answer", "record": "command_ack", "command_id": "native-B", "leaf_worker_id": "lab/worker", "state": "accepted", "received_at_utc": "2026-09-29T22:48:17Z", "requested_execution": "21796c7ee07b89b777f8d23a53a13664"}
+{"scenario": "bridge-answer", "record": "command_ack", "command_id": "native-B", "leaf_worker_id": "lab/worker", "state": "accepted", "received_at_utc": "2026-09-29T22:48:17Z", "requested_execution": "21796c7ee07b89b777f8d23a53a13664"}
+{"scenario": "bridge-answer", "record": "command_ack", "command_id": "native-C", "leaf_worker_id": "lab/worker", "state": "accepted", "received_at_utc": "2026-09-29T22:48:18Z", "requested_execution": "21796c7ee07b89b777f8d23a53a13664"}
+{"scenario": "bridge-answer", "record": "command_ack", "command_id": "native-C", "leaf_worker_id": "lab/worker", "state": "accepted", "received_at_utc": "2026-09-29T22:48:18Z", "requested_execution": "21796c7ee07b89b777f8d23a53a13664"}
+{"scenario": "bridge-answer", "record": "command_ack", "command_id": "native-D", "leaf_worker_id": "lab/worker", "state": "accepted", "received_at_utc": "2026-09-29T22:48:56Z", "requested_execution": "21796c7ee07b89b777f8d23a53a13664"}
+{"scenario": "bridge-answer", "record": "command_ack", "command_id": "native-E", "leaf_worker_id": "lab/worker", "state": "accepted", "received_at_utc": "2026-09-29T22:48:56Z", "requested_execution": "21796c7ee07b89b777f8d23a53a13664"}
+{"scenario": "native-result-outage-recovered", "attempts": [{"machine": "lab", "command_id": "e1415c299ae14797beced9f323311c7b", "ok": true, "error": ""}, {"machine": "lab", "command_id": "e1415c299ae14797beced9f323311c7b", "ok": true, "error": ""}], "successor_native_applications": ["D", "E"], "original_unresolved_binding": {"execution": "21796c7ee07b89b777f8d23a53a13664", "order_id": "native-ended", "turn": "6d7483f7b10c4c439ff520f2906350a9"}}
+{"scenario": "bridge-answer", "record": "command_ack", "command_id": "retained-steer", "leaf_worker_id": "lab/retained", "state": "refused", "received_at_utc": "2026-09-29T22:48:57Z", "reason": "endpoint_not_orderable: execution dfba6de275cc054e27f8dba88eb2f424 has no native steering receiver; retained agents remain available for input, status and kill, but this order was not delivered; upgrade the agent at a safe worker boundary", "requested_execution": "dfba6de275cc054e27f8dba88eb2f424"}
+{"scenario": "bridge-answer", "record": "command_ack", "command_id": "ordinary-large", "leaf_worker_id": "lab/ordinary", "state": "accepted", "received_at_utc": "2026-09-29T22:49:00Z", "requested_execution": "fc6971c0198d02725d46bffa234a669d"}
+{"scenario": "retained-compatibility-and-native-only-limits", "retained_execution": "dfba6de275cc054e27f8dba88eb2f424", "legacy_input": true, "retained_native_refused": true, "native_70000_refused": true, "ordinary_execution": "fc6971c0198d02725d46bffa234a669d", "ordinary_received_bytes": 70000}
+PASS all seven native live receiver scenarios
+worker-capture:
+exec bash /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.no-mistakes/test-tmp/fm-stream-deck-live.Ljwlpi/scenarios/launch-worker.sh
+➜  cwd exec bash /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.no-mistakes/test-tmp/fm-stream-deck-live.Ljwlpi/scenarios/launch-worker.sh
+
+
+▸ run_command {"command":"touch started; for i in $(seq 1 1000); do [ ! -f initial-gate ] || break; sleep 0.1; done; test -f initial-gate"}
+  ↳ run_command (16387 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"printf CORRECTED > result.txt; echo A >> applications; touch applied-A; sleep 1"}
+  ↳ run_command (1143 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"mv /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.no-mistakes/test-tmp/fm-stream-deck-live.Ljwlpi/scenarios/
+  ↳ run_command (164 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"touch awaiting-finish; for i in $(seq 1 1000); do [ ! -f a-gate ] || break; sleep 0.1; done; test -f a-gate"}
+  ↳ run_command (312 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"echo B >> applications"}
+  ↳ run_command (87 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"mv /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.no-mistakes/test-tmp/fm-stream-deck-live.Ljwlpi/scenarios/
+  ↳ run_command (87 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"echo C >> applications"}
+  ↳ run_command (79 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"mv /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.no-mistakes/test-tmp/fm-stream-deck-live.Ljwlpi/scenarios/
+  ↳ run_command (100 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"touch ready-to-finish; for i in $(seq 1 1000); do [ ! -f finish-gate ] || break; sleep 0.1; done; test -f finish-gate"}
+  ↳ run_command (546 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"test \"$(cat result.txt)\" = CORRECTED && test \"$(cat applications)\" = \"$(printf 'A\\nB\\nC')\" && test -f finish-gate && printf 'done: verified\
+  ↳ run_command (90 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+Captain, verified: preserved `CORRECTED`, applied A/B/C once, acknowledged all three inbox sources, and appended `done: verified` after `finish-gate` existed.
+── turn finished 2026-09-29T22:48Z (11 model calls)
+
+idle since 2026-09-29T22:48Z
+❯ Runtime test only: first execute touch successor-started; for i in $(seq 1 1000); do [ ! -f successor-gate ] || break; sleep 0.1; done; test -f successor-gate. Do not inspect or execute old inbox so
+urces. Honor only new native guidance. After handling it, use a separate tool call to execute touch successor-waiting; for i in $(seq 1 1000); do [ ! -f successor-finish ] || break; sleep 0.1; done; t
+est -f successor-finish. Then append done: successor to /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.no-mistakes/test-tmp/fm-stream-deck-live.Ljwlpi/scenarios
+/state/worker.status and finish.
+
+⛵ deck working - ctrl+c to stop
+
+▸ run_command {"command":"touch successor-started; for i in $(seq 1 1000); do [ ! -f successor-gate ] || break; sleep 0.1; done; test -f successor-gate"}
+  ↳ run_command (8535 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"echo D >> successor-applications; touch successor-corrected"}
+  ↳ run_command (75 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"mv /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.no-mistakes/test-tmp/fm-stream-deck-live.Ljwlpi/scenarios/
+  ↳ run_command (154 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"echo E >> successor-applications; touch successor-corrected"}
+  ↳ run_command (81 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"mv /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.no-mistakes/test-tmp/fm-stream-deck-live.Ljwlpi/scenarios/
+  ↳ run_command (115 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"touch successor-waiting; for i in $(seq 1 1000); do [ ! -f successor-finish ] || break; sleep 0.1; done; test -f successor-finish"}
+  ↳ run_command (293 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"test -f successor-finish && test \"$(cat successor-applications)\" = \"$(printf 'D\\nE')\" && printf 'done: successor\\n' >> /Users/bastotecnologia/
+  ↳ run_command (63 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+Captain, applied D and E once, acknowledged both new sources, and verified `successor-finish` before appending `done: successor`. Left `result.txt` and old inbox sources untouched.turn finished 2026-0
+9-29T22:48Z (8 model calls)
+
+── turn finished 2026-09-29T22:48Z (8 model calls)
+
+▸ run_command {"command":"touch successor-started; for i in $(seq 1 1000); do [ ! -f successor-gate ] || break; sleep 0.1; done; test -f successor-gate"}
+  ↳ run_command (8535 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"echo D >> successor-applications; touch successor-corrected"}
+  ↳ run_command (75 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"mv /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.no-mistakes/test-tmp/fm-stream-deck-live.Ljwlpi/scenarios/
+  ↳ run_command (154 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"echo E >> successor-applications; touch successor-corrected"}
+  ↳ run_command (81 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"mv /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.no-mistakes/test-tmp/fm-stream-deck-live.Ljwlpi/scenarios/
+  ↳ run_command (115 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"touch successor-waiting; for i in $(seq 1 1000); do [ ! -f successor-finish ] || break; sleep 0.1; done; test -f successor-finish"}
+  ↳ run_command (293 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+
+▸ run_command {"command":"test -f successor-finish && test \"$(cat successor-applications)\" = \"$(printf 'D\\nE')\" && printf 'done: successor\\n' >> /Users/bastotecnologia/
+  ↳ run_command (63 ms) {"exit_code":0,"stderr":"","stdout":"","timed_out":false}
+Captain, applied D and E once, acknowledged both new sources, and verified `successor-finish` before appending `done: successor`. Left `result.txt` and old inbox sources untouched.
+── turn finished 2026-09-29T22:48Z (8 model calls)
+
+idle since 2026-09-29T22:48Z
+❯
+
+agent.log:
+fm-stream-agent 2.1.0 endpoint 21796c7ee07b89b777f8d23a53a13664 on lab -> http://127.0.0.1:61047
+
+bridge-A-duplicate.log:
+
+bridge-A.log:
+
+bridge-B.log:
+
+bridge-C.log:
+
+bridge-ended.log:
+
+bridge-native-D.log:
+
+bridge-native-E.log:
+
+hub.log:
+fm-stream-hub 2.0.0 protocol 3 listening on 127.0.0.1:61046
+
+ordinary.log:
+fm-stream-agent 2.1.0 endpoint fc6971c0198d02725d46bffa234a669d on lab -> http://127.0.0.1:61046
+
+retained.log:
+fm-stream-agent 2.1.0 endpoint dfba6de275cc054e27f8dba88eb2f424 on lab -> http://127.0.0.1:61046
+
+FM_TEST_END 2026-09-29T22:49:03Z tests/fm-stream-deck-live-e2e.test.sh exit=0 duration_ms=142382 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=142964
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=1 duration_ms=142382 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-deck-live-e2e.test.sh duration_ms=142382

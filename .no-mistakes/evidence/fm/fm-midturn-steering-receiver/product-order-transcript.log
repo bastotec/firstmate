@@ -1,0 +1,6 @@
+order response: {"delivered": true, "execution_id": "449cdc256eb1fde13a8f709b4a97d272", "leaf_worker_id": "box-a/ordered-1190", "ok": true, "order_id": "order-c5b84260091e001ed1f0000686fc33cd", "outcome": "accepted", "requested_at": 1790718315.0109959, "requested_execution_id": "449cdc256eb1fde13a8f709b4a97d272", "worker_gone": false}
+worker capture:
+echo ORDER-LANDED
+ok - hub: an order addressed by leaf reaches that leaf's worker
+superseded execution response: {"delivered": false, "error": "execution_superseded", "execution_id": "3ab414a71d15fd4d129fcec3d12d8e13", "leaf_worker_id": "box-a/relaunched-1190", "message": "leaf box-a/relaunched-1190 is now execution 3ab414a71d15fd4d129fcec3d12d8e13; the order was aimed at 40f28c24366d08cde81b1ef8bbe0ac2d and was not delivered", "ok": false, "order_id": "order-9b308ee4a007f4390cdcc00833250f94", "outcome": "refused", "reason": "execution_superseded", "reason_message": "leaf box-a/relaunched-1190 is now execution 3ab414a71d15fd4d129fcec3d12d8e13; the order was aimed at 40f28c24366d08cde81b1ef8bbe0ac2d and was not delivered", "requested_at": 1790718321.53687, "requested_execution_id": "40f28c24366d08cde81b1ef8bbe0ac2d", "worker_gone": false}
+ok - hub: an order aimed at a replaced execution is refused and never lands in its replacement

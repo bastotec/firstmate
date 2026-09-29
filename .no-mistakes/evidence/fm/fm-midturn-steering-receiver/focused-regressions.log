@@ -1,0 +1,51 @@
+FM_TEST_BEGIN 2026-09-29T22:49:28Z tests/fm-stream-deck.test.sh family=unclassified expected_gate_skip=none
+fm-stream-agent: command application unconfirmed: [Errno 28] source storage temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 28] source storage temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 5] source reads temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 5] source reads temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 28] temporary projection failure
+fm-stream-agent: could not acknowledge: result connection temporarily unavailable
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result capability revoked
+fm-stream-agent: could not acknowledge: late taken result needs a final shutdown attempt
+fm-stream-agent: could not acknowledge: late taken result needs a final shutdown attempt
+{"order_id": "bytes-0", "source_text": "first\r\nsecond", "handled_projection": "5.msg", "duplicate_result": [true, ""]}
+{"order_id": "bytes-1", "source_text": "first\rsecond\r", "handled_projection": "6.msg", "duplicate_result": [true, ""]}
+{"order_id": "bytes-2", "source_text": "α\r\nβ\n\n", "handled_projection": "7.msg", "duplicate_result": [true, ""]}
+PASS active-turn delivery, duplicate/lost-ack reconciliation, stale execution, finish race, ordered recovery, byte-exact sources, and untouched evidence
+PASS durable take barriers, full-timeout delayed destructive HTTP, independent application/take/result responsibilities, bounded retry expiry, shutdown drain, and durable recovery
+PASS executable entry points, per-endpoint negotiation, retained-agent compatibility, and native-only text limits
+FM_TEST_END 2026-09-29T22:49:37Z tests/fm-stream-deck.test.sh exit=0 duration_ms=8680 gate_skip=false
+FM_TEST_BEGIN 2026-09-29T22:49:37Z tests/fm-stream-bridge.test.sh family=unclassified expected_gate_skip=none
+ok - bridge: recorded hub traffic replays into the Bridge UI's record shape
+ok - bridge: only an exit the owning agent reported becomes Stopped or Failed
+ok - bridge: malformed recordings are refused and malformed endpoints left out
+ok - bridge: a leaf is emitted once from the hub's current execution
+ok - bridge: a snapshot reads a real hub's registrations and closes
+ok - bridge: a real agent's reported worker exit reaches the Bridge
+ok - bridge: serve streams every tick and goes silent while the hub is gone
+ok - bridge: wrong credentials and incompatible hubs are refused during negotiation
+ok - bridge: commands rebind atomically to the active hub generation
+ok - bridge: a composer command reaches the worker and is acknowledged
+ok - bridge: a reused command id refuses a different payload
+ok - bridge: a command for a worker its agent reported gone is nacked
+ok - bridge: a command aimed at a replaced execution is refused without claiming absence
+ok - bridge: commands require the execution they were composed against
+ok - bridge: commands for another or missing fleet are nacked
+ok - bridge: an order the hub cannot settle is left pending rather than answered
+ok - bridge: a command that names no worker stays pending rather than nacked
+ok - bridge: the comparison harness sets rendered states against crew state
+FM_TEST_END 2026-09-29T22:50:50Z tests/fm-stream-bridge.test.sh exit=0 duration_ms=72200 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=81540
+FM_TEST_SUMMARY_FAMILY family=unclassified count=2 duration_ms=80880 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-bridge.test.sh duration_ms=72200
+FM_TEST_SLOWEST rank=2 script=tests/fm-stream-deck.test.sh duration_ms=8680

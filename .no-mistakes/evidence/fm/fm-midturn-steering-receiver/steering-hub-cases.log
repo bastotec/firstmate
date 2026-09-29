@@ -1,0 +1,4 @@
+ok - hub: endpoint capabilities prevent command theft, remain idempotent, and revoke
+ok - hub: an agent retains and retries a successful command result
+ok - hub: a terminal result rejection does not wedge command polling
+not ok - the agent never applied the command and posted its result

@@ -1,0 +1,11 @@
+FM_TEST_BEGIN 2026-09-29T21:38:19Z tests/fm-stream-hub.test.sh family=unclassified expected_gate_skip=none
+ok - hub: endpoint capabilities prevent command theft, remain idempotent, and revoke
+ok - hub: every data route requires a bearer token, and only the viewer page does not
+ok - hub: registering an endpoint needs the publish class, reading needs subscribe
+ok - hub: steering needs the control class, and a viewing token holds none of it
+ok - hub: the screen read answers with the live screen and its cursor row
+not ok - capture must stay readable while frames arrive: capture failed: URLError(ConnectionResetError(54, 'Connection reset by peer')) (expected 'capture failed: URLError(ConnectionResetError(54, 'Connection reset by peer'))', got 'clean')
+FM_TEST_END 2026-09-29T21:38:39Z tests/fm-stream-hub.test.sh exit=1 duration_ms=19187 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=21093
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=19187 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-hub.test.sh duration_ms=19187

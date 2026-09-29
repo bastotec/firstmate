@@ -1,0 +1,4 @@
+retained-client order response: {"delivered": false, "error": "no_agent_ack", "execution_id": "997901041f40e0626d63e5d593529b12", "leaf_worker_id": "retained/recovering", "message": "the agent on machine retained did not acknowledge within 1s (last heard from 1.0s ago); the input was NOT delivered", "ok": false, "order_id": "retained-native-contract", "outcome": "refused", "reason": "no_agent_ack", "reason_message": "the agent on machine retained did not acknowledge within 1s (last heard from 1.0s ago); the input was NOT delivered", "requested_at": 1790722318.9789, "requested_execution_id": "997901041f40e0626d63e5d593529b12", "worker_gone": false}
+not ok - result retries alone must not authorize native steering (expected '504', got '409')
+
+base-commit regression exit=1 (expected nonzero)

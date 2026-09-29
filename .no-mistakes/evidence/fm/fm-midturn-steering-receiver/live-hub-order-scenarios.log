@@ -1,0 +1,17 @@
+retained-client order response: {"delivered": false, "error": "endpoint_not_orderable", "execution_id": "c50197e7877dc33fb15ba3418aded191", "leaf_worker_id": "retained/recovering", "message": "execution c50197e7877dc33fb15ba3418aded191 has no native steering receiver; retained agents remain available for input, status and kill, but this order was not delivered; upgrade the agent at a safe worker boundary", "ok": false, "order_id": "retained-native-contract", "outcome": "refused", "reason": "endpoint_not_orderable", "reason_message": "execution c50197e7877dc33fb15ba3418aded191 has no native steering receiver; retained agents remain available for input, status and kill, but this order was not delivered; upgrade the agent at a safe worker boundary", "requested_at": 1790719127.399829, "requested_execution_id": "c50197e7877dc33fb15ba3418aded191", "worker_gone": false}
+ok - hub: endpoint registration controls Bridge orderability
+order response: {"delivered": true, "execution_id": "a689b2e502085cff00022f9641c0c10a", "leaf_worker_id": "box-a/ordered-41991", "ok": true, "order_id": "order-d36397b3cd9f133148c385b0ba0e39f9", "outcome": "accepted", "requested_at": 1790719130.260582, "requested_execution_id": "a689b2e502085cff00022f9641c0c10a", "worker_gone": false}
+worker capture:
+echo ORDER-LANDED
+ok - hub: an order addressed by leaf reaches that leaf's worker
+superseded execution response: {"delivered": false, "error": "execution_superseded", "execution_id": "f1f7cf0bc6142f1b010586c1465fa988", "leaf_worker_id": "box-a/relaunched-41991", "message": "leaf box-a/relaunched-41991 is now execution f1f7cf0bc6142f1b010586c1465fa988; the order was aimed at 560a4e40c7875fa5bb17ce3e17c37f4c and was not delivered", "ok": false, "order_id": "order-41c9338493ee99cb23dafcf4673c618e", "outcome": "refused", "reason": "execution_superseded", "reason_message": "leaf box-a/relaunched-41991 is now execution f1f7cf0bc6142f1b010586c1465fa988; the order was aimed at 560a4e40c7875fa5bb17ce3e17c37f4c and was not delivered", "requested_at": 1790719136.1985269, "requested_execution_id": "560a4e40c7875fa5bb17ce3e17c37f4c", "worker_gone": false}
+ok - hub: an order aimed at a replaced execution is refused and never lands in its replacement
+ok - hub: an order to a worker its own agent reported gone is refused as gone
+ok - hub: an unconfirmed order reconciles through a resend after its acknowledgement lands
+ok - hub: an order id deduplicates identical payloads and refuses conflicts
+first placement response: {"delivered": true, "execution_id": "f2e6016f7517f07c61cbd5a6ceebd7de", "leaf_worker_id": "box-a/racing-41991", "ok": true, "order_id": "sent-while-placing", "outcome": "accepted", "requested_at": 1790719146.66845, "requested_execution_id": "f2e6016f7517f07c61cbd5a6ceebd7de", "worker_gone": false}
+resend response: {"delivered": true, "execution_id": "f2e6016f7517f07c61cbd5a6ceebd7de", "leaf_worker_id": "box-a/racing-41991", "ok": true, "order_id": "sent-while-placing", "outcome": "accepted", "requested_at": 1790719146.66845, "requested_execution_id": "f2e6016f7517f07c61cbd5a6ceebd7de", "worker_gone": false}
+worker-written execution ledger:
+landed
+ok - hub: a resend overtaking a placement in flight is answered, not retyped
+ok - hub: ordering needs control, generation, and the narrow Bridge request shape

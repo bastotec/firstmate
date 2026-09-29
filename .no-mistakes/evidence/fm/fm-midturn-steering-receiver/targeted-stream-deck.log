@@ -1,0 +1,100 @@
+FM_TEST_BEGIN 2026-09-29T21:35:00Z tests/fm-stream-deck.test.sh family=unclassified expected_gate_skip=none
+fm-stream-agent: command application unconfirmed: [Errno 28] source storage temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 28] source storage temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 5] source reads temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 5] source reads temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 28] temporary projection failure
+fm-stream-agent: could not acknowledge: result connection temporarily unavailable
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result capability revoked
+fm-stream-agent: could not acknowledge: late taken result needs a final shutdown attempt
+fm-stream-agent: could not acknowledge: late taken result needs a final shutdown attempt
+PASS active-turn delivery, duplicate/lost-ack reconciliation, stale execution, finish race, ordered recovery, byte-exact sources, and untouched evidence
+PASS durable take barriers, full-timeout delayed destructive HTTP, independent application/take/result responsibilities, bounded retry expiry, shutdown drain, and durable recovery
+PASS executable entry points, per-endpoint negotiation, retained-agent compatibility, and native-only text limits
+FM_TEST_END 2026-09-29T21:35:07Z tests/fm-stream-deck.test.sh exit=0 duration_ms=7522 gate_skip=false
+FM_TEST_BEGIN 2026-09-29T21:35:07Z tests/fm-stream-bridge.test.sh family=unclassified expected_gate_skip=none
+ok - bridge: recorded hub traffic replays into the Bridge UI's record shape
+ok - bridge: only an exit the owning agent reported becomes Stopped or Failed
+ok - bridge: malformed recordings are refused and malformed endpoints left out
+ok - bridge: a leaf is emitted once from the hub's current execution
+ok - bridge: a snapshot reads a real hub's registrations and closes
+ok - bridge: a real agent's reported worker exit reaches the Bridge
+ok - bridge: serve streams every tick and goes silent while the hub is gone
+ok - bridge: wrong credentials and incompatible hubs are refused during negotiation
+ok - bridge: commands rebind atomically to the active hub generation
+ok - bridge: a composer command reaches the worker and is acknowledged
+ok - bridge: a reused command id refuses a different payload
+ok - bridge: a command for a worker its agent reported gone is nacked
+ok - bridge: a command aimed at a replaced execution is refused without claiming absence
+ok - bridge: commands require the execution they were composed against
+ok - bridge: commands for another or missing fleet are nacked
+ok - bridge: an order the hub cannot settle is left pending rather than answered
+ok - bridge: a command that names no worker stays pending rather than nacked
+ok - bridge: the comparison harness sets rendered states against crew state
+FM_TEST_END 2026-09-29T21:36:10Z tests/fm-stream-bridge.test.sh exit=0 duration_ms=62188 gate_skip=false
+FM_TEST_BEGIN 2026-09-29T21:36:10Z tests/fm-stream-hub.test.sh family=unclassified expected_gate_skip=none
+ok - hub: endpoint capabilities prevent command theft, remain idempotent, and revoke
+ok - hub: every data route requires a bearer token, and only the viewer page does not
+ok - hub: registering an endpoint needs the publish class, reading needs subscribe
+ok - hub: steering needs the control class, and a viewing token holds none of it
+ok - hub: the screen read answers with the live screen and its cursor row
+not ok - capture must stay readable while frames arrive: capture failed: URLError(ConnectionResetError(54, 'Connection reset by peer')) (expected 'capture failed: URLError(ConnectionResetError(54, 'Connection reset by peer'))', got 'clean')
+FM_TEST_END 2026-09-29T21:36:22Z tests/fm-stream-hub.test.sh exit=1 duration_ms=11803 gate_skip=false
+FM_TEST_BEGIN 2026-09-29T21:36:22Z tests/fm-deck-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - Herdr Deck recovery proves driver identity; dead and non-Deck paths remain conservative
+ok - Herdr Deck recovery attributes a live driver across a spaced code root and state root
+ok - the steering doorbell rings a live remote Deck driver and skips an absent one
+ok - Deck idle Ctrl+C stays a signal, not fake input, while partial input remains visible
+ok - Deck host preserves handling-successor supervision without parent turn-end wakes
+ok - fm-deck-worker: a secondmate records a failed turn and waits at its prompt for the next wake
+ok - fm-deck-worker: a secondmate with no session repeats its launch brief on the next wake
+ok - fm-deck-worker: a secondmate that cannot open a session stops for the guarded relaunch
+ok - fm-deck-worker: a secondmate that cannot publish a failed turn stops instead of looping
+ok - fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model
+ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
+ok - fm-deck-worker: busy-state failures stop turns and publish status evidence
+ok - fm-deck-worker: turn-end publication refuses unsafe targets
+ok - fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported
+ok - fm-deck-worker: Deck stderr cannot break completion-blocked rendering
+ok - fm-deck-worker: Firstmate bookkeeping cannot satisfy worker evidence
+ok - fm-deck-worker: the finished-turn line carries the UTC completion time and degrades safely without it
+ok - fm-deck-worker: the idle prompt notes the UTC idle instant beside the bare ❯ prompt
+ok - fm-deck-worker: status evidence never follows symlinked or non-regular paths
+ok - fm-deck-worker: silent and failed turns gain status evidence before turn-end
+ok - fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt
+ok - fm-deck-worker: each completed turn leaves the next steer an idle baseline
+ok - Deck stop: physical aliases and spaced paths stop the active Deck process
+ok - Deck stop: stale secondmate drivers stop before replacement arming
+tests/fm-deck-harness.test.sh: line 586: 12182 Killed: 9               FM_DECK_READY="$dir/ready" FM_DECK_SIGNALLED="$dir/signalled" python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' "$WORKER" --id owned --state "$dir/state" --gen "$gen" --deck "$dir/deck" -- old-brief < /dev/null > "$dir/pane.out" 2>&1
+ok - Deck stop: exact task scope and bounded escalation remove survivors
+ok - liveness: the deck driver and binary are agents, unrelated names are not
+ok - tmux liveness: Deck's Linux comm and argv0 classify alive
+ok - control and busy-source tables carry Deck mechanics without rendered delivery evidence
+ok - Deck supervision autoarm remains scoped to secondmate launches
+ok - fm-spawn: ordinary Deck dispatch records only default effort
+ok - fm-spawn: Deck refuses unsupported effort before launch metadata
+fm-deck-harness: all cases passed
+FM_TEST_END 2026-09-29T21:38:02Z tests/fm-deck-harness.test.sh exit=0 duration_ms=100442 gate_skip=false
+FM_TEST_BEGIN 2026-09-29T21:38:02Z tests/fm-stream-deck-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+skip: live: disabled by FM_LIVE=0
+fm-test-run: gate skip: tests/fm-stream-deck-live-e2e.test.sh: live: disabled by FM_LIVE=0
+FM_TEST_END 2026-09-29T21:38:03Z tests/fm-stream-deck-live-e2e.test.sh exit=0 duration_ms=259 gate_skip=true
+FM_TEST_SUMMARY total=5 failed=1 skipped_gate=1 duration_ms=183389
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=1 duration_ms=259 failed=0
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=100442 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=3 duration_ms=81513 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-harness.test.sh duration_ms=100442
+FM_TEST_SLOWEST rank=2 script=tests/fm-stream-bridge.test.sh duration_ms=62188
+FM_TEST_SLOWEST rank=3 script=tests/fm-stream-hub.test.sh duration_ms=11803
+FM_TEST_SLOWEST rank=4 script=tests/fm-stream-deck.test.sh duration_ms=7522
+FM_TEST_SLOWEST rank=5 script=tests/fm-stream-deck-live-e2e.test.sh duration_ms=259

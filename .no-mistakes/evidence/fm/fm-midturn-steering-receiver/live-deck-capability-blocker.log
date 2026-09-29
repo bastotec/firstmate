@@ -1,0 +1,39 @@
+FAIL Deck lacks --steer-dir: /Users/bastotecnologia/.local/bin/deck
+
+Focused command: TMPDIR="$PWD/.test-live-tmp" PYTHONDONTWRITEBYTECODE=1 FM_LIVE=1 FM_DECK_LIVE=1 bash tests/fm-stream-deck-live-e2e.test.sh
+Exit status: 1
+
+Installed executable: /Users/bastotecnologia/.local/bin/deck
+deck 0.1.0
+Run one prompt through the agent loop
+
+Usage: deck run [OPTIONS] <PROMPT>
+
+Arguments:
+  <PROMPT>  The prompt. Pass `-` to read it from stdin
+
+Options:
+  -m, --model <MODEL>
+          Model route on the gateway (default: zai/glm-5.3, or PROXAI_MODEL)
+      --base-url <BASE_URL>
+          Gateway base URL (default: http://127.0.0.1:8329/v1, or PROXAI_BASE_URL)
+      --api-key-file <API_KEY_FILE>
+          File holding the gateway client key
+  -s, --session <SESSION>
+          Session id to resume; a fresh one is generated when omitted
+      --ephemeral
+          Run without persisting a session
+      --max-turns <MAX_TURNS>
+          Maximum model calls for this run (tool-loop bound) [default: 24]
+      --deadline-secs <DEADLINE_SECS>
+          Run deadline in seconds (default 900, the gateway's own)
+      --command-timeout-secs <COMMAND_TIMEOUT_SECS>
+          Shell tool timeout in seconds (default 120)
+      --hook <EVENT=COMMAND>
+          Attach a process hook at the command line: `--hook EVENT=COMMAND`, repeatable. EVENT is one of pre_tool_use, post_tool_use, session_start, pre_complete, session_end. Merged after the deck.hooks.json files, so a supervisor (e.g. firstmate spawning a worker) can wire completion/progress/guard hooks at spawn without writing a config file. COMMAND runs via `bash -lc` with the event JSON on stdin
+  -h, --help
+          Print help
+
+Classification: setup/environment prerequisite failure; installed Deck lacks native steering support.
+All seven selected native live scenarios remain untested; no shared services or production tasks launched.
+No dependency installation or system configuration changes performed.

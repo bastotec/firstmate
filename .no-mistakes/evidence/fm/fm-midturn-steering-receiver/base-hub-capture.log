@@ -1,0 +1,1 @@
+not ok - capture must stay readable while frames arrive: capture failed: ConnectionResetError(54, 'Connection reset by peer') (expected 'capture failed: ConnectionResetError(54, 'Connection reset by peer')', got 'clean')

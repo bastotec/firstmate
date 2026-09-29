@@ -1,0 +1,251 @@
+{
+  "verdict": "pass",
+  "reproduced_failure": "FM_LIVE=1 with the installed Deck fails the --steer-dir prerequisite",
+  "root_cause": "The installed Deck binary lacks the native interface; the captain-approved compatible binary succeeds without host changes.",
+  "command": "TMPDIR=\"$PWD/.test-tmp\" FM_LIVE=1 FM_DECK_LIVE_BINARY=/Users/bastotecnologia/.treehouse/firstmate-0243e2/7/firstmate/.no-mistakes/deck-source/target/release/deck bash tests/fm-stream-deck-live-e2e.test.sh",
+  "exit_code": 0,
+  "scenarios": [
+    "Original-turn reservation and duplicate reconciliation without changed turn evidence",
+    "Transient lookup/projection recovery with no successor-turn delivery",
+    "Delayed real destructive take while independent local native publication continues",
+    "Failed native result posting retries durably while further native sources reserve and publish",
+    "CRLF, bare carriage returns, Unicode and duplicate identity survive native persistence",
+    "Actual retained base-agent legacy compatibility and native-only size limits",
+    "Bridge changes a real running Deck turn to CORRECTED without restart, displacement or false failure"
+  ],
+  "observations": [
+    {
+      "scenario": "reservation-and-lookup-fault",
+      "binding": {
+        "order_id": "native-A",
+        "execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2",
+        "turn": "696cb2061243429db03b1cf28d82e31c"
+      },
+      "takes_while_unpublished": 4
+    },
+    {
+      "scenario": "delayed-destructive-take",
+      "original_turn": "696cb2061243429db03b1cf28d82e31c",
+      "native_A_published": true,
+      "B_response_still_in_flight": true,
+      "held_seconds": 4.2774380830232985
+    },
+    {
+      "scenario": "byte-exact-native-persistence",
+      "order_id": "native-A",
+      "source_text": "Change course: never write ORIGINAL. Execute: printf CORRECTED > result.txt; echo A >> applications; touch applied-A; sleep 1. Use a separate tool call to acknowledge the ordinary source as the native guidance says. Next use a separate tool call to execute: touch awaiting-finish; for i in $(seq 1 1000); do [ ! -f a-gate ] || break; sleep 0.1; done; test -f a-gate. Honor any further native instructions after that tool returns. Do not combine their application/source acknowledgement with the final wait. Finally, in a separate tool call execute: touch ready-to-finish; for i in $(seq 1 1000); do [ ! -f finish-gate ] || break; sleep 0.1; done; test -f finish-gate. Only then append done: verified to /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QB6N5CWNPN7VWK7GRV8GC3/.test-tmp/fm-stream-deck-live.Vx7sjD/scenarios/state/worker.status and finish. Payload byte probe follows; it is not a shell command:\r\nα\rβ\n\n",
+      "projection": "1.msg",
+      "binding": {
+        "execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2",
+        "order_id": "native-A",
+        "turn": "696cb2061243429db03b1cf28d82e31c"
+      }
+    },
+    {
+      "scenario": "byte-exact-native-persistence",
+      "order_id": "native-B",
+      "source_text": "Runtime test instruction B: execute echo B >> applications. Acknowledge this source as instructed; preserve CORRECTED and keep the earlier finish-gate requirement.\r\nfirst\rsecond\n",
+      "projection": "2.msg",
+      "binding": {
+        "execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2",
+        "order_id": "native-B",
+        "turn": "696cb2061243429db03b1cf28d82e31c"
+      }
+    },
+    {
+      "scenario": "byte-exact-native-persistence",
+      "order_id": "native-C",
+      "source_text": "Runtime test instruction C: execute echo C >> applications. Acknowledge this source as instructed; preserve CORRECTED and keep the earlier finish-gate requirement. Unicode: café λ.\r\n",
+      "projection": "3.msg",
+      "binding": {
+        "execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2",
+        "order_id": "native-C",
+        "turn": "696cb2061243429db03b1cf28d82e31c"
+      }
+    },
+    {
+      "scenario": "same-turn-correction-and-duplicates",
+      "execution_id": "0ba9bc5a92fa89fec5887ca7d0b13fd2",
+      "turn": "696cb2061243429db03b1cf28d82e31c",
+      "result": "CORRECTED",
+      "applications": [
+        "A",
+        "B",
+        "C"
+      ],
+      "busy_state_unchanged": true,
+      "no_turn_end": true,
+      "no_manufactured_status": true
+    },
+    {
+      "scenario": "bridge-answer",
+      "record": "command_ack",
+      "command_id": "native-too-large",
+      "leaf_worker_id": "lab/worker",
+      "state": "refused",
+      "received_at_utc": "2026-09-29T22:43:10Z",
+      "reason": "agent_refused: Deck steering is blank or exceeds interface size with source reference",
+      "requested_execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2"
+    },
+    {
+      "scenario": "original-turn-only-recovery",
+      "reserved_turn": "696cb2061243429db03b1cf28d82e31c",
+      "successor": "a8918c72a12f46528a3358963d8e0b80",
+      "source_binding": {
+        "execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2",
+        "order_id": "native-ended",
+        "turn": "696cb2061243429db03b1cf28d82e31c"
+      },
+      "successor_messages": 0,
+      "fabricated_result": false
+    },
+    {
+      "scenario": "independent-result-retry",
+      "pending_result": {
+        "order_id": "native-A",
+        "result": {
+          "machine": "lab",
+          "command_id": "e42ec4c62dad43a3815105a57a5b7def",
+          "ok": true,
+          "error": ""
+        },
+        "expires_at": 1790722710.641144,
+        "retry_at": 1790721810.641144,
+        "backoff": 2.0,
+        "settled": false
+      },
+      "attempts": 2,
+      "native_D_and_E_reserved": true,
+      "native_D_and_E_published": true,
+      "result_connection_unavailable": true
+    },
+    {
+      "scenario": "bridge-answer",
+      "record": "command_ack",
+      "command_id": "native-A",
+      "leaf_worker_id": "lab/worker",
+      "state": "accepted",
+      "received_at_utc": "2026-09-29T22:43:43Z",
+      "requested_execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2"
+    },
+    {
+      "scenario": "bridge-answer",
+      "record": "command_ack",
+      "command_id": "native-A",
+      "leaf_worker_id": "lab/worker",
+      "state": "accepted",
+      "received_at_utc": "2026-09-29T22:43:43Z",
+      "requested_execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2"
+    },
+    {
+      "scenario": "bridge-answer",
+      "record": "command_ack",
+      "command_id": "native-B",
+      "leaf_worker_id": "lab/worker",
+      "state": "accepted",
+      "received_at_utc": "2026-09-29T22:43:43Z",
+      "requested_execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2"
+    },
+    {
+      "scenario": "bridge-answer",
+      "record": "command_ack",
+      "command_id": "native-B",
+      "leaf_worker_id": "lab/worker",
+      "state": "accepted",
+      "received_at_utc": "2026-09-29T22:43:43Z",
+      "requested_execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2"
+    },
+    {
+      "scenario": "bridge-answer",
+      "record": "command_ack",
+      "command_id": "native-C",
+      "leaf_worker_id": "lab/worker",
+      "state": "accepted",
+      "received_at_utc": "2026-09-29T22:43:43Z",
+      "requested_execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2"
+    },
+    {
+      "scenario": "bridge-answer",
+      "record": "command_ack",
+      "command_id": "native-C",
+      "leaf_worker_id": "lab/worker",
+      "state": "accepted",
+      "received_at_utc": "2026-09-29T22:43:44Z",
+      "requested_execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2"
+    },
+    {
+      "scenario": "bridge-answer",
+      "record": "command_ack",
+      "command_id": "native-D",
+      "leaf_worker_id": "lab/worker",
+      "state": "accepted",
+      "received_at_utc": "2026-09-29T22:44:22Z",
+      "requested_execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2"
+    },
+    {
+      "scenario": "bridge-answer",
+      "record": "command_ack",
+      "command_id": "native-E",
+      "leaf_worker_id": "lab/worker",
+      "state": "accepted",
+      "received_at_utc": "2026-09-29T22:44:22Z",
+      "requested_execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2"
+    },
+    {
+      "scenario": "native-result-outage-recovered",
+      "attempts": [
+        {
+          "machine": "lab",
+          "command_id": "e42ec4c62dad43a3815105a57a5b7def",
+          "ok": true,
+          "error": ""
+        },
+        {
+          "machine": "lab",
+          "command_id": "e42ec4c62dad43a3815105a57a5b7def",
+          "ok": true,
+          "error": ""
+        }
+      ],
+      "successor_native_applications": [
+        "D",
+        "E"
+      ],
+      "original_unresolved_binding": {
+        "execution": "0ba9bc5a92fa89fec5887ca7d0b13fd2",
+        "order_id": "native-ended",
+        "turn": "696cb2061243429db03b1cf28d82e31c"
+      }
+    },
+    {
+      "scenario": "bridge-answer",
+      "record": "command_ack",
+      "command_id": "retained-steer",
+      "leaf_worker_id": "lab/retained",
+      "state": "refused",
+      "received_at_utc": "2026-09-29T22:44:24Z",
+      "reason": "endpoint_not_orderable: execution c53737e5313d74ef42a1240ef543163c has no native steering receiver; retained agents remain available for input, status and kill, but this order was not delivered; upgrade the agent at a safe worker boundary",
+      "requested_execution": "c53737e5313d74ef42a1240ef543163c"
+    },
+    {
+      "scenario": "bridge-answer",
+      "record": "command_ack",
+      "command_id": "ordinary-large",
+      "leaf_worker_id": "lab/ordinary",
+      "state": "accepted",
+      "received_at_utc": "2026-09-29T22:44:29Z",
+      "requested_execution": "db551c32010bec1a39dfb6e4c67e3b70"
+    },
+    {
+      "scenario": "retained-compatibility-and-native-only-limits",
+      "retained_execution": "c53737e5313d74ef42a1240ef543163c",
+      "legacy_input": true,
+      "retained_native_refused": true,
+      "native_70000_refused": true,
+      "ordinary_execution": "db551c32010bec1a39dfb6e4c67e3b70",
+      "ordinary_received_bytes": 70000
+    }
+  ],
+  "scope": "Isolated loopback hub, real agents, real Bridge, real Deck, filesystem faults and forwarding proxy; no production tasks, shared stream service, host installation, full suite, lint, push, PR or CI phases.",
+  "note": "The branch-versus-base concurrent capture finding T1 remains unchanged and was not rerun."
+}
