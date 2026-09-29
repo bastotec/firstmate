@@ -1,0 +1,1129 @@
+   Compiling fm-stream-hub v2.0.0 (/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/crates/fm-stream-hub)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.02s
+     Running tests/cli.rs (target/debug/deps/cli-844c7b4c0725012f)
+
+running 1 test
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:433:13:
+assertion `left == right` failed
+  left: 403
+ right: 200
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339525061) panicked at crates/fm-stream-hub/tests/cli.rs:457:91:
+called `Result::unwrap()` on an `Err` value: JoinError::Panic(Id(1), "assertion `left == right` failed\n  left: 403\n right: 200", ...)
+test idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable ... FAILED
+
+failures:
+
+failures:
+    idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.51s
+
+error: test failed, to rerun pass `-p fm-stream-hub --test cli`

@@ -1,0 +1,19 @@
+   Compiling fm-stream-hub v2.0.0 (/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/baseline/crates/fm-stream-hub)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.44s
+     Running tests/cli.rs (.test-phase/baseline-target/debug/deps/cli-36c37fdcacc4aebd)
+
+running 1 test
+
+thread 'idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable' (339947790) panicked at crates/fm-stream-hub/tests/cli.rs:63:46:
+called `Result::unwrap()` on an `Err` value: Os { code: 35, kind: WouldBlock, message: "Resource temporarily unavailable" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable ... FAILED
+
+failures:
+
+failures:
+    idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 5.62s
+
+error: test failed, to rerun pass `-p fm-stream-hub --test cli`

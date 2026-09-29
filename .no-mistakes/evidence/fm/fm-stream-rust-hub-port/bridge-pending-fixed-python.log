@@ -1,0 +1,3 @@
+ok - bridge: an order the hub cannot settle is left pending rather than answered
+ok - bridge: a command that names no worker stays pending rather than nacked
+ok - bridge: the comparison harness sets rendered states against crew state

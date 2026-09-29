@@ -1,0 +1,18 @@
+[
+  {
+    "record": "leaf_heartbeat",
+    "identity": {
+      "fleet_id": "test",
+      "leaf_worker_id": "peers/python",
+      "parent_mate_id": "peers",
+      "execution_id": "python-peer",
+      "stream_epoch": 1
+    },
+    "sequence": 1,
+    "state": "Unknown",
+    "clock": {
+      "producer_monotonic_ms": "clock",
+      "hub_arrival_ms": "clock"
+    }
+  }
+]

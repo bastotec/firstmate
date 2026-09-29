@@ -1,0 +1,74 @@
+   Compiling libc v0.2.189
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.26
+   Compiling itoa v1.0.18
+   Compiling pin-project-lite v0.2.17
+   Compiling futures-core v0.3.34
+   Compiling bytes v1.12.1
+   Compiling serde_core v1.0.229
+   Compiling httparse v1.10.1
+   Compiling zmij v1.0.23
+   Compiling once_cell v1.21.4
+   Compiling serde_json v1.0.151
+   Compiling try-lock v0.2.5
+   Compiling getrandom v0.4.3
+   Compiling serde v1.0.229
+   Compiling http v1.5.0
+   Compiling want v0.3.1
+   Compiling tracing-core v0.1.36
+   Compiling futures-channel v0.3.34
+   Compiling errno v0.3.14
+   Compiling socket2 v0.6.5
+   Compiling syn v3.0.6
+   Compiling signal-hook-registry v1.4.8
+   Compiling mio v1.2.3
+   Compiling memchr v2.8.3
+   Compiling futures-task v0.3.34
+   Compiling atomic-waker v1.1.2
+   Compiling cfg-if v1.0.5
+   Compiling smallvec v1.16.1
+   Compiling unicode-general-category v1.1.0
+   Compiling httpdate v1.0.3
+   Compiling http-body v1.1.0
+   Compiling signal-hook v0.3.18
+   Compiling futures-util v0.3.34
+   Compiling tracing v0.1.44
+   Compiling percent-encoding v2.3.2
+   Compiling tower-service v0.3.3
+   Compiling tinyvec v1.13.3
+   Compiling form_urlencoded v1.2.2
+   Compiling uuid v1.26.1
+   Compiling http-body-util v0.1.5
+   Compiling unicode-normalization v0.1.25
+   Compiling subtle v2.6.1
+   Compiling unicode-width v0.2.2
+   Compiling base64 v0.22.1
+   Compiling tokio-macros v2.7.2
+   Compiling serde_derive v1.0.229
+   Compiling tokio v1.53.1
+   Compiling fm-stream-wire v0.1.0 (/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/baseline/crates/fm-stream-wire)
+   Compiling hyper v1.11.1
+   Compiling tokio-stream v0.1.19
+   Compiling hyper-util v0.1.20
+   Compiling fm-stream-hub v2.0.0 (/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/baseline/crates/fm-stream-hub)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 30.94s
+     Running tests/cli.rs (.test-phase/baseline-target/debug/deps/cli-36c37fdcacc4aebd)
+
+running 1 test
+
+thread 'extreme_negative_csi_parameters_preserve_screen_and_fleet_state' (338472569) panicked at crates/fm-stream-hub/tests/cli.rs:307:9:
+assertion `left == right` failed: 9223372036854775808G
+  left: String("\n\nx\n")
+ right: "\n\n       x\n"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test extreme_negative_csi_parameters_preserve_screen_and_fleet_state ... FAILED
+
+failures:
+
+failures:
+    extreme_negative_csi_parameters_preserve_screen_and_fleet_state
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.34s
+
+error: test failed, to rerun pass `-p fm-stream-hub --test cli`

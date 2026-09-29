@@ -1,0 +1,28 @@
+   Compiling fm-stream-hub v2.0.0 (/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/crates/fm-stream-hub)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.94s
+     Running tests/cli.rs (target/debug/deps/cli-844c7b4c0725012f)
+
+running 1 test
+513 idle polls: health=(200, Object {"capabilities": Array [String("current_execution"), String("idempotent_command_results"), String("result_retry_orderability"), String("endpoint_command_auth")], "command_ack_secs": Number(5.0), "endpoints": Number(1), "generation": String("3099c90cf6e241e7956cd23f8ccf1436"), "ok": Bool(true), "protocol": Number(3), "started_at": Number(1790722363.901126), "state_max_age_secs": Number(30.0), "version": String("2.0.0")}); frame=(200, Object {"accepted": Number(1), "ok": Bool(true)}); acknowledgement=(200, Object {"ok": Bool(true)}); input=(200, Object {"delivered": String("99999999999999999999999999999999"), "ok": Bool(true)})
+test idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.53s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/cli.rs (target/debug/deps/cli-844c7b4c0725012f)
+
+running 1 test
+513 idle polls: health=(200, Object {"capabilities": Array [String("current_execution"), String("idempotent_command_results"), String("result_retry_orderability"), String("endpoint_command_auth")], "command_ack_secs": Number(5.0), "endpoints": Number(1), "generation": String("1cf382651b554f95ac1731e898a8dfa1"), "ok": Bool(true), "protocol": Number(3), "started_at": Number(1790722364.493449), "state_max_age_secs": Number(30.0), "version": String("2.0.0")}); frame=(200, Object {"accepted": Number(1), "ok": Bool(true)}); acknowledgement=(200, Object {"ok": Bool(true)}); input=(200, Object {"delivered": String("99999999999999999999999999999999"), "ok": Bool(true)})
+test idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.50s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/cli.rs (target/debug/deps/cli-844c7b4c0725012f)
+
+running 1 test
+513 idle polls: health=(200, Object {"capabilities": Array [String("current_execution"), String("idempotent_command_results"), String("result_retry_orderability"), String("endpoint_command_auth")], "command_ack_secs": Number(5.0), "endpoints": Number(1), "generation": String("1f58e907b455481c9f57ac9865773e9e"), "ok": Bool(true), "protocol": Number(3), "started_at": Number(1790722365.059285), "state_max_age_secs": Number(30.0), "version": String("2.0.0")}); frame=(200, Object {"accepted": Number(1), "ok": Bool(true)}); acknowledgement=(200, Object {"ok": Bool(true)}); input=(200, Object {"delivered": String("99999999999999999999999999999999"), "ok": Bool(true)})
+test idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.49s
+

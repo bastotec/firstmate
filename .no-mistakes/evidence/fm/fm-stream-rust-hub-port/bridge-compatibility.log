@@ -1,0 +1,19 @@
+FM_TEST_BEGIN 2026-09-29T22:28:47Z tests/fm-stream-bridge.test.sh family=unclassified expected_gate_skip=none
+ok - bridge: recorded hub traffic replays into the Bridge UI's record shape
+ok - bridge: only an exit the owning agent reported becomes Stopped or Failed
+ok - bridge: malformed recordings are refused and malformed endpoints left out
+ok - bridge: a leaf is emitted once from the hub's current execution
+ok - bridge: a snapshot reads a real hub's registrations and closes
+ok - bridge: a real agent's reported worker exit reaches the Bridge
+ok - bridge: serve streams every tick and goes silent while the hub is gone
+ok - bridge: wrong credentials and incompatible hubs are refused during negotiation
+ok - bridge: commands rebind atomically to the active hub generation
+ok - bridge: a composer command reaches the worker and is acknowledged
+ok - bridge: a reused command id refuses a different payload
+ok - bridge: a command for a worker its agent reported gone is nacked
+ok - bridge: a command aimed at a replaced execution is refused without claiming absence
+ok - bridge: commands require the execution they were composed against
+ok - bridge: commands for another or missing fleet are nacked
+not ok - an order the hub could not settle must produce no record at all (expected '{"record":"command_ack","command_id":"c-pending","leaf_worker_id":"box-a/frozen-89476","state":"refused","received_at_utc":"2026-09-29T22:32:00Z","reason":"no_agent_ack: the agent on machine box-a did not acknowledge within 20s (last heard from 22.0s ago); the input was NOT delivered"}', got '')
+FM_TEST_END 2026-09-29T22:32:03Z tests/fm-stream-bridge.test.sh exit=1 duration_ms=195832 gate_skip=false
+FM_TEST_BEGIN 2026-09-29T22:32:03Z tests/fm-stream-bridge-rust.test.sh family=unclassified expected_gate_skip=none

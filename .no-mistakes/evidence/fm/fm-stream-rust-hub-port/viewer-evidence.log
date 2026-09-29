@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/viewer-evidence.py", line 63, in <module>
+    bridge = fixture.peers(pilot)
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/tests/assets/stream-hub-differential.py", line 340, in peers
+    capture = p.api("GET", "/v1/tasks/" + eid + "/capture")[1]
+              ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/viewer-evidence.py", line 44, in evidence_api
+    browser('open', pilot.url + '/#ctl')
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/viewer-evidence.py", line 23, in browser
+    assert result.returncode == 0, result.stderr
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ✗ Session name 'stream-test-74579' is too long. Socket path would be 140 bytes (max 103).
+Use a shorter session name or set AGENT_BROWSER_SOCKET_DIR to a shorter path.
+

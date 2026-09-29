@@ -1,0 +1,1082 @@
+{
+  "python": [
+    [
+      201,
+      {
+        "endpoint": {
+          "agent_silent_for_secs": "clock",
+          "closed_at": null,
+          "closed_by": null,
+          "cols": 8,
+          "created_at": "clock",
+          "cwd": "/tmp",
+          "endpoint_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "exit_code": null,
+          "label": "terminal",
+          "machine": "box",
+          "rows": 4,
+          "state_age_secs": null,
+          "stream_offset": 0
+        },
+        "ok": true
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab៘cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab៘cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      "ab៘cd\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab⸺cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab⸺cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      "ab⸺cd\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab⸻cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab⸻cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      "ab⸻cd\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab中cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab中cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      "ab中cd\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab́中c\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "\u001b[31mab́\u001b[0m中\u001b[2mc\u001b[0m\n\n\n"
+      }
+    ],
+    [
+      200,
+      "\u001b[31mab́\u001b[0m中\u001b[2mc\u001b[0m\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 2,
+        "ok": true,
+        "screen": "\n\nx\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 2,
+        "ok": true,
+        "screen": "\n\nx\n"
+      }
+    ],
+    [
+      200,
+      "\n\nx\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 2,
+        "ok": true,
+        "screen": "\n\n       x\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 2,
+        "ok": true,
+        "screen": "\n\n       x\n"
+      }
+    ],
+    [
+      200,
+      "\n\n       x\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 3,
+        "ok": true,
+        "screen": "\n\n\n       x"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 3,
+        "ok": true,
+        "screen": "\n\n\n       x"
+      }
+    ],
+    [
+      200,
+      "\n\n\n       x\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      "starté o\nk\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      "starté o\nk\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      "starté o\nk\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      "starté o\nk\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      "starté o\nk\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 3,
+        "ok": true,
+        "screen": "++++++++\n++++++++\n++++++++\n++++"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 3,
+        "ok": true,
+        "screen": "++++++++\n++++++++\n++++++++\n++++"
+      }
+    ],
+    [
+      200,
+      "++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++\n"
+    ],
+    [
+      201,
+      {
+        "endpoint": {
+          "agent_silent_for_secs": "clock",
+          "closed_at": null,
+          "closed_by": null,
+          "cols": 1,
+          "created_at": "clock",
+          "cwd": "/tmp",
+          "endpoint_id": "ffffffffffffffffffffffffffffffff",
+          "exit_code": null,
+          "label": "narrow",
+          "machine": "box",
+          "rows": 3,
+          "state_age_secs": null,
+          "stream_offset": 0
+        },
+        "ok": true
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "\n中́\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "\nx\n"
+      }
+    ]
+  ],
+  "rust": [
+    [
+      201,
+      {
+        "endpoint": {
+          "agent_silent_for_secs": "clock",
+          "closed_at": null,
+          "closed_by": null,
+          "cols": 8,
+          "created_at": "clock",
+          "cwd": "/tmp",
+          "endpoint_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "exit_code": null,
+          "label": "terminal",
+          "machine": "box",
+          "rows": 4,
+          "state_age_secs": null,
+          "stream_offset": 0
+        },
+        "ok": true
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab៘cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab៘cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      "ab៘cd\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab⸺cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab⸺cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      "ab⸺cd\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab⸻cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab⸻cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      "ab⸻cd\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab中cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab中cd\n\n\n"
+      }
+    ],
+    [
+      200,
+      "ab中cd\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "ab́中c\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "\u001b[31mab́\u001b[0m中\u001b[2mc\u001b[0m\n\n\n"
+      }
+    ],
+    [
+      200,
+      "\u001b[31mab́\u001b[0m中\u001b[2mc\u001b[0m\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 2,
+        "ok": true,
+        "screen": "\n\nx\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 2,
+        "ok": true,
+        "screen": "\n\nx\n"
+      }
+    ],
+    [
+      200,
+      "\n\nx\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 2,
+        "ok": true,
+        "screen": "\n\n       x\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 2,
+        "ok": true,
+        "screen": "\n\n       x\n"
+      }
+    ],
+    [
+      200,
+      "\n\n       x\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 3,
+        "ok": true,
+        "screen": "\n\n\n       x"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 3,
+        "ok": true,
+        "screen": "\n\n\n       x"
+      }
+    ],
+    [
+      200,
+      "\n\n\n       x\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      "starté o\nk\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      "starté o\nk\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      "starté o\nk\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      "starté o\nk\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 0,
+        "ok": true,
+        "screen": "start ok\n\n\n"
+      }
+    ],
+    [
+      200,
+      "start ok\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "starté o\nk\n\n"
+      }
+    ],
+    [
+      200,
+      "starté o\nk\n"
+    ],
+    [
+      200,
+      {
+        "cursor_row": 3,
+        "ok": true,
+        "screen": "++++++++\n++++++++\n++++++++\n++++"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 3,
+        "ok": true,
+        "screen": "++++++++\n++++++++\n++++++++\n++++"
+      }
+    ],
+    [
+      200,
+      "++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++++++\n++++\n"
+    ],
+    [
+      201,
+      {
+        "endpoint": {
+          "agent_silent_for_secs": "clock",
+          "closed_at": null,
+          "closed_by": null,
+          "cols": 1,
+          "created_at": "clock",
+          "cwd": "/tmp",
+          "endpoint_id": "ffffffffffffffffffffffffffffffff",
+          "exit_code": null,
+          "label": "narrow",
+          "machine": "box",
+          "rows": 3,
+          "state_age_secs": null,
+          "stream_offset": 0
+        },
+        "ok": true
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "\n中́\n"
+      }
+    ],
+    [
+      200,
+      {
+        "cursor_row": 1,
+        "ok": true,
+        "screen": "\nx\n"
+      }
+    ]
+  ]
+}

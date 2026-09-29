@@ -1,0 +1,636 @@
+[
+  {
+    "method": "POST",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c/input",
+    "request": {
+      "text": "printf 'PYTHON-PEER-OK:%s:%s:%s\\n' \"$HOME\" \"$SHELL\" \"$HISTFILE\"",
+      "submit": true
+    },
+    "status": 200,
+    "response": {
+      "delivered": "ba06c918cf2afed11e5db01ee1e06b7c",
+      "ok": true
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c/capture",
+    "request": null,
+    "status": 200,
+    "response": "\nThe default interactive shell is now zsh.\nTo update your account to use zsh, please run `chsh -s /bin/zsh`.\nFor more details, please visit https://support.apple.com/kb/HT208050.\nbash-3.2$ printf 'PYTHON-PEER-OK:%s:%s:%s\\n' \"$HOME\" \"$SHELL\" \"$HISTFILE\"\nPYTHON-PEER-OK:/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust/peer-home:/bin/bash:/dev/null\nbash-3.2$\n"
+  },
+  {
+    "browser": [
+      "open",
+      "http://127.0.0.1:56557/ui#ctl"
+    ],
+    "stdout": "✓ Firstmate stream\n  http://127.0.0.1:56557/ui#ctl\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "browser": [
+      "wait",
+      "button.ep"
+    ],
+    "stdout": "✓ Done\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "browser": [
+      "click",
+      "button.ep"
+    ],
+    "stdout": "✓ Done\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "browser": [
+      "fill",
+      "#line",
+      "printf 'VIEWER-SEND-OK\\n'"
+    ],
+    "stdout": "✓ Done\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "browser": [
+      "click",
+      "button.send"
+    ],
+    "stdout": "✓ Done\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "capture_after_browser_send": "\nThe default interactive shell is now zsh.\nTo update your account to use zsh, please run `chsh -s /bin/zsh`.\nFor more details, please visit https://support.apple.com/kb/HT208050.\nbash-3.2$ printf 'PYTHON-PEER-OK:%s:%s:%s\\n' \"$HOME\" \"$SHELL\" \"$HISTFILE\"\nPYTHON-PEER-OK:/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust/peer-home:/bin/bash:/dev/null\nbash-3.2$ printf 'VIEWER-SEND-OK\\n'\nVIEWER-SEND-OK\nbash-3.2$\n"
+  },
+  {
+    "browser": [
+      "screenshot",
+      "/Users/bastotecnologia/.no-mistakes/evidence/01M3QC1MATCA01QP8SH40BPCW3/viewer-live.png"
+    ],
+    "stdout": "✓ Screenshot saved to /Users/bastotecnologia/.no-mistakes/evidence/01M3QC1MATCA01QP8SH40BPCW3/viewer-live.png\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "method": "GET",
+    "path": "/v1/health",
+    "request": null,
+    "status": 200,
+    "response": {
+      "capabilities": [
+        "current_execution",
+        "idempotent_command_results",
+        "result_retry_orderability",
+        "endpoint_command_auth"
+      ],
+      "command_ack_secs": 0.25,
+      "endpoints": 0,
+      "generation": "89f184d2fdae457b9d3a656f41d4edb2",
+      "ok": true,
+      "protocol": 3,
+      "started_at": 1790721664.495427,
+      "state_max_age_secs": 0.5,
+      "version": "2.0.0"
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks",
+    "request": null,
+    "status": 200,
+    "response": {
+      "machines": [],
+      "ok": true,
+      "tasks": []
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks",
+    "request": null,
+    "status": 200,
+    "response": {
+      "machines": [],
+      "ok": true,
+      "tasks": []
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks",
+    "request": null,
+    "status": 200,
+    "response": {
+      "machines": [
+        {
+          "first_seen": 1790721664.684729,
+          "last_seen": 1790721664.686277,
+          "machine": "peers",
+          "reachable": true,
+          "silent_for_secs": 0.029
+        }
+      ],
+      "ok": true,
+      "tasks": [
+        {
+          "agent_silent_for_secs": 0.029,
+          "closed_at": null,
+          "closed_by": null,
+          "cols": 200,
+          "created_at": 1790721664.686273,
+          "current_execution": true,
+          "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+          "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+          "exit_code": null,
+          "label": "python",
+          "machine": "peers",
+          "rows": 40,
+          "state_age_secs": null,
+          "stream_offset": 0
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c/input",
+    "request": {
+      "text": "exit",
+      "submit": true
+    },
+    "status": 200,
+    "response": {
+      "delivered": "ba06c918cf2afed11e5db01ee1e06b7c",
+      "ok": true
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.0,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": null,
+        "stream_offset": 1
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.025,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": null,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.026,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.026,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.098,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.098,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.192,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.192,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.27,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.27,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.355,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.355,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.447,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.447,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.542,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.542,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.637,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.637,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.716,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.716,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.778,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.778,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.813,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.813,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.902,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.902,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.953,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.953,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 1.035,
+        "closed_at": null,
+        "closed_by": null,
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": null,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 1.035,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ba06c918cf2afed11e5db01ee1e06b7c",
+    "request": null,
+    "status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.078,
+        "closed_at": 1790721665.793111,
+        "closed_by": "agent",
+        "cols": 200,
+        "created_at": 1790721664.686273,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QC1MATCA01QP8SH40BPCW3/.test-phase/tmp/viewer-existing-rig-8d71uufg/rust",
+        "endpoint_id": "ba06c918cf2afed11e5db01ee1e06b7c",
+        "exit_code": 0,
+        "label": "python",
+        "machine": "peers",
+        "rows": 40,
+        "state_age_secs": 0.078,
+        "stream_offset": 12
+      }
+    }
+  },
+  {
+    "browser": [
+      "open",
+      "http://127.0.0.1:56557/ui#ctl"
+    ],
+    "stdout": "✓ Firstmate stream\n  http://127.0.0.1:56557/ui#ctl\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "browser": [
+      "wait",
+      "button.ep"
+    ],
+    "stdout": "✓ Done\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "browser": [
+      "click",
+      "button.ep"
+    ],
+    "stdout": "✓ Done\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "browser": [
+      "wait",
+      "#line:disabled"
+    ],
+    "stdout": "✓ Done\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "browser": [
+      "is",
+      "enabled",
+      "#line"
+    ],
+    "stdout": "false\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "browser": [
+      "screenshot",
+      "/Users/bastotecnologia/.no-mistakes/evidence/01M3QC1MATCA01QP8SH40BPCW3/viewer-closed.png"
+    ],
+    "stdout": "✓ Screenshot saved to /Users/bastotecnologia/.no-mistakes/evidence/01M3QC1MATCA01QP8SH40BPCW3/viewer-closed.png\n",
+    "stderr": "",
+    "exit": 0
+  }
+]

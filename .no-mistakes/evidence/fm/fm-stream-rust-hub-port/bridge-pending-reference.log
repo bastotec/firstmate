@@ -1,0 +1,1 @@
+not ok - an order the hub could not settle must produce no record at all (expected '{"record":"command_ack","command_id":"c-pending","leaf_worker_id":"box-a/frozen-90883","state":"refused","received_at_utc":"2026-09-29T22:34:40Z","reason":"no_agent_ack: the agent on machine box-a did not acknowledge within 20s (last heard from 21.9s ago); the input was NOT delivered"}', got '')
