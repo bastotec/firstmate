@@ -1673,6 +1673,135 @@ pe "$HFC" retire aa-fast-src >/dev/null 2>&1 || true
 pe "$HFC" retire zz-hold-src >/dev/null 2>&1 || true
 pass "a launch that finished before confirmation looked is still reported as started"
 
+# --- a live claim confirms even while the source lock is contended ----------
+# The claim is the launch's own handshake and is WRITTEN under the source lock.
+# Confirmation once read it through that same lock, so a holder in the window -
+# the old confirm poll's own try-acquire every few dozen milliseconds above all,
+# which contends with the very handoff it waits for - hid the owner the window
+# was waiting for, and a healthy runner was reported failed= while listening.
+# That is the reported remote-reply shape: its capture is terminal per
+# registration, so every cycle re-arms and re-proves ownership through a fresh
+# confirm window, and each contended window opened another false launch-failed
+# episode while the remote end stayed healthy.
+#
+# Deterministic shape of the race. aa-own-src's runner claims promptly and then
+# sleeps its launch floor (a planted fresh pacing stamp plus a long floor keep
+# its own stamp write out of the window), so the claim is the window's only
+# confirmation signal. Reconcile is stalled on zz-stall-src's held lock until
+# that claim has landed, then a second holder takes aa-own-src's source lock -
+# uncontended, while confirmation has not started - and holds it across the
+# whole window. Lock contention is the only variable: without that holder the
+# same fixture confirms on every code path.
+HOC="$TMP_ROOT/hoc"; new_home "$HOC"
+OC_OWN_TRIGGER="$TMP_ROOT/own-trigger"
+OC_STALL_TRIGGER="$TMP_ROOT/stall-trigger"
+pe_register "$HOC" lavish aa-own-src -- "$BLOCKER" "$OC_OWN_TRIGGER" "owned" >/dev/null
+pe_register "$HOC" lavish zz-stall-src -- "$BLOCKER" "$OC_STALL_TRIGGER" "stalled" >/dev/null
+oc_stamp=$(FM_HOME="$HOC" bash -c '
+  . "$1/bin/fm-pr-lib.sh"; . "$1/bin/fm-wake-lib.sh"; . "$1/bin/fm-procevent-lib.sh"
+  identity=$(fm_pr_file_identity "$2/state/procevent/aa-own-src.source") || exit 1
+  fm_procevent_launch_floor_stamp_path "$2/state" aa-own-src "$identity"
+' _ "$ROOT" "$HOC") || fail "could not derive the owned fixture's launch-pacing stamp path"
+perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC \
+  -e 'print clock_gettime(CLOCK_MONOTONIC), "\n"' > "$oc_stamp" \
+  || fail "could not plant the owned fixture's launch-pacing stamp"
+OC_STALL_READY="$TMP_ROOT/own-stall-ready"; OC_STALL_RELEASE="$TMP_ROOT/own-stall-release"
+hold_source_lock zz-stall-src "$OC_STALL_READY" "$OC_STALL_RELEASE"
+OC_STALL_HOLDER=$HOLDER_PID
+wait_for "$OC_STALL_READY" || fail "the owned fixture could not hold the stall source's lock"
+FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=4 FM_PROCEVENT_LAUNCH_FLOOR_SECONDS=8 \
+  pe "$HOC" reconcile > "$TMP_ROOT/own-reconcile.out" 2>&1 &
+OC_RECON=$!
+wait_for "$FM_PROCEVENT_CLAIM_ROOT/aa-own-src.claim" \
+  || fail "fixture invalid: the owned runner never took its claim while reconcile was stalled"
+OC_OWN_READY="$TMP_ROOT/own-lock-ready"; OC_OWN_RELEASE="$TMP_ROOT/own-lock-release"
+hold_source_lock aa-own-src "$OC_OWN_READY" "$OC_OWN_RELEASE"
+OC_OWN_HOLDER=$HOLDER_PID
+wait_for "$OC_OWN_READY" || fail "the owned fixture could not hold the claimed source's lock"
+: > "$OC_STALL_RELEASE"
+oc_rc=0; wait "$OC_RECON" || oc_rc=$?
+: > "$OC_OWN_RELEASE"
+wait "$OC_STALL_HOLDER" 2>/dev/null || true
+wait "$OC_OWN_HOLDER" 2>/dev/null || true
+oc_out=$(cat "$TMP_ROOT/own-reconcile.out")
+assert_contains "$oc_out" "started=2" \
+  "a live claim hidden behind a held source lock lost its launch: $oc_out"
+assert_contains "$oc_out" "failed=0" \
+  "confirmation reported a claim-holding runner as failed while the lock was contended: $oc_out"
+[ "$oc_rc" -eq 0 ] || fail "reconcile exited non-zero with every launch confirmed: $oc_out"
+# The incident shape must stay visible after the window: the runner is healthy
+# and owns its source, so any failure report here would have been false.
+oc_owner=$(pe "$HOC" list | awk '$1 == "aa-own-src" { print $3 }')
+[ "$oc_owner" = live ] || fail "the confirmed runner does not own its source after the window: $oc_owner"
+assert_absent "$HOC/state/procevent/.aa-own-src.launch-failed" \
+  "a confirmed launch opened a launch-failure episode anyway"
+: > "$OC_OWN_TRIGGER"; : > "$OC_STALL_TRIGGER"
+pe "$HOC" retire aa-own-src >/dev/null 2>&1 || true
+pe "$HOC" retire zz-stall-src >/dev/null 2>&1 || true
+pass "a live claim is confirmed even while the source lock is contended"
+
+# --- an unreadable claim record never reads as an owner ---------------------
+# Confirmation observes the claim record without the source lock, and the
+# record is published by rename, so an observation sees a whole generation or
+# nothing. A truncated record must confirm nothing and be preserved as
+# uncertain - the runner side refuses it as already owned and reconcile starts
+# no replacement - because a torn read that guessed "owned" would close a
+# launch-failed episode over a source nothing is collecting from.
+HTR="$TMP_ROOT/htr"; new_home "$HTR"
+TR_TRIGGER="$TMP_ROOT/torn-trigger"
+pe_register "$HTR" lavish torn-src -- "$BLOCKER" "$TR_TRIGGER" "torn" >/dev/null
+printf 'torn\n' > "$FM_PROCEVENT_CLAIM_ROOT/torn-src.claim"
+chmod 0600 "$FM_PROCEVENT_CLAIM_ROOT/torn-src.claim"
+tr_rc=0; tr_out=$(pe "$HTR" reconcile) || tr_rc=$?
+assert_contains "$tr_out" "started=0" "a torn claim record counted as a launch: $tr_out"
+assert_contains "$tr_out" "uncertain=1" "a torn claim record was not preserved as uncertain: $tr_out"
+assert_contains "$tr_out" "failed=0" "a torn claim record was reported as a launch failure: $tr_out"
+[ "$tr_rc" -eq 0 ] || fail "a preserved torn claim made reconcile fail: $tr_out"
+tr_owner=$(pe "$HTR" list | awk '$1 == "torn-src" { print $3 }')
+[ "$tr_owner" = uncertain ] || fail "a torn claim record was read as owner state: $tr_owner"
+rm -f -- "$FM_PROCEVENT_CLAIM_ROOT/torn-src.claim"
+: > "$TR_TRIGGER"
+pe "$HTR" retire torn-src >/dev/null 2>&1 || true
+pass "an unreadable claim record confirms nothing and is preserved as uncertain"
+
+# --- a failed launch leaves no litter and a repaired source re-arms ---------
+# The failure this fix removes was reported per launch, so the failure path
+# itself has to stay clean: an unconfirmed launch leaves no claim, runner
+# marker or staged output behind, its failure episode is recorded exactly
+# once, and a repaired registration arms and closes that episode on a later
+# cycle instead of inheriting it.
+HCL="$TMP_ROOT/hcl"; new_home "$HCL"
+CL_TRIGGER="$TMP_ROOT/cleanup-trigger"
+pe_register "$HCL" lavish cleanup-src -- "$BLOCKER" "$CL_TRIGGER" "cleanup" >/dev/null
+CL_SOURCE="$HCL/state/procevent/cleanup-src.source"
+if ! awk '/^argv:$/ { print; exit } { print }' "$CL_SOURCE" > "$CL_SOURCE.tmp"; then
+  fail "could not damage the cleanup fixture registration"
+fi
+mv "$CL_SOURCE.tmp" "$CL_SOURCE" || fail "could not damage the cleanup fixture registration"
+chmod 0600 "$CL_SOURCE"
+cl_rc=0
+cl_out=$(FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=2 pe "$HCL" reconcile) || cl_rc=$?
+assert_contains "$cl_out" "failed=1" \
+  "the unstartable cleanup fixture was not reported as failed: $cl_out"
+[ "$cl_rc" -ne 0 ] || fail "reconcile exited zero while a launch could not confirm: $cl_out"
+assert_absent "$FM_PROCEVENT_CLAIM_ROOT/cleanup-src.claim" \
+  "a launch that never claimed left a claim behind"
+assert_absent "$HCL/state/procevent/cleanup-src.runner" \
+  "a launch that never claimed left a runner marker behind"
+cl_staging=$(find "$HCL/state/procevent" -name '.cleanup-src.*.output' -print 2>/dev/null | head -1)
+[ -z "$cl_staging" ] || fail "a launch that never claimed left staged output behind: $cl_staging"
+assert_present "$HCL/state/procevent/.cleanup-src.launch-failed" \
+  "an unconfirmed launch did not record its failure episode"
+pe_register "$HCL" lavish cleanup-src -- "$BLOCKER" "$CL_TRIGGER" "cleanup" >/dev/null
+cl_ok=$(pe "$HCL" reconcile)
+assert_contains "$cl_ok" "started=1" \
+  "the repaired cleanup fixture did not arm on a later cycle: $cl_ok"
+assert_absent "$HCL/state/procevent/.cleanup-src.launch-failed" \
+  "a confirmed launch did not close its failure episode"
+: > "$CL_TRIGGER"
+pe "$HCL" retire cleanup-src >/dev/null 2>&1 || true
+pass "a failed launch leaves no litter and a repaired source re-arms cleanly"
+
 # --- a zero-padded confirm window is read as base 10 -------------------------
 # The window's validator reads base 10, so `08` is a value it accepts. Read as
 # octal in arithmetic it is not a number at all, which under `set -u` takes the
