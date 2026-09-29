@@ -365,22 +365,7 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
         }
         if tail.is_empty() && method == "DELETE" {
             require(h, r, q, "control", false)?;
-            let result = h.submit(eid, "kill", json!({"signal":"TERM"}), None);
-            let mut delivered = true;
-            if let Err(e) = result {
-                if e.code != "no_agent_ack" {
-                    return Err(e);
-                }
-                let mut s = h.state.lock().unwrap();
-                s.endpoints.get_mut(eid).unwrap().close(Value::Null, "hub");
-                h.wake.notify_all();
-                delivered = false;
-            }
-            let s = h.state.lock().unwrap();
-            let e = Hub::get(&s, eid)?;
-            return answer(
-                json!({"ok":true,"closed":eid,"machine":e.machine,"delivered":delivered}),
-            );
+            return answer(h.delete(eid)?);
         }
         let steering = method == "POST" && (tail == "input" || tail == "status");
         require(
@@ -984,6 +969,133 @@ mod tests {
             for poll in polls { tokio::time::timeout(Duration::from_secs(1), poll).await.unwrap().unwrap(); }
             server.abort();
         });
+    }
+
+    #[tokio::test]
+    async fn deletion_survives_retention_and_never_closes_or_commands_a_replacement() {
+        for (replacement_machine, take_original) in [
+            (None, false),
+            (Some("box"), false),
+            (Some("other"), false),
+            (Some("box"), true),
+        ] {
+            let (h, eid, cap) = fixture();
+            let (address, server) = server(h.clone()).await;
+            let path = format!("/v1/tasks/{eid}");
+            let delete_path = path.clone();
+            let deletion = tokio::spawn(async move {
+                json_response(request(address, "DELETE", &delete_path, json!({}), "").await).await
+            });
+            tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    let queued = h
+                        .state
+                        .lock()
+                        .unwrap()
+                        .commands
+                        .values()
+                        .any(|c| c.lock().unwrap().kind == "kill");
+                    if queued {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+            let original_command = if take_original {
+                let (status, taken) = json_response(
+                    request(
+                        address,
+                        "GET",
+                        &format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=0"),
+                        json!({}),
+                        &cap,
+                    )
+                    .await,
+                )
+                .await;
+                assert_eq!(status, 200);
+                Some(
+                    taken["commands"][0]["command_id"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                )
+            } else {
+                None
+            };
+            h.state
+                .lock()
+                .unwrap()
+                .endpoints
+                .get_mut(&eid)
+                .unwrap()
+                .seen = now() - 3601.;
+            let (status, tasks) =
+                json_response(request(address, "GET", "/v1/tasks", json!({}), "").await).await;
+            assert_eq!(status, 200);
+            assert_eq!(tasks["tasks"], json!([]));
+            if let Some(machine) = replacement_machine {
+                let (status, registered) = json_response(request(address, "POST", "/v1/agent/endpoints", json!({"protocol":3,"endpoint_id":eid,"machine":machine,"label":"replacement","rows":2,"cols":8}), "").await).await;
+                assert_eq!(status, 201);
+                let replacement_cap = registered["command_capability"].as_str().unwrap();
+                let (status, commands) = json_response(
+                    request(
+                        address,
+                        "GET",
+                        &format!("/v1/agent/commands?machine={machine}&endpoint={eid}&wait=0"),
+                        json!({}),
+                        replacement_cap,
+                    )
+                    .await,
+                )
+                .await;
+                assert_eq!(status, 200);
+                assert_eq!(commands["commands"], json!([]));
+                if let Some(cid) = original_command {
+                    let (status, refused) = json_response(
+                        request(
+                            address,
+                            "POST",
+                            "/v1/agent/results",
+                            json!({"machine":machine,"command_id":cid,"ok":true}),
+                            replacement_cap,
+                        )
+                        .await,
+                    )
+                    .await;
+                    assert_eq!(status, 403);
+                    assert_eq!(refused["error"], "endpoint_unauthorized");
+                }
+            }
+            let (status, deleted) = tokio::time::timeout(Duration::from_secs(5), deletion)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(status, 200);
+            assert_eq!(
+                deleted,
+                json!({"ok":true,"closed":eid,"machine":"box","delivered":false})
+            );
+            let (status, health) =
+                json_response(request(address, "GET", "/v1/health", json!({}), "").await).await;
+            assert_eq!(status, 200);
+            assert_eq!(
+                health["endpoints"],
+                usize::from(replacement_machine.is_some())
+            );
+            if let Some(machine) = replacement_machine {
+                let (status, task) =
+                    json_response(request(address, "GET", &path, json!({}), "").await).await;
+                assert_eq!(status, 200);
+                assert!(task["task"]["closed_at"].is_null());
+                assert!(task["task"]["closed_by"].is_null());
+                let frame = request(address, "POST", "/v1/agent/frames", json!({"machine":machine,"frames":[{"endpoint_id":eid,"b64":STANDARD.encode(b"still live")}]}), "").await;
+                assert_eq!(frame.status(), 200);
+            }
+            server.abort();
+        }
     }
 
     #[tokio::test]
