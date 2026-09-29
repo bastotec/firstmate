@@ -57,7 +57,6 @@ import base64
 import errno
 import fcntl
 import json
-import math
 import os
 import random
 import re
@@ -863,7 +862,8 @@ class Agent:
                 result = receiver.apply(str(payload.get('order_id') or command['command_id']),
                                         str(payload.get('execution_id') or ''),
                                         str(payload.get('text') or ''), self.pty.alive,
-                                        reconcile_only=reconcile_only)
+                                        reconcile_only=reconcile_only,
+                                        reservation=command.setdefault('_steering_reservation', {}))
                 if result is not None:
                     return result
             if reconcile_only:
@@ -977,6 +977,23 @@ class Agent:
                 % (urllib.parse.quote(self.machine), self.endpoint_id,
                    int(self.options.poll_secs)))
         pending = {}
+
+        def apply(command, reconcile_only):
+            try:
+                ok, error = self.apply_command(command, reconcile_only=reconcile_only)
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write("fm-stream-agent: command application unconfirmed: %s\n" % exc)
+                if command.get('kind') == 'steer':
+                    pending[command['command_id']] = (
+                        command, time.monotonic() + STEERING_RECONCILE_SECS)
+                return
+            if ok is None:
+                live = error == 'Deck application pending'
+                delay = STEERING_APPLY_POLL_SECS if live else STEERING_RECONCILE_SECS
+                pending[command['command_id']] = (command, time.monotonic() + delay)
+                return
+            self.acknowledge_command(command, ok, error)
+
         while not self.stop.is_set():
             if self.stood_down.is_set():
                 # Standing down means taking no commands, whichever path
@@ -985,6 +1002,13 @@ class Agent:
                 # the fleet no longer believes is at this endpoint - and the
                 # publish path can reach either verdict, so this is where the
                 # loop notices rather than only where it raised.
+                return
+            now = time.monotonic()
+            for command_id, (command, due) in list(pending.items()):
+                if due <= now:
+                    pending.pop(command_id)
+                    apply(command, True)
+            if self.stop.is_set() or self.stood_down.is_set():
                 return
             # Cleared BEFORE the attempt, never before the wait below. A
             # recovery can land at any instant, and the only window in which
@@ -998,12 +1022,14 @@ class Agent:
             self._poll_wake.clear()
             try:
                 wait = int(self.options.poll_secs)
+                timeout = self.options.poll_secs + 15
                 if pending:
-                    delay = min(due for _, due, _ in pending.values()) - time.monotonic()
-                    wait = (0 if any(live for _, _, live in pending.values())
-                            else min(max(1, wait), max(1, math.ceil(delay))))
+                    delay = max(0.001, min(due for _, due in pending.values())
+                                - time.monotonic())
+                    wait = min(wait, int(delay))
+                    timeout = min(timeout, delay)
                 poll_path = path.rsplit('=', 1)[0] + '=%d' % wait
-                answer = self.hub.call("GET", poll_path, timeout=self.options.poll_secs + 15)
+                answer = self.hub.call("GET", poll_path, timeout=timeout)
             except Superseded as exc:
                 self.give_up(exc)
                 return
@@ -1013,7 +1039,11 @@ class Agent:
                 # reconnects - but an agent whose hub is gone for good would
                 # otherwise poll a dead socket forever.
                 sys.stderr.write("fm-stream-agent: command poll failed: %s\n" % exc)
-                if not self._poll_wake.wait(self._backoff):
+                backoff = self._backoff
+                if pending:
+                    backoff = min(backoff, max(0, min(
+                        due for _, due in pending.values()) - time.monotonic()))
+                if not self._poll_wake.wait(backoff):
                     self._backoff = min(self._backoff * 2, POLL_BACKOFF_MAX)
                 elif not self.stop.is_set():
                     # The endpoint is back. The wait this poll's own failure
@@ -1024,33 +1054,11 @@ class Agent:
                     self._backoff = POLL_BACKOFF_MIN
                 continue
             self._backoff = POLL_BACKOFF_MIN
-            now = time.monotonic()
-            commands = []
-            for command_id, (command, due, _) in list(pending.items()):
-                if due <= now:
-                    commands.append((command, True))
-                    pending.pop(command_id)
-            commands.extend((command, False) for command in answer.get("commands") or [])
-            for command, reconcile_only in commands:
-                ok, error = False, "the agent could not apply the command"
-                try:
-                    ok, error = self.apply_command(command, reconcile_only=reconcile_only)
-                except Exception as exc:  # noqa: BLE001 - application is unconfirmed
-                    sys.stderr.write("fm-stream-agent: command application unconfirmed: %s\n" % exc)
-                    if command.get('kind') == 'steer':
-                        pending[command['command_id']] = (
-                            command, time.monotonic() + STEERING_RECONCILE_SECS, False)
-                    continue
-                if ok is None:
-                    live = error == 'Deck application pending'
-                    delay = STEERING_APPLY_POLL_SECS if live else STEERING_RECONCILE_SECS
-                    pending[command['command_id']] = (command, time.monotonic() + delay, live)
-                    # Taken is not accepted: leave uncertain results unresolved
-                    # in the existing hub journal, never fabricate a refusal.
-                    continue
-                self.acknowledge_command(command, ok, error)
-            if any(live for _, _, live in pending.values()):
-                self.stop.wait(STEERING_APPLY_POLL_SECS)
+            for command in answer.get("commands") or []:
+                apply(command, False)
+            if pending and wait == 0:
+                self.stop.wait(max(0, min(due for _, due in pending.values())
+                                   - time.monotonic()))
 
     # --- lifecycle --------------------------------------------------------
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Deck's stream-order application seam, not a second transport or command store.
 
-The ordinary task inbox is the durable source and command-id binding. Deck's
-per-turn inbox is only its required plain-text/canonical-sequence projection.
+The ordinary task inbox is the durable message source. Per-order reservations
+bind unpublished messages to their original turn. Deck's per-turn inbox is
+only its required plain-text/canonical-sequence projection.
 An endpoint-scoped lifecycle lock serializes publication with driver start/end.
 No projection is ever carried into the next turn. Only Deck's handled file
 confirms application; inbox publication, run liveness and PTY writes do not.
@@ -11,6 +12,7 @@ start prints the turn projection path; end retires the active descriptor.
 """
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -110,7 +112,8 @@ class Receiver:
         sync_dir(record.parent)
         return record
 
-    def apply(self, order_id, execution, text, alive, reconcile_only=False):
+    def apply(self, order_id, execution, text, alive, reconcile_only=False,
+              reservation=None):
         """None means this is not a Deck driver; all other answers are final facts.
 
         Unknown application is returned honestly as unconfirmed, never as an
@@ -118,27 +121,60 @@ class Receiver:
         """
         if execution != self.endpoint:
             return False, 'stale execution; steer was not applied'
+        if reservation is None:
+            reservation = {}
         with self.locked():
+            if not reservation and not reconcile_only:
+                active = self.active()
+                if active and active['active'] and active['supported']:
+                    reservation.update({
+                        'binding': {'order_id': order_id, 'execution': execution,
+                                    'turn': active['turn']},
+                        'text_sha256': hashlib.sha256(text.encode('utf-8')).hexdigest()})
+            reserved_path = self.root / ('order-' + hashlib.sha256(
+                order_id.encode('utf-8')).hexdigest() + '.json')
+            try:
+                stored = json.loads(reserved_path.read_text())
+            except FileNotFoundError:
+                stored = None
+            if stored:
+                reservation.clear()
+                reservation.update(stored)
+            elif reservation:
+                atomic_write(reserved_path, json.dumps(reservation))
             found = self.find(order_id)
             if found:
                 record, binding, original = found
+                canonical = {'binding': binding, 'text_sha256': hashlib.sha256(
+                    original.encode('utf-8')).hexdigest()}
+                if reservation != canonical:
+                    reservation.clear()
+                    reservation.update(canonical)
+                    atomic_write(reserved_path, json.dumps(reservation))
                 if original != text or binding['execution'] != execution:
                     return False, 'steering idempotency conflict'
             else:
-                if reconcile_only:
-                    return None, 'Deck binding unavailable; application unconfirmed'
-                active = self.active()
-                if active is None or not active['active']:
+                if not reservation:
+                    if reconcile_only:
+                        return None, 'Deck binding unavailable; application unconfirmed'
+                    active = self.active()
+                    if active and active['active'] and not active['supported']:
+                        return False, 'Deck has no --steer-dir interface; no PTY fallback'
                     return None
+                binding = reservation['binding']
+                if (binding['order_id'] != order_id or binding['execution'] != execution
+                        or reservation['text_sha256'] != hashlib.sha256(
+                            text.encode('utf-8')).hexdigest()):
+                    return False, 'steering idempotency conflict'
+                active = self.active()
+                if (not active or not active['active'] or active['turn'] != binding['turn']
+                        or not alive()):
+                    return None, 'original Deck turn ended; application unconfirmed'
                 limit = 65536 - 2 * len(str(self.inbox).encode('utf-8')) - 400
                 if not text.strip() or len(text.encode('utf-8')) > limit:
                     return False, 'Deck steering is blank or exceeds interface size with source reference'
                 if not active['supported']:
                     return False, 'Deck has no --steer-dir interface; no PTY fallback'
-                if not alive():
-                    return False, 'no active Deck turn; steer was not applied'
-                binding = {'order_id': order_id, 'execution': execution,
-                           'turn': active['turn']}
                 record = self.enqueue(binding, text)
             seq = str(int(record.stem))
             projection = self.root / binding['turn']

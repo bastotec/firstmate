@@ -6,7 +6,7 @@ set -eu
 LAB=$(fm_test_tmproot fm-stream-deck)
 trap fm_test_cleanup EXIT
 python3 - "$ROOT" "$LAB" <<'PY'
-import errno, importlib.util, pathlib, subprocess, sys, threading
+import errno, importlib.util, json, pathlib, subprocess, sys, threading
 from types import SimpleNamespace
 root, lab = map(pathlib.Path, sys.argv[1:])
 sys.path.insert(0, str(root/'bin'))
@@ -110,7 +110,8 @@ def run_loop(agent, hub):
     hub.clock = LoopClock()
     agent.stop = LoopStop(hub.clock)
     agent.stood_down = threading.Event()
-    agent._poll_wake = threading.Event()
+    agent._poll_wake = LoopStop(hub.clock)
+    agent._backoff = module.POLL_BACKOFF_MIN
     agent.options = SimpleNamespace(poll_secs=25)
     agent.machine = 'test'
     agent.hub = hub
@@ -281,12 +282,146 @@ assert len(attempts) == 4, attempts
 assert attempts[1] - attempts[0] == module.STEERING_APPLY_POLL_SECS
 assert all(right - left >= module.STEERING_RECONCILE_SECS
            for left, right in zip(attempts[1:], attempts[2:])), attempts
-assert all(wait >= 1 for wait in waits[2:]), waits
+assert any(wait >= 4 for wait in waits[2:]), waits
+assert hub.polls < 45
 assert results.count(('ended', True, '')) == 1
 assert len(results) > 30
 assert not list((receiver.root/'successor').glob('*.msg'))
 assert len(list(receiver.inbox.glob('*.msg'))) == 1
 print('PASS guarded read failures, reconciliation-only uncertainty, continued command delivery, and bounded ended-turn reconciliation')
+
+for stage in ('lookup', 'source', 'reservation'):
+    for successor in (False, True):
+        agent.status_path = str(lab/('prepare-%s-%s.status' % (stage, successor)))
+        receiver = agent.deck_receiver()
+        original = pathlib.Path(receiver.start('original', True))
+        fresh = command('prepare-%s-%s' % (stage, successor))
+        publish = deck.atomic_write
+        find = Receiver.find
+        enqueue = Receiver.enqueue
+        faults = []
+        def fail_lookup(instance, order_id):
+            if instance.task == receiver.task and not faults:
+                faults.append('lookup')
+                raise OSError(errno.EIO, 'temporary source lookup failure')
+            return find(instance, order_id)
+        def fail_source(instance, binding, text):
+            if instance.task == receiver.task and not faults:
+                faults.append('source')
+                raise OSError(errno.ENOSPC, 'temporary source publication failure')
+            return enqueue(instance, binding, text)
+        def fail_reservation(path, body):
+            if path.name.startswith('order-') and not faults:
+                faults.append('reservation')
+                raise OSError(errno.ENOSPC, 'temporary reservation publication failure')
+            return publish(path, body)
+        if stage == 'lookup': Receiver.find = fail_lookup
+        if stage == 'source': Receiver.enqueue = fail_source
+        if stage == 'reservation': deck.atomic_write = fail_reservation
+        try:
+            try:
+                agent.apply_command(fresh)
+            except OSError:
+                pass
+            else:
+                raise AssertionError('preparation failure did not occur')
+        finally:
+            Receiver.find = find
+            Receiver.enqueue = enqueue
+            deck.atomic_write = publish
+        assert faults == [stage]
+        assert not list(receiver.inbox.glob('*.msg'))
+        assert not list(original.glob('*.msg'))
+        reservations = list(receiver.root.glob('order-*.json'))
+        if stage != 'reservation':
+            assert len(reservations) == 1
+            saved = json.loads(reservations[0].read_text())
+            assert saved['binding'] == {'order_id':fresh['command_id'],
+                                        'execution':agent.endpoint_id, 'turn':'original'}
+            fresh.pop('_steering_reservation')
+        if successor:
+            receiver.end()
+            receiver.start('successor', True)
+        assert agent.apply_command(fresh, reconcile_only=True)[0] is None
+        assert len(list(receiver.inbox.glob('*.msg'))) == int(not successor)
+        saved = json.loads(next(receiver.root.glob('order-*.json')).read_text())
+        assert saved['binding']['turn'] == 'original'
+        if successor:
+            assert not list((receiver.root/'successor').glob('*.msg'))
+        else:
+            message = next(original.glob('*.msg'))
+            (original/'handled').mkdir()
+            message.rename(original/'handled'/message.name)
+            assert agent.apply_command(fresh, reconcile_only=True) == (True, '')
+            assert agent.apply_command(command(fresh['command_id'], 'conflict'))[0] is False
+            assert len(list(receiver.inbox.glob('*.msg'))) == 1
+
+for successor, hanging in ((False, False), (False, True), (True, False), (True, True)):
+    agent.status_path = str(lab/('offline-%s-%s.status' % (successor, hanging)))
+    receiver = agent.deck_receiver()
+    original = pathlib.Path(receiver.start('original', True))
+    offline = command('offline-%s' % successor)
+    publish = deck.atomic_write
+    faults = []
+    results = []
+    writes_before = list(agent.pty.writes)
+    attempts = []
+    apply_command = agent.apply_command
+    def observe_offline(cmd, reconcile_only=False):
+        attempts.append(hub.clock.now)
+        return apply_command(cmd, reconcile_only=reconcile_only)
+    def fail_projection(path, body):
+        if path.suffix == '.msg' and not faults:
+            faults.append(path)
+            raise OSError(errno.ENOSPC, 'temporary offline projection failure')
+        return publish(path, body)
+    class OfflineHub:
+        polls = 0
+        failures = 0
+        def call(self, method, path, timeout):
+            assert method == 'GET'
+            self.polls += 1
+            assert self.polls < 10, 'native reconciliation depended on hub recovery'
+            if self.polls == 1:
+                return {'commands':[offline]}
+            self.failures += 1
+            assert 0 < timeout <= module.STEERING_RECONCILE_SECS
+            assert int(path.rsplit('=', 1)[1]) <= timeout
+            if self.failures == 1 and successor:
+                receiver.end()
+                receiver.start('successor', True)
+            if self.failures > 1 and len(attempts) > 1:
+                if successor:
+                    assert not list(original.glob('*.msg'))
+                    assert not list((receiver.root/'successor').glob('*.msg'))
+                    agent.stop.set()
+                else:
+                    message = next(original.glob('*.msg'), None)
+                    assert message is not None, 'local publication waited for a successful GET'
+                    assert self.clock.now <= module.STEERING_RECONCILE_SECS
+                    (original/'handled').mkdir()
+                    message.rename(original/'handled'/message.name)
+            if hanging:
+                self.clock.advance(timeout)
+            raise RuntimeError('hub unavailable')
+    hub = OfflineHub()
+    def acknowledge_offline(cmd, ok, error):
+        results.append((cmd['command_id'], ok, error))
+        agent.stop.set()
+    agent.apply_command = observe_offline
+    agent.acknowledge_command = acknowledge_offline
+    deck.atomic_write = fail_projection
+    try:
+        run_loop(agent, hub)
+    finally:
+        deck.atomic_write = publish
+        del agent.apply_command
+    assert faults and hub.failures >= 2
+    assert len(attempts) >= 2
+    assert results == ([] if successor else [(offline['command_id'], True, '')])
+    assert len(list(receiver.inbox.glob('*.msg'))) == 1
+    assert agent.pty.writes == writes_before
+print('PASS durable pre-source turn reservations, unpublished recovery, persistence-failure binding, and hub-independent local reconciliation')
 
 spec = importlib.util.spec_from_file_location('stream_hub', root/'bin/fm-stream-hub.py')
 hub_module = importlib.util.module_from_spec(spec); spec.loader.exec_module(hub_module)
