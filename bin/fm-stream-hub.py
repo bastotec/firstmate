@@ -123,7 +123,8 @@ HUB_PROTOCOL = 3
 RESULT_RETRY_CAPABILITY = "idempotent_command_results"
 ORDERABLE_ENDPOINT_CAPABILITY = "result_retry_orderability"
 HUB_CAPABILITIES = ("current_execution", RESULT_RETRY_CAPABILITY,
-                    ORDERABLE_ENDPOINT_CAPABILITY, "endpoint_command_auth")
+                    ORDERABLE_ENDPOINT_CAPABILITY, "endpoint_command_auth",
+                    "deck_midturn_orders")
 
 DEFAULT_PORT = 7717
 DEFAULT_RING_BYTES = 262144
@@ -1657,10 +1658,12 @@ class Hub:
                     "the order was not delivered" % current.endpoint_id)
 
             try:
-                self.submit_command(current, "input", {
+                self.submit_command(current, "steer", {
                     "text": text,
                     "keys": None,
                     "submit": True,
+                    "order_id": order_id,
+                    "execution_id": requested_execution,
                 }, order=order)
             except HubError as exc:
                 if order.command is None or not order.command.taken_at:

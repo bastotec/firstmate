@@ -844,6 +844,26 @@ class Agent:
     def apply_command(self, command: dict) -> tuple:
         kind = command.get("kind")
         payload = command.get("payload") or {}
+        if kind == "steer":
+            if command.get("endpoint_id") != self.endpoint_id:
+                return (False, "stale execution; steer was not applied")
+            if self.status_path:
+                from fm_stream_deck import Receiver
+                state, filename = os.path.split(self.status_path)
+                receiver = Receiver(state, filename.removesuffix('.status'), self.endpoint_id)
+                result = receiver.apply(str(payload.get('order_id') or command['command_id']),
+                                        str(payload.get('execution_id') or ''),
+                                        str(payload.get('text') or ''), self.pty.alive)
+                if result is not None:
+                    return result
+            # A Deck wrapper whose interface has not registered must never
+            # fall back to typing a steer into a later turn's stdin.
+            for process in self.pty.foreground_processes():
+                args = process.get('args', '')
+                if 'fm-deck-worker' in args.split(' ', 1)[0] or 'fm-deck-worker.sh' in args:
+                    return (False, 'Deck steering interface unavailable; no PTY fallback')
+            # Non-Deck endpoints retain the established PTY order contract.
+            kind = "input"
         if kind == "input":
             data = b""
             text = payload.get("text")
@@ -944,6 +964,7 @@ class Agent:
         path = ("/v1/agent/commands?machine=%s&endpoint=%s&wait=%d"
                 % (urllib.parse.quote(self.machine), self.endpoint_id,
                    int(self.options.poll_secs)))
+        pending = {}
         while not self.stop.is_set():
             if self.stood_down.is_set():
                 # Standing down means taking no commands, whichever path
@@ -964,7 +985,8 @@ class Agent:
             # one about to be made.
             self._poll_wake.clear()
             try:
-                answer = self.hub.call("GET", path, timeout=self.options.poll_secs + 15)
+                poll_path = path.rsplit('=', 1)[0] + '=0' if pending else path
+                answer = self.hub.call("GET", poll_path, timeout=self.options.poll_secs + 15)
             except Superseded as exc:
                 self.give_up(exc)
                 return
@@ -985,13 +1007,23 @@ class Agent:
                     self._backoff = POLL_BACKOFF_MIN
                 continue
             self._backoff = POLL_BACKOFF_MIN
-            for command in answer.get("commands") or []:
+            commands = list(pending.values()) + (answer.get("commands") or [])
+            pending.clear()
+            for command in commands:
                 ok, error = False, "the agent could not apply the command"
                 try:
                     ok, error = self.apply_command(command)
-                except Exception as exc:  # noqa: BLE001 - always answer the hub
-                    ok, error = False, str(exc)
+                except Exception as exc:  # noqa: BLE001 - application is unconfirmed
+                    ok, error = None, str(exc)
+                if ok is None:
+                    if error == 'Deck application pending':
+                        pending[command['command_id']] = command
+                    # Taken is not accepted: leave uncertain results unresolved
+                    # in the existing hub journal, never fabricate a refusal.
+                    continue
                 self.acknowledge_command(command, ok, error)
+            if pending:
+                self.stop.wait(0.1)
 
     # --- lifecycle --------------------------------------------------------
 

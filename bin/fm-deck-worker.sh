@@ -124,7 +124,12 @@ tty_busy() { [ -z "$TTY_SETTINGS" ] || stty icanon 2>/dev/null || true; }
 # control-key furniture (^C) as if it were pending input on an idle prompt.
 # Unlike repainting, this leaves genuinely buffered partial input visible.
 tty_ready() { [ -z "$TTY_SETTINGS" ] || stty -icanon -echoctl min 1 time 0 2>/dev/null || true; }
+deck_stream_end() {
+  [ -z "${FM_STREAM_ENDPOINT_ID:-}" ] || python3 "$SCRIPT_DIR/fm_stream_deck.py" end \
+    "$STATE" "$ID" "$FM_STREAM_ENDPOINT_ID" >&2 || true
+}
 cleanup() {
+  deck_stream_end
   if [ -n "$TURN_PID" ]; then
     kill -TERM "$TURN_PID" 2>/dev/null || true
     wait "$TURN_PID" 2>/dev/null || true
@@ -398,6 +403,17 @@ run_turn() {  # <prompt>
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
   [ -z "$MODEL" ] || args+=(--model "$MODEL")
   [ -z "$SESSION" ] || args+=(--session "$SESSION")
+  if [ -n "${FM_STREAM_ENDPOINT_ID:-}" ]; then
+    local steer_supported=0 steer_turn steer_dir
+    "$DECK" run --help 2>/dev/null | grep -q -- '--steer-dir' && steer_supported=1
+    steer_turn=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
+    if steer_dir=$(python3 "$SCRIPT_DIR/fm_stream_deck.py" start "$STATE" "$ID" \
+        "$FM_STREAM_ENDPOINT_ID" "$steer_turn" "$steer_supported"); then
+      [ "$steer_supported" = 0 ] || args+=(--steer-dir "$steer_dir")
+    else
+      printf 'fm-deck-worker: stream steering interface unavailable; continuing turn without it\n' >&2
+    fi
+  fi
   INTERRUPTED=0
   tty_busy
   if ! status_size > "$TURN_MARK"; then
@@ -459,6 +475,7 @@ run_turn() {  # <prompt>
     "$DECK" "${args[@]}" </dev/null | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
     turn_pipeline=("${PIPESTATUS[@]}")
   fi
+  deck_stream_end
   rc=${turn_pipeline[0]}
   if [ "$SECONDMATE" = 1 ] && [ "$INTERRUPTED" != 1 ] && { [ "${turn_pipeline[1]}" -ne 0 ] || [ "${turn_pipeline[2]}" -ne 0 ]; }; then
     host_failure 'event capture or rendering failed' || true

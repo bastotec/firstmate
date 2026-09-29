@@ -928,6 +928,27 @@ The CLI matrix was checked directly:
 All destructive verification used `bin/fm-herdr-lab.sh` with a non-default `fm-lab-` name and a byte-identical default-session tripwire.
 No ambient `herdr server stop` command is a supported test operation.
 
+### Deck native mid-turn steering over stream
+
+Verified on 2026-09-29 on macOS with Python 3.9.6 and Deck 0.1.0 built from the merged native-steering interface in `bastotec/deck`.
+The isolated live guard exercised the real Bridge command adapter, authenticated loopback hub, PTY agent, Deck driver, and model turn; `bin/fm_stream_deck.py` owns the receiver mechanics.
+Run the guard with a Deck build whose `run --help` advertises `--steer-dir`:
+
+```sh
+FM_DECK_LIVE=1 bin/fm-test-run.sh tests/fm-stream-deck-live-e2e.test.sh
+```
+
+`FM_DECK_LIVE_BINARY` selects a non-default Deck build for the same guard.
+Observed output:
+
+```text
+deck 0.1.0
+PASS real Deck mid-turn correction through Bridge/hub/agent, execution-bound ack, one turn, and no false evidence/failure
+```
+
+The portable application regressions run with `bin/fm-test-run.sh tests/fm-stream-deck.test.sh`.
+Other harnesses retain their existing PTY order path, and other runtime backends do not invoke this stream receiver.
+
 ### Deck endpoint recovery (shim-based)
 
 Verified on 2026-09-23, re-verified on 2026-09-24 on macOS with the repository's real Deck driver, busy-state writer, and OS processes, a shimmed Herdr protocol-14 CLI, and a shimmed model endpoint; this is not a local live-Herdr or live-model result.

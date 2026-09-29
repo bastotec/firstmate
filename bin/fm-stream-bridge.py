@@ -119,8 +119,9 @@ FIVE PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
   the worker that replaced it.
 
   Acknowledgement.  Every settled order gets an explicit answer.
-  `state: accepted` means the owning AGENT wrote the complete order, including
-  its submit byte, to the worker's pseudoterminal and said so.
+  `state: accepted` means the owning agent confirmed application to the named
+  execution: Deck's durable native steering acknowledgement for a Deck driver,
+  or a complete PTY write including the submit byte for other endpoints.
 
   Membership.  A `command_nack` is an authoritative answer and nothing else
   produces one: `no_such_worker` is the owning agent's own report that its
@@ -412,7 +413,8 @@ class HubClient:
         required = [CURRENT_EXECUTION_CAPABILITY]
         if require_result_retry:
             required.extend((IDEMPOTENT_RESULT_CAPABILITY,
-                             ORDERABLE_ENDPOINT_CAPABILITY, "endpoint_command_auth"))
+                             ORDERABLE_ENDPOINT_CAPABILITY, "endpoint_command_auth",
+                             "deck_midturn_orders"))
         missing = [name for name in required
                    if not isinstance(capabilities, list) or name not in capabilities]
         if missing:

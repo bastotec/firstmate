@@ -409,7 +409,7 @@ class H(http.server.BaseHTTPRequestHandler):
         self.reply(200, {"ok": True, "protocol": 3,
                          "capabilities": ["current_execution",
                                           "idempotent_command_results",
-                                          "result_retry_orderability", "endpoint_command_auth"],
+                                          "result_retry_orderability", "endpoint_command_auth", "deck_midturn_orders"],
                          "generation": H.generation})
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)

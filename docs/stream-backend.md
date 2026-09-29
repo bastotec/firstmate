@@ -159,7 +159,10 @@ The adapter's header owns the three record shapes, required identity and payload
 
 At operator level, every order names both a worker by `leaf_worker_id` - `<machine>/<label>`, from the same machine and label the feed emits and `fm-stream.sh tasks` lists - and the exact execution the feed showed.
 That binding prevents an order composed for one run from being typed into its replacement.
-Acceptance means the owning agent wrote the complete order, including its submit byte, to that execution's pseudoterminal and acknowledged it; the owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership produces no record and remains pending.
+Acceptance means the owning agent confirmed application to the named execution: a durable native steering acknowledgement for a Deck driver, or a complete pseudoterminal write including the submit byte for other endpoints.
+The Deck receiver's publication, turn binding, reconciliation, and refusal mechanics are owned by `bin/fm_stream_deck.py`; Bridge orders require the hub's `deck_midturn_orders` capability and never fall back to PTY input for a registered Deck driver.
+A Deck driver requires a build supporting `deck run --steer-dir`; an unavailable interface is refused without changing the running turn.
+The owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership or application produces no record and remains pending.
 Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
 The PTY agent advertises that capability back on every endpoint registration, and the hub places Bridge orders only for endpoints that do.
 Protocol-2 agents cannot register, while protocol-3 tail publishers remain visible but non-orderable.
