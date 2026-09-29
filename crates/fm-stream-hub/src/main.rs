@@ -87,19 +87,17 @@ fn body(r: &mut Request) -> Result<Value> {
     }
     let text = std::str::from_utf8(raw)
         .map_err(|e| Error::new(400, "bad_json", format!("malformed JSON body: {e}")))?;
-    let p = serde_json::from_str::<Value>(text)
-        .or_else(|_| fm_stream_wire::python_json::python_reparse(text).map_err(|_| ()))
-        .map_err(|_| {
-            Error::new(
+    let p = serde_json::from_str::<Value>(text).or_else(|_| {
+        if let Some(error) = fm_stream_wire::python_json::python_json_error(text) {
+            return Err(Error::new(
                 400,
                 "bad_json",
-                format!(
-                    "malformed JSON body: {}",
-                    fm_stream_wire::python_json::python_json_error(text)
-                        .unwrap_or_else(|| "invalid JSON".into())
-                ),
-            )
-        })?;
+                format!("malformed JSON body: {error}"),
+            ));
+        }
+        fm_stream_wire::python_json::python_reparse(text)
+            .map_err(|_| Error::new(400, "bad_json", "malformed JSON body: invalid JSON"))
+    })?;
     if !p.is_object() {
         return Err(Error::new(
             400,
@@ -747,15 +745,15 @@ fn run() -> std::result::Result<(), String> {
     let mut opts = BTreeMap::new();
     let mut i = 1;
     while i < args.len() {
-        let key = args[i].trim_start_matches("--");
+        let key = args[i].as_str();
         if ![
-            "bind",
-            "port",
-            "token-file",
-            "state-max-age-secs",
-            "command-ack-secs",
-            "ready-file",
-            "pid-file",
+            "--bind",
+            "--port",
+            "--token-file",
+            "--state-max-age-secs",
+            "--command-ack-secs",
+            "--ready-file",
+            "--pid-file",
         ]
         .contains(&key)
             || i + 1 >= args.len()
@@ -765,7 +763,11 @@ fn run() -> std::result::Result<(), String> {
         opts.insert(key.to_owned(), args[i + 1].clone());
         i += 2;
     }
-    let opt = |name: &str, default: &str| opts.get(name).cloned().unwrap_or_else(|| default.into());
+    let opt = |name: &str, default: &str| {
+        opts.get(&format!("--{name}"))
+            .cloned()
+            .unwrap_or_else(|| default.into())
+    };
     let parse = |name: &str, default: &str| -> std::result::Result<f64, String> {
         let n = opt(name, default)
             .parse::<f64>()

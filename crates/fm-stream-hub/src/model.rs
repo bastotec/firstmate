@@ -541,6 +541,7 @@ impl Hub {
             if let Some(pos) = pos {
                 m.queue.remove(pos);
                 command.lock().unwrap().withdrawn = true;
+                s.commands.remove(&cid);
             }
             let silent = (now() - s.machines[&machine].seen).max(0.);
             let taken = !command.lock().unwrap().withdrawn;
@@ -633,7 +634,8 @@ impl Hub {
         if let Some(eid) = m.pending.get(cid).cloned() {
             Self::authorize(Self::get(&s, &eid)?, machine, cap)?;
             s.machines.get_mut(machine).unwrap().pending.remove(cid);
-            let mut c = s.commands[cid].lock().unwrap();
+            let command = s.commands.remove(cid).unwrap();
+            let mut c = command.lock().unwrap();
             c.done = true;
             c.ok = ok;
             c.error = error.into();
@@ -960,6 +962,74 @@ mod tests {
             hub.complete("box", &cid, true, "", &cap).unwrap_err().code,
             "no_such_command"
         );
+    }
+    #[test]
+    fn completed_commands_release_payloads_and_preserve_result_retries() {
+        let (mut hub, eid, cap) = fixture();
+        Arc::get_mut(&mut hub).unwrap().ack = 5.;
+        let submit_hub = hub.clone();
+        let execution = eid.clone();
+        let request = std::thread::spawn(move || {
+            submit_hub.submit(&execution, "input", json!({"text":"hello"}), None)
+        });
+        let commands = hub.take("box", &eid, 5., &cap).unwrap();
+        assert_eq!(commands.len(), 1);
+        let cid = commands[0]["command_id"].as_str().unwrap();
+        let weak = Arc::downgrade(&hub.state.lock().unwrap().commands[cid]);
+        assert_eq!(
+            hub.complete("box", cid, true, "", "invalid")
+                .unwrap_err()
+                .code,
+            "endpoint_unauthorized"
+        );
+        assert!(hub.state.lock().unwrap().commands.contains_key(cid));
+        hub.complete("box", cid, true, "", &cap).unwrap();
+        assert!(!hub.state.lock().unwrap().commands.contains_key(cid));
+        request.join().unwrap().unwrap();
+        assert!(weak.upgrade().is_none());
+        hub.complete("box", cid, true, "", &cap).unwrap();
+        assert_eq!(
+            hub.complete("box", cid, false, "refused", &cap)
+                .unwrap_err()
+                .code,
+            "result_conflict"
+        );
+    }
+    #[test]
+    fn completed_orders_keep_their_journal_without_global_command_payloads() {
+        let (mut hub, eid, cap) = fixture();
+        Arc::get_mut(&mut hub).unwrap().ack = 5.;
+        let order_hub = hub.clone();
+        let execution = eid.clone();
+        let request = std::thread::spawn(move || {
+            order_hub.place("box/worker", &execution, "hello", "completed")
+        });
+        let commands = hub.take("box", &eid, 5., &cap).unwrap();
+        assert_eq!(commands.len(), 1);
+        let cid = commands[0]["command_id"].as_str().unwrap();
+        hub.complete("box", cid, true, "", &cap).unwrap();
+        assert!(!hub.state.lock().unwrap().commands.contains_key(cid));
+        assert_eq!(request.join().unwrap().unwrap()["outcome"], "accepted");
+        assert_eq!(
+            hub.place("box/worker", &eid, "hello", "completed").unwrap()["outcome"],
+            "accepted"
+        );
+        assert!(hub.take("box", &eid, 0., &cap).unwrap().is_empty());
+    }
+    #[test]
+    fn withdrawn_orders_release_global_commands_and_never_redeliver() {
+        let (hub, eid, cap) = fixture();
+        let first = hub
+            .place("box/worker", &eid, "hello", "withdrawn")
+            .unwrap_err();
+        assert_eq!(first.details["delivered"], false);
+        assert!(hub.state.lock().unwrap().commands.is_empty());
+        let resent = hub
+            .place("box/worker", &eid, "hello", "withdrawn")
+            .unwrap_err();
+        assert_eq!(resent.details["outcome"], "refused");
+        assert_eq!(resent.details["delivered"], false);
+        assert!(hub.take("box", &eid, 0., &cap).unwrap().is_empty());
     }
     #[test]
     fn pending_commands_and_journal_keep_their_own_reference_lifetimes() {

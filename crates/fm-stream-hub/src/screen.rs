@@ -1,5 +1,6 @@
 //! The reference hub's deliberately small VT model (not a full emulator).
 use std::collections::VecDeque;
+use unicode_general_category::{get_general_category, GeneralCategory};
 use unicode_normalization::char::canonical_combining_class;
 use unicode_width::UnicodeWidthChar;
 
@@ -241,7 +242,13 @@ impl Screen {
         self.attrs = self.saved.2.clone();
     }
     fn put(&mut self, c: char) {
-        let width = if canonical_combining_class(c) != 0 {
+        let width = if canonical_combining_class(c) != 0
+            || matches!(
+                get_general_category(c),
+                GeneralCategory::NonspacingMark
+                    | GeneralCategory::EnclosingMark
+                    | GeneralCategory::Format
+            ) {
             0
         } else {
             c.width().unwrap_or(1).max(1)
@@ -450,5 +457,39 @@ impl Screen {
             .iter()
             .map(|r| Self::render(r, ansi))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_width_marks_and_format_characters_do_not_wrap() {
+        for c in [
+            '\u{2063}', '\u{fe0f}', '\u{fe0e}', '\u{20dd}', '\u{ad}', '\u{301}',
+        ] {
+            let mut screen = Screen::new(2, 4);
+            let text = format!("ab{c}cd");
+            for byte in text.as_bytes() {
+                screen.feed(&[*byte]);
+            }
+            assert_eq!(screen.cy, 0, "{c:?}");
+            assert_eq!(screen.lines(false), vec![text.clone(), String::new()]);
+            assert_eq!(screen.tail(2, false), vec![text]);
+            screen.feed(c.to_string().as_bytes());
+            assert_eq!(screen.cy, 0);
+            screen.feed(b"e");
+            assert_eq!(screen.cy, 1);
+            assert_eq!(screen.lines(false), vec![format!("ab{c}cd{c}"), "e".into()]);
+        }
+    }
+
+    #[test]
+    fn spacing_marks_still_occupy_a_column() {
+        let mut screen = Screen::new(2, 4);
+        screen.feed("ab\u{903}cd".as_bytes());
+        assert_eq!(screen.cy, 1);
+        assert_eq!(screen.lines(false), vec!["ab\u{903}c", "d"]);
     }
 }
