@@ -1491,11 +1491,8 @@ launch_entry_listed() {  # <entry> <newline-separated entries>
 # runner merely slow to claim looks the same inside the window, which is why
 # the failure this reports is "not proved within the window" and nothing more.
 #
-# Both reads are observations of durable records and neither takes the source
-# lock: the claim is exactly the write that lock serializes, so reading it
-# through the lock both contended with the handshakes this window exists to
-# confirm and hid an already-written claim from every poll that lost the lock
-# to a holder.
+# fm_procevent_claim_state_observed in fm-procevent-lib.sh owns the lock-free
+# observation safety rationale and its exclusion from state-transition authority.
 #
 # Every launch shares ONE window rather than taking a window each, so a whole
 # fleet of failing sources costs a watcher cycle the same bounded wait as one.
@@ -1520,13 +1517,6 @@ confirm_launched_runners() {  # <source-id><TAB><registration-identity><TAB><lau
       identity=${rest%%$'\t'*}
       before=${rest#*$'\t'}
       state=1
-      # Read the claim without entering the source lock. The write this window
-      # waits for - the runner's claim - is serialized by that lock, so taking
-      # it here every few dozen milliseconds contended with the claim handoff
-      # and hid the claim from every poll that lost the lock to a holder: a
-      # healthy, claim-holding runner was reported failed while listening.
-      # fm-procevent-lib.sh owns why an observation needs no lock and why no
-      # state transition may skip it.
       fm_procevent_claim_state_observed "$id"
       state=$?
       if [ "$state" -eq 0 ]; then

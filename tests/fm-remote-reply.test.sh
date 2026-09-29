@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 # End-to-end remote reply relay through fm-on and the process-event runner.
+# FM_REMOTE_REPLY_REAL_SSH=1 selects the opt-in real-SSH fixture; its header
+# owns the required host and explicitly authorized disposable remote tree.
 set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+if [ "${FM_REMOTE_REPLY_REAL_SSH:-0}" = 1 ]; then
+  # shellcheck source=tests/fm-remote-reply-ssh-fixture.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/fm-remote-reply-ssh-fixture.sh"
+  exit "$?"
+fi
 
 # An isolated code snapshot allows all fixture homes to remain inside a gate
 # worktree without overlapping the entrypoint's configured code root.

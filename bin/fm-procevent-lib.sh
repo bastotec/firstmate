@@ -714,20 +714,14 @@ fm_procevent_claim_state_locked() {
   fm_procevent_pid_state "$FM_PROCEVENT_CLAIM_PID" "$FM_PROCEVENT_CLAIM_IDENTITY"
 }
 
-# The same read as an OBSERVATION, for the one caller that must never enter the
-# source lock to make it: launch confirmation is waiting on the runner's claim,
-# and that claim is written under the source lock. Reading it through the lock
-# fails twice over. The poll is a contender for the very write it waits for -
-# it takes that lock every few dozen milliseconds for a whole window while the
-# runner's own acquire retries around it - and any lock holder hides a claim
-# that already exists, because the read is skipped exactly while the handshake
-# or another transition is serialized there. Either way a healthy, claim-holding
-# runner was reported failed while it was listening. The observation cannot
-# fail that way, and it is safe because the claim record is published by rename
-# with every field revalidated on read: it sees a whole generation or none,
-# never a torn one, and either still answers "did a runner take this claim".
-# Only this read-only question may skip the lock; every state TRANSITION keeps
-# it.
+# Read-only launch confirmation must not compete for the lock that publishes
+# the claim it awaits, or skip observing a published claim while that lock is held.
+# Claim publication uses rename and the loader validates the opened record, so
+# this observation sees a whole generation or no valid record, never a partial
+# publication. An unreadable or malformed record remains uncertain.
+# This snapshot proves no authority to mutate or signal: every state transition
+# still requires the source lock and revalidation there.
+# tests/fm-procevent.test.sh pins the contended-lock and malformed-record cases.
 fm_procevent_claim_state_observed() {  # <source-id>
   fm_procevent_claim_state_locked "$1"
 }
