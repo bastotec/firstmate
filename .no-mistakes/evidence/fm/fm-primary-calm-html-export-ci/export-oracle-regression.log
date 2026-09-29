@@ -1,0 +1,56 @@
+Base-commit export oracle against the real Pi 0.99.1 browser DOM: exit=1 (expected 1; regression reproduced).
+Updated browser visibility oracle results on the same DOM:
+{
+  "errors": [],
+  "hiddenIds": [
+    "entry-a0000010",
+    "entry-5cd832c2"
+  ],
+  "toggleSupported": true,
+  "initial": [
+    {
+      "display": "none",
+      "rects": 0,
+      "visible": false
+    },
+    {
+      "display": "none",
+      "rects": 0,
+      "visible": false
+    }
+  ],
+  "revealed": [
+    {
+      "display": "block",
+      "rects": 1,
+      "visible": true
+    },
+    {
+      "display": "block",
+      "rects": 1,
+      "visible": true
+    }
+  ],
+  "rehidden": [
+    {
+      "display": "none",
+      "rects": 0,
+      "visible": false
+    },
+    {
+      "display": "none",
+      "rects": 0,
+      "visible": false
+    }
+  ]
+}
+Base-oracle checks on generated public export DOM: {
+  "containersPresent": true,
+  "genuineUserPresent": true,
+  "genuineAssistantPresent": true,
+  "baseRequiresCustomNodesAbsent": true,
+  "baseRequiresSyntheticTextAbsent": false,
+  "operationalMarkersPresent": true,
+  "provenancePresent": true
+}
+Regression isolated: all base positive checks hold; its synthetic-text-absence assertion alone rejects Pi 0.99.1 CSS-hidden content. New computed-layout checks and H toggling passed on this same real export.

@@ -1,0 +1,11 @@
+Command: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--headless=new', '--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage', '--disable-background-networking', '--user-data-dir=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QR27PR3HKZZ9TGZXF9920F/.test-tmp/chrome-visual-revealed', '--virtual-time-budget=2000', '--window-size=1440,1700', '--hide-scrollbars', '--screenshot=/Users/bastotecnologia/.no-mistakes/evidence/01M3QR27PR3HKZZ9TGZXF9920F/calm-export-revealed.png', 'file:///Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QR27PR3HKZZ9TGZXF9920F/.test-tmp/calm-export-revealed.html']
+[43633:346479835:0929/204229.437609:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[43633:346479835:0929/204229.438208:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[43633:346479835:0929/204229.438280:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[43633:346479835:0929/204229.438341:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[43633:346479835:0929/204229.438416:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[43633:346479835:0929/204229.438497:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+Trying to load the allocator multiple times. This is *not* supported.
+283092 bytes written to file /Users/bastotecnologia/.no-mistakes/evidence/01M3QR27PR3HKZZ9TGZXF9920F/calm-export-revealed.png
+
+Screenshot captured; dedicated browser process group stopped.

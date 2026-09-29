@@ -1,0 +1,17 @@
+Command: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--headless=new', '--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage', '--disable-background-networking', '--user-data-dir=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QR27PR3HKZZ9TGZXF9920F/.test-tmp/chrome-visual-initial', '--virtual-time-budget=2000', '--window-size=1440,1700', '--hide-scrollbars', '--screenshot=/Users/bastotecnologia/.no-mistakes/evidence/01M3QR27PR3HKZZ9TGZXF9920F/calm-export-initial.png', 'file:///Users/bastotecnologia/.no-mistakes/evidence/01M3QR27PR3HKZZ9TGZXF9920F/calm-export.html']
+[42231:346477251:0929/204227.647087:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[42231:346477251:0929/204227.650136:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[42231:346477251:0929/204227.650761:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[42231:346477251:0929/204227.651078:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[42231:346477251:0929/204227.651460:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[42231:346477251:0929/204227.651559:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+Trying to load the allocator multiple times. This is *not* supported.
+283424 bytes written to file /Users/bastotecnologia/.no-mistakes/evidence/01M3QR27PR3HKZZ9TGZXF9920F/calm-export-initial.png
+[41333:346475348:0929/204228.668553:ERROR:content/browser/network_service_instance_impl.cc:653] Network service crashed or was terminated, restarting service.
+[41333:346475348:0929/204228.668896:ERROR:content/browser/gpu/gpu_process_host.cc:1130] GPU process exited unexpectedly: exit_code=15
+
+Screenshot captured; dedicated browser process group stopped.
+[43494:346479462:0929/204228.716885:ERROR:base/apple/mach_port_rendezvous_mac.cc:256] bootstrap_look_up com.google.Chrome.MachPortRendezvousServer.1: Unknown service name (1102)
+[43494:346479462:0929/204228.717359:ERROR:base/memory/shared_memory_switch.cc:261] No rendezvous client, terminating process (parent died?)
+[43493:346479459:0929/204228.719561:ERROR:base/apple/mach_port_rendezvous_mac.cc:256] bootstrap_look_up com.google.Chrome.MachPortRendezvousServer.1: Unknown service name (1102)
+[43493:346479459:0929/204228.720030:ERROR:base/memory/shared_memory_switch.cc:261] No rendezvous client, terminating process (parent died?)
