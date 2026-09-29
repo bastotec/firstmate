@@ -5000,6 +5000,19 @@ const pi = {
 };
 const extension = await import(`${pathToFileURL(process.env.EXT).href}?consumer=${Date.now()}`);
 extension.default(pi);
+const processedDefinition = tools.find((tool) => tool.name === "fm_branch_processed");
+if (!processedDefinition) throw new Error("fm_branch_processed was not registered");
+// Pi catches renderer exceptions and silently falls back, so exercise the
+// acknowledgement renderer directly to keep missing shared helpers visible.
+const processedContext = { state: {}, toolCallId: "processed", expanded: false, isError: false, isPartial: false };
+const processedCall = processedDefinition.renderCall({ through: 1 }, theme, processedContext);
+processedDefinition.renderResult(
+  { content: [{ type: "text", text: "Acknowledged through 1" }] },
+  { expanded: false, isPartial: false }, theme, processedContext,
+);
+if (!processedCall.render(100).join("\n").includes("Acknowledged through 1")) {
+  throw new Error("Calm-off acknowledgement renderer lost its result");
+}
 const actualDefinition = tools.find((tool) => tool.name === "fm_branch_outcomes");
 if (!actualDefinition) throw new Error("fm_branch_outcomes was not registered");
 const stockDefinition = { ...actualDefinition };

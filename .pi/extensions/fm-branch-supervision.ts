@@ -2316,23 +2316,27 @@ ${context.command}
       through: Type.Number({ description: "The highest outcome sequence number this conversation has processed" }),
     }),
     renderShell: "self",
-    renderCall: (_args, theme, context) => {
+    renderCall: (args, _theme, context) => {
       if (calmPresentation.stockExportRendering) throw new Error("Use Pi stock export rendering");
       if (calmHides("assistant-tool-call")) return new Container();
-      const shellState = context.state as OutcomesToolShellState;
-      shellState.call = new Text(theme.fg("toolTitle", theme.bold("fm_branch_processed")), 0, 0);
-      return refreshOutcomesToolShell(shellState, theme, context);
+      const state = context.state as { stockRow?: ToolExecutionComponent };
+      const row = new ToolExecutionComponent(
+        "fm_branch_processed", context.toolCallId, args, { showImages: false },
+        { name: "fm_branch_processed", label: "Acknowledge processed supervision outcomes", description: "", parameters: Type.Object({}), execute: async () => ({ content: [], details: undefined }) },
+        { requestRender() {} } as ConstructorParameters<typeof ToolExecutionComponent>[5], root,
+      );
+      if (context.executionStarted) row.markExecutionStarted();
+      if (context.argsComplete) row.setArgsComplete();
+      row.setExpanded(context.expanded);
+      state.stockRow = row;
+      return { render: (width: number) => row.render(width).slice(1), invalidate: () => row.invalidate() };
     },
-    renderResult: (result, _options, theme, context) => {
+    renderResult: (result, options, _theme, context) => {
       if (calmPresentation.stockExportRendering) throw new Error("Use Pi stock export rendering");
       if (calmHides("tool-result")) return new Container();
-      const output = result.content
-        .filter((item) => item.type === "text")
-        .map((item) => normalizeOutcomesToolOutput(item.text))
-        .join("\n");
-      const shellState = context.state as OutcomesToolShellState;
-      shellState.result = output ? new Text(theme.fg("toolOutput", output), 0, 0) : new Container();
-      refreshOutcomesToolShell(shellState, theme, context);
+      const state = context.state as { stockRow?: ToolExecutionComponent };
+      state.stockRow?.setExpanded(options.expanded);
+      state.stockRow?.updateResult({ ...result, isError: context.isError }, options.isPartial);
       return new Container();
     },
     execute: async (_toolCallId, params) => {
