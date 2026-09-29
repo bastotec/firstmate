@@ -50,10 +50,11 @@ impl Pty {
         }
         let end = name.iter().position(|b| *b == 0).unwrap_or(name.len());
         let tty = String::from_utf8_lossy(&name[..end]).into_owned();
-        // Prevent an HTTP subprocess or inspection child inheriting our master.
-        // SAFETY: master is live and fcntl receives the documented integer argument.
-        if unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
-            return Err(io::Error::last_os_error());
+        // SAFETY: both files own live descriptors; fcntl receives the documented integer argument.
+        for descriptor in [&master, &slave] {
+            if unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+                return Err(io::Error::last_os_error());
+            }
         }
         let shell = std::env::var("SHELL")
             .ok()

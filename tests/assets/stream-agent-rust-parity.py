@@ -458,6 +458,35 @@ def lost_kill_result(executable, name):
     return lost_result(executable, name, kill=True)
 
 
+def redirected_background_exit(executable, name):
+    rig = Rig(name)
+    ready = rig.dir / "background-ready"
+    worker_pid = None
+    try:
+        proc, endpoint, status = rig.agent(executable)
+        rig.remember_worker(endpoint)
+        rig.input(endpoint, "set +H")
+        rig.marker(endpoint, "BEFORE-REDIRECTED-BACKGROUND")
+        code, body = call(rig.url, "POST", f"/v1/tasks/{endpoint}/status", {"state": "working", "note": "redirected background"})
+        assert code == 200, body
+        rig.input(endpoint, f"trap '' HUP; sleep 15 </dev/null >/dev/null 2>&1 & printf '%s\\n' \"$!\" > {shlex.quote(str(ready))}")
+        worker_pid = wait(lambda: int(ready.read_text()) if ready.exists() and ready.read_text().strip() else None, "redirected background readiness")
+        assert alive(worker_pid)
+        rig.input(endpoint, "exit 7")
+        proc.wait(timeout=10)
+        task = wait(lambda: rig.task(endpoint) if rig.task(endpoint).get("closed_by") == "agent" else None, "prompt final close with background child", 50)
+        assert task["exit_code"] == 7 and task["endpoint_id"] == endpoint, task
+        assert alive(worker_pid), "close depended on background completion"
+        assert status.read_text() == "working: redirected background\n"
+        return task["closed_by"], task["exit_code"], status.read_text()
+    finally:
+        try:
+            if worker_pid is not None:
+                wait(lambda: not alive(worker_pid), "bounded background self-termination", 200)
+        finally:
+            rig.close()
+
+
 def final_rejoin(executable, name):
     rig = Rig(name)
     try:
@@ -543,10 +572,11 @@ def refusals(executable, name):
     return outputs
 
 
-for function in (command_values, intervals, concurrent_status, generation_refusal, lifecycle, lost_result, lost_kill_result, final_rejoin, contest, refusals):
-    python = function(AGENTS[0], function.__name__ + "-python")
-    rust = function(AGENTS[1], function.__name__ + "-rust")
-    assert python == rust, (function.__name__, python, rust)
-    print("ok:", function.__name__, "Python/Rust observable parity", flush=True)
+if __name__ == "__main__":
+    for function in (command_values, intervals, concurrent_status, generation_refusal, lifecycle, lost_result, lost_kill_result, redirected_background_exit, final_rejoin, contest, refusals):
+        python = function(AGENTS[0], function.__name__ + "-python")
+        rust = function(AGENTS[1], function.__name__ + "-rust")
+        assert python == rust, (function.__name__, python, rust)
+        print("ok:", function.__name__, "Python/Rust observable parity", flush=True)
 
-unsafe_intervals()
+    unsafe_intervals()
