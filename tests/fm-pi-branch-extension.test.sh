@@ -83,13 +83,18 @@ export function keyHint(_keybinding, description) {
 }
 
 export class ToolExecutionComponent {
+  constructor(name) { this.name = name; }
+  markExecutionStarted() {}
+  setArgsComplete() {}
+  setExpanded(expanded) { this.expanded = expanded; }
+  invalidate() {}
   updateResult(result) {
     this.result = result;
   }
   render() {
-    return (this.result?.content ?? [])
+    return ["", this.name, ...(this.result?.content ?? [])
       .filter((item) => item.type === "text")
-      .flatMap((item) => item.text.split("\n"));
+      .flatMap((item) => item.text.split("\n"))];
   }
 }
 
@@ -817,10 +822,7 @@ const renderContext = { state: {}, isError: false, isPartial: false };
 const stockResult = { content: [{ type: "text", text: "OUTCOME_DUMP" }] };
 const calmOffCall = outcomesTool.renderCall({}, renderTheme, renderContext);
 const calmOffResult = outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext);
-if (calmOffCall.constructor.name !== "Box" || calmOffCall.paddingX !== 1 || calmOffCall.paddingY !== 1) {
-  throw new Error("fm_branch_outcomes changed its ordinary shell rendering");
-}
-if (calmOffResult.constructor.name !== "Container" || calmOffCall.children[0]?.text !== "fm_branch_outcomes" || calmOffCall.children[1]?.text !== "OUTCOME_DUMP") {
+if (calmOffResult.render(100).length !== 0 || calmOffCall.render(100).join("\n") !== "fm_branch_outcomes\nOUTCOME_DUMP") {
   throw new Error("fm_branch_outcomes changed its ordinary call or result rendering");
 }
 const legacyStockResult = {
@@ -832,12 +834,12 @@ const legacyStockResult = {
 const legacyRenderContext = { state: {}, isError: false, isPartial: false };
 const legacyCall = outcomesTool.renderCall({}, renderTheme, legacyRenderContext);
 outcomesTool.renderResult(legacyStockResult, { expanded: false, isPartial: false }, renderTheme, legacyRenderContext);
-const collapsedLegacyText = legacyCall.children[1]?.text;
+const collapsedLegacyText = legacyCall.render(100).join("\n");
 if (!collapsedLegacyText?.includes("LEGACY_OUTCOME_12") || collapsedLegacyText.includes("more lines")) {
   throw new Error("legacy all-line stock capability did not preserve collapsed Calm-off output");
 }
 outcomesTool.renderResult(legacyStockResult, { expanded: true, isPartial: false }, renderTheme, legacyRenderContext);
-if (legacyCall.children[1]?.text !== collapsedLegacyText) {
+if (legacyCall.render(100).join("\n") !== collapsedLegacyText) {
   throw new Error("legacy all-line stock capability changed expanded Calm-off output");
 }
 pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: false });
@@ -847,7 +849,9 @@ if (calmOnCall.constructor.name !== "Container" || calmOnCall.render(100).length
   throw new Error("fm_branch_outcomes remained visible while Calm was on");
 }
 pi.events.emit("firstmate:calm-presentation", { active: false, stockExportRendering: false });
-if (outcomesTool.renderCall({}, renderTheme, renderContext).constructor.name !== "Box" || outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext).constructor.name !== "Container") {
+const restoredCall = outcomesTool.renderCall({}, renderTheme, renderContext);
+const restoredResult = outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext);
+if (restoredCall.render(100).join("\n") !== "fm_branch_outcomes\nOUTCOME_DUMP" || restoredResult.render(100).length !== 0) {
   throw new Error("fm_branch_outcomes did not restore ordinary rendering when Calm was turned off");
 }
 pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: true });
@@ -1069,7 +1073,10 @@ entries.push({ type: "message", message: { role: "user", content: legacyOperatio
 await fire("agent_start", {}, mainCtx);
 const unsolicited = dispatch("signal: healthy resource result");
 if (!unsolicited.accepted) throw new Error("branch did not accept the unsolicited result");
-await settle(() => fleetOperations.length === 2, "unsolicited result acknowledgement");
+// The accepted wake owns its asynchronous drain/report/ack work. Await that
+// public completion boundary instead of giving real subprocesses 2.5 seconds.
+await unsolicited.settlement;
+if (fleetOperations.length !== 2) throw new Error("unsolicited result did not drain and acknowledge exactly once");
 if (sentToMain.length !== 1 || sentToMain[0].options.triggerTurn) {
   throw new Error(`unsolicited healthy result opened a main turn: ${JSON.stringify(sentToMain)}`);
 }
@@ -1098,7 +1105,10 @@ for (let index = 0; index < requestedPrompts.length; index += 1) {
   await fire("agent_start", {}, mainCtx);
   const requested = dispatch("signal: healthy resource result");
   if (!requested.accepted) throw new Error(`branch did not accept requested result ${index}`);
-  await settle(() => fleetOperations.length === 4 + (index * 2), `requested result ${index} acknowledgement`);
+  await requested.settlement;
+  if (fleetOperations.length !== 4 + (index * 2)) {
+    throw new Error(`requested result ${index} did not drain and acknowledge exactly once`);
+  }
   const deliveredRequestMirror = globalThis.__fmSessions[0].ops
     .filter((op) => op.kind === "custom" && op.message.customType === "fm-main-mirror")
     .at(-1)?.message.content;
@@ -2292,8 +2302,8 @@ test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldow
   PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
 const prelude = process.env.DRIVER_PRELUDE;
-await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatch, fire, settle, home, realRoot, mainUserMessages, sentToMain }; })()`);
-const { pi, makeOffer, dispatch, fire, settle, home, realRoot, mainUserMessages, sentToMain } = globalThis.__t;
+await eval(`(async () => { ${prelude}; globalThis.__t = { pi, makeOffer, dispatch, fire, home, realRoot, mainUserMessages, sentToMain }; })()`);
+const { pi, makeOffer, dispatch, fire, home, realRoot, mainUserMessages, sentToMain } = globalThis.__t;
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
@@ -2334,6 +2344,8 @@ globalThis.__fmInitialBranchMessages = Array.from({ length: 100 }, (_, index) =>
 }));
 let attempt = 0;
 let releaseFailedProbe;
+let markFailedProbeReady;
+const failedProbeReady = new Promise((resolve) => { markFailedProbeReady = resolve; });
 globalThis.__fmOnBranchPrompt = async ({ session }) => {
   attempt += 1;
   if (attempt === 1) {
@@ -2343,6 +2355,9 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
     ];
   }
   if (attempt === 2 || attempt === 6 || attempt === 8) {
+    // A healthy provider may take longer than the driver's 2.5-second poll
+    // budget. Completion, not that budget, must govern the report assertion.
+    if (attempt === 8) await new Promise((resolve) => setTimeout(resolve, 3000));
     await runBranchDrain(session);
     const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
     const summary = attempt === 2
@@ -2377,7 +2392,10 @@ globalThis.__fmOnBranchPrompt = async ({ session }) => {
       {},
     );
     if (recorded.isError) throw new Error(`pre-error report failed: ${JSON.stringify(recorded)}`);
-    await new Promise((resolve) => { releaseFailedProbe = resolve; });
+    await new Promise((resolve) => {
+      releaseFailedProbe = resolve;
+      markFailedProbeReady();
+    });
   }
   if (attempt === 9 || attempt === 10) {
     await runBranchDrain(session);
@@ -2424,7 +2442,7 @@ if (existsSync(`${home}/state/.branch-eligible-rows`)) {
 const healthy = dispatch("signal: healthy branch turn");
 if (!healthy.accepted) throw new Error("one provider error latched the branch prematurely");
 await healthy.settlement;
-await settle(() => attempt === 2 && sentToMain.length === 1, "healthy branch report");
+if (attempt !== 2 || sentToMain.length !== 1) throw new Error("healthy branch report was not delivered");
 if (mainUserMessages.length !== 0) throw new Error("a healthy reported turn fell back to main");
 
 const third = dispatch("signal: provider error after reset");
@@ -2461,7 +2479,13 @@ if (dispatch("signal: still inside first cooldown").accepted) {
 now += 1;
 const failedProbe = dispatch("signal: first cooldown probe");
 if (!failedProbe.accepted) throw new Error("the branch did not accept one probe after its cooldown elapsed");
-await settle(() => attempt === 5 && typeof releaseFailedProbe === "function", "in-flight failed cooldown probe");
+await Promise.race([
+  failedProbeReady,
+  failedProbe.settlement.then(() => { throw new Error("failed cooldown probe settled before reaching its in-flight gate"); }),
+]);
+if (attempt !== 5 || typeof releaseFailedProbe !== "function") {
+  throw new Error("failed cooldown probe did not reach its in-flight gate");
+}
 if (sentToMain.some((sent) => sent.message.content.includes("Supervision branch recovered after a successful cooldown probe"))) {
   throw new Error("a durable report cleared the latch before its prompt settled");
 }
@@ -2506,10 +2530,12 @@ if (dispatch("signal: inside extended cooldown").accepted) {
 now += 5 * 60 * 1000;
 const recoveryProbe = dispatch("signal: recovery probe after extended cooldown");
 if (!recoveryProbe.accepted) throw new Error("the branch did not re-probe after the extended cooldown elapsed");
-await settle(() => attempt === 6 && sentToMain.some((sent) => sent.message.content.includes("cooldown probe recovered the branch")), "successful recovery probe");
-// The recovery note is emitted when the wake SETTLES, which is after the
-// report note the condition above waits for.
+// Reports and the recovery note are guaranteed by settlement, not by a
+// short polling deadline while the real fleet-record subprocesses run.
 await recoveryProbe.settlement;
+if (attempt !== 6 || !sentToMain.some((sent) => sent.message.content.includes("cooldown probe recovered the branch"))) {
+  throw new Error("successful recovery probe did not deliver its report");
+}
 if (mainUserMessages.length !== 0) throw new Error("a successful recovery probe also fell back to main");
 const recoveryNotes = sentToMain.filter((sent) => sent.message.content.includes("Supervision branch recovered after a successful cooldown probe"));
 if (recoveryNotes.length !== 1 || recoveryNotes[0].message.content.includes("\n")) {
@@ -2531,8 +2557,10 @@ if (existsSync(`${home}/state/.branch-eligible-rows`)) {
 }
 const afterRecoveryHealthy = dispatch("signal: healthy turn after one post-recovery error");
 if (!afterRecoveryHealthy.accepted) throw new Error("the successful probe did not clear the provider-error streak");
-await settle(() => attempt === 8 && sentToMain.some((sent) => sent.message.content.includes("post-recovery report proved")), "post-recovery healthy report");
 await afterRecoveryHealthy.settlement;
+if (attempt !== 8 || !sentToMain.some((sent) => sent.message.content.includes("post-recovery report proved"))) {
+  throw new Error("post-recovery healthy report was not delivered");
+}
 
 function dispatchTwoRowGrant(label) {
   writeFileSync(
@@ -4952,14 +4980,11 @@ test_outcomes_tool_uses_stock_execution_and_export_consumers() {
     echo "skip: installed @earendil-works/pi-coding-agent package not found"
     return
   fi
-  # This case compares the extension's own renderers against Pi's stock
-  # rendering, so its verdict is only meaningful against the vendor contract
-  # those renderers target: since Pi 0.84.4 the stock renderer no longer
-  # supplies an implicit reset at multiline boundaries, and the extension
-  # emits that reset itself. An older installed Pi still supplies it, so the
-  # two legitimately differ there and a comparison would report a defect that
-  # is really a version skew. Name the version and skip rather than degrade
-  # quietly; a package whose version cannot be read at all is still a failure.
+  # This fixture requires the collapsed preview and expansion hint introduced
+  # in Pi 0.84.4. Older all-line stock output cannot exercise those assertions;
+  # this is a fixture floor, not a minimum version for the extension's stock
+  # delegation. Name the version and skip rather than claim preview coverage;
+  # a package whose version cannot be read at all is still a failure.
   package_version=$(node -p 'require(process.argv[1]).version || ""' "$package_dir/package.json" 2>/dev/null || printf '')
   [ -n "$package_version" ] \
     || fail "installed @earendil-works/pi-coding-agent has no readable version at $package_dir"
@@ -5013,6 +5038,19 @@ const pi = {
 };
 const extension = await import(`${pathToFileURL(process.env.EXT).href}?consumer=${Date.now()}`);
 extension.default(pi);
+const processedDefinition = tools.find((tool) => tool.name === "fm_branch_processed");
+if (!processedDefinition) throw new Error("fm_branch_processed was not registered");
+// Pi catches renderer exceptions and silently falls back, so exercise the
+// acknowledgement renderer directly to keep missing shared helpers visible.
+const processedContext = { state: {}, toolCallId: "processed", expanded: false, isError: false, isPartial: false };
+const processedCall = processedDefinition.renderCall({ through: 1 }, theme, processedContext);
+processedDefinition.renderResult(
+  { content: [{ type: "text", text: "Acknowledged through 1" }] },
+  { expanded: false, isPartial: false }, theme, processedContext,
+);
+if (!processedCall.render(100).join("\n").includes("Acknowledged through 1")) {
+  throw new Error("Calm-off acknowledgement renderer lost its result");
+}
 const actualDefinition = tools.find((tool) => tool.name === "fm_branch_outcomes");
 if (!actualDefinition) throw new Error("fm_branch_outcomes was not registered");
 const stockDefinition = { ...actualDefinition };
@@ -5045,29 +5083,40 @@ const result = {
 const ui = { requestRender() {} };
 const stockRow = new ToolExecutionComponent("fm_branch_outcomes", "stock", args, { showImages: false }, stockDefinition, ui, process.cwd());
 const actualRow = new ToolExecutionComponent("fm_branch_outcomes", "actual", args, { showImages: false }, actualDefinition, ui, process.cwd());
+function assertStockRows(label) {
+  for (const width of [30, 100, 160]) {
+    if (JSON.stringify(actualRow.render(width)) !== JSON.stringify(stockRow.render(width))) {
+      throw new Error(`${label} differs from Pi stock at width ${width}`);
+    }
+  }
+}
+assertStockRows("pending Calm-off ToolExecutionComponent");
 for (const row of [stockRow, actualRow]) {
   row.markExecutionStarted();
   row.setArgsComplete();
-  row.updateResult(result);
 }
+assertStockRows("started Calm-off ToolExecutionComponent");
+for (const row of [stockRow, actualRow]) row.updateResult(result);
+assertStockRows("completed Calm-off ToolExecutionComponent");
 const collapsedStock = stockRow.render(100);
-const collapsedActual = actualRow.render(100);
-if (JSON.stringify(collapsedActual) !== JSON.stringify(collapsedStock)) {
-  throw new Error("Calm-off ToolExecutionComponent rendering differs from Pi stock");
-}
 const collapsedText = collapsedStock.join("\n");
 if (collapsedText.includes("OUTCOME_TWELVE") || !collapsedText.includes("more lines") || !collapsedText.includes("to expand")) {
   throw new Error("stock rendering fixture did not exercise its collapsed preview and expansion hint");
 }
 stockRow.setExpanded(true);
 actualRow.setExpanded(true);
+assertStockRows("expanded Calm-off ToolExecutionComponent");
 const expandedStock = stockRow.render(100);
-const expandedActual = actualRow.render(100);
-if (JSON.stringify(expandedActual) !== JSON.stringify(expandedStock)) {
-  throw new Error("expanded Calm-off ToolExecutionComponent rendering differs from Pi stock");
-}
 if (!expandedStock.join("\n").includes("OUTCOME_TWELVE") || JSON.stringify(expandedStock) === JSON.stringify(collapsedStock)) {
   throw new Error("stock rendering fixture did not exercise expanded output");
+}
+for (const isError of [true, false]) {
+  for (const row of [stockRow, actualRow]) row.updateResult({ ...result, isError });
+  for (const width of [30, 100]) {
+    if (JSON.stringify(actualRow.render(width)) !== JSON.stringify(stockRow.render(width))) {
+      throw new Error(`Calm-off result framing differs from Pi stock (error=${isError}, width=${width})`);
+    }
+  }
 }
 pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: false });
 actualRow.invalidate();
@@ -5076,8 +5125,13 @@ if (actualRow.render(100).length !== 0) {
 }
 pi.events.emit("firstmate:calm-presentation", { active: false, stockExportRendering: false });
 actualRow.invalidate();
-if (JSON.stringify(actualRow.render(100)) !== JSON.stringify(stockRow.render(100))) {
-  throw new Error("ToolExecutionComponent rendering did not restore after live toggle");
+assertStockRows("restored Calm-off ToolExecutionComponent");
+for (const next of [
+  { content: [{ type: "text", text: "OUTCOME_ERROR" }], isError: true },
+  { content: [], isError: false },
+]) {
+  for (const row of [stockRow, actualRow]) row.updateResult(next);
+  assertStockRows(next.isError ? "error result" : "empty result");
 }
 
 pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: true });
