@@ -268,16 +268,14 @@ SH
   printf '100\t8\tcheck\thealthy\tcheck: healthy progress\n' > "$sub/state/.wake-queue.tmp" \
     && mv "$sub/state/.wake-queue.tmp" "$sub/state/.wake-queue" \
     || fail "could not publish foreign drain progress"
-  printf '1002\n' > "$dir/now.tmp" && mv "$dir/now.tmp" "$dir/now" \
-    || fail "could not publish the progress clock"
   i=0
   while [ "$i" -lt 40 ]; do
     progress=$(cat "$state/.secondmate-wake-progress-mate" 2>/dev/null || true)
-    [ "$progress" = $'1002\t100-8' ] && break
+    [ "$progress" = $'1000\t100-8' ] && break
     sleep 0.1
     i=$((i + 1))
   done
-  [ "$progress" = $'1002\t100-8' ] || fail "successor did not recognize foreign drain progress"
+  [ "$progress" = $'1000\t100-8' ] || fail "successor did not recognize foreign drain progress"
   # Sample an entire two-second window, not just startup presence.
   i=0
   while [ "$i" -lt 20 ]; do
@@ -291,7 +289,7 @@ SH
     sleep 0.1
     i=$((i + 1))
   done
-  printf '1004\n' > "$dir/now.tmp" && mv "$dir/now.tmp" "$dir/now" \
+  printf '1002\n' > "$dir/now.tmp" && mv "$dir/now.tmp" "$dir/now" \
     || fail "could not publish the stalled clock"
   wait_for_exit "$child" 40 || fail "foreign no-progress episode stayed hidden after the window"
   grep -Fx 'check: secondmate wake-loop stalled: mate=mate row=8 idle=2s' "$out" >/dev/null \
