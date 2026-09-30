@@ -345,7 +345,7 @@ family_for_basename() {
     fm-composer-codex-idle-live-e2e.test.sh|\
     fm-codex-continuity-live-e2e.test.sh|fm-grok-continuity-live-e2e.test.sh|\
     fm-cursor-primary-live-e2e.test.sh|\
-    fm-deck-host-live-e2e.test.sh|\
+    fm-deck-host-live-e2e.test.sh|fm-stream-deck-live-e2e.test.sh|\
     fm-grok-stop-live-e2e.test.sh|fm-harness-adapter-instructions-live-e2e.test.sh|\
     fm-harness-liveness-drift-live-e2e.test.sh|\
     fm-muse-signals-live-e2e.test.sh|fm-rovo-signals-live-e2e.test.sh|fm-agy-signals-live-e2e.test.sh|\
@@ -789,6 +789,9 @@ tests/fm-stow-cascade.test.sh 3101
 # ~8s on the dev host); refresh from CI timing artifacts per the doc below.
 tests/fm-stream-bridge-rust.test.sh 31489
 tests/fm-stream-claude-tail.test.sh 9000
+# Completed measurements from run 36642742794's green serial shards 1 and 2.
+tests/fm-stream-deck-live-e2e.test.sh 79
+tests/fm-stream-deck.test.sh 4208
 tests/fm-stream-opencode-tail.test.sh 17476
 tests/fm-subagent-pretool-check.test.sh 1030
 tests/fm-supervision-events.test.sh 719
