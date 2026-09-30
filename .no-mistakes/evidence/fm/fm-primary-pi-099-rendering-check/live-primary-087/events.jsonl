@@ -1,0 +1,79 @@
+{"type":"model","version":"0.87.1","provider":"openai-codex","model":"gpt-5.6-sol"}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"tool_call","tool":"fm_branch_processed","args":{"through":13}}
+{"type":"tool_result","tool":"fm_branch_processed","content":[{"type":"text","text":"processed through seq 13; no captain outcome remains unprocessed"}],"isError":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"tool_call","tool":"fm_branch_outcomes","args":{"recent":1}}
+{"type":"tool_result","tool":"fm_branch_outcomes","content":[{"type":"text","text":"{\"seq\":13,\"epoch\":1790730358,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"captain\",\"summary\":\"LIVE_CAPTAIN_PROCESSED\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}"}],"isError":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"tool_call","tool":"fm_branch_outcomes","args":{"recent":20}}
+{"type":"tool_result","tool":"fm_branch_outcomes","content":[{"type":"text","text":"{\"seq\":1,\"epoch\":1790730355,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_01\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":2,\"epoch\":1790730355,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_02\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":3,\"epoch\":1790730356,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_03\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":4,\"epoch\":1790730356,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_04\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":5,\"epoch\":1790730356,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_05\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":6,\"epoch\":1790730356,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_06\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":7,\"epoch\":1790730357,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_07\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":8,\"epoch\":1790730357,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_08\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":9,\"epoch\":1790730357,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_09\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":10,\"epoch\":1790730357,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_10\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":11,\"epoch\":1790730358,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_11\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":12,\"epoch\":1790730358,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"routine\",\"summary\":\"LIVE_OUTCOME_12\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}\n{\"seq\":13,\"epoch\":1790730358,\"task\":\"render-probe\",\"wake\":\"\",\"verdict\":\"captain\",\"summary\":\"LIVE_CAPTAIN_PROCESSED\",\"silent\":false,\"statusEndpoint\":0,\"statusIdent\":\"-\"}"}],"isError":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}
+{"type":"render-error","tool":"fm_branch_processed","slot":"renderCall","exporting":true,"message":"Error: Use Pi stock export rendering"}
+{"type":"render-error","tool":"fm_branch_processed","slot":"renderResult","exporting":true,"message":"Error: Use Pi stock export rendering"}
+{"type":"render-error","tool":"fm_branch_outcomes","slot":"renderCall","exporting":true,"message":"Error: Use Pi stock export rendering"}
+{"type":"render-error","tool":"fm_branch_outcomes","slot":"renderResult","exporting":true,"message":"Error: Use Pi stock export rendering"}
+{"type":"render-error","tool":"fm_branch_outcomes","slot":"renderCall","exporting":true,"message":"Error: Use Pi stock export rendering"}
+{"type":"render-error","tool":"fm_branch_outcomes","slot":"renderResult","exporting":true,"message":"Error: Use Pi stock export rendering"}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_processed","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderCall","exporting":false}
+{"type":"render","tool":"fm_branch_outcomes","slot":"renderResult","exporting":false}

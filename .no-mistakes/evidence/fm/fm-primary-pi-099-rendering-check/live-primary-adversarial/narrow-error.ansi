@@ -1,0 +1,223 @@
+
+ [1m[38;2;138;190;183mpi[0m[38;2;102;102;102m v0.87.1[39m
+ [38;2;102;102;102mescape[38;2;128;128;128m to interrupt[39m
+ [38;2;102;102;102mctrl+c[38;2;128;128;128m to clear[39m
+ [38;2;102;102;102mctrl+c twice[38;2;128;128;128m to exit[39m
+ [38;2;102;102;102mctrl+d[38;2;128;128;128m to exit (empty)[39m
+ [38;2;102;102;102mctrl+z[38;2;128;128;128m to suspend[39m
+ [38;2;102;102;102mctrl+k[38;2;128;128;128m to delete to end[39m
+ [38;2;102;102;102mshift+tab[38;2;128;128;128m to cycle thinking
+[39m [38;2;128;128;128mlevel[39m
+ [38;2;102;102;102mctrl+p/shift+ctrl+p[38;2;128;128;128m to cycle
+[39m [38;2;128;128;128mmodels[39m
+ [38;2;102;102;102mctrl+l[38;2;128;128;128m to select model[39m
+ [38;2;102;102;102mctrl+o[38;2;128;128;128m to expand tools[39m
+ [38;2;102;102;102mctrl+t[38;2;128;128;128m to expand thinking[39m
+ [38;2;102;102;102mctrl+g[38;2;128;128;128m for external editor[39m
+ [38;2;102;102;102m/[38;2;128;128;128m for commands[39m
+ [38;2;102;102;102m![38;2;128;128;128m to run bash[39m
+ [38;2;102;102;102m!![38;2;128;128;128m to run bash (no context)[39m
+ [38;2;102;102;102moption+enter[38;2;128;128;128m to queue
+[39m [38;2;128;128;128mfollow-up[39m
+ [38;2;102;102;102moption+up[38;2;128;128;128m to edit all queued
+[39m [38;2;128;128;128mmessages[39m
+ [38;2;102;102;102mctrl+v[38;2;128;128;128m to paste image (with
+[39m [38;2;128;128;128mtext fallback)[39m
+ [38;2;102;102;102mdrop files[38;2;128;128;128m to attach[39m
+
+ [38;2;102;102;102mPi can explain its own
+[39m [38;2;102;102;102mfeatures and look up its
+[39m [38;2;102;102;102mdocs. Ask it how to use or
+[39m [38;2;102;102;102mextend Pi.[39m
+
+[38;2;240;198;116m[Extensions][39m
+  [38;2;138;190;183mproject[39m
+[38;2;102;102;102m
+~/.no-mistakes/worktrees/5a1fd
+3284f12/01M3QWS2Z2CH1TGQE619HN
+B7JK/.pi-live-e2e.41672/projec
+t/.pi/extensions/fm-calm.ts[39m
+[38;2;102;102;102m
+~/.no-mistakes/worktrees/5a1fd
+3284f12/01M3QWS2Z2CH1TGQE619HN
+B7JK/.pi-live-e2e.41672/projec
+t/.pi/extensions/render-probe.
+ts[39m
+
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_01[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_02[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_03[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_04[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_05[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_06[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_07[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_08[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_09[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_10[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_11[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe:
+[39m [38;2;102;102;102mLIVE_OUTCOME_12[39m
+
+ [38;2;212;212;212m⚓[38;2;102;102;102m [seq 13] render-probe:
+[39m [38;2;102;102;102mLIVE_CAPTAIN_PROCESSED[39m
+
+ Processed supervision
+ outcome 13
+ ([38;2;138;190;183mLIVE_CAPTAIN_PROCESSED[39m). No
+ further action is needed.
+
+[48;2;40;50;40m
+ [1m[38;2;212;212;212mfm_branch_processed[0m[48;2;40;50;40m
+ [38;2;128;128;128mprocessed through seq 13; no
+[39m [38;2;128;128;128mcaptain outcome remains
+[39m [38;2;128;128;128munprocessed[39m
+
+
+[49m [1;3m[38;2;128;128;128mFinalizing acknowledgement
+[0m [1;3m[38;2;128;128;128mprocess[0m
+
+ PRIMARY_RENDER_ACK
+
+[48;2;52;53;65m
+ [38;2;212;212;212mCall fm_branch_outcomes with
+[39m [38;2;212;212;212mrecent 20, then reply
+[39m [38;2;212;212;212mexactly PRIMARY_OUTCOMES_ACK
+[39m [38;2;212;212;212mwithout repeating any
+[39m [38;2;212;212;212moutcome text.[39m
+
+
+[48;2;40;50;40m
+ [1m[38;2;212;212;212mfm_branch_outcomes[0m[48;2;40;50;40m
+ [38;2;128;128;128m{"seq":1,"epoch":1790730687,
+[39m [38;2;128;128;128m"task":"render-probe","wake"
+[39m [38;2;128;128;128m:"","verdict":"routine","sum
+[39m [38;2;128;128;128mmary":"LIVE_OUTCOME_01","sil
+[39m [38;2;128;128;128ment":false,"statusEndpoint":
+[39m [38;2;128;128;128m0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":2,"epoch":1790730687,
+[39m [38;2;128;128;128m"task":"render-probe","wake"
+[39m [38;2;128;128;128m:"","verdict":"routine","sum
+[39m [38;2;128;128;128mmary":"LIVE_OUTCOME_02","sil
+[39m [38;2;128;128;128ment":false,"statusEndpoint":
+[39m [38;2;128;128;128m0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":3,"epoch":1790730687,
+[39m [38;2;128;128;128m"task":"render-probe","wake"
+[39m [38;2;128;128;128m:"","verdict":"routine","sum
+[39m [38;2;128;128;128mmary":"LIVE_OUTCOME_03","sil
+[39m [38;2;128;128;128ment":false,"statusEndpoint":
+[39m [38;2;128;128;128m0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":4,"epoch":1790730687,
+[39m [38;2;128;128;128m"task":"render-probe","wake"
+[39m [38;2;128;128;128m:"","verdict":"routine","sum
+[39m [38;2;128;128;128mmary":"LIVE_OUTCOME_04","sil
+[39m [38;2;128;128;128ment":false,"statusEndpoint":
+[39m [38;2;128;128;128m0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":5,"epoch":1790730688,
+[39m [38;2;128;128;128m"task":"render-probe","wake"
+[39m [38;2;128;128;128m:"","verdict":"routine","sum
+[39m [38;2;128;128;128mmary":"LIVE_OUTCOME_05","sil
+[39m [38;2;128;128;128ment":false,"statusEndpoint":
+[39m [38;2;128;128;128m0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":6,"epoch":1790730688,
+[39m [38;2;128;128;128m"task":"render-probe","wake"
+[39m [38;2;128;128;128m:"","verdict":"routine","sum
+[39m [38;2;128;128;128mmary":"LIVE_OUTCOME_06","sil
+[39m [38;2;128;128;128ment":false,"statusEndpoint":
+[39m [38;2;128;128;128m0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":7,"epoch":1790730688,
+[39m [38;2;128;128;128m"task":"render-probe","wake"
+[39m [38;2;128;128;128m:"","verdict":"routine","sum
+[39m [38;2;128;128;128mmary":"LIVE_OUTCOME_07","sil
+[39m [38;2;128;128;128ment":false,"statusEndpoint":
+[39m [38;2;128;128;128m0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":8,"epoch":1790730688,
+[39m [38;2;128;128;128m"task":"render-probe","wake"
+[39m [38;2;128;128;128m:"","verdict":"routine","sum
+[39m [38;2;128;128;128mmary":"LIVE_OUTCOME_08","sil
+[39m [38;2;128;128;128ment":false,"statusEndpoint":
+[39m [38;2;128;128;128m0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":9,"epoch":1790730688,
+[39m [38;2;128;128;128m"task":"render-probe","wake"
+[39m [38;2;128;128;128m:"","verdict":"routine","sum
+[39m [38;2;128;128;128mmary":"LIVE_OUTCOME_09","sil
+[39m [38;2;128;128;128ment":false,"statusEndpoint":
+[39m [38;2;128;128;128m0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":10,"epoch":1790730688
+[39m [38;2;128;128;128m,"task":"render-probe","wake
+[39m [38;2;128;128;128m":"","verdict":"routine","su
+[39m [38;2;128;128;128mmmary":"LIVE_OUTCOME_10","si
+[39m [38;2;128;128;128mlent":false,"statusEndpoint"
+[39m [38;2;128;128;128m:0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":11,"epoch":1790730688
+[39m [38;2;128;128;128m,"task":"render-probe","wake
+[39m [38;2;128;128;128m":"","verdict":"routine","su
+[39m [38;2;128;128;128mmmary":"LIVE_OUTCOME_11","si
+[39m [38;2;128;128;128mlent":false,"statusEndpoint"
+[39m [38;2;128;128;128m:0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":12,"epoch":1790730688
+[39m [38;2;128;128;128m,"task":"render-probe","wake
+[39m [38;2;128;128;128m":"","verdict":"routine","su
+[39m [38;2;128;128;128mmmary":"LIVE_OUTCOME_12","si
+[39m [38;2;128;128;128mlent":false,"statusEndpoint"
+[39m [38;2;128;128;128m:0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":13,"epoch":1790730688
+[39m [38;2;128;128;128m,"task":"render-probe","wake
+[39m [38;2;128;128;128m":"","verdict":"captain","su
+[39m [38;2;128;128;128mmmary":"LIVE_CAPTAIN_PROCESS
+[39m [38;2;128;128;128mED","silent":false,"statusEn
+[39m [38;2;128;128;128mdpoint":0,"statusIdent":"-"}[39m
+
+
+[49m PRIMARY_OUTCOMES_ACK
+
+ [38;2;102;102;102mTool output: expanded[39m
+
+[48;2;52;53;65m
+ [38;2;212;212;212mFor this refusal-path test,
+[39m [38;2;212;212;212mcall fm_branch_processed
+[39m [38;2;212;212;212mwith through 999 exactly
+[39m [38;2;212;212;212monce. This is intentionally
+[39m [38;2;212;212;212moutside the active
+[39m [38;2;212;212;212mprocessing request; do not
+[39m [38;2;212;212;212mcall other tools or repair
+[39m [38;2;212;212;212manything. Then reply exactly
+[39m [38;2;212;212;212mPRIMARY_REFUSAL_ACK.[39m
+
+
+[48;2;40;50;40m
+ [1m[38;2;212;212;212mfm_branch_processed[0m[48;2;40;50;40m
+ [38;2;128;128;128macknowledgement refused: seq
+[39m [38;2;128;128;128m999 was not listed in the
+[39m [38;2;128;128;128mactive processing request[39m
+
+
+[49m PRIMARY_REFUSAL_ACK
+
+[38;2;95;135;175m── ⠴[39m [38;2;95;135;175mWorking ─────────────────
+[7m[39m [0m
+[38;2;95;135;175m──────────────────────────────
+[38;2;102;102;102m~/.no-mistakes/worktrees/5a...
+↑5.1k ↓212 R2.4k CH0.0% $0.[39m...

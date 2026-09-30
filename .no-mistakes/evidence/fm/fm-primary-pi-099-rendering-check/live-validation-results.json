@@ -1,0 +1,398 @@
+[
+  {
+    "evidence_directory": "live-primary-085-final",
+    "model": {
+      "type": "model",
+      "version": "0.85.1",
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol"
+    },
+    "tool_calls": [
+      {
+        "type": "tool_call",
+        "tool": "fm_branch_outcomes",
+        "args": {
+          "recent": 1
+        }
+      },
+      {
+        "type": "tool_call",
+        "tool": "fm_branch_processed",
+        "args": {
+          "through": 13
+        }
+      },
+      {
+        "type": "tool_call",
+        "tool": "fm_branch_outcomes",
+        "args": {
+          "recent": 20
+        }
+      },
+      {
+        "type": "tool_call",
+        "tool": "fm_branch_processed",
+        "args": {
+          "through": 999
+        }
+      }
+    ],
+    "acknowledgement_results": [
+      {
+        "type": "tool_result",
+        "tool": "fm_branch_processed",
+        "content": [
+          {
+            "type": "text",
+            "text": "processed through seq 13; no captain outcome remains unprocessed"
+          }
+        ],
+        "isError": false
+      },
+      {
+        "type": "tool_result",
+        "tool": "fm_branch_processed",
+        "content": [
+          {
+            "type": "text",
+            "text": "acknowledgement refused: seq 999 was not listed in the active processing request"
+          }
+        ],
+        "isError": false
+      }
+    ],
+    "non_export_renderer_errors": []
+  },
+  {
+    "evidence_directory": "live-primary-087-final",
+    "model": {
+      "type": "model",
+      "version": "0.87.1",
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol"
+    },
+    "tool_calls": [
+      {
+        "type": "tool_call",
+        "tool": "fm_branch_processed",
+        "args": {
+          "through": 13
+        }
+      },
+      {
+        "type": "tool_call",
+        "tool": "fm_branch_outcomes",
+        "args": {
+          "recent": 20
+        }
+      },
+      {
+        "type": "tool_call",
+        "tool": "fm_branch_processed",
+        "args": {
+          "through": 999
+        }
+      }
+    ],
+    "acknowledgement_results": [
+      {
+        "type": "tool_result",
+        "tool": "fm_branch_processed",
+        "content": [
+          {
+            "type": "text",
+            "text": "processed through seq 13; no captain outcome remains unprocessed"
+          }
+        ],
+        "isError": false
+      },
+      {
+        "type": "tool_result",
+        "tool": "fm_branch_processed",
+        "content": [
+          {
+            "type": "text",
+            "text": "acknowledgement refused: seq 999 was not listed in the active processing request"
+          }
+        ],
+        "isError": false
+      }
+    ],
+    "non_export_renderer_errors": []
+  },
+  {
+    "evidence_directory": "pre-ack-fix-live",
+    "model": {
+      "type": "model",
+      "version": "0.85.1",
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol"
+    },
+    "tool_calls": [
+      {
+        "type": "tool_call",
+        "tool": "fm_branch_outcomes",
+        "args": {
+          "recent": 1
+        }
+      },
+      {
+        "type": "tool_call",
+        "tool": "fm_branch_processed",
+        "args": {
+          "through": 13
+        }
+      },
+      {
+        "type": "tool_call",
+        "tool": "fm_branch_outcomes",
+        "args": {
+          "recent": 20
+        }
+      },
+      {
+        "type": "tool_call",
+        "tool": "fm_branch_processed",
+        "args": {
+          "through": 999
+        }
+      }
+    ],
+    "acknowledgement_results": [
+      {
+        "type": "tool_result",
+        "tool": "fm_branch_processed",
+        "content": [
+          {
+            "type": "text",
+            "text": "processed through seq 13; no captain outcome remains unprocessed"
+          }
+        ],
+        "isError": false
+      },
+      {
+        "type": "tool_result",
+        "tool": "fm_branch_processed",
+        "content": [
+          {
+            "type": "text",
+            "text": "acknowledgement refused: seq 999 was not listed in the active processing request"
+          }
+        ],
+        "isError": false
+      }
+    ],
+    "non_export_renderer_errors": [
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderResult",
+        "exporting": false,
+        "message": "ReferenceError: normalizeOutcomesToolOutput is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderResult",
+        "exporting": false,
+        "message": "ReferenceError: normalizeOutcomesToolOutput is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderResult",
+        "exporting": false,
+        "message": "ReferenceError: normalizeOutcomesToolOutput is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderResult",
+        "exporting": false,
+        "message": "ReferenceError: normalizeOutcomesToolOutput is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderCall",
+        "exporting": false,
+        "message": "ReferenceError: refreshOutcomesToolShell is not defined"
+      },
+      {
+        "type": "render-error",
+        "tool": "fm_branch_processed",
+        "slot": "renderResult",
+        "exporting": false,
+        "message": "ReferenceError: normalizeOutcomesToolOutput is not defined"
+      }
+    ]
+  }
+]

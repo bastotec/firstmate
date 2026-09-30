@@ -1,0 +1,26 @@
+{
+  "auth.json": {
+    "exists": true,
+    "size": 2528,
+    "mtime_ns": 1790411590114148707,
+    "inode": 498928208
+  },
+  "models.json": {
+    "exists": true,
+    "size": 5105,
+    "mtime_ns": 1790707943975261082,
+    "inode": 484077381
+  },
+  "models-store.json": {
+    "exists": true,
+    "size": 243167,
+    "mtime_ns": 1790708176826130050,
+    "inode": 350648698
+  },
+  "settings.json": {
+    "exists": true,
+    "size": 472,
+    "mtime_ns": 1790284270905041404,
+    "inode": 350649233
+  }
+}

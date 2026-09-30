@@ -1,0 +1,223 @@
+
+ pi v0.85.1
+ escape to interrupt
+ ctrl+c to clear
+ ctrl+c twice to exit
+ ctrl+d to exit (empty)
+ ctrl+z to suspend
+ ctrl+k to delete to end
+ shift+tab to cycle thinking
+ level
+ ctrl+p/shift+ctrl+p to cycle
+ models
+ ctrl+l to select model
+ ctrl+o to expand tools
+ ctrl+t to expand thinking
+ ctrl+g for external editor
+ / for commands
+ ! to run bash
+ !! to run bash (no context)
+ option+enter to queue
+ follow-up
+ option+up to edit all queued
+ messages
+ ctrl+v to paste image (with
+ text fallback)
+ drop files to attach
+
+ Pi can explain its own
+ features and look up its
+ docs. Ask it how to use or
+ extend Pi.
+
+[Extensions]
+  project
+
+~/.no-mistakes/worktrees/5a1fd
+3284f12/01M3QWS2Z2CH1TGQE619HN
+B7JK/.pi-live-e2e.93575/projec
+t/.pi/extensions/fm-calm.ts
+
+~/.no-mistakes/worktrees/5a1fd
+3284f12/01M3QWS2Z2CH1TGQE619HN
+B7JK/.pi-live-e2e.93575/projec
+t/.pi/extensions/render-probe.
+ts
+
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_01
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_02
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_03
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_04
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_05
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_06
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_07
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_08
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_09
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_10
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_11
+
+ ⛵ render-probe:
+ LIVE_OUTCOME_12
+
+ ⚓ [seq 13] render-probe:
+ LIVE_CAPTAIN_PROCESSED
+
+ Renaming outcome variables
+
+
+ fm_branch_outcomes
+ {"seq":13,"epoch":1790730806
+ ,"task":"render-probe","wake
+ ":"","verdict":"captain","su
+ mmary":"LIVE_CAPTAIN_PROCESS
+ ED","silent":false,"statusEn
+ dpoint":0,"statusIdent":"-"}
+
+
+fm_branch_processed
+processed through seq 13; no
+captain outcome remains
+unprocessed
+
+ PRIMARY_RENDER_ACK
+
+
+ Call fm_branch_outcomes with
+ recent 20, then reply
+ exactly PRIMARY_OUTCOMES_ACK
+ without repeating any
+ outcome text.
+
+
+
+ fm_branch_outcomes
+ {"seq":1,"epoch":1790730805,
+ "task":"render-probe","wake"
+ :"","verdict":"routine","sum
+ mary":"LIVE_OUTCOME_01","sil
+ ent":false,"statusEndpoint":
+ 0,"statusIdent":"-"}
+ {"seq":2,"epoch":1790730805,
+ "task":"render-probe","wake"
+ :"","verdict":"routine","sum
+ mary":"LIVE_OUTCOME_02","sil
+ ent":false,"statusEndpoint":
+ 0,"statusIdent":"-"}
+ {"seq":3,"epoch":1790730805,
+ "task":"render-probe","wake"
+ :"","verdict":"routine","sum
+ mary":"LIVE_OUTCOME_03","sil
+ ent":false,"statusEndpoint":
+ 0,"statusIdent":"-"}
+ {"seq":4,"epoch":1790730806,
+ "task":"render-probe","wake"
+ :"","verdict":"routine","sum
+ mary":"LIVE_OUTCOME_04","sil
+ ent":false,"statusEndpoint":
+ 0,"statusIdent":"-"}
+ {"seq":5,"epoch":1790730806,
+ "task":"render-probe","wake"
+ :"","verdict":"routine","sum
+ mary":"LIVE_OUTCOME_05","sil
+ ent":false,"statusEndpoint":
+ 0,"statusIdent":"-"}
+ {"seq":6,"epoch":1790730806,
+ "task":"render-probe","wake"
+ :"","verdict":"routine","sum
+ mary":"LIVE_OUTCOME_06","sil
+ ent":false,"statusEndpoint":
+ 0,"statusIdent":"-"}
+ {"seq":7,"epoch":1790730806,
+ "task":"render-probe","wake"
+ :"","verdict":"routine","sum
+ mary":"LIVE_OUTCOME_07","sil
+ ent":false,"statusEndpoint":
+ 0,"statusIdent":"-"}
+ {"seq":8,"epoch":1790730806,
+ "task":"render-probe","wake"
+ :"","verdict":"routine","sum
+ mary":"LIVE_OUTCOME_08","sil
+ ent":false,"statusEndpoint":
+ 0,"statusIdent":"-"}
+ {"seq":9,"epoch":1790730806,
+ "task":"render-probe","wake"
+ :"","verdict":"routine","sum
+ mary":"LIVE_OUTCOME_09","sil
+ ent":false,"statusEndpoint":
+ 0,"statusIdent":"-"}
+ {"seq":10,"epoch":1790730806
+ ,"task":"render-probe","wake
+ ":"","verdict":"routine","su
+ mmary":"LIVE_OUTCOME_10","si
+ lent":false,"statusEndpoint"
+ :0,"statusIdent":"-"}
+ {"seq":11,"epoch":1790730806
+ ,"task":"render-probe","wake
+ ":"","verdict":"routine","su
+ mmary":"LIVE_OUTCOME_11","si
+ lent":false,"statusEndpoint"
+ :0,"statusIdent":"-"}
+ {"seq":12,"epoch":1790730806
+ ,"task":"render-probe","wake
+ ":"","verdict":"routine","su
+ mmary":"LIVE_OUTCOME_12","si
+ lent":false,"statusEndpoint"
+ :0,"statusIdent":"-"}
+ {"seq":13,"epoch":1790730806
+ ,"task":"render-probe","wake
+ ":"","verdict":"captain","su
+ mmary":"LIVE_CAPTAIN_PROCESS
+ ED","silent":false,"statusEn
+ dpoint":0,"statusIdent":"-"}
+
+
+ PRIMARY_OUTCOMES_ACK
+
+ Tool output: expanded
+
+
+ For this refusal-path test,
+ call fm_branch_processed
+ with through 999 exactly
+ once. This is intentionally
+ outside the active
+ processing request; do not
+ call other tools or repair
+ anything. Then reply exactly
+ PRIMARY_REFUSAL_ACK.
+
+
+fm_branch_processed
+acknowledgement refused: seq
+999 was not listed in the
+active processing request
+
+ PRIMARY_REFUSAL_ACK
+
+── ⠋ Working ─────────────────
+
+──────────────────────────────
+~/.no-mistakes/worktrees/5a...
+↑4.8k ↓132 R5.8k CH89.1% $0...

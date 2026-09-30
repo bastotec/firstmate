@@ -1,0 +1,10 @@
+not ok - Pi outcomes rendering consumers must preserve stock behavior: file:///Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QWS2Z2CH1TGQE619HNB7JK/.test-temp/fm-pi-branch-extension.7fBcHQ/stock-render-consumers/.pi/extensions/fm-branch-supervision.ts?consumer=1790730673637:2324
+      return refreshOutcomesToolShell(shellState, theme, context);
+      ^
+
+ReferenceError: refreshOutcomesToolShell is not defined
+    at Object.renderCall (file:///Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QWS2Z2CH1TGQE619HNB7JK/.test-temp/fm-pi-branch-extension.7fBcHQ/stock-render-consumers/.pi/extensions/fm-branch-supervision.ts?consumer=1790730673637:2324:7)
+    at file:///Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3QWS2Z2CH1TGQE619HNB7JK/.test-temp/fm-pi-branch-extension.7fBcHQ/stock-render-consumers/[eval1]:36:43
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+
+Node.js v22.22.0: expected exit 0, got 1

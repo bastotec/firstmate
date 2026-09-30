@@ -1,0 +1,160 @@
+
+ [1m[38;2;138;190;183mpi[0m[38;2;102;102;102m v0.85.1[39m
+ [38;2;102;102;102mescape[38;2;128;128;128m interrupt · [38;2;102;102;102mctrl+c/ctrl+d[38;2;128;128;128m clear/exit · [38;2;102;102;102m/[38;2;128;128;128m commands · [38;2;102;102;102m![38;2;128;128;128m bash · [38;2;102;102;102mctrl+o[38;2;128;128;128m more[39m
+ [38;2;102;102;102mPress ctrl+o to show full startup help and loaded resources.[39m
+
+ [38;2;102;102;102mPi can explain its own features and look up its docs. Ask it how to use or extend Pi.[39m
+
+[38;2;240;198;116m[Extensions][39m
+[38;2;102;102;102m  fm-calm.ts, render-probe.ts[39m
+
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_01[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_02[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_03[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_04[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_05[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_06[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_07[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_08[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_09[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_10[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_11[39m
+
+ [38;2;212;212;212m⛵[38;2;102;102;102m render-probe: LIVE_OUTCOME_12[39m
+
+ [38;2;212;212;212m⚓[38;2;102;102;102m [seq 13] render-probe: LIVE_CAPTAIN_PROCESSED[39m
+
+[48;2;40;50;40m
+ [1m[38;2;212;212;212mfm_branch_outcomes[0m[48;2;40;50;40m
+ [38;2;128;128;128m{"seq":13,"epoch":1790730888,"task":"render-probe","wake":"","verdict":"captain","summary":"LIVE_C
+[39m [38;2;128;128;128mAPTAIN_PROCESSED","silent":false,"statusEndpoint":0,"statusIdent":"-"}[39m
+
+
+
+ [1m[38;2;212;212;212mfm_branch_processed[0m[48;2;40;50;40m
+ [38;2;128;128;128mprocessed through seq 13; no captain outcome remains unprocessed[39m
+
+
+[49m PRIMARY_RENDER_ACK
+
+[48;2;52;53;65m
+ [38;2;212;212;212mCall fm_branch_outcomes with recent 20, then reply exactly PRIMARY_OUTCOMES_ACK without repeating
+[39m [38;2;212;212;212many outcome text.[39m
+
+
+[48;2;40;50;40m
+ [1m[38;2;212;212;212mfm_branch_outcomes[0m[48;2;40;50;40m
+ [38;2;128;128;128m{"seq":1,"epoch":1790730886,"task":"render-probe","wake":"","verdict":"routine","summary":"LIVE_OU
+[39m [38;2;128;128;128mTCOME_01","silent":false,"statusEndpoint":0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":2,"epoch":1790730886,"task":"render-probe","wake":"","verdict":"routine","summary":"LIVE_OU
+[39m [38;2;128;128;128mTCOME_02","silent":false,"statusEndpoint":0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":3,"epoch":1790730886,"task":"render-probe","wake":"","verdict":"routine","summary":"LIVE_OU
+[39m [38;2;128;128;128mTCOME_03","silent":false,"statusEndpoint":0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":4,"epoch":1790730887,"task":"render-probe","wake":"","verdict":"routine","summary":"LIVE_OU
+[39m [38;2;128;128;128mTCOME_04","silent":false,"statusEndpoint":0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":5,"epoch":1790730887,"task":"render-probe","wake":"","verdict":"routine","summary":"LIVE_OU
+[39m [38;2;128;128;128mTCOME_05","silent":false,"statusEndpoint":0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":6,"epoch":1790730887,"task":"render-probe","wake":"","verdict":"routine","summary":"LIVE_OU
+[39m [38;2;128;128;128mTCOME_06","silent":false,"statusEndpoint":0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":7,"epoch":1790730887,"task":"render-probe","wake":"","verdict":"routine","summary":"LIVE_OU
+[39m [38;2;128;128;128mTCOME_07","silent":false,"statusEndpoint":0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":8,"epoch":1790730887,"task":"render-probe","wake":"","verdict":"routine","summary":"LIVE_OU
+[39m [38;2;128;128;128mTCOME_08","silent":false,"statusEndpoint":0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":9,"epoch":1790730888,"task":"render-probe","wake":"","verdict":"routine","summary":"LIVE_OU
+[39m [38;2;128;128;128mTCOME_09","silent":false,"statusEndpoint":0,"statusIdent":"-"}[39m
+ [38;2;128;128;128m{"seq":10,"epoch":1790730888,"task":"render-probe","wake":"","verdict":"routine","summary":"LIVE_O
+[39m [38;2;128;128;128mUTCOME_10","silent":false,"statusEndpoint":0,"statusIdent":"-"}
+[39m [38;2;128;128;128m... (3 more lines,[39m [38;2;102;102;102mctrl+o[38;2;128;128;128m to expand)[39m
+
+
+[49m PRIMARY_OUTCOMES_ACK
+
+[38;2;95;135;175m────────────────────────────────────────────────────────────────────────────────────────────────────
+[7m[39m [0m
+[38;2;95;135;175m────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;2;102;102;102m~/.no-mistakes/worktrees/5a1fd3284f12/01M3QWS2Z2CH1TGQE619HNB7JK/.pi-live-e2e.22855/project (deta...
+↑5.5k ↓75 R1.0k CH0.0% $0.030 (sub) 0.7%/272k (auto)                (openai-codex) gpt-5.6-sol • low
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
