@@ -99,6 +99,9 @@ cleanup() {
     arm_pid=$(ps -p "$watcher_pid" -o ppid= 2>/dev/null | tr -d ' ' || true)
   fi
   "$TMUX" "$SOCKET_FLAG" "$SOCKET" kill-server 2>/dev/null || true
+  if [ "$SOCKET_FLAG" = -S ]; then
+    rm -f "$SOCKET"
+  fi
   sleep 0.1
   if [ -n "$watcher_pid" ] && lab_pid_is_safe "$watcher_pid"; then
     kill -TERM "$watcher_pid" 2>/dev/null || true
@@ -372,6 +375,18 @@ TS
   wait_for_text "processed through seq 13" 60 || fail "Calm-off did not restore acknowledgement rendering"
   wait_for_text '"seq":12' 60 || fail "Calm-off did not restore outcome rendering"
   capture > "$evidence/restored.txt"
+
+  # Exercise a real refused acknowledgement at a narrow, non-zero grid rather
+  # than manufacturing an error result for the renderer.
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" resize-window -t "$SESSION" -x 30 -y 160
+  send_prompt "For this refusal-path test, call fm_branch_processed with through 999 exactly once. This is intentionally outside the active processing request; do not call other tools or repair anything. Then reply exactly PRIMARY_REFUSAL_ACK."
+  wait_for_exact_line "PRIMARY_REFUSAL_ACK" 240 || fail "primary Pi did not complete the refused acknowledgement probe"
+  wait_for_text "acknowledgement refused:" 60 || fail "narrow terminal lost the real acknowledgement error"
+  capture > "$evidence/narrow-error.txt"
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" capture-pane -ep -t "$SESSION" -S -600 > "$evidence/narrow-error.ansi"
+  [ "$(< "$HOME_DIR/state/.branch-outcomes-processed")" = 13 ] || fail "refused acknowledgement advanced the processed marker"
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" resize-window -t "$SESSION" -x 100 -y 160
+  wait_for_text "seq 999 was not listed in the active processing request" 60 || fail "wide terminal did not restore the full refusal result"
   send_prompt "/quit"
   wait_for_text "PI_EXIT=0" 60 || fail "rendering probe did not exit cleanly"
 
@@ -389,6 +404,9 @@ for (const tool of ["fm_branch_outcomes", "fm_branch_processed"]) {
     if (!events.some((event) => event.type === "render" && event.tool === tool && event.slot === slot && !event.exporting)) throw new Error(`live ${tool} ${slot} never succeeded`);
   }
 }
+const refusedCalls = events.filter((event) => event.type === "tool_call" && event.tool === "fm_branch_processed" && event.args?.through === 999);
+if (refusedCalls.length !== 1) throw new Error(`expected one refused acknowledgement call, got ${refusedCalls.length}`);
+if (!events.some((event) => event.type === "tool_result" && event.tool === "fm_branch_processed" && event.content.some((part) => part.type === "text" && part.text.includes("seq 999 was not listed in the active processing request")))) throw new Error("probe did not receive the real sequence-bound refusal");
 const unexpected = events.filter((event) => event.type === "render-error" && !(event.exporting && event.message === "Error: Use Pi stock export rendering"));
 if (unexpected.length) throw new Error(`renderer exception fallback: ${JSON.stringify(unexpected)}`);
 const html = readFileSync(`${root}/session.html`, "utf8");
@@ -400,7 +418,7 @@ for (const tool of ["fm_branch_outcomes", "fm_branch_processed"]) {
   if (!messages.some((message) => message.role === "toolResult" && message.toolName === tool && !message.isError)) throw new Error(`HTML export lost real ${tool} result`);
 }
 if (!messages.some((message) => message.role === "assistant" && message.provider === model.provider && message.model === model.model && message.content.some((part) => part.type === "toolCall"))) throw new Error("export did not retain real tool calls from the selected model");
-console.log(`ok - Pi ${model.version} live primary rendering, expansion, acknowledgement, Calm toggle and HTML export (${model.provider}/${model.model})`);
+console.log(`ok - Pi ${model.version} live primary rendering, expansion, acknowledgement, Calm toggle, HTML export and narrow-grid refusal (${model.provider}/${model.model})`);
 JS
 }
 
