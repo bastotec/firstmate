@@ -17,7 +17,7 @@ Pi 0.81.1 was installed when Calm was first built, and Pi 0.82.0 was the later r
 The inspected Pi CHANGELOG shows no relevant presentation API introduced at either version, so those versions remain verification evidence rather than compatibility bounds.
 The exported classes used by the adapters (`AssistantMessageComponent` and `InteractiveMode`) are undocumented internals with no stated version guarantee.
 `tests/fm-calm-pi-extension.test.sh` records the installed Pi version as evidence without gating on it and covers both newer synthetic versions and an unavailable adapter seam.
-This host tracks Pi latest, so the version the evidence is pinned to moves; the [2026-09-07 record](#2026-09-07-pi-0851-renderer-and-export-dom-verification) owns the currently pinned version and the renderer comparison behind it.
+The [2026-09-29 record](#2026-09-29-primary-pi-0991-export-visibility-verification) owns the current primary Pi end-to-end export verification; the [2026-09-07 record](#2026-09-07-pi-0851-renderer-and-export-dom-verification) retains the earlier renderer comparison.
 
 ### Built-in tool override constraints
 
@@ -207,8 +207,8 @@ Every tool registered or supplied by Firstmate under `.pi/extensions` has this d
 | --- | --- | --- |
 | `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls` | Calm wrappers for Pi's seven main-session built-ins | Their call and text-result shells hide while Calm is active; ordinary and stock export rendering delegate to Pi's original renderers. |
 | `fm_watch_arm_pi` | Main-session custom tool in `fm-primary-pi-watch.ts` | Its complete self-rendered shell hides while Calm is active and returns unchanged when Calm is off or stock export rendering is active. |
-| `fm_branch_outcomes` | Main-session custom tool in `fm-branch-supervision.ts` | Its complete self-rendered shell hides while Calm is active; when visible, the self-renderer reconstructs Pi's ordinary boxed fallback shell and probes Pi's rendered stock fallback to preserve that installed surface's collapsed or all-line output policy plus expanded state, while stock export rendering deliberately falls through to Pi's structured fallback. |
-| `fm_branch_processed` | Main-session custom tool in `fm-branch-supervision.ts` | Its complete self-rendered shell hides while Calm is active, exactly like `fm_branch_outcomes`; when visible, the self-renderer reconstructs Pi's ordinary boxed fallback shell around the one-line acknowledgement result, while stock export rendering deliberately falls through to Pi's structured fallback. |
+| `fm_branch_outcomes` | Main-session custom tool in `fm-branch-supervision.ts` | Its complete self-rendered shell hides while Calm is active; when visible, it delegates the whole row to Pi's `ToolExecutionComponent` with a renderer-free tool definition, preserving stock arguments, pending state, output normalization, preview, expansion, and error framing without copying or probing the fallback, while stock export rendering deliberately falls through to Pi's structured fallback. |
+| `fm_branch_processed` | Main-session custom tool in `fm-branch-supervision.ts` | Uses the same stock-component delegation, Calm hiding, and stock export fallback as `fm_branch_outcomes` above. |
 | `fm_branch_report` | Branch-session custom tool supplied directly to `createAgentSession` | It runs only in the headless supervision session and has no main-session `ToolExecutionComponent`; successful execution writes the outcome store and delivers a routine note or exact captain entry through the separately audited delivery path, so the tool cannot emit a dump-shaped row in the captain's transcript. |
 | branch-local `read` built-in | Branch-session built-in enabled through `createAgentSession` | It runs only in the headless supervision session and has no main-session `ToolExecutionComponent`, so its file output cannot emit a row in the captain's transcript. |
 | branch-local `bash` override | Branch-session replacement supplied directly to `createAgentSession` | It runs only in the headless supervision session and has no main-session `ToolExecutionComponent`, so its command output cannot emit a row in the captain's transcript. |
@@ -226,7 +226,7 @@ The test fixture enumerates every class below through the centralized policy, an
 | `genuine-agent-response` | Assistant text in `AssistantMessageComponent` | Visible. |
 | `assistant-working-note` | Assistant text in an `AssistantMessageComponent` message the model did not end its response with, identified by its own `stopReason` of `toolUse`, or of `length` with tool calls present | The text blocks are removed from the shallow presentation copy before layout, so a `toolUse` message carrying only narration occupies zero rows (verified on Pi 0.84.1); a still-streaming `pending` message is never filtered, so narration is briefly visible before the marker flips. |
 | `assistant-thinking` | Thinking content in `AssistantMessageComponent` | Collapsed reasoning is removed from the shallow presentation copy before layout and occupies zero rows; explicit expansion renders the original reasoning. |
-| `assistant-tool-call` | `ToolExecutionComponent` | Seven built-ins, `fm_watch_arm_pi`, and `fm_branch_outcomes` hidden; other arbitrary custom tools remain an unsupported boundary. |
+| `assistant-tool-call` | `ToolExecutionComponent` | The controlled tools in the [Firstmate Pi tool audit](#firstmate-pi-tool-audit) hide; other arbitrary custom tools remain an unsupported boundary. |
 | `tool-result` | `ToolExecutionComponent` | Text results for the controlled tools hidden; other arbitrary custom results remain an unsupported boundary. |
 | `tool-image` | Image children appended outside tool renderer slots | Unsupported boundary; remains visible. |
 | `user-bash` | `BashExecutionComponent` for `!` and `!!` | Unsupported boundary; remains visible. |
@@ -281,14 +281,19 @@ Only Pi's Calm presentation implementation changed; every producer and non-Pi tr
 
 ## Regression coverage
 
-`tests/fm-calm-pi-extension.test.sh` compares wrapped and stock renderers and verifies all seven built-ins plus `fm_watch_arm_pi`; `tests/fm-pi-branch-extension.test.sh` verifies `fm_branch_outcomes` Calm toggling, capability-probed all-line versus collapsed stock output, exact expanded output, and export rendering.
+`tests/fm-calm-pi-extension.test.sh` compares wrapped and stock renderers and verifies all seven built-ins plus `fm_watch_arm_pi`.
+`tests/fm-pi-branch-extension.test.sh` exercises installed stock-component parity, Calm hiding and restoration, and stock export fallback; the [2026-09-29 stock outcomes rendering record](verification/runtime-backends.md#2026-09-29-stock-outcomes-rendering) owns the comparison coverage and evidence.
+It also checks the `fm_branch_processed` callbacks directly so Pi's exception fallback cannot mask an acknowledgement-renderer failure.
+The installed-package comparison's fixture-floor rationale is owned by `test_outcomes_tool_uses_stock_execution_and_export_consumers` in that script; a skipped preview fixture does not establish renderer parity on the installed version.
 Together they exercise redraw of already-rendered tool, thinking, current operational-user, and legacy synthetic rows, and cover every policy class.
 It covers persisted preference restoration across every session-start reason and a real restart, proves the working-ship presentation and Calm-off stock `Working...` row through a delayed deterministic provider, asserts no Calm status row, verifies operational messages remain exact ordinary user-role session entries and complete exports, and drives genuine 100 by 44, 160 by 36, and 180 by 44 terminal fixtures.
-A native deterministic `/skill:ahoy` turn produces thinking, tool-call, and tool-result blocks, asserts that the collapsed skill-to-final gap equals the two-row visible-only baseline, expands and re-collapses original thinking, restores Calm-off rendering, verifies persisted hidden history, and repeats the geometry assertion after restart with `terminal.clearOnShrink` explicitly off.
+A native deterministic `/skill:ahoy` turn produces thinking, tool-call, and tool-result blocks, asserts that the collapsed skill-to-final gap equals the two-row visible-only baseline, expands and re-collapses original thinking, restores Calm-off rendering, verifies persisted hidden history, and repeats the geometry assertion after reload and restart with `terminal.clearOnShrink` explicitly off.
 The operational provider path covers Calm loaded on, loaded off, default preference, extension absent, exact watcher delivery, narrow bare-marker legacy input, persisted restart replay, a genuine captain prompt, and adjacent notifications coalesced into one intended processing turn.
 It asserts one persisted and rendered captain answer, exact user-role operational envelopes in order, no replacement custom messages, one processing result, zero operational transcript rows, and the two-row neighboring-assistant geometry for live, adjacent, and restart paths.
 Quoted current markers, ASCII-only labels, ordinary text before a marker, unrelated U+2063 placement, and image-bearing input remain visible in component and native transcript checks.
-`tests/fm-pi-primary-live-e2e.test.sh` also proves the working ship replaces the built-in `Working...` row while Calm is active on the credentialed provider path, and that it clears when the run settles, before continuing its ordinary watcher lifecycle.
+The default case in `tests/fm-pi-primary-live-e2e.test.sh` also proves the working ship replaces the built-in `Working...` row while Calm is active on the credentialed provider path, and that it clears when the run settles, before continuing its ordinary watcher lifecycle.
+Its focused supervision-tool rendering case drives real outcome reads and acknowledgements in a primary Pi TUI, checks expansion, Calm hiding and restoration, HTML export, and a sequence-bound acknowledgement refusal at 30 columns followed by restoration at 100 columns, and records the actual Pi version and model plus renderer errors.
+That case references the existing authentication and model configuration through Pi's read-only credential store, isolates other CLI state, and launches no worker, secondmate, or watcher; the script header owns its selection and evidence-retention options.
 `tests/fm-pi-primary-types.test.sh` performs strict no-emit TypeScript checking against whichever Pi declarations are installed, without pinning a version of its own.
 
 The relevant commands are:
@@ -297,6 +302,7 @@ The relevant commands are:
 tests/fm-calm-pi-extension.test.sh
 tests/fm-pi-branch-extension.test.sh
 FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh
+FM_LIVE=1 FM_PI_LIVE_RENDER_ONLY=1 tests/fm-pi-primary-live-e2e.test.sh
 tests/fm-pi-primary-types.test.sh
 ```
 
@@ -525,10 +531,8 @@ FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=30 duration_ms=277700 fai
 ## 2026-08-28 Pi 0.84.4 outcome-renderer compatibility verification
 
 Pi 0.84.4's stock `ToolExecutionComponent` collapses a text result longer than ten lines, adds Pi's expansion hint, and renders every line when expanded, while the previously verified Pi 0.81.1 stock fallback renders every line in both states.
-The `fm_branch_outcomes` self-renderer now probes the installed component's rendered capability once rather than branching on a version number, then applies that discovered preview policy while preserving Pi's exact expanded result.
-Calm still hides the complete row while active, restores the probed stock behavior when turned off, and delegates stock HTML export rendering to Pi.
-
-The real installed-package comparison and the portable legacy-capability case are both executable through:
+The capability-probing self-renderer verified in this record has been replaced; the [Firstmate Pi tool audit](#firstmate-pi-tool-audit) owns the current delegation mechanism.
+The portable fixture now checks legacy all-line stock delegation without capability probing, while the real installed-package comparison remains executable through:
 
 ```sh
 bin/fm-test-run.sh tests/fm-pi-branch-extension.test.sh
@@ -546,8 +550,7 @@ The real renderer comparison exercised twelve outcome lines and reported collaps
 
 ## 2026-09-07 Pi 0.85.1 renderer and export-DOM verification
 
-This host tracks Pi latest, so the version this contract's evidence is pinned to moves.
-The renderer and lifecycle evidence below was taken against installed `@earendil-works/pi-coding-agent` 0.85.1 with `@earendil-works/pi-server` 0.85.0 also installed globally.
+The earlier renderer and lifecycle evidence below was taken against installed `@earendil-works/pi-coding-agent` 0.85.1 with `@earendil-works/pi-server` 0.85.0 also installed globally.
 
 Calm's rendered rows are unchanged across 0.84.4, 0.85.0, and 0.85.1.
 `FM_PI_PACKAGE_DIR` points `tests/fm-calm-pi-extension.test.sh` at an isolated install, so each comparison ran against its own temporary dependency tree and never mutated the globally installed packages.
@@ -611,3 +614,33 @@ ok - Pi Calm working ship moves on a slow independent cadence over faster fixed-
 ok - the rendered-export-DOM guard renders in one pass, retries a bounded number of Chrome start-up failures, and reports the Chrome binary, Chrome version, Pi version, exit status, and Chrome diagnostic when every attempt fails
 ok - Pi calm native E2E replaces the stock working row with a moving, resize-clamped working ship that freezes and resumes across two working periods in one Pi session, clears on abort, keeps captain turns visible, hides exact operational user rows without changing persistence, restores stock rendering Calm-off, survives restart, and preserves export plus Ctrl+O behavior
 ```
+
+## 2026-09-29 primary Pi 0.99.1 export visibility verification
+
+Verified the complete Calm suite against Pi 0.99.1 on macOS Darwin 27 arm64 with Node 26.5.0, Chrome 154.0.8037.58, and tmux 3.6a, and on Debian 12 arm64 with Node 22.23.3, Chromium 154.0.8037.57, and tmux 3.3a.
+This is evidence for the supported primary Firstmate presentation surface, not worker or secondmate adapter support.
+The suite binds every interactive and restart launch to the absolute Pi executable selected before its version probe, so a tmux shell's PATH cannot silently select a different version.
+
+Pi 0.99.0 introduced a stock HTML `H` toggle for custom messages marked `display: false`.
+The Pi 0.99.1 exports exercised here retain those messages as CSS-hidden DOM nodes with complete session data and provenance in the tree; [`calm.md`](calm.md) owns the user-facing export behavior.
+The real-browser regression measures computed display and client rectangles in a scratch export, checks positive visibility of genuine conversation and current operational user markers, verifies reveal/re-hide through `H` where exposed, and rejects a deliberately visible synthetic node.
+It does not change the exported product artifact, persisted session, or Calm's presentation policy.
+
+Refresh this evidence with matching executable and package installs:
+
+```sh
+PATH="<pi-install>/node_modules/.bin:$PATH" \
+  FM_PI_PACKAGE_DIR="<pi-install>/node_modules/@earendil-works/pi-coding-agent" \
+  bin/fm-test-run.sh tests/fm-calm-pi-extension.test.sh
+```
+
+Both platforms reported:
+
+```text
+ok - tmux uses the probed Pi executable even when its shell PATH resolves bare pi to a decoy
+export visibility: 2 hidden entries; H toggle verified
+ok - export visibility rejects a deliberately visible synthetic message while preserving hidden provenance and genuine conversation
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
+```
+
+Measured full-suite wall time was 51.3 seconds on macOS and 39.2 seconds on Debian; the summary above omits its varying `duration_ms` field.
