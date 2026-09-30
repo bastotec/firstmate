@@ -259,7 +259,7 @@ run_native_ahoy_regressions() {
 # Focused rendering probe; shares this rig's private terminal and cleanup, but
 # never launches a worker, secondmate, watcher, or credential-refresh command.
 run_outcome_rendering_regression() {
-  local package_dir agent_dir auth_dir evidence pane attempt
+  local package_dir agent_dir auth_dir evidence pane
   package_dir=${FM_PI_PACKAGE_DIR:-"$(npm root -g)/@earendil-works/pi-coding-agent"}
   agent_dir="$LAB/agent-dir"
   auth_dir=${PI_CODING_AGENT_DIR:-"$HOME/.pi/agent"}
@@ -358,7 +358,7 @@ TS
   printf '%s\n' "$pane" | grep -Fq '"seq":12' || fail "expanding the real tool row did not reveal its tail"
 
   send_prompt "/calm"
-  for attempt in {1..60}; do
+  for _ in {1..60}; do
     "$TMUX" "$SOCKET_FLAG" "$SOCKET" capture-pane -p -t "$SESSION" > "$evidence/calm.txt"
     if ! grep -Eq '"seq":12|^ fm_branch_outcomes$|processed through seq 13' "$evidence/calm.txt"; then
       break
