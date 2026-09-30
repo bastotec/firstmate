@@ -2037,7 +2037,7 @@ In TUI mode, its `/supervision-model` model list is drawn with Pi's own `SelectL
 
 `fm_branch_outcomes` delegates its visible terminal row to Pi's `ToolExecutionComponent`, retaining the zero-height Calm row and stock HTML-export fallback.
 The real-consumer regression compares pending, started, completed, expanded, restored, error, and empty rows at widths 30, 100, and 160, including tool arguments and sanitized multiline output.
-It no longer needs the historical 0.84.4 comparison floor because it no longer imitates Pi's rendering.
+The regression retains the fixture-version floor explained by `test_outcomes_tool_uses_stock_execution_and_export_consumers` in `tests/fm-pi-branch-extension.test.sh`; stock-component delegation itself does not impose that floor.
 On macOS, Node v22.22.0, the following commands passed with `FM_PI_PACKAGE_DIR` selecting Pi 0.99.1 and again with the default npm package, Pi 0.85.1:
 
 ```bash
