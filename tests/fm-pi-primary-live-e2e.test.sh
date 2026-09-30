@@ -289,6 +289,7 @@ ModelRuntime.create = (options = {}) => create({
   ...options,
   credentials: new ReadOnlyAuthStorage(`${process.env.FM_PI_AUTH_DIR}/auth.json`),
   modelsPath: `${process.env.FM_PI_AUTH_DIR}/models.json`,
+  modelsStorePath: `${process.env.PI_CODING_AGENT_DIR}/models-store.json`,
   allowModelNetwork: false,
 });
 await import(pathToFileURL(`${pkg}/dist/cli.js`).href);
