@@ -1,0 +1,44 @@
+
+ ▀▀█  v0.99.1
+ █▀ █ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+[Skills]
+  1password, agent-browser, agents-sdk, ahoy, alloydb-basics, bigquery-basics, caveman,
+chat-composer-pattern, cloud-run-basics, cloud-sql-basics, cloudflare, cloudflare-email-service,
+cloudflare-one, cloudflare-one-migrations, designer-loop, durable-objects, find-skills,
+firebase-basics, gemini-api, gke-basics, gog, google-cloud-recipe-auth,
+google-cloud-recipe-networking-observability, google-cloud-recipe-onboarding,
+google-cloud-waf-cost-optimization, google-cloud-waf-reliability, google-cloud-waf-security,
+humanizer, icloud-photos, macos-harness, microsoft-foundry, no-mistakes, obsidian,
+opencode-conversation-analysis, pdf, sandbox-sdk, turnstile-spin, web-perf, workers-best-practices,
+wrangler
+
+[Extensions]
+  fm-calm.ts, geometry-provider.ts
+
+
+ [skill] ahoy (ctrl+o to expand)
+
+
+ CALM_GEOMETRY_FINAL
+
+ - visible row one
+ - visible row two
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+~/.no-mistakes/worktrees/5a1fd3284f12/01M3SBJQMMD4HEJ5YSKTK6ZZ4T/.test-phase-tmp/fm-calm-pi-exten...
+↑7.6k ↓50 R15k W7.6k CH99.3% 186.5%/4.1k (auto)           (calm-geometry-e2e) deterministic • medium
+
+
+
+
+
+
+
+
+

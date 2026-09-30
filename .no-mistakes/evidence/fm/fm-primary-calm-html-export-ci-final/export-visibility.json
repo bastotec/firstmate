@@ -1,0 +1,69 @@
+{
+  "calm-export-dom.html": {
+    "errors": [],
+    "hiddenIds": [
+      "entry-a0000010",
+      "entry-2bd3783b"
+    ],
+    "toggleSupported": true,
+    "initial": [
+      {
+        "display": "none",
+        "rects": 0,
+        "visible": false
+      },
+      {
+        "display": "none",
+        "rects": 0,
+        "visible": false
+      }
+    ],
+    "revealed": [
+      {
+        "display": "block",
+        "rects": 1,
+        "visible": true
+      },
+      {
+        "display": "block",
+        "rects": 1,
+        "visible": true
+      }
+    ],
+    "rehidden": [
+      {
+        "display": "none",
+        "rects": 0,
+        "visible": false
+      },
+      {
+        "display": "none",
+        "rects": 0,
+        "visible": false
+      }
+    ]
+  },
+  "calm-export-visible-synthetic-dom.html": {
+    "errors": [
+      "initial hidden message entry-a0000010 occupied browser layout: {\"display\":\"block\",\"rects\":1,\"visible\":true}",
+      "initial custom message entry-a0000010 was not hidden: {\"display\":\"block\",\"rects\":1,\"visible\":true}"
+    ],
+    "hiddenIds": [
+      "entry-a0000010",
+      "entry-2bd3783b"
+    ],
+    "toggleSupported": true,
+    "initial": [
+      {
+        "display": "block",
+        "rects": 1,
+        "visible": true
+      },
+      {
+        "display": "none",
+        "rects": 0,
+        "visible": false
+      }
+    ]
+  }
+}

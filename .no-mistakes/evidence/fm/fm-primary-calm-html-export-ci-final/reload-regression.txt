@@ -1,0 +1,14 @@
+Live regression check: existing test_hidden_block_geometry_e2e, Pi 0.99.1.
+The suite's own real tmux fixtures were reused at 100x44; no additional rig was created.
+Each delayed-capture case inserts sleep 1 immediately after submitting /reload, before the first completion capture.
+
+Base dd52a99b61adb77b0c255258d529f553698942fc, delayed capture: exit 1.
+not ok - Pi Calm hidden-block geometry E2E did not complete the /reload viewport transition
+
+Target 1878b51c89bce8644f96c635540425983ce27828, identical delayed capture: exit 0.
+ok - Pi Calm native /skill:ahoy geometry keeps every collapsed thinking and tool block at zero height while preserving expansion, history, restart, and Calm-off rendering
+
+Target, negative control: /reload typed but Enter omitted, same one-second delay: exit 1.
+not ok - Pi Calm hidden-block geometry E2E did not complete the /reload viewport transition
+
+The base interactive/export case also passed without a delay in this run. Its normal pass does not reproduce the reload polling race; the delayed-capture counterfactual above does.
