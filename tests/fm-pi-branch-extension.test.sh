@@ -4957,14 +4957,11 @@ test_outcomes_tool_uses_stock_execution_and_export_consumers() {
     echo "skip: installed @earendil-works/pi-coding-agent package not found"
     return
   fi
-  # This case compares the extension's own renderers against Pi's stock
-  # rendering, so its verdict is only meaningful against the vendor contract
-  # those renderers target: since Pi 0.84.4 the stock renderer no longer
-  # supplies an implicit reset at multiline boundaries, and the extension
-  # emits that reset itself. An older installed Pi still supplies it, so the
-  # two legitimately differ there and a comparison would report a defect that
-  # is really a version skew. Name the version and skip rather than degrade
-  # quietly; a package whose version cannot be read at all is still a failure.
+  # This fixture requires the collapsed preview and expansion hint introduced
+  # in Pi 0.84.4. Older all-line stock output cannot exercise those assertions;
+  # this is a fixture floor, not a minimum version for the extension's stock
+  # delegation. Name the version and skip rather than claim preview coverage;
+  # a package whose version cannot be read at all is still a failure.
   package_version=$(node -p 'require(process.argv[1]).version || ""' "$package_dir/package.json" 2>/dev/null || printf '')
   [ -n "$package_version" ] \
     || fail "installed @earendil-works/pi-coding-agent has no readable version at $package_dir"
