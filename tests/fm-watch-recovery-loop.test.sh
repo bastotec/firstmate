@@ -222,5 +222,85 @@ test_handling_successor_does_not_go_blind() {
   pass "a resurfacing handling successor stays alive and supervises instead of going blind"
 }
 
+# T3: the foreign no-progress shape must stay observable in a handling
+# successor across multiple poll cycles, even when its observation clock is
+# unrelated to filesystem mtimes. A single lock sample cannot prove this.
+test_foreign_queue_successor_continuity_window() {
+  local dir state sub fakebin real_date child out i progress
+  dir=$(make_case foreign-successor-window)
+  state="$dir/state"
+  sub="$dir/secondmate"
+  fakebin="$dir/fakebin"
+  mkdir -p "$sub/state"
+  printf 'mate\n' > "$sub/.fm-secondmate-home"
+  printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=claude\nbackend=tmux\nhome=%s\n' \
+    "$sub" > "$state/mate.meta"
+  printf 'acked:handling:window.1\n' > "$state/.watcher-down"
+  chmod 600 "$state/.watcher-down"
+  printf '1000\n' > "$dir/now"
+  printf '100\t7\tcheck\trouted\tcheck: routed row\n' > "$sub/state/.wake-queue"
+  real_date=$(command -v date)
+  cat > "$fakebin/date" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = +%s ]; then
+  cat "\${FM_FAKE_NOW_FILE:?}"
+else
+  exec "$real_date" "\$@"
+fi
+SH
+  chmod +x "$fakebin/date"
+  out="$dir/watch.out"
+  PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" \
+    FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WATCH_HANDLING_SUCCESSOR=1 \
+    "$WATCH" > "$out" 2>&1 &
+  child=$!
+  fm_test_track_helper_pid "$child"
+  i=0
+  while [ "$i" -lt 40 ]; do
+    progress=$(cat "$state/.secondmate-wake-progress-mate" 2>/dev/null || true)
+    [ "$progress" = $'1000\t100-7' ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$progress" = $'1000\t100-7' ] || fail "successor never observed the foreign queue"
+  printf '100\t8\tcheck\thealthy\tcheck: healthy progress\n' > "$sub/state/.wake-queue"
+  printf '1002\n' > "$dir/now"
+  i=0
+  while [ "$i" -lt 40 ]; do
+    progress=$(cat "$state/.secondmate-wake-progress-mate" 2>/dev/null || true)
+    [ "$progress" = $'1002\t100-8' ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$progress" = $'1002\t100-8' ] || fail "successor did not recognize foreign drain progress"
+  # Sample an entire two-second window, not just startup presence.
+  i=0
+  while [ "$i" -lt 20 ]; do
+    is_live_non_zombie "$child" || fail "successor stopped inside the continuity window"
+    [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$child" ] \
+      || fail "successor lost singleton ownership inside the continuity window"
+    [ "$(cat "$state/.watcher-down")" = 'acked:handling:window.1' ] \
+      || fail "successor reopened an acknowledged recovery episode"
+    [ ! -s "$out" ] && [ ! -s "$state/.wake-queue" ] \
+      || fail "healthy progress caused a duplicate or synthetic model wake"
+    sleep 0.1
+    i=$((i + 1))
+  done
+  printf '1004\n' > "$dir/now"
+  wait_for_exit "$child" 40 || fail "foreign no-progress episode stayed hidden after the window"
+  grep -Fx 'check: secondmate wake-loop stalled: mate=mate row=8 idle=2s' "$out" >/dev/null \
+    || fail "successor did not surface the exact foreign no-progress episode"
+  [ "$(wc -l < "$out" | tr -d '[:space:]')" = 1 ] \
+    || fail "successor delivered more than one model wake"
+  [ "$(grep -c 'secondmate-wake-loop-mate-100-8' "$state/.wake-queue")" = 1 ] \
+    || fail "foreign stall delivery was not bound to exactly one durable row"
+  grep -Fx $'100\t8\tcheck\thealthy\tcheck: healthy progress' "$sub/state/.wake-queue" >/dev/null \
+    || fail "successor modified the foreign queue"
+  pass "one handling successor preserves acknowledged recovery and foreign queue observation across a poll window"
+}
+
 test_handling_successor_does_not_go_blind
+test_foreign_queue_successor_continuity_window
 test_unacknowledged_recovery_is_announced_once_per_generation
