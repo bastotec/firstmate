@@ -28,7 +28,7 @@ TMP_ROOT=$(fm_test_tmproot fm-wake-tests)
 # poll-plus-publication window, and let normal EXIT cleanup finish between
 # observations instead of killing its lock-writing descendants at the deadline.
 foreign_queue_checkpoint() { # <poll-plus-publication-seconds>
-  python3 "$ROOT/tests/assets/watcher-queue-fixture.py" checkpoint "$WATCH" "$1"
+  FM_WATCH_HANDLING_SUCCESSOR=1 python3 "$ROOT/tests/assets/watcher-queue-fixture.py" checkpoint "$WATCH" "$1"
 }
 
 test_concurrent_append_and_drain() {
@@ -274,7 +274,8 @@ SH
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL="$FOREIGN_QUEUE_POLL" FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-first.out" 2> "$dir/watch-first.err" || true
+    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-first.out" 2> "$dir/watch-first.err" \
+    || fail "first foreign queue observation failed: $(< "$dir/watch-first.err")"
   [ ! -s "$state/.wake-queue" ] \
     || fail "the first observation of an old foreign row produced an age-only alert"
 
@@ -286,7 +287,8 @@ SH
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL="$FOREIGN_QUEUE_POLL" FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-progress.out" 2> "$dir/watch-progress.err" || true
+    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-progress.out" 2> "$dir/watch-progress.err" \
+    || fail "foreign progress observation failed: $(< "$dir/watch-progress.err")"
   [ ! -s "$state/.wake-queue" ] \
     || fail "an advancing foreign queue produced a stall alert because its oldest row was old"
 
@@ -301,7 +303,8 @@ SH
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL="$FOREIGN_QUEUE_POLL" FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$out" 2> "$dir/watch-stalled.err" || true
+    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$out" 2> "$dir/watch-stalled.err" \
+    || fail "foreign stall observation failed: $(< "$dir/watch-stalled.err")"
   grep -F 'check: secondmate wake-loop stalled: mate=mate row=8 idle=2s' "$out" >/dev/null \
     || fail "a foreign queue with no progress did not alert: $(cat "$out")"
   stall_count=$(grep -c 'secondmate-wake-loop-mate-' "$state/.wake-queue" || true)
@@ -321,7 +324,8 @@ SH
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL="$FOREIGN_QUEUE_POLL" FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-next.out" 2> "$dir/watch-next.err" || true
+    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-next.out" 2> "$dir/watch-next.err" \
+    || fail "foreign partial-drain observation failed: $(< "$dir/watch-next.err")"
   [ ! -s "$state/.wake-queue" ] \
     || fail "a newly-oldest row cascaded an immediate second alert after progress"
   cp "$sub/state/.wake-queue" "$row_after"
@@ -334,7 +338,8 @@ SH
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL="$FOREIGN_QUEUE_POLL" FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-refrozen.out" 2> "$dir/watch-refrozen.err" || true
+    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-refrozen.out" 2> "$dir/watch-refrozen.err" \
+    || fail "foreign refrozen observation failed: $(< "$dir/watch-refrozen.err")"
   grep -F 'check: secondmate wake-loop stalled: mate=mate row=9 idle=2s' "$dir/watch-refrozen.out" >/dev/null \
     || fail "a genuine later no-progress episode was hidden after earlier progress"
   stall_count=$(grep -c 'secondmate-wake-loop-mate-' "$state/.wake-queue" || true)
@@ -418,13 +423,15 @@ EOF
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL="$FOREIGN_QUEUE_POLL" FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-first.out" 2> "$dir/watch-first.err" || true
+    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-first.out" 2> "$dir/watch-first.err" \
+    || fail "first pause-row observation failed: $(< "$dir/watch-first.err")"
   printf '5000\n' > "$dir/now"
   PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL="$FOREIGN_QUEUE_POLL" FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-second.out" 2> "$dir/watch-second.err" || true
+    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-second.out" 2> "$dir/watch-second.err" \
+    || fail "second pause-row observation failed: $(< "$dir/watch-second.err")"
   [ ! -s "$state/.wake-queue" ] \
     || fail "declared external-wait rows fed the secondmate wake-loop escalation"
   ! grep -F 'secondmate wake-loop stalled' "$dir/watch-first.out" "$dir/watch-second.out" >/dev/null \
@@ -466,7 +473,8 @@ SH
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL="$FOREIGN_QUEUE_POLL" FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-old.out" 2> "$dir/watch-old.err" || true
+    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-old.out" 2> "$dir/watch-old.err" \
+    || fail "retired generation observation failed: $(< "$dir/watch-old.err")"
   [ ! -s "$state/.wake-queue" ] || fail "the first observation of the retired generation alerted"
 
   # Reprovisioning under the same task id restarts the sequence on 9 again, long
@@ -478,7 +486,8 @@ SH
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL="$FOREIGN_QUEUE_POLL" FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-regen.out" 2> "$dir/watch-regen.err" || true
+    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-regen.out" 2> "$dir/watch-regen.err" \
+    || fail "reprovisioned generation observation failed: $(< "$dir/watch-regen.err")"
   [ ! -s "$state/.wake-queue" ] \
     || fail "a reprovisioned queue generation inherited the retired generation's idle interval and alerted"
 
@@ -488,7 +497,8 @@ SH
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL="$FOREIGN_QUEUE_POLL" FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-regen-frozen.out" 2> "$dir/watch-regen-frozen.err" || true
+    foreign_queue_checkpoint "$FOREIGN_QUEUE_CHECKPOINT" > "$dir/watch-regen-frozen.out" 2> "$dir/watch-regen-frozen.err" \
+    || fail "reprovisioned stall observation failed: $(< "$dir/watch-regen-frozen.err")"
   grep -F 'check: secondmate wake-loop stalled: mate=mate row=9 idle=2s' "$dir/watch-regen-frozen.out" >/dev/null \
     || fail "a frozen reprovisioned queue generation was hidden: $(cat "$dir/watch-regen-frozen.out")"
   pass "a reprovisioned queue generation starts a fresh no-progress interval"

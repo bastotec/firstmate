@@ -265,8 +265,11 @@ SH
     i=$((i + 1))
   done
   [ "$progress" = $'1000\t100-7' ] || fail "successor never observed the foreign queue"
-  printf '100\t8\tcheck\thealthy\tcheck: healthy progress\n' > "$sub/state/.wake-queue"
-  printf '1002\n' > "$dir/now"
+  printf '100\t8\tcheck\thealthy\tcheck: healthy progress\n' > "$sub/state/.wake-queue.tmp" \
+    && mv "$sub/state/.wake-queue.tmp" "$sub/state/.wake-queue" \
+    || fail "could not publish foreign drain progress"
+  printf '1002\n' > "$dir/now.tmp" && mv "$dir/now.tmp" "$dir/now" \
+    || fail "could not publish the progress clock"
   i=0
   while [ "$i" -lt 40 ]; do
     progress=$(cat "$state/.secondmate-wake-progress-mate" 2>/dev/null || true)
@@ -288,7 +291,8 @@ SH
     sleep 0.1
     i=$((i + 1))
   done
-  printf '1004\n' > "$dir/now"
+  printf '1004\n' > "$dir/now.tmp" && mv "$dir/now.tmp" "$dir/now" \
+    || fail "could not publish the stalled clock"
   wait_for_exit "$child" 40 || fail "foreign no-progress episode stayed hidden after the window"
   grep -Fx 'check: secondmate wake-loop stalled: mate=mate row=8 idle=2s' "$out" >/dev/null \
     || fail "successor did not surface the exact foreign no-progress episode"
