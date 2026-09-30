@@ -2033,6 +2033,28 @@ The [2026-09-29 Pi 0.99.1 verification](../calm-mode-feasibility.md#2026-09-29-p
 The supervision-branch extension (`.pi/extensions/fm-branch-supervision.ts`, [docs/pi-supervision-branch.md](../pi-supervision-branch.md)) builds its second session through the Pi SDK surface: `createAgentSession` (including its `model`, `modelRuntime`, and `thinkingLevel` options), `DefaultResourceLoader` with `extensionFactories`, `SessionManager`, `createBashToolDefinition` with a `spawnHook`, `sendCustomMessage` for routine notes, `appendEntry` and `registerEntryRenderer` for captain outcomes, the `before_provider_request` hook, the command context's model registry for picker candidates, a fresh `ModelRuntime` for isolated-branch resolution, and Pi's own `getSupportedThinkingLevels`/`clampThinkingLevel` plus its `getThinkingLevel` and `thinking_level_select` extension surface for effort.
 In TUI mode, its `/supervision-model` model list is drawn with Pi's own `SelectList`, `Input`, `fuzzyFilter`, and `DynamicBorder` through the extension context's `ui.custom` surface, which is what bounds and searches a long catalog.
 
+### 2026-09-29 stock outcomes rendering
+
+`fm_branch_outcomes` delegates its visible terminal row to Pi's `ToolExecutionComponent`, retaining the zero-height Calm row and stock HTML-export fallback.
+The real-consumer regression compares pending, started, completed, expanded, restored, error, and empty rows at widths 30, 100, and 160, including tool arguments and sanitized multiline output.
+It no longer needs the historical 0.84.4 comparison floor because it no longer imitates Pi's rendering.
+On macOS, Node v22.22.0, the following commands passed with `FM_PI_PACKAGE_DIR` selecting Pi 0.99.1 and again with the default npm package, Pi 0.85.1:
+
+```bash
+TMPDIR="$PWD/.ci-tmp" FM_PI_PACKAGE_DIR="$PWD/.ci-runtime/node_modules/@earendil-works/pi-coding-agent" bash tests/fm-pi-branch-extension.test.sh
+TMPDIR="$PWD/.ci-tmp" bash tests/fm-pi-branch-extension.test.sh
+PATH="$PWD/.ci-tools/node_modules/.bin:$PATH" TMPDIR="$PWD/.ci-tmp" FM_PI_PACKAGE_DIR="$PWD/.ci-runtime/node_modules/@earendil-works/pi-coding-agent" bash tests/fm-pi-primary-types.test.sh
+PATH="$PWD/.ci-tools/node_modules/.bin:$PATH" TMPDIR="$PWD/.ci-tmp" bash tests/fm-pi-primary-types.test.sh
+```
+
+```text
+ok - fm_branch_outcomes hides through ToolExecutionComponent while Calm-off and HTML export stay stock
+ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.99.1
+ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.85.1
+```
+
+The primary Calm suite also passed with both its executable and package bound to Pi 0.99.1, including the real-browser checks referenced under [Primary Pi Calm](#primary-pi-calm).
+
 Evidence produced 2026-08-25 on macOS 26.5.2 arm64, Node v24.13.1:
 
 - Historical real-SDK guard: `FM_PI_BRANCH_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-pi-branch-live-e2e.test.sh` against the globally installed `@earendil-works/pi-coding-agent` 0.81.1 printed `ok - real Pi SDK 0.81.1 accepts the branch session construction and preserves an unpromptable wake`.
@@ -2194,8 +2216,7 @@ skip: installed Pi 0.81.1 predates the stock renderer contract 0.84.4 this case 
 ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.81.1
 ```
 
-That skip is the renderer case declining to render a verdict on a Pi older than the contract it compares against: since 0.84.4 the stock renderer no longer supplies an implicit reset at multiline boundaries and the extension emits that reset itself, so an older installed Pi differs legitimately.
-It names the installed version and the floor rather than degrading quietly, and a package whose version cannot be read at all is still a failure.
+That historical skip declined to compare an older Pi with the then-imitated stock renderer; the current delegation and regression above remove that version floor.
 
 The same guard against the pre-change extension in the same lab measured a 676.9 ms worst keystroke echo while delivering two outcomes and a 295.3 ms worst echo with nothing to deliver, against a 49.2 ms extension-free floor, and failed as designed.
 Measured through the same real `fm_branch_report` tool and real `bin/` scripts with a 1 ms interval timer, the largest single block of the JavaScript thread fell from 273 ms to 2.0 ms for a routine outcome, from 286 ms to 2.0 ms for a captain outcome, and from 134 ms to 1.9 ms for main's acknowledgement, against a 1.3-2.2 ms idle-loop floor.
