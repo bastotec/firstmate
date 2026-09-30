@@ -822,8 +822,25 @@ const renderContext = { state: {}, isError: false, isPartial: false };
 const stockResult = { content: [{ type: "text", text: "OUTCOME_DUMP" }] };
 const calmOffCall = outcomesTool.renderCall({}, renderTheme, renderContext);
 const calmOffResult = outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext);
-if (calmOffResult.constructor.name !== "Container" || calmOffCall.render(100).join("\n") !== "fm_branch_outcomes\nOUTCOME_DUMP") {
-  throw new Error("fm_branch_outcomes did not delegate its visible row to the stock consumer");
+if (calmOffResult.render(100).length !== 0 || calmOffCall.render(100).join("\n") !== "fm_branch_outcomes\nOUTCOME_DUMP") {
+  throw new Error("fm_branch_outcomes changed its ordinary call or result rendering");
+}
+const legacyStockResult = {
+  content: [{
+    type: "text",
+    text: Array.from({ length: 12 }, (_, index) => `LEGACY_OUTCOME_${String(index + 1).padStart(2, "0")}`).join("\n"),
+  }],
+};
+const legacyRenderContext = { state: {}, isError: false, isPartial: false };
+const legacyCall = outcomesTool.renderCall({}, renderTheme, legacyRenderContext);
+outcomesTool.renderResult(legacyStockResult, { expanded: false, isPartial: false }, renderTheme, legacyRenderContext);
+const collapsedLegacyText = legacyCall.render(100).join("\n");
+if (!collapsedLegacyText?.includes("LEGACY_OUTCOME_12") || collapsedLegacyText.includes("more lines")) {
+  throw new Error("legacy all-line stock capability did not preserve collapsed Calm-off output");
+}
+outcomesTool.renderResult(legacyStockResult, { expanded: true, isPartial: false }, renderTheme, legacyRenderContext);
+if (legacyCall.render(100).join("\n") !== collapsedLegacyText) {
+  throw new Error("legacy all-line stock capability changed expanded Calm-off output");
 }
 pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: false });
 const calmOnCall = outcomesTool.renderCall({}, renderTheme, renderContext);
@@ -833,8 +850,8 @@ if (calmOnCall.constructor.name !== "Container" || calmOnCall.render(100).length
 }
 pi.events.emit("firstmate:calm-presentation", { active: false, stockExportRendering: false });
 const restoredCall = outcomesTool.renderCall({}, renderTheme, renderContext);
-outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext);
-if (restoredCall.render(100).join("\n") !== "fm_branch_outcomes\nOUTCOME_DUMP") {
+const restoredResult = outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext);
+if (restoredCall.render(100).join("\n") !== "fm_branch_outcomes\nOUTCOME_DUMP" || restoredResult.render(100).length !== 0) {
   throw new Error("fm_branch_outcomes did not restore ordinary rendering when Calm was turned off");
 }
 pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: true });
@@ -5060,35 +5077,30 @@ const result = {
 const ui = { requestRender() {} };
 const stockRow = new ToolExecutionComponent("fm_branch_outcomes", "stock", args, { showImages: false }, stockDefinition, ui, process.cwd());
 const actualRow = new ToolExecutionComponent("fm_branch_outcomes", "actual", args, { showImages: false }, actualDefinition, ui, process.cwd());
+function assertStockRows(label) {
+  for (const width of [30, 100, 160]) {
+    if (JSON.stringify(actualRow.render(width)) !== JSON.stringify(stockRow.render(width))) {
+      throw new Error(`${label} differs from Pi stock at width ${width}`);
+    }
+  }
+}
+assertStockRows("pending Calm-off ToolExecutionComponent");
 for (const row of [stockRow, actualRow]) {
   row.markExecutionStarted();
   row.setArgsComplete();
-  row.updateResult(result);
 }
-// Pending calls must also remain byte-for-byte stock before a result exists.
-const pendingStock = new ToolExecutionComponent("fm_branch_outcomes", "pending-stock", args, { showImages: false }, stockDefinition, ui, process.cwd());
-const pendingActual = new ToolExecutionComponent("fm_branch_outcomes", "pending-actual", args, { showImages: false }, actualDefinition, ui, process.cwd());
-for (const width of [30, 100]) {
-  if (JSON.stringify(pendingActual.render(width)) !== JSON.stringify(pendingStock.render(width))) {
-    throw new Error("pending Calm-off tool arguments differ from Pi stock");
-  }
-}
+assertStockRows("started Calm-off ToolExecutionComponent");
+for (const row of [stockRow, actualRow]) row.updateResult(result);
+assertStockRows("completed Calm-off ToolExecutionComponent");
 const collapsedStock = stockRow.render(100);
-const collapsedActual = actualRow.render(100);
-if (JSON.stringify(collapsedActual) !== JSON.stringify(collapsedStock)) {
-  throw new Error("Calm-off ToolExecutionComponent rendering differs from Pi stock");
-}
 const collapsedText = collapsedStock.join("\n");
 if (collapsedText.includes("OUTCOME_TWELVE") || !collapsedText.includes("more lines") || !collapsedText.includes("to expand")) {
   throw new Error("stock rendering fixture did not exercise its collapsed preview and expansion hint");
 }
 stockRow.setExpanded(true);
 actualRow.setExpanded(true);
+assertStockRows("expanded Calm-off ToolExecutionComponent");
 const expandedStock = stockRow.render(100);
-const expandedActual = actualRow.render(100);
-if (JSON.stringify(expandedActual) !== JSON.stringify(expandedStock)) {
-  throw new Error("expanded Calm-off ToolExecutionComponent rendering differs from Pi stock");
-}
 if (!expandedStock.join("\n").includes("OUTCOME_TWELVE") || JSON.stringify(expandedStock) === JSON.stringify(collapsedStock)) {
   throw new Error("stock rendering fixture did not exercise expanded output");
 }
@@ -5107,8 +5119,13 @@ if (actualRow.render(100).length !== 0) {
 }
 pi.events.emit("firstmate:calm-presentation", { active: false, stockExportRendering: false });
 actualRow.invalidate();
-if (JSON.stringify(actualRow.render(100)) !== JSON.stringify(stockRow.render(100))) {
-  throw new Error("ToolExecutionComponent rendering did not restore after live toggle");
+assertStockRows("restored Calm-off ToolExecutionComponent");
+for (const next of [
+  { content: [{ type: "text", text: "OUTCOME_ERROR" }], isError: true },
+  { content: [], isError: false },
+]) {
+  for (const row of [stockRow, actualRow]) row.updateResult(next);
+  assertStockRows(next.isError ? "error result" : "empty result");
 }
 
 pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: true });
