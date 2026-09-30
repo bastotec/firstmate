@@ -2035,7 +2035,7 @@ In TUI mode, its `/supervision-model` model list is drawn with Pi's own `SelectL
 
 ### 2026-09-29 stock outcomes rendering
 
-`fm_branch_outcomes` delegates its visible terminal row to Pi's `ToolExecutionComponent`, retaining the zero-height Calm row and stock HTML-export fallback.
+The [Firstmate Pi tool audit](../calm-mode-feasibility.md#firstmate-pi-tool-audit) owns the stock-component delegation and export-fallback mechanism exercised here.
 The real-consumer regression compares pending, started, completed, expanded, restored, error, and empty rows at widths 30, 100, and 160, including tool arguments and sanitized multiline output.
 The regression retains the fixture-version floor explained by `test_outcomes_tool_uses_stock_execution_and_export_consumers` in `tests/fm-pi-branch-extension.test.sh`; stock-component delegation itself does not impose that floor.
 On macOS, Node v22.22.0, the following commands passed with `FM_PI_PACKAGE_DIR` selecting Pi 0.99.1 and again with the default npm package, Pi 0.85.1:
@@ -2053,7 +2053,7 @@ ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.99.1
 ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.85.1
 ```
 
-The primary Calm suite also passed with both its executable and package bound to Pi 0.99.1, including the real-browser checks referenced under [Primary Pi Calm](#primary-pi-calm).
+### 2026-08-25 and 2026-08-26 SDK verification
 
 Evidence produced 2026-08-25 on macOS 26.5.2 arm64, Node v24.13.1:
 
@@ -2140,7 +2140,8 @@ ok - real Pi SDK 0.84.4 immediately renders appendEntry in the active transcript
 
 The focused regression recreates the two 2026-08-31 incident shapes against the real store scripts: a delivered decision outcome whose processing turn returns an empty assistant message, and one whose turn repeats an unrelated prior answer.
 In both, the processed marker holds, the same sequence is presented again at the run boundary and after a session replacement, the triggered-turn budget gives way to a next-prompt copy without duplicates, and only `fm_branch_processed` with the presented sequence closes the outcome; a routine outcome never enters the path, and delivered history from before the marker existed is migrated once rather than re-presented.
-On this machine the globally installed npm package is 0.81.1, whose stock `ToolExecutionComponent` rendering differs from the 0.84 line and fails the suite's first rendering-consumer case before any delivery case runs, which is why `FM_PI_PACKAGE_DIR` points at the 0.84.4 install above.
+At verification time the globally installed npm package was 0.81.1, whose stock `ToolExecutionComponent` rendering differed from the 0.84 line and failed the then-current rendering-consumer case before any delivery case ran, which is why `FM_PI_PACKAGE_DIR` selected the 0.84.4 install above.
+The current fixture-floor rationale is owned by `test_outcomes_tool_uses_stock_execution_and_export_consumers` in `tests/fm-pi-branch-extension.test.sh`; the older all-line stock delegation is covered by its portable fixture rather than claimed as installed preview parity.
 
 ### 2026-09-02 historical post-construction provider-error fallback
 
