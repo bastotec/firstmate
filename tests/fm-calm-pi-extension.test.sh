@@ -17,6 +17,14 @@ PI_OPERATIONAL_INPUT="$ROOT/.pi/extensions/lib/fm-operational-input.ts"
 PI_PACKAGE_DIR=${FM_PI_PACKAGE_DIR:-"$(npm root -g 2>/dev/null)/@earendil-works/pi-coding-agent"}
 TMUX_SOCKET="fm-calm-$$"
 TMUX_SESSION="fm-calm-e2e"
+# A tmux command is run by another shell, which can replace PATH on startup.
+# Bind its Pi launches to the executable whose version this suite probes.
+PI_BIN=$(command -v pi 2>/dev/null || true)
+if [ -n "$PI_BIN" ] && [ -x "$PI_BIN" ]; then
+  PI_BIN="$(cd "$(dirname "$PI_BIN")" && pwd -P)/$(basename "$PI_BIN")"
+else
+  PI_BIN=''
+fi
 # Verified against Pi 0.81.1 and 0.82.0 (docs/calm-mode-feasibility.md). This is
 # known-good evidence, not a support ceiling: the fixtures below run against whatever
 # Pi is actually installed, and record_pi_version_evidence never rejects a newer
@@ -35,6 +43,13 @@ cleanup() {
   fm_test_cleanup
 }
 trap cleanup EXIT
+
+# All interactive fixtures, including restarts, use this same launch boundary.
+start_pi_tmux() {
+  local width=$1 height=$2 prefix=$3 args=$4 hold=$5
+  tmux -L "$TMUX_SOCKET" new-session -d -s "$TMUX_SESSION" -x "$width" -y "$height" \
+    "$prefix '$PI_BIN' $args; rc=\$?; printf '\nPI_EXIT=%s\n' \"\$rc\"; sleep $hold"
+}
 
 wait_for_text() {
   local file=$1 text=$2 i=0
@@ -1711,11 +1726,11 @@ JS
 
 test_operational_followup_turn_e2e() {
   local project home config sessions version label case_name calm_state expected_notifications session_file pane i captain_line handled_line geometry_gap exact_session
-  if ! command -v pi >/dev/null 2>&1 || ! command -v tmux >/dev/null 2>&1; then
+  if [ -z "$PI_BIN" ] || ! command -v tmux >/dev/null 2>&1; then
     echo "skip: pi or tmux not found for Pi operational follow-up E2E"
     return 0
   fi
-  version=$(pi --version 2>/dev/null || true)
+  version=$("$PI_BIN" --version 2>/dev/null || true)
   record_pi_version_evidence "$version" "Pi operational follow-up E2E"
 
   project="$TMP_ROOT/followup-project"
@@ -1882,8 +1897,9 @@ TS
       session_arg="--session '$session_arg'"
     fi
 
-    tmux -L "$TMUX_SOCKET" new-session -d -s "$TMUX_SESSION" -x 160 -y 36 \
-      "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' FM_OPERATIONAL_INPUT_SCRIPT='$OPERATIONAL_INPUT' PI_OFFLINE=1 pi --approve --no-context-files --no-skills --no-prompt-templates --no-extensions $extensions $session_arg; rc=\$?; printf '\nPI_EXIT=%s\n' \"\$rc\"; sleep 20"
+    start_pi_tmux 160 36 \
+      "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' FM_OPERATIONAL_INPUT_SCRIPT='$OPERATIONAL_INPUT' PI_OFFLINE=1" \
+      "--approve --no-context-files --no-skills --no-prompt-templates --no-extensions $extensions $session_arg" 20
     i=0
     while [ "$i" -lt 120 ]; do
       pane=$(tmux -L "$TMUX_SOCKET" capture-pane -p -t "$TMUX_SESSION" -S - 2>/dev/null || true)
@@ -2021,8 +2037,9 @@ JS
   replay_exact_case() {
     tmux -L "$TMUX_SOCKET" kill-session -t "$TMUX_SESSION" 2>/dev/null || true
     printf '%s\n' on >"$home/config/calm"
-    tmux -L "$TMUX_SOCKET" new-session -d -s "$TMUX_SESSION" -x 160 -y 36 \
-      "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' FM_OPERATIONAL_INPUT_SCRIPT='$OPERATIONAL_INPUT' PI_OFFLINE=1 pi --approve --no-context-files --no-skills --no-prompt-templates --no-extensions -e ./.pi/extensions/fm-calm.ts -e ./followup-e2e.ts --session '$exact_session'; rc=\$?; printf '\nPI_EXIT=%s\n' \"\$rc\"; sleep 20"
+    start_pi_tmux 160 36 \
+      "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' FM_OPERATIONAL_INPUT_SCRIPT='$OPERATIONAL_INPUT' PI_OFFLINE=1" \
+      "--approve --no-context-files --no-skills --no-prompt-templates --no-extensions -e ./.pi/extensions/fm-calm.ts -e ./followup-e2e.ts --session '$exact_session'" 20
     i=0
     while [ "$i" -lt 120 ]; do
       pane=$(tmux -L "$TMUX_SOCKET" capture-pane -p -t "$TMUX_SESSION" -S - 2>/dev/null || true)
@@ -2076,11 +2093,11 @@ JS
 test_hidden_block_geometry_e2e() {
   local project home config sessions session_file snapshot expanded_snapshot calm_off_snapshot restarted_snapshot
   local version skill_line final_line gap i
-  if ! command -v pi >/dev/null 2>&1 || ! command -v tmux >/dev/null 2>&1; then
+  if [ -z "$PI_BIN" ] || ! command -v tmux >/dev/null 2>&1; then
     echo "skip: pi or tmux not found for Pi Calm hidden-block geometry E2E"
     return 0
   fi
-  version=$(pi --version 2>/dev/null || true)
+  version=$("$PI_BIN" --version 2>/dev/null || true)
   record_pi_version_evidence "$version" "Pi Calm hidden-block geometry E2E"
 
   project="$TMP_ROOT/geometry-project"
@@ -2179,8 +2196,9 @@ TS
   start_geometry_pi() {
     local session_arg=$1
     tmux -L "$TMUX_SOCKET" kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-    tmux -L "$TMUX_SOCKET" new-session -d -s "$TMUX_SESSION" -x 100 -y 44 \
-      "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' PI_OFFLINE=1 pi --approve --no-context-files --no-prompt-templates --no-extensions -e ./.pi/extensions/fm-calm.ts -e ./geometry-provider.ts $session_arg; rc=\$?; printf '\nPI_EXIT=%s\n' \"\$rc\"; sleep 20"
+    start_pi_tmux 100 44 \
+      "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' PI_OFFLINE=1" \
+      "--approve --no-context-files --no-prompt-templates --no-extensions -e ./.pi/extensions/fm-calm.ts -e ./geometry-provider.ts $session_arg" 20
   }
 
   capture_geometry_viewport() {
@@ -2194,21 +2212,6 @@ TS
       capture_geometry_viewport "$file" || true
       grep -Fq "$text" "$file" 2>/dev/null && return 0
       sleep 0.05
-      attempt=$((attempt + 1))
-    done
-    return 1
-  }
-
-  wait_for_geometry_transition() {
-    local file=$1 transient_text=$2 final_text=$3 attempt=0 saw_transient=0
-    while [ "$attempt" -lt 600 ]; do
-      capture_geometry_viewport "$file" || true
-      if grep -Fq "$transient_text" "$file" 2>/dev/null; then
-        saw_transient=1
-      elif [ "$saw_transient" -eq 1 ] && grep -Fq "$final_text" "$file" 2>/dev/null; then
-        return 0
-      fi
-      sleep 0.01
       attempt=$((attempt + 1))
     done
     return 1
@@ -2260,10 +2263,10 @@ TS
 
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" -l '/reload'
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" Enter
-  wait_for_geometry_transition \
-    "$snapshot" \
-    "Reloading keybindings, extensions, skills, prompts, themes, and context files..." \
-    "CALM_GEOMETRY_FINAL" \
+  # The transient reload screen can disappear between captures. Pi's persistent
+  # completion status proves /reload ran, unlike the final reply already on screen.
+  wait_for_geometry_text "$snapshot" \
+    "Reloaded keybindings, extensions, skills, prompts, themes, and context files" \
     || fail "Pi Calm hidden-block geometry E2E did not complete the /reload viewport transition"
   assert_geometry_gap "$snapshot" "reloaded native Calm transcript"
 
@@ -3214,6 +3217,135 @@ JS
   pass "Pi Calm working ship keeps its centered two-row asymmetric Unicode boat inside a deterministic long-wave trough, preserves blue water through the hull, uses standard blue/cyan/yellow/red with balanced resets, keeps ANSI-stripped width exact, reverses cleanly at both edges and every width, clamps visible and hidden resizes, falls back deterministically when narrow, freezes and resumes across settle/start without hidden-time jumps or duplicate timers, resets only on a fresh session, and leaves Calm-off visibility untouched"
 }
 
+# Probe only a scratch copy of Pi's export. DOM bytes include CSS-hidden custom
+# messages on Pi 0.99+, so the oracle must measure browser layout, not substrings.
+prepare_export_visibility_probe() {
+  node - "$1" "$2" "${3:-none}" <<'JS'
+const fs = require("node:fs");
+const [source, target, mutation] = process.argv.slice(2);
+const html = fs.readFileSync(source, "utf8");
+const match = html.match(/<script id="session-data" type="application\/json">([^<]+)<\/script>/);
+if (!match) throw new Error("export has no session data for visibility probe");
+const session = JSON.parse(Buffer.from(match[1], "base64").toString("utf8"));
+const entries = session.session?.entries ?? session.entries ?? [];
+const hiddenIds = entries.filter((entry) => entry.type === "custom_message" && entry.display === false)
+  .map((entry) => `entry-${entry.id}`);
+const synthetic = entries.find((entry) => entry.customType === "firstmate-synthetic-input");
+if (!synthetic || synthetic.display !== false) throw new Error("missing display:false synthetic provenance");
+
+function probe(hiddenIds, syntheticId, mutation) {
+  const result = { errors: [], hiddenIds, toggleSupported: false };
+  const require = (condition, message) => { if (!condition) result.errors.push(message); };
+  const measure = (element) => element && ({
+    display: getComputedStyle(element).display,
+    rects: element.getClientRects().length,
+    visible: element.getClientRects().length > 0 &&
+      getComputedStyle(element).display !== "none" &&
+      getComputedStyle(element).visibility === "visible" &&
+      element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }),
+  });
+  try {
+    const messages = document.getElementById("messages");
+    const tree = document.getElementById("tree-container");
+    require(!!messages && !!tree, "export messages/tree did not render");
+    if (!messages || !tree) throw new Error("missing rendered containers");
+    if (mutation === "visible-synthetic") {
+      // Both vendor layouts are supported: omitted old nodes and CSS-hidden new
+      // nodes. Introduce a visible leak even when the vendor omitted the node.
+      let node = messages.querySelector(`#${syntheticId}`);
+      if (!node) {
+        node = document.createElement("div");
+        node.id = syntheticId;
+        node.className = "hook-message";
+        node.textContent = "[firstmate-synthetic-input]";
+        messages.appendChild(node);
+      }
+      node.style.setProperty("display", "block", "important");
+    }
+    const hidden = () => hiddenIds.map((id) => measure(messages.querySelector(`#${id}`)));
+    result.initial = hidden();
+    for (const [index, state] of result.initial.entries()) {
+      require(!state || (state.display === "none" && state.rects === 0),
+        `initial hidden message ${hiddenIds[index]} occupied browser layout: ${JSON.stringify(state)}`);
+    }
+    for (const node of messages.querySelectorAll(".hook-message")) {
+      const state = measure(node);
+      require(state.display === "none" && state.rects === 0,
+        `initial custom message ${node.id} was not hidden: ${JSON.stringify(state)}`);
+    }
+    const visibleText = (selector, text) => [...messages.querySelectorAll(selector)]
+      .some((node) => node.innerText.includes(text) && measure(node).visible);
+    require(visibleText(".user-message", "Show a deterministic tool example."), "genuine user prompt was not visible");
+    require(visibleText(".assistant-message", "The deterministic tool example is complete."), "genuine assistant reply was not visible");
+    for (const marker of ["CURRENT_WATCHER_E2E", "CURRENT_TURN_END_E2E", "CURRENT_AWAY_E2E", "CURRENT_FROM_FIRSTMATE_E2E", "CURRENT_LAUNCH_BRIEF_E2E"]) {
+      require(visibleText(".user-message", marker), `operational user marker ${marker} was not visible`);
+    }
+    const treeBefore = tree.textContent;
+    require(treeBefore.includes("firstmate-synthetic-input") && treeBefore.includes("/tmp/probe.status"),
+      "tree lost synthetic provenance");
+    result.toggleSupported = !!document.querySelector('[data-action="toggle-hidden-messages"]');
+    if (result.toggleSupported && mutation === "none") {
+      document.activeElement?.blur();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "h", bubbles: true }));
+      result.revealed = hidden();
+      require(result.revealed.every((state) => state?.visible), "H did not reveal every hidden custom message");
+      require(messages.innerText.includes("[firstmate-synthetic-input]"), "H lost synthetic message content");
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "h", bubbles: true }));
+      result.rehidden = hidden();
+      require(result.rehidden.every((state) => state?.display === "none" && state.rects === 0),
+        "second H did not hide custom messages without layout residue");
+      require(tree.textContent === treeBefore, "H changed provenance in the tree");
+    }
+  } catch (error) {
+    result.errors.push(String(error));
+  }
+  const output = document.createElement("script");
+  output.id = "calm-export-visibility";
+  output.type = "application/json";
+  output.textContent = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(result))));
+  document.body.appendChild(output);
+}
+const close = html.lastIndexOf("</body>");
+if (close < 0) throw new Error("export has no closing body");
+const script = `<script>document.addEventListener("DOMContentLoaded", () => (${probe.toString()})(${JSON.stringify(hiddenIds)}, ${JSON.stringify(`entry-${synthetic.id}`)}, ${JSON.stringify(mutation)}));</script>`;
+fs.writeFileSync(target, html.slice(0, close) + script + html.slice(close));
+JS
+}
+
+assert_export_visibility() {
+  node - "$1" <<'JS'
+const fs = require("node:fs");
+const dom = fs.readFileSync(process.argv[2], "utf8");
+const match = dom.match(/<script id="calm-export-visibility" type="application\/json">([^<]+)<\/script>/);
+if (!match) throw new Error("browser did not complete the export visibility probe");
+const result = JSON.parse(Buffer.from(match[1], "base64").toString("utf8"));
+if (result.errors.length) throw new Error(result.errors.join("\n"));
+console.log(`export visibility: ${result.hiddenIds.length} hidden entries; H toggle ${result.toggleSupported ? "verified" : "not exposed by this Pi"}`);
+JS
+}
+
+test_selected_pi_survives_decoy_path() {
+  local dir version snapshot
+  if [ -z "$PI_BIN" ] || ! command -v tmux >/dev/null 2>&1; then
+    echo "skip: pi or tmux not found for selected Pi executable regression"
+    return 0
+  fi
+  dir="$TMP_ROOT/pi-decoy"
+  mkdir -p "$dir/bin"
+  printf '%s\n' '#!/bin/sh' 'echo DECOY_PI' >"$dir/bin/pi"
+  chmod +x "$dir/bin/pi"
+  version=$("$PI_BIN" --version) || fail "selected Pi version probe failed"
+  snapshot="$dir/pane"
+  start_pi_tmux 80 24 \
+    "env PATH='$dir/bin:$PATH' pi --version >'$dir/decoy'; env PATH='$dir/bin:$PATH'" \
+    "--version >'$dir/selected'" 30
+  wait_for_text "$snapshot" PI_EXIT=0 || fail "Pi decoy PATH fixture did not finish"
+  [ "$(cat "$dir/decoy")" = DECOY_PI ] || fail "decoy PATH fixture did not blind bare Pi resolution"
+  [ "$(cat "$dir/selected")" = "$version" ] || fail "tmux did not run the selected absolute Pi executable"
+  tmux -L "$TMUX_SOCKET" kill-session -t "$TMUX_SESSION"
+  pass "tmux uses the probed Pi executable even when its shell PATH resolves bare pi to a decoy"
+}
+
 # The rendered-DOM assertions below depend on a real browser, so the render step
 # itself is the part that fails for reasons that have nothing to do with Calm.
 # This pins that guard with real processes and no browser: one clean render, one
@@ -3313,12 +3445,17 @@ SH
 
 test_interactive_terminal_e2e() {
   local project config home session_file export_file export_dom default_snapshot expanded_snapshot hidden_snapshot active_before_snapshot active_hidden_snapshot export_snapshot export_settled_snapshot restored_snapshot working_snapshot working_response_snapshot restarted_snapshot resumed_restored_snapshot hash_before hash_after now version chrome chrome_report active_wait active_screen_wait boat_frame_one boat_frame_two boat_resized_snapshot boat_focus_snapshot boat_cleared_snapshot boat_hull_line boat_sail_line boat_column_one boat_column_two boat_line boat_color_snapshot boat_color_line boat_water_snapshot boat_water_line boat_water_first boat_water_changed boat_narrow_snapshot boat_freeze_snapshot boat_resume_snapshot boat_freeze_column boat_freeze_sail boat_resume_column boat_resume_sail
-  if ! command -v pi >/dev/null 2>&1 || ! command -v tmux >/dev/null 2>&1; then
+  if [ -z "$PI_BIN" ] || ! command -v tmux >/dev/null 2>&1; then
     echo "skip: pi or tmux not found for Pi calm interactive E2E"
     return 0
   fi
-  version=$(pi --version 2>/dev/null || true)
+  version=$("$PI_BIN" --version 2>/dev/null || true)
   record_pi_version_evidence "$version" "Pi calm interactive E2E"
+  local export_probe leak_export leak_dom visibility_error
+  export_probe="$TMP_ROOT/calm-export-probe.html"
+  leak_export="$TMP_ROOT/calm-export-visible-synthetic.html"
+  leak_dom="$TMP_ROOT/calm-export-visible-synthetic-dom.html"
+  visibility_error="$TMP_ROOT/calm-export-visibility-error.txt"
 
   project="$TMP_ROOT/e2e-project"
   config="$TMP_ROOT/e2e-config"
@@ -3555,8 +3692,9 @@ TS
 {"type":"message","id":"a0000016","parentId":"a0000015","timestamp":"$now","message":{"role":"assistant","content":[{"type":"text","text":"The deterministic tool example is complete."}],"api":"anthropic-messages","provider":"anthropic","model":"claude-sonnet-4-5","usage":{"input":2,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":3,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":16}}
 JSON
 
-  tmux -L "$TMUX_SOCKET" new-session -d -s "$TMUX_SESSION" -x 180 -y 44 \
-    "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' FM_OPERATIONAL_INPUT_SCRIPT='$OPERATIONAL_INPUT' PI_OFFLINE=1 pi --approve --no-skills --no-prompt-templates --no-context-files --session '$session_file'; rc=\$?; printf '\nPI_EXIT=%s\n' \"\$rc\"; sleep 30"
+  start_pi_tmux 180 44 \
+    "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' FM_OPERATIONAL_INPUT_SCRIPT='$OPERATIONAL_INPUT' PI_OFFLINE=1" \
+    "--approve --no-skills --no-prompt-templates --no-context-files --session '$session_file'" 30
   wait_for_text "$default_snapshot" "The deterministic tool example is complete." \
     || fail "Pi calm E2E did not reach the restored session transcript"
   assert_contains "$(cat "$default_snapshot")" "CALM_E2E_OUTPUT" "calm mode was not off by default"
@@ -3761,22 +3899,26 @@ if (!synthetic || synthetic.display) process.exit(1);
 JS
   chrome=$(find_chrome) \
     || fail "Chrome or Chromium is required for rendered export DOM assertions; set FM_CHROME_BIN to one"
-  chrome_report=$(render_export_dom "$chrome" "$export_file" "$export_dom" "$version") \
+  prepare_export_visibility_probe "$export_file" "$export_probe" \
+    || fail "could not prepare the scratch export visibility probe"
+  chrome_report=$(render_export_dom "$chrome" "$export_probe" "$export_dom" "$version") \
     || fail "could not render calm-mode HTML export DOM: $chrome_report"
-  node - "$export_dom" <<'JS' || fail "rendered export DOM violated the Calm conversation boundary"
-const dom = require("node:fs").readFileSync(process.argv[2], "utf8");
-const messages = dom.match(/<div id="messages">([\s\S]*?)<\/main>/)?.[1];
-const tree = dom.match(/<div[^>]*id="tree-container"[^>]*>([\s\S]*?)<div[^>]*id="tree-status"/)?.[1];
-if (!messages || !tree) process.exit(1);
-if (!/<div class="user-message"[^>]*>[\s\S]*Show a deterministic tool example\./.test(messages)) process.exit(1);
-if (!/<div class="assistant-message"[^>]*>[\s\S]*The deterministic tool example is complete\./.test(messages)) process.exit(1);
-if (messages.includes('<div class="hook-message"')) process.exit(1);
-if (messages.includes("[firstmate-synthetic-input]")) process.exit(1);
-for (const current of ["CURRENT_WATCHER_E2E", "CURRENT_TURN_END_E2E", "CURRENT_AWAY_E2E", "CURRENT_FROM_FIRSTMATE_E2E", "CURRENT_LAUNCH_BRIEF_E2E"]) {
-  if (!messages.includes(current)) process.exit(1);
-}
-if (!tree.includes("firstmate-synthetic-input") || !tree.includes("/tmp/probe.status")) process.exit(1);
-JS
+  assert_export_visibility "$export_dom" \
+    || fail "rendered export DOM violated the Calm conversation boundary"
+
+  # Prove the same oracle rejects a visible synthetic message, without changing
+  # the original export or the persisted session. This catches a removed CSS
+  # rule as well as an omitted hidden class, rather than trusting vendor markup.
+  prepare_export_visibility_probe "$export_file" "$leak_export" visible-synthetic \
+    || fail "could not prepare the adversarial scratch export"
+  chrome_report=$(render_export_dom "$chrome" "$leak_export" "$leak_dom" "$version") \
+    || fail "could not render the adversarial scratch export: $chrome_report"
+  if assert_export_visibility "$leak_dom" >"$visibility_error" 2>&1; then
+    fail "export visibility oracle accepted a visible synthetic message"
+  fi
+  grep -Fq 'initial hidden message entry-a0000010 occupied browser layout' "$visibility_error" \
+    || fail "adversarial export failed for a reason other than its visible synthetic message: $(cat "$visibility_error")"
+  pass "export visibility rejects a deliberately visible synthetic message while preserving hidden provenance and genuine conversation"
   # Calm returns the transcript to its own presentation once the export has been
   # rendered. That repaint runs on the macrotask right after Pi prints the export
   # confirmation, so it must not overwrite it: the captain has to keep seeing where
@@ -3921,6 +4063,12 @@ JS
       [ "$boat_water_line" != "$boat_water_first" ]; then
       boat_water_changed=1
       break
+    fi
+    # Compare consecutive observed frames: the geometry/color assertions above
+    # can outlast a boat step, so its original column may already be behind us.
+    if [ -n "$boat_water_line" ] && [ -n "$boat_column_two" ]; then
+      boat_column_one=$boat_column_two
+      boat_water_first=$boat_water_line
     fi
     sleep 0.05
     active_screen_wait=$((active_screen_wait + 1))
@@ -4164,8 +4312,9 @@ JS
     || fail "Pi did not exit cleanly before the Calm persistence restart"
   tmux -L "$TMUX_SOCKET" kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 
-  tmux -L "$TMUX_SOCKET" new-session -d -s "$TMUX_SESSION" -x 180 -y 44 \
-    "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' FM_OPERATIONAL_INPUT_SCRIPT='$OPERATIONAL_INPUT' PI_OFFLINE=1 pi --approve --no-skills --no-prompt-templates --no-context-files --session '$session_file'; rc=\$?; printf '\nPI_EXIT=%s\n' \"\$rc\"; sleep 30"
+  start_pi_tmux 180 44 \
+    "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' FM_OPERATIONAL_INPUT_SCRIPT='$OPERATIONAL_INPUT' PI_OFFLINE=1" \
+    "--approve --no-skills --no-prompt-templates --no-context-files --session '$session_file'" 30
   wait_for_text "$restarted_snapshot" "CALM_WORKING_E2E_RESPONSE" \
     || fail "Pi did not restore the persisted session after restart"
   assert_not_contains "$(cat "$restarted_snapshot")" "CALM_E2E_OUTPUT" "restart/resume reset Calm and restored a tool row"
@@ -4207,4 +4356,5 @@ test_operational_followup_turn_e2e
 test_hidden_block_geometry_e2e
 test_working_ship_geometry_and_lifecycle
 test_export_dom_render_guard
+test_selected_pi_survives_decoy_path
 test_interactive_terminal_e2e
