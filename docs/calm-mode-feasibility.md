@@ -282,11 +282,12 @@ Only Pi's Calm presentation implementation changed; every producer and non-Pi tr
 ## Regression coverage
 
 `tests/fm-calm-pi-extension.test.sh` compares wrapped and stock renderers and verifies all seven built-ins plus `fm_watch_arm_pi`.
-`tests/fm-pi-branch-extension.test.sh` compares `fm_branch_outcomes` with the installed stock component for pending arguments, collapsed and expanded output containing ANSI and control characters, and success/error framing at 30 and 100 columns; it also checks Calm hiding and restoration, stock export fallback, and the `fm_branch_processed` callbacks directly so Pi's exception fallback cannot mask an acknowledgement-renderer failure.
+`tests/fm-pi-branch-extension.test.sh` exercises installed stock-component parity, Calm hiding and restoration, and stock export fallback; the [2026-09-29 stock outcomes rendering record](verification/runtime-backends.md#2026-09-29-stock-outcomes-rendering) owns the comparison coverage and evidence.
+It also checks the `fm_branch_processed` callbacks directly so Pi's exception fallback cannot mask an acknowledgement-renderer failure.
 The installed-package comparison's fixture-floor rationale is owned by `test_outcomes_tool_uses_stock_execution_and_export_consumers` in that script; a skipped preview fixture does not establish renderer parity on the installed version.
 Together they exercise redraw of already-rendered tool, thinking, current operational-user, and legacy synthetic rows, and cover every policy class.
 It covers persisted preference restoration across every session-start reason and a real restart, proves the working-ship presentation and Calm-off stock `Working...` row through a delayed deterministic provider, asserts no Calm status row, verifies operational messages remain exact ordinary user-role session entries and complete exports, and drives genuine 100 by 44, 160 by 36, and 180 by 44 terminal fixtures.
-A native deterministic `/skill:ahoy` turn produces thinking, tool-call, and tool-result blocks, asserts that the collapsed skill-to-final gap equals the two-row visible-only baseline, expands and re-collapses original thinking, restores Calm-off rendering, verifies persisted hidden history, and repeats the geometry assertion after restart with `terminal.clearOnShrink` explicitly off.
+A native deterministic `/skill:ahoy` turn produces thinking, tool-call, and tool-result blocks, asserts that the collapsed skill-to-final gap equals the two-row visible-only baseline, expands and re-collapses original thinking, restores Calm-off rendering, verifies persisted hidden history, and repeats the geometry assertion after reload and restart with `terminal.clearOnShrink` explicitly off.
 The operational provider path covers Calm loaded on, loaded off, default preference, extension absent, exact watcher delivery, narrow bare-marker legacy input, persisted restart replay, a genuine captain prompt, and adjacent notifications coalesced into one intended processing turn.
 It asserts one persisted and rendered captain answer, exact user-role operational envelopes in order, no replacement custom messages, one processing result, zero operational transcript rows, and the two-row neighboring-assistant geometry for live, adjacent, and restart paths.
 Quoted current markers, ASCII-only labels, ordinary text before a marker, unrelated U+2063 placement, and image-bearing input remain visible in component and native transcript checks.
@@ -531,7 +532,7 @@ FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=30 duration_ms=277700 fai
 
 Pi 0.84.4's stock `ToolExecutionComponent` collapses a text result longer than ten lines, adds Pi's expansion hint, and renders every line when expanded, while the previously verified Pi 0.81.1 stock fallback renders every line in both states.
 The capability-probing self-renderer verified in this record has been replaced; the [Firstmate Pi tool audit](#firstmate-pi-tool-audit) owns the current delegation mechanism.
-The portable legacy-capability fixture was removed with that replacement, while the real installed-package comparison remains executable through:
+The portable fixture now checks legacy all-line stock delegation without capability probing, while the real installed-package comparison remains executable through:
 
 ```sh
 bin/fm-test-run.sh tests/fm-pi-branch-extension.test.sh
