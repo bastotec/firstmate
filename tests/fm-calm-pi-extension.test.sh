@@ -3759,23 +3759,50 @@ if (!serialized.includes("firstmate-synthetic-input") || !serialized.includes("/
 const synthetic = entries.find((entry) => entry.type === "custom_message" && entry.customType === "firstmate-synthetic-input");
 if (!synthetic || synthetic.display) process.exit(1);
 JS
+  # The generated HTML is Pi's public export interface. Pi 0.99.1 retains
+  # hidden custom messages in its DOM, so presence alone is not visibility.
+  # Probe a copy in Chrome and assert computed presentation, not DOM bytes.
+  node - "$export_file" "$TMP_ROOT/calm-export-probe.html" <<'JS'
+const fs = require("node:fs");
+function probeExport() {
+  const errors = [];
+  const expect = (condition, message) => { if (!condition) errors.push(message); };
+  const visible = (element) => {
+    if (!element) return false;
+    for (let current = element; current; current = current.parentElement) {
+      const style = getComputedStyle(current);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+    }
+    return element.getClientRects().length > 0;
+  };
+  const messages = document.getElementById("messages");
+  const tree = document.getElementById("tree-container");
+  expect(!!messages && !!tree, "export did not render messages and tree");
+  const hasVisibleText = (selector, text) => [...(messages?.querySelectorAll(selector) ?? [])]
+    .some((element) => visible(element) && element.textContent.includes(text));
+  expect(hasVisibleText(".user-message", "Show a deterministic tool example."), "genuine user prompt hidden");
+  expect(hasVisibleText(".assistant-message", "The deterministic tool example is complete."), "genuine assistant reply hidden");
+  expect(![...(messages?.querySelectorAll(".hook-message") ?? [])].some(visible), "custom message visible");
+  for (const current of ["CURRENT_WATCHER_E2E", "CURRENT_TURN_END_E2E", "CURRENT_AWAY_E2E", "CURRENT_FROM_FIRSTMATE_E2E", "CURRENT_LAUNCH_BRIEF_E2E"]) {
+    expect(hasVisibleText(".user-message", current), `stock export hid ${current}`);
+  }
+  expect(tree?.textContent.includes("firstmate-synthetic-input") && tree?.textContent.includes("/tmp/probe.status"), "tree lost synthetic provenance");
+  const result = document.createElement("pre");
+  result.id = "calm-export-assertions";
+  result.textContent = JSON.stringify(errors);
+  document.body.appendChild(result);
+}
+const html = fs.readFileSync(process.argv[2], "utf8");
+fs.writeFileSync(process.argv[3], html.replace("</body>", `<script>(${probeExport.toString()})();</script></body>`));
+JS
   chrome=$(find_chrome) \
     || fail "Chrome or Chromium is required for rendered export DOM assertions; set FM_CHROME_BIN to one"
-  chrome_report=$(render_export_dom "$chrome" "$export_file" "$export_dom" "$version") \
+  chrome_report=$(render_export_dom "$chrome" "$TMP_ROOT/calm-export-probe.html" "$export_dom" "$version") \
     || fail "could not render calm-mode HTML export DOM: $chrome_report"
   node - "$export_dom" <<'JS' || fail "rendered export DOM violated the Calm conversation boundary"
 const dom = require("node:fs").readFileSync(process.argv[2], "utf8");
-const messages = dom.match(/<div id="messages">([\s\S]*?)<\/main>/)?.[1];
-const tree = dom.match(/<div[^>]*id="tree-container"[^>]*>([\s\S]*?)<div[^>]*id="tree-status"/)?.[1];
-if (!messages || !tree) process.exit(1);
-if (!/<div class="user-message"[^>]*>[\s\S]*Show a deterministic tool example\./.test(messages)) process.exit(1);
-if (!/<div class="assistant-message"[^>]*>[\s\S]*The deterministic tool example is complete\./.test(messages)) process.exit(1);
-if (messages.includes('<div class="hook-message"')) process.exit(1);
-if (messages.includes("[firstmate-synthetic-input]")) process.exit(1);
-for (const current of ["CURRENT_WATCHER_E2E", "CURRENT_TURN_END_E2E", "CURRENT_AWAY_E2E", "CURRENT_FROM_FIRSTMATE_E2E", "CURRENT_LAUNCH_BRIEF_E2E"]) {
-  if (!messages.includes(current)) process.exit(1);
-}
-if (!tree.includes("firstmate-synthetic-input") || !tree.includes("/tmp/probe.status")) process.exit(1);
+const result = dom.match(/<pre id="calm-export-assertions">([^<]*)<\/pre>/)?.[1];
+if (result !== "[]") throw new Error(`Chrome export visibility assertions: ${result ?? "probe did not run"}`);
 JS
   # Calm returns the transcript to its own presentation once the export has been
   # rendered. That repaint runs on the macrotask right after Pi prints the export

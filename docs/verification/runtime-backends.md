@@ -2190,8 +2190,7 @@ skip: installed Pi 0.81.1 predates the stock renderer contract 0.84.4 this case 
 ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.81.1
 ```
 
-That skip is the renderer case declining to render a verdict on a Pi older than the contract it compares against: since 0.84.4 the stock renderer no longer supplies an implicit reset at multiline boundaries and the extension emits that reset itself, so an older installed Pi differs legitimately.
-It names the installed version and the floor rather than degrading quietly, and a package whose version cannot be read at all is still a failure.
+The recorded renderer skip predates stock-component delegation; the [Firstmate Pi tool audit](../calm-mode-feasibility.md#firstmate-pi-tool-audit) owns the current rendering mechanism, and `test_outcomes_tool_uses_stock_execution_and_export_consumers` in `tests/fm-pi-branch-extension.test.sh` owns the current fixture-floor rationale.
 
 The same guard against the pre-change extension in the same lab measured a 676.9 ms worst keystroke echo while delivering two outcomes and a 295.3 ms worst echo with nothing to deliver, against a 49.2 ms extension-free floor, and failed as designed.
 Measured through the same real `fm_branch_report` tool and real `bin/` scripts with a 1 ms interval timer, the largest single block of the JavaScript thread fell from 273 ms to 2.0 ms for a routine outcome, from 286 ms to 2.0 ms for a captain outcome, and from 134 ms to 1.9 ms for main's acknowledgement, against a 1.3-2.2 ms idle-loop floor.

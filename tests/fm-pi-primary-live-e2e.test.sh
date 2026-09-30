@@ -2,12 +2,18 @@
 # Opt-in credentialed Pi continuity regression on a private tmux socket and
 # isolated project/home state. It uses the existing shared Pi auth store without
 # copying credentials and pins the captain-approved openai-codex model.
+# FM_PI_LIVE_RENDER_ONLY=1 selects the supervision-tool rendering case only;
+# FM_PI_RENDER_EVIDENCE_DIR retains terminal captures and the live HTML export.
 set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-fm_live_gate opt-in FM_PI_LIVE_E2E pi tmux
+if [ "${FM_PI_LIVE_RENDER_ONLY:-0}" = 1 ]; then
+  fm_live_gate opt-in FM_PI_LIVE_E2E pi tmux npm node jq
+else
+  fm_live_gate opt-in FM_PI_LIVE_E2E pi tmux
+fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 unset NO_MISTAKES_GATE
@@ -19,6 +25,12 @@ fail() {
 
 TMUX=$(command -v tmux)
 SOCKET="fm-pi-live-e2e-$$"
+SOCKET_FLAG=-L
+if [ "${FM_PI_LIVE_RENDER_ONLY:-0}" = 1 ]; then
+  # Relative Unix socket avoids sockaddr_un's path limit in long gate paths.
+  SOCKET=".pi-render-$$.sock"
+  SOCKET_FLAG=-S
+fi
 SESSION=pi-live-e2e
 LAB="$ROOT/.pi-live-e2e.$$"
 PROJECT="$LAB/project"
@@ -39,7 +51,7 @@ QUOTED_CURRENT="Captain quote: $CURRENT_WATCHER"
 ASCII_ONLY='FIRSTMATE_OP: v1 watcher: captain-authored text'
 
 capture() {
-  "$TMUX" -L "$SOCKET" capture-pane -p -t "$SESSION" -S -600 2>/dev/null || true
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" capture-pane -p -t "$SESSION" -S -600 2>/dev/null || true
 }
 
 wait_for_text() {
@@ -86,7 +98,10 @@ cleanup() {
     watcher_pid=$(sed -n '1p' "$pid_file" 2>/dev/null || true)
     arm_pid=$(ps -p "$watcher_pid" -o ppid= 2>/dev/null | tr -d ' ' || true)
   fi
-  "$TMUX" -L "$SOCKET" kill-server 2>/dev/null || true
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" kill-server 2>/dev/null || true
+  if [ "$SOCKET_FLAG" = -S ]; then
+    rm -f "$SOCKET"
+  fi
   sleep 0.1
   if [ -n "$watcher_pid" ] && lab_pid_is_safe "$watcher_pid"; then
     kill -TERM "$watcher_pid" 2>/dev/null || true
@@ -100,8 +115,8 @@ trap cleanup EXIT
 
 send_prompt() {
   local prompt=$1
-  "$TMUX" -L "$SOCKET" send-keys -t "$SESSION" -l "$prompt"
-  "$TMUX" -L "$SOCKET" send-keys -t "$SESSION" Enter
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" send-keys -t "$SESSION" -l "$prompt"
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" send-keys -t "$SESSION" Enter
 }
 
 wait_pid_dead() {
@@ -241,6 +256,177 @@ run_native_ahoy_regressions() {
     || fail "Pi native later-message Ahoy reran session start"
 }
 
+# Focused rendering probe; shares this rig's private terminal and cleanup, but
+# never launches a worker, secondmate, watcher, or credential-refresh command.
+run_outcome_rendering_regression() {
+  local package_dir agent_dir auth_dir evidence pane
+  package_dir=${FM_PI_PACKAGE_DIR:-"$(npm root -g)/@earendil-works/pi-coding-agent"}
+  agent_dir="$LAB/agent-dir"
+  auth_dir=${PI_CODING_AGENT_DIR:-"$HOME/.pi/agent"}
+  evidence=${FM_PI_RENDER_EVIDENCE_DIR:-"$LAB/evidence"}
+  mkdir -p "$PROJECT/.pi/extensions" "$HOME_DIR/state" "$HOME_DIR/config" "$agent_dir" "$evidence"
+  cp -R "$ROOT/.pi/extensions/lib" "$PROJECT/.pi/extensions/"
+  cp "$ROOT/.pi/extensions/fm-calm.ts" "$ROOT/.pi/extensions/fm-branch-supervision.ts" "$PROJECT/.pi/extensions/"
+  cp -R "$ROOT/bin" "$PROJECT/bin"
+  printf 'off\n' > "$HOME_DIR/config/calm"
+  printf '0\n' > "$HOME_DIR/state/.branch-outcomes-processed"
+  # More than Pi's collapsed preview: only expansion should expose the tail.
+  local index
+  for index in {1..12}; do
+    FM_HOME="$HOME_DIR" "$ROOT/bin/fm-branch-outcome.sh" append --task render-probe --verdict routine \
+      --summary "$(printf 'LIVE_OUTCOME_%02d' "$index")" >/dev/null
+  done
+  FM_HOME="$HOME_DIR" "$ROOT/bin/fm-branch-outcome.sh" append --task render-probe --verdict captain \
+    --summary LIVE_CAPTAIN_PROCESSED >/dev/null
+
+  # Read the existing credentials and model configuration by reference. The
+  # vendor read-only store refuses refreshes instead of writing shared auth.
+  # All other CLI state (settings, cache, session, trust) belongs to this lab.
+  cat > "$LAB/readonly-cli.mjs" <<'JS'
+import { pathToFileURL } from "node:url";
+const pkg = process.env.FM_PI_PACKAGE_DIR;
+const { ModelRuntime } = await import(pathToFileURL(`${pkg}/dist/core/model-runtime.js`).href);
+const { ReadOnlyAuthStorage } = await import(pathToFileURL(`${pkg}/dist/core/auth-storage.js`).href);
+const create = ModelRuntime.create.bind(ModelRuntime);
+ModelRuntime.create = (options = {}) => create({
+  ...options,
+  credentials: new ReadOnlyAuthStorage(`${process.env.FM_PI_AUTH_DIR}/auth.json`),
+  modelsPath: `${process.env.FM_PI_AUTH_DIR}/models.json`,
+  modelsStorePath: `${process.env.PI_CODING_AGENT_DIR}/models-store.json`,
+  allowModelNetwork: false,
+});
+await import(pathToFileURL(`${pkg}/dist/cli.js`).href);
+JS
+  cat > "$PROJECT/.pi/extensions/render-probe.ts" <<'TS'
+import { appendFileSync, writeFileSync } from "node:fs";
+import { VERSION } from "@earendil-works/pi-coding-agent";
+import branch from "./fm-branch-supervision.ts";
+export default function (pi) {
+  const log = (record) => appendFileSync(`${process.env.FM_PI_RENDER_EVIDENCE_DIR}/events.jsonl`, `${JSON.stringify(record)}\n`);
+  let exporting = false;
+  pi.events.on("firstmate:calm-presentation", (state) => { exporting = state.stockExportRendering; });
+  pi.on("session_start", (_event, ctx) => {
+    writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+    log({ type: "model", version: VERSION, provider: ctx.model?.provider, model: ctx.model?.id });
+  });
+  // Pi swallows renderer exceptions; observe the real registered callbacks
+  // without replacing their components or manufacturing tool results.
+  branch({ ...pi, registerTool(tool) {
+    for (const slot of ["renderCall", "renderResult"]) {
+      const render = tool[slot];
+      if (!render) continue;
+      tool[slot] = (...args) => {
+        try {
+          const result = render(...args);
+          log({ type: "render", tool: tool.name, slot, exporting });
+          return result;
+        } catch (error) {
+          log({ type: "render-error", tool: tool.name, slot, exporting, message: String(error) });
+          throw error;
+        }
+      };
+    }
+    pi.registerTool(tool);
+  } });
+  pi.on("tool_call", (event) => { log({ type: "tool_call", tool: event.toolName, args: event.input }); });
+  pi.on("tool_result", (event) => { log({ type: "tool_result", tool: event.toolName, content: event.content, isError: event.isError }); });
+}
+TS
+  : > "$evidence/events.jsonl"
+  : > "$evidence/terminal-write.log"
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" new-session -d -x 100 -y 160 -s "$SESSION" -c "$PROJECT" \
+    "env FM_HOME='$HOME_DIR' FM_ROOT_OVERRIDE='$PROJECT' PI_CODING_AGENT_DIR='$agent_dir' FM_PI_AUTH_DIR='$auth_dir' FM_PI_PACKAGE_DIR='$package_dir' FM_PI_RENDER_EVIDENCE_DIR='$evidence' PI_OFFLINE=1 PI_TELEMETRY=0 PI_TUI_WRITE_LOG='$evidence/terminal-write.log' node '$LAB/readonly-cli.mjs' --approve --session-dir '$LAB/sessions' --no-context-files --no-extensions --no-skills --no-prompt-templates --no-themes -e .pi/extensions/fm-calm.ts -e .pi/extensions/render-probe.ts --tools fm_branch_outcomes,fm_branch_processed --model openai-codex/gpt-5.6-sol --thinking low --tui-mode regular --append-system-prompt 'This is an isolated primary-session rendering test. For each supervision processing request, call fm_branch_outcomes with recent 1, then fm_branch_processed through the highest listed sequence. Do not repeat the outcome text in your reply. Finish with PRIMARY_RENDER_ACK.'; rc=\$?; printf 'PI_EXIT=%s\n' \"\$rc\"; sleep 300"
+
+  wait_for_text "PRIMARY_RENDER_ACK" 240 || fail "primary Pi did not complete the live outcome processing request"
+  wait_for_text "processed through seq 13" 60 || fail "live acknowledgement result was not rendered"
+  [ "$(< "$HOME_DIR/state/.branch-outcomes-processed")" = 13 ] || fail "live model did not acknowledge the durable captain outcome"
+  send_prompt "Call fm_branch_outcomes with recent 20, then reply exactly PRIMARY_OUTCOMES_ACK without repeating any outcome text."
+  wait_for_exact_line "PRIMARY_OUTCOMES_ACK" 240 || fail "primary Pi did not execute the outcome read"
+  capture > "$evidence/collapsed.txt"
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" capture-pane -ep -t "$SESSION" -S -600 > "$evidence/collapsed.ansi"
+  pane=$(capture)
+  # The separate captain entry is always complete; inspect only the read row.
+  pane=${pane##*fm_branch_outcomes}
+  printf '%s\n' "$pane" | grep -Fq "to expand" || fail "Calm-off result lacked Pi's expansion hint"
+  printf '%s\n' "$pane" | grep -Fq '"seq":12' && fail "collapsed tool preview exposed its tail"
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" send-keys -t "$SESSION" C-o
+  wait_for_text '"seq":12' 60 || fail "expanded tool result did not arrive"
+  capture > "$evidence/expanded.txt"
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" capture-pane -ep -t "$SESSION" -S -600 > "$evidence/expanded.ansi"
+  pane=$(capture)
+  pane=${pane##*fm_branch_outcomes}
+  printf '%s\n' "$pane" | grep -Fq '"seq":12' || fail "expanding the real tool row did not reveal its tail"
+
+  send_prompt "/calm"
+  for _ in {1..60}; do
+    "$TMUX" "$SOCKET_FLAG" "$SOCKET" capture-pane -p -t "$SESSION" > "$evidence/calm.txt"
+    if ! grep -Eq '"seq":12|^ fm_branch_outcomes$|processed through seq 13' "$evidence/calm.txt"; then
+      break
+    fi
+    sleep 0.5
+  done
+  grep -Fq '"seq":12' "$evidence/calm.txt" && fail "Calm left the outcome tool result visible"
+  grep -Fxq ' fm_branch_outcomes' "$evidence/calm.txt" && fail "Calm left the outcome tool call visible"
+  grep -Fq "processed through seq 13" "$evidence/calm.txt" && fail "Calm left the acknowledgement row visible"
+  send_prompt "/export $evidence/session.html"
+  wait_for_text "Session exported to:" 60 || fail "live Pi did not export its session"
+  [ -s "$evidence/session.html" ] || fail "live session HTML was not created"
+  send_prompt "/calm"
+  wait_for_text "processed through seq 13" 60 || fail "Calm-off did not restore acknowledgement rendering"
+  wait_for_text '"seq":12' 60 || fail "Calm-off did not restore outcome rendering"
+  capture > "$evidence/restored.txt"
+
+  # Exercise a real refused acknowledgement at a narrow, non-zero grid rather
+  # than manufacturing an error result for the renderer.
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" resize-window -t "$SESSION" -x 30 -y 160
+  send_prompt "For this refusal-path test, call fm_branch_processed with through 999 exactly once. This is intentionally outside the active processing request; do not call other tools or repair anything. Then reply exactly PRIMARY_REFUSAL_ACK."
+  wait_for_exact_line "PRIMARY_REFUSAL_ACK" 240 || fail "primary Pi did not complete the refused acknowledgement probe"
+  wait_for_text "acknowledgement refused:" 60 || fail "narrow terminal lost the real acknowledgement error"
+  capture > "$evidence/narrow-error.txt"
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" capture-pane -ep -t "$SESSION" -S -600 > "$evidence/narrow-error.ansi"
+  [ "$(< "$HOME_DIR/state/.branch-outcomes-processed")" = 13 ] || fail "refused acknowledgement advanced the processed marker"
+  "$TMUX" "$SOCKET_FLAG" "$SOCKET" resize-window -t "$SESSION" -x 100 -y 160
+  wait_for_text "seq 999 was not listed in the active processing request" 60 || fail "wide terminal did not restore the full refusal result"
+  send_prompt "/quit"
+  wait_for_text "PI_EXIT=0" 60 || fail "rendering probe did not exit cleanly"
+
+  # Assert the serialized session/export interfaces, not implementation text.
+  FM_PI_RENDER_EVIDENCE_DIR="$evidence" node --input-type=module <<'JS'
+import { readFileSync } from "node:fs";
+const root = process.env.FM_PI_RENDER_EVIDENCE_DIR;
+const events = readFileSync(`${root}/events.jsonl`, "utf8").trim().split("\n").map(JSON.parse);
+const model = events.find((event) => event.type === "model");
+if (model?.provider !== "openai-codex" || model?.model !== "gpt-5.6-sol") throw new Error(`unexpected actual model: ${JSON.stringify(model)}`);
+for (const tool of ["fm_branch_outcomes", "fm_branch_processed"]) {
+  if (!events.some((event) => event.type === "tool_call" && event.tool === tool)) throw new Error(`model never called ${tool}`);
+  if (!events.some((event) => event.type === "tool_result" && event.tool === tool && !event.isError)) throw new Error(`no successful live result for ${tool}`);
+  for (const slot of ["renderCall", "renderResult"]) {
+    if (!events.some((event) => event.type === "render" && event.tool === tool && event.slot === slot && !event.exporting)) throw new Error(`live ${tool} ${slot} never succeeded`);
+  }
+}
+const refusedCalls = events.filter((event) => event.type === "tool_call" && event.tool === "fm_branch_processed" && event.args?.through === 999);
+if (refusedCalls.length !== 1) throw new Error(`expected one refused acknowledgement call, got ${refusedCalls.length}`);
+if (!events.some((event) => event.type === "tool_result" && event.tool === "fm_branch_processed" && event.content.some((part) => part.type === "text" && part.text.includes("seq 999 was not listed in the active processing request")))) throw new Error("probe did not receive the real sequence-bound refusal");
+const unexpected = events.filter((event) => event.type === "render-error" && !(event.exporting && event.message === "Error: Use Pi stock export rendering"));
+if (unexpected.length) throw new Error(`renderer exception fallback: ${JSON.stringify(unexpected)}`);
+const html = readFileSync(`${root}/session.html`, "utf8");
+const match = html.match(/<script id="session-data" type="application\/json">([^<]+)<\/script>/);
+if (!match) throw new Error("export did not contain Pi's session-data interface");
+const exported = JSON.parse(Buffer.from(match[1], "base64").toString("utf8"));
+const messages = exported.entries.filter((entry) => entry.type === "message").map((entry) => entry.message);
+for (const tool of ["fm_branch_outcomes", "fm_branch_processed"]) {
+  if (!messages.some((message) => message.role === "toolResult" && message.toolName === tool && !message.isError)) throw new Error(`HTML export lost real ${tool} result`);
+}
+if (!messages.some((message) => message.role === "assistant" && message.provider === model.provider && message.model === model.model && message.content.some((part) => part.type === "toolCall"))) throw new Error("export did not retain real tool calls from the selected model");
+console.log(`ok - Pi ${model.version} live primary rendering, expansion, acknowledgement, Calm toggle, HTML export and narrow-grid refusal (${model.provider}/${model.model})`);
+JS
+}
+
+if [ "${FM_PI_LIVE_RENDER_ONLY:-0}" = 1 ]; then
+  run_outcome_rendering_regression
+  exit $?
+fi
+
 mkdir -p "$LAB"
 git clone -q "$ROOT" "$PROJECT"
 run_ahoy_transcript_regressions
@@ -263,7 +449,7 @@ cp "$ROOT/bin/fm-supervision-instructions.sh" "$PROJECT/bin/fm-supervision-instr
 chmod +x "$PROJECT/bin/fm-operational-input.sh"
 mkdir -p "$HOME_DIR/state" "$HOME_DIR/config"
 
-"$TMUX" -L "$SOCKET" new-session -d -s "$SESSION" -c "$PROJECT" \
+"$TMUX" "$SOCKET_FLAG" "$SOCKET" new-session -d -s "$SESSION" -c "$PROJECT" \
   "env FM_HOME='$HOME_DIR' FM_ROOT_OVERRIDE='$PROJECT' FM_POLL=1 FM_SIGNAL_GRACE=0 FM_HEARTBEAT=600 bash -lc 'printf \"%s\\n\" \"\$\$\" > \"\$FM_HOME/state/.lock\"; pi --approve --no-session --no-context-files --no-extensions -e .pi/extensions/fm-calm.ts -e .pi/extensions/fm-primary-turnend-guard.ts -e .pi/extensions/fm-primary-pi-watch.ts --model openai-codex/gpt-5.6-sol --thinking low; rc=\$?; printf \"PI_EXIT=%s\\n\" \"\$rc\"; sleep 300'"
 
 i=0
@@ -334,9 +520,9 @@ watcher_pid=$(sed -n '1p' "$pid_file")
 arm_pid=$(ps -p "$watcher_pid" -o ppid= | tr -d ' ')
 [ -n "$arm_pid" ] || fail "re-armed watcher parent was not live"
 
-"$TMUX" -L "$SOCKET" send-keys -t "$SESSION" -l '/quit'
+"$TMUX" "$SOCKET_FLAG" "$SOCKET" send-keys -t "$SESSION" -l '/quit'
 sleep 1
-"$TMUX" -L "$SOCKET" send-keys -t "$SESSION" Enter
+"$TMUX" "$SOCKET_FLAG" "$SOCKET" send-keys -t "$SESSION" Enter
 wait_for_text "PI_EXIT=0" 60 || fail "Pi did not exit cleanly"
 wait_pid_dead "$watcher_pid" || fail "watcher child survived clean Pi exit"
 wait_pid_dead "$arm_pid" || fail "arm child survived clean Pi exit"
