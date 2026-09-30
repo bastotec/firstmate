@@ -1,0 +1,23 @@
+FM_TEST_BEGIN 2026-09-30T20:48:11Z tests/fm-watch-recovery-loop.test.sh family=watcher-wake-lock expected_gate_skip=none
+T2_WATCH_OUTPUT=signal: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-watch-recovery-loop.8GNhG0/recovery-gap-successor/state/crew.status 
+T2_QUEUE_ROW=1790801293	2	signal	crew.status	signal: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-watch-recovery-loop.8GNhG0/recovery-gap-successor/state/crew.status
+ok - a resurfacing handling successor stays alive and supervises instead of going blind
+not ok - successor never observed the foreign queue
+tests/lib.sh: line 277: 31376 Killed: 9               PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" > "$out" 2>&1
+FM_TEST_END 2026-09-30T20:48:21Z tests/fm-watch-recovery-loop.test.sh exit=1 duration_ms=9776 gate_skip=false
+FM_TEST_BEGIN 2026-09-30T20:48:21Z tests/fm-wake-queue.test.sh family=watcher-wake-lock expected_gate_skip=none
+ok - an abandoned same-process lock hold is reclaimed; a parent's live hold is not
+ok - without BASHPID a subshell cannot release or reclaim its parent lock and owns its own hold
+ok - bounded acquire hands ownership to the waiting caller after contention
+ok - presentation lock waits are bounded and retriable without weakening acknowledgement atomicity
+ok - malformed presentation locks report acquire failure instead of contention
+not ok - first foreign queue observation failed: Terminated: 15
+Traceback (most recent call last):
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3SYGESWXE82KNPA2WQ3H3BW/tests/assets/watcher-queue-fixture.py", line 101, in <module>
+    raise AssertionError("watcher did not prove singleton/first-poll readiness within 5s")
+AssertionError: watcher did not prove singleton/first-poll readiness within 5s
+FM_TEST_END 2026-09-30T20:48:41Z tests/fm-wake-queue.test.sh exit=1 duration_ms=20158 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=2 skipped_gate=0 duration_ms=30617
+FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 duration_ms=29934 failed=2
+FM_TEST_SLOWEST rank=1 script=tests/fm-wake-queue.test.sh duration_ms=20158
+FM_TEST_SLOWEST rank=2 script=tests/fm-watch-recovery-loop.test.sh duration_ms=9776
