@@ -1,0 +1,20 @@
+FM_TEST_BEGIN 2026-10-01T23:22:08Z tests/fm-stream-agent-rust.test.sh family=unclassified expected_gate_skip=none
+ok: native_orders Python/Rust observable parity
+ok: command_values Python/Rust observable parity
+ok: command_limits Python/Rust observable parity
+ok: intervals Python/Rust observable parity
+ok: concurrent_status Python/Rust observable parity
+ok: generation_refusal Python/Rust observable parity
+ok: lifecycle Python/Rust observable parity
+ok: lost_result Python/Rust observable parity
+ok: lost_kill_result Python/Rust observable parity
+ok: redirected_background_exit Python/Rust observable parity
+ok: final_rejoin Python/Rust observable parity
+ok: contest Python/Rust observable parity
+ok: refusals Python/Rust observable parity
+ok: unsafe intervals refused before endpoint creation
+ok - Rust/Python agents: native receiver application, durable original-turn proofs, PTY I/O, results, restart, capability isolation, contests, exits and shutdown parity
+FM_TEST_END 2026-10-01T23:25:56Z tests/fm-stream-agent-rust.test.sh exit=0 duration_ms=227854 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=228243
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=227854 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-agent-rust.test.sh duration_ms=227854

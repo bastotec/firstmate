@@ -1,0 +1,7 @@
+python: persisted exact large-surrogate and 150-deep status; {"status_bytes": 500334, "sha256": "5da28c6f330af3e05dcbaecce04b8737315911d9222e37141d4d1c4f7e7b0321", "closed_by": "agent", "exit_code": 0}
+rust: persisted exact large-surrogate and 150-deep status; {"status_bytes": 500334, "sha256": "5da28c6f330af3e05dcbaecce04b8737315911d9222e37141d4d1c4f7e7b0321", "closed_by": "agent", "exit_code": 0}
+python: {"duplicate": "accepted-once", "ended": "unconfirmed-not-gone", "late": "accepted-original-only", "native": "accepted", "rejected": "refused", "stale": "refused", "unsupported": "refused-no-PTY-fallback"}
+python: status channel preserved: 'working: receiver sentinel\n'
+rust: {"duplicate": "accepted-once", "ended": "unconfirmed-not-gone", "late": "accepted-original-only", "native": "accepted", "rejected": "refused", "stale": "refused", "unsupported": "refused-no-PTY-fallback"}
+rust: status channel preserved: 'working: receiver sentinel\n'
+Actual HTTP status/order acknowledgements and authoritative final-close responses saved in agent-api-responses.json; cleanup assertions passed.

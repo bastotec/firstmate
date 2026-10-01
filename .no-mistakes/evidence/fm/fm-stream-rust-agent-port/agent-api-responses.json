@@ -1,0 +1,822 @@
+[
+  {
+    "method": "POST",
+    "path": "/v1/tasks/ab021599212eae3e9c4056dcf768c21c/status",
+    "http_status": 200,
+    "response": {
+      "appended": "ab021599212eae3e9c4056dcf768c21c",
+      "ok": true
+    },
+    "payload_bytes": 600034,
+    "payload_sha256": "8a7da7387d5a140ce4d9ef4968e16d3380666693ce1b47e083d2e6d3957e99ae"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/tasks/ab021599212eae3e9c4056dcf768c21c/status",
+    "http_status": 200,
+    "response": {
+      "appended": "ab021599212eae3e9c4056dcf768c21c",
+      "ok": true
+    },
+    "payload_bytes": 340,
+    "payload_sha256": "2fa40c08d883fbfc406116ef2c605673bbf1047d8e5832a9d5f273392cdd0b0d"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/tasks/ab021599212eae3e9c4056dcf768c21c/input",
+    "http_status": 200,
+    "response": {
+      "delivered": "ab021599212eae3e9c4056dcf768c21c",
+      "ok": true
+    },
+    "payload_bytes": 65,
+    "payload_sha256": "9c9d18bb16f0985dee24e1f00e03c65b21a829a09d090c3a6ef9795f49b64148"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/tasks/ab021599212eae3e9c4056dcf768c21c/input",
+    "http_status": 200,
+    "response": {
+      "delivered": "ab021599212eae3e9c4056dcf768c21c",
+      "ok": true
+    },
+    "payload_bytes": 34,
+    "payload_sha256": "f7f47a6f145c1f5c7b1c79109acb4bd2e69a48c83f7fd775b29476ffbba4f549"
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ab021599212eae3e9c4056dcf768c21c",
+    "http_status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.078,
+        "closed_at": 1790897346.849139,
+        "closed_by": "agent",
+        "cols": 200,
+        "created_at": 1790897345.664669,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3WSV6S9ZT5R2W4F482JHCY8/.test-tmp/evidence-parity/evidence-limits-python",
+        "endpoint_id": "ab021599212eae3e9c4056dcf768c21c",
+        "exit_code": 0,
+        "label": "worker",
+        "machine": "pilot",
+        "rows": 40,
+        "state_age_secs": 0.078,
+        "stream_offset": 285
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/ab021599212eae3e9c4056dcf768c21c",
+    "http_status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.079,
+        "closed_at": 1790897346.849139,
+        "closed_by": "agent",
+        "cols": 200,
+        "created_at": 1790897345.664669,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3WSV6S9ZT5R2W4F482JHCY8/.test-tmp/evidence-parity/evidence-limits-python",
+        "endpoint_id": "ab021599212eae3e9c4056dcf768c21c",
+        "exit_code": 0,
+        "label": "worker",
+        "machine": "pilot",
+        "rows": 40,
+        "state_age_secs": 0.079,
+        "stream_offset": 285
+      }
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/v1/tasks/e4bd9b3fa0e107d331e697d23df93965/status",
+    "http_status": 200,
+    "response": {
+      "appended": "e4bd9b3fa0e107d331e697d23df93965",
+      "ok": true
+    },
+    "payload_bytes": 600034,
+    "payload_sha256": "8a7da7387d5a140ce4d9ef4968e16d3380666693ce1b47e083d2e6d3957e99ae"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/tasks/e4bd9b3fa0e107d331e697d23df93965/status",
+    "http_status": 200,
+    "response": {
+      "appended": "e4bd9b3fa0e107d331e697d23df93965",
+      "ok": true
+    },
+    "payload_bytes": 340,
+    "payload_sha256": "2fa40c08d883fbfc406116ef2c605673bbf1047d8e5832a9d5f273392cdd0b0d"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/tasks/e4bd9b3fa0e107d331e697d23df93965/input",
+    "http_status": 200,
+    "response": {
+      "delivered": "e4bd9b3fa0e107d331e697d23df93965",
+      "ok": true
+    },
+    "payload_bytes": 65,
+    "payload_sha256": "9c9d18bb16f0985dee24e1f00e03c65b21a829a09d090c3a6ef9795f49b64148"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/tasks/e4bd9b3fa0e107d331e697d23df93965/input",
+    "http_status": 200,
+    "response": {
+      "delivered": "e4bd9b3fa0e107d331e697d23df93965",
+      "ok": true
+    },
+    "payload_bytes": 34,
+    "payload_sha256": "f7f47a6f145c1f5c7b1c79109acb4bd2e69a48c83f7fd775b29476ffbba4f549"
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/e4bd9b3fa0e107d331e697d23df93965",
+    "http_status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.06,
+        "closed_at": 1790897349.4327629,
+        "closed_by": "agent",
+        "cols": 200,
+        "created_at": 1790897347.992525,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3WSV6S9ZT5R2W4F482JHCY8/.test-tmp/evidence-parity/evidence-limits-rust",
+        "endpoint_id": "e4bd9b3fa0e107d331e697d23df93965",
+        "exit_code": 0,
+        "label": "worker",
+        "machine": "pilot",
+        "rows": 40,
+        "state_age_secs": 0.06,
+        "stream_offset": 285
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/e4bd9b3fa0e107d331e697d23df93965",
+    "http_status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.061,
+        "closed_at": 1790897349.4327629,
+        "closed_by": "agent",
+        "cols": 200,
+        "created_at": 1790897347.992525,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3WSV6S9ZT5R2W4F482JHCY8/.test-tmp/evidence-parity/evidence-limits-rust",
+        "endpoint_id": "e4bd9b3fa0e107d331e697d23df93965",
+        "exit_code": 0,
+        "label": "worker",
+        "machine": "pilot",
+        "rows": 40,
+        "state_age_secs": 0.061,
+        "stream_offset": 285
+      }
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 200,
+    "response": {
+      "delivered": true,
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "ok": true,
+      "order_id": "native-one",
+      "outcome": "accepted",
+      "requested_at": 1790897351.022121,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 214,
+    "payload_sha256": "8469028d06c272ff48465b288b9e566dca65f20409accb937963707aee5d4c60"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 200,
+    "response": {
+      "delivered": true,
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "ok": true,
+      "order_id": "native-one",
+      "outcome": "accepted",
+      "requested_at": 1790897351.022121,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 214,
+    "payload_sha256": "8469028d06c272ff48465b288b9e566dca65f20409accb937963707aee5d4c60"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 409,
+    "response": {
+      "error": "order_id_conflict",
+      "message": "order_id native-one is already bound to a different order",
+      "ok": false
+    },
+    "payload_bytes": 210,
+    "payload_sha256": "828b4bfdb6f24bdcb429a56ac40139e517b5ad215df9c2961eaaf907656d790c"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 404,
+    "response": {
+      "delivered": false,
+      "error": "execution_not_found",
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "message": "this hub holds no execution ffffffffffffffffffffffffffffffff for leaf pilot/worker (its current execution is 676b85adb27222090661cd59c16b7cba)",
+      "ok": false,
+      "order_id": "native-stale",
+      "outcome": "refused",
+      "reason": "execution_not_found",
+      "reason_message": "this hub holds no execution ffffffffffffffffffffffffffffffff for leaf pilot/worker (its current execution is 676b85adb27222090661cd59c16b7cba)",
+      "requested_at": 1790897351.680644,
+      "requested_execution_id": "ffffffffffffffffffffffffffffffff",
+      "worker_gone": false
+    },
+    "payload_bytes": 210,
+    "payload_sha256": "a9cc70d942e20826ee6f94e1277eb91d3cd5b9ffb3a9bec4675276d186021293"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 502,
+    "response": {
+      "delivered": false,
+      "error": "agent_refused",
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "message": "Deck rejected the steering message",
+      "ok": false,
+      "order_id": "native-rejected",
+      "outcome": "refused",
+      "reason": "agent_refused",
+      "reason_message": "Deck rejected the steering message",
+      "requested_at": 1790897351.681777,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 210,
+    "payload_sha256": "668c13e54d367d2c7744d82edc7db08f3e9adaa3974cf88afe8adc3d86f0ed61"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the agent on machine pilot took the steer but did not acknowledge it within 4s (last heard from 0.3s ago); whether it reached the worker is NOT known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897352.050215,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "2acdf3c68941767a5eae29a22534dd980c471253dd9210a9032d74d7f493519c"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897352.050215,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "2acdf3c68941767a5eae29a22534dd980c471253dd9210a9032d74d7f493519c"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897352.050215,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "2acdf3c68941767a5eae29a22534dd980c471253dd9210a9032d74d7f493519c"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897352.050215,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "2acdf3c68941767a5eae29a22534dd980c471253dd9210a9032d74d7f493519c"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897352.050215,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "2acdf3c68941767a5eae29a22534dd980c471253dd9210a9032d74d7f493519c"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897352.050215,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "2acdf3c68941767a5eae29a22534dd980c471253dd9210a9032d74d7f493519c"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897352.050215,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "2acdf3c68941767a5eae29a22534dd980c471253dd9210a9032d74d7f493519c"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 200,
+    "response": {
+      "delivered": true,
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "ok": true,
+      "order_id": "native-ended",
+      "outcome": "accepted",
+      "requested_at": 1790897352.050215,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "2acdf3c68941767a5eae29a22534dd980c471253dd9210a9032d74d7f493519c"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 502,
+    "response": {
+      "delivered": false,
+      "error": "agent_refused",
+      "execution_id": "676b85adb27222090661cd59c16b7cba",
+      "leaf_worker_id": "pilot/worker",
+      "message": "Deck has no --steer-dir interface; no PTY fallback",
+      "ok": false,
+      "order_id": "native-unsupported",
+      "outcome": "refused",
+      "reason": "agent_refused",
+      "reason_message": "Deck has no --steer-dir interface; no PTY fallback",
+      "requested_at": 1790897357.678265,
+      "requested_execution_id": "676b85adb27222090661cd59c16b7cba",
+      "worker_gone": false
+    },
+    "payload_bytes": 213,
+    "payload_sha256": "0faf0e262ca17241af2204d6c691615bfd7cd57b6c3ed3f3caeec7da6ead9a93"
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/676b85adb27222090661cd59c16b7cba",
+    "http_status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.119,
+        "closed_at": 1790897360.775872,
+        "closed_by": "agent",
+        "cols": 200,
+        "created_at": 1790897350.729599,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3WSV6S9ZT5R2W4F482JHCY8/.test-tmp/evidence-parity/evidence-native-python",
+        "endpoint_id": "676b85adb27222090661cd59c16b7cba",
+        "exit_code": -9,
+        "label": "worker",
+        "machine": "pilot",
+        "rows": 40,
+        "state_age_secs": 0.119,
+        "stream_offset": 201
+      }
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 200,
+    "response": {
+      "delivered": true,
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "ok": true,
+      "order_id": "native-one",
+      "outcome": "accepted",
+      "requested_at": 1790897362.5298738,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 214,
+    "payload_sha256": "e76f871720fdf4661266cfb469c8f9e3d01265c84bb753662d647989fd6a6133"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 200,
+    "response": {
+      "delivered": true,
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "ok": true,
+      "order_id": "native-one",
+      "outcome": "accepted",
+      "requested_at": 1790897362.5298738,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 214,
+    "payload_sha256": "e76f871720fdf4661266cfb469c8f9e3d01265c84bb753662d647989fd6a6133"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 409,
+    "response": {
+      "error": "order_id_conflict",
+      "message": "order_id native-one is already bound to a different order",
+      "ok": false
+    },
+    "payload_bytes": 210,
+    "payload_sha256": "d04913b8dcbe41ffdefd7db654aad411a6a1894294fd8904aa2d4f7c291858ae"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 404,
+    "response": {
+      "delivered": false,
+      "error": "execution_not_found",
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "message": "this hub holds no execution ffffffffffffffffffffffffffffffff for leaf pilot/worker (its current execution is c1fcc1e9b9dd0a4383a75bfad31b55cd)",
+      "ok": false,
+      "order_id": "native-stale",
+      "outcome": "refused",
+      "reason": "execution_not_found",
+      "reason_message": "this hub holds no execution ffffffffffffffffffffffffffffffff for leaf pilot/worker (its current execution is c1fcc1e9b9dd0a4383a75bfad31b55cd)",
+      "requested_at": 1790897363.4290009,
+      "requested_execution_id": "ffffffffffffffffffffffffffffffff",
+      "worker_gone": false
+    },
+    "payload_bytes": 210,
+    "payload_sha256": "3e64087d9da9b55af29b0ce9e9322c44480d9d07badb727ea6ef58145751b710"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 502,
+    "response": {
+      "delivered": false,
+      "error": "agent_refused",
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "message": "Deck rejected the steering message",
+      "ok": false,
+      "order_id": "native-rejected",
+      "outcome": "refused",
+      "reason": "agent_refused",
+      "reason_message": "Deck rejected the steering message",
+      "requested_at": 1790897363.4312582,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 210,
+    "payload_sha256": "0a70efd126e9aaa079c05bbe629bcf01e4dbd5b87849e1340c6b92e68d4c3d46"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the agent on machine pilot took the steer but did not acknowledge it within 4s (last heard from 0.2s ago); whether it reached the worker is NOT known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897363.949119,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "f0f0027cf3fb458d27f046f38005f4e2408dd369163f5a2dc8a05b9ca01c6b50"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897363.949119,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "f0f0027cf3fb458d27f046f38005f4e2408dd369163f5a2dc8a05b9ca01c6b50"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897363.949119,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "f0f0027cf3fb458d27f046f38005f4e2408dd369163f5a2dc8a05b9ca01c6b50"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897363.949119,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "f0f0027cf3fb458d27f046f38005f4e2408dd369163f5a2dc8a05b9ca01c6b50"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897363.949119,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "f0f0027cf3fb458d27f046f38005f4e2408dd369163f5a2dc8a05b9ca01c6b50"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897363.949119,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "f0f0027cf3fb458d27f046f38005f4e2408dd369163f5a2dc8a05b9ca01c6b50"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897363.949119,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "f0f0027cf3fb458d27f046f38005f4e2408dd369163f5a2dc8a05b9ca01c6b50"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 504,
+    "response": {
+      "delivered": null,
+      "error": "no_agent_ack",
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "ok": false,
+      "order_id": "native-ended",
+      "outcome": "unconfirmed",
+      "reason": "no_agent_ack",
+      "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known",
+      "requested_at": 1790897363.949119,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "f0f0027cf3fb458d27f046f38005f4e2408dd369163f5a2dc8a05b9ca01c6b50"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 200,
+    "response": {
+      "delivered": true,
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "ok": true,
+      "order_id": "native-ended",
+      "outcome": "accepted",
+      "requested_at": 1790897363.949119,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 216,
+    "payload_sha256": "f0f0027cf3fb458d27f046f38005f4e2408dd369163f5a2dc8a05b9ca01c6b50"
+  },
+  {
+    "method": "POST",
+    "path": "/v1/orders",
+    "http_status": 502,
+    "response": {
+      "delivered": false,
+      "error": "agent_refused",
+      "execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "leaf_worker_id": "pilot/worker",
+      "message": "Deck has no --steer-dir interface; no PTY fallback",
+      "ok": false,
+      "order_id": "native-unsupported",
+      "outcome": "refused",
+      "reason": "agent_refused",
+      "reason_message": "Deck has no --steer-dir interface; no PTY fallback",
+      "requested_at": 1790897369.702683,
+      "requested_execution_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "worker_gone": false
+    },
+    "payload_bytes": 213,
+    "payload_sha256": "1177adc0498a1cd1b9cef6b6ba803fdf2c780fb75c7ccdc18d5f0c74b0f8c8a6"
+  },
+  {
+    "method": "GET",
+    "path": "/v1/tasks/c1fcc1e9b9dd0a4383a75bfad31b55cd",
+    "http_status": 200,
+    "response": {
+      "ok": true,
+      "task": {
+        "agent_silent_for_secs": 0.054,
+        "closed_at": 1790897373.0335941,
+        "closed_by": "agent",
+        "cols": 200,
+        "created_at": 1790897362.201557,
+        "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3WSV6S9ZT5R2W4F482JHCY8/.test-tmp/evidence-parity/evidence-native-rust",
+        "endpoint_id": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+        "exit_code": -9,
+        "label": "worker",
+        "machine": "pilot",
+        "rows": 40,
+        "state_age_secs": 0.054,
+        "stream_offset": 201
+      }
+    }
+  }
+]

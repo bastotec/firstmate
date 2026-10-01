@@ -1,0 +1,3 @@
+Pre-fix 6abfef34: first status note contains 150 nested lists around ordinary; actual hub response:
+{'error': 'no_agent_ack', 'message': 'the agent on machine pilot took the status but did not acknowledge it within 4s (last heard from 0.7s ago); whether it reached the worker is NOT known', 'ok': False, 'taken': True}
+Expected regression reproduced through executable status API; fixture cleanup completed.

@@ -1,0 +1,15 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.30s
+     Running unittests src/main.rs (target/debug/deps/fm_stream_agent-588b6d463cf2019e)
+
+running 8 tests
+test hub_json::tests::malformed_command_strings_still_fail ... ok
+test hub_json::tests::nested_command_values_do_not_use_recursive_trees ... ok
+test hub_json::tests::composite_surrogates_are_scoped_to_command_responses ... ok
+test receiver::tests::failed_reservation_is_uncertain_and_retains_original_binding ... ok
+test pty::tests::own_group_and_session_are_refused ... ok
+test pty::tests::reaped_child_cannot_signal_a_bystander ... ok
+test hub_json::tests::large_surrogate_composite_has_exact_linear_rendering ... ok
+test receiver::tests::durable_reservation_recovery_never_borrows_a_successor ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+

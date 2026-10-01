@@ -1,0 +1,97 @@
+[
+  {
+    "binding": {
+      "order_id": "native-rejected",
+      "execution": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "turn": "original"
+    },
+    "text_sha256": "a0ce4d4edb0665e97edd114bb44616040c82c6539be27f2cfc3d28155fe42f57",
+    "command_ids": [
+      "7049aaca41b64853952fd9b01391fb3d"
+    ],
+    "results": {
+      "7049aaca41b64853952fd9b01391fb3d": {
+        "order_id": "native-rejected",
+        "result": {
+          "machine": "pilot",
+          "command_id": "7049aaca41b64853952fd9b01391fb3d",
+          "ok": false,
+          "error": "Deck rejected the steering message"
+        },
+        "expires_at": 1790898263.936844,
+        "retry_at": 1790897366.11825,
+        "backoff": 4.0,
+        "settled": true
+      }
+    }
+  },
+  {
+    "results": {
+      "b9d529ea5a094460be096823998c39f5": {
+        "order_id": "native-unsupported",
+        "result": {
+          "machine": "pilot",
+          "command_id": "b9d529ea5a094460be096823998c39f5",
+          "ok": false,
+          "error": "Deck has no --steer-dir interface; no PTY fallback"
+        },
+        "expires_at": 1790898269.877001,
+        "retry_at": 1790897372.04925,
+        "backoff": 4.0,
+        "settled": true
+      }
+    }
+  },
+  {
+    "binding": {
+      "order_id": "native-ended",
+      "execution": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "turn": "original"
+    },
+    "text_sha256": "bac84c9eae75ab6b042c365c33480d10787c549bc33ea5c60dd34473cbc3fd54",
+    "command_ids": [
+      "d1e0ff4a516b465fbc41f1a93e4a1118"
+    ],
+    "results": {
+      "d1e0ff4a516b465fbc41f1a93e4a1118": {
+        "order_id": "native-ended",
+        "result": {
+          "machine": "pilot",
+          "command_id": "d1e0ff4a516b465fbc41f1a93e4a1118",
+          "ok": true,
+          "error": ""
+        },
+        "expires_at": 1790898269.520725,
+        "retry_at": 1790897371.697642,
+        "backoff": 4.0,
+        "settled": true
+      }
+    }
+  },
+  {
+    "binding": {
+      "order_id": "native-one",
+      "execution": "c1fcc1e9b9dd0a4383a75bfad31b55cd",
+      "turn": "original"
+    },
+    "text_sha256": "8cddfde512cf3a0bf7b4b0b736459f5eb869c579ddfb82d2a392462d9862102e",
+    "command_ids": [
+      "7bc201ceaa004950881349b8e033c4d7"
+    ],
+    "results": {
+      "7bc201ceaa004950881349b8e033c4d7": {
+        "order_id": "native-one",
+        "result": {
+          "machine": "pilot",
+          "command_id": "7bc201ceaa004950881349b8e033c4d7",
+          "ok": true,
+          "error": ""
+        },
+        "expires_at": 1790898263.412838,
+        "retry_at": 1790897369.929819,
+        "backoff": 8.0,
+        "settled": true
+      }
+    }
+  }
+]

@@ -1,0 +1,8 @@
+Pre-fix 6abfef34: first status note contains 150 nested lists around ordinary; actual hub response:
+{'error': 'no_agent_ack', 'message': 'the agent on machine pilot took the status but did not acknowledge it within 4s (last heard from 0.7s ago); whether it reached the worker is NOT known', 'ok': False, 'taken': True}
+Traceback (most recent call last):
+  File "<stdin>", line 8, in <module>
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3WSV6S9ZT5R2W4F482JHCY8/tests/assets/stream-agent-rust-parity.py", line 271, in command_values
+    assert code == 200 and body["ok"] and body["appended"] == endpoint, body
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'error': 'no_agent_ack', 'message': 'the agent on machine pilot took the status but did not acknowledge it within 4s (last heard from 0.7s ago); whether it reached the worker is NOT known', 'ok': False, 'taken': True}
