@@ -265,8 +265,21 @@ watch_confirm_handling_delivery() {
     WATCH_HANDLING_WATCHER_PID=''
     return 0
   fi
-  host_failure 'successor watcher refused handling delivery confirmation'
-  return 1
+  # Refused: the successor watcher died before the turn could confirm it, or
+  # the recovery episode moved on to a newer generation. The wakes it would
+  # have announced are durable in the home queue (bin/fm-wake-drain.sh), so
+  # the persistent driver replaces its watcher and carries on instead of
+  # exiting - ending here took a remote secondmate down after every relaunch.
+  printf 'fm-deck-worker: successor watcher refused handling delivery confirmation; replacing the watcher\n' >&2
+  WATCH_HANDLING_GENERATION=''
+  WATCH_HANDLING_WATCHER_PID=''
+  WATCH_PREDECESSOR_ARM_PID=''
+  if [ -n "$WATCH_PID" ]; then
+    kill -TERM "$WATCH_PID" 2>/dev/null || true
+    wait "$WATCH_PID" 2>/dev/null || true
+    WATCH_PID=''
+  fi
+  watch_start
 }
 
 watch_start() {
