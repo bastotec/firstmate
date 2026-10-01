@@ -1,7 +1,9 @@
 //! Independent pilot port. The Python deployment remains the default.
 mod command_value;
+mod commands;
 mod hub_json;
 mod pty;
+mod receiver;
 use base64::Engine;
 use fm_stream_wire::{is_machine_name, protocol_of_health, HUB_PROTOCOL};
 use pty::Pty;
@@ -297,7 +299,7 @@ struct Agent {
 }
 impl Agent {
     fn registration(&self) -> Value {
-        json!({"endpoint_id":self.id,"machine":self.options.machine,"label":self.options.label,"cwd":self.options.cwd,"rows":self.options.rows,"cols":self.options.cols,"capabilities":[CAPABILITY],"protocol":HUB_PROTOCOL})
+        json!({"endpoint_id":self.id,"machine":self.options.machine,"label":self.options.label,"cwd":self.options.cwd,"rows":self.options.rows,"cols":self.options.cols,"capabilities":[CAPABILITY,"native_steering_receiver"],"protocol":HUB_PROTOCOL})
     }
     fn state(&self) -> Value {
         let deadline = *self.hub.deadline.lock().unwrap();
@@ -496,83 +498,6 @@ impl Agent {
                 Ok(())
             }
             kind => Err(Error::Other(format!("unknown command kind {kind:?}"))),
-        }
-    }
-    fn acknowledge(&self, command: &Value, result: Result<(), Error>) {
-        let body = json!({"machine":self.options.machine,"command_id":command["command_id"],"ok":result.is_ok(),"error":result.err().map(|e| e.to_string()).unwrap_or_default()});
-        let deadline = Instant::now() + Duration::from_secs(RESULT_RETRY_SECS);
-        let mut backoff: f64 = 2.0;
-        loop {
-            let attempted = Instant::now();
-            match self.hub.call(
-                "POST",
-                "/v1/agent/results",
-                Some(&body),
-                Duration::from_secs(RESULT_POST_SECS),
-            ) {
-                Ok(_) | Err(Error::Rejected) => return,
-                Err(_) => (),
-            }
-            let until = self
-                .result_deadline
-                .lock()
-                .unwrap()
-                .unwrap_or(deadline)
-                .min(deadline);
-            if attempted >= until {
-                return;
-            }
-            if Instant::now() >= until {
-                continue;
-            } // One final attempt after deadline.
-              // Stop must not discard an applied result. Shutdown's deadline, not
-              // process presence, bounds reconciliation; wake on deadline publication.
-            self.wake.wait(
-                self.wake.snapshot(),
-                backoff.min(
-                    until
-                        .saturating_duration_since(Instant::now())
-                        .as_secs_f64(),
-                ),
-                &AtomicBool::new(false),
-            );
-            backoff = (backoff * 2.0).min(60.0);
-        }
-    }
-    fn commands(&self) {
-        let path = format!(
-            "/v1/agent/commands?machine={}&endpoint={}&wait={}",
-            self.options.machine, self.id, self.options.poll_secs as u64
-        );
-        let mut backoff: f64 = 2.0;
-        while !self.stop.load(Ordering::SeqCst) && !self.stood_down.load(Ordering::SeqCst) {
-            let generation = self.wake.snapshot();
-            match self.hub.call(
-                "GET",
-                &path,
-                None,
-                Duration::from_secs_f64(self.options.poll_secs + 15.0),
-            ) {
-                Ok(answer) => {
-                    backoff = 2.0;
-                    if let Some(commands) = answer["commands"].as_array() {
-                        for command in commands {
-                            self.acknowledge(command, self.apply(command, &answer));
-                        }
-                    }
-                }
-                Err(Error::Superseded) => {
-                    self.stand_down();
-                    return;
-                }
-                Err(_) => {
-                    if self.wake.wait(generation, backoff, &self.stop) {
-                        backoff = 2.0;
-                    } else {
-                        backoff = (backoff * 2.0).min(60.0);
-                    }
-                }
-            }
         }
     }
     fn abandon(&self) {

@@ -14,3 +14,4 @@ libc = "0.2"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
 signal-hook = "0.3"
+sha2 = "0.10"

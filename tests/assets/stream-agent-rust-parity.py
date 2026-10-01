@@ -572,8 +572,126 @@ def refusals(executable, name):
     return outputs
 
 
+def native_orders(executable, name):
+    """Real publishers + hub + landed driver CLI; only native handled proves ack.
+
+    This pins the receiver's public filesystem interface, not Deck vendor
+    interpretation. The opt-in real Deck guard remains fm-stream-deck-live-e2e.
+    """
+    rig = Rig(name)
+    try:
+        ready, dropped = rig.dir / "native-proxy-ready", rig.dir / "native-result-dropped"
+        rig.spawn([sys.executable, str(ROOT / "tests/assets/stream-drop-response-proxy.py"),
+                   "--target", rig.url, "--drop-path", "/v1/agent/results",
+                   "--drop-number", "1", "--dropped-file", str(dropped),
+                   "--ready-file", str(ready)])
+        wait(lambda: ready.exists() and ready.read_text().strip(), "native result proxy readiness")
+        host, port = ready.read_text().split()
+        proc, endpoint, status = rig.agent(executable, url=f"http://{host}:{port}")
+        rig.remember_worker(endpoint)
+        generation = call(rig.url, "GET", "/v1/health")[1]["generation"]
+        state, task = status.parent, status.stem
+        root = state / (task + ".inbox") / ("deck-" + endpoint)
+        inbox = state / (task + ".inbox")
+        before = b"working: receiver sentinel\n"
+        status.write_bytes(before)
+        def driver(action, turn="", supported="1"):
+            completed = subprocess.run([sys.executable, str(ROOT / "bin/fm_stream_deck.py"),
+                action, str(state), task, endpoint, turn, supported],
+                env=ENV, capture_output=True, text=True, timeout=10, check=True)
+            return Path(completed.stdout.strip()) if action == "start" else None
+        def order(order_id, text, execution=endpoint):
+            return call(rig.url, "POST", "/v1/orders", {
+                "leaf_worker_id": "pilot/worker", "execution_id": execution,
+                "order_id": order_id, "hub_generation": generation,
+                "text": text, "submit": True})
+        def submit(order_id, text):
+            replies = []
+            thread = threading.Thread(target=lambda: replies.append(order(order_id, text)))
+            thread.start()
+            return thread, replies
+        def projection_for(projection, text):
+            def find():
+                for path in projection.glob("*.msg"):
+                    if path.read_bytes().startswith(text.encode() + b"\n\nAfter handling"):
+                        return path
+            return wait(find, "native original-turn projection", 250)
+        def ack(projection, message, rejected=False):
+            destination = projection / ("rejected" if rejected else "handled")
+            destination.mkdir(exist_ok=True)
+            message.rename(destination / message.name)
+        def settle(thread, replies):
+            thread.join(timeout=12)
+            assert not thread.is_alive() and replies, "order response did not settle"
+            return replies[0]
+        first = driver("start", "original")
+        text = "α\r\nβ\n\n"
+        thread, replies = submit("native-one", text)
+        message = projection_for(first, text)
+        # Inbox acknowledgement alone is NOT native application proof.
+        source = wait(lambda: next(inbox.glob("*.msg"), None), "durable source")
+        original_bytes = source.read_bytes()
+        (inbox / "handled").mkdir(exist_ok=True)
+        source.rename(inbox / "handled" / source.name)
+        time.sleep(0.3)
+        assert thread.is_alive(), "ordinary inbox movement falsely acknowledged native application"
+        ack(first, message)
+        code, answer = settle(thread, replies)
+        assert code == 200 and answer["outcome"] == "accepted" and answer["delivered"] is True, (code, answer)
+        assert text.encode() in original_bytes
+        wait(dropped.exists, "native applied-result response loss")
+        assert status.read_bytes() == before, "steering changed the status channel"
+        assert order("native-one", text)[1]["outcome"] == "accepted"
+        assert not list(first.glob("*.msg")), "duplicate replayed a native message"
+        code, answer = order("native-one", "conflicting text")
+        assert code == 409 and answer["error"] == "order_id_conflict", (code, answer)
+        code, answer = order("native-stale", "must not apply", "f" * 32)
+        assert code != 200 and answer["delivered"] is False and not list(first.glob("*.msg"))
+        # Rejecting the native projection is a confirmed refusal, not acceptance.
+        thread, replies = submit("native-rejected", "reject this")
+        message = projection_for(first, "reject this")
+        ack(first, message, rejected=True)
+        code, answer = settle(thread, replies)
+        assert code != 200 and answer["delivered"] is False, (code, answer)
+        # Ending the original turn leaves the order unconfirmed. Neither process
+        # presence nor starting a successor may borrow its turn for that order.
+        text = "unconfirmed original"
+        thread, replies = submit("native-ended", text)
+        message = projection_for(first, text)
+        driver("end")
+        successor = driver("start", "successor")
+        code, answer = settle(thread, replies)
+        assert code != 200 and answer["outcome"] == "unconfirmed" and answer["worker_gone"] is False, (code, answer)
+        time.sleep(0.3)
+        assert not list(successor.glob("*.msg")), "ended-turn order migrated to successor"
+        assert proc.poll() is None, "uncertainty killed the worker"
+        # Late handled proof from ORIGINAL turn is valid, even with a successor.
+        ack(first, message)
+        wait(lambda: order("native-ended", text)[1]["outcome"] == "accepted", "late original-turn handled proof", 150)
+        assert not list(successor.glob("*.msg"))
+        driver("end")
+        unsupported = driver("start", "unsupported", "0")
+        code, answer = order("native-unsupported", "do not type")
+        assert code != 200 and answer["delivered"] is False and not list(unsupported.glob("*.msg")), (code, answer)
+        # Result records are durable and share the existing per-order reservation.
+        records = wait(lambda: list(root.glob("order-*.json")), "receiver result records")
+        saved = [json.loads(path.read_text()) for path in records]
+        assert any(record.get("binding", {}).get("turn") == "original" and
+                   any(result["result"]["ok"] for result in record.get("results", {}).values())
+                   for record in saved)
+        driver("end")
+        proc.terminate()
+        proc.wait(timeout=15)
+        assert rig.task(endpoint)["closed_by"] == "agent"
+        return {"native": "accepted", "duplicate": "accepted-once", "stale": "refused",
+                "rejected": "refused", "ended": "unconfirmed-not-gone",
+                "late": "accepted-original-only", "unsupported": "refused-no-PTY-fallback"}
+    finally:
+        rig.close()
+
+
 if __name__ == "__main__":
-    for function in (command_values, intervals, concurrent_status, generation_refusal, lifecycle, lost_result, lost_kill_result, redirected_background_exit, final_rejoin, contest, refusals):
+    for function in (native_orders, command_values, intervals, concurrent_status, generation_refusal, lifecycle, lost_result, lost_kill_result, redirected_background_exit, final_rejoin, contest, refusals):
         python = function(AGENTS[0], function.__name__ + "-python")
         rust = function(AGENTS[1], function.__name__ + "-rust")
         assert python == rust, (function.__name__, python, rust)

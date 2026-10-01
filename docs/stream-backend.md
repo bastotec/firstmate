@@ -137,11 +137,13 @@ target/release/fm-stream-agent serve --hub "$PILOT_HUB" \
 
 Do not use a deployed fleet's label or hub for this test: no backend launcher is switched, and the Python agent remains deployed and available.
 The port uses the shared wire protocol with Reqwest/rustls, Serde JSON, POSIX PTYs, and signal-hook; it needs no Python interpreter at runtime.
+Keep the pilot binary under this repository's `target/` tree: native source publication invokes the existing `bin/fm-task-inbox-lib.sh` writer rather than duplicating its sequence and record contract.
+`crates/fm-stream-agent/src/receiver.rs` implements the native Deck application interface described under [Command path](#command-path); `crates/fm-stream-agent/src/commands.rs` owns the Rust scheduler and durable result reconciliation.
 HTTP redirects are refused rather than forwarding endpoint credentials to a redirect target; point directly at the final HTTP or HTTPS hub URL.
 Option names are full names rather than argparse abbreviations, geometry is bounded to the kernel's unsigned 16-bit values, and heartbeat/poll intervals must be finite, nonnegative, and representable by Rust's monotonic timers.
 Successful command responses preserve the Python hub's non-finite numeric values as well as ordinary JSON values; other hub responses use strict JSON decoding.
-`tests/fm-stream-agent-rust.test.sh` compares both executable agents against disposable Python hubs for PTY input/output, Python command-value conversion including non-finite numbers, zero and multi-day scheduling intervals, concurrent complete local status records, result-response loss, restart/rejoin, stale hub-generation order refusal, revoked private capability refusal, stand-down contests, child exits with fully redirected background jobs, and signal shutdown.
-`cargo test -p fm-stream-agent` covers the process-group signal ownership boundary with real child processes.
+`tests/fm-stream-agent-rust.test.sh` compares both executable agents against disposable Python hubs for native execution-bound acceptance, duplicate and conflict refusal, stale execution, byte-exact durable sources, handled/rejected application proof, original-turn uncertainty and late acknowledgement without successor delivery, unsupported receiver refusal, PTY input/output, Python command-value conversion including non-finite numbers, zero and multi-day scheduling intervals, concurrent complete local status records, result-response loss, restart/rejoin, stale hub-generation order refusal, revoked private capability refusal, stand-down contests, child exits with fully redirected background jobs, and signal shutdown.
+`cargo test -p fm-stream-agent` covers durable reservation/result recovery, original-turn binding after storage failure, and the process-group signal ownership boundary through executable filesystem and process interfaces.
 Production replacement still requires launcher selection, installed-harness liveness verification through the Rust publisher, and parity with any subsequent Python protocol changes before changing the default.
 
 ## Tail adapters
@@ -199,7 +201,7 @@ While an id remains there, an identical resend is answered from the original ord
 A retry after more than 512 newer orders is not guaranteed to be deduplicated.
 An order whose membership remains unresolved keeps that binding, while an identical resend may retry placement because no command was created.
 A taken command remains eligible for a late agent acknowledgement and a completed result remains idempotently answerable for at least 15 minutes, and an endpoint whose worker exits while acknowledgement is retrying keeps its publisher alive while the result can still settle.
-Result-post retries do not block local Deck reconciliation or later command polling; `bin/fm-stream-agent.py` owns their scheduling and durable retry metadata.
+Result-post retries do not block local Deck reconciliation or later command polling; `bin/fm-stream-agent.py` and the pilot's `crates/fm-stream-agent/src/commands.rs` own their respective scheduling and durable retry metadata.
 A definitive result rejection - including capability revocation after the hub closes the endpoint - or retry expiry ends retrying so the closing frame can publish, while the caller's unresolved order remains unconfirmed.
 A hub restart empties its journal along with the registry, so a resend has no hub-side delivery history.
 After the same endpoint re-registers, retained Deck receiver records can still reconcile the same order id against its original turn; other endpoints have no such local native proof.
