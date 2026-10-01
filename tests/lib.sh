@@ -590,6 +590,16 @@ fm_git_identity() {
   export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
 }
 
+# fm_git_foreground_maintenance <repo>: keep automatic Git housekeeping owned
+# by the fixture command that starts it. A detached repack can remove loose
+# source objects while a subsequent local clone is copying them, or outlive the
+# fixture's cleanup. Keep maintenance enabled, but join it before proceeding.
+# maintenance.autoDetach covers current Git; gc.autoDetach covers older Git.
+fm_git_foreground_maintenance() {
+  git -C "$1" config maintenance.autoDetach false || return
+  git -C "$1" config gc.autoDetach false
+}
+
 # fm_git_init_commit <dir>: create a git repo at <dir> with a README and one
 # commit. Uses an inline identity so it works whether or not fm_git_identity was
 # called. The initial branch is pinned rather than inherited from

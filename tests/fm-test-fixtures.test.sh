@@ -19,6 +19,59 @@ set -u
 
 TMP_ROOT=$(fm_test_tmproot fm-test-fixtures)
 
+test_git_maintenance_is_owned_through_local_clone() (
+  local dir="$TMP_ROOT/maintenance" repo real_git owner head
+  repo="$dir/source"
+  real_git=$(command -v git)
+  owner=$$
+  mkdir -p "$repo" "$dir/exec"
+  git -C "$repo" init -q -b main --object-format=sha1
+  fm_git_foreground_maintenance "$repo" || fail 'could not own automatic maintenance'
+  git -C "$repo" config maintenance.strategy gc
+  git -C "$repo" config gc.auto 1
+  fm_git_identity
+
+  # Two real SHA-1 blobs in Git's sampled loose-object bucket (17) force
+  # automatic GC even on older Git, whose normal threshold masks the race.
+  printf 'fixture maintenance 216\n' > "$repo/one"
+  printf 'fixture maintenance 234\n' > "$repo/two"
+  git -C "$repo" add one two
+
+  # Observe the real repack's process ancestry, not Git's config or a delay.
+  # Detachment severs the fixture owner's ancestry even when housekeeping
+  # happens to finish before clone, so that masking condition cannot pass.
+  cat > "$dir/exec/git" <<'SH'
+#!/usr/bin/env bash
+set -eu
+if [ "${1:-}" = repack ] && [ "$PWD" = "$FM_FIXTURE_REPO" ]; then
+  cursor=$PPID
+  owned=detached
+  while [ "$cursor" -gt 1 ]; do
+    if [ "$cursor" = "$FM_FIXTURE_OWNER" ]; then owned=owned; break; fi
+    cursor=$(ps -p "$cursor" -o ppid= | tr -d '[:space:]')
+    [ -n "$cursor" ] || break
+  done
+  printf '%s\n' "$owned" > "$FM_FIXTURE_PROBE/owner"
+  "$FM_FIXTURE_GIT" "$@"
+  printf 'completed\n' > "$FM_FIXTURE_PROBE/repack"
+  exit 0
+fi
+exec "$FM_FIXTURE_GIT" "$@"
+SH
+  chmod +x "$dir/exec/git"
+  export GIT_EXEC_PATH="$dir/exec" FM_FIXTURE_REPO="$repo" FM_FIXTURE_OWNER="$owner"
+  export FM_FIXTURE_GIT="$real_git" FM_FIXTURE_PROBE="$dir"
+  git -C "$repo" commit -qm 'maintenance fixture' || fail 'fixture commit failed'
+  assert_grep owned "$dir/owner" 'automatic repack escaped the fixture owner'
+  assert_grep completed "$dir/repack" 'commit returned before its automatic repack completed'
+  head=$(git -C "$repo" rev-parse HEAD)
+  git clone -q "$repo" "$dir/clone" || fail 'owned source clone failed'
+  assert_equals "$head" "$(git -C "$dir/clone" rev-parse HEAD)" 'clone lost the source commit'
+  git -C "$dir/clone" fsck --full > "$dir/fsck" 2>&1 || fail 'clone has missing objects'
+  assert_absent "$dir/clone/.git/objects/info/alternates" 'clone borrowed unowned objects'
+  pass 'automatic Git repack stays owned and finishes before a complete local clone'
+)
+
 test_git_config_isolation() (
   local dir="$TMP_ROOT/git-config" helper jobs timeout fakebin rc
   mkdir -p "$dir/runner/bin" "$dir/runner/tests"
@@ -279,6 +332,7 @@ test_spawn_home_layout() {
   pass "spawn-home layout writes harness pin, beat, and brief"
 }
 
+test_git_maintenance_is_owned_through_local_clone || fail 'Git fixture maintenance ownership'
 test_git_config_isolation || fail "Git fixture config isolation"
 test_touch_epoch_preserves_repeated_dst_hour
 test_no_mistakes_version_constant
