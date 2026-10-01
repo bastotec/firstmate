@@ -49,7 +49,11 @@
 # Exactly one Deck turn runs at a time, including stdin and watcher turns.
 # Supervision uses child processes and stdin, never backend-specific injection.
 # Startup, lock, watcher, and event-capture failures publish failure status and
-# stop the driver.
+# stop the driver, except a refused handling-delivery confirmation: the driver
+# logs that refusal to stderr, stops the remaining arm child, starts a fresh
+# watcher with no predecessor claim, and continues the turn without publishing
+# failed status. Wakes remain durable in the home queue for bin/fm-wake-drain.sh;
+# this recovery does not fix the cause of a successor watcher's death.
 # A failed turn is recorded and published the same way but does NOT stop the
 # driver: a persistent supervisor outlives a gateway, quota, or model failure and
 # returns to its prompt, keeping its Deck session where one exists, so the next
@@ -265,11 +269,8 @@ watch_confirm_handling_delivery() {
     WATCH_HANDLING_WATCHER_PID=''
     return 0
   fi
-  # Refused: the successor watcher died before the turn could confirm it, or
-  # the recovery episode moved on to a newer generation. The wakes it would
-  # have announced are durable in the home queue (bin/fm-wake-drain.sh), so
-  # the persistent driver replaces its watcher and carries on instead of
-  # exiting - ending here took a remote secondmate down after every relaunch.
+  # A dead successor or moved recovery generation invalidates the handoff,
+  # not the durable wakes. The header owns the nonfatal replacement contract.
   printf 'fm-deck-worker: successor watcher refused handling delivery confirmation; replacing the watcher\n' >&2
   WATCH_HANDLING_GENERATION=''
   WATCH_HANDLING_WATCHER_PID=''

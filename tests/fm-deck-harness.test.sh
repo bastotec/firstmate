@@ -1466,8 +1466,8 @@ def wait_for(check, label):
         if p.poll() is not None: raise AssertionError(label+' - host exited: '+(root/'pane').read_text())
         time.sleep(.1)
     raise AssertionError(label+': '+(root/'pane').read_text())
-with (root/'pane').open('w') as output:
-    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=env, text=True, start_new_session=True)
+with (root/'pane').open('w') as output, (root/'stderr').open('w') as errors:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=errors, env=env, text=True, start_new_session=True)
     try:
         wait_for(lambda: len(rows()) == 1, 'first turn')
         # The successor watcher of the next wake refuses its handoff, the way
@@ -1480,13 +1480,23 @@ with (root/'pane').open('w') as output:
         assert 'Firstmate instruction waiting:' in rows()[1]['prompt']
         assert 'actionable wake' in rows()[1]['inbox']
         assert p.poll() is None, 'the driver exited on a refused confirmation: '+(root/'pane').read_text()
-        assert 'replacing the watcher' in (root/'pane').read_text()
+        assert 'replacing the watcher' in (root/'stderr').read_text(), 'the refusal was not logged to stderr'
+        assert 'replacing the watcher' not in (root/'pane').read_text(), 'the refusal leaked into stdout'
         assert arms()[-1].endswith('predecessor=none'), 'the replacement watcher claimed the refused predecessor'
+        refused_pid = int((home/'handling-refused').read_text().split('watcher=', 1)[1].strip())
+        try:
+            os.kill(refused_pid, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            raise AssertionError('the refused watcher was left running beside its replacement')
         status = (root/'parent/host.status').read_text() if (root/'parent/host.status').exists() else ''
-        assert 'refused handling delivery confirmation' not in status, 'a recovered refusal was published as a failure'
-        # The replacement still rings.
+        assert not any(x.startswith('failed:') for x in status.splitlines()), 'a recovered refusal was published as a failure'
+        # The replacement still rings and the driver retains its Deck session.
         (home/'trigger').touch()
         wait_for(lambda: len(rows()) == 3, 'wake through the replacement watcher')
+        assert 'actionable wake' in rows()[2]['inbox'], 'the replacement wake was not delivered'
+        assert all(x['resumed'] and x['session'] == rows()[0]['session'] for x in rows()[1:]), 'the refusal lost the Deck session'
         p.stdin.write('/quit\n'); p.stdin.flush()
         assert p.wait(timeout=20) == 0, 'the surviving driver did not stop on /quit'
     finally:
