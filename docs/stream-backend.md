@@ -190,13 +190,13 @@ Run `command` on the host that runs the hub, reading its stdin from wherever the
 The same-origin, local-only UI adapter may call `bin/fm-ui-host-control.py` only after checking its per-launch browser-session authorization and authority for that exact action.
 This executable is a host-side routing surface, not an HTTP endpoint or an authentication substitute.
 Its header and `--help` own the operator-maintained 0600 binding registry, exact target resolution, and supported verbs.
-The host resolves `(machine, label)` to an explicit `FM_HOME` and exact task id; neither the registry's home paths nor control-class credentials are supplied by or returned to the browser.
+The host resolves `(machine, label)` to an explicit `FM_HOME` and exact task or captain-call binding; neither the registry's home paths nor control-class credentials are supplied by or returned to the browser.
 Unknown, ambiguous, or stale bindings refuse before dispatch.
 Lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or remote-secondmate refusal checks.
 The host adapter must keep backend credentials in host-only 0600 files and must never send them in page content, browser environment, or browser storage.
 
 Decision actions carry the captain's authenticated exact answer through the host route to the existing owner: `resolve-key` delegates to `fm-send --resolve-key`, and `answer` / `release` delegates to `fm-captain-hold answer` with the requested close mode.
-The `command` entry point returns the owner's success as a correlated NDJSON `command_ack`; uncertain owner errors remain pending rather than being misreported as proof that nothing changed.
+The sole executable entry point is `command`, returning the owner's success as a correlated NDJSON `command_ack`; uncertain owner errors remain pending rather than being misreported as proof that nothing changed.
 The browser never writes state directly, supplies an owner-home path, or invokes an owner command itself.
 `note` remains only the supervisor-note path through `bin/fm-inbox.sh`, not a substitute for a decision action.
 A crew-owned `no-mistakes axi respond` remains worker-owned and is never invoked by this host route.
@@ -204,8 +204,9 @@ Existing owner guards remain authoritative, including endpoint retirement and st
 
 Full primary control is not yet implemented.
 The runtime/control-plane owner owns these explicit capability gaps: primary interrupt, primary exit/shutdown, primary relaunch/restart, primary missing-endpoint recovery, and primary native mid-turn steering.
-Primary supervisor bindings currently accept notes only; decision bindings address the exact captain-call id in the owning home's backlog instead of pretending it is a worker endpoint.
-Real primary shutdown/restart and any other live fleet operation are outside this change's verification scope; no worker-only route is described as satisfying those missing primary capabilities.
+Primary decision control is supported through an explicit host-registry captain-call binding under the primary owner's `FM_HOME`, while task-key decisions use an exact task binding in their owning home.
+Notes-only and worker-only bindings do not constitute full primary control.
+Real primary shutdown/restart and any other live fleet operation remain forbidden in this change's scope; the runtime/control-plane owner must supply the missing lifecycle capabilities separately.
 
 The Bridge command plane remains `steer` only.
 The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.

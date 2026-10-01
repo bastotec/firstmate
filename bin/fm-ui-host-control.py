@@ -1,15 +1,7 @@
 #!/usr/bin/env python3
 """Host-only owner routing for a same-origin, local UI adapter.
 
-Usage: fm-ui-host-control.py --registry FILE --machine NAME --label NAME
-                           note --text TEXT
-       fm-ui-host-control.py --registry FILE --machine NAME --label NAME
-                           interrupt|exit|relaunch|recover-missing [--note TEXT]
-       fm-ui-host-control.py --registry FILE --machine NAME --label NAME
-                           resolve-key --key KEY --text EXACT_ANSWER
-       fm-ui-host-control.py --registry FILE --machine NAME --label NAME
-                           answer|release --text EXACT_ANSWER
-       fm-ui-host-control.py --registry FILE command
+Usage: fm-ui-host-control.py --registry FILE command
 
 command consumes NDJSON command records with command_id, identity containing
 parent_mate_id and leaf_worker_id (machine/label), and payload containing kind
@@ -25,9 +17,14 @@ FILE is an operator-maintained, host-only regular file owned by this uid with
 mode 0600, containing a JSON array of bindings:
   {"machine": NAME, "label": NAME, "fm_home": ABSOLUTE_PATH,
    "task_id": EXACT_TASK_ID}
-A primary supervisor has task_id null and accepts only note, not lifecycle
-verbs. Every (machine, label) and (fm_home, task_id) must be unique. Unknown,
-ambiguous, malformed, or stale bindings refuse before dispatch. For a task,
+A primary supervisor has task_id null and accepts note, plus answer/release
+when its binding includes "captain_call_id": EXACT_CAPTAIN_CALL_ID in that
+home's backlog. The browser cannot select or override that id. Task-key
+resolve-key actions require a task_id binding in the decision-owning home.
+Primary interrupt, exit/shutdown, relaunch/restart, recover-missing, and native
+mid-turn steering are unsupported. Every (machine, label) and
+(fm_home, task_id or captain_call_id) must be unique. Unknown, ambiguous,
+malformed, or stale bindings refuse before dispatch. For a task,
 label must equal fm-<task_id>, the stream publisher's label. The home's
 config/stream-machine (default hostname) must match machine. Worker actions
 require regular owner metadata; answer/release resolve the registered exact
@@ -82,7 +79,9 @@ def bindings(filename):
         raise Refused('registry must be an array of bindings')
     leaves, owners = set(), set()
     for row in rows:
-        if not isinstance(row, dict) or set(row) != {'machine', 'label', 'fm_home', 'task_id'}:
+        required = {'machine', 'label', 'fm_home', 'task_id'}
+        if (not isinstance(row, dict) or not required <= set(row)
+                or set(row) - required - {'captain_call_id'}):
             raise Refused('malformed registry binding')
         for field in ('machine', 'label'):
             if not isinstance(row[field], str) or not re.fullmatch(r'[A-Za-z0-9._-]+', row[field]):
@@ -94,10 +93,15 @@ def bindings(filename):
         if task is not None and (not isinstance(task, str)
                                  or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', task)):
             raise Refused('invalid exact task id')
+        if 'captain_call_id' in row:
+            call = row['captain_call_id']
+            if (task is not None or not isinstance(call, str)
+                    or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', call)):
+                raise Refused('captain-call binding requires a primary target and exact call id')
         if task is not None and row['label'] != 'fm-' + task:
             raise Refused('task label does not match the stream publisher label')
         leaf = row['machine'], row['label']
-        owner = str(Path(home).resolve()), task
+        owner = str(Path(home).resolve()), task or row.get('captain_call_id')
         if leaf in leaves or owner in owners:
             raise Refused('ambiguous registry binding')
         leaves.add(leaf)
@@ -116,6 +120,11 @@ def route(rows, machine, label, payload):
     if owner_machine != machine:
         raise Refused('registry machine disagrees with owning home')
     action = payload.get('kind')
+    task = row['task_id']
+    if task is None and action not in ('note', 'answer', 'release'):
+        raise Refused('primary interrupt, exit/shutdown, relaunch/restart, recover-missing, '
+                      'and native mid-turn steering are unsupported; task-key decisions '
+                      'require an exact task binding')
     fields = {
         'note': {'kind', 'text'},
         'resolve-key': {'kind', 'key', 'text'},
@@ -131,9 +140,9 @@ def route(rows, machine, label, payload):
     text = payload.get('text', payload.get('note'))
     if text is not None and (not isinstance(text, str) or not text.strip()):
         raise Refused('note or answer must not be blank')
-    task = row['task_id']
-    if task is None and action != 'note':
-        raise Refused('primary lifecycle/decision target is unsupported; register the exact captain-call id')
+    call = row.get('captain_call_id') if task is None else task
+    if action in ('answer', 'release') and call is None:
+        raise Refused('primary decision requires an exact captain-call id in the host registry')
     if task is not None and action not in ('answer', 'release'):
         meta = home / 'state' / (task + '.meta')
         if not meta.is_file() or meta.is_symlink():
@@ -147,10 +156,13 @@ def route(rows, machine, label, payload):
         key = payload['key']
         if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', key):
             raise Refused('invalid decision key')
-        # fm-send interprets slash/skill text as native commands. Decision
-        # answers must stay in its durable inbox plane, not invoke a harness.
-        if text.lstrip().startswith(('/', '$', '--')):
+        if text.lstrip().startswith(('/', '--')):
             raise Refused('decision answer cannot be a harness invocation or send option')
+        if text.startswith('$'):
+            metadata = dict(line.split('=', 1) for line in meta.read_text().split('\n')
+                            if '=' in line)
+            if metadata.get('harness') == 'codex' and not metadata.get('remote_host'):
+                raise Refused('decision answer cannot be a harness invocation or send option')
         argv = [str(scripts / 'fm-send.sh'), task, '--resolve-key', key, text]
         body = None
     elif action in ('answer', 'release'):
@@ -161,7 +173,7 @@ def route(rows, machine, label, payload):
                                                      prefix='fm-ui-answer-', delete=False)
         decision_file.write(text)
         decision_file.close()
-        argv = [str(scripts / 'fm-captain-hold.sh'), 'answer', task,
+        argv = [str(scripts / 'fm-captain-hold.sh'), 'answer', call,
                 '--decision-file', decision_file.name]
         if action == 'release':
             argv.append('--release')
@@ -225,34 +237,9 @@ def command_stream(filename):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--registry', required=True)
-    parser.add_argument('--machine')
-    parser.add_argument('--label')
-    commands = parser.add_subparsers(dest='action', required=True)
-    commands.add_parser('command')
-    for action in ('note', 'answer', 'release', 'resolve-key'):
-        command = commands.add_parser(action)
-        command.add_argument('--text', required=True)
-        if action == 'resolve-key':
-            command.add_argument('--key', required=True)
-    for action in ('interrupt', 'exit', 'relaunch', 'recover-missing'):
-        command = commands.add_parser(action)
-        if action in ('relaunch', 'recover-missing'):
-            command.add_argument('--note', required=True)
+    parser.add_argument('action', choices=['command'])
     args = parser.parse_args()
-    if args.action == 'command':
-        if args.machine or args.label:
-            parser.error('command takes identities from each record')
-        return command_stream(args.registry)
-    if not args.machine or not args.label:
-        parser.error('direct actions require --machine and --label')
-    payload = {'kind': args.action}
-    for key in ('text', 'key', 'note'):
-        if hasattr(args, key):
-            payload[key] = getattr(args, key)
-    result = route(bindings(args.registry), args.machine, args.label, payload)
-    sys.stdout.write(result.stdout)
-    sys.stderr.write(result.stderr)
-    return result.returncode
+    return command_stream(args.registry)
 
 
 if __name__ == '__main__':
