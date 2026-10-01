@@ -1027,7 +1027,7 @@ PY
     "$ROOT/bin/fm-ui-host-control.py" --registry "$dir/registry" command \
     < "$dir/fixture-answer" 2> "$dir/answer-diagnostics"); rc=$?
   expect_code 0 "$rc" "host decision should reach fm-send's durable owner"$'\n'"$out"
-  python3 - "$out" <<'PY'
+  if ! python3 - "$out" <<'PY'
 import json
 import sys
 acks = [json.loads(line) for line in sys.argv[1].splitlines()]
@@ -1036,23 +1036,27 @@ assert acks[0]['record'] == 'command_ack' and acks[0]['state'] == 'accepted', ac
 assert acks[0]['command_id'] == 'fixture-answer', acks
 assert acks[0]['leaf_worker_id'] == 'fixture-host/fm-sample', acks
 PY
-  [ "$?" = 0 ] || fail "host answer acknowledgement must preserve command correlation"
+  then
+    fail "host answer acknowledgement must preserve command correlation"
+  fi
   assert_contains "$(cat "$dir/home/state/sample.status")" \
     'resolved [key=fixture-choice]:' "the existing owner must close the exact worker key"
-  python3 - "$dir/home/state/sample.inbox" <<'PY'
+  if ! python3 - "$dir/home/state/sample.inbox" <<'PY'
 from pathlib import Path
 import sys
 messages = list(Path(sys.argv[1]).glob('*.msg'))
 assert len(messages) == 1, messages
 assert messages[0].read_text().split('\n--\n', 1)[1] == 'Use option one.\nKeep the rest queued.'
 PY
-  [ "$?" = 0 ] || fail "the worker inbox must carry the exact answer bytes"
+  then
+    fail "the worker inbox must carry the exact answer bytes"
+  fi
   : > "$dir/fake/keys"
   out=$(PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" FM_STREAM_MACHINE=fixture-host \
     "$ROOT/bin/fm-ui-host-control.py" --registry "$dir/registry" command \
     < "$dir/fixture-interrupt" 2> "$dir/interrupt-diagnostics"); rc=$?
   expect_code 0 "$rc" "host lifecycle should reach fm-control"$'\n'"$out"
-  python3 - "$out" <<'PY'
+  if ! python3 - "$out" <<'PY'
 import json
 import sys
 acks = [json.loads(line) for line in sys.argv[1].splitlines()]
@@ -1061,7 +1065,9 @@ assert acks[0]['record'] == 'command_ack' and acks[0]['state'] == 'accepted', ac
 assert acks[0]['command_id'] == 'fixture-interrupt', acks
 assert acks[0]['leaf_worker_id'] == 'fixture-host/fm-sample', acks
 PY
-  [ "$?" = 0 ] || fail "host interrupt acknowledgement must preserve command correlation"
+  then
+    fail "host interrupt acknowledgement must preserve command correlation"
+  fi
   [ "$(keys_sent "$dir")" = Escape ] || fail "host interrupt must deliver the owner's verified key"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "host interrupt must leave the agent running"
   pass "host route: exact worker answer and guarded lifecycle reach their existing owners"
