@@ -417,6 +417,7 @@ exit 1
 SH
   chmod +x "$fakebin/ssh"
   out=$(run_remote_secondmate_spawn "$home" "$fakebin" smchain1) || rc=$?
+  printf 'Configured-chain readiness output:\n%s\n' "$out"
   [ "$rc" -ne 0 ] || fail "a spawn against an unready host must refuse, not launch"
   assert_not_contains "$out" "command not found" \
     "the remote secondmate spawn must find the launch resolver instead of crashing before anything is launched"
@@ -440,6 +441,7 @@ SH
   chmod +x "$fakebin/ssh"
   out=$(run_remote_secondmate_spawn "$home" "$fakebin" smchain2 \
     --model 'codex/gpt-6-luna,zai/glm-5.3') || rc=$?
+  printf 'Explicit-chain readiness output:\n%s\n' "$out"
   [ "$rc" -ne 0 ] || fail "a spawn against an unready host must refuse, not launch"
   assert_not_contains "$out" "command not found" \
     "the remote secondmate spawn must find the launch resolver instead of crashing before anything is launched"
@@ -464,6 +466,7 @@ exit 1
 SH
   chmod +x "$fakebin/ssh"
   out=$(run_remote_secondmate_spawn "$home" "$fakebin" smchain3) || rc=$?
+  printf 'Default-model readiness output:\n%s\n' "$out"
   [ "$rc" -ne 0 ] || fail "a spawn against an unready gate must refuse, not launch"
   assert_not_contains "$out" "command not found" \
     "a default-resolved model surface must take the default branch without crashing"
@@ -486,6 +489,7 @@ exit 1
 SH
   chmod +x "$fakebin/ssh"
   out=$(run_remote_secondmate_spawn "$home" "$fakebin" smchain4) || rc=$?
+  printf 'Absent-config readiness output:\n%s\n' "$out"
   [ "$rc" -ne 0 ] || fail "a spawn with no secondmate-harness config must refuse at the gate, not crash"
   assert_not_contains "$out" "command not found" \
     "an absent config/secondmate-harness must not reach the resolver at all"

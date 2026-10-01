@@ -1093,6 +1093,7 @@ pass "mixed local and remote routes validate without migration"
 # Launch on the remote home's own configured backend. Parent metadata records
 # host placement separately from that backend and arms the reply source.
 printf 'pi\n' > "$PARENT/config/crew-harness"
+printf 'codex codex/gpt-6-luna\n' > "$PARENT/config/secondmate-harness"
 launches_before_inherit=0
 [ ! -f "$HERDR_LOG" ] || launches_before_inherit=$(grep -c '^tab create' "$HERDR_LOG" || true)
 if FM_FAKE_SSH_MODE=inherit-partial remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate \
@@ -1123,6 +1124,83 @@ publish_healthy_watcher_identity "$PARENT/state" "$PARENT" "$ROOT/bin/fm-watch.s
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh observe ios)" = idle ] \
   || fail "remote endpoint delivery observation did not execute on its own host"
 pass "remote spawn launches on the remote-local backend and records a host-qualified route"
+grep -Fx 'model=codex/gpt-6-luna' "$PARENT/state/ios.meta" >/dev/null \
+  || fail "configured exact model did not reach parent metadata"
+grep -Fx 'model=codex/gpt-6-luna' "$REMOTE_HOME/state/parent-route/ios.meta" >/dev/null \
+  || fail "configured exact model did not reach host launch metadata"
+assert_grep "--model 'codex/gpt-6-luna'" "$HERDR_LOG" "configured exact model did not reach the submitted launch command"
+pass "remote configured exact model launches without an undefined resolver"
+printf 'Configured-model launch output:\n%s\n' "$out"
+remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh route ios
+
+# Stop the remote endpoint through its backend, then let the ordinary startup
+# liveness owner recover it through the parent spawn path with a configured
+# chain. The host transport and terminal are the existing deterministic rig;
+# the spawn, bootstrap, host-local control and replacement processes are real.
+stop_model_endpoint() {
+  local target
+  target=$(sed -n 's/^window=//p' "$REMOTE_HOME/state/parent-route/ios.meta")
+  FM_HOME="$REMOTE_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" PATH="$REMOTE_ROOT/bin:$PATH" \
+    bash -c '. "$1/bin/fm-backend.sh"; fm_backend_kill herdr "$2"' _ "$REMOTE_ROOT" "$target" \
+    || fail "could not stop the remote model endpoint"
+  [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = missing ] \
+    || fail "the remote endpoint was not stopped before recovery"
+}
+stop_model_endpoint
+printf 'codex codex/gpt-6-luna,codex/gpt-6-luna-fallback\n' > "$PARENT/config/secondmate-harness"
+model_boot=$(remote_env "$ROOT/bin/fm-bootstrap.sh" 2>&1)
+assert_not_contains "$model_boot" 'command not found' "configured chain recovery crashed before launch"
+[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
+  || fail "startup did not recover the stopped remote agent with a configured chain: $model_boot"
+grep -Fx 'model=codex/gpt-6-luna' "$PARENT/state/ios.meta" >/dev/null \
+  || fail "recovery did not publish the chain head"
+assert_present "$PARENT/state/model-chain/secondmate.state" "recovery did not materialize the configured chain lane"
+grep -Fx 'model=codex/gpt-6-luna' "$REMOTE_HOME/state/parent-route/ios.meta" >/dev/null \
+  || fail "recovery did not launch the chain head on the host"
+pass "startup recovers a stopped remote secondmate on the configured chain head"
+printf 'Stopped-agent recovery output:\n%s\n' "$model_boot"
+remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh route ios
+
+# Seed the shared lane's public cooldown state directly: this check owns
+# launch selection, not the separate task-to-lane refusal-recording policy.
+FM_HOME="$PARENT" bash -c '. "$1/bin/fm-model-chain-lib.sh";
+  fm_model_chain_record_refusal "$2/state/model-chain/secondmate.state" "$3" "$(date +%s)"' \
+  _ "$ROOT" "$PARENT" codex/gpt-6-luna || fail "could not seed the head cooldown"
+stop_model_endpoint
+model_fall=$(remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate 2>&1) \
+  || fail "remote chain fallback launch failed: $model_fall"
+assert_contains "$model_fall" 'chain skip: codex/gpt-6-luna' "remote fallback did not disclose the cooled-down head"
+assert_contains "$model_fall" 'selected codex/gpt-6-luna-fallback' "remote fallback did not select its ready tail"
+grep -Fx 'model=codex/gpt-6-luna-fallback' "$PARENT/state/ios.meta" >/dev/null \
+  || fail "fallback did not reach parent metadata"
+grep -Fx 'model=codex/gpt-6-luna-fallback' "$REMOTE_HOME/state/parent-route/ios.meta" >/dev/null \
+  || fail "fallback did not reach the host launch"
+assert_grep "--model 'codex/gpt-6-luna-fallback'" "$HERDR_LOG" "fallback did not reach the submitted launch command"
+[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
+  || fail "the fallback left no live remote replacement"
+pass "a remote recovery skips a refused head and launches its configured tail"
+printf 'Cooldown fallback output:\n%s\n' "$model_fall"
+remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh route ios
+
+FM_HOME="$PARENT" bash -c '. "$1/bin/fm-model-chain-lib.sh";
+  fm_model_chain_record_refusal "$2/state/model-chain/secondmate.state" "$3" "$(date +%s)"' \
+  _ "$ROOT" "$PARENT" codex/gpt-6-luna-fallback || fail "could not seed the tail cooldown"
+cp "$PARENT/state/ios.meta" "$TMP_ROOT/model-before-exhaustion.meta"
+model_launches=$(grep -c '^tab create' "$HERDR_LOG" || true)
+if model_exhaust=$(remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate 2>&1); then
+  fail "an exhausted remote model chain launched: $model_exhaust"
+fi
+assert_contains "$model_exhaust" 'model chain exhausted' "remote exhaustion did not explain its refusal"
+cmp -s "$PARENT/state/ios.meta" "$TMP_ROOT/model-before-exhaustion.meta" \
+  || fail "remote exhaustion changed the preserved route"
+[ "$(grep -c '^tab create' "$HERDR_LOG" || true)" = "$model_launches" ] \
+  || fail "remote exhaustion created a new endpoint"
+[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
+  || fail "remote exhaustion stopped the existing agent"
+pass "an exhausted remote chain refuses without launching or changing the existing route"
+printf 'Exhausted-chain refusal output:\n%s\n' "$model_exhaust"
+# Subsequent lifecycle cases retain their original default-model posture.
+printf 'codex\n' > "$PARENT/config/secondmate-harness"
 
 remote_route_meta="$REMOTE_HOME/state/parent-route/ios.meta"
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-default-session.meta"

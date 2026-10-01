@@ -2001,10 +2001,9 @@ esac
 # to the first ready label, each skipped label is disclosed on stderr, and an
 # exhausted chain refuses the launch rather than substituting an out-of-chain
 # model. The launch resolver shared with fm-control.sh's relaunch and
-# recover-missing paths lives in fm-model-chain-launch-lib.sh, sourced beside
-# the parser above and again here beside the parser for the later spawn
-# paths; spawn_remote_secondmate returns before this block, so both sources
-# keep exactly one definition of the resolver.
+# recover-missing paths lives in fm-model-chain-launch-lib.sh, sourced above
+# before spawn_remote_secondmate can call it and return early. The later
+# spawn paths re-source that same library here.
 # shellcheck source=bin/fm-model-chain-launch-lib.sh
 . "$SCRIPT_DIR/fm-model-chain-launch-lib.sh"
 
