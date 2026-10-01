@@ -426,7 +426,12 @@ impl Agent {
             "input" => {
                 let mut bytes = Vec::new();
                 if !payload["text"].is_null() {
-                    bytes.extend_from_slice(response.python_str(&payload["text"]).as_bytes());
+                    bytes.extend_from_slice(
+                        response
+                            .python_str(&payload["text"])
+                            .map_err(|error| Error::Other(error.into()))?
+                            .as_bytes(),
+                    );
                 }
                 if payload["submit"].as_bool().unwrap_or(false) {
                     bytes.push(b'\r');
@@ -482,7 +487,9 @@ impl Agent {
                 let note = if payload["note"].is_null() {
                     String::new()
                 } else {
-                    response.python_str(&payload["note"])
+                    response
+                        .python_str(&payload["note"])
+                        .map_err(|error| Error::Other(error.into()))?
                 };
                 let note = note
                     .split(|ch: char| ch.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&ch))

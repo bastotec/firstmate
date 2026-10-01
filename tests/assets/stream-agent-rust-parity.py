@@ -247,6 +247,9 @@ def command_values(executable, name):
             float("inf"),
             -float("inf"),
             [float("nan"), float("inf"), -float("inf")],
+            ["\ud800"],
+            ["\udfff", "\ud800\ud801", "é\ud800end", "start\udfff"],
+            {"\udfff": "\ud800'\"\n\\", "nested": ["\ud800\udfff", "😀", "\\ud800", "\x00\ud800\x00\udfff", "\x00:d800", "\x00\x00:dfff", {"\ud800key": "value\udfff"}], "nonfinite": float("nan")},
             {"NaN": "NaN Infinity -Infinity \\\"", "nested": [{"nan": float("nan"), "positive": float("inf"), "negative": -float("inf")}], "integers": [10**20, 10**21, 10**22, -(10**20)], "escaped": '\\"NaN\\" \\\\Infinity'},
             {"z": True, "attempt": [None, False, {"text": "it's a quote", "both": "'\"", "escapes": "\\\n\t\r\x00\x1b\u00a0\u200b\ue000\U000f0000", "utf8": "é-中-😀"}], "a": 9223372036854775809},
             [1.0, -0.0, 1e-5, 1e16, True, None, ["nested", {"unsigned": 18446744073709551615}]],
@@ -258,7 +261,7 @@ def command_values(executable, name):
         expected = ""
         for value in values + [None, "one\n  local\t record", "python\x1c\x1d\x1e\x1f separators"]:
             code, body = call(rig.url, "POST", f"/v1/tasks/{endpoint}/status", {"state": "working", "note": value})
-            assert code == 200, body
+            assert code == 200 and body["ok"] and body["appended"] == endpoint, body
             delivered_value = json.loads(json.dumps(value, sort_keys=True))
             expected += "working: " + " ".join(str(delivered_value or "").split()) + "\n"
             assert status.read_text() == expected, (value, status.read_text(), expected)
