@@ -7,11 +7,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 
 pub const VERSION: &str = "2.0.0";
-pub const CAPS: [&str; 4] = [
+pub const CAPS: [&str; 5] = [
     "current_execution",
     "idempotent_command_results",
     "result_retry_orderability",
     "endpoint_command_auth",
+    "deck_midturn_orders",
 ];
 pub fn now() -> f64 {
     SystemTime::now()
@@ -80,6 +81,7 @@ pub struct Endpoint {
     pub rows: usize,
     pub cols: usize,
     pub retry: bool,
+    pub native_steering: bool,
     pub capability: String,
     pub created: f64,
     pub closed: f64,
@@ -418,6 +420,7 @@ impl Hub {
                 .clone()
         };
         let retry = caps.iter().any(|c| c == "idempotent_command_results");
+        let native_steering = caps.iter().any(|c| c == "native_steering_receiver");
         let screen = Screen::try_new(rows, cols)
             .map_err(|_| Error::new(500, "internal", "cannot allocate endpoint screen"))?;
         let mut s = self.state.lock().unwrap();
@@ -430,7 +433,7 @@ impl Hub {
                     format!("endpoint {eid} is registered to machine {}", e.machine),
                 ));
             }
-            if e.retry != retry {
+            if e.retry != retry || e.native_steering != native_steering {
                 return Err(Error::new(
                     409,
                     "endpoint_capabilities_changed",
@@ -463,6 +466,7 @@ impl Hub {
                     rows,
                     cols,
                     retry,
+                    native_steering,
                     capability: if cap.is_empty() {
                         format!("{}{}", id(), id())
                     } else {
@@ -884,6 +888,8 @@ impl Hub {
                 Some((409,"hub_closed_record",format!("the hub closed its record of execution {} because it could no longer steer it; the order was not delivered, and this is not evidence about the worker",e.id)))
             } else if !e.retry {
                 Some((409,"endpoint_not_orderable",format!("execution {} did not advertise reliable result acknowledgement, so the order was not delivered",e.id)))
+            } else if !e.native_steering {
+                Some((409,"endpoint_not_orderable",format!("execution {} has no native steering receiver; retained agents remain available for input, status and kill, but this order was not delivered; upgrade the agent at a safe worker boundary",e.id)))
             } else {
                 None
             }
@@ -914,8 +920,8 @@ impl Hub {
         drop(s);
         let result = self.submit(
             selected.as_deref().unwrap(),
-            "input",
-            json!({"text":text,"keys":null,"submit":true}),
+            "steer",
+            json!({"text":text,"keys":null,"submit":true,"order_id":oid,"execution_id":execution}),
             Some(&order),
         );
         let s = self.state.lock().unwrap();
@@ -972,7 +978,7 @@ mod tests {
     fn fixture() -> (Arc<Hub>, String, String) {
         let hub = Hub::new(vec![("test".into(), vec!["publish".into()])], 30., 0.01);
         let eid = "a".repeat(32);
-        let result=hub.register(&json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker","capabilities":["idempotent_command_results"]}),"").unwrap();
+        let result=hub.register(&json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker","capabilities":["idempotent_command_results","native_steering_receiver"]}),"").unwrap();
         let capability = result["command_capability"].as_str().unwrap().to_owned();
         (hub, eid, capability)
     }
@@ -1213,7 +1219,7 @@ mod tests {
         let hub = Hub::new(vec![], 30., 5.);
         let eid = "a".repeat(32);
         let legacy = "b".repeat(32);
-        let response=hub.register(&json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker","capabilities":["idempotent_command_results"]}),"").unwrap();
+        let response=hub.register(&json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker","capabilities":["idempotent_command_results","native_steering_receiver"]}),"").unwrap();
         let cap = response["command_capability"].as_str().unwrap().to_owned();
         hub.register(
             &json!({"protocol":3,"endpoint_id":legacy,"machine":"box","label":"legacy"}),

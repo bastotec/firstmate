@@ -102,7 +102,8 @@ class Pilot:
 
     def register(self, eid, label="worker", **extra):
         p = dict(protocol=3, endpoint_id=eid, machine="box", label=label,
-                 rows=4, cols=40, cwd="/tmp", capabilities=["idempotent_command_results"])
+                 rows=4, cols=40, cwd="/tmp",
+                 capabilities=["idempotent_command_results", "native_steering_receiver"])
         p.update(extra)
         code, answer = self.api("POST", "/v1/agent/endpoints", p, "pub",
                                 self.capabilities.get(eid))
@@ -221,6 +222,8 @@ def exercise(p):
     save(p.register(a))
     save(p.register(a))
     save(p.register(a, capabilities=[]))
+    revoked = save(p.register(a, capabilities=["idempotent_command_results"]))
+    assert revoked[0] == 409 and revoked[1]["error"] == "endpoint_capabilities_changed"
     save(p.register(a, machine="other"))
     save(p.take(a, capability="invalid"))
     save(p.frame(a, b"start\r\n\x1b[2mghost\x1b[0m\r\n\xe4"))
@@ -264,7 +267,12 @@ def exercise(p):
                 break
             time.sleep(.001)
         assert len(commands) == 1
-        cid = commands[0]["command_id"]
+        command = commands[0]
+        assert command["kind"] == "steer"
+        assert command["payload"] == {"text": "hello", "keys": None, "submit": True,
+                                      "order_id": "order", "execution_id": a}
+        records.append(normalized(command, {command["command_id"]: "command"}))
+        cid = command["command_id"]
         save(p.result(cid, a))
         for f in futures:
             save(f.result())
@@ -314,6 +322,14 @@ def exercise(p):
     assert events[-1]["closed"] and events[0]["offset"] == 300000
     save((200, stream[1]))
     save(p.order(b, "closed", leaf_worker_id="box/sibling"))
+    save(p.register(c, label="legacy", capabilities=["idempotent_command_results"]))
+    retained = save(p.order(c, "retained", leaf_worker_id="box/legacy"))
+    assert retained[0] == 409 and retained[1]["error"] == "endpoint_not_orderable"
+    assert "no native steering receiver" in retained[1]["message"]
+    assert retained[1]["delivered"] is False and not retained[1]["worker_gone"]
+    assert p.take(c)[1]["commands"] == []
+    save(p.frame(c, closed=True, exit_code=0))
+    c = "d" * 32
     save(p.register(c, label="legacy", capabilities=[]))
     save(p.order(c, "legacy", leaf_worker_id="box/legacy"))
     # Journal retention evicts old ids, does not mutate current records.
