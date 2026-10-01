@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 fm-stream-wire.workspace = true
-serde_json = { workspace = true, features = ["preserve_order", "arbitrary_precision", "float_roundtrip"] }
+serde_json = { workspace = true, features = ["preserve_order", "arbitrary_precision", "float_roundtrip", "raw_value"] }
 unicode-general-category = "1"
 libc = "0.2"
 base64 = "0.22"

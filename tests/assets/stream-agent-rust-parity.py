@@ -237,7 +237,14 @@ def command_values(executable, name):
     try:
         proc, endpoint, status = rig.agent(executable)
         rig.remember_worker(endpoint)
+        nested = "ordinary"
+        for _ in range(150):
+            nested = [nested]
         values = [
+            nested,
+            2**128 - 1,
+            [2**128 - 1, 2**128 - 2, float("nan"), "\x00sd800", "\x00n"],
+            "\x00n\x00sd800",
             "ordinary 'quoted' UTF8-é-中 \\",
             9223372036854775809,
             18446744073709551615,
@@ -284,6 +291,36 @@ def command_values(executable, name):
         proc.terminate()
         proc.wait(timeout=15)
         return expected, received.read_bytes()
+    finally:
+        rig.close()
+
+
+def command_limits(executable, name):
+    rig = Rig(name)
+    try:
+        proc, endpoint, status = rig.agent(executable)
+        rig.remember_worker(endpoint)
+        nested = "ordinary"
+        for _ in range(150):
+            nested = [nested]
+        values = [["\x00" * 50_000 + "\ud800" * 50_000], nested]
+        expected = ""
+        for value in values:
+            payload = {"state": "working", "note": value}
+            assert len(json.dumps(payload).encode()) < 4 * 1024 * 1024
+            code, body = call(rig.url, "POST", f"/v1/tasks/{endpoint}/status", payload)
+            assert code == 200 and body["ok"] and body["appended"] == endpoint, body
+            delivered = json.loads(json.dumps(value, sort_keys=True))
+            expected += "working: " + " ".join(str(delivered).split()) + "\n"
+            assert status.read_text() == expected
+            assert proc.poll() is None
+        rig.marker(endpoint, "AFTER-COMMAND-LIMITS")
+        rig.input(endpoint, "exit 0")
+        proc.wait(timeout=15)
+        task = wait(lambda: rig.task(endpoint) if rig.task(endpoint).get("closed_by") == "agent" else None, "command limits authoritative close")
+        assert task["exit_code"] == 0 and task["endpoint_id"] == endpoint, task
+        assert status.read_text() == expected
+        return status.read_bytes(), task["closed_by"], task["exit_code"]
     finally:
         rig.close()
 
@@ -694,7 +731,7 @@ def native_orders(executable, name):
 
 
 if __name__ == "__main__":
-    for function in (native_orders, command_values, intervals, concurrent_status, generation_refusal, lifecycle, lost_result, lost_kill_result, redirected_background_exit, final_rejoin, contest, refusals):
+    for function in (native_orders, command_values, command_limits, intervals, concurrent_status, generation_refusal, lifecycle, lost_result, lost_kill_result, redirected_background_exit, final_rejoin, contest, refusals):
         python = function(AGENTS[0], function.__name__ + "-python")
         rust = function(AGENTS[1], function.__name__ + "-rust")
         assert python == rust, (function.__name__, python, rust)
