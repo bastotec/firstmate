@@ -5,6 +5,21 @@ Usage: fm-ui-host-control.py --registry FILE --machine NAME --label NAME
                            note --text TEXT
        fm-ui-host-control.py --registry FILE --machine NAME --label NAME
                            interrupt|exit|relaunch|recover-missing [--note TEXT]
+       fm-ui-host-control.py --registry FILE --machine NAME --label NAME
+                           resolve-key --key KEY --text EXACT_ANSWER
+       fm-ui-host-control.py --registry FILE --machine NAME --label NAME
+                           answer|release --text EXACT_ANSWER
+       fm-ui-host-control.py --registry FILE command
+
+command consumes NDJSON command records with command_id, identity containing
+parent_mate_id and leaf_worker_id (machine/label), and payload containing kind
+plus the action's text, key, or note fields. No request supplies a home path,
+file path, executable, or arbitrary argv. Only pre-authorized host callers
+may submit records. Accepted command_ack means the existing owner returned
+success, NOT that the worker acted on an inbox answer. Pre-dispatch refusals
+return command_ack refused. Nonzero owner exits may follow partial writes,
+so they remain pending (no record), with a host-only diagnostic; reconcile
+before retrying. This local plane has no hub journal or automatic retry.
 
 FILE is an operator-maintained, host-only regular file owned by this uid with
 mode 0600, containing a JSON array of bindings:
@@ -14,10 +29,13 @@ A primary supervisor has task_id null and accepts only note, not lifecycle
 verbs. Every (machine, label) and (fm_home, task_id) must be unique. Unknown,
 ambiguous, malformed, or stale bindings refuse before dispatch. For a task,
 label must equal fm-<task_id>, the stream publisher's label. The home's
-config/stream-machine (default hostname) must match machine; metadata must
-exist. fm-control owns all deeper endpoint, lease, eligibility and remote
-secondmate checks. This router does not accept paths or arbitrary arguments
-from the request, resolve keys, append task status, or respond to gates.
+config/stream-machine (default hostname) must match machine. Worker actions
+require regular owner metadata; answer/release resolve the registered exact
+captain-call id through fm-captain-hold's backlog guards instead. fm-control
+owns all deeper endpoint, lease, eligibility and remote secondmate checks.
+Decision actions delegate to fm-send --resolve-key or fm-captain-hold answer
+(with --release for release), preserving exact words. This router never
+appends task status directly and never invokes no-mistakes axi respond.
 
 The local UI adapter owns per-launch browser authorization and same-origin
 checks BEFORE calling this executable. It keeps registry and hub credentials
@@ -35,6 +53,8 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
+from datetime import datetime, timezone
 
 
 class Refused(ValueError):
@@ -85,52 +105,154 @@ def bindings(filename):
     return rows
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--registry', required=True)
-    parser.add_argument('--machine', required=True)
-    parser.add_argument('--label', required=True)
-    commands = parser.add_subparsers(dest='action', required=True)
-    commands.add_parser('note').add_argument('--text', required=True)
-    for action in ('interrupt', 'exit', 'relaunch', 'recover-missing'):
-        command = commands.add_parser(action)
-        if action in ('relaunch', 'recover-missing'):
-            command.add_argument('--note', required=True)
-    args = parser.parse_args()
-    rows = bindings(args.registry)
-    matches = [row for row in rows if (row['machine'], row['label']) == (args.machine, args.label)]
+def route(rows, machine, label, payload):
+    matches = [row for row in rows if (row['machine'], row['label']) == (machine, label)]
     if len(matches) != 1:
         raise Refused('unknown or ambiguous target')
     row = matches[0]
     home = Path(row['fm_home']).resolve()
     machine_file = home / 'config/stream-machine'
-    machine = machine_file.read_text().strip() if machine_file.exists() else socket.gethostname()
-    if machine != args.machine:
+    owner_machine = machine_file.read_text().strip() if machine_file.exists() else socket.gethostname()
+    if owner_machine != machine:
         raise Refused('registry machine disagrees with owning home')
+    action = payload.get('kind')
+    fields = {
+        'note': {'kind', 'text'},
+        'resolve-key': {'kind', 'key', 'text'},
+        'answer': {'kind', 'text'},
+        'release': {'kind', 'text'},
+        'interrupt': {'kind'},
+        'exit': {'kind'},
+        'relaunch': {'kind', 'note'},
+        'recover-missing': {'kind', 'note'},
+    }
+    if not isinstance(action, str) or action not in fields or set(payload) != fields[action]:
+        raise Refused('unsupported action or payload fields')
+    text = payload.get('text', payload.get('note'))
+    if text is not None and (not isinstance(text, str) or not text.strip()):
+        raise Refused('note or answer must not be blank')
     task = row['task_id']
-    if task is not None:
+    if task is None and action != 'note':
+        raise Refused('primary lifecycle/decision target is unsupported; register the exact captain-call id')
+    if task is not None and action not in ('answer', 'release'):
         meta = home / 'state' / (task + '.meta')
         if not meta.is_file() or meta.is_symlink():
             raise Refused('registered task has no regular owner metadata')
     scripts = Path(__file__).resolve().parent
-    if args.action == 'note':
-        if not args.text.strip():
-            raise Refused('note must not be blank')
+    decision_file = None
+    if action == 'note':
         argv = [str(scripts / 'fm-inbox.sh'), 'note', '-']
-        body = args.text
+        body = text
+    elif action == 'resolve-key':
+        key = payload['key']
+        if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', key):
+            raise Refused('invalid decision key')
+        # fm-send interprets slash/skill text as native commands. Decision
+        # answers must stay in its durable inbox plane, not invoke a harness.
+        if text.lstrip().startswith(('/', '$', '--')):
+            raise Refused('decision answer cannot be a harness invocation or send option')
+        argv = [str(scripts / 'fm-send.sh'), task, '--resolve-key', key, text]
+        body = None
+    elif action in ('answer', 'release'):
+        if len(text.encode('utf-8')) > 8192:
+            raise Refused('captain answer exceeds the owner limit')
+        # The existing owner consumes a file, never text reinterpreted as flags.
+        decision_file = tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
+                                                     prefix='fm-ui-answer-', delete=False)
+        decision_file.write(text)
+        decision_file.close()
+        argv = [str(scripts / 'fm-captain-hold.sh'), 'answer', task,
+                '--decision-file', decision_file.name]
+        if action == 'release':
+            argv.append('--release')
+        body = None
     else:
-        if task is None:
-            raise Refused('primary lifecycle is unsupported; only supervisor notes exist')
-        argv = [str(scripts / 'fm-control.sh'), task, args.action]
-        if args.action in ('relaunch', 'recover-missing'):
-            argv.extend(['--note', args.note])
+        argv = [str(scripts / 'fm-control.sh'), task, action]
+        if action in ('relaunch', 'recover-missing'):
+            argv.extend(['--note', text])
         body = None
     env = os.environ.copy()
-    # A caller's current home overrides must never redirect the resolved owner.
     for key in ('FM_ROOT_OVERRIDE', 'FM_STATE_OVERRIDE', 'FM_DATA_OVERRIDE', 'FM_CONFIG_OVERRIDE'):
         env.pop(key, None)
     env['FM_HOME'] = str(home)
-    return subprocess.run(argv, input=body, text=True, env=env, cwd=home, check=False).returncode
+    try:
+        return subprocess.run(argv, input=body, text=True, env=env, cwd=home,
+                              capture_output=True, check=False)
+    finally:
+        if decision_file is not None:
+            os.unlink(decision_file.name)
+
+
+def command_stream(filename):
+    for line in sys.stdin:
+        command_id = leaf = None
+        try:
+            record = json.loads(line, object_pairs_hook=unique_fields)
+            if not isinstance(record, dict) or record.get('record') != 'command':
+                raise Refused('expected a command record')
+            command_id = record.get('command_id')
+            identity = record.get('identity')
+            if not isinstance(command_id, str) or not command_id or not isinstance(identity, dict):
+                raise Refused('command requires its id and identity')
+            leaf = identity.get('leaf_worker_id')
+            machine = identity.get('parent_mate_id')
+            if not isinstance(leaf, str) or not isinstance(machine, str) or not leaf.startswith(machine + '/'):
+                raise Refused('leaf and parent identity disagree')
+            payload = record.get('payload')
+            if not isinstance(payload, dict):
+                raise Refused('command requires an action payload')
+            result = route(bindings(filename), machine, leaf[len(machine) + 1:], payload)
+            if result.returncode:
+                # Owner errors may follow partial durable work. Do not claim
+                # refusal or invite a blind retry; diagnostics remain host-side.
+                print('host owner result unconfirmed (exit %d)' % result.returncode, file=sys.stderr)
+                continue
+            answer = {'record': 'command_ack', 'command_id': command_id,
+                      'leaf_worker_id': leaf, 'state': 'accepted',
+                      'received_at_utc': datetime.now(timezone.utc).isoformat()}
+        except (Refused, OSError, ValueError) as exc:
+            if not isinstance(command_id, str) or not command_id or not isinstance(leaf, str):
+                print('REFUSED: invalid command framing', file=sys.stderr)
+                continue
+            answer = {'record': 'command_ack', 'command_id': command_id,
+                      'leaf_worker_id': leaf, 'state': 'refused',
+                      'reason': str(exc) if isinstance(exc, Refused) else 'host routing unavailable or malformed request',
+                      'received_at_utc': datetime.now(timezone.utc).isoformat()}
+        print(json.dumps(answer), flush=True)
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--registry', required=True)
+    parser.add_argument('--machine')
+    parser.add_argument('--label')
+    commands = parser.add_subparsers(dest='action', required=True)
+    commands.add_parser('command')
+    for action in ('note', 'answer', 'release', 'resolve-key'):
+        command = commands.add_parser(action)
+        command.add_argument('--text', required=True)
+        if action == 'resolve-key':
+            command.add_argument('--key', required=True)
+    for action in ('interrupt', 'exit', 'relaunch', 'recover-missing'):
+        command = commands.add_parser(action)
+        if action in ('relaunch', 'recover-missing'):
+            command.add_argument('--note', required=True)
+    args = parser.parse_args()
+    if args.action == 'command':
+        if args.machine or args.label:
+            parser.error('command takes identities from each record')
+        return command_stream(args.registry)
+    if not args.machine or not args.label:
+        parser.error('direct actions require --machine and --label')
+    payload = {'kind': args.action}
+    for key in ('text', 'key', 'note'):
+        if hasattr(args, key):
+            payload[key] = getattr(args, key)
+    result = route(bindings(args.registry), args.machine, args.label, payload)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    return result.returncode
 
 
 if __name__ == '__main__':

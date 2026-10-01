@@ -187,7 +187,7 @@ Run `command` on the host that runs the hub, reading its stdin from wherever the
 
 ### Private host control routing
 
-The same-origin, local-only UI adapter may call `bin/fm-ui-host-control.py` only after checking its per-launch browser-session authorization.
+The same-origin, local-only UI adapter may call `bin/fm-ui-host-control.py` only after checking its per-launch browser-session authorization and authority for that exact action.
 This executable is a host-side routing surface, not an HTTP endpoint or an authentication substitute.
 Its header and `--help` own the operator-maintained 0600 binding registry, exact target resolution, and supported verbs.
 The host resolves `(machine, label)` to an explicit `FM_HOME` and exact task id; neither the registry's home paths nor control-class credentials are supplied by or returned to the browser.
@@ -195,15 +195,23 @@ Unknown, ambiguous, or stale bindings refuse before dispatch.
 Lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or remote-secondmate refusal checks.
 The host adapter must keep backend credentials in host-only 0600 files and must never send them in page content, browser environment, or browser storage.
 
-Decision input is intent-only: `note` queues the captain's words through the owning supervisor's `bin/fm-inbox.sh`, including when the selected target is a task.
-The UI never calls `fm-send --resolve-key`, `fm-captain-hold`, or `no-mistakes axi respond` and never appends a resolved event or a task status line.
-The supervisor processes that intent through the existing authority workflow; a crew-owned no-mistakes response remains worker-owned after the supervisor supplies its authorized decision.
-Primary supervisor targets accept notes only.
-Primary lifecycle control beyond that existing inbox is absent and requires a separately designed, security-sensitive core surface; the runtime/control-plane owner, not the UI adapter, owns that gap.
+Decision actions carry the captain's authenticated exact answer through the host route to the existing owner: `resolve-key` delegates to `fm-send --resolve-key`, and `answer` / `release` delegates to `fm-captain-hold answer` with the requested close mode.
+The `command` entry point returns the owner's success as a correlated NDJSON `command_ack`; uncertain owner errors remain pending rather than being misreported as proof that nothing changed.
+The browser never writes state directly, supplies an owner-home path, or invokes an owner command itself.
+`note` remains only the supervisor-note path through `bin/fm-inbox.sh`, not a substitute for a decision action.
+A crew-owned `no-mistakes axi respond` remains worker-owned and is never invoked by this host route.
+Existing owner guards remain authoritative, including endpoint retirement and stand-down refusals; the host route does not revive or reassign workers.
+
+Full primary control is not yet implemented.
+The runtime/control-plane owner owns these explicit capability gaps: primary interrupt, primary exit/shutdown, primary relaunch/restart, primary missing-endpoint recovery, and primary native mid-turn steering.
+Primary supervisor bindings currently accept notes only; decision bindings address the exact captain-call id in the owning home's backlog instead of pretending it is a worker endpoint.
+Real primary shutdown/restart and any other live fleet operation are outside this change's verification scope; no worker-only route is described as satisfying those missing primary capabilities.
 
 The Bridge command plane remains `steer` only.
 The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.
-The hub's endpoint-addressed `input`, `kill`, and `status` routes are different planes, not interchangeable Bridge orders: raw input bypasses native steering, kill closes an endpoint rather than executing guarded lifecycle control, and status appends worker events rather than carrying captain intent.
+The hub's endpoint-addressed non-order command path already carries `input`, `kill`, and `status` through `submit_command` and the agent's take/result acknowledgement path, independent of the Bridge journal.
+Those are different planes, not interchangeable Bridge orders: raw input bypasses native steering, kill closes an endpoint rather than executing guarded lifecycle control, and status appends worker events rather than carrying captain intent.
+That path's acknowledgement does not supply the Bridge journal's leaf binding, command-id replay, or late-result lookup, so a preflight lookup followed by a plain command cannot honestly inherit the journal contract.
 Consequently this host route does not expose those routes as composer kinds or fabricate equivalent acknowledgement and retry guarantees.
 A future generalized hub journal belongs to the core stream owner and must establish each kind's execution binding, idempotency, and authority before a UI can expose it.
 Use guarded host lifecycle verbs for process control and supervisor notes for intent; this is not a claim of full primary lifecycle or raw endpoint command support.
