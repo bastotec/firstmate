@@ -97,6 +97,8 @@ SH
 chmod +x "$REMOTE_ROOT/bin/tmux"
 install_remote_herdr_fixture "$REMOTE_ROOT" "$HERDR_STATE" "$HERDR_LOG" \
   "$TMP_ROOT/herdr-send-fail" "$TMP_ROOT/herdr.sock"
+# Use the worker's OS Bash for the simulated host's env-based shebangs too.
+ln -s /bin/bash "$REMOTE_ROOT/bin/bash"
 git -C "$REMOTE_ROOT" init -q -b main
 fm_git_foreground_maintenance "$REMOTE_ROOT" || fail 'could not own fixture Git maintenance'
 git -C "$REMOTE_ROOT" config user.email test@example.com
