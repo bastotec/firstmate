@@ -19,6 +19,14 @@
 #   D) Exhaustion. A chain whose every label is in cooldown refuses with a
 #      clear reason, never substituting an out-of-chain model - including on
 #      the spawn path itself, where the refusal must precede any task record.
+#   E) End to end through fm-spawn (crew spawns): the resolved model lands in
+#      the recorded meta and the spawned launch command.
+#   F) The remote secondmate spawn path. spawn_remote_secondmate resolves its
+#      model surface before fm-spawn's main chain-resolution block, so a
+#      non-default surface must find the launch resolver there (a
+#      config/secondmate-harness pin shares the secondmate lane; an explicit
+#      --model uses the task lane), while a default or absent surface takes
+#      the default branch without ever invoking the resolver.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -355,6 +363,143 @@ test_chain_parse_error_refuses_the_spawn() {
   pass "a malformed chained --model refuses the spawn loudly"
 }
 
+# --- F) The remote secondmate spawn resolves its own model chain ------------
+#
+# spawn_remote_secondmate runs long before fm-spawn's main chain-resolution
+# block, so it owns resolving the remote surface itself, under the same lanes
+# (a default-resolved config/secondmate-harness pin shares the secondmate
+# lane; anything explicit uses the task lane). These cases drive the REAL
+# bin/fm-spawn.sh against a remote registry route whose ssh transport answers
+# the readiness gate with a hard refusal, which is the deterministic boundary
+# past the resolver: the model surface has already been resolved and its lane
+# state materialized by then, so every assertion below reads behavior a launch
+# consumer would see, never source text.
+
+# make_remote_route <case-name> <id> [secondmate-harness-line]
+# Builds a parent home carrying one remote secondmate route and a fakebin
+# whose ssh refuses readiness with a permanent gap (rc 1), so a spawn under
+# test stops at the gate with nothing launched.
+make_remote_route() {
+  local name=$1 id=$2 harness_line=${3:-}
+  local case_dir=$1 home remote_root
+  case_dir="$TMP_ROOT/$name"
+  home="$case_dir/home"
+  remote_root="$case_dir/remote-root"
+  mkdir -p "$home/data" "$home/state" "$home/config" "$home/projects" \
+    "$remote_root/sm-home" "$case_dir/fake"
+  touch "$home/state/.last-watcher-beat"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  [ -z "$harness_line" ] || printf '%s\n' "$harness_line" > "$home/config/secondmate-harness"
+  printf -- '- %s - Remote route under test (host: remote-mac; root: %s; home: %s/sm-home; scope: remote chain coverage; projects: ; added 2026-08-02)\n' \
+    "$id" "$remote_root" "$remote_root" > "$home/data/secondmates.md"
+  printf '%s\n' "$case_dir|$home"
+}
+
+run_remote_secondmate_spawn() {  # <home> <fakebin> <id> [fm-spawn args...]
+  local home=$1 fakebin=$2 id=$3
+  shift 3
+  FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$home/user-home" \
+    CLAUDE_CONFIG_DIR='' FM_SPAWN_NO_GUARD=1 \
+    FM_SSH_BIN="$fakebin/ssh" FM_PROCEVENT_CLAIM_ROOT="$TMP_ROOT/claims" \
+    PATH="$fakebin:$PATH" \
+    "$ROOT/bin/fm-spawn.sh" "$id" --secondmate "$@" 2>&1
+}
+
+test_remote_secondmate_configured_chain_resolves_on_the_secondmate_lane() {
+  local rec home fakebin out rc=0
+  rec=$(make_remote_route smchain-r1 smchain1 'deck codex/gpt-6-luna,zai/glm-5.3')
+  IFS='|' read -r _ home <<<"$rec"
+  fakebin=$(fm_fakebin "$TMP_ROOT/smchain-r1/fake")
+  cat > "$fakebin/ssh" <<SH
+#!/usr/bin/env bash
+echo 'error: this host is not ready for a remote second mate; unresolved: launchagent' >&2
+exit 1
+SH
+  chmod +x "$fakebin/ssh"
+  out=$(run_remote_secondmate_spawn "$home" "$fakebin" smchain1) || rc=$?
+  printf 'Configured-chain readiness output:\n%s\n' "$out"
+  [ "$rc" -ne 0 ] || fail "a spawn against an unready host must refuse, not launch"
+  assert_not_contains "$out" "command not found" \
+    "the remote secondmate spawn must find the launch resolver instead of crashing before anything is launched"
+  assert_contains "$out" "model chain (remote-secondmate spawn, lane secondmate): selected codex/gpt-6-luna" \
+    "a config-pinned chained model must resolve through the shared secondmate lane"
+  [ -f "$home/state/model-chain/secondmate.state" ] \
+    || fail "the shared secondmate lane state was not materialized by the remote spawn"
+  pass "remote secondmate spawn: a configured chained model resolves on the shared secondmate lane"
+}
+
+test_remote_secondmate_explicit_chain_uses_the_task_lane() {
+  local rec home fakebin out rc=0
+  rec=$(make_remote_route smchain-r2 smchain2 'deck')
+  IFS='|' read -r _ home <<<"$rec"
+  fakebin=$(fm_fakebin "$TMP_ROOT/smchain-r2/fake")
+  cat > "$fakebin/ssh" <<SH
+#!/usr/bin/env bash
+echo 'error: this host is not ready for a remote second mate; unresolved: launchagent' >&2
+exit 1
+SH
+  chmod +x "$fakebin/ssh"
+  out=$(run_remote_secondmate_spawn "$home" "$fakebin" smchain2 \
+    --model 'codex/gpt-6-luna,zai/glm-5.3') || rc=$?
+  printf 'Explicit-chain readiness output:\n%s\n' "$out"
+  [ "$rc" -ne 0 ] || fail "a spawn against an unready host must refuse, not launch"
+  assert_not_contains "$out" "command not found" \
+    "the remote secondmate spawn must find the launch resolver instead of crashing before anything is launched"
+  assert_contains "$out" "model chain (remote-secondmate spawn, lane secondmate-smchain2): selected codex/gpt-6-luna" \
+    "an explicit chained model must resolve through the task's own lane"
+  [ -f "$home/state/model-chain/secondmate-smchain2.state" ] \
+    || fail "the task lane state was not materialized by the remote spawn"
+  [ ! -e "$home/state/model-chain/secondmate.state" ] \
+    || fail "an explicit model must not touch the shared secondmate lane"
+  pass "remote secondmate spawn: an explicit chained model resolves on the task lane"
+}
+
+test_remote_secondmate_default_model_never_invokes_the_resolver() {
+  local rec home fakebin out rc=0
+  rec=$(make_remote_route smchain-r3 smchain3 'deck')
+  IFS='|' read -r _ home <<<"$rec"
+  fakebin=$(fm_fakebin "$TMP_ROOT/smchain-r3/fake")
+  cat > "$fakebin/ssh" <<SH
+#!/usr/bin/env bash
+echo 'error: this host is not ready for a remote second mate; unresolved: launchagent' >&2
+exit 1
+SH
+  chmod +x "$fakebin/ssh"
+  out=$(run_remote_secondmate_spawn "$home" "$fakebin" smchain3) || rc=$?
+  printf 'Default-model readiness output:\n%s\n' "$out"
+  [ "$rc" -ne 0 ] || fail "a spawn against an unready gate must refuse, not launch"
+  assert_not_contains "$out" "command not found" \
+    "a default-resolved model surface must take the default branch without crashing"
+  assert_not_contains "$out" "model chain" \
+    "a default-resolved model surface must disclose no chain resolution"
+  [ ! -e "$home/state/model-chain" ] \
+    || fail "a default-resolved model surface must create no cooldown lane"
+  pass "remote secondmate spawn: a default or absent model takes the default branch with no resolver call"
+}
+
+test_remote_secondmate_absent_config_takes_the_default_branch() {
+  local rec home fakebin out rc=0
+  rec=$(make_remote_route smchain-r4 smchain4)
+  IFS='|' read -r _ home <<<"$rec"
+  fakebin=$(fm_fakebin "$TMP_ROOT/smchain-r4/fake")
+  cat > "$fakebin/ssh" <<SH
+#!/usr/bin/env bash
+echo 'error: this host is not ready for a remote second mate; unresolved: launchagent' >&2
+exit 1
+SH
+  chmod +x "$fakebin/ssh"
+  out=$(run_remote_secondmate_spawn "$home" "$fakebin" smchain4) || rc=$?
+  printf 'Absent-config readiness output:\n%s\n' "$out"
+  [ "$rc" -ne 0 ] || fail "a spawn with no secondmate-harness config must refuse at the gate, not crash"
+  assert_not_contains "$out" "command not found" \
+    "an absent config/secondmate-harness must not reach the resolver at all"
+  assert_not_contains "$out" "model chain" \
+    "an absent config must disclose no chain resolution"
+  [ ! -e "$home/state/model-chain" ] \
+    || fail "an absent config must create no cooldown lane"
+  pass "remote secondmate spawn: an absent secondmate-harness config keeps the default branch"
+}
+
 test_exact_pin_creates_no_lane
 test_exact_pin_is_byte_identical
 test_chained_model_resolves_head_and_records_lane
@@ -362,5 +507,9 @@ test_chained_model_falls_through_after_recorded_refusal
 test_exhausted_chain_refuses_the_spawn
 test_chain_parse_error_refuses_the_spawn
 test_relaunch_resolves_a_chained_model_and_records_its_lane
+test_remote_secondmate_configured_chain_resolves_on_the_secondmate_lane
+test_remote_secondmate_explicit_chain_uses_the_task_lane
+test_remote_secondmate_default_model_never_invokes_the_resolver
+test_remote_secondmate_absent_config_takes_the_default_branch
 
 printf 'all fm-model-chain tests passed\n'

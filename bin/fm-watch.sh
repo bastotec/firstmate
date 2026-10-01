@@ -140,7 +140,9 @@ WATCH_CODE_REF="$STATE/.watch-code-ref"
 WATCH_CODE_START_REF=
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   if [ -z "$WATCH_START_EPOCH" ]; then
-    WATCH_START_NOW=$(date +%s) || {
+    # Code mtimes use the filesystem wall clock, not the queue-observation clock.
+    # Perl is also the clock owner in watch_code_ref_advance below.
+    WATCH_START_NOW=$(perl -e 'print time') || {
       echo "watcher: FAILED - cannot capture code-start time" >&2
       exit 1
     }

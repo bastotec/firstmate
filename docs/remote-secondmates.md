@@ -345,4 +345,5 @@ The account-level checks the doctor performs - a real Aqua login session, a real
 The audit-session facts the guard relies on are recorded with their commands in [runtime backend verification](verification/runtime-backends.md#fm-remote-server-birth-and-login-keychain-access).
 
 For a real-host smoke test, provision a disposable remote account and project, run the doctor and its repair against that account, launch the second mate, send one marked request, verify its correlated reply and structured fleet projection, simulate an unreachable host to confirm unknown-without-failover behavior, then retire only after the remote queue is empty.
-The deterministic suite is automated; real-host validation is still an operator-run smoke test and is not claimed by the repository tests.
+Full real-host lifecycle validation remains an operator-run smoke test.
+The opt-in real-SSH reply fixture in [`tests/fm-remote-reply-ssh-fixture.sh`](../tests/fm-remote-reply-ssh-fixture.sh), selected through `tests/fm-remote-reply.test.sh`, covers only synthetic reply capture and re-arming; its header owns the required route and explicitly authorized disposable remote tree.

@@ -505,6 +505,13 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 # when the resolved model surface actually carries a chain.
 # shellcheck source=bin/fm-model-chain-lib.sh
 . "$SCRIPT_DIR/fm-model-chain-lib.sh"
+# The launch-side chain resolver (fm_model_chain_resolve_for_launch) is owned
+# by the launch owner's lib and reads STATE, so it is sourced once STATE
+# exists, before any early caller can reach it: spawn_remote_secondmate
+# resolves its model surface long before the main chain-resolution block
+# below re-sources this lib for the later spawn paths.
+# shellcheck source=bin/fm-model-chain-launch-lib.sh
+. "$SCRIPT_DIR/fm-model-chain-launch-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -1994,8 +2001,9 @@ esac
 # to the first ready label, each skipped label is disclosed on stderr, and an
 # exhausted chain refuses the launch rather than substituting an out-of-chain
 # model. The launch resolver shared with fm-control.sh's relaunch and
-# recover-missing paths lives in fm-model-chain-launch-lib.sh, sourced below
-# beside the parser.
+# recover-missing paths lives in fm-model-chain-launch-lib.sh, sourced above
+# before spawn_remote_secondmate can call it and return early. The later
+# spawn paths re-source that same library here.
 # shellcheck source=bin/fm-model-chain-launch-lib.sh
 . "$SCRIPT_DIR/fm-model-chain-launch-lib.sh"
 

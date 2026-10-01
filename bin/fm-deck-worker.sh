@@ -9,6 +9,8 @@
 #   - the launch brief is the first turn; every later line typed at the `❯`
 #     prompt (a steer, the steering-inbox doorbell) is the next turn of the SAME
 #     Deck session (`--session`), so context carries across steers;
+#   - stream Bridge orders bypass stdin through bin/fm_stream_deck.py's native
+#     receiver; docs/stream-backend.md "Command path" owns compatibility and limits;
 #   - each turn's events render as readable text in the pane (fm-peek reads it);
 #   - it is the semantic busy source for the task: turn start and turn end are
 #     written through bin/fm-busy-event.sh with source `deck-wrapper`, and each
@@ -47,7 +49,11 @@
 # Exactly one Deck turn runs at a time, including stdin and watcher turns.
 # Supervision uses child processes and stdin, never backend-specific injection.
 # Startup, lock, watcher, and event-capture failures publish failure status and
-# stop the driver.
+# stop the driver, except a refused handling-delivery confirmation: the driver
+# logs that refusal to stderr, stops the remaining arm child, starts a fresh
+# watcher with no predecessor claim, and continues the turn without publishing
+# failed status. Wakes remain durable in the home queue for bin/fm-wake-drain.sh;
+# this recovery does not fix the cause of a successor watcher's death.
 # A failed turn is recorded and published the same way but does NOT stop the
 # driver: a persistent supervisor outlives a gateway, quota, or model failure and
 # returns to its prompt, keeping its Deck session where one exists, so the next
@@ -61,6 +67,8 @@
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
 #   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600)
+#   FM_STREAM_ENDPOINT_ID  set by the owning stream agent, enabling receiver
+#                           start/end registration for each driver turn
 #   PROXAI_BASE_URL, PROXAI_MODEL, PROXAI_API_KEY_FILE, PROXAI_API_KEY
 #                           Deck's own endpoint settings, passed through. When
 #                           neither key variable is set and
@@ -124,7 +132,12 @@ tty_busy() { [ -z "$TTY_SETTINGS" ] || stty icanon 2>/dev/null || true; }
 # control-key furniture (^C) as if it were pending input on an idle prompt.
 # Unlike repainting, this leaves genuinely buffered partial input visible.
 tty_ready() { [ -z "$TTY_SETTINGS" ] || stty -icanon -echoctl min 1 time 0 2>/dev/null || true; }
+deck_stream_end() {
+  [ -z "${FM_STREAM_ENDPOINT_ID:-}" ] || python3 "$SCRIPT_DIR/fm_stream_deck.py" end \
+    "$STATE" "$ID" "$FM_STREAM_ENDPOINT_ID" >&2 || true
+}
 cleanup() {
+  deck_stream_end
   if [ -n "$TURN_PID" ]; then
     kill -TERM "$TURN_PID" 2>/dev/null || true
     wait "$TURN_PID" 2>/dev/null || true
@@ -256,8 +269,18 @@ watch_confirm_handling_delivery() {
     WATCH_HANDLING_WATCHER_PID=''
     return 0
   fi
-  host_failure 'successor watcher refused handling delivery confirmation'
-  return 1
+  # A dead successor or moved recovery generation invalidates the handoff,
+  # not the durable wakes. The header owns the nonfatal replacement contract.
+  printf 'fm-deck-worker: successor watcher refused handling delivery confirmation; replacing the watcher\n' >&2
+  WATCH_HANDLING_GENERATION=''
+  WATCH_HANDLING_WATCHER_PID=''
+  WATCH_PREDECESSOR_ARM_PID=''
+  if [ -n "$WATCH_PID" ]; then
+    kill -TERM "$WATCH_PID" 2>/dev/null || true
+    wait "$WATCH_PID" 2>/dev/null || true
+    WATCH_PID=''
+  fi
+  watch_start
 }
 
 watch_start() {
@@ -398,6 +421,17 @@ run_turn() {  # <prompt>
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
   [ -z "$MODEL" ] || args+=(--model "$MODEL")
   [ -z "$SESSION" ] || args+=(--session "$SESSION")
+  if [ -n "${FM_STREAM_ENDPOINT_ID:-}" ]; then
+    local steer_supported=0 steer_turn steer_dir
+    "$DECK" run --help 2>/dev/null | grep -q -- '--steer-dir' && steer_supported=1
+    steer_turn=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
+    if steer_dir=$(python3 "$SCRIPT_DIR/fm_stream_deck.py" start "$STATE" "$ID" \
+        "$FM_STREAM_ENDPOINT_ID" "$steer_turn" "$steer_supported"); then
+      [ "$steer_supported" = 0 ] || args+=(--steer-dir "$steer_dir")
+    else
+      printf 'fm-deck-worker: stream steering interface unavailable; continuing turn without it\n' >&2
+    fi
+  fi
   INTERRUPTED=0
   tty_busy
   if ! status_size > "$TURN_MARK"; then
@@ -459,6 +493,7 @@ run_turn() {  # <prompt>
     "$DECK" "${args[@]}" </dev/null | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
     turn_pipeline=("${PIPESTATUS[@]}")
   fi
+  deck_stream_end
   rc=${turn_pipeline[0]}
   if [ "$SECONDMATE" = 1 ] && [ "$INTERRUPTED" != 1 ] && { [ "${turn_pipeline[1]}" -ne 0 ] || [ "${turn_pipeline[2]}" -ne 0 ]; }; then
     host_failure 'event capture or rendering failed' || true

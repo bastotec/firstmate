@@ -714,6 +714,18 @@ fm_procevent_claim_state_locked() {
   fm_procevent_pid_state "$FM_PROCEVENT_CLAIM_PID" "$FM_PROCEVENT_CLAIM_IDENTITY"
 }
 
+# Read-only launch confirmation must not compete for the lock that publishes
+# the claim it awaits, or skip observing a published claim while that lock is held.
+# Claim publication uses rename and the loader validates the opened record, so
+# this observation sees a whole generation or no valid record, never a partial
+# publication. An unreadable or malformed record remains uncertain.
+# This snapshot proves no authority to mutate or signal: every state transition
+# still requires the source lock and revalidation there.
+# tests/fm-procevent.test.sh pins the contended-lock and malformed-record cases.
+fm_procevent_claim_state_observed() {  # <source-id>
+  fm_procevent_claim_state_locked "$1"
+}
+
 # fm_procevent_claim_acquire_locked <source-id> <home> <pid> <registration> <state-root>
 # 0 acquired, 1 error, 2 held by a live owner (possibly another home).
 fm_procevent_claim_acquire_locked() {

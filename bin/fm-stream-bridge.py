@@ -119,8 +119,9 @@ FIVE PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
   the worker that replaced it.
 
   Acknowledgement.  Every settled order gets an explicit answer.
-  `state: accepted` means the owning AGENT wrote the complete order, including
-  its submit byte, to the worker's pseudoterminal and said so.
+  `state: accepted` means the owning agent confirmed application to the named
+  execution: Deck's durable native steering acknowledgement for a Deck driver,
+  or a complete PTY write including the submit byte for other endpoints.
 
   Membership.  A `command_nack` is an authoritative answer and nothing else
   produces one: `no_such_worker` is the owning agent's own report that its
@@ -157,8 +158,8 @@ CMD (default the fm-crew-state.sh beside this script), --fleet-id.
 
 Live subcommands negotiate protocol 3 and the hub's `current_execution`
 capability before doing work; `command` additionally requires
-`idempotent_command_results`, `result_retry_orderability`, and
-`endpoint_command_auth`, and binds each
+`idempotent_command_results`, `result_retry_orderability`,
+`endpoint_command_auth`, and `deck_midturn_orders`, and binds each
 order to the generation returned by that negotiation.  An older running hub is
 refused with a diagnostic
 to restart or upgrade it; offline `translate` needs no hub negotiation.
@@ -412,7 +413,8 @@ class HubClient:
         required = [CURRENT_EXECUTION_CAPABILITY]
         if require_result_retry:
             required.extend((IDEMPOTENT_RESULT_CAPABILITY,
-                             ORDERABLE_ENDPOINT_CAPABILITY, "endpoint_command_auth"))
+                             ORDERABLE_ENDPOINT_CAPABILITY, "endpoint_command_auth",
+                             "deck_midturn_orders"))
         missing = [name for name in required
                    if not isinstance(capabilities, list) or name not in capabilities]
         if missing:

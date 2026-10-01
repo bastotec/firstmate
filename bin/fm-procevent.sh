@@ -1491,6 +1491,9 @@ launch_entry_listed() {  # <entry> <newline-separated entries>
 # runner merely slow to claim looks the same inside the window, which is why
 # the failure this reports is "not proved within the window" and nothing more.
 #
+# fm_procevent_claim_state_observed in fm-procevent-lib.sh owns the lock-free
+# observation safety rationale and its exclusion from state-transition authority.
+#
 # Every launch shares ONE window rather than taking a window each, so a whole
 # fleet of failing sources costs a watcher cycle the same bounded wait as one.
 confirm_launched_runners() {  # <source-id><TAB><registration-identity><TAB><launch-stamp-before>...
@@ -1514,11 +1517,8 @@ confirm_launched_runners() {  # <source-id><TAB><registration-identity><TAB><lau
       identity=${rest%%$'\t'*}
       before=${rest#*$'\t'}
       state=1
-      if fm_procevent_source_lock_try_acquire "$id"; then
-        fm_procevent_claim_state_locked "$id"
-        state=$?
-        fm_procevent_source_lock_release "$id"
-      fi
+      fm_procevent_claim_state_observed "$id"
+      state=$?
       if [ "$state" -eq 0 ]; then
         continue
       fi

@@ -7,6 +7,13 @@
 # public commands against the currently published poll shape; no live Lavish
 # server is started.
 #
+# FM_PROCEVENT_HANDSHAKE_ONLY=1 selects the three claim-handshake scenarios.
+# Those use real /bin/sleep processes, not the payload stub, and print product
+# output and persisted protocol state for live-validation evidence.
+# FM_PROCEVENT_STALE_RACE_ONLY=1 selects the existing stale-claim race;
+# FM_PROCEVENT_STALE_RACE_TRIES defaults to 600 bounded 0.1-second polls.
+# FM_PROCEVENT_TEST_ROOT may select an isolated code snapshot for a baseline.
+#
 # Delivery is deliberately NOT asserted as at-least-once or lossless: the
 # published Lavish poll clears feedback destructively before returning it, so
 # the only durability under test is the runner's own - output that reached the
@@ -16,7 +23,7 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ROOT=${FM_PROCEVENT_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 TMP_ROOT=$(fm_test_tmproot fm-procevent-tests)
 export FM_PROCEVENT_CLAIM_ROOT="$TMP_ROOT/claims"
 
@@ -164,6 +171,7 @@ hold_source_lock_then_handle() {  # <home> <source-id> <sequence> <ready-file> <
   HOLDER_PID=$!
 }
 
+if [ "${FM_PROCEVENT_HANDSHAKE_ONLY:-0}" != 1 ] && [ "${FM_PROCEVENT_STALE_RACE_ONLY:-0}" != 1 ]; then
 # --- inert with nothing configured ------------------------------------------
 IDLE="$TMP_ROOT/idle"; mkdir -p "$IDLE"
 out=$(pe "$IDLE" list)
@@ -1099,6 +1107,9 @@ assert_contains "$out" "captured:" "a second home can replace a stale source own
 assert_absent "$HC_OLD_STATE/procevent/.cross-home-src.cross-home-token.output" "cross-home reclaim removes the old generation's recorded staging file"
 pass "cross-home stale recovery removes abandoned output from the old state directory"
 
+fi
+
+if [ "${FM_PROCEVENT_HANDSHAKE_ONLY:-0}" != 1 ]; then
 HR="$TMP_ROOT/hr"; new_home "$HR"
 RACE_TRIGGER="$TMP_ROOT/race-trigger"
 RACE_LOG="$TMP_ROOT/race-executions"
@@ -1114,16 +1125,28 @@ pe_register "$HR" lavish race-src -- "$RACE_BLOCKER" "$RACE_LOG" "$RACE_TRIGGER"
 printf '%s\n%s\nold-token\nold-identity\n' "$TMP_ROOT/gone-home" 999999 > "$FM_PROCEVENT_CLAIM_ROOT/race-src.claim"
 chmod 0600 "$FM_PROCEVENT_CLAIM_ROOT/race-src.claim"
 race_pids=()
-for _ in $(seq 1 24); do
-  pe "$HR" start race-src >/dev/null &
+race_began=$(date +%s)
+for contender in $(seq 1 24); do
+  pe "$HR" start race-src > "$TMP_ROOT/race-$contender.out" 2>&1 &
   race_pids+=("$!")
 done
-wait_for "$RACE_LOG" || fail "no contender acquired the stale claim"
+# Twenty-four public starts establish process groups and serialize claim probes
+# before the winner can reacquire the launch boundary. Wait for that observable
+# execution, not the shorter single-runner claim timeout.
+if ! wait_for "$RACE_LOG" "${FM_PROCEVENT_STALE_RACE_TRIES:-600}"; then
+  pe "$HR" list
+  printf 'Stale-claim race protocol state:\n'; cat "$FM_PROCEVENT_CLAIM_ROOT/race-src.claim"
+  printf 'Contender output:\n'; cat "$TMP_ROOT"/race-*.out
+  fail "no contender acquired the stale claim"
+fi
+printf 'Stale-claim winner executed after %s seconds; execution log:\n' "$(( $(date +%s) - race_began ))"
+cat "$RACE_LOG"
 sleep 0.5
 [ "$(wc -l < "$RACE_LOG" | tr -d ' ')" = 1 ] || fail "stale-claim race started more than one runner"
 : > "$RACE_TRIGGER"
 for race_pid in "${race_pids[@]}"; do wait "$race_pid" 2>/dev/null || true; done
 pass "concurrent stale-claim replacement starts exactly one runner"
+if [ "${FM_PROCEVENT_STALE_RACE_ONLY:-0}" = 1 ]; then exit 0; fi
 
 # --- a crashed runner leader must not make its live child group look stale ---
 # The runner is its own process group leader, so SIGKILL on the leader alone
@@ -1672,6 +1695,159 @@ assert_contains "$fc_out" "failed=0" \
 pe "$HFC" retire aa-fast-src >/dev/null 2>&1 || true
 pe "$HFC" retire zz-hold-src >/dev/null 2>&1 || true
 pass "a launch that finished before confirmation looked is still reported as started"
+
+fi
+
+# --- a live claim confirms even while the source lock is contended ----------
+# The claim is the launch's own handshake and is WRITTEN under the source lock.
+# Confirmation once read it through that same lock, so a holder in the window -
+# the old confirm poll's own try-acquire every few dozen milliseconds above all,
+# which contends with the very handoff it waits for - hid the owner the window
+# was waiting for, and a healthy runner was reported failed= while listening.
+# That is the reported remote-reply shape: its capture is terminal per
+# registration, so every cycle re-arms and re-proves ownership through a fresh
+# confirm window, and each contended window opened another false launch-failed
+# episode while the remote end stayed healthy.
+#
+# Deterministic shape of the race. aa-own-src's runner claims promptly and then
+# sleeps its launch floor (a planted fresh pacing stamp plus a long floor keep
+# its own stamp write out of the window), so the claim is the window's only
+# confirmation signal. Reconcile is stalled on zz-stall-src's held lock until
+# that claim has landed, then a second holder takes aa-own-src's source lock -
+# uncontended, while confirmation has not started - and holds it across the
+# whole window. Lock contention is the only variable: without that holder the
+# same fixture confirms on every code path.
+HOC="$TMP_ROOT/hoc"; new_home "$HOC"
+pe_register "$HOC" lavish aa-own-src -- /bin/sleep 120 >/dev/null
+pe_register "$HOC" lavish zz-stall-src -- /bin/sleep 120 >/dev/null
+oc_stamp=$(FM_HOME="$HOC" bash -c '
+  . "$1/bin/fm-pr-lib.sh"; . "$1/bin/fm-wake-lib.sh"; . "$1/bin/fm-procevent-lib.sh"
+  identity=$(fm_pr_file_identity "$2/state/procevent/aa-own-src.source") || exit 1
+  fm_procevent_launch_floor_stamp_path "$2/state" aa-own-src "$identity"
+' _ "$ROOT" "$HOC") || fail "could not derive the owned fixture's launch-pacing stamp path"
+perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC \
+  -e 'print clock_gettime(CLOCK_MONOTONIC), "\n"' > "$oc_stamp" \
+  || fail "could not plant the owned fixture's launch-pacing stamp"
+OC_STALL_READY="$TMP_ROOT/own-stall-ready"; OC_STALL_RELEASE="$TMP_ROOT/own-stall-release"
+hold_source_lock zz-stall-src "$OC_STALL_READY" "$OC_STALL_RELEASE"
+OC_STALL_HOLDER=$HOLDER_PID
+wait_for "$OC_STALL_READY" || fail "the owned fixture could not hold the stall source's lock"
+FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=4 FM_PROCEVENT_LAUNCH_FLOOR_SECONDS=8 \
+  pe "$HOC" reconcile > "$TMP_ROOT/own-reconcile.out" 2>&1 &
+OC_RECON=$!
+wait_for "$FM_PROCEVENT_CLAIM_ROOT/aa-own-src.claim" \
+  || fail "fixture invalid: the owned runner never took its claim while reconcile was stalled"
+OC_OWN_READY="$TMP_ROOT/own-lock-ready"; OC_OWN_RELEASE="$TMP_ROOT/own-lock-release"
+hold_source_lock aa-own-src "$OC_OWN_READY" "$OC_OWN_RELEASE"
+OC_OWN_HOLDER=$HOLDER_PID
+wait_for "$OC_OWN_READY" || fail "the owned fixture could not hold the claimed source's lock"
+: > "$OC_STALL_RELEASE"
+oc_rc=0; wait "$OC_RECON" || oc_rc=$?
+: > "$OC_OWN_RELEASE"
+wait "$OC_STALL_HOLDER" 2>/dev/null || true
+wait "$OC_OWN_HOLDER" 2>/dev/null || true
+oc_out=$(cat "$TMP_ROOT/own-reconcile.out")
+printf '\nSCENARIO: claim confirmation under source-lock contention\n'
+printf 'fm-procevent reconcile (exit=%s): %s\n' "$oc_rc" "$oc_out"
+pe "$HOC" list
+printf 'Published claim protocol:\n'; cat "$FM_PROCEVENT_CLAIM_ROOT/aa-own-src.claim"
+assert_contains "$oc_out" "started=2" \
+  "a live claim hidden behind a held source lock lost its launch: $oc_out"
+assert_contains "$oc_out" "failed=0" \
+  "confirmation reported a claim-holding runner as failed while the lock was contended: $oc_out"
+[ "$oc_rc" -eq 0 ] || fail "reconcile exited non-zero with every launch confirmed: $oc_out"
+# The incident shape must stay visible after the window: the runner is healthy
+# and owns its source, so any failure report here would have been false.
+oc_owner=$(pe "$HOC" list | awk '$1 == "aa-own-src" { print $3 }')
+[ "$oc_owner" = live ] || fail "the confirmed runner does not own its source after the window: $oc_owner"
+assert_absent "$HOC/state/procevent/.aa-own-src.launch-failed" \
+  "a confirmed launch opened a launch-failure episode anyway"
+printf 'Launch-failure episode absent; both registrations run /bin/sleep 120.\n'
+pe "$HOC" retire aa-own-src >/dev/null 2>&1 || true
+pe "$HOC" retire zz-stall-src >/dev/null 2>&1 || true
+pass "a live claim is confirmed even while the source lock is contended"
+
+# --- an unreadable claim record never reads as an owner ---------------------
+# Confirmation observes the claim record without the source lock, and the
+# record is published by rename, so an observation sees a whole generation or
+# nothing. A truncated record must confirm nothing and be preserved as
+# uncertain - the runner side refuses it as already owned and reconcile starts
+# no replacement - because a torn read that guessed "owned" would close a
+# launch-failed episode over a source nothing is collecting from.
+HTR="$TMP_ROOT/htr"; new_home "$HTR"
+pe_register "$HTR" lavish torn-src -- /bin/sleep 120 >/dev/null
+printf 'torn\n' > "$FM_PROCEVENT_CLAIM_ROOT/torn-src.claim"
+chmod 0600 "$FM_PROCEVENT_CLAIM_ROOT/torn-src.claim"
+tr_rc=0; tr_out=$(pe "$HTR" reconcile) || tr_rc=$?
+printf '\nSCENARIO: malformed claim remains uncertain\n'
+printf 'Claim protocol: '; cat "$FM_PROCEVENT_CLAIM_ROOT/torn-src.claim"
+printf 'fm-procevent reconcile (exit=%s): %s\n' "$tr_rc" "$tr_out"
+pe "$HTR" list
+tr_observed=0
+FM_HOME="$HTR" bash -c '
+  . "$1/bin/fm-pr-lib.sh"; . "$1/bin/fm-wake-lib.sh"; . "$1/bin/fm-procevent-lib.sh"
+  fm_procevent_claim_state_observed torn-src
+' _ "$ROOT" || tr_observed=$?
+[ "$tr_observed" -eq 2 ] || fail "lock-free observation guessed ownership of a malformed claim: $tr_observed"
+printf 'Lock-free claim observation returned uncertain (exit=%s).\n' "$tr_observed"
+assert_contains "$tr_out" "started=0" "a torn claim record counted as a launch: $tr_out"
+assert_contains "$tr_out" "uncertain=1" "a torn claim record was not preserved as uncertain: $tr_out"
+assert_contains "$tr_out" "failed=0" "a torn claim record was reported as a launch failure: $tr_out"
+[ "$tr_rc" -eq 0 ] || fail "a preserved torn claim made reconcile fail: $tr_out"
+tr_owner=$(pe "$HTR" list | awk '$1 == "torn-src" { print $3 }')
+[ "$tr_owner" = uncertain ] || fail "a torn claim record was read as owner state: $tr_owner"
+rm -f -- "$FM_PROCEVENT_CLAIM_ROOT/torn-src.claim"
+pe "$HTR" retire torn-src >/dev/null 2>&1 || true
+pass "an unreadable claim record confirms nothing and is preserved as uncertain"
+
+# --- a failed launch leaves no litter and a repaired source re-arms ---------
+# The failure this fix removes was reported per launch, so the failure path
+# itself has to stay clean: an unconfirmed launch leaves no claim, runner
+# marker or staged output behind, its failure episode is recorded exactly
+# once, and a repaired registration arms and closes that episode on a later
+# cycle instead of inheriting it.
+HCL="$TMP_ROOT/hcl"; new_home "$HCL"
+pe_register "$HCL" lavish cleanup-src -- /bin/sleep 120 >/dev/null
+CL_SOURCE="$HCL/state/procevent/cleanup-src.source"
+if ! awk '/^argv:$/ { print; exit } { print }' "$CL_SOURCE" > "$CL_SOURCE.tmp"; then
+  fail "could not damage the cleanup fixture registration"
+fi
+mv "$CL_SOURCE.tmp" "$CL_SOURCE" || fail "could not damage the cleanup fixture registration"
+chmod 0600 "$CL_SOURCE"
+cl_rc=0
+cl_out=$(FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=2 pe "$HCL" reconcile) || cl_rc=$?
+printf '\nSCENARIO: genuine launch failure and repair\n'
+printf 'fm-procevent reconcile damaged argv (exit=%s): %s\n' "$cl_rc" "$cl_out"
+launch_failed_wake_payloads "$HCL" cleanup-src
+assert_contains "$cl_out" "failed=1" \
+  "the unstartable cleanup fixture was not reported as failed: $cl_out"
+[ "$cl_rc" -ne 0 ] || fail "reconcile exited zero while a launch could not confirm: $cl_out"
+assert_absent "$FM_PROCEVENT_CLAIM_ROOT/cleanup-src.claim" \
+  "a launch that never claimed left a claim behind"
+assert_absent "$HCL/state/procevent/cleanup-src.runner" \
+  "a launch that never claimed left a runner marker behind"
+cl_staging=$(find "$HCL/state/procevent" -name '.cleanup-src.*.output' -print 2>/dev/null | head -1)
+[ -z "$cl_staging" ] || fail "a launch that never claimed left staged output behind: $cl_staging"
+assert_present "$HCL/state/procevent/.cleanup-src.launch-failed" \
+  "an unconfirmed launch did not record its failure episode"
+printf 'No claim, runner marker, or staged output remains. Failure episode protocol:\n'
+cat "$HCL/state/procevent/.cleanup-src.launch-failed"
+pe_register "$HCL" lavish cleanup-src -- /bin/sleep 120 >/dev/null
+cl_ok=$(pe "$HCL" reconcile)
+printf 'fm-procevent reconcile repaired argv: %s\n' "$cl_ok"
+pe "$HCL" list
+assert_contains "$cl_ok" "started=1" \
+  "the repaired cleanup fixture did not arm on a later cycle: $cl_ok"
+assert_absent "$HCL/state/procevent/.cleanup-src.launch-failed" \
+  "a confirmed launch did not close its failure episode"
+printf 'Repair confirmed ownership and cleared the launch-failure episode.\n'
+pe "$HCL" retire cleanup-src >/dev/null 2>&1 || true
+pass "a failed launch leaves no litter and a repaired source re-arms cleanly"
+
+if [ "${FM_PROCEVENT_HANDSHAKE_ONLY:-0}" = 1 ]; then
+  echo "ALL HANDSHAKE SCENARIOS PASSED"
+  exit 0
+fi
 
 # --- a zero-padded confirm window is read as base 10 -------------------------
 # The window's validator reads base 10, so `08` is a value it accepts. Read as

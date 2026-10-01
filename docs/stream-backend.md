@@ -81,7 +81,7 @@ A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoi
 The feed direction only reads the hub: `serve`, `snapshot`, and `compare` in live mode hold a `subscribe` credential, open no listening socket, and send nothing to any worker.
 `translate` is offline and needs no hub credential.
 Writing is the adapter's other direction, a separate command with its own credential, which [Command path](#command-path) owns.
-Before any live feed or command does work, the adapter negotiates both the hub protocol and the advertised `current_execution` capability, and the command direction additionally requires `idempotent_command_results` plus the endpoint-gate generation `result_retry_orderability`.
+Before any live feed or command does work, the adapter negotiates both the hub protocol and the advertised `current_execution` capability; [Command path](#command-path) owns the additional order compatibility requirements.
 It rejects an older running hub before processing records and directs the operator to restart or upgrade it rather than guessing which execution is current or placing an order without reliable acknowledgement.
 Its header owns the record mapping and every field the hub cannot supply; the short version is that the `/v1/tasks` listing this bridge consumes carries no token counters, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
 When the hub cannot be read it emits nothing.
@@ -181,23 +181,62 @@ The adapter's header owns the three record shapes, required identity and payload
 
 At operator level, every order names both a worker by `leaf_worker_id` - `<machine>/<label>`, from the same machine and label the feed emits and `fm-stream.sh tasks` lists - and the exact execution the feed showed.
 That binding prevents an order composed for one run from being typed into its replacement.
-Acceptance means the owning agent wrote the complete order, including its submit byte, to that execution's pseudoterminal and acknowledged it; the owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership produces no record and remains pending.
+For Deck, Bridge orders correct the already-running turn without ending, displacing, restarting, or manufacturing lifecycle evidence for it; ordinary `fm-send` inbox doorbells still use the existing next-turn path.
+Native Deck acceptance is execution-bound through the durable receiver, never a PTY write; non-Deck endpoints retain the complete PTY typing contract.
+Native steering requires a Deck build supporting `deck run --steer-dir`; an unavailable interface is refused without changing the running turn or falling back to PTY input.
+Native text must be nonblank and fit below Deck's 64 KiB projection ceiling, with space reserved for source paths and acknowledgement guidance; that limit does not apply to other harnesses' PTY orders.
+The adapter header owns acceptance and hub capability negotiation, and `bin/fm_stream_deck.py` owns Deck's durable source, original-turn binding, idempotency, reconciliation, and refusal mechanics.
+The owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership or application produces no record and remains pending.
 Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
-The PTY agent advertises that capability back on every endpoint registration, and the hub places Bridge orders only for endpoints that do.
+The PTY agent advertises both reliable result acknowledgement and `native_steering_receiver` on every endpoint registration, and the hub requires both per-endpoint capabilities before placing Bridge orders.
+Retained protocol-3 agents without the receiver capability can re-register and retain input, status, and kill support, but Bridge orders are refused before routing rather than sent through legacy PTY input; upgrade those agents only at a safe worker boundary.
 Protocol-2 agents cannot register, while protocol-3 tail publishers remain visible but non-orderable.
 Each internal HTTP order carries the hub generation returned by compatibility negotiation; a replacement hub rejects a stale generation before placement, the adapter renegotiates before retrying, and the Bridge `command`, `command_ack`, and `command_nack` records do not change.
 
-Reconciliation state lives in the hub's memory, not on disk.
+The Bridge order journal lives in the hub's memory, not on disk; Deck's local durable source and receiver records do not replace it.
 The journal retains bindings for the most recent 512 orders.
 While an id remains there, an identical resend is answered from the original order, including when it overtakes the original placement; reuse with a different leaf, execution, or text is refused as an idempotency conflict.
 A retry after more than 512 newer orders is not guaranteed to be deduplicated.
 An order whose membership remains unresolved keeps that binding, while an identical resend may retry placement because no command was created.
 A taken command remains eligible for a late agent acknowledgement and a completed result remains idempotently answerable for at least 15 minutes, and an endpoint whose worker exits while acknowledgement is retrying keeps its publisher alive while the result can still settle.
-A definitive result rejection - including capability revocation after the hub closes the endpoint - or retry expiry ends retrying so the closing frame can publish and later commands can still be polled, while the caller's unresolved order remains unconfirmed.
-A hub restart empties the journal along with the registry, so a resend after restart is a new order and cannot reconcile delivery from before the restart.
+Result-post retries do not block local Deck reconciliation or later command polling; `bin/fm-stream-agent.py` owns their scheduling and durable retry metadata.
+A definitive result rejection - including capability revocation after the hub closes the endpoint - or retry expiry ends retrying so the closing frame can publish, while the caller's unresolved order remains unconfirmed.
+A hub restart empties its journal along with the registry, so a resend has no hub-side delivery history.
+After the same endpoint re-registers, retained Deck receiver records can still reconcile the same order id against its original turn; other endpoints have no such local native proof.
 
 The credentials are separate on purpose: `command` needs a `control`-class token, the class that can type into workers, while the feed holds `subscribe` alone, so a host running only the feed cannot order anything with the credential the feed uses.
 Run `command` on the host that runs the hub, reading its stdin from wherever the composer's records come from over SSH or an equivalent encrypted transport - the same open exposure decision the feed names, with a sharper edge, because this direction carries the credential that steers the fleet.
+
+### Private host control routing
+
+The same-origin, local-only UI adapter may call `bin/fm-ui-host-control.py` only after checking its per-launch browser-session authorization and authority for that exact action.
+This executable is a host-side routing surface, not an HTTP endpoint or an authentication substitute.
+Its header and `--help` own the operator-maintained 0600 binding registry, exact target resolution, and supported verbs.
+The host resolves `(machine, label)` to an explicit `FM_HOME` and exact task or captain-call binding; neither the registry's home paths nor control-class credentials are supplied by or returned to the browser.
+Invalid registry bindings refuse before dispatch; stale captain calls and deeper task eligibility are checked by the existing owners.
+Lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or remote-secondmate refusal checks.
+The host adapter must keep backend credentials in host-only 0600 files and must never send them in page content, browser environment, or browser storage.
+
+Decision actions carry the captain's authenticated exact answer to the existing send or captain-hold owner; the [host executable's header and help](../bin/fm-ui-host-control.py) own payload fields, delegation, acknowledgement framing, host-only diagnostics, and retry limits.
+Owner success does not prove that a worker acted on its inbox answer, and owner errors remain pending rather than being misreported as proof that nothing changed.
+The browser never writes state directly, supplies an owner-home path, or invokes an owner command itself.
+`note` remains only the supervisor-note path through `bin/fm-inbox.sh`, not a substitute for a decision action.
+A crew-owned `no-mistakes axi respond` remains worker-owned and is never invoked by this host route.
+Existing owner guards remain authoritative, including endpoint retirement and stand-down refusals; the host route does not bypass those refusals to revive or reassign workers.
+
+Full primary control is not yet implemented.
+The runtime/control-plane owner owns these explicit capability gaps: primary interrupt, primary exit/shutdown, primary relaunch/restart, primary missing-endpoint recovery, and primary native mid-turn steering.
+Primary decision control is supported through an explicit host-registry captain-call binding under the primary owner's `FM_HOME`, while task-key decisions use an exact task binding in their owning home.
+Notes-only and worker-only bindings do not constitute full primary control.
+
+The Bridge command plane remains `steer` only.
+The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.
+The hub's endpoint-addressed non-order command path already carries `input`, `kill`, and `status` through `submit_command` and the agent's take/result acknowledgement path, independent of the Bridge journal.
+Those are different planes, not interchangeable Bridge orders: raw input bypasses native steering, kill closes an endpoint rather than executing guarded lifecycle control, and status appends worker events rather than carrying captain intent.
+That path's acknowledgement does not supply the Bridge journal's leaf binding, command-id replay, or late-result lookup, so a preflight lookup followed by a plain command cannot honestly inherit the journal contract.
+Consequently this host route does not expose those routes as composer kinds or fabricate equivalent acknowledgement and retry guarantees.
+A future generalized hub journal belongs to the core stream owner and must establish each kind's execution binding, idempotency, and authority before a UI can expose it.
+Use guarded host lifecycle verbs for process control and supervisor notes for intent; this is not a claim of full primary lifecycle or raw endpoint command support.
 
 ## Security
 
@@ -221,7 +260,7 @@ Command retrieval and result submission additionally require the endpoint's priv
 A poll must name that endpoint; machine-wide command retrieval is refused.
 A recovering agent presents its current capability when registering an endpoint, and the hub adopts or retains that same value so retrying after a lost registration response is idempotent; closing the endpoint revokes it.
 Agents and tail adapters retain the capability only in memory, and listings, state reads, logs, and status lines never expose it.
-The Bridge command direction requires the hub's `endpoint_command_auth` capability before placing orders; the Python command wire shapes are unchanged.
+[Command path](#command-path) owns Bridge order compatibility; the endpoint authentication here also protects those orders.
 The Rust bridge remains a read-only feed, not a command adapter.
 The bundled viewer page is served without a credential - it is static, and the token it reads out of the URL fragment is what its own requests carry - but every data route behind it is authenticated, and opening it with a viewing token gives a read-only view whose send box is refused.
 
@@ -367,7 +406,8 @@ The hub owns no pseudoterminal, so it cannot take a worker with it.
 While it is down, unreachable, or restarting:
 
 - Every worker keeps running, and keeps producing output into the pty its own agent holds.
-- Nothing can be watched, steered, captured, or killed through this backend, because every one of those routes is the hub.
+- Nothing can be watched, newly steered, captured, or killed through this backend, because every one of those requests goes through the hub.
+  Already-reserved native Deck orders continue local reconciliation independently of hub connectivity under the [Command path](#command-path) contract.
 - Every endpoint reads stale, which is `unreadable`, never `dead`.
   Supervision must not treat that as evidence a worker died, because it is evidence of nothing at all.
 - Status lines are the exception, and deliberately so: they are written by each agent on its own machine, so the durable record a task reports into keeps working while the hub is gone.
@@ -384,8 +424,10 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
 - Experimental; CI's Rust agent parity step exercises disposable Python hubs and real PTYs, not installed harnesses.
   [Rust PTY agent pilot](#rust-pty-agent-pilot) owns the opt-in port's verification coverage and production-replacement requirements.
   [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) is the live guard that proves each installed harness is still classified through the hub, and the command that refreshes the dated per-harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md).
-  The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, `tests/fm-stream-claude-tail.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
+  Native Deck steering has its own live guard and portable receiver regressions, linked in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
+  The other portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, `tests/fm-stream-claude-tail.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
   The secondmate credential-seeding regressions from the Security section above ride `tests/fm-secondmate-safety.test.sh`.
+  `tests/fm-ui-host-control.test.sh` covers the private host route's registry, captain-call decisions, exact-task and harness-switch races, independent-host lease preservation, stdin isolation, and host-only diagnostics; `tests/fm-control.test.sh` covers integration with the existing worker owners.
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.
 - An unreachable agent and a dead worker are indistinguishable from the hub, so a stale read carries no liveness verdict at all.
   Only one of those two states authorizes recovery, and reporting silence as death is how a healthy worker gets torn down.

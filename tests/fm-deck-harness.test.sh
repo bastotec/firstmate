@@ -1167,6 +1167,11 @@ SH
   cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --handling-delivered ]; then
+  if [ -f "$FM_HOME/refuse-next-handling" ]; then
+    rm -f "$FM_HOME/refuse-next-handling"
+    printf 'generation=%s watcher=%s\n' "$2" "$4" >> "$FM_HOME/handling-refused"
+    exit 1
+  fi
   printf 'generation=%s watcher=%s\n' "$2" "$4" >> "$FM_HOME/handling-delivered"
   exit 0
 fi
@@ -1210,7 +1215,7 @@ if records:
             break
         time.sleep(.05)
     assert len(starts) >= 2, 'next watcher cycle did not start before wake handling'
-    assert delivered, 'successor watcher handling was not confirmed before wake handling'
+    assert delivered or (home / 'handling-refused').exists(), 'successor watcher handling was not confirmed before wake handling'
     (home / 'wake-turn-active').touch()
     time.sleep(2)
     successor = int((home / 'watch-starts').read_text().splitlines()[-1])
@@ -1439,6 +1444,72 @@ PYTHON
   pass "fm-deck-worker: a secondmate records a failed turn and waits at its prompt for the next wake"
 }
 
+test_secondmate_survives_a_refused_handling_confirmation() {
+  local dir="$TMP_ROOT/host-refused-handling"
+  make_secondmate_host_fixture "$dir"
+  python3 - "$dir" <<'PYTHON' || fail "a Deck secondmate did not survive a refused handling confirmation"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def arms():
+    path = home/'watch-arms'
+    return path.read_text().splitlines() if path.exists() else []
+def wait_for(check, label):
+    for _ in range(200):
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+' - host exited: '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+with (root/'pane').open('w') as output, (root/'stderr').open('w') as errors:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=errors, env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: len(rows()) == 1, 'first turn')
+        # The successor watcher of the next wake refuses its handoff, the way
+        # a watcher that died or a recovery episode that moved on does: the
+        # driver must replace its watcher and still handle the queued wake.
+        (home/'refuse-next-handling').touch()
+        (home/'trigger').touch()
+        wait_for(lambda: (home/'handling-refused').exists(), 'refused handling confirmation')
+        wait_for(lambda: len(rows()) == 2, 'wake turn after a refused confirmation')
+        assert 'Firstmate instruction waiting:' in rows()[1]['prompt']
+        assert 'actionable wake' in rows()[1]['inbox']
+        assert p.poll() is None, 'the driver exited on a refused confirmation: '+(root/'pane').read_text()
+        assert 'replacing the watcher' in (root/'stderr').read_text(), 'the refusal was not logged to stderr'
+        assert 'replacing the watcher' not in (root/'pane').read_text(), 'the refusal leaked into stdout'
+        assert arms()[-1].endswith('predecessor=none'), 'the replacement watcher claimed the refused predecessor'
+        refused_pid = int((home/'handling-refused').read_text().split('watcher=', 1)[1].strip())
+        try:
+            os.kill(refused_pid, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            raise AssertionError('the refused watcher was left running beside its replacement')
+        status = (root/'parent/host.status').read_text() if (root/'parent/host.status').exists() else ''
+        assert not any(x.startswith('failed:') for x in status.splitlines()), 'a recovered refusal was published as a failure'
+        # The replacement still rings and the driver retains its Deck session.
+        (home/'trigger').touch()
+        wait_for(lambda: len(rows()) == 3, 'wake through the replacement watcher')
+        assert 'actionable wake' in rows()[2]['inbox'], 'the replacement wake was not delivered'
+        assert all(x['resumed'] and x['session'] == rows()[0]['session'] for x in rows()[1:]), 'the refusal lost the Deck session'
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=20) == 0, 'the surviving driver did not stop on /quit'
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGTERM)
+            try:
+                p.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  pass "fm-deck-worker: a secondmate replaces its watcher when the successor refuses its handoff"
+}
+
 test_secondmate_repeats_its_launch_brief_after_a_session_less_failure() {
   local dir="$TMP_ROOT/host-no-session"
   make_secondmate_host_fixture "$dir"
@@ -1585,6 +1656,7 @@ test_herdr_deck_ring_rings_live_driver
 test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_survives_a_failed_turn
+test_secondmate_survives_a_refused_handling_confirmation
 test_secondmate_repeats_its_launch_brief_after_a_session_less_failure
 test_secondmate_stops_when_a_repeated_launch_brief_opens_no_session
 test_secondmate_stops_when_a_failed_turn_cannot_be_recorded

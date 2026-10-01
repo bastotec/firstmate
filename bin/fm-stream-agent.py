@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import concurrent.futures
 import errno
 import fcntl
 import json
@@ -75,6 +76,7 @@ import urllib.request
 AGENT_VERSION = "2.1.0"
 AGENT_PROTOCOL = 3
 IDEMPOTENT_RESULT_CAPABILITY = "idempotent_command_results"
+NATIVE_STEERING_CAPABILITY = "native_steering_receiver"
 
 STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
                  "failed", "resolved")
@@ -452,6 +454,8 @@ POLL_BACKOFF_MIN = 2.0
 POLL_BACKOFF_MAX = 60.0
 RESULT_POST_TIMEOUT_SECS = 15.0
 RESULT_RETRY_SHUTDOWN_SECS = 900.0
+STEERING_APPLY_POLL_SECS = 0.1
+STEERING_RECONCILE_SECS = 5.0
 REREGISTER_BACKOFF_MIN = 2.0
 REREGISTER_BACKOFF_MAX = 60.0
 REREGISTER_JITTER = 0.25
@@ -494,7 +498,7 @@ def registration(options: argparse.Namespace, endpoint_id: str) -> dict:
         "cwd": options.cwd,
         "rows": options.rows,
         "cols": options.cols,
-        "capabilities": [IDEMPOTENT_RESULT_CAPABILITY],
+        "capabilities": [IDEMPOTENT_RESULT_CAPABILITY, NATIVE_STEERING_CAPABILITY],
         "protocol": AGENT_PROTOCOL,
     }
 
@@ -841,9 +845,39 @@ class Agent:
 
     # --- commands ---------------------------------------------------------
 
-    def apply_command(self, command: dict) -> tuple:
+    def deck_receiver(self):
+        if not self.status_path:
+            return None
+        from fm_stream_deck import Receiver
+        state, filename = os.path.split(self.status_path)
+        return Receiver(state, filename.removesuffix('.status'), self.endpoint_id)
+
+    def apply_command(self, command: dict, reconcile_only: bool = False) -> tuple:
         kind = command.get("kind")
         payload = command.get("payload") or {}
+        if kind == "steer":
+            if command.get("endpoint_id") != self.endpoint_id:
+                return (False, "stale execution; steer was not applied")
+            receiver = None if command.get('_legacy_prepared') else self.deck_receiver()
+            if receiver is not None:
+                result = receiver.apply(str(payload.get('order_id') or command['command_id']),
+                                        str(payload.get('execution_id') or ''),
+                                        str(payload.get('text') or ''), self.pty.alive,
+                                        reconcile_only=reconcile_only,
+                                        reservation=command.setdefault('_steering_reservation', {}),
+                                        command_id=command['command_id'])
+                if result is not None:
+                    return result
+            if reconcile_only:
+                return None, 'native steering binding unavailable; application unconfirmed'
+            # A Deck wrapper whose interface has not registered must never
+            # fall back to typing a steer into a later turn's stdin.
+            for process in self.pty.foreground_processes():
+                args = process.get('args', '')
+                if 'fm-deck-worker' in args.split(' ', 1)[0] or 'fm-deck-worker.sh' in args:
+                    return (False, 'Deck steering interface unavailable; no PTY fallback')
+            # Non-Deck endpoints retain the established PTY order contract.
+            kind = "input"
         if kind == "input":
             data = b""
             text = payload.get("text")
@@ -901,97 +935,257 @@ class Agent:
         sys.stderr.write("fm-stream-agent: %s\n" % reason)
         sys.stderr.flush()
 
-    def acknowledge_command(self, command: dict, ok: bool, error: str) -> None:
-        result = {
-            "machine": self.machine,
-            "command_id": command.get("command_id"),
-            "ok": ok,
-            "error": error,
-        }
-        retry_after = POLL_BACKOFF_MIN
-        retry_deadline = time.monotonic() + RESULT_RETRY_SHUTDOWN_SECS
-        while True:
-            attempted_at = time.monotonic()
-            try:
-                self.hub.call("POST", "/v1/agent/results", result,
-                              timeout=RESULT_POST_TIMEOUT_SECS)
-                return
-            except ResultRejected as exc:
-                sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
-                return
-            except RuntimeError as exc:
-                sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
-                with self._result_retry_condition:
-                    deadline = self._result_retry_deadline
-                    if deadline is None or deadline > retry_deadline:
-                        deadline = retry_deadline
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        if attempted_at < deadline:
-                            continue
-                        return
-                    wait = min(retry_after, remaining)
-                    self._result_retry_condition.wait(wait)
-                retry_after = min(retry_after * 2, POLL_BACKOFF_MAX)
+    def reserve_command(self, command: dict) -> bool:
+        if command.get('kind') != 'steer' or command.get('endpoint_id') != self.endpoint_id:
+            return True
+        receiver = self.deck_receiver()
+        if receiver is None:
+            return True
+        payload = command.get('payload') or {}
+        reconcile_only = command.get('_reservation_attempted', False)
+        command['_reservation_attempted'] = True
+        result = receiver.apply(
+            str(payload.get('order_id') or command['command_id']),
+            str(payload.get('execution_id') or ''), str(payload.get('text') or ''),
+            self.pty.alive, reconcile_only=reconcile_only,
+            reservation=command.setdefault('_steering_reservation', {}),
+            command_id=command['command_id'], reserve_only=True)
+        if result is None:
+            for process in self.pty.foreground_processes():
+                args = process.get('args', '')
+                if 'fm-deck-worker' in args.split(' ', 1)[0] or 'fm-deck-worker.sh' in args:
+                    command['_application_result'] = (
+                        False, 'Deck steering interface unavailable; no PTY fallback')
+                    return True
+            command['_legacy_prepared'] = True
+            return True
+        if result[0] is not None:
+            command['_application_result'] = result
+            return True
+        if result[1] == 'Deck application reserved':
+            command['_native_prepared'] = True
+            return True
+        return False
+
+    def acknowledge_command(self, command: dict, ok: bool, error: str) -> bool:
+        result = {"machine": self.machine, "command_id": command['command_id'],
+                  "ok": ok, "error": error}
+        try:
+            self.hub.call("POST", "/v1/agent/results", result,
+                          timeout=RESULT_POST_TIMEOUT_SECS)
+            return True
+        except ResultRejected as exc:
+            sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
+            return True
+        except RuntimeError as exc:
+            sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
+            return False
 
     def command_loop(self) -> None:
-        """Long-poll the hub for this endpoint's commands and acknowledge each.
+        """Keep take, local application and result posting independent in one process.
 
-        The acknowledgement is what lets the hub tell a delivered input from one
-        that merely sat in a queue, so a failure here is reported rather than
-        swallowed.
+        A take destructively removes hub commands: keep its full HTTP timeout,
+        and durably reserve native commands before starting another take.
+        Local reconciliation must progress even while either network call is
+        unavailable; it never borrows a successor turn (fm_stream_deck.py).
+        Only live-original-turn pending application polls at 100 ms; ended
+        turns and transient storage failures reconcile at a five-second cadence.
+        Result posts are single bounded attempts; with a status path their retry
+        state is durable in the receiver's existing per-order records, not a
+        second command store. Retry rejection or expiry ends posting, not the
+        worker's turn. tests/fm-stream-deck.test.sh pins these safety boundaries.
         """
         path = ("/v1/agent/commands?machine=%s&endpoint=%s&wait=%d"
                 % (urllib.parse.quote(self.machine), self.endpoint_id,
                    int(self.options.poll_secs)))
-        while not self.stop.is_set():
-            if self.stood_down.is_set():
-                # Standing down means taking no commands, whichever path
-                # reached it. A name this agent has lost and a hub that refuses
-                # it both make anything typed through here an act by a worker
-                # the fleet no longer believes is at this endpoint - and the
-                # publish path can reach either verdict, so this is where the
-                # loop notices rather than only where it raised.
-                return
-            # Cleared BEFORE the attempt, never before the wait below. A
-            # recovery can land at any instant, and the only window in which
-            # losing its signal would cost anything is between discovering this
-            # poll has failed and giving up on waiting. Clearing here puts that
-            # window ahead of the attempt instead of inside it: a recovery
-            # during the call, or during the wait, is still set when the wait
-            # looks. One that lands in the instant before the attempt is not
-            # lost either, because the attempt it would have prompted is the
-            # one about to be made.
-            self._poll_wake.clear()
+        receiver = self.deck_receiver()
+        receipts, pending, outcomes = {}, {}, {}
+        loaded = receiver is None
+        load_due = poll_due = 0.0
+        take = post = None
+        posting_id = None
+        shutdown_at = None
+
+        def persist(record):
+            if not record.get('_dirty'):
+                return True
+            if time.monotonic() < record.get('_persist_at', 0):
+                return False
             try:
-                answer = self.hub.call("GET", path, timeout=self.options.poll_secs + 15)
-            except Superseded as exc:
-                self.give_up(exc)
-                return
-            except RuntimeError as exc:
-                # Back off rather than spin. A hub outage must not take the
-                # worker down with it - the pty keeps running and this
-                # reconnects - but an agent whose hub is gone for good would
-                # otherwise poll a dead socket forever.
-                sys.stderr.write("fm-stream-agent: command poll failed: %s\n" % exc)
-                if not self._poll_wake.wait(self._backoff):
-                    self._backoff = min(self._backoff * 2, POLL_BACKOFF_MAX)
-                elif not self.stop.is_set():
-                    # The endpoint is back. The wait this poll's own failure
-                    # earned was sized by an outage that has ended, so serving
-                    # the rest of it would leave the worker listed and healthy
-                    # while a steer sent to it came back undelivered. Both the
-                    # wait and the growth behind it end here.
-                    self._backoff = POLL_BACKOFF_MIN
-                continue
-            self._backoff = POLL_BACKOFF_MIN
-            for command in answer.get("commands") or []:
-                ok, error = False, "the agent could not apply the command"
-                try:
-                    ok, error = self.apply_command(command)
-                except Exception as exc:  # noqa: BLE001 - always answer the hub
-                    ok, error = False, str(exc)
-                self.acknowledge_command(command, ok, error)
+                if receiver is not None:
+                    receiver.save_result(record['order_id'], record['result']['command_id'], record)
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write("fm-stream-agent: result persistence pending: %s\n" % exc)
+                record['_persist_at'] = time.monotonic() + STEERING_RECONCILE_SECS
+                return False
+            record['_dirty'] = False
+            return True
+
+        def finish(command, ok, error):
+            command['_application_result'] = (ok, error)
+            command_id = command['command_id']
+            if command_id not in outcomes:
+                payload = command.get('payload') or {}
+                wall = time.time()
+                outcomes[command_id] = {
+                    'order_id': str(payload.get('order_id') or command_id),
+                    'result': {'machine': self.machine, 'command_id': command_id,
+                               'ok': ok, 'error': error},
+                    'expires_at': wall + RESULT_RETRY_SHUTDOWN_SECS,
+                    'retry_at': wall, 'backoff': POLL_BACKOFF_MIN, 'settled': False,
+                    '_dirty': True}
+            return persist(outcomes[command_id])
+
+        def apply(command, fresh):
+            try:
+                if fresh and '_application_result' not in command and not self.reserve_command(command):
+                    return False
+                if '_application_result' in command:
+                    ok, error = command['_application_result']
+                else:
+                    ok, error = self.apply_command(
+                        command, reconcile_only=not fresh or command.get('_native_prepared', False))
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write("fm-stream-agent: command application unconfirmed: %s\n" % exc)
+                if not fresh or command.get('_native_prepared'):
+                    pending[command['command_id']] = (
+                        command, time.monotonic() + STEERING_RECONCILE_SECS)
+                    return bool(fresh)
+                return False
+            if ok is None:
+                delay = (STEERING_APPLY_POLL_SECS if error == 'Deck application pending'
+                         else STEERING_RECONCILE_SECS)
+                pending[command['command_id']] = (command, time.monotonic() + delay)
+                return True
+            if finish(command, ok, error):
+                return True
+            if not fresh or command.get('_native_prepared'):
+                pending[command['command_id']] = (
+                    command, time.monotonic() + STEERING_RECONCILE_SECS)
+                return bool(fresh)
+            return False
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as network:
+            while True:
+                now, wall = time.monotonic(), time.time()
+                stopping = self.stop.is_set() or self.stood_down.is_set()
+                if stopping and shutdown_at is None:
+                    shutdown_at = now + RESULT_RETRY_SHUTDOWN_SECS
+                    pending = {key: (command, now) for key, (command, _) in pending.items()}
+                with self._result_retry_condition:
+                    deadline = self._result_retry_deadline
+                if deadline is not None:
+                    shutdown_at = min(shutdown_at or deadline, deadline)
+                if (shutdown_at is not None
+                        and now >= shutdown_at + 2 * RESULT_POST_TIMEOUT_SECS + 1):
+                    break
+
+                if take is not None and take.done():
+                    try:
+                        answer = take.result()
+                    except Superseded as exc:
+                        self.give_up(exc)
+                    except RuntimeError as exc:
+                        sys.stderr.write("fm-stream-agent: command poll failed: %s\n" % exc)
+                        poll_due = now + self._backoff
+                        self._backoff = min(self._backoff * 2, POLL_BACKOFF_MAX)
+                    else:
+                        self._backoff = POLL_BACKOFF_MIN
+                        poll_due = now
+                        for command in answer.get('commands') or []:
+                            receipts[command['command_id']] = (command, now)
+                    take = None
+
+                if post is not None and post.done():
+                    record = outcomes[posting_id]
+                    settled = post.result()
+                    limit = record['expires_at']
+                    if shutdown_at is not None:
+                        limit = min(limit, wall + shutdown_at - now)
+                    record['settled'] = (settled or (
+                        wall >= limit and record['_last_attempt_at'] >= limit))
+                    record['retry_at'] = min(wall + record['backoff'], limit)
+                    record['backoff'] = min(record['backoff'] * 2, POLL_BACKOFF_MAX)
+                    record['_dirty'] = True
+                    post = posting_id = None
+
+                if not loaded and now >= load_due:
+                    try:
+                        commands, saved = receiver.recover()
+                    except Exception as exc:  # noqa: BLE001
+                        sys.stderr.write("fm-stream-agent: command recovery pending: %s\n" % exc)
+                        load_due = now + STEERING_RECONCILE_SECS
+                    else:
+                        for record in saved.values():
+                            if not record['settled'] and wall > record['expires_at']:
+                                record['settled'] = True
+                                record['_dirty'] = True
+                        outcomes.update(saved)
+                        pending.update((command['command_id'], (command, now)) for command in commands)
+                        loaded = True
+
+                if not self.stood_down.is_set():
+                    for command_id, (command, due) in list(pending.items()):
+                        if due <= time.monotonic():
+                            pending.pop(command_id)
+                            apply(command, False)
+                    for command_id, (command, due) in list(receipts.items()):
+                        if due <= time.monotonic():
+                            if command_id in outcomes and persist(outcomes[command_id]):
+                                receipts.pop(command_id)
+                            elif apply(command, True):
+                                receipts.pop(command_id)
+                            else:
+                                receipts[command_id] = (
+                                    command, time.monotonic() + STEERING_RECONCILE_SECS)
+                else:
+                    receipts.clear()
+                    pending.clear()
+
+                for record in outcomes.values():
+                    persist(record)
+
+                stopping = self.stop.is_set() or self.stood_down.is_set()
+                if stopping and take is None and not receipts and post is None and all(
+                        record['settled'] and not record.get('_dirty') for record in outcomes.values()):
+                    break
+                if not stopping and loaded and not receipts and take is None:
+                    if self._poll_wake.is_set():
+                        poll_due = time.monotonic()
+                    if time.monotonic() >= poll_due:
+                        self._poll_wake.clear()
+                        take = network.submit(self.hub.call, 'GET', path,
+                                              timeout=self.options.poll_secs + 15)
+                if post is None:
+                    ready = [record for record in outcomes.values()
+                             if not record['settled'] and not record.get('_dirty')
+                             and record['retry_at'] <= time.time()]
+                    if ready:
+                        record = min(ready, key=lambda value: value['retry_at'])
+                        posting_id = record['result']['command_id']
+                        result = record['result']
+                        record['_last_attempt_at'] = time.time()
+                        post = network.submit(self.acknowledge_command, result,
+                                              result['ok'], result['error'])
+
+                due = [when for _, when in pending.values()] + [when for _, when in receipts.values()]
+                if not loaded:
+                    due.append(load_due)
+                if take is None and not stopping and not receipts and loaded:
+                    due.append(poll_due)
+                for record in outcomes.values():
+                    if record.get('_dirty'):
+                        due.append(record.get('_persist_at', 0))
+                    elif not record['settled'] and post is None:
+                        due.append(time.monotonic() + max(0, record['retry_at'] - time.time()))
+                delay = min(0.1, max(0, min(due) - time.monotonic())) if due else 0.1
+                active = [future for future in (take, post) if future is not None]
+                if active:
+                    concurrent.futures.wait(active, timeout=delay,
+                                            return_when=concurrent.futures.FIRST_COMPLETED)
+                else:
+                    with self._result_retry_condition:
+                        self._result_retry_condition.wait(delay)
 
     # --- lifecycle --------------------------------------------------------
 

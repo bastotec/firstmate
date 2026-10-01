@@ -2159,6 +2159,9 @@ test_direct_spawn_relaunch_refuses_secondmate_account_slot_after_metadata_load()
   pass "direct spawn relaunch rechecks the recorded secondmate kind before account selection"
 }
 
+# fm-model-chain sources these fixture helpers without running this suite.
+[ "${FM_MODEL_CHAIN_TEST_SKIP_RUN:-0}" != 1 ] || return 0
+
 test_secondmate_relaunch_onto_deck
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
