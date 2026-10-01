@@ -160,6 +160,7 @@ The adapter's header owns the three record shapes, required identity and payload
 At operator level, every order names both a worker by `leaf_worker_id` - `<machine>/<label>`, from the same machine and label the feed emits and `fm-stream.sh tasks` lists - and the exact execution the feed showed.
 That binding prevents an order composed for one run from being typed into its replacement.
 For Deck, Bridge orders correct the already-running turn without ending, displacing, restarting, or manufacturing lifecycle evidence for it; ordinary `fm-send` inbox doorbells still use the existing next-turn path.
+Native Deck acceptance is execution-bound through the durable receiver, never a PTY write; non-Deck endpoints retain the complete PTY typing contract.
 Native steering requires a Deck build supporting `deck run --steer-dir`; an unavailable interface is refused without changing the running turn or falling back to PTY input.
 Native text must be nonblank and fit below Deck's 64 KiB projection ceiling, with space reserved for source paths and acknowledgement guidance; that limit does not apply to other harnesses' PTY orders.
 The adapter header owns acceptance and hub capability negotiation, and `bin/fm_stream_deck.py` owns Deck's durable source, original-turn binding, idempotency, reconciliation, and refusal mechanics.
@@ -183,6 +184,29 @@ After the same endpoint re-registers, retained Deck receiver records can still r
 
 The credentials are separate on purpose: `command` needs a `control`-class token, the class that can type into workers, while the feed holds `subscribe` alone, so a host running only the feed cannot order anything with the credential the feed uses.
 Run `command` on the host that runs the hub, reading its stdin from wherever the composer's records come from over SSH or an equivalent encrypted transport - the same open exposure decision the feed names, with a sharper edge, because this direction carries the credential that steers the fleet.
+
+### Private host control routing
+
+The same-origin, local-only UI adapter may call `bin/fm-ui-host-control.py` only after checking its per-launch browser-session authorization.
+This executable is a host-side routing surface, not an HTTP endpoint or an authentication substitute.
+Its header and `--help` own the operator-maintained 0600 binding registry, exact target resolution, and supported verbs.
+The host resolves `(machine, label)` to an explicit `FM_HOME` and exact task id; neither the registry's home paths nor control-class credentials are supplied by or returned to the browser.
+Unknown, ambiguous, or stale bindings refuse before dispatch.
+Lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or remote-secondmate refusal checks.
+The host adapter must keep backend credentials in host-only 0600 files and must never send them in page content, browser environment, or browser storage.
+
+Decision input is intent-only: `note` queues the captain's words through the owning supervisor's `bin/fm-inbox.sh`, including when the selected target is a task.
+The UI never calls `fm-send --resolve-key`, `fm-captain-hold`, or `no-mistakes axi respond` and never appends a resolved event or a task status line.
+The supervisor processes that intent through the existing authority workflow; a crew-owned no-mistakes response remains worker-owned after the supervisor supplies its authorized decision.
+Primary supervisor targets accept notes only.
+Primary lifecycle control beyond that existing inbox is absent and requires a separately designed, security-sensitive core surface; the runtime/control-plane owner, not the UI adapter, owns that gap.
+
+The Bridge command plane remains `steer` only.
+The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.
+The hub's endpoint-addressed `input`, `kill`, and `status` routes are different planes, not interchangeable Bridge orders: raw input bypasses native steering, kill closes an endpoint rather than executing guarded lifecycle control, and status appends worker events rather than carrying captain intent.
+Consequently this host route does not expose those routes as composer kinds or fabricate equivalent acknowledgement and retry guarantees.
+A future generalized hub journal belongs to the core stream owner and must establish each kind's execution binding, idempotency, and authority before a UI can expose it.
+Use guarded host lifecycle verbs for process control and supervisor notes for intent; this is not a claim of full primary lifecycle or raw endpoint command support.
 
 ## Security
 

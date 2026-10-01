@@ -798,6 +798,8 @@ tests/fm-supervision-events.test.sh 719
 tests/fm-tangle-guard.test.sh 9662
 tests/fm-task-delivery.test.sh 5952
 tests/fm-task-inbox.test.sh 25369
+# Local completed host-routing run seed; refresh from green CI artifacts.
+tests/fm-ui-host-control.test.sh 1762
 tests/fm-teardown-endpoint-safety.test.sh 4620
 tests/fm-teardown.test.sh 97603
 tests/fm-test-fixture-cleanup.test.sh 915
