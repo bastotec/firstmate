@@ -1014,23 +1014,56 @@ registry = p / 'registry'
 registry.write_text(json.dumps([dict(machine='fixture-host', label='fm-sample',
                                      fm_home=str(p / 'home'), task_id='sample')]))
 registry.chmod(0o600)
+for command_id, payload in (
+        ('fixture-answer', dict(kind='resolve-key', key='fixture-choice', text='Use option one.\nKeep the rest queued.')),
+        ('fixture-interrupt', dict(kind='interrupt'))):
+    (p / command_id).write_text(json.dumps(dict(
+        record='command', command_id=command_id,
+        identity=dict(parent_mate_id='fixture-host', leaf_worker_id='fixture-host/fm-sample'),
+        payload=payload)) + '\n')
 PY
   printf 'needs-decision [key=fixture-choice]: Fixture choice\n' > "$dir/home/state/sample.status"
-  out=$(PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" \
-    "$ROOT/bin/fm-ui-host-control.py" --registry "$dir/registry" \
-    --machine fixture-host --label fm-sample resolve-key --key fixture-choice \
-    --text $'Use option one.\nKeep the rest queued.' 2>&1); rc=$?
+  out=$(PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" FM_STREAM_MACHINE=fixture-host \
+    "$ROOT/bin/fm-ui-host-control.py" --registry "$dir/registry" command \
+    < "$dir/fixture-answer" 2> "$dir/answer-diagnostics"); rc=$?
   expect_code 0 "$rc" "host decision should reach fm-send's durable owner"$'\n'"$out"
+  python3 - "$out" <<'PY'
+import json
+import sys
+acks = [json.loads(line) for line in sys.argv[1].splitlines()]
+assert len(acks) == 1, acks
+assert acks[0]['record'] == 'command_ack' and acks[0]['state'] == 'accepted', acks
+assert acks[0]['command_id'] == 'fixture-answer', acks
+assert acks[0]['leaf_worker_id'] == 'fixture-host/fm-sample', acks
+PY
+  [ "$?" = 0 ] || fail "host answer acknowledgement must preserve command correlation"
   assert_contains "$(cat "$dir/home/state/sample.status")" \
     'resolved [key=fixture-choice]:' "the existing owner must close the exact worker key"
-  out=$(cat "$dir/home/state/sample.inbox/"*.msg)
-  assert_contains "$out" $'Use option one.\nKeep the rest queued.' \
-    "the worker inbox must carry the exact answer bytes"
-  out=$(PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" \
-    "$ROOT/bin/fm-ui-host-control.py" --registry "$dir/registry" \
-    --machine fixture-host --label fm-sample interrupt 2>&1); rc=$?
+  python3 - "$dir/home/state/sample.inbox" <<'PY'
+from pathlib import Path
+import sys
+messages = list(Path(sys.argv[1]).glob('*.msg'))
+assert len(messages) == 1, messages
+assert messages[0].read_text().split('\n--\n', 1)[1] == 'Use option one.\nKeep the rest queued.'
+PY
+  [ "$?" = 0 ] || fail "the worker inbox must carry the exact answer bytes"
+  : > "$dir/fake/keys"
+  out=$(PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" FM_STREAM_MACHINE=fixture-host \
+    "$ROOT/bin/fm-ui-host-control.py" --registry "$dir/registry" command \
+    < "$dir/fixture-interrupt" 2> "$dir/interrupt-diagnostics"); rc=$?
   expect_code 0 "$rc" "host lifecycle should reach fm-control"$'\n'"$out"
-  assert_contains "$out" 'interrupt-delivered sample' "the owner must verify lifecycle delivery"
+  python3 - "$out" <<'PY'
+import json
+import sys
+acks = [json.loads(line) for line in sys.argv[1].splitlines()]
+assert len(acks) == 1, acks
+assert acks[0]['record'] == 'command_ack' and acks[0]['state'] == 'accepted', acks
+assert acks[0]['command_id'] == 'fixture-interrupt', acks
+assert acks[0]['leaf_worker_id'] == 'fixture-host/fm-sample', acks
+PY
+  [ "$?" = 0 ] || fail "host interrupt acknowledgement must preserve command correlation"
+  [ "$(keys_sent "$dir")" = Escape ] || fail "host interrupt must deliver the owner's verified key"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "host interrupt must leave the agent running"
   pass "host route: exact worker answer and guarded lifecycle reach their existing owners"
 }
 

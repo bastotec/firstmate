@@ -11,7 +11,10 @@ may submit records. Accepted command_ack means the existing owner returned
 success, NOT that the worker acted on an inbox answer. Pre-dispatch refusals
 return command_ack refused. Nonzero owner exits may follow partial writes,
 so they remain pending (no record), with a host-only diagnostic; reconcile
-before retrying. This local plane has no hub journal or automatic retry.
+before retrying. Correlated host_owner_result records on host-only stderr
+retain the owner's stdout, stderr and exit code, including successful warnings.
+Children never inherit the command stream's stdin. This local plane has no hub
+journal or automatic retry.
 
 FILE is an operator-maintained, host-only regular file owned by this uid with
 mode 0600, containing a JSON array of bindings:
@@ -26,7 +29,9 @@ mid-turn steering are unsupported. Every (machine, label) and
 (fm_home, task_id or captain_call_id) must be unique. Unknown, ambiguous,
 malformed, or stale bindings refuse before dispatch. For a task,
 label must equal fm-<task_id>, the stream publisher's label. The home's
-config/stream-machine (default hostname) must match machine. Worker actions
+stream machine identity resolved by fm_backend_stream_machine must match
+machine. The host delegates as the main supervision actor, preserving live
+branch leases even without a Pi caller environment. Worker actions
 require regular owner metadata; answer/release resolve the registered exact
 captain-call id through fm-captain-hold's backlog guards instead. fm-control
 owns all deeper endpoint, lease, eligibility and remote secondmate checks.
@@ -46,7 +51,6 @@ import json
 import os
 from pathlib import Path
 import re
-import socket
 import stat
 import subprocess
 import sys
@@ -115,9 +119,19 @@ def route(rows, machine, label, payload):
         raise Refused('unknown or ambiguous target')
     row = matches[0]
     home = Path(row['fm_home']).resolve()
-    machine_file = home / 'config/stream-machine'
-    owner_machine = machine_file.read_text().strip() if machine_file.exists() else socket.gethostname()
-    if owner_machine != machine:
+    scripts = Path(__file__).resolve().parent
+    env = os.environ.copy()
+    for key in ('FM_ROOT_OVERRIDE', 'FM_STATE_OVERRIDE', 'FM_DATA_OVERRIDE', 'FM_CONFIG_OVERRIDE'):
+        env.pop(key, None)
+    env['FM_HOME'] = str(home)
+    env['FM_SUPERVISION_ACTOR'] = 'main'
+    identity = subprocess.run(['bash', '-c', '. "$1"; fm_backend_stream_machine',
+                               'fm-ui-host-control', str(scripts / 'backends/stream.sh')],
+                              stdin=subprocess.DEVNULL, text=True, env=env, cwd=home,
+                              capture_output=True, check=False)
+    if identity.returncode:
+        raise Refused('owning home stream machine identity unavailable')
+    if identity.stdout != machine:
         raise Refused('registry machine disagrees with owning home')
     action = payload.get('kind')
     task = row['task_id']
@@ -138,7 +152,7 @@ def route(rows, machine, label, payload):
     if not isinstance(action, str) or action not in fields or set(payload) != fields[action]:
         raise Refused('unsupported action or payload fields')
     text = payload.get('text', payload.get('note'))
-    if text is not None and (not isinstance(text, str) or not text.strip()):
+    if fields[action] & {'text', 'note'} and (not isinstance(text, str) or not text.strip()):
         raise Refused('note or answer must not be blank')
     call = row.get('captain_call_id') if task is None else task
     if action in ('answer', 'release') and call is None:
@@ -147,7 +161,6 @@ def route(rows, machine, label, payload):
         meta = home / 'state' / (task + '.meta')
         if not meta.is_file() or meta.is_symlink():
             raise Refused('registered task has no regular owner metadata')
-    scripts = Path(__file__).resolve().parent
     decision_file = None
     if action == 'note':
         argv = [str(scripts / 'fm-inbox.sh'), 'note', '-']
@@ -183,12 +196,8 @@ def route(rows, machine, label, payload):
         if action in ('relaunch', 'recover-missing'):
             argv.extend(['--note', text])
         body = None
-    env = os.environ.copy()
-    for key in ('FM_ROOT_OVERRIDE', 'FM_STATE_OVERRIDE', 'FM_DATA_OVERRIDE', 'FM_CONFIG_OVERRIDE'):
-        env.pop(key, None)
-    env['FM_HOME'] = str(home)
     try:
-        return subprocess.run(argv, input=body, text=True, env=env, cwd=home,
+        return subprocess.run(argv, input=body if body is not None else '', text=True, env=env, cwd=home,
                               capture_output=True, check=False)
     finally:
         if decision_file is not None:
@@ -214,10 +223,13 @@ def command_stream(filename):
             if not isinstance(payload, dict):
                 raise Refused('command requires an action payload')
             result = route(bindings(filename), machine, leaf[len(machine) + 1:], payload)
+            if result.stdout or result.stderr or result.returncode:
+                print(json.dumps({'record': 'host_owner_result', 'command_id': command_id,
+                                  'leaf_worker_id': leaf, 'exit_code': result.returncode,
+                                  'state': 'unconfirmed' if result.returncode else 'confirmed',
+                                  'stdout': result.stdout, 'stderr': result.stderr}),
+                      file=sys.stderr, flush=True)
             if result.returncode:
-                # Owner errors may follow partial durable work. Do not claim
-                # refusal or invite a blind retry; diagnostics remain host-side.
-                print('host owner result unconfirmed (exit %d)' % result.returncode, file=sys.stderr)
                 continue
             answer = {'record': 'command_ack', 'command_id': command_id,
                       'leaf_worker_id': leaf, 'state': 'accepted',
