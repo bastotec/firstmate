@@ -1,0 +1,1 @@
+error: frozen migration archives cannot spawn work

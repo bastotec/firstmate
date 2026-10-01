@@ -1,0 +1,14 @@
+FM_TEST_BEGIN 2026-10-01T01:23:57Z tests/fm-test-fixtures.test.sh family=standalone expected_gate_skip=none
+ok - automatic Git repack stays owned and finishes before a complete local clone
+ok - runner and shared helpers isolate host Git config and preserve explicit config and outside commits
+ok - fm_touch_epoch preserves both epochs in the repeated DST hour
+ok - fake no-mistakes --version is the shared constant and overridable
+ok - init/doctor no-mistakes stub touches markers and refuses other verbs
+ok - fake gh authenticates and fake gh-axi reports the shared version
+ok - spawn fakebin answers pane path, logs -l payloads, and installs extra tools
+ok - send stubs log typed text and fake ssh records argv with a controllable exit
+ok - spawn-home layout writes harness pin, beat, and brief
+FM_TEST_END 2026-10-01T01:24:29Z tests/fm-test-fixtures.test.sh exit=0 duration_ms=31235 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=31979
+FM_TEST_SUMMARY_FAMILY family=standalone count=1 duration_ms=31235 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-test-fixtures.test.sh duration_ms=31235

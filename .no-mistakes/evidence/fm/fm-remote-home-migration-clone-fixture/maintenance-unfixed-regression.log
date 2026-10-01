@@ -1,0 +1,8 @@
+FM_TEST_BEGIN 2026-10-01T01:23:40Z tests/fm-test-fixtures.test.sh family=standalone expected_gate_skip=none
+grep: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3TG1GR9QP3T3Z3QYXV9RTEK/.no-mistakes/test-tmp/fm-test-fixtures.K9oF2c/maintenance/owner: No such file or directory
+not ok - automatic repack escaped the fixture owner
+not ok - Git fixture maintenance ownership
+FM_TEST_END 2026-10-01T01:23:42Z tests/fm-test-fixtures.test.sh exit=1 duration_ms=1017 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=1728
+FM_TEST_SUMMARY_FAMILY family=standalone count=1 duration_ms=1017 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-test-fixtures.test.sh duration_ms=1017
