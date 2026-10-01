@@ -14,6 +14,7 @@ import shutil
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 root, temp = map(Path, sys.argv[1:])
 router = root / 'bin/fm-ui-host-control.py'
@@ -143,6 +144,7 @@ fakebin.mkdir()
 tmux = fakebin / 'tmux'
 tmux.write_text('''#!/usr/bin/env bash
 case "$1" in
+  send-keys) [ -z "${FM_TEST_TMUX_LOG:-}" ] || printf '%s\\n' "$@" >> "$FM_TEST_TMUX_LOG" ;;
   display-message) printf '1\n' ;;
   capture-pane) printf '╭────╮\n│    │\n╰────╯\n' ;;
   list-windows) printf 'fm-sample\n' ;;
@@ -167,7 +169,8 @@ for metadata in ('harness=codex\n', 'harness=claude\nharness=codex\n'):
     (home / 'state/sample.meta').write_text('window=fixture:fm-sample\nkind=ship\n' + metadata)
     (home / 'state/sample.status').write_text('needs-decision [key=fixture-key]: approve the price\n')
     before = set((home / 'state/sample.inbox').glob('*.msg'))
-    refused('fm-sample', 'harness invocation', dict(kind='resolve-key', key='fixture-key', text=words))
+    result, records = stream_command('fm-sample', dict(kind='resolve-key', key='fixture-key', text=words))
+    assert not records and 'harness invocation' in owner_results(result)[0]['stderr'], result
     assert set((home / 'state/sample.inbox').glob('*.msg')) == before
     assert 'resolved' not in (home / 'state/sample.status').read_text()
 print('NDJSON routing, exclusive CLI, lifecycle refusals and harness-specific dollar answers passed')
@@ -232,6 +235,176 @@ subprocess.run(lease_command + ['release', 'sample'], env=lease_env, check=True,
 lock.unlink()
 env.pop('FM_SUPERVISION_ACTOR', None)
 print('nonnull text, authoritative machine identities and independent-host lease preservation passed')
+racebin = temp / 'racebin'
+racebin.mkdir()
+race_router = racebin / 'fm-ui-host-control.py'
+shutil.copy2(router, race_router)
+(racebin / 'backends').symlink_to(root / 'bin/backends', target_is_directory=True)
+race_sender = racebin / 'fm-send.sh'
+race_sender.write_text('''#!/usr/bin/env bash
+printf '%s\\n' ready > "$FM_TEST_SEND_READY"
+while [ ! -e "$FM_TEST_SEND_GO" ]; do /bin/sleep 0.01; done
+exec "$FM_TEST_REAL_SEND" "$@"
+''')
+race_sender.chmod(0o755)
+typed_log = temp / 'typed-events'
+race_env = dict(env, FM_TEST_REAL_SEND=str(root / 'bin/fm-send.sh'), FM_TEST_TMUX_LOG=str(typed_log))
+
+
+def await_file(path, process):
+    deadline = time.monotonic() + 10
+    while not path.exists():
+        assert process.poll() is None, process.communicate()
+        assert time.monotonic() < deadline, 'timed out awaiting ' + path.name
+        time.sleep(0.01)
+
+
+def race_request(task_id, command_id, text):
+    return dict(record='command', command_id=command_id,
+                identity=dict(parent_mate_id='fixture-host', leaf_worker_id='fixture-host/fm-' + task_id),
+                payload=dict(kind='resolve-key', key='race-key', text=text))
+
+
+def seed_race(task_id, harness='claude'):
+    meta = home / ('state/' + task_id + '.meta')
+    meta.write_text('window=fixture:fm-' + task_id + '\nkind=ship\nharness=' + harness + '\nspawn_gen=old\n')
+    status = home / ('state/' + task_id + '.status')
+    status.write_text('needs-decision [key=race-key]: approve the price\n')
+    typed_log.write_text('')
+    return meta, status
+
+
+for scenario in ('retired-exact', 'switched-harness'):
+    exact = 'fm-sample' if scenario == 'retired-exact' else 'switch-sample'
+    meta, status = seed_race(exact)
+    sibling_meta, sibling_status = seed_race('sample')
+    status_bytes, sibling_bytes = status.read_bytes(), sibling_status.read_bytes()
+    sibling_inbox = set((home / 'state/sample.inbox').glob('*.msg'))
+    write([dict(task, task_id=exact, label='fm-' + exact)])
+    ready, go = temp / (scenario + '-ready'), temp / (scenario + '-go')
+    answer = '$5/month is approved\nKeep the exact words.'
+    request = race_request(exact, scenario, answer)
+    process = subprocess.Popen([str(race_router), '--registry', str(registry), 'command'],
+                               env=dict(race_env, FM_TEST_SEND_READY=str(ready), FM_TEST_SEND_GO=str(go)),
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        process.stdin.write(json.dumps(request) + '\n')
+        process.stdin.close()
+        process.stdin = None
+        await_file(ready, process)
+        if scenario == 'retired-exact':
+            meta.unlink()
+        else:
+            staged = meta.with_suffix('.replacement')
+            staged.write_text(meta.read_text().replace('harness=claude', 'harness=codex').replace('spawn_gen=old', 'spawn_gen=new'))
+            staged.replace(meta)
+        go.touch()
+        stdout, stderr = process.communicate(timeout=15)
+        assert process.returncode == 0 and not stdout, (stdout, stderr)
+        diagnostic = json.loads(stderr)
+        assert diagnostic['state'] == 'unconfirmed' and diagnostic['command_id'] == scenario, diagnostic
+        assert diagnostic['leaf_worker_id'] == request['identity']['leaf_worker_id'], diagnostic
+        assert diagnostic['exit_code'] != 0, diagnostic
+        expected = 'exact task' if scenario == 'retired-exact' else 'harness invocation'
+        assert expected in diagnostic['stderr'], diagnostic
+        assert status.read_bytes() == status_bytes and sibling_status.read_bytes() == sibling_bytes
+        assert not (home / ('state/' + exact + '.inbox')).exists()
+        assert set((home / 'state/sample.inbox').glob('*.msg')) == sibling_inbox
+        assert not typed_log.read_bytes(), typed_log.read_text()
+    finally:
+        if process.poll() is None:
+            go.touch()
+            process.kill()
+            process.communicate()
+write([task])
+send_env = dict(race_env, FM_HOME=str(home))
+for field in ('FM_ROOT_OVERRIDE', 'FM_STATE_OVERRIDE', 'FM_DATA_OVERRIDE', 'FM_CONFIG_OVERRIDE'):
+    send_env.pop(field, None)
+legacy = subprocess.run([str(root / 'bin/fm-send.sh'), 'fm-sample', '--resolve-key', 'race-key', 'Legacy exact words'],
+                        env=send_env, cwd=home, capture_output=True, text=True, timeout=15)
+assert legacy.returncode == 0, legacy
+assert 'resolved [key=race-key]:' in (home / 'state/sample.status').read_text()
+assert any(path.read_text().split('\n--\n', 1)[1] == 'Legacy exact words'
+           for path in (home / 'state/sample.inbox').glob('*.msg'))
+meta, status = seed_race('fm-sample')
+sibling_meta, sibling_status = seed_race('sample')
+sibling_bytes = sibling_status.read_bytes()
+sibling_inbox = set((home / 'state/sample.inbox').glob('*.msg'))
+write([dict(task, task_id='fm-sample', label='fm-fm-sample')])
+answer = '$5/month is approved\nKeep the exact words.'
+result, records = stream_command('fm-fm-sample', dict(kind='resolve-key', key='race-key', text=answer))
+assert records and records[0]['state'] == 'accepted', result
+messages = list((home / 'state/fm-sample.inbox').glob('*.msg'))
+assert len(messages) == 1 and messages[0].read_text().split('\n--\n', 1)[1] == answer, messages
+assert 'resolved [key=race-key]:' in status.read_text()
+assert sibling_status.read_bytes() == sibling_bytes
+assert set((home / 'state/sample.inbox').glob('*.msg')) == sibling_inbox
+for args in (['sample', '--resolve-key', 'race-key', '/quit'], ['sample', '--key', 'Enter'],
+             ['fixture:fm-sample', '--resolve-key', 'race-key', 'Approved']):
+    typed_log.write_text('')
+    refused_send = subprocess.run([str(root / 'bin/fm-send.sh'), '--decision-answer', *args],
+                                  env=send_env, cwd=home, capture_output=True, text=True, timeout=15)
+    assert refused_send.returncode != 0, refused_send
+    assert not typed_log.read_bytes(), typed_log.read_text()
+    assert sibling_status.read_bytes() == sibling_bytes
+    assert set((home / 'state/sample.inbox').glob('*.msg')) == sibling_inbox
+sleep_spy = fakebin / 'sleep'
+sleep_spy.write_text('''#!/usr/bin/env bash
+if [ "${1:-}" = 0.1 ] && [ -n "${FM_TEST_LOCK_WAIT_READY:-}" ]; then
+  printf '%s\\n' waiting > "$FM_TEST_LOCK_WAIT_READY"
+fi
+exec /bin/sleep "$@"
+''')
+sleep_spy.chmod(0o755)
+for old_harness, new_harness in (('claude', 'codex'), ('codex', 'claude')):
+    exact = 'lock-switch-' + new_harness
+    meta, status = seed_race(exact, old_harness)
+    before = status.read_bytes()
+    staged = meta.with_suffix('.replacement')
+    staged.write_text(meta.read_text().replace('harness=' + old_harness, 'harness=' + new_harness))
+    meta_lock = home / ('state/.meta-' + exact + '.lock')
+    holder = subprocess.Popen(['bash', '-c',
+                               '. "$1"; fm_lock_acquire_wait "$2"; trap \'fm_lock_release "$2"\' EXIT; '
+                               'printf "locked\\n"; IFS= read -r go; mv "$3" "$4"',
+                               'fixture-publisher', str(root / 'bin/fm-wake-lib.sh'), str(meta_lock), str(staged), str(meta)],
+                              env=dict(env, FM_STATE_OVERRIDE=str(home / 'state')),
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    sender = None
+    try:
+        assert select.select([holder.stdout], [], [], 5)[0], 'publisher did not acquire metadata lock'
+        assert holder.stdout.readline() == 'locked\n'
+        wait_ready = temp / (exact + '-waiting')
+        answer = '$5/month is approved\nKeep the exact words.'
+        sender = subprocess.Popen([str(root / 'bin/fm-send.sh'), '--decision-answer', exact,
+                                   '--resolve-key', 'race-key', answer],
+                                  env=dict(send_env, FM_TEST_LOCK_WAIT_READY=str(wait_ready),
+                                           FM_TASK_INBOX_LOCK_WAIT_SECS='15'),
+                                  cwd=home, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        await_file(wait_ready, sender)
+        holder.communicate(input='publish\n', timeout=5)
+        assert holder.returncode == 0
+        stdout, stderr = sender.communicate(timeout=15)
+        if new_harness == 'codex':
+            assert sender.returncode != 0 and 'harness invocation' in stderr, (stdout, stderr)
+            assert status.read_bytes() == before
+            assert not (home / ('state/' + exact + '.inbox')).exists()
+            assert not typed_log.read_bytes(), typed_log.read_text()
+        else:
+            assert sender.returncode == 0, (stdout, stderr)
+            messages = list((home / ('state/' + exact + '.inbox')).glob('*.msg'))
+            assert len(messages) == 1 and messages[0].read_text().split('\n--\n', 1)[1] == answer, messages
+            assert 'resolved [key=race-key]:' in status.read_text()
+            assert answer not in typed_log.read_text(), typed_log.read_text()
+        assert not meta_lock.exists() and not meta_lock.is_symlink()
+    finally:
+        if holder.poll() is None:
+            holder.kill()
+            holder.communicate()
+        if sender is not None and sender.poll() is None:
+            sender.kill()
+            sender.communicate()
+print('exact retirement, legacy selector compatibility and locked harness-switch races passed')
+write([task])
 spybin = temp / 'spybin'
 spybin.mkdir()
 spy_router = spybin / 'fm-ui-host-control.py'

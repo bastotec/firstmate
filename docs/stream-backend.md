@@ -195,7 +195,7 @@ Unknown, ambiguous, or stale bindings refuse before dispatch.
 Lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or remote-secondmate refusal checks.
 The host adapter must keep backend credentials in host-only 0600 files and must never send them in page content, browser environment, or browser storage.
 
-Decision actions carry the captain's authenticated exact answer through the host route to the existing owner: `resolve-key` delegates to `fm-send --resolve-key`, and `answer` / `release` delegates to `fm-captain-hold answer` with the requested close mode.
+Decision actions carry the captain's authenticated exact answer through the host route to the existing owner: `resolve-key` delegates to `fm-send --decision-answer` with `--resolve-key`, and `answer` / `release` delegates to `fm-captain-hold answer` with the requested close mode.
 The sole executable entry point is `command`, returning the owner's success as a correlated NDJSON `command_ack`; uncertain owner errors remain pending rather than being misreported as proof that nothing changed.
 The browser never writes state directly, supplies an owner-home path, or invokes an owner command itself.
 `note` remains only the supervisor-note path through `bin/fm-inbox.sh`, not a substitute for a decision action.

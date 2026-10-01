@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell line into its terminal, best-effort.
-# Usage: fm-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] <text...>
+# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] <text...>
+#   --decision-answer requires an exact task id and keyed answer, resolves
+#   regular metadata under the supervision lease and metadata lock, and refuses
+#   harness-native text rather than leaving the durable inbox plane.
+#   It accepts one exact answer argument, never keys or fire-and-forget.
+#   Without this flag the legacy selector and typed-plane behavior is unchanged.
 #   <target> may be an exact task id, a legacy fm-<id> task label resolved
 #   through this home's state/<id>.meta, or an explicit well-formed backend
 #   target. fm-send refuses unresolved guesses rather than falling back to a
@@ -337,7 +342,15 @@ fm_send_resolve_target() {  # <raw-target>
   TARGET_REMOTE_HOST=""
   RESOLUTION_TRIED=""
 
-  meta=$(fm_backend_meta_for_selector "$raw" "$STATE" 2>/dev/null || true)
+  if [ "$DECISION_ANSWER" = 1 ]; then
+    meta="$STATE/$raw.meta"
+    if [ ! -f "$meta" ] || [ -L "$meta" ]; then
+      echo "error: decision answer requires regular metadata for exact task '$raw'; nothing was sent" >&2
+      return 1
+    fi
+  else
+    meta=$(fm_backend_meta_for_selector "$raw" "$STATE" 2>/dev/null || true)
+  fi
   if [ -n "$meta" ]; then
     if [ -n "$(fm_meta_get "$meta" remote_host)" ]; then
       id=$(fm_send_id_from_meta "$meta")
@@ -363,7 +376,7 @@ fm_send_resolve_target() {  # <raw-target>
     TARGET_BACKEND=$backend
     TARGET_META=$meta
     TARGET_HARNESS=$(fm_meta_get "$meta" harness)
-    EXPECTED_LABEL=$(fm_backend_expected_label_of_selector "$raw" "$STATE")
+    EXPECTED_LABEL="fm-$(fm_send_id_from_meta "$meta")"
     TARGET_SELECTOR=1
     return 0
   fi
@@ -428,7 +441,34 @@ fm_send_resolve_target() {  # <raw-target>
   return 1
 }
 
-RAW_TARGET=$1
+# shellcheck source=bin/fm-lease-lib.sh
+. "$SCRIPT_DIR/fm-lease-lib.sh"
+DECISION_ANSWER=0
+DECISION_META_LOCK=
+if [ "${1:-}" = --decision-answer ]; then
+  DECISION_ANSWER=1
+  shift
+fi
+fm_send_release_locks() {
+  [ -z "$DECISION_META_LOCK" ] || fm_lock_release "$DECISION_META_LOCK"
+  fm_lease_guard_release
+}
+RAW_TARGET=${1:-}
+if [ "$DECISION_ANSWER" = 1 ]; then
+  case "$RAW_TARGET" in
+    ''|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*)
+      echo "error: --decision-answer requires an exact task id" >&2
+      exit 1
+      ;;
+  esac
+  fm_lease_guard "$RAW_TARGET" "decision answer (fm-send)"
+  trap fm_send_release_locks EXIT
+  DECISION_META_LOCK=$(fm_meta_lock_path "$STATE/$RAW_TARGET.meta") || exit 1
+  if ! fm_task_inbox_lock_acquire "$DECISION_META_LOCK"; then
+    echo "error: decision answer could not lock exact task '$RAW_TARGET'; nothing was sent" >&2
+    exit 1
+  fi
+fi
 fm_send_resolve_target "$RAW_TARGET" || exit 1
 T=$RESOLVED_TARGET
 DELIVERY_TASK_ID=
@@ -439,13 +479,11 @@ shift
 # supervision actors, so refuse while the OTHER actor holds this task's live
 # lease. A home with no supervision branch has no lease files and passes
 # untouched (contract: bin/fm-lease-lib.sh).
-# shellcheck source=bin/fm-lease-lib.sh
-. "$SCRIPT_DIR/fm-lease-lib.sh"
-if [ -n "$TARGET_META" ]; then
+if [ "$DECISION_ANSWER" != 1 ] && [ -n "$TARGET_META" ]; then
   LEASE_GUARD_TASK=$(fm_send_id_from_meta "$TARGET_META")
   if [ -n "$LEASE_GUARD_TASK" ]; then
     fm_lease_guard "$LEASE_GUARD_TASK" "steer (fm-send)"
-    trap 'fm_lease_guard_release' EXIT
+    trap fm_send_release_locks EXIT
   fi
 fi
 
@@ -498,6 +536,15 @@ done
 
 if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1
+fi
+if [ "$DECISION_ANSWER" = 1 ]; then
+  if [ -z "$RESOLVE_KEYS" ] || [ -n "$FIRE_AND_FORGET_ID" ] || [ "$#" -ne 1 ]; then
+    echo "error: --decision-answer requires keyed resolution and one exact answer, without fire-and-forget" >&2
+    exit 1
+  fi
+  case "$1" in
+    --*) echo "error: decision answer cannot be a send option; nothing was sent" >&2; exit 1 ;;
+  esac
 fi
 
 # Classify a from-firstmate -> secondmate request. Only a task selector resolved
@@ -738,6 +785,22 @@ else
   # The pre-marker answer text, kept for the closing resolved note so the
   # durable ledger records the plain answer without marker or corr bytes.
   RESOLVE_ANSWER_TEXT=$MESSAGE
+  INBOX_PLANE=0
+  if [ -n "$TARGET_SELECTOR" ]; then
+    if [ -n "$FIRE_AND_FORGET_ID" ] || [ "$TARGET_BACKEND" = remote ]; then
+      INBOX_PLANE=1
+    else
+      case "$RESOLVE_ANSWER_TEXT" in
+        /*) ;;
+        \$*) [ "$TARGET_HARNESS" = codex ] || INBOX_PLANE=1 ;;
+        *) INBOX_PLANE=1 ;;
+      esac
+    fi
+  fi
+  if [ "$DECISION_ANSWER" = 1 ] && [ "$INBOX_PLANE" != 1 ]; then
+    echo "error: decision answer cannot be a harness invocation; nothing was sent" >&2
+    exit 1
+  fi
   if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$FIRE_AND_FORGET_ID" ]; then
     fm_message_mark_from_firstmate "$MESSAGE" MESSAGE
     MESSAGE="${FM_FROMFIRST_MARK}delivery=${FIRE_AND_FORGET_ID} ${MESSAGE#"$FM_FROMFIRST_MARK"}"
@@ -789,32 +852,6 @@ else
       exit 1
     fi
   fi
-  # Data-plane selection (see the header): text addressed to a task selector
-  # resolved through this home's metadata rides the inbox plane, unless it is
-  # a LOCAL harness-native invocation that must reach the harness's own parser
-  # - a leading "/" (slash command), or a leading "$" to a codex target (skill
-  # invocation). A remote secondmate selector always rides the inbox: its
-  # requests are marked, and a marked request reaches the harness as
-  # marker-prefixed chat rather than a parser command anyway, so no remote
-  # text has a typed plane to lose. An explicit backend target stays typed
-  # even when it happens to match local metadata: it names an endpoint, not a
-  # task, the same boundary that keeps it unmarked and outside --resolve-key.
-  # Classification reads the pre-marker text so a marked secondmate request
-  # and a plain crewmate steer classify identically. It deliberately does NOT
-  # promise that a marked parser-native secondmate request executes as a parser
-  # command: the pre-existing marker-first wire bytes are retained in stage 1.
-  INBOX_PLANE=0
-  if [ -n "$TARGET_SELECTOR" ]; then
-    if [ -n "$FIRE_AND_FORGET_ID" ] || [ "$TARGET_BACKEND" = remote ]; then
-      INBOX_PLANE=1
-    else
-      case "$RESOLVE_ANSWER_TEXT" in
-        /*) ;;
-        \$*) [ "$TARGET_HARNESS" = codex ] || INBOX_PLANE=1 ;;
-        *) INBOX_PLANE=1 ;;
-      esac
-    fi
-  fi
   if [ "$INBOX_PLANE" = 1 ] && [ "$TARGET_BACKEND" = remote ]; then
     # Remote inbox leg: the message becomes a durable record in the remote
     # home's steering inbox, written idempotently by the host-local leg, then
@@ -827,7 +864,7 @@ else
     # open indefinitely; a bound hit exits through the same
     # unconfirmed-delivery contract.
     REMOTE_META_LOCK=$(fm_meta_lock_path "$TARGET_META") || exit 1
-    if ! fm_task_inbox_lock_acquire "$REMOTE_META_LOCK"; then
+    if [ "$DECISION_META_LOCK" != "$REMOTE_META_LOCK" ] && ! fm_task_inbox_lock_acquire "$REMOTE_META_LOCK"; then
       if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       fi
@@ -934,7 +971,7 @@ else
   if [ "$INBOX_PLANE" = 1 ]; then
     INBOX_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
     INBOX_META_LOCK=$(fm_meta_lock_path "$TARGET_META") || exit 1
-    if ! fm_task_inbox_lock_acquire "$INBOX_META_LOCK"; then
+    if [ "$DECISION_META_LOCK" != "$INBOX_META_LOCK" ] && ! fm_task_inbox_lock_acquire "$INBOX_META_LOCK"; then
       if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       fi

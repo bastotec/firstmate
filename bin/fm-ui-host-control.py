@@ -35,7 +35,8 @@ branch leases even without a Pi caller environment. Worker actions
 require regular owner metadata; answer/release resolve the registered exact
 captain-call id through fm-captain-hold's backlog guards instead. fm-control
 owns all deeper endpoint, lease, eligibility and remote secondmate checks.
-Decision actions delegate to fm-send --resolve-key or fm-captain-hold answer
+Decision actions delegate to fm-send --decision-answer with --resolve-key or
+fm-captain-hold answer
 (with --release for release), preserving exact words. This router never
 appends task status directly and never invokes no-mistakes axi respond.
 
@@ -171,12 +172,7 @@ def route(rows, machine, label, payload):
             raise Refused('invalid decision key')
         if text.lstrip().startswith(('/', '--')):
             raise Refused('decision answer cannot be a harness invocation or send option')
-        if text.startswith('$'):
-            metadata = dict(line.split('=', 1) for line in meta.read_text().split('\n')
-                            if '=' in line)
-            if metadata.get('harness') == 'codex' and not metadata.get('remote_host'):
-                raise Refused('decision answer cannot be a harness invocation or send option')
-        argv = [str(scripts / 'fm-send.sh'), task, '--resolve-key', key, text]
+        argv = [str(scripts / 'fm-send.sh'), '--decision-answer', task, '--resolve-key', key, text]
         body = None
     elif action in ('answer', 'release'):
         if len(text.encode('utf-8')) > 8192:
