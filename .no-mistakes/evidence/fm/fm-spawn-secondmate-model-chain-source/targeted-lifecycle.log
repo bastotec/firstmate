@@ -1,0 +1,41 @@
+FM_TEST_BEGIN 2026-10-01T06:27:55Z tests/fm-model-chain.test.sh family=unclassified expected_gate_skip=none
+ok - parsing follows the branch idiom including loud refusals
+ok - fall-through records refusals with the branch backoff
+ok - label decoding round-trips ids and refuses provider pipes
+ok - backoff streaks reset once a cooldown has expired
+ok - the cooldown lock is per lane, beside that lane's state file
+ok - cooldown expiry and clearing restore the head of the chain
+ok - exhaustion refuses with a clear reason and no substitution
+ok - a single-label --model stays an exact pin with no lane or chain disclosure
+ok - a modelless spawn never touches a lane (exact-pin baseline)
+ok - a chained --model resolves to its head and records its lane
+ok - a recorded refusal falls the next launch through to the next ready label
+ok - an exhausted chain refuses the spawn before any record exists
+ok - a malformed chained --model refuses the spawn loudly
+ok - fm-control relaunch: a chained model resolves, discloses, and records its lane
+ok - remote secondmate spawn: a configured chained model resolves on the shared secondmate lane
+ok - remote secondmate spawn: an explicit chained model resolves on the task lane
+ok - remote secondmate spawn: a default or absent model takes the default branch with no resolver call
+ok - remote secondmate spawn: an absent secondmate-harness config keeps the default branch
+all fm-model-chain tests passed
+FM_TEST_END 2026-10-01T06:29:01Z tests/fm-model-chain.test.sh exit=0 duration_ms=65866 gate_skip=false
+FM_TEST_BEGIN 2026-10-01T06:29:01Z tests/fm-remote-secondmate-lifecycle-e2e.test.sh family=secondmate expected_gate_skip=none
+ok - overlapping remote home provisioning serializes through publication and rollback
+ok - remote seed rollback preserves serialized competing routes
+ok - unknown readiness preserves its route and brief for reconciliation
+ok - remote seeding checks, repairs, and re-checks readiness, then stops on a remaining gap
+ok - remote seeding proceeds once the repair closes every gap
+ok - remote seeding provisions a supplied origin without touching the primary project tree
+ok - remote provisioning re-validates a supplied origin at the receiving host
+ok - seeding carries bitbucket, self-hosted, and scp-like origins through to the remote clone
+ok - remote seed registers the route and provisions the whole home and project clone on that host
+ok - remote inheritance rejects incomplete and superseded payload generations
+ok - mixed local and remote routes validate without migration
+ok - remote spawn launches on the remote-local backend and records a host-qualified route
+not ok - configured exact model did not reach parent metadata
+FM_TEST_END 2026-10-01T06:30:38Z tests/fm-remote-secondmate-lifecycle-e2e.test.sh exit=1 duration_ms=96501 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=1 skipped_gate=0 duration_ms=162897
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=96501 failed=1
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=65866 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-remote-secondmate-lifecycle-e2e.test.sh duration_ms=96501
+FM_TEST_SLOWEST rank=2 script=tests/fm-model-chain.test.sh duration_ms=65866

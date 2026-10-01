@@ -1,0 +1,38 @@
+FM_TEST_BEGIN 2026-10-01T06:49:11Z tests/fm-model-chain.test.sh family=unclassified expected_gate_skip=none
+ok - parsing follows the branch idiom including loud refusals
+ok - fall-through records refusals with the branch backoff
+ok - label decoding round-trips ids and refuses provider pipes
+ok - backoff streaks reset once a cooldown has expired
+ok - the cooldown lock is per lane, beside that lane's state file
+ok - cooldown expiry and clearing restore the head of the chain
+ok - exhaustion refuses with a clear reason and no substitution
+ok - a single-label --model stays an exact pin with no lane or chain disclosure
+ok - a modelless spawn never touches a lane (exact-pin baseline)
+ok - a chained --model resolves to its head and records its lane
+ok - a recorded refusal falls the next launch through to the next ready label
+ok - an exhausted chain refuses the spawn before any record exists
+ok - a malformed chained --model refuses the spawn loudly
+ok - fm-control relaunch: a chained model resolves, discloses, and records its lane
+Configured-chain readiness output:
+model chain (remote-secondmate spawn, lane secondmate): selected codex/gpt-6-luna
+error: remote secondmate smchain1 host remote-mac is not ready for a remote second mate; launch refused
+error: this host is not ready for a remote second mate; unresolved: launchagent
+ok - remote secondmate spawn: a configured chained model resolves on the shared secondmate lane
+Explicit-chain readiness output:
+model chain (remote-secondmate spawn, lane secondmate-smchain2): selected codex/gpt-6-luna
+error: remote secondmate smchain2 host remote-mac is not ready for a remote second mate; launch refused
+error: this host is not ready for a remote second mate; unresolved: launchagent
+ok - remote secondmate spawn: an explicit chained model resolves on the task lane
+Default-model readiness output:
+error: remote secondmate smchain3 host remote-mac is not ready for a remote second mate; launch refused
+error: this host is not ready for a remote second mate; unresolved: launchagent
+ok - remote secondmate spawn: a default or absent model takes the default branch with no resolver call
+Absent-config readiness output:
+error: remote secondmate smchain4 host remote-mac is not ready for a remote second mate; launch refused
+error: this host is not ready for a remote second mate; unresolved: launchagent
+ok - remote secondmate spawn: an absent secondmate-harness config keeps the default branch
+all fm-model-chain tests passed
+FM_TEST_END 2026-10-01T06:50:17Z tests/fm-model-chain.test.sh exit=0 duration_ms=66171 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=66507
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=66171 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-model-chain.test.sh duration_ms=66171
