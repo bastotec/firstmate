@@ -5,10 +5,14 @@ Usage: fm-ui-host-control.py --registry FILE command
 
 command consumes NDJSON command records with command_id, identity containing
 parent_mate_id and leaf_worker_id (machine/label), and payload containing kind
-plus the action's text, key, or note fields. No request supplies a home path,
-file path, executable, or arbitrary argv. Only pre-authorized host callers
-may submit records. Accepted command_ack means the existing owner returned
-success, NOT that the worker acted on an inbox answer. Pre-dispatch refusals
+plus exactly the fields listed for its kind:
+  note: text; resolve-key: key and text; answer/release: text;
+  interrupt/exit: no additional fields; relaunch/recover-missing: note.
+Required text and note fields must be nonblank strings. No request supplies
+a home path, file path, executable, or arbitrary argv. Only pre-authorized
+host callers may submit records. Accepted command_ack means the existing
+owner returned success, NOT that the worker acted on an inbox answer.
+Pre-dispatch refusals
 return command_ack refused. Nonzero owner exits may follow partial writes,
 so they remain pending (no record), with a host-only diagnostic; reconcile
 before retrying. Correlated host_owner_result records on host-only stderr
@@ -16,8 +20,8 @@ retain the owner's stdout, stderr and exit code, including successful warnings.
 Children never inherit the command stream's stdin. This local plane has no hub
 journal or automatic retry.
 
-FILE is an operator-maintained, host-only regular file owned by this uid with
-mode 0600, containing a JSON array of bindings:
+FILE is an operator-maintained, host-only single-link regular file owned by
+this uid with mode 0600, containing a JSON array of bindings:
   {"machine": NAME, "label": NAME, "fm_home": ABSOLUTE_PATH,
    "task_id": EXACT_TASK_ID}
 A primary supervisor has task_id null and accepts note, plus answer/release
@@ -27,18 +31,21 @@ resolve-key actions require a task_id binding in the decision-owning home.
 Primary interrupt, exit/shutdown, relaunch/restart, recover-missing, and native
 mid-turn steering are unsupported. Every (machine, label) and
 (fm_home, task_id or captain_call_id) must be unique. Unknown, ambiguous,
-malformed, or stale bindings refuse before dispatch. For a task,
-label must equal fm-<task_id>, the stream publisher's label. The home's
-stream machine identity resolved by fm_backend_stream_machine must match
-machine. The host delegates as the main supervision actor, preserving live
+or malformed bindings refuse before dispatch, as does missing regular task
+metadata for actions that require it. Stale captain calls and deeper task
+eligibility checks are decided by the owner; nonzero owner exits stay pending
+under the result contract above. For a task, label must equal fm-<task_id>,
+the stream publisher's label. The home's stream machine identity resolved
+by fm_backend_stream_machine must match machine. The host delegates as the main supervision actor, preserving live
 branch leases even without a Pi caller environment. Worker actions
 require regular owner metadata; answer/release resolve the registered exact
 captain-call id through fm-captain-hold's backlog guards instead. fm-control
 owns all deeper endpoint, lease, eligibility and remote secondmate checks.
 Decision actions delegate to fm-send --decision-answer with --resolve-key or
-fm-captain-hold answer
-(with --release for release), preserving exact words. This router never
-appends task status directly and never invokes no-mistakes axi respond.
+fm-captain-hold answer (with --release for release), preserving exact words.
+fm-send's header owns locked exact-task and inbox-only decision delivery.
+This router never appends task status directly and never invokes no-mistakes
+axi respond.
 
 The local UI adapter owns per-launch browser authorization and same-origin
 checks BEFORE calling this executable. It keeps registry and hub credentials

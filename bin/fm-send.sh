@@ -5,11 +5,12 @@
 #   --decision-answer requires an exact task id and keyed answer, resolves
 #   regular metadata under the supervision lease and metadata lock, and refuses
 #   harness-native text rather than leaving the durable inbox plane.
-#   It accepts one exact answer argument, never keys or fire-and-forget.
+#   It accepts one exact answer argument, never --key or fire-and-forget,
+#   and has no legacy label fallback or explicit endpoint escape hatch.
 #   Without this flag the legacy selector and typed-plane behavior is unchanged.
-#   <target> may be an exact task id, a legacy fm-<id> task label resolved
-#   through this home's state/<id>.meta, or an explicit well-formed backend
-#   target. fm-send refuses unresolved guesses rather than falling back to a
+#   For ordinary sends, <target> may be an exact task id, a legacy fm-<id>
+#   task label resolved through this home's state/<id>.meta, or an explicit
+#   well-formed backend target. fm-send refuses unresolved guesses rather than falling back to a
 #   tmux window search, because a "successful" send to the wrong endpoint is
 #   worse than a loud failure.
 # Special keys instead of text: fm-send.sh <target> --key Enter
@@ -729,12 +730,9 @@ fm_send_feed_resolved_holds() {  # <answer-text>
   fi
 }
 
-# Resolve the target's harness from its meta (recorded by fm-spawn), used only to
-# scope the codex `$<skill>` popup-settle below. A task selector carries
-# meta; an explicit backend-target escape hatch has none, so its harness is
-# unknown and treated as non-codex (the safe default that keeps the fast path).
-# The target's BACKEND comes from selector meta, from matching an explicit target
-# back to recorded meta, or from strict explicit-target shape validation.
+# The resolved harness context scopes native-invocation classification and
+# typed-plane popup settling (see the header); the resolved backend determines
+# dispatch.
 # Do not add a separate passive liveness preflight here. Active send paths own
 # backend readiness: herdr, for example, must route through its session-aware
 # target_ready path before sending, while zellij verifies pane labels in its

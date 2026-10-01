@@ -175,12 +175,13 @@ A zellij task additionally records `zellij_session=`, `zellij_tab_id=`, and `zel
 An Orca task additionally records `orca_worktree_id=` and `terminal=`, with `window=fm-<id>` kept as the shared firstmate alias.
 A cmux task additionally records `cmux_workspace_id=` and `cmux_surface_id=`.
 A stream task additionally records `stream_hub=` and `stream_endpoint_id=`.
-Task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` resolve centrally through `fm_backend_resolve_selector`.
+Ordinary task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` use the shared backend selector vocabulary.
 A selector containing `:` is passed through as an explicit backend endpoint escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that themselves start with `fm-` route to their own metadata instead of being stripped.
 A metadata-routed selector returns the recorded backend target (`terminal=` for Orca, otherwise `window=`), and matching explicit targets can still recover the recorded backend when metadata contains the same endpoint.
 Only metadata-routed task selectors carry secondmate-marker and Codex-harness context; explicit endpoint escape hatches do not.
-These five sentences are the single owner of the task-selector vocabulary; backend guides and other documents point here instead of restating the resolution order.
+This paragraph is the single owner of the ordinary task-selector vocabulary; backend guides and other documents point here instead of restating the resolution order.
+Host decision answers instead use the constrained mode owned by [`bin/fm-send.sh`'s header](../bin/fm-send.sh).
 `fm-teardown.sh <id>` takes a task id directly and validates the complete metadata-only endpoint identity before any runtime dispatch or cleanup mutation.
 Missing, empty, duplicate, malformed, backend-inconsistent, or task-mismatched endpoint records are preserved and refused.
 Legacy tmux metadata remains cleanup-compatible when its exact window name is `fm-<id>`; opaque non-tmux endpoints require their recorded `endpoint_task_id=` binding.

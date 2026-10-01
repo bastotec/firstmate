@@ -191,22 +191,21 @@ The same-origin, local-only UI adapter may call `bin/fm-ui-host-control.py` only
 This executable is a host-side routing surface, not an HTTP endpoint or an authentication substitute.
 Its header and `--help` own the operator-maintained 0600 binding registry, exact target resolution, and supported verbs.
 The host resolves `(machine, label)` to an explicit `FM_HOME` and exact task or captain-call binding; neither the registry's home paths nor control-class credentials are supplied by or returned to the browser.
-Unknown, ambiguous, or stale bindings refuse before dispatch.
+Invalid registry bindings refuse before dispatch; stale captain calls and deeper task eligibility are checked by the existing owners.
 Lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or remote-secondmate refusal checks.
 The host adapter must keep backend credentials in host-only 0600 files and must never send them in page content, browser environment, or browser storage.
 
-Decision actions carry the captain's authenticated exact answer through the host route to the existing owner: `resolve-key` delegates to `fm-send --decision-answer` with `--resolve-key`, and `answer` / `release` delegates to `fm-captain-hold answer` with the requested close mode.
-The sole executable entry point is `command`, returning the owner's success as a correlated NDJSON `command_ack`; uncertain owner errors remain pending rather than being misreported as proof that nothing changed.
+Decision actions carry the captain's authenticated exact answer to the existing send or captain-hold owner; the [host executable's header and help](../bin/fm-ui-host-control.py) own payload fields, delegation, acknowledgement framing, host-only diagnostics, and retry limits.
+Owner success does not prove that a worker acted on its inbox answer, and owner errors remain pending rather than being misreported as proof that nothing changed.
 The browser never writes state directly, supplies an owner-home path, or invokes an owner command itself.
 `note` remains only the supervisor-note path through `bin/fm-inbox.sh`, not a substitute for a decision action.
 A crew-owned `no-mistakes axi respond` remains worker-owned and is never invoked by this host route.
-Existing owner guards remain authoritative, including endpoint retirement and stand-down refusals; the host route does not revive or reassign workers.
+Existing owner guards remain authoritative, including endpoint retirement and stand-down refusals; the host route does not bypass those refusals to revive or reassign workers.
 
 Full primary control is not yet implemented.
 The runtime/control-plane owner owns these explicit capability gaps: primary interrupt, primary exit/shutdown, primary relaunch/restart, primary missing-endpoint recovery, and primary native mid-turn steering.
 Primary decision control is supported through an explicit host-registry captain-call binding under the primary owner's `FM_HOME`, while task-key decisions use an exact task binding in their owning home.
 Notes-only and worker-only bindings do not constitute full primary control.
-Real primary shutdown/restart and any other live fleet operation remain forbidden in this change's scope; the runtime/control-plane owner must supply the missing lifecycle capabilities separately.
 
 The Bridge command plane remains `steer` only.
 The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.
@@ -405,6 +404,7 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
   Native Deck steering has its own live guard and portable receiver regressions, linked in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
   The other portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, `tests/fm-stream-claude-tail.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
   The secondmate credential-seeding regressions from the Security section above ride `tests/fm-secondmate-safety.test.sh`.
+  `tests/fm-ui-host-control.test.sh` covers the private host route's registry, captain-call decisions, exact-task and harness-switch races, independent-host lease preservation, stdin isolation, and host-only diagnostics; `tests/fm-control.test.sh` covers integration with the existing worker owners.
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.
 - An unreachable agent and a dead worker are indistinguishable from the hub, so a stale read carries no liveness verdict at all.
   Only one of those two states authorizes recovery, and reporting silence as death is how a healthy worker gets torn down.
