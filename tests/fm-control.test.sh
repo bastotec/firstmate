@@ -998,6 +998,82 @@ test_exit_reports_a_gone_agent_instead_of_a_composer_refusal() {
   pass "fm-control exit: a gone agent is distinguished from an unknown composer - respawn, not composer clear"
 }
 
+test_host_route_reaches_guarded_worker_owners() {
+  local dir out rc
+  dir=$(new_case host-owner)
+  add_task "$dir" sample claude
+  alive_as "$dir" claude
+  mkdir -p "$dir/home/config"
+  printf 'fixture-host\n' > "$dir/home/config/stream-machine"
+  python3 - "$dir" <<'PY'
+import json
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+registry = p / 'registry'
+registry.write_text(json.dumps([dict(machine='fixture-host', label='fm-sample',
+                                     fm_home=str(p / 'home'), task_id='sample')]))
+registry.chmod(0o600)
+for command_id, payload in (
+        ('fixture-answer', dict(kind='resolve-key', key='fixture-choice', text='Use option one.\nKeep the rest queued.')),
+        ('fixture-interrupt', dict(kind='interrupt'))):
+    (p / command_id).write_text(json.dumps(dict(
+        record='command', command_id=command_id,
+        identity=dict(parent_mate_id='fixture-host', leaf_worker_id='fixture-host/fm-sample'),
+        payload=payload)) + '\n')
+PY
+  printf 'needs-decision [key=fixture-choice]: Fixture choice\n' > "$dir/home/state/sample.status"
+  out=$(PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" FM_STREAM_MACHINE=fixture-host \
+    "$ROOT/bin/fm-ui-host-control.py" --registry "$dir/registry" command \
+    < "$dir/fixture-answer" 2> "$dir/answer-diagnostics"); rc=$?
+  expect_code 0 "$rc" "host decision should reach fm-send's durable owner"$'\n'"$out"
+  if ! python3 - "$out" <<'PY'
+import json
+import sys
+acks = [json.loads(line) for line in sys.argv[1].splitlines()]
+assert len(acks) == 1, acks
+assert acks[0]['record'] == 'command_ack' and acks[0]['state'] == 'accepted', acks
+assert acks[0]['command_id'] == 'fixture-answer', acks
+assert acks[0]['leaf_worker_id'] == 'fixture-host/fm-sample', acks
+PY
+  then
+    fail "host answer acknowledgement must preserve command correlation"
+  fi
+  assert_contains "$(cat "$dir/home/state/sample.status")" \
+    'resolved [key=fixture-choice]:' "the existing owner must close the exact worker key"
+  if ! python3 - "$dir/home/state/sample.inbox" <<'PY'
+from pathlib import Path
+import sys
+messages = list(Path(sys.argv[1]).glob('*.msg'))
+assert len(messages) == 1, messages
+assert messages[0].read_text().split('\n--\n', 1)[1] == 'Use option one.\nKeep the rest queued.'
+PY
+  then
+    fail "the worker inbox must carry the exact answer bytes"
+  fi
+  : > "$dir/fake/keys"
+  out=$(PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" FM_STREAM_MACHINE=fixture-host \
+    "$ROOT/bin/fm-ui-host-control.py" --registry "$dir/registry" command \
+    < "$dir/fixture-interrupt" 2> "$dir/interrupt-diagnostics"); rc=$?
+  expect_code 0 "$rc" "host lifecycle should reach fm-control"$'\n'"$out"
+  if ! python3 - "$out" <<'PY'
+import json
+import sys
+acks = [json.loads(line) for line in sys.argv[1].splitlines()]
+assert len(acks) == 1, acks
+assert acks[0]['record'] == 'command_ack' and acks[0]['state'] == 'accepted', acks
+assert acks[0]['command_id'] == 'fixture-interrupt', acks
+assert acks[0]['leaf_worker_id'] == 'fixture-host/fm-sample', acks
+PY
+  then
+    fail "host interrupt acknowledgement must preserve command correlation"
+  fi
+  [ "$(keys_sent "$dir")" = Escape ] || fail "host interrupt must deliver the owner's verified key"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "host interrupt must leave the agent running"
+  pass "host route: exact worker answer and guarded lifecycle reach their existing owners"
+}
+
+test_host_route_reaches_guarded_worker_owners
 test_exit_types_each_harness_verified_command
 test_interrupt_sends_each_harness_verified_key
 test_opencode_interrupts_twice_and_others_once

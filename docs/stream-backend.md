@@ -160,6 +160,7 @@ The adapter's header owns the three record shapes, required identity and payload
 At operator level, every order names both a worker by `leaf_worker_id` - `<machine>/<label>`, from the same machine and label the feed emits and `fm-stream.sh tasks` lists - and the exact execution the feed showed.
 That binding prevents an order composed for one run from being typed into its replacement.
 For Deck, Bridge orders correct the already-running turn without ending, displacing, restarting, or manufacturing lifecycle evidence for it; ordinary `fm-send` inbox doorbells still use the existing next-turn path.
+Native Deck acceptance is execution-bound through the durable receiver, never a PTY write; non-Deck endpoints retain the complete PTY typing contract.
 Native steering requires a Deck build supporting `deck run --steer-dir`; an unavailable interface is refused without changing the running turn or falling back to PTY input.
 Native text must be nonblank and fit below Deck's 64 KiB projection ceiling, with space reserved for source paths and acknowledgement guidance; that limit does not apply to other harnesses' PTY orders.
 The adapter header owns acceptance and hub capability negotiation, and `bin/fm_stream_deck.py` owns Deck's durable source, original-turn binding, idempotency, reconciliation, and refusal mechanics.
@@ -183,6 +184,37 @@ After the same endpoint re-registers, retained Deck receiver records can still r
 
 The credentials are separate on purpose: `command` needs a `control`-class token, the class that can type into workers, while the feed holds `subscribe` alone, so a host running only the feed cannot order anything with the credential the feed uses.
 Run `command` on the host that runs the hub, reading its stdin from wherever the composer's records come from over SSH or an equivalent encrypted transport - the same open exposure decision the feed names, with a sharper edge, because this direction carries the credential that steers the fleet.
+
+### Private host control routing
+
+The same-origin, local-only UI adapter may call `bin/fm-ui-host-control.py` only after checking its per-launch browser-session authorization and authority for that exact action.
+This executable is a host-side routing surface, not an HTTP endpoint or an authentication substitute.
+Its header and `--help` own the operator-maintained 0600 binding registry, exact target resolution, and supported verbs.
+The host resolves `(machine, label)` to an explicit `FM_HOME` and exact task or captain-call binding; neither the registry's home paths nor control-class credentials are supplied by or returned to the browser.
+Invalid registry bindings refuse before dispatch; stale captain calls and deeper task eligibility are checked by the existing owners.
+Lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or remote-secondmate refusal checks.
+The host adapter must keep backend credentials in host-only 0600 files and must never send them in page content, browser environment, or browser storage.
+
+Decision actions carry the captain's authenticated exact answer to the existing send or captain-hold owner; the [host executable's header and help](../bin/fm-ui-host-control.py) own payload fields, delegation, acknowledgement framing, host-only diagnostics, and retry limits.
+Owner success does not prove that a worker acted on its inbox answer, and owner errors remain pending rather than being misreported as proof that nothing changed.
+The browser never writes state directly, supplies an owner-home path, or invokes an owner command itself.
+`note` remains only the supervisor-note path through `bin/fm-inbox.sh`, not a substitute for a decision action.
+A crew-owned `no-mistakes axi respond` remains worker-owned and is never invoked by this host route.
+Existing owner guards remain authoritative, including endpoint retirement and stand-down refusals; the host route does not bypass those refusals to revive or reassign workers.
+
+Full primary control is not yet implemented.
+The runtime/control-plane owner owns these explicit capability gaps: primary interrupt, primary exit/shutdown, primary relaunch/restart, primary missing-endpoint recovery, and primary native mid-turn steering.
+Primary decision control is supported through an explicit host-registry captain-call binding under the primary owner's `FM_HOME`, while task-key decisions use an exact task binding in their owning home.
+Notes-only and worker-only bindings do not constitute full primary control.
+
+The Bridge command plane remains `steer` only.
+The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.
+The hub's endpoint-addressed non-order command path already carries `input`, `kill`, and `status` through `submit_command` and the agent's take/result acknowledgement path, independent of the Bridge journal.
+Those are different planes, not interchangeable Bridge orders: raw input bypasses native steering, kill closes an endpoint rather than executing guarded lifecycle control, and status appends worker events rather than carrying captain intent.
+That path's acknowledgement does not supply the Bridge journal's leaf binding, command-id replay, or late-result lookup, so a preflight lookup followed by a plain command cannot honestly inherit the journal contract.
+Consequently this host route does not expose those routes as composer kinds or fabricate equivalent acknowledgement and retry guarantees.
+A future generalized hub journal belongs to the core stream owner and must establish each kind's execution binding, idempotency, and authority before a UI can expose it.
+Use guarded host lifecycle verbs for process control and supervisor notes for intent; this is not a claim of full primary lifecycle or raw endpoint command support.
 
 ## Security
 
@@ -372,6 +404,7 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
   Native Deck steering has its own live guard and portable receiver regressions, linked in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
   The other portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, `tests/fm-stream-claude-tail.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
   The secondmate credential-seeding regressions from the Security section above ride `tests/fm-secondmate-safety.test.sh`.
+  `tests/fm-ui-host-control.test.sh` covers the private host route's registry, captain-call decisions, exact-task and harness-switch races, independent-host lease preservation, stdin isolation, and host-only diagnostics; `tests/fm-control.test.sh` covers integration with the existing worker owners.
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.
 - An unreachable agent and a dead worker are indistinguishable from the hub, so a stale read carries no liveness verdict at all.
   Only one of those two states authorizes recovery, and reporting silence as death is how a healthy worker gets torn down.
