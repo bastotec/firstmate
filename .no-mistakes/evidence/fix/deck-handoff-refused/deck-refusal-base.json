@@ -1,0 +1,15 @@
+{
+  "host-refused-handling": {
+    "pane": "\n\u26f5 deck working - ctrl+c to stop\nwatcher: started pid=13674 (beacon fresh)\ncheck: example\n\n\u2500\u2500 turn finished (1 model calls)\n",
+    "stderr": "fm-deck-worker: successor watcher refused handling delivery confirmation\n",
+    "parent/host.status": "failed: Deck secondmate successor watcher refused handling delivery confirmation\n",
+    "parent/host.busy-state": "v1 gen=g1790830815.11561.28630 seq=3 state=idle source=deck-wrapper event=turn-end ts=1790830817\n",
+    "home/watch-starts": "13674\n15135\n",
+    "home/watch-arms": "arm=13674 predecessor=none\narm=15135 predecessor=13674\n",
+    "home/handling-refused": "generation=deck-13674 watcher=15135\n",
+    "home/handling-delivered": "<absent>",
+    "home/turns": "{\"prompt\": \"charter\\n\\nThe task steering inbox is /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M3TWWAS997H1ZVESC3YT6J8J/.validation-tmp/fm-deck-harness.Z9TUIT/host-refused-handling/parent/host.inbox. It belongs to this secondmate even outside its home. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.\\nThe Deck host already ran bin/fm-session-start.sh exactly once for this session.\\nRead the complete digest below; do not run session start again.\\nlock acquired: harness pid 11880\\ncomplete startup digest marker\", \"session\": \"host-session\", \"resumed\": false, \"inbox\": \"\"}\n",
+    "first.err": "<absent>",
+    "state/t1.status": "<absent>"
+  }
+}

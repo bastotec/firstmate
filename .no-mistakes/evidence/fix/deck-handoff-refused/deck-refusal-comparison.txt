@@ -1,0 +1,41 @@
+Deck handling-refusal counterfactual
+Executed real fm-deck-worker.sh with the repository secondmate fixture; Deck and watcher arm are test doubles, not real model sessions.
+
+BASE DRIVER
+stderr:
+fm-deck-worker: successor watcher refused handling delivery confirmation
+parent status:
+failed: Deck secondmate successor watcher refused handling delivery confirmation
+watcher arms:
+arm=13674 predecessor=none
+arm=15135 predecessor=13674
+refused confirmation:
+generation=deck-13674 watcher=15135
+confirmed later delivery:
+<absent>
+busy state:
+v1 gen=g1790830815.11561.28630 seq=3 state=idle source=deck-wrapper event=turn-end ts=1790830817
+Deck turn records:
+turn=1 session=host-session resumed=False inbox=''
+
+TARGET DRIVER
+stderr:
+fm-deck-worker: successor watcher refused handling delivery confirmation; replacing the watcher
+parent status:
+<absent>
+watcher arms:
+arm=90311 predecessor=none
+arm=91446 predecessor=90311
+arm=91817 predecessor=none
+arm=98210 predecessor=91817
+refused confirmation:
+generation=deck-90311 watcher=91446
+confirmed later delivery:
+generation=deck-91817 watcher=98210
+busy state:
+v1 gen=g1790830799.88713.10244 seq=8 state=idle source=deck-wrapper event=session-end ts=1790830809
+Deck turn records:
+turn=1 session=host-session resumed=False inbox=''
+turn=2 session=host-session resumed=True inbox='schema=fm-task-inbox.v1\nat=2026-10-01T05:00:01Z\n--\nThe home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, handle every emitted wake and open decision, and acknowledge only after handling. Watcher output:\nwatcher: started pid=90311 (beacon fresh)\ncheck: example'
+turn=3 session=host-session resumed=True inbox='schema=fm-task-inbox.v1\nat=2026-10-01T05:00:06Z\n--\nThe home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, handle every emitted wake and open decision, and acknowledge only after handling. Watcher output:\nwatcher: started pid=91817 (beacon fresh)\ncheck: example'
+
