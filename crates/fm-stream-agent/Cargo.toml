@@ -1,0 +1,17 @@
+[package]
+name = "fm-stream-agent"
+description = "Opt-in Rust PTY publisher for the stream backend"
+version = "2.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+fm-stream-wire.workspace = true
+serde_json = { workspace = true, features = ["preserve_order", "arbitrary_precision", "float_roundtrip", "raw_value"] }
+unicode-general-category = "1"
+libc = "0.2"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
+signal-hook = "0.3"
+sha2 = "0.10"

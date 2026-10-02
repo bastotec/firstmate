@@ -35,6 +35,10 @@ jobs:
         run: |
           cargo +stable fmt --all --check
           cargo +stable test --workspace --locked
+      - name: Rust agent parity against the Python hub
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: FM_LIVE=0 bin/fm-test-run.sh tests/fm-stream-agent-rust.test.sh
 
   lint:
     name: Lint
