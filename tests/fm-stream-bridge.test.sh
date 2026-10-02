@@ -53,7 +53,11 @@ start_hub() {
   chmod 600 "$CASE_DIR/tokens" "$CASE_DIR/view-token" "$CASE_DIR/publish-token" \
     "$CASE_DIR/control-token"
   ready="$CASE_DIR/ready"
-  python3 "$HUB" serve --bind 127.0.0.1 --port 0 \
+  local hub_command=(python3 "$HUB")
+  if [ -n "${FM_TEST_STREAM_HUB_BINARY:-}" ]; then
+    hub_command=("$FM_TEST_STREAM_HUB_BINARY")
+  fi
+  "${hub_command[@]}" serve --bind 127.0.0.1 --port 0 \
     --token-file "$CASE_DIR/tokens" --ready-file "$ready" > "$CASE_DIR/log" 2>&1 &
   pid=$!
   disown "$pid" 2>/dev/null || true
@@ -675,16 +679,34 @@ test_an_order_the_hub_cannot_settle_is_left_pending_rather_than_answered() {
   # record - an accepted one would be a fabrication, and a refused one would be
   # just as false.
   start_hub command-pending
-  local endpoint agent out
-  endpoint=$(start_real_agent frozen)
-  agent=$(ps -eo pid,args 2>/dev/null \
-    | awk -v l="--label frozen-$RUN" 'index($0, "fm-stream-agent.py") && index($0, l) && !index($0, "awk") {print $1; exit}')
-  [ -n "$agent" ] || fail "the agent should be running"
-  kill -STOP "$agent" || fail "could not pause the agent"
-  out=$(printf '%s\n' "$(composer_command c-pending "box-a/frozen-$RUN" "echo MAYBE" "$endpoint")" \
+  local endpoint out capability taken waited=0 caller
+  endpoint=$(new_id)
+  # An untaken order is definitively NOT delivered and must be refused.
+  # Publish by hand, as in the other HTTP cases, then take the queued command
+  # using this endpoint's capability but deliberately withhold its result.
+  capability=$(curl -sS -m 30 -H "Authorization: Bearer $PUBLISH_TOKEN" \
+    -H 'Content-Type: application/json' --data-binary "$(jq -nc \
+      --arg id "$endpoint" --arg label "frozen-$RUN" \
+      '{protocol: 3, endpoint_id: $id, machine: "box-a", label: $label, cwd: "/tmp", capabilities: ["idempotent_command_results"]}')" \
+    "$URL/v1/agent/endpoints" | jq -er '.command_capability') \
+    || fail "could not register the test endpoint"
+  printf '%s\n' "$(composer_command c-pending "box-a/frozen-$RUN" "echo MAYBE" "$endpoint")" \
     | python3 "$BRIDGE" command --hub "$URL" --token-file "$CASE_DIR/control-token" \
-        --fleet-id test-fleet 2>/dev/null)
-  kill -CONT "$agent" || fail "could not resume the agent"
+        --fleet-id test-fleet > "$CASE_DIR/pending.out" 2> "$CASE_DIR/pending.err" &
+  caller=$!
+  fm_test_track_helper_pid "$caller"
+  while [ "$waited" -lt 100 ]; do
+    taken=$(curl -sS -m 30 -H "Authorization: Bearer $PUBLISH_TOKEN" \
+      -H "X-Endpoint-Capability: $capability" \
+      "$URL/v1/agent/commands?machine=box-a&endpoint=$endpoint&wait=0")
+    [ "$(printf '%s' "$taken" | jq '.commands | length')" = 1 ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$(printf '%s' "$taken" | jq -r '.commands[0].payload.text')" \
+    "echo MAYBE" "the pending order must actually be taken before its result is withheld"
+  wait "$caller" || fail "bridge command failed: $(cat "$CASE_DIR/pending.err")"
+  out=$(cat "$CASE_DIR/pending.out")
   assert_equals "$out" "" \
     "an order the hub could not settle must produce no record at all"
   pass "bridge: an order the hub cannot settle is left pending rather than answered"

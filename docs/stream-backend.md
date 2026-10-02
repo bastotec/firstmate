@@ -119,8 +119,39 @@ The Cargo workspace shares the protocol handshake and heartbeat wire mapping in 
 The bridge uses Tokio, Hyper, and rustls for HTTP and HTTPS access and Serde JSON for parsing, without an LLM framework.
 It follows HTTP redirects and accepts argparse-style unique long-option abbreviations.
 Epochs remain limited to signed 64-bit integers, unlike Python's arbitrary-precision values.
+The shared Rust JSON compatibility scanner bounds nesting at 128 containers before recursive scanning, so deeply nested documents accepted by Python can be refused by either Rust binary.
 `tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
 Live comparisons exclude process-local clocks; help presentation, top-level command choices, and transport-library error details are not byte contracts.
+
+## Rust hub pilot
+
+The opt-in `fm-stream-hub` workspace binary implements the hub HTTP surfaces alongside the Python reference.
+`bin/fm-stream.sh` still starts the Python hub; building the Rust crate does not select, stop, replace, or restart the central service.
+Rust 1.96 or newer is required to build it.
+The binary's `--help` owns its CLI flags, and it shares the protocol constant and identity validation with `fm-stream-wire`.
+[Security](#security) applies to both hubs, including the plain-HTTP transport boundary.
+Rust query integers (`wait` and `lines`) must fit signed 64-bit values before clamping, unlike Python's arbitrary-precision query parsing.
+
+Run an isolated pilot with a newly created token file, an ephemeral loopback port, and ready/pid paths belonging only to that pilot:
+
+```sh
+cargo build --release --locked -p fm-stream-hub
+target/release/fm-stream-hub serve --bind 127.0.0.1 --port 0 \
+  --token-file /path/to/pilot-only-tokens \
+  --ready-file /path/to/pilot-only-ready --pid-file /path/to/pilot-only-pid
+```
+
+Point only disposable Python agents and a separate Python bridge process at the address in the pilot ready file.
+Do not redirect live agents, reuse the fleet's ready/pid files, or mirror control requests from production: an order is an action on a worker, not passive shadow traffic.
+`tests/fm-stream-hub-rust.test.sh` drives isolated Rust and Python hubs from equivalent state, compares HTTP/stream records and lifecycle outcomes, exercises the deployed Python peers, and prints observational startup/RSS/frame-throughput measurements without enforcing a budget.
+The existing hub and bridge suites accept `FM_TEST_STREAM_HUB_BINARY` for HTTP compatibility runs; the hub suite's accelerated Python-retention fixture remains reference-only, with Rust expiry boundaries covered by the crate's tests.
+[Runtime verification](verification/runtime-backends.md#stream) records current evidence and host-specific gaps.
+
+Replacing the central hub is a separate, explicitly approved quiet-window operation, not part of this pilot.
+Before replacement, require green compatibility checks, a pilot against the deployed agent/bridge versions, the same protocol and token-class configuration, verified endpoint capability rejoin, an unchanged external URL/TLS termination, and an available Python rollback command.
+Drain or resolve every queued, taken-but-unacknowledged, or otherwise unconfirmed command/order before stopping either hub; [Command path](#command-path) and [When the hub restarts](#when-the-hub-restarts) own the in-memory reconciliation and rejoin contracts.
+Plan and verify agent re-registration after replacement under those contracts.
+Rollback also requires a quiet window because it incurs the same restart losses.
 
 ## Tail adapters
 

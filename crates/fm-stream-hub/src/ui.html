@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firstmate stream</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0d10; --panel:#14181d; --line:#232a32;
+          --fg:#d7dde5; --dim:#8b97a6; --live:#4ade80; --stale:#fbbf24; --gone:#6b7280; }
+  * { box-sizing: border-box; }
+  body { margin:0; height:100vh; display:flex; background:var(--bg); color:var(--fg);
+         font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  aside { width:300px; flex:none; border-right:1px solid var(--line); overflow-y:auto; }
+  aside h1 { margin:0; padding:12px 14px; font-size:12px; letter-spacing:.09em;
+             text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--line); }
+  .machine { padding:10px 14px 4px; font-size:11px; letter-spacing:.07em;
+             text-transform:uppercase; color:var(--dim); }
+  .machine .silent { color:var(--stale); text-transform:none; letter-spacing:0; }
+  button.ep { display:block; width:100%; text-align:left; padding:7px 14px; border:0;
+              background:none; color:var(--fg); font:inherit; cursor:pointer; }
+  button.ep:hover { background:var(--panel); }
+  button.ep[aria-current="true"] { background:var(--panel); box-shadow:inset 2px 0 0 var(--live); }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:8px; }
+  .dot.live { background:var(--live); } .dot.stale { background:var(--stale); }
+  .dot.gone { background:var(--gone); }
+  main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line); display:flex;
+           gap:12px; align-items:baseline; }
+  header .name { font-weight:600; } header .meta { color:var(--dim); font-size:12px; }
+  pre#out { flex:1; margin:0; padding:12px 16px; overflow:auto; white-space:pre-wrap;
+            word-break:break-word; }
+  form { display:flex; gap:8px; padding:10px 16px; border-top:1px solid var(--line); }
+  input { flex:1; padding:8px 10px; background:var(--panel); color:var(--fg);
+          border:1px solid var(--line); border-radius:4px; font:inherit; }
+  input:disabled { opacity:.5; }
+  button.send { padding:8px 16px; background:var(--panel); color:var(--fg);
+                border:1px solid var(--line); border-radius:4px; font:inherit; cursor:pointer; }
+  .notice { padding:12px 16px; color:var(--dim); }
+  .error { color:var(--stale); }
+</style>
+</head>
+<body>
+<aside><h1>Fleet</h1><div id="list"><p class="notice">Loading...</p></div></aside>
+<main>
+  <header><span class="name" id="name">No worker selected</span>
+          <span class="meta" id="meta"></span></header>
+  <pre id="out"></pre>
+  <form id="form"><input id="line" placeholder="Select a worker to type into it"
+         autocomplete="off" disabled><button class="send" type="submit">Send</button></form>
+</main>
+<script>
+(function () {
+  "use strict";
+  var token = location.hash.slice(1);
+  var selected = null, source = null, decoder = null, selectedClosed = false;
+  var listEl = document.getElementById("list"), outEl = document.getElementById("out");
+  var nameEl = document.getElementById("name"), metaEl = document.getElementById("meta");
+  var lineEl = document.getElementById("line"), formEl = document.getElementById("form");
+
+  function api(path, options) {
+    options = options || {};
+    options.headers = Object.assign({}, options.headers,
+      {"Authorization": "Bearer " + token});
+    return fetch(path, options).then(function (r) {
+      if (!r.ok) { return r.json().catch(function () { return {}; })
+        .then(function (b) { throw new Error(b.message || ("HTTP " + r.status)); }); }
+      return r.json();
+    });
+  }
+
+  function health(ep, machines) {
+    if (ep.closed_at) { return "gone"; }
+    var m = machines[ep.machine];
+    if (!m || !m.reachable) { return "stale"; }
+    if (ep.state_age_secs === null) { return "stale"; }
+    return "live";
+  }
+
+  function refresh() {
+    return api("/v1/tasks").then(function (data) {
+      var machines = {};
+      (data.machines || []).forEach(function (m) { machines[m.machine] = m; });
+      var groups = {};
+      (data.tasks || []).forEach(function (ep) {
+        (groups[ep.machine] = groups[ep.machine] || []).push(ep);
+      });
+      var names = Object.keys(groups).sort();
+      if (!names.length) {
+        listEl.innerHTML = '<p class="notice">No workers registered yet.</p>';
+        return;
+      }
+      listEl.textContent = "";
+      names.forEach(function (machine) {
+        var head = document.createElement("div");
+        head.className = "machine";
+        head.textContent = machine;
+        var m = machines[machine];
+        if (m && !m.reachable) {
+          var s = document.createElement("span");
+          s.className = "silent";
+          s.textContent = "  silent " + Math.round(m.silent_for_secs) + "s";
+          head.appendChild(s);
+        }
+        listEl.appendChild(head);
+        groups[machine].forEach(function (ep) {
+          var b = document.createElement("button");
+          b.className = "ep";
+          b.type = "button";
+          if (selected === ep.endpoint_id) { b.setAttribute("aria-current", "true"); }
+          var dot = document.createElement("span");
+          dot.className = "dot " + health(ep, machines);
+          b.appendChild(dot);
+          b.appendChild(document.createTextNode(ep.label));
+          b.addEventListener("click", function () { select(ep); });
+          listEl.appendChild(b);
+        });
+      });
+    }).catch(function (err) {
+      listEl.innerHTML = '<p class="notice error"></p>';
+      listEl.firstChild.textContent = err.message;
+    });
+  }
+
+  function select(ep) {
+    var chosen = ep.endpoint_id;
+    selected = chosen;
+    nameEl.textContent = ep.label;
+    metaEl.textContent = ep.machine + (ep.closed_at ? " - closed" : "");
+    selectedClosed = !!ep.closed_at;
+    lineEl.disabled = selectedClosed;
+    lineEl.placeholder = ep.closed_at ? "This worker has closed"
+                                      : "Type a line for " + ep.label;
+    outEl.textContent = "";
+    if (source) { source.close(); source = null; }
+    // Every asynchronous write into the pane checks the selection it was
+    // issued for. A response that loses the race to a later click is dropped:
+    // painting one worker's terminal under another's name is the one mistake
+    // this view must never make.
+    fetch("/v1/tasks/" + chosen + "/capture?lines=200",
+          {headers: {"Authorization": "Bearer " + token}})
+      .then(function (r) {
+        return r.text().then(function (t) {
+          // A refusal is not terminal output. Painting its body into the pane
+          // would read as something the worker printed, so only the hub's own
+          // message crosses over, exactly as api() reports a failure.
+          if (!r.ok) {
+            var message = "";
+            try { message = (JSON.parse(t) || {}).message || ""; } catch (e) { message = ""; }
+            throw new Error(message || ("HTTP " + r.status));
+          }
+          return t;
+        });
+      })
+      .then(function (t) {
+        if (selected !== chosen) { return; }
+        outEl.textContent = t;
+        outEl.scrollTop = outEl.scrollHeight;
+      })
+      .catch(function (err) {
+        if (selected !== chosen) { return; }
+        outEl.textContent = "";
+        var notice = document.createElement("span");
+        notice.className = "notice error";
+        notice.textContent = "This worker's transcript could not be read: " + err.message;
+        outEl.appendChild(notice);
+      });
+    source = new EventSource("/v1/tasks/" + chosen +
+      "/stream?access_token=" + encodeURIComponent(token));
+    // One decoder for the whole subscription: frames are raw pty chunks, so a
+    // character can straddle any frame boundary and only a streaming decode
+    // carries the remainder across.
+    decoder = new TextDecoder("utf-8");
+    source.onmessage = function (event) {
+      if (selected !== chosen) { return; }
+      var record = JSON.parse(event.data);
+      if (record.b64) {
+        var binary = atob(record.b64);
+        var bytes = new Uint8Array(binary.length);
+        for (var i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+        outEl.textContent += decoder.decode(bytes, {stream: true});
+        outEl.scrollTop = outEl.scrollHeight;
+      }
+      if (record.closed) { selectedClosed = true; lineEl.disabled = true; refresh(); }
+    };
+    refresh();
+  }
+
+  formEl.addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (!selected || !lineEl.value) { return; }
+    var chosen = selected;
+    var text = lineEl.value;
+    lineEl.value = "";
+    lineEl.disabled = true;
+    api("/v1/tasks/" + chosen + "/input", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: text, submit: true})
+    }).catch(function (err) {
+      if (selected !== chosen) { return; }
+      outEl.textContent += "\n[not delivered: " + err.message + "]\n";
+      outEl.scrollTop = outEl.scrollHeight;
+    }).then(function () {
+      if (selected !== chosen) { return; }
+      // Whether the box is usable is the selected worker's business, not this
+      // request's: a send that lands after the worker closed must not reopen
+      // it under a placeholder saying it is gone.
+      lineEl.disabled = selectedClosed;
+      if (!selectedClosed) { lineEl.focus(); }
+    });
+  });
+
+  if (!token) {
+    listEl.innerHTML = '<p class="notice error">No token in the URL fragment.</p>';
+  } else {
+    refresh();
+    setInterval(refresh, 5000);
+  }
+}());
+</script>
+</body>
+</html>
