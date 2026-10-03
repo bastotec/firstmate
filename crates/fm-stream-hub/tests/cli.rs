@@ -45,6 +45,11 @@ impl Server {
     }
 
     fn api(&self, method: &str, path: &str, body: &str, cap: &str) -> (u16, Value) {
+        let (status, body) = self.api_raw(method, path, body, cap);
+        (status, serde_json::from_str(&body).unwrap())
+    }
+
+    fn api_raw(&self, method: &str, path: &str, body: &str, cap: &str) -> (u16, String) {
         let mut socket = TcpStream::connect(&self.address).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(5)))
@@ -63,7 +68,7 @@ impl Server {
         socket.read_to_string(&mut response).unwrap();
         let (headers, body) = response.split_once("\r\n\r\n").unwrap();
         let status = headers.split_whitespace().nth(1).unwrap().parse().unwrap();
-        (status, serde_json::from_str(body).unwrap())
+        (status, body.to_owned())
     }
 }
 
@@ -161,18 +166,22 @@ fn compatibility_input_preserves_literal_text_and_nonfinite_boolean_fields() {
         std::thread::scope(|scope| {
             let input =
                 scope.spawn(|| server.api("POST", &format!("/v1/tasks/{eid}/input"), &raw, ""));
-            let (status, taken) = server.api(
+            let (status, taken_raw) = server.api_raw(
                 "GET",
                 &format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=3"),
                 "",
                 cap,
             );
             assert_eq!(status, 200);
+            let taken = fm_stream_wire::python_json::python_reparse(&taken_raw).unwrap();
             let command = &taken["commands"][0];
-            assert_eq!(command["payload"]["text"], "\\ud800");
-            assert_eq!(command["payload"]["keys"][0], "\u{fffd}");
-            assert_eq!(command["payload"]["submit"], true);
             let cid = command["command_id"].as_str().unwrap();
+            assert_eq!(
+                taken_raw,
+                format!(
+                    r#"{{"commands": [{{"command_id": "{cid}", "endpoint_id": "{eid}", "kind": "input", "payload": {{"keys": ["\ud800"], "submit": true, "text": "\\ud800"}}}}], "ok": true}}"#
+                )
+            );
             let result = format!(
                 r#"{{"machine":"box","command_id":"{cid}","ok":{literal},"unused":"\ud800"}}"#
             );

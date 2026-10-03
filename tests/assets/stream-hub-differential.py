@@ -75,13 +75,13 @@ class Pilot:
         self.url = "http://%s:%s" % (host, port)
         self.generation = self.api("GET", "/v1/health", token="pub")[1]["generation"]
 
-    def api(self, method, path, payload=None, token="ctl", capability=None):
+    def api(self, method, path, payload=None, token="ctl", capability=None, raw_json=False):
         headers = {}
         if token is not None:
             headers["Authorization"] = "Bearer " + token
         if capability is not None:
             headers["X-Endpoint-Capability"] = capability
-        data = None if payload is None else json.dumps(payload).encode()
+        data = payload if isinstance(payload, bytes) else None if payload is None else json.dumps(payload).encode()
         request = urllib.request.Request(self.url + path, data=data, headers=headers,
                                          method=method)
         try:
@@ -96,7 +96,7 @@ class Pilot:
             ) from exc
         with response:
             raw = response.read()
-            if response.headers.get("Content-Type", "").startswith("application/json"):
+            if not raw_json and response.headers.get("Content-Type", "").startswith("application/json"):
                 raw = json.loads(raw)
             return response.status, raw
 
@@ -186,6 +186,52 @@ def terminal_compatibility(p):
     return [normalized(record) for record in records]
 
 
+def command_json_compatibility(p, eid):
+    records = []
+    notes = [b'[NaN, "\\ud800"]', b'NaN', b'Infinity', b'-Infinity', b'1e999',
+             b'-1e999', b'{"\\udfff": [NaN, Infinity, -Infinity, "\\ud800", "\\ud83d\\ude00"], "literal": "\\\\ud800 NaN"}',
+             b'{"duplicate": NaN, "duplicate": "\\udfff"}', b'0', b'1e-999']
+    cases = [("status", b'{"state":"working","note":' + note + b'}') for note in notes]
+    cases += [("input", b'{"text":NaN,"keys":["\\ud800",Infinity],"submit":NaN}'),
+              ("input", b'{"text":"\\ud800","keys":null,"submit":Infinity}')]
+    for text in ("\ud800", "\udfff"):
+        cases.append(("steer", json.dumps(dict(leaf_worker_id="box/worker", execution_id=eid,
+                     order_id=f"surrogate-order-{ord(text):x}", text=text, submit=True,
+                     hub_generation=p.generation)).encode()))
+    for kind, body in cases:
+        parsed = json.loads(body)
+        if kind == "status":
+            payload = {"state": "working", "note": parsed["note"] or ""}
+        elif kind == "input":
+            payload = {"text": parsed["text"], "keys": parsed["keys"], "submit": bool(parsed["submit"])}
+        else:
+            payload = {"text": parsed["text"], "keys": None, "submit": True,
+                       "order_id": parsed["order_id"], "execution_id": eid}
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            path = "/v1/orders" if kind == "steer" else "/v1/tasks/" + eid + "/" + kind
+            future = pool.submit(p.api, "POST", path, body)
+            code, raw = p.api("GET", "/v1/agent/commands?machine=box&endpoint=" + eid + "&wait=1",
+                              token="pub", capability=p.capabilities[eid], raw_json=True)
+            assert code == 200, (code, raw)
+            commands = json.loads(raw)["commands"]
+            assert len(commands) == 1, raw
+            cid = commands[0]["command_id"]
+            expected = {"commands": [{"command_id": cid, "endpoint_id": eid,
+                                      "kind": kind, "payload": payload}], "ok": True}
+            assert raw == json.dumps(expected, sort_keys=True).encode(), (body, raw, expected)
+            records.append(raw.replace(cid.encode(), b"command"))
+            assert p.result(cid, eid, ok=float("nan"))[0] == 200
+            assert future.result()[0] == 200
+        if kind == "steer":
+            changed = dict(parsed, text="\udfff" if parsed["text"] == "\ud800" else "\ud800")
+            conflict = p.api("POST", "/v1/orders", changed)
+            assert conflict[0] == 409 and conflict[1]["error"] == "order_id_conflict"
+    for body in (b'{', b'{"state":"working","note":NaN garbage}', b'{"note":"\\ud800",}'):
+        code, refusal = p.api("POST", "/v1/tasks/" + eid + "/status", body)
+        assert code == 400 and refusal["error"] == "bad_json", (body, code, refusal)
+    return records
+
+
 def exercise(p):
     records = []
     def save(answer):
@@ -234,6 +280,7 @@ def exercise(p):
                  "processes", "cwd"):
         save(p.api("GET", "/v1/tasks/" + a + "/" + tail))
     records.extend(terminal_compatibility(p))
+    records.extend(command_json_compatibility(p, a))
     save(p.register(b))  # A speaking agent contests a duplicate label.
     save(p.register(b, label="sibling"))
     save(p.take(b))
@@ -356,6 +403,7 @@ def exercise(p):
 
 def peers(p):
     ready = p.directory / "agent-ready"
+    status = p.directory / "peer-status"
     home = p.directory / "peer-home"
     home.mkdir()
     startup = home / "startup-sentinel"
@@ -372,7 +420,8 @@ def peers(p):
     process = subprocess.Popen([sys.executable, str(ROOT / "bin/fm-stream-agent.py"),
         "serve", "--hub", p.url, "--token-file", str(p.directory / "pub"),
         "--machine", "peers", "--label", "python", "--cwd", str(p.directory),
-        "--ready-file", str(ready), "--state-interval", "0.1", "--poll-secs", "1"],
+        "--ready-file", str(ready), "--status-path", str(status),
+        "--state-interval", "0.1", "--poll-secs", "1"],
         stdout=log, stderr=log, env=env)
     p.processes.append(process)
     for _ in range(300):
@@ -403,6 +452,11 @@ def peers(p):
     matching = [r for r in records if r.get("identity", {}).get("leaf_worker_id") == "peers/python"]
     assert matching, records
     out = normalized(matching, {eid: "python-peer"})
+    note = [float("nan"), "\ud800"]
+    result = p.api("POST", "/v1/tasks/" + eid + "/status", {"state": "working", "note": note})
+    assert result[0] == 200, result
+    durable = status.read_bytes()
+    assert durable == ("working: " + str(note) + "\n").encode(), durable
     # Restart preserves the worker. Its Python agent must rejoin an empty hub.
     port = int(p.url.rsplit(":", 1)[1])
     p.stop()
@@ -429,7 +483,7 @@ def peers(p):
     assert startup.read_bytes() == b"startup untouched\n", "peer loaded operator startup files"
     assert history.read_bytes() == b"history untouched\n", "peer modified operator history"
     log.close()
-    return out
+    return out, durable
 
 
 def measure(p):

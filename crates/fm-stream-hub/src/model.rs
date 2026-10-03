@@ -150,7 +150,7 @@ pub struct Command {
     pub endpoint: String,
     pub endpoint_created: f64,
     pub kind: String,
-    pub payload: Value,
+    pub payload: String,
     pub taken: f64,
     pub done: bool,
     pub ok: bool,
@@ -158,8 +158,13 @@ pub struct Command {
     pub withdrawn: bool,
 }
 impl Command {
-    pub fn describe(&self) -> Value {
-        json!({"command_id":self.id,"endpoint_id":self.endpoint,"kind":self.kind,"payload":self.payload})
+    pub fn describe(&self) -> String {
+        crate::payload::object(&[
+            ("command_id", crate::encode(&json!(self.id))),
+            ("endpoint_id", crate::encode(&json!(self.endpoint))),
+            ("kind", crate::encode(&json!(self.kind))),
+            ("payload", self.payload.clone()),
+        ])
     }
 }
 pub struct Machine {
@@ -497,21 +502,27 @@ impl Hub {
             let e = Self::get(&s, eid)?;
             (e.created, e.machine.clone())
         };
-        let delivered =
-            match self.submit_to(eid, "kill", json!({"signal":"TERM"}), None, Some(created)) {
-                Ok(()) => true,
-                Err(error) if error.code == "no_agent_ack" => {
-                    let mut s = self.state.lock().unwrap();
-                    if let Some(e) = s.endpoints.get_mut(eid).filter(|e| e.created == created) {
-                        e.close(Value::Null, "hub");
-                        self.wake.notify_all();
-                    }
-                    false
+        let delivered = match self.submit_to(
+            eid,
+            "kill",
+            crate::encode(&json!({"signal":"TERM"})),
+            None,
+            Some(created),
+        ) {
+            Ok(()) => true,
+            Err(error) if error.code == "no_agent_ack" => {
+                let mut s = self.state.lock().unwrap();
+                if let Some(e) = s.endpoints.get_mut(eid).filter(|e| e.created == created) {
+                    e.close(Value::Null, "hub");
+                    self.wake.notify_all();
                 }
-                Err(error) => return Err(error),
-            };
+                false
+            }
+            Err(error) => return Err(error),
+        };
         Ok(json!({"ok":true,"closed":eid,"machine":machine,"delivered":delivered}))
     }
+    #[cfg(test)]
     pub fn submit(
         &self,
         eid: &str,
@@ -519,13 +530,16 @@ impl Hub {
         payload: Value,
         order: Option<&Arc<Mutex<Order>>>,
     ) -> Result<()> {
-        self.submit_to(eid, kind, payload, order, None)
+        self.submit_to(eid, kind, crate::encode(&payload), order, None)
+    }
+    pub fn submit_encoded(&self, eid: &str, kind: &str, payload: String) -> Result<()> {
+        self.submit_to(eid, kind, payload, None, None)
     }
     fn submit_to(
         &self,
         eid: &str,
         kind: &str,
-        payload: Value,
+        payload: String,
         order: Option<&Arc<Mutex<Order>>>,
         expected: Option<f64>,
     ) -> Result<()> {
@@ -621,7 +635,7 @@ impl Hub {
         }
         Ok(())
     }
-    pub fn take(&self, machine: &str, eid: &str, wait: f64, cap: &str) -> Result<Vec<Value>> {
+    pub fn take(&self, machine: &str, eid: &str, wait: f64, cap: &str) -> Result<Vec<String>> {
         let deadline = now() + wait;
         let mut s = self.state.lock().unwrap();
         let mut result = vec![];
@@ -804,7 +818,17 @@ impl Hub {
             Err(e)
         }
     }
+    #[cfg(test)]
     pub fn place(&self, leaf: &str, execution: &str, text: &str, oid: &str) -> Result<Value> {
+        self.place_encoded(leaf, execution, &crate::encode(&json!(text)), oid)
+    }
+    pub fn place_encoded(
+        &self,
+        leaf: &str,
+        execution: &str,
+        text: &str,
+        oid: &str,
+    ) -> Result<Value> {
         let mut s = self.state.lock().unwrap();
         let mut created = now();
         let mut replace_position = None;
@@ -918,11 +942,18 @@ impl Hub {
             }
         }
         drop(s);
-        let result = self.submit(
+        let result = self.submit_to(
             selected.as_deref().unwrap(),
             "steer",
-            json!({"text":text,"keys":null,"submit":true,"order_id":oid,"execution_id":execution}),
+            crate::payload::object(&[
+                ("text", text.into()),
+                ("keys", "null".into()),
+                ("submit", "true".into()),
+                ("order_id", crate::encode(&json!(oid))),
+                ("execution_id", crate::encode(&json!(execution))),
+            ]),
             Some(&order),
+            None,
         );
         let s = self.state.lock().unwrap();
         let mut o = order.lock().unwrap();
@@ -1103,7 +1134,8 @@ mod tests {
         });
         let commands = hub.take("box", &eid, 5., &cap).unwrap();
         assert_eq!(commands.len(), 1);
-        let cid = commands[0]["command_id"].as_str().unwrap();
+        let command: Value = serde_json::from_str(&commands[0]).unwrap();
+        let cid = command["command_id"].as_str().unwrap();
         let weak = Arc::downgrade(&hub.state.lock().unwrap().commands[cid]);
         assert_eq!(
             hub.complete("box", cid, true, "", "invalid")
@@ -1135,7 +1167,8 @@ mod tests {
         });
         let commands = hub.take("box", &eid, 5., &cap).unwrap();
         assert_eq!(commands.len(), 1);
-        let cid = commands[0]["command_id"].as_str().unwrap();
+        let command: Value = serde_json::from_str(&commands[0]).unwrap();
+        let cid = command["command_id"].as_str().unwrap();
         hub.complete("box", cid, true, "", &cap).unwrap();
         assert!(!hub.state.lock().unwrap().commands.contains_key(cid));
         assert_eq!(request.join().unwrap().unwrap()["outcome"], "accepted");
@@ -1175,7 +1208,8 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(1));
         }
-        let cid = commands[0]["command_id"].as_str().unwrap();
+        let command: Value = serde_json::from_str(&commands[0]).unwrap();
+        let cid = command["command_id"].as_str().unwrap();
         let first = request.join().unwrap().unwrap_err();
         assert_eq!(first.details["delivered"], Value::Null);
         {
@@ -1249,7 +1283,9 @@ mod tests {
         }
         hub.complete(
             "box",
-            commands[0]["command_id"].as_str().unwrap(),
+            serde_json::from_str::<Value>(&commands[0]).unwrap()["command_id"]
+                .as_str()
+                .unwrap(),
             true,
             "",
             &cap,

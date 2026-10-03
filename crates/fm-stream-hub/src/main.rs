@@ -1,5 +1,6 @@
 //! Isolated Rust hub pilot. No deployed entry point selects this binary.
 mod model;
+mod payload;
 mod screen;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use fm_stream_wire::{is_endpoint_id, is_label, is_machine_name, HUB_PROTOCOL};
@@ -22,6 +23,15 @@ struct Request {
     body_error: Option<Error>,
 }
 impl Request {
+    fn forwarded(&self) -> Result<payload::Json> {
+        let text = if self.raw.is_empty() {
+            "{}"
+        } else {
+            std::str::from_utf8(&self.raw)
+                .map_err(|e| Error::new(400, "bad_json", format!("malformed JSON body: {e}")))?
+        };
+        payload::Json::parse(text)
+    }
     fn method(&self) -> &hyper::Method {
         &self.method
     }
@@ -240,7 +250,11 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
                 return Err(Error::new(400, "bad_endpoint_id", "malformed endpoint id"));
             }
             let wait = query_int(q, "wait", 25)?.clamp(0, 120) as f64;
-            return answer(json!({"ok":true,"commands":h.take(machine,eid,wait,&cap)?}));
+            let commands = h.take(machine, eid, wait, &cap)?;
+            return Ok(Answer::Text(
+                format!("{{\"commands\": [{}], \"ok\": true}}", commands.join(", ")),
+                "application/json",
+            ));
         }
         if tail == "results" && method == "POST" {
             let p = body(r)?;
@@ -308,7 +322,7 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
                     "an execution_id must be 32 lowercase hex characters",
                 )
             })?;
-        let text = p["text"]
+        p["text"]
             .as_str()
             .ok_or_else(|| Error::new(400, "bad_input", "an order needs 'text' as a string"))?;
         if p["submit"] != true {
@@ -352,7 +366,12 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
                     "an order_id must be 1-128 characters of [A-Za-z0-9._-]",
                 )
             })?;
-        return answer(h.place(leaf, execution, text, oid)?);
+        return answer(h.place_encoded(
+            leaf,
+            execution,
+            &r.forwarded()?.get("text").encode(),
+            oid,
+        )?);
     }
     if let Some(rest) = path.strip_prefix("/v1/tasks/") {
         let (eid, tail) = rest.split_once('/').unwrap_or((rest, ""));
@@ -381,18 +400,24 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
         }
         if tail == "input" && method == "POST" {
             let p = body(r)?;
-            if p["text"].is_null() && p["keys"].is_null() {
+            let forwarded = r.forwarded()?;
+            if matches!(forwarded.get("text"), payload::Json::Null)
+                && matches!(forwarded.get("keys"), payload::Json::Null)
+            {
                 return Err(Error::new(
                     400,
                     "bad_input",
                     "an input needs 'text' or 'keys'",
                 ));
             }
-            h.submit(
+            h.submit_encoded(
                 eid,
                 "input",
-                json!({"text":p["text"],"keys":p["keys"],"submit":truth(&p["submit"])}),
-                None,
+                payload::object(&[
+                    ("text", forwarded.get("text").encode()),
+                    ("keys", forwarded.get("keys").encode()),
+                    ("submit", truth(&p["submit"]).to_string()),
+                ]),
             )?;
             return answer(json!({"ok":true,"delivered":eid}));
         }
@@ -419,7 +444,23 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
                     ),
                 ));
             }
-            h.submit(eid,"status",json!({"state":state,"note":if truth(&p["note"]) {p["note"].clone()} else {json!("")}}),None)?;
+            let forwarded = r.forwarded()?;
+            let note = forwarded.get("note");
+            h.submit_encoded(
+                eid,
+                "status",
+                payload::object(&[
+                    ("state", encode(&json!(state))),
+                    (
+                        "note",
+                        if note.truth() {
+                            note.encode()
+                        } else {
+                            encode(&json!(""))
+                        },
+                    ),
+                ]),
+            )?;
             return answer(json!({"ok":true,"appended":eid}));
         }
         let s = h.state.lock().unwrap();
