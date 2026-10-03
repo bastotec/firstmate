@@ -38,6 +38,10 @@ jobs:
           cargo +stable clippy -p fm-stream-hub --all-targets --no-deps -- -D warnings
       - name: Compare isolated hubs with deployed Python peers
         run: bin/fm-test-run.sh tests/fm-stream-hub-rust.test.sh
+      - name: Rust agent parity against the Python hub
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: FM_LIVE=0 bin/fm-test-run.sh tests/fm-stream-agent-rust.test.sh
 
   lint:
     name: Lint

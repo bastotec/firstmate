@@ -123,6 +123,31 @@ The shared Rust JSON compatibility scanner bounds nesting at 128 containers befo
 `tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
 Live comparisons exclude process-local clocks; help presentation, top-level command choices, and transport-library error details are not byte contracts.
 
+### Rust PTY agent pilot
+
+The opt-in Rust agent builds with `cargo build --release --locked -p fm-stream-agent` (Rust 1.96 or newer).
+Run `target/release/fm-stream-agent serve` instead of `bin/fm-stream-agent.py serve` only for a disposable pilot endpoint, with an explicit isolated hub URL, private publish token file, machine, label, absolute cwd, status-path, and ready-file.
+Its `--help` owns the full option surface; the ready file has the same `machine endpoint_id` format as the Python agent.
+For example, with a disposable Python hub already started according to `bin/fm-stream-hub.py serve --help`, use:
+
+```sh
+target/release/fm-stream-agent serve --hub "$PILOT_HUB" \
+  --token-file "$PILOT_TOKEN_FILE" --machine pilot --label rust-worker \
+  --cwd "$PILOT_CWD" --status-path "$PILOT_STATUS" --ready-file "$PILOT_READY"
+```
+
+Do not use a deployed fleet's label or hub for this test: no backend launcher is switched, and the Python agent remains deployed and available.
+The port uses the shared wire protocol with Reqwest/rustls, Serde JSON, POSIX PTYs, and signal-hook; it needs no Python interpreter at runtime.
+Keep the pilot binary under this repository's `target/` tree: native source publication invokes the existing `bin/fm-task-inbox-lib.sh` writer rather than duplicating its sequence and record contract.
+`crates/fm-stream-agent/src/receiver.rs` implements the native Deck application interface described under [Command path](#command-path); `crates/fm-stream-agent/src/commands.rs` owns the Rust scheduler and durable result reconciliation.
+HTTP redirects are refused rather than forwarding endpoint credentials to a redirect target; point directly at the final HTTP or HTTPS hub URL.
+Option names are full names rather than argparse abbreviations, geometry is bounded to the kernel's unsigned 16-bit values, and heartbeat/poll intervals must be finite, nonnegative, and representable by Rust's monotonic timers.
+Successful command-poll responses preserve Python input/status value conversion, including exact integers, non-finite numbers, deeply nested list/dict values, and escaped lone surrogates inside composites.
+Top-level strings containing lone surrogates still fail UTF-8 encoding; literal escapes and valid surrogate pairs retain their meaning, and other hub responses remain strict JSON.
+`tests/fm-stream-agent-rust.test.sh` compares both executable agents against disposable Python hubs for native execution-bound acceptance, duplicate and conflict refusal, stale execution, byte-exact durable sources, handled/rejected application proof, original-turn uncertainty and late acknowledgement without successor delivery, unsupported receiver refusal, PTY input/output, Python command-value conversion including non-finite numbers and composite surrogates, large NUL/surrogate composites and 150-deep lists with exact status rendering and result acknowledgement, zero and multi-day scheduling intervals, concurrent complete local status records, result-response loss, restart/rejoin, stale hub-generation order refusal, revoked private capability refusal, stand-down contests, child exits with fully redirected background jobs, and signal shutdown.
+`cargo test -p fm-stream-agent` covers durable reservation/result recovery, original-turn binding after storage failure, and the process-group signal ownership boundary through executable filesystem and process interfaces.
+Production replacement still requires launcher selection, installed-harness liveness verification through the Rust publisher, and parity with any subsequent Python protocol changes before changing the default.
+
 ## Rust hub pilot
 
 The opt-in `fm-stream-hub` workspace binary implements the hub HTTP surfaces alongside the Python reference.
@@ -208,7 +233,7 @@ While an id remains there, an identical resend is answered from the original ord
 A retry after more than 512 newer orders is not guaranteed to be deduplicated.
 An order whose membership remains unresolved keeps that binding, while an identical resend may retry placement because no command was created.
 A taken command remains eligible for a late agent acknowledgement and a completed result remains idempotently answerable for at least 15 minutes, and an endpoint whose worker exits while acknowledgement is retrying keeps its publisher alive while the result can still settle.
-Result-post retries do not block local Deck reconciliation or later command polling; `bin/fm-stream-agent.py` owns their scheduling and durable retry metadata.
+Result-post retries do not block local Deck reconciliation or later command polling; `bin/fm-stream-agent.py` and the pilot's `crates/fm-stream-agent/src/commands.rs` own their respective scheduling and durable retry metadata.
 A definitive result rejection - including capability revocation after the hub closes the endpoint - or retry expiry ends retrying so the closing frame can publish, while the caller's unresolved order remains unconfirmed.
 A hub restart empties its journal along with the registry, so a resend has no hub-side delivery history.
 After the same endpoint re-registers, retained Deck receiver records can still reconcile the same order id against its original turn; other endpoints have no such local native proof.
@@ -430,7 +455,8 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
 
 ## Limits
 
-- Experimental, with no dedicated real-backend CI lane.
+- Experimental; CI's Rust agent parity step exercises disposable Python hubs and real PTYs, not installed harnesses.
+  [Rust PTY agent pilot](#rust-pty-agent-pilot) owns the opt-in port's verification coverage and production-replacement requirements.
   [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) is the live guard that proves each installed harness is still classified through the hub, and the command that refreshes the dated per-harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md).
   Native Deck steering has its own live guard and portable receiver regressions, linked in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
   The other portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, `tests/fm-stream-claude-tail.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
