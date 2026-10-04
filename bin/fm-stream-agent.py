@@ -1241,9 +1241,7 @@ class Agent:
         reader.join(timeout=5.0)
         if not install_signals:
             reader.join()  # Managed replacement requires definitive reader retirement.
-        # Embedded owners may start another endpoint in this process. No old
-        # state publisher may still read the PTY when its descriptor is reused.
-        state.join()
+            state.join()
         self.pty.release()
         self._post_frames([{
             "endpoint_id": self.endpoint_id,

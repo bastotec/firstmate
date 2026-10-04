@@ -46,6 +46,7 @@ import subprocess
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location("fm_stream_agent", sys.argv[1])
 agent = importlib.util.module_from_spec(spec)
@@ -97,6 +98,100 @@ finally:
 report("partial-write-completes",
        count == len(b"composer-order\r") and b"".join(chunks) == b"composer-order\r",
        "count=%r bytes=%r" % (count, b"".join(chunks)))
+
+
+class ShutdownPty:
+    exit_code = 0
+
+    def __init__(self):
+        self.probing = threading.Event()
+        self.unblock = threading.Event()
+        self.probe_done = threading.Event()
+        self.closed = threading.Event()
+        self.released = threading.Event()
+        self.released_during_probe = None
+
+    def alive(self):
+        return not self.closed.is_set()
+
+    def foreground_processes(self, until):
+        return []
+
+    def foreground_cwd(self, until):
+        assert until is None
+        self.probing.set()
+        self.unblock.wait()
+        self.probe_done.set()
+        return ""
+
+    def close(self):
+        self.closed.set()
+
+    def release(self):
+        self.released_during_probe = not self.probe_done.is_set()
+        self.released.set()
+
+
+class ShutdownHub:
+    deadline = None
+
+    def __init__(self):
+        self.closing = threading.Event()
+        self.frames = []
+
+    def call(self, method, path, payload, timeout):
+        self.frames.extend(payload['frames'])
+        if any(frame.get('closed') for frame in payload['frames']):
+            self.closing.set()
+        return {}
+
+
+class ShutdownAgent(agent.Agent):
+    def read_loop(self):
+        self.stop.wait()
+        self.reader_done.set()
+
+    def command_loop(self):
+        self.stop.wait()
+
+
+for embedded in (False, True):
+    mode = 'embedded' if embedded else 'standalone'
+    pty = ShutdownPty()
+    hub = ShutdownHub()
+    options = SimpleNamespace(machine='fixture', status_path='', state_interval=0.01)
+    publisher = ShutdownAgent(options, hub, pty, 'fixture-'+mode)
+
+    def stop_during_probe():
+        try:
+            blocked = pty.probing.wait(2)
+            report(mode+'-probe-blocked', blocked)
+            publisher.halt()
+            report(mode+'-pty-closed', pty.closed.wait(2))
+            closed_before_unblock = hub.closing.wait(0.2 if embedded else 2)
+            report(mode+'-shutdown-retirement',
+                   not closed_before_unblock and not pty.released.is_set() if embedded
+                   else closed_before_unblock and pty.released.is_set(),
+                   'closed=%r released=%r while state probe blocked' % (
+                       closed_before_unblock, pty.released.is_set()))
+        finally:
+            publisher.halt()
+            pty.unblock.set()
+
+    controller = threading.Thread(target=stop_during_probe)
+    previous_signals = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    controller.start()
+    try:
+        result = publisher.run(install_signals=not embedded)
+    finally:
+        controller.join(5)
+        for sig, disposition in previous_signals.items():
+            signal.signal(sig, disposition)
+    report(mode+'-shutdown-completes', result == 0 and not controller.is_alive()
+           and pty.probe_done.wait(2) and pty.released.is_set()
+           and pty.released_during_probe == (not embedded)
+           and any(frame.get('closed') and frame['state']['alive'] is False
+                   for frame in hub.frames))
 
 
 def read_until(pty, marker, timeout):
@@ -244,6 +339,8 @@ rc=$?
 [ "$rc" -eq 0 ] || fail "the kill-safety driver did not finish: $(head -5 "$CASE_DIR/drive.err" 2>/dev/null)"
 
 for case_name in partial-write-completes \
+  standalone-probe-blocked standalone-pty-closed standalone-shutdown-retirement standalone-shutdown-completes \
+  embedded-probe-blocked embedded-pty-closed embedded-shutdown-retirement embedded-shutdown-completes \
   child-ready-with-parent-sigint-0 child-ready-with-parent-sigint-1 \
   child-handles-sigint-with-parent-0 child-handles-sigint-with-parent-1 \
   parent-sigint-disposition-unchanged-0 parent-sigint-disposition-unchanged-1 \
