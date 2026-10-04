@@ -251,9 +251,12 @@ impl Parser<'_> {
     }
     fn scalar(&mut self) -> Json {
         let start = self.pos;
-        while self.text.as_bytes().get(self.pos).is_some_and(|b| {
-            !matches!(b, b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n')
-        }) {
+        while self
+            .text
+            .as_bytes()
+            .get(self.pos)
+            .is_some_and(|b| !matches!(b, b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n'))
+        {
             self.pos += 1;
         }
         let token = &self.text[start..self.pos];
@@ -264,8 +267,7 @@ impl Parser<'_> {
             "NaN" | "Infinity" | "-Infinity" => Json::Number(token.into()),
             _ => {
                 let float = token.contains(['.', 'e', 'E']);
-                let number = if float
-                    && token.parse::<f64>().is_ok_and(|value| value.is_infinite())
+                let number = if float && token.parse::<f64>().is_ok_and(|value| value.is_infinite())
                 {
                     if token.starts_with('-') {
                         "-Infinity".into()

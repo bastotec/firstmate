@@ -124,8 +124,7 @@ fn deeply_nested_commands_are_forwarded_without_losing_hub_state() {
     let (status, registered) = server.api(
         "POST",
         "/v1/agent/endpoints",
-        &json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker"})
-            .to_string(),
+        &json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker"}).to_string(),
         "",
     );
     assert_eq!(status, 201);
@@ -154,9 +153,8 @@ fn deeply_nested_commands_are_forwarded_without_losing_hub_state() {
                 )
             };
             std::thread::scope(|scope| {
-                let submit = scope.spawn(|| {
-                    server.api("POST", &format!("/v1/tasks/{eid}/{kind}"), &request, "")
-                });
+                let submit = scope
+                    .spawn(|| server.api("POST", &format!("/v1/tasks/{eid}/{kind}"), &request, ""));
                 let (status, raw) = server.api_raw(
                     "GET",
                     &format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=3"),
@@ -173,7 +171,9 @@ fn deeply_nested_commands_are_forwarded_without_losing_hub_state() {
                     .unwrap();
                 assert_eq!(
                     raw,
-                    format!(r#"{{"commands": [{{"command_id": "{cid}", "endpoint_id": "{eid}", "kind": "{kind}", "payload": {payload}}}], "ok": true}}"#)
+                    format!(
+                        r#"{{"commands": [{{"command_id": "{cid}", "endpoint_id": "{eid}", "kind": "{kind}", "payload": {payload}}}], "ok": true}}"#
+                    )
                 );
                 let result = json!({"machine":"box","command_id":cid,"ok":true}).to_string();
                 assert_eq!(server.api("POST", "/v1/agent/results", &result, cap).0, 200);
@@ -186,12 +186,7 @@ fn deeply_nested_commands_are_forwarded_without_losing_hub_state() {
         "[".repeat(150),
         "]".repeat(150)
     );
-    let (status, response) = server.api(
-        "POST",
-        &format!("/v1/tasks/{eid}/status"),
-        &malformed,
-        "",
-    );
+    let (status, response) = server.api("POST", &format!("/v1/tasks/{eid}/status"), &malformed, "");
     assert_eq!(status, 400);
     assert_eq!(response["error"], "bad_json");
     let (status, health) = server.api("GET", "/v1/health", "", "");

@@ -35,7 +35,11 @@ impl Request {
         };
         let parsed = payload::Json::parse(text)?;
         if !matches!(parsed, payload::Json::Object(_)) {
-            return Err(Error::new(400, "bad_json", "the body must be a JSON object"));
+            return Err(Error::new(
+                400,
+                "bad_json",
+                "the body must be a JSON object",
+            ));
         }
         Ok(parsed)
     }
