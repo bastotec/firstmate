@@ -8,11 +8,18 @@ targets emits one browser-safe JSON array, with machine, label, target_class
 It validates the whole registry and owning-home identities before publishing;
 no paths, task ids, captain-call ids, credentials or owner output are emitted.
 Operations describe routing capability, not current owner eligibility.
+Task metadata must contain exactly one kind=ship, kind=scout or kind=secondmate;
+ship/scout classify as worker, secondmate as secondmate, and task_id null as
+primary. Every target advertises note; task targets additionally advertise
+resolve-key, interrupt, exit, relaunch and recover-missing. Only workers and
+primaries with captain_call_id advertise answer/release and call_available=true.
+A secondmate runtime id alone binds no captain call in its owning home.
 call_available means an exact decision target is bound, not that it is held.
 
 command consumes NDJSON command records with command_id, identity containing
 parent_mate_id and leaf_worker_id (machine/label), and payload containing kind
 plus exactly the fields listed for its kind:
+  steer (primary refusal only): text;
   note: text; resolve-key: key and text; answer/release: text;
   interrupt/exit: no additional fields; relaunch/recover-missing: note.
 Required text and note fields must be nonblank strings. No request supplies
@@ -37,10 +44,12 @@ home's backlog. The browser cannot select or override that id. Task-key
 resolve-key actions require a task_id binding in the decision-owning home.
 Primary interrupt, exit, relaunch and recover-missing explicitly refuse with
 primary-lifecycle-owner-absent; primary steer (text) explicitly refuses with
-primary-not-stream-registered. No primary task or endpoint is synthesized.
+primary-not-stream-registered. Payload validation precedes these refusals;
+no primary task or endpoint is synthesized and no PTY fallback is attempted.
 Every (machine, label) and (fm_home, task_id or captain_call_id) must be unique.
-Unknown, ambiguous,
-or malformed bindings refuse before dispatch, as does missing regular task
+Distinct primary captain-call bindings may share a home when their labels and
+call ids differ; selecting machine/label still resolves one exact call.
+Unknown, ambiguous or malformed bindings refuse before dispatch, as does missing regular task
 metadata for actions that require it. Stale captain calls and deeper task
 eligibility checks are decided by the owner; nonzero owner exits stay pending
 under the result contract above. For a task, label must equal fm-<task_id>,

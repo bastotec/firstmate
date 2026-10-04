@@ -262,25 +262,13 @@ A crew-owned `no-mistakes axi respond` remains worker-owned and is never invoked
 Existing owner guards remain authoritative, including endpoint retirement and stand-down refusals; the host route does not bypass those refusals to revive or reassign workers.
 
 Full primary control is not yet implemented.
-Valid primary `interrupt`, `exit`, `relaunch`, and `recover-missing` requests return `command_ack` refused with `primary-lifecycle-owner-absent`; valid primary `steer` requests return refused with `primary-not-stream-registered`.
-Malformed payloads still refuse through normal payload validation before those capability checks.
-Neither refusal invokes a task owner, synthesizes task metadata, infers an endpoint from the label, or falls back to PTY input.
+The [host executable's header and help](../bin/fm-ui-host-control.py) own the explicit primary lifecycle and steering refusal contract.
 Primary decision control is supported through an explicit host-registry captain-call binding under the primary owner's `FM_HOME`, while task-key decisions use an exact task binding in their owning home.
 Notes-only and worker-only bindings do not constitute full primary control.
 
 The read-only `targets` subcommand provides browser-safe discovery for registered primaries, secondmates, and workers even when they are absent from the hub feed.
-Its header owns the exact row schema; supported operations describe routing capability rather than current eligibility, and call availability describes a bound decision target rather than proving a currently held call.
-Discovery validates the entire registry, home machine identities, and task metadata classifications before emitting any rows; it never returns private registry contents or paths.
-
-#### Primary owner prerequisites
-
-A future authoritative primary lifecycle owner must provide an exact home-bound endpoint identity and execution generation, a serialized action/ownership guard, authoritative alive/stopped/missing classification, verified per-harness interrupt and exit mechanics, and explicit refused versus unconfirmed results.
-Relaunch and missing-endpoint recovery must preserve unlanded work and prove launch authority and stopped/missing postconditions before replacement, with idempotent retry and recovery after partial failure.
-The README launch command remains the primary launch owner, including the signed-primary boundary; primary launch reconstruction is not implemented by this router, and `fm-spawn.sh` remains task-only.
-
-A future primary endpoint registration record must bind the owning home to its exact stream machine, label, endpoint and execution generation, plus authenticated receiver capability and receiver binding independently of any task status path.
-It must supply authoritative freshness, retirement and replacement checks so native steering binds to the registered execution, preserves command-id deduplication and application acknowledgement, and refuses missing or stale capability without PTY fallback.
-Until those owners and records exist, the named primary refusals remain the supported contract.
+The [host executable's header and help](../bin/fm-ui-host-control.py) own its row schema, classification, advertised operations, call-binding semantics, and all-or-nothing validation.
+[Primary owner prerequisites](agent-control.md#primary-owner-prerequisites) belong to the runtime/control-plane owner; discovery alone does not implement those controls.
 
 The Bridge command plane remains `steer` only.
 The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.
@@ -480,7 +468,7 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
   Native Deck steering has its own live guard and portable receiver regressions, linked in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
   The other portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, `tests/fm-stream-claude-tail.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
   The secondmate credential-seeding regressions from the Security section above ride `tests/fm-secondmate-safety.test.sh`.
-  `tests/fm-ui-host-control.test.sh` covers the private host route's registry, captain-call decisions, exact-task and harness-switch races, independent-host lease preservation, stdin isolation, and host-only diagnostics; `tests/fm-control.test.sh` covers integration with the existing worker owners.
+  `tests/fm-ui-host-control.test.sh` covers the private host route's registry, browser-safe discovery and classification, distinct primary captain-call bindings, repeated primary capability refusals, captain-call decisions, exact-task and harness-switch races, independent-host lease preservation, stdin isolation, and host-only diagnostics; `tests/fm-control.test.sh` covers integration with the existing worker owners.
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.
 - An unreachable agent and a dead worker are indistinguishable from the hub, so a stale read carries no liveness verdict at all.
   Only one of those two states authorizes recovery, and reporting silence as death is how a healthy worker gets torn down.

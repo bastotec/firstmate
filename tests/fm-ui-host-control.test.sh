@@ -34,6 +34,18 @@ env.update(FM_HOME=str(wrong), FM_STATE_OVERRIDE=str(wrong / 'state'),
            FM_DATA_OVERRIDE=str(wrong / 'data'), FM_CONFIG_OVERRIDE=str(wrong / 'config'))
 
 
+# Optional product transcripts for targeted validation; never capture spy owners.
+def evidence(surface, result, request=None):
+    destination = os.environ.get('FM_TEST_UI_HOST_TRANSCRIPT')
+    if destination:
+        entry = dict(surface=surface, exit_code=result.returncode,
+                     stdout=result.stdout, stderr=result.stderr)
+        if request is not None:
+            entry['request'] = request
+        with open(destination, 'a', encoding='utf-8') as output:
+            output.write(json.dumps(entry) + '\n')
+
+
 def write(rows):
     registry.write_text(json.dumps(rows))
     registry.chmod(0o600)
@@ -45,6 +57,7 @@ def stream_command(label, payload, machine='fixture-host'):
                   payload=payload)
     result = subprocess.run([str(router), '--registry', str(registry), 'command'], env=env,
                             input=json.dumps(record) + '\n', text=True, capture_output=True, timeout=20)
+    evidence('command', result, record)
     records = [json.loads(line) for line in result.stdout.splitlines()]
     assert result.returncode == 0, result
     for ack in records:
@@ -115,7 +128,14 @@ refused('supervisor', 'disagrees', note)
 (home / 'config/stream-machine').write_text('fixture-host\n')
 result, records = stream_command('supervisor', dict(kind='note', text='exact intent\nsecond line'))
 assert records[0]['state'] == 'accepted', result
-assert list((home / 'state/inbox').glob('*.note')), result
+notes = list((home / 'state/inbox').glob('*.note'))
+assert len(notes) == 1, result
+assert notes[0].read_text().split('\n--\n', 1)[1] == 'exact intent\nsecond line\n'
+listed = subprocess.run([str(root / 'bin/fm-inbox.sh'), 'list'],
+                        env=dict(env, FM_HOME=str(home), FM_STATE_OVERRIDE=str(home / 'state')),
+                        capture_output=True, text=True, timeout=10)
+assert listed.returncode == 0 and 'exact intent\n    second line' in listed.stdout, listed
+evidence('owning-home-inbox-list', listed)
 assert not list((wrong / 'state').iterdir())
 assert not list((home / 'state').glob('*.status'))
 refused('supervisor', 'unsupported action or payload fields', dict(note, fm_home=str(wrong)))
@@ -549,6 +569,7 @@ def discover(rows, reason=None):
     write(rows)
     result = subprocess.run([str(router), '--registry', str(registry), 'targets'],
                             env=env, text=True, capture_output=True, timeout=20)
+    evidence('targets', result)
     if reason is not None:
         assert result.returncode == 2 and not result.stdout, result
         assert reason in result.stderr, result
@@ -631,6 +652,7 @@ write([primary])
 registry.chmod(0o644)
 result = subprocess.run([str(router), '--registry', str(registry), 'targets'],
                         env=env, text=True, capture_output=True, timeout=20)
+evidence('targets-insecure-registry', result)
 assert result.returncode == 2 and not result.stdout and '0600' in result.stderr, result
 write([primary])
 # Named primary refusals remain explicit while stdin stays open, never invoking owners.

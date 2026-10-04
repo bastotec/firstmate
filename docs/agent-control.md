@@ -26,6 +26,17 @@ The failure repeated across harnesses and homes, and the workaround (remember to
 A recorded `harness=` is not always an exact adapter name: a task launched from a raw command records that command's basename instead.
 `fm_control_harness_family` is the one place that prefix rule is stated, and an unrecognized value resolves to no adapter rather than being guessed into one.
 
+## Primary owner prerequisites
+
+The runtime/control-plane owner owns implementation of primary lifecycle and native steering; the [private host route](stream-backend.md#private-host-control-routing) only exposes the current supported limits.
+A future authoritative primary lifecycle owner must provide an exact home-bound endpoint identity and execution generation, a serialized action/ownership guard, authoritative alive/stopped/missing classification, verified per-harness interrupt and exit mechanics, and explicit refused versus unconfirmed results.
+Relaunch and missing-endpoint recovery must preserve unlanded work and prove launch authority and stopped/missing postconditions before replacement, with idempotent retry and recovery after partial failure.
+The [README launch commands](../README.md#install-and-launch) remain the primary launch instructions, including the signed-primary boundary; primary launch reconstruction is not implemented by the host router, and `fm-spawn.sh` remains task-only.
+
+A future primary endpoint registration record must bind the owning home to its exact stream machine, label, endpoint and execution generation, plus authenticated receiver capability and receiver binding independently of any task status path.
+It must supply authoritative freshness, retirement and replacement checks so native steering binds to the registered execution, preserves command-id deduplication and application acknowledgement, and refuses missing or stale capability without PTY fallback.
+The [host executable's header and help](../bin/fm-ui-host-control.py) own the current primary refusal contract; `tests/fm-ui-host-control.test.sh` pins that boundary without claiming these prerequisites are implemented.
+
 ## Verbs
 
 | Verb | Effect | Postcondition |
