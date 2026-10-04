@@ -63,6 +63,8 @@ hub=subprocess.Popen([sys.executable,str(bin/'fm-stream-hub.py'),'serve','--bind
                       '--port','0','--token-file',str(hub_tokens),'--ready-file',str(ready)],
                      stdout=hub_log,stderr=hub_log)
 processes=[hub]
+sentinel=subprocess.Popen(['sleep','300'])
+processes.append(sentinel)
 logs=[]
 env=dict(os.environ, PATH=str(fixture)+os.pathsep+os.environ['PATH'],
          TMPDIR=str(lab), FM_TASK_ID='must-not-leak', FM_HOME='must-not-leak')
@@ -83,6 +85,29 @@ def command(*args, success=True):
  return json.loads(result.stdout)
 def control(execution,action,*args,success=True):
  return command('control','--home',str(home),'--execution-id',execution,action,*args,success=success)
+registry=lab/'ui-registry.json'
+router=[sys.executable,str(bin/'fm-ui-host-control.py'),'--registry',str(registry)]
+def ui(action,execution,**extra):
+ payload=dict(kind=action,execution_id=execution)
+ if action in ('relaunch','recover-missing'): payload['note']='fixture lifecycle checkpoint'
+ payload.update(extra)
+ request=dict(record='command',command_id='fixture-'+action+'-'+execution,
+              identity=dict(parent_mate_id='fixture-machine',leaf_worker_id='fixture-machine/fixture-primary'),
+              payload=payload)
+ result=subprocess.run(router+['command'],input=json.dumps(request)+'\n',env=env,
+                       capture_output=True,text=True,timeout=130)
+ assert result.returncode==0,(result.stdout,result.stderr)
+ return [json.loads(line) for line in result.stdout.splitlines()]
+def publish_ui_binding(binding):
+ registry.write_text(json.dumps([binding])); registry.chmod(0o600)
+ result=subprocess.run(router+['targets'],env=env,capture_output=True,text=True,timeout=10)
+ assert result.returncode==0,(result.stdout,result.stderr)
+ safe=json.loads(result.stdout)
+ assert len(safe)==1 and safe[0]['target_class']=='primary' and not safe[0]['call_available']
+ assert safe[0]['execution_id']==record()['execution_id']
+ for secret in (str(home),str(registration),record()['capability'],record()['profile']['executable']):
+  assert secret not in result.stdout,'host-private data leaked to discovery'
+ return safe[0]
 def launch(adapter='deck'):
  logfile=lab/(adapter+'-owner.log'); log=logfile.open('w'); logs.append(log)
  proc=subprocess.Popen(cli+['launch','--home',str(home),'--machine','fixture-machine',
@@ -98,6 +123,11 @@ try:
  assert 'unregistered_primary' in refusal['message']
  refusal=control('missing','exit',success=False)
  assert 'unregistered_primary' in refusal['message']
+ gate_env=dict(env,NO_MISTAKES_GATE='fixture-gate',FM_GATE_REFUSE_BYPASS='')
+ gate=subprocess.run(cli+['control','--home',str(home),'--execution-id','missing','exit'],
+                     env=gate_env,capture_output=True,text=True,timeout=10)
+ assert gate.returncode!=0 and 'authority refused' in gate.stdout
+ assert not registration.parent.exists(),'gate refusal mutated primary state'
  owner=launch()
  first=wait(lambda: (r if (r:=record()) and r['state']=='running' else None),'registered primary')
  eid=first['execution_id']; assert eid==first['endpoint_generation']
@@ -112,6 +142,10 @@ try:
  discovered=command('discover','--home',str(home))
  assert discovered=={'machine':'fixture-machine','label':'fixture-primary',
    'fm_home':str(home),'task_id':None,'primary_registration':str(registration)}
+ target=publish_ui_binding(discovered)
+ assert set(target['supported_operations'])=={'note','interrupt','exit','relaunch','recover-missing','steer'}
+ assert ui('interrupt','0'*32)[0]['state']=='refused'
+ assert ui('recover-missing',eid)[0]['state']=='refused'
  # The captured private registration is genuine: the actual isolated hub has
  # exactly this endpoint, not invented task metadata.
  request=urllib.request.Request(url+'/v1/tasks',headers={'Authorization':'Bearer fixture-secret'})
@@ -127,36 +161,47 @@ try:
  alive=control(eid,'recover-missing',success=False)
  assert 'registered_primary_is_alive' in alive['message']
  native_args=('--order-id','fixture-order','--text','native fixture steer')
- result=control(eid,'steer',*native_args)
- assert result['state'] in ('pending','accepted'),result
+ result=ui('steer',eid,text='native fixture steer')
+ assert not result or result[0]['state']=='accepted',result
  wait(lambda:(fixture/(eid+'.steered')).exists(),'execution-bound native application')
- assert control(eid,'steer',*native_args)['state']=='accepted'
+ assert ui('steer',eid,text='native fixture steer')[0]['state']=='accepted'
  assert len(list(pathlib.Path(first['status_path']).parent.glob('primary.inbox/*.msg')))==1
- assert control(eid,'interrupt')['state']=='accepted'
+ assert ui('interrupt',eid)[0]['state']=='accepted'
  wait(lambda:(fixture/(eid+'.interrupted')).exists(),'interrupt genuine owned Deck turn')
  assert owner.poll() is None
- assert control(eid,'relaunch')['state']=='accepted'
+ assert ui('relaunch',eid)[0]['state']=='accepted'
  second=record(); eid2=second['execution_id']; assert eid2!=eid
+ assert ui('relaunch',eid)[0]['state']=='accepted','same request must reconcile the original result'
+ assert record()['execution_id']==eid2,'duplicate lifecycle request launched a second child'
  assert second['profile']==first['profile'],'restart changed original launch profile'
  wait(lambda:(fixture/(eid2+'.started')).exists(),'replacement genuine child')
  assert control(eid,'exit',success=False)['state']=='refused'
- assert control(eid2,'exit')['state']=='accepted' and record()['state']=='exited'
+ assert ui('exit',eid)[0]['state']=='refused'
+ assert ui('exit',eid2)[0]['state']=='accepted' and record()['state']=='exited'
  assert owner.poll() is None,'exit must retain manager capability for relaunch'
- assert control(eid2,'recover-missing')['state']=='accepted'
+ assert ui('recover-missing',eid2)[0]['state']=='accepted'
  third=record(); eid3=third['execution_id']; assert eid3 not in (eid,eid2)
  wait(lambda:(fixture/(eid3+'.started')).exists(),'recover missing owned child')
  assert third['profile']==first['profile']
- assert control(eid3,'exit')['state']=='accepted'
+ assert ui('exit',eid3)[0]['state']=='accepted'
  owner.terminate(); owner.wait(timeout=15)
  assert not registration.exists(),'clean owner stop must retire registration'
  owner2=launch('pi')
  unsupported=wait(lambda: (r if (r:=record()) and r['state']=='running' else None),'Pi registration')
  eidpi=unsupported['execution_id']
  wait(lambda:(fixture/(eidpi+'.pi')).exists(),'Pi fixture child')
+ pi_target=publish_ui_binding(command('discover','--home',str(home)))
+ assert 'steer' not in pi_target['supported_operations']
+ ui_refused=ui('steer',eidpi,text='native fixture steer')
+ assert ui_refused[0]['state']=='refused' and 'primary_adapter_has_no_native_receiver' in ui_refused[0]['reason']
  refused=control(eidpi,'steer',*native_args,success=False)
  assert 'primary_adapter_has_no_native_receiver' in refused['message']
  assert not list(pathlib.Path(unsupported['status_path']).parent.glob('primary.inbox/*.msg'))
  assert control(eidpi,'exit')['state']=='accepted'
+ pathlib.Path(unsupported['socket']).unlink()  # Fixture-owned capability only.
+ unreachable=control(eidpi,'recover-missing',success=False)
+ assert 'primary_owner_unreachable' in unreachable['message']
+ assert sentinel.poll() is None,'lifecycle touched an unrelated fixture process'
  owner2.terminate(); owner2.wait(timeout=15)
  print('PASS managed setup/discovery, genuine endpoint registration, duplicate and unregistered refusals')
  print('PASS owned-child interrupt/exit/relaunch/recover-missing, exact profile replay, stale execution refusal')

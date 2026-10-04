@@ -8,7 +8,7 @@ Handle every emitted wake, open decision, and unread status, then run the exact 
 Never acknowledge unhandled work.
 Return after handling: the driver publishes watcher results through the task steering inbox and submits its ordinary doorbell as the next turn of the same conversation.
 Do not arm a watcher manually or keep a tool call open to wait; the persistent driver owns the child process, including cleanup.
-The driver's header owns terminal host failures and recoverable watcher handoffs; recovery after the driver stops belongs to the parent's guarded relaunch path.
+The driver's header owns terminal host failures and recoverable watcher handoffs; recovery after the driver stops belongs to its lifecycle owner, the parent for a secondmate or the managed owner for a primary.
 A failed turn is reported to the parent the same way but does not stop this driver: it returns to its prompt keeping its Deck session, so the next wake is simply the next turn, and only a failure it could not report stops it.
-A failure that opened no session at all stops this driver after its one repeated launch brief, so the home returns to the parent's guarded relaunch path rather than parking blind.
+A failure that opened no session at all stops this driver after its one repeated launch brief, so the home returns to its lifecycle owner's guarded relaunch path rather than parking blind.
 This protocol applies to persistent secondmates and explicitly managed primaries; [`docs/managed-primary.md`](../managed-primary.md) owns the opt-in setup and never authorizes adoption of an existing primary.

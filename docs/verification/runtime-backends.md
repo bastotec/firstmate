@@ -1804,6 +1804,30 @@ The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
 
 ## stream
 
+### Managed primary ownership and execution-bound steering
+
+Verified 2026-10-04 on macOS with Python 3.9.6, the Python stream hub 2.0.0 and agent 2.1.0 speaking protocol 3.
+The managed-primary suite runs the real launcher, private host router, stream publisher, PTY and Deck receiver against an isolated hub and standby harnesses; only home bootstrap/watcher infrastructure is stubbed.
+It creates genuine registered endpoint ids and does not control live-fleet endpoints.
+[Managed primary setup](../managed-primary.md) owns the supported operator path and its refusal boundaries.
+
+```sh
+FM_LIVE=0 bin/fm-test-run.sh tests/fm-primary.test.sh tests/fm-stream-deck.test.sh tests/fm-stream-agent-kill-safety.test.sh tests/fm-supervision-instructions.test.sh
+```
+
+Observed managed-primary output:
+
+```text
+PASS managed setup/discovery, genuine endpoint registration, duplicate and unregistered refusals
+PASS owned-child interrupt/exit/relaunch/recover-missing, exact profile replay, stale execution refusal
+PASS execution-bound Deck native acceptance and unsupported-adapter no-fallback refusal
+```
+
+The four suites reported `FM_TEST_SUMMARY total=4 failed=0 skipped_gate=0`.
+The primary suite also asserts browser-safe host discovery, command-id reconciliation without duplicate relaunch, gate-authority refusal before mutation, unreachable-owner refusal and survival of an unrelated fixture child.
+The installed Deck 0.1.0 CLI independently advertised `--steer-dir` with handled-file acknowledgement under `deck run --help`; this is token-free interface evidence, not a live primary lifecycle or model-application test.
+Existing secondmate/worker host regressions passed separately with `FM_LIVE=0 bin/fm-test-run.sh tests/fm-deck-harness.test.sh`.
+
 ### Rust hub isolated compatibility
 
 Measured 2026-10-01 on macOS with Rust 1.96.0 and Python 3.9.6 against Hub 2.0.0, protocol 3.

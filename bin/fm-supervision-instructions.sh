@@ -154,7 +154,7 @@ repair_line() {
 
   case "$HARNESS" in
     deck)
-      printf '%s\n' 'Deck driver owns watcher continuity; do not arm manually. A driver failure must be reported to the parent for relaunch.'
+      printf '%s\n' 'Deck driver owns watcher continuity; do not arm manually. Report a driver failure to its lifecycle owner: parent for secondmates, managed launcher for primaries.'
       ;;
     claude)
       printf '%s%s\n' "$prefix" 'watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.'
@@ -186,7 +186,7 @@ repair_line() {
 ordinary_wake_line() {
   case "$HARNESS" in
     deck)
-      printf '%s\n' 'Deck driver owns watcher continuity; do not arm manually. A driver failure must be reported to the parent for relaunch.'
+      printf '%s\n' 'Deck driver owns watcher continuity; do not arm manually. Report a driver failure to its lifecycle owner: parent for secondmates, managed launcher for primaries.'
       ;;
     claude)
       printf '%s\n' '- Ordinary wake: the Stop-owned auto-arm (bin/fm-claude-stop-autoarm.sh) already owns watcher continuity; drain and handle the wake, and do not arm another cycle yourself.'

@@ -6,8 +6,14 @@ Usage:
       --token-file FILE --adapter deck|pi|pi-signed [--model MODEL] --prompt TEXT
   fm-primary.py discover --home HOME
   fm-primary.py control --home HOME --execution-id ID ACTION
-      [--order-id ID --text TEXT]
+      [--command-id ID] [--order-id ID --text TEXT]
 Actions: interrupt, exit, relaunch, recover-missing, steer.
+Lifecycle commands reserve durable receipts below primary-owner/commands before
+mutation; retain command-id plus original execution-id to reconcile a lost reply
+without repeating the action. A pending reservation never re-executes blindly.
+Without --command-id, control mints an id and includes it in its result.
+The shared fm-gate-refuse-lib.sh authority guard protects launch and control;
+read-only discovery remains available.
 
 Launch stays in the foreground and owns only the PTY child it creates through
 fm-stream-agent. Do not launch this against a home with an existing primary.
@@ -46,6 +52,7 @@ import shutil
 import signal
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -64,6 +71,14 @@ NAME = re.compile(r'[A-Za-z0-9._-]{1,128}\Z')
 
 class Refused(ValueError):
     pass
+
+
+def require_lifecycle_authority():
+    result = subprocess.run(['bash', '-c', '. "$1"; fm_refuse_if_gate_agent',
+                             'managed-primary', str(BIN / 'fm-gate-refuse-lib.sh')],
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
+    if result.returncode:
+        raise Refused('primary lifecycle authority refused: ' + result.stderr.strip())
 
 
 def unique_fields(pairs):
@@ -104,17 +119,37 @@ def read_record(path):
         record = json.loads(body, object_pairs_hook=unique_fields)
     required = {'version', 'home', 'machine', 'label', 'hub', 'socket', 'capability',
                 'profile', 'execution_id', 'endpoint_generation', 'status_path', 'state'}
-    if not isinstance(record, dict) or set(record) != required or record['version'] != 1:
+    if (not isinstance(record, dict) or set(record) != required
+            or type(record['version']) is not int or record['version'] != 1):
         raise Refused('malformed primary registration')
+    string_fields = required - {'version', 'profile'}
+    if any(not isinstance(record[key], str) for key in string_fields):
+        raise Refused('malformed primary registration fields')
+    captured = record['profile']
+    if (not isinstance(captured, dict)
+            or set(captured) != {'adapter', 'executable', 'driver', 'model', 'prompt', 'environment'}
+            or captured['adapter'] not in ('deck', 'pi', 'pi-signed')
+            or any(not isinstance(captured[key], str) for key in ('executable', 'model', 'prompt'))
+            or not Path(captured['executable']).is_absolute()
+            or not isinstance(captured['environment'], dict)
+            or set(captured['environment']) - set(ENV_KEYS)
+            or any(not isinstance(value, str) for value in captured['environment'].values())):
+        raise Refused('malformed captured primary launch profile')
+    if (captured['adapter'] == 'deck' and (not isinstance(captured['driver'], str)
+            or not Path(captured['driver']).is_absolute())) or (
+            captured['adapter'] != 'deck' and captured['driver'] is not None):
+        raise Refused('malformed primary driver binding')
     return record
 
 
 def write_record(path, record):
+    body = json.dumps(record, sort_keys=True) + '\n'
+    if len(body.encode('utf-8')) > 131072:
+        raise Refused('primary record exceeds size limit')
     fd, tmp = tempfile.mkstemp(prefix='.registration-', dir=path.parent)
     try:
         with os.fdopen(fd, 'w') as file:
-            json.dump(record, file, sort_keys=True)
-            file.write('\n')
+            file.write(body)
             file.flush()
             os.fsync(file.fileno())
         os.replace(tmp, path)
@@ -143,7 +178,6 @@ def profile(args):
 def launch_argv(captured, state):
     adapter = captured['adapter']
     if adapter == 'deck':
-        import subprocess
         gen = subprocess.check_output([str(BIN / 'fm-busy-event.sh'), 'arm', str(state),
                                        'primary', '--source', 'managed-primary'], text=True).strip()
         argv = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
@@ -162,11 +196,20 @@ def launch_argv(captured, state):
 class Owner:
     """The capability owns live Python Pty objects, never reconstructed PIDs."""
     def __init__(self, args):
+        require_lifecycle_authority()
         self.args = args
         self.home = str(Path(args.home).resolve())
         if not Path(self.home).is_dir():
             raise Refused('primary home does not exist')
-        self.root = private_dir(Path(self.home) / 'state' / 'primary-owner')
+        state = Path(self.home) / 'state'
+        state.mkdir(mode=0o700, exist_ok=True)
+        info = state.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o022):
+            raise Refused('primary state must be an owned non-writable directory, not a symlink')
+        self.root = private_dir(state / 'primary-owner')
+        self.executions = private_dir(self.root / 'executions')
+        self.commands = private_dir(self.root / 'commands')
         self.path = record_path(self.home)
         self.agent = None
         self.thread = None
@@ -175,6 +218,7 @@ class Owner:
         self.socket = None
         self.socket_path = None
         self.saved_record = None
+        self.action_started = False
         self.stopping = False
 
     def publish(self):
@@ -217,10 +261,17 @@ class Owner:
         self.publish()
 
     def start(self):
+        if (Path(self.home) / '.fm-home-migration').exists():
+            raise Refused('managed primary home is a frozen migration archive')
+        lock = subprocess.run([str(BIN / 'fm-lock.sh'), 'status'],
+                              env=dict(os.environ, FM_HOME=self.home, FM_STATE_OVERRIDE=str(Path(self.home) / 'state')),
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
+        if lock.returncode or not lock.stdout.startswith(('lock: free', 'lock: stale')):
+            raise Refused('home session ownership is not free: ' + lock.stdout.strip())
         if self.thread and self.thread.is_alive():
             raise Refused('primary publisher is still draining; replacement refused')
         endpoint = secrets.token_hex(16)
-        state = private_dir(self.root / 'executions' / endpoint)
+        state = private_dir(self.executions / endpoint)
         status_path = str(state / 'primary.status')
         captured = self.record['profile']
         command = launch_argv(captured, state)
@@ -274,11 +325,48 @@ class Owner:
         self.publish()
 
     def dispatch(self, request):
+        self.action_started = False
+        if (not isinstance(request, dict) or not isinstance(request.get('command_id'), str)
+                or not request['command_id'] or len(request['command_id']) > 256):
+            raise Refused('primary control requires a stable command id')
+        if read_record(self.path) != self.record:
+            raise Refused('primary registration changed; capability refused')
+        if not secrets.compare_digest(str(request.get('capability')), self.record['capability']):
+            raise Refused('invalid primary control capability')
+        if request.get('kind') == 'steer':
+            answer = self.apply(request)
+            answer['command_id'] = request['command_id']
+            return answer  # Receiver reconciliation, not a cached pending result.
+        receipts = private_dir(self.commands / hashlib.sha256(
+            self.record['capability'].encode()).hexdigest())
+        receipt = receipts / (hashlib.sha256(request['command_id'].encode()).hexdigest() + '.json')
+        if receipt.exists():
+            saved = json.loads(receipt.read_text())
+            if saved['request'] != request:
+                raise Refused('primary command idempotency conflict')
+            return saved['result']
+        # Persist a reservation before any action. A lost reply can reconcile
+        # the same request; it cannot interrupt a later turn or relaunch twice.
+        saved = {'request': request, 'result': {'state': 'pending',
+                 'message': 'primary action reserved; reconcile before retrying',
+                 'command_id': request['command_id']}}
+        write_record(receipt, saved)
+        try:
+            answer = self.apply(request)
+        except (ValueError, OSError, RuntimeError) as exc:
+            answer = {'state': 'pending' if self.action_started else 'refused', 'message': str(exc)}
+        answer['command_id'] = request['command_id']
+        saved['result'] = answer
+        write_record(receipt, saved)
+        return answer
+
+    def apply(self, request):
+        self.action_started = False
         if read_record(self.path) != self.record:
             raise Refused('primary registration changed; capability refused')
         if not isinstance(request, dict):
             raise Refused('invalid primary control request')
-        required = {'capability', 'execution_id', 'kind'}
+        required = {'capability', 'execution_id', 'kind', 'command_id'}
         kind = request.get('kind')
         extra = {'order_id', 'text'} if kind == 'steer' else set()
         if set(request) != required | extra:
@@ -295,6 +383,7 @@ class Owner:
                 raise Refused('native steering requires an order id and nonblank text')
             if not self.agent:
                 raise Refused('primary native receiver unavailable; no PTY fallback')
+            self.action_started = True
             ok, error = self.agent.apply_command({
                 'kind': 'steer', 'endpoint_id': self.record['execution_id'],
                 'command_id': request['order_id'], 'payload': {
@@ -308,10 +397,12 @@ class Owner:
             # Lifecycle interrupt, not native steering: adapter-explicit key,
             # delivered to this owner's own PTY, never to an inferred process.
             key = b'\x03' if self.record['profile']['adapter'] == 'deck' else b'\x1b'
+            self.action_started = True
             self.agent.pty.write(key)
         elif kind in ('exit', 'relaunch', 'recover-missing'):
             if kind == 'recover-missing' and self.agent and self.agent.pty.alive():
                 raise Refused('registered_primary_is_alive: recover-missing refused')
+            self.action_started = True
             self.end_child()
             if kind != 'exit':
                 self.start()
@@ -333,6 +424,7 @@ class Owner:
                     continue
                 with connection:
                     connection.settimeout(5)
+                    self.action_started = False
                     try:
                         with connection.makefile('rb') as file:
                             line = file.readline(131073)
@@ -340,7 +432,8 @@ class Owner:
                                 raise Refused('invalid/oversized primary command')
                             answer = self.dispatch(json.loads(line, object_pairs_hook=unique_fields))
                     except (ValueError, OSError, RuntimeError) as exc:
-                        answer = {'state': 'refused', 'message': str(exc)}
+                        answer = {'state': 'pending' if self.action_started else 'refused',
+                                  'message': str(exc)}
                     try:
                         connection.sendall((json.dumps(answer) + '\n').encode())
                     except OSError:
@@ -374,11 +467,14 @@ def discover(home):
             'primary_registration': str(record_path(record['home']))}
 
 
-def control(home, execution, action, order_id=None, text=None):
+def control(home, execution, action, order_id=None, text=None, command_id=None):
+    require_lifecycle_authority()
     record = read_record(record_path(Path(home).resolve()))
     if record['home'] != str(Path(home).resolve()):
         raise Refused('primary registration belongs to a different home')
-    request = {'capability': record['capability'], 'execution_id': execution, 'kind': action}
+    command_id = command_id or order_id or secrets.token_hex(16)
+    request = {'capability': record['capability'], 'execution_id': execution, 'kind': action,
+               'command_id': command_id}
     if action == 'steer':
         request.update(order_id=order_id, text=text)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
@@ -394,7 +490,7 @@ def control(home, execution, action, order_id=None, text=None):
         except (ValueError, OSError):
             return {'state': 'pending', 'message':
                     'primary owner result unconfirmed; inspect registration before retrying lifecycle',
-                    'execution_id': execution}
+                    'execution_id': execution, 'command_id': command_id}
 
 
 def main():
@@ -410,6 +506,7 @@ def main():
     call = sub.add_parser('control')
     call.add_argument('--home', required=True)
     call.add_argument('--execution-id', required=True)
+    call.add_argument('--command-id', help='reuse the same id to reconcile a lost lifecycle reply')
     call.add_argument('action', choices=('interrupt', 'exit', 'relaunch', 'recover-missing', 'steer'))
     call.add_argument('--order-id')
     call.add_argument('--text')
@@ -428,7 +525,7 @@ def main():
             owner.serve()
             return 0
         answer = discover(args.home) if args.command == 'discover' else control(
-            args.home, args.execution_id, args.action, args.order_id, args.text)
+            args.home, args.execution_id, args.action, args.order_id, args.text, args.command_id)
         print(json.dumps(answer, sort_keys=True))
         return 1 if answer.get('state') == 'refused' else 0
     except (ValueError, OSError, RuntimeError) as exc:

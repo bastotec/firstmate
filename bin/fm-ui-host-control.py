@@ -7,6 +7,9 @@ targets emits one browser-safe JSON array, with machine, label, target_class
 (primary/secondmate/worker), supported_operations and boolean call_available.
 It validates the whole registry and owning-home identities before publishing;
 no paths, task ids, captain-call ids, credentials or owner output are emitted.
+Managed primaries additionally emit their exact execution_id; their lifecycle
+and native-steer payloads MUST carry it so a stale browser cannot target a
+replacement execution. Unregistered primary payloads retain the named refusals.
 Operations describe routing capability, not current owner eligibility.
 Task metadata must contain exactly one kind=ship, kind=scout or kind=secondmate;
 ship/scout classify as worker, secondmate as secondmate, and task_id null as
@@ -19,9 +22,13 @@ call_available means an exact decision target is bound, not that it is held.
 command consumes NDJSON command records with command_id, identity containing
 parent_mate_id and leaf_worker_id (machine/label), and payload containing kind
 plus exactly the fields listed for its kind:
-  steer (primary refusal only): text;
+  steer: text (managed primary additionally requires execution_id);
   note: text; resolve-key: key and text; answer/release: text;
   interrupt/exit: no additional fields; relaunch/recover-missing: note.
+Managed-primary lifecycle payloads additionally require execution_id.
+Native steering uses a stable command_id as its idempotent order identity;
+pending application/lost owner replies emit only host diagnostics, never an
+accepted command_ack. Repeat the same command_id and text to reconcile a steer.
 Required text and note fields must be nonblank strings. No request supplies
 a home path, file path, executable, or arbitrary argv. Only pre-authorized
 host callers may submit records. Accepted command_ack means the existing
@@ -42,10 +49,17 @@ A primary supervisor has task_id null and accepts note, plus answer/release
 when its binding includes "captain_call_id": EXACT_CAPTAIN_CALL_ID in that
 home's backlog. The browser cannot select or override that id. Task-key
 resolve-key actions require a task_id binding in the decision-owning home.
-Primary interrupt, exit, relaunch and recover-missing explicitly refuse with
-primary-lifecycle-owner-absent; primary steer (text) explicitly refuses with
-primary-not-stream-registered. Payload validation precedes these refusals;
-no primary task or endpoint is synthesized and no PTY fallback is attempted.
+An opt-in managed primary binding adds primary_registration: the exact
+<home>/state/primary-owner/registration.json created by fm-primary.py. Only
+primary targets may carry it; its home/machine/label must match the row and
+its status path must bind the exact registered execution. Such targets route
+lifecycle through that owner's private capability, and Deck targets route
+native steering through its execution-bound receiver, never a PTY fallback.
+Unregistered primary interrupt, exit, relaunch and recover-missing explicitly
+refuse with primary-lifecycle-owner-absent; unregistered primary steer (text)
+explicitly refuses with primary-not-stream-registered. Payload validation
+precedes these refusals; no primary task or endpoint is synthesized.
+The managed launcher's header owns its profile, registration and child custody.
 Every (machine, label) and (fm_home, task_id or captain_call_id) must be unique.
 Distinct primary captain-call bindings may share a home when their labels and
 call ids differ; selecting machine/label still resolves one exact call.
@@ -73,6 +87,8 @@ the owning supervisor's durable inbox, never closes a decision itself.
 """
 
 import argparse
+import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -97,6 +113,39 @@ def unique_fields(pairs):
     return result
 
 
+PRIMARY_OWNER = None
+
+
+def primary_binding(row):
+    """Resolve only a host-selected, separate managed-primary registration."""
+    global PRIMARY_OWNER
+    if 'primary_registration' not in row:
+        return None, None
+    home = Path(row['fm_home']).resolve()
+    expected = home / 'state' / 'primary-owner' / 'registration.json'
+    if row['task_id'] is not None or row['primary_registration'] != str(expected):
+        raise Refused('managed primary requires its exact owning-home registration path')
+    if PRIMARY_OWNER is None:
+        spec = importlib.util.spec_from_file_location('fm_ui_primary_owner',
+                    Path(__file__).resolve().with_name('fm-primary.py'))
+        PRIMARY_OWNER = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(PRIMARY_OWNER)
+    try:
+        record = PRIMARY_OWNER.read_record(expected)
+    except PRIMARY_OWNER.Refused as exc:
+        raise Refused(str(exc)) from exc
+    if (record['home'] != str(home) or record['machine'] != row['machine']
+            or record['label'] != row['label']):
+        raise Refused('primary registry and registered execution identity disagree')
+    execution = record['execution_id']
+    if (not isinstance(execution, str) or not re.fullmatch(r'[a-f0-9]{32}', execution)
+            or record['endpoint_generation'] != execution
+            or record['status_path'] != str(expected.parent / 'executions' / execution / 'primary.status')
+            or record['profile']['adapter'] not in ('deck', 'pi', 'pi-signed')):
+        raise Refused('managed primary registration has no exact execution binding')
+    return PRIMARY_OWNER, record
+
+
 def bindings(filename):
     flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
     with os.fdopen(os.open(filename, flags), encoding='utf-8') as stream:
@@ -111,7 +160,7 @@ def bindings(filename):
     for row in rows:
         required = {'machine', 'label', 'fm_home', 'task_id'}
         if (not isinstance(row, dict) or not required <= set(row)
-                or set(row) - required - {'captain_call_id'}):
+                or set(row) - required - {'captain_call_id', 'primary_registration'}):
             raise Refused('malformed registry binding')
         for field in ('machine', 'label'):
             if not isinstance(row[field], str) or not re.fullmatch(r'[A-Za-z0-9._-]+', row[field]):
@@ -128,6 +177,10 @@ def bindings(filename):
             if (task is not None or not isinstance(call, str)
                     or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', call)):
                 raise Refused('captain-call binding requires a primary target and exact call id')
+        if 'primary_registration' in row:
+            expected = Path(home).resolve() / 'state' / 'primary-owner' / 'registration.json'
+            if task is not None or row['primary_registration'] != str(expected):
+                raise Refused('managed primary requires its exact owning-home registration path')
         if task is not None and row['label'] != 'fm-' + task:
             raise Refused('task label does not match the stream publisher label')
         leaf = row['machine'], row['label']
@@ -147,6 +200,9 @@ def owner_context(row):
         env.pop(key, None)
     env['FM_HOME'] = str(home)
     env['FM_SUPERVISION_ACTOR'] = 'main'
+    if 'primary_registration' in row:
+        primary_binding(row)
+        return home, scripts, env
     identity = subprocess.run(['bash', '-c', '. "$1"; fm_backend_stream_machine',
                                'fm-ui-host-control', str(scripts / 'backends/stream.sh')],
                               stdin=subprocess.DEVNULL, text=True, env=env, cwd=home,
@@ -180,17 +236,26 @@ def targets(filename):
                 raise Refused('registered task has ambiguous or unsupported target class')
             target_class = 'secondmate' if kinds[0] == 'secondmate' else 'worker'
             operations += ['resolve-key', 'interrupt', 'exit', 'relaunch', 'recover-missing']
+        managed = None
+        if task is None and 'primary_registration' in row:
+            _, managed = primary_binding(row)
+            operations += ['interrupt', 'exit', 'relaunch', 'recover-missing']
+            if managed['profile']['adapter'] == 'deck':
+                operations += ['steer']
         call = target_class == 'worker' or 'captain_call_id' in row
         if call:
             operations += ['answer', 'release']
-        result.append(dict(machine=row['machine'], label=row['label'],
-                           target_class=target_class, supported_operations=operations,
-                           call_available=call))
+        target = dict(machine=row['machine'], label=row['label'],
+                      target_class=target_class, supported_operations=operations,
+                      call_available=call)
+        if managed is not None:
+            target['execution_id'] = managed['execution_id']
+        result.append(target)
     print(json.dumps(result), flush=True)
     return 0
 
 
-def route(rows, machine, label, payload):
+def route(rows, machine, label, payload, command_id=None):
     matches = [row for row in rows if (row['machine'], row['label']) == (machine, label)]
     if len(matches) != 1:
         raise Refused('unknown or ambiguous target')
@@ -209,11 +274,38 @@ def route(rows, machine, label, payload):
         'relaunch': {'kind', 'note'},
         'recover-missing': {'kind', 'note'},
     }
+    primary, managed = primary_binding(row)
+    managed_actions = ('interrupt', 'exit', 'relaunch', 'recover-missing', 'steer')
+    if managed is not None and action in managed_actions:
+        fields[action] = fields[action] | {'execution_id'}
     if not isinstance(action, str) or action not in fields or set(payload) != fields[action]:
         raise Refused('unsupported action or payload fields')
     text = payload.get('text', payload.get('note'))
     if fields[action] & {'text', 'note'} and (not isinstance(text, str) or not text.strip()):
         raise Refused('note or answer must not be blank')
+    if managed is not None and action in managed_actions:
+        if not isinstance(payload['execution_id'], str):
+            raise Refused('managed primary requires an execution id')
+        if action == 'steer' and payload['execution_id'] != managed['execution_id']:
+            raise Refused('stale_primary_execution: refresh discovery before control')
+        if action == 'steer' and managed['profile']['adapter'] != 'deck':
+            raise Refused('primary_adapter_has_no_native_receiver: no PTY fallback')
+        if action == 'steer' and (not isinstance(command_id, str) or not command_id):
+            raise Refused('native steering requires a stable command id')
+        order_id = 'ui-' + hashlib.sha256(command_id.encode('utf-8')).hexdigest() if action == 'steer' else None
+        try:
+            answer = primary.control(str(home), payload['execution_id'], action,
+                                     order_id=order_id, text=text if action == 'steer' else None,
+                                     command_id=command_id)
+        except primary.Refused as exc:
+            raise Refused(str(exc)) from exc
+        if answer.get('state') == 'refused':
+            raise Refused(answer.get('message', 'primary owner refused'))
+        # Pending native application or a lost lifecycle response MUST NOT be
+        # advertised as accepted by the host's existing command_ack contract.
+        return subprocess.CompletedProcess(['managed-primary', action],
+                    0 if answer.get('state') == 'accepted' else 3,
+                    stdout=json.dumps(answer), stderr='')
     if task is None:
         if action in ('interrupt', 'exit', 'relaunch', 'recover-missing'):
             raise Refused('primary-lifecycle-owner-absent')
@@ -284,7 +376,7 @@ def command_stream(filename):
             payload = record.get('payload')
             if not isinstance(payload, dict):
                 raise Refused('command requires an action payload')
-            result = route(bindings(filename), machine, leaf[len(machine) + 1:], payload)
+            result = route(bindings(filename), machine, leaf[len(machine) + 1:], payload, command_id)
             if result.stdout or result.stderr or result.returncode:
                 print(json.dumps({'record': 'host_owner_result', 'command_id': command_id,
                                   'leaf_worker_id': leaf, 'exit_code': result.returncode,

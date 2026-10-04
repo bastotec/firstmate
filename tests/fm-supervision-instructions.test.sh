@@ -226,7 +226,7 @@ test_deck_protocol() {
   assert_contains "$out" "do not run session start again" "Deck startup ownership missing"
   assert_contains "$out" "WAKE_ACK_REQUIRED" "Deck protocol lost durable acknowledgement"
   out=$("$RENDER" --harness deck --repair-line)
-  assert_contains "$out" "parent for relaunch" "Deck failure recovery missing"
+  assert_contains "$out" "managed launcher for primaries" "Deck failure recovery missing"
   pass "Deck instructions delegate continuity to the persistent driver"
 }
 

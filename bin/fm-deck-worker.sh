@@ -112,6 +112,8 @@ command -v jq >/dev/null 2>&1 || { echo "fm-deck-worker: jq is required to rende
 command -v python3 >/dev/null 2>&1 || { echo "fm-deck-worker: python3 is required for safe status I/O" >&2; exit 2; }
 [ -f "$STATE_IO" ] && [ ! -L "$STATE_IO" ] || { echo "fm-deck-worker: safe status I/O helper is unavailable" >&2; exit 2; }
 
+HOST_ROLE=secondmate
+[ "$PRIMARY" != 1 ] || HOST_ROLE='managed primary'
 STATUS_FILE="$STATE/$ID.status"
 TURNEND_FILE="$STATE/$ID.turn-ended"
 MAX_TURNS=${FM_DECK_MAX_TURNS:-200}
@@ -220,8 +222,8 @@ q() { printf '%q' "$1"; }
 HOST_FAILURE_UNPUBLISHED=2
 host_failure() {
   printf 'fm-deck-worker: %s\n' "$1" >&2
-  printf 'failed: Deck secondmate %s\n' "$1" | status_append || {
-    printf 'fm-deck-worker: failed to publish secondmate failure\n' >&2
+  printf 'failed: Deck %s %s\n' "$HOST_ROLE" "$1" | status_append || {
+    printf 'fm-deck-worker: failed to publish %s failure\n' "$HOST_ROLE" >&2
     return "$HOST_FAILURE_UNPUBLISHED"
   }
   return 1
@@ -394,8 +396,6 @@ for seq, line in enumerate(sys.stdin):
     cat "$WORK/startup" >&2
     host_failure 'session start did not publish a complete digest'; exit 1
   fi
-  HOST_ROLE=secondmate
-  [ "$PRIMARY" != 1 ] || HOST_ROLE='managed primary'
   PROMPT="$PROMPT
 
 The execution steering inbox is $STATE/$ID.inbox. It belongs to this $HOST_ROLE. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.

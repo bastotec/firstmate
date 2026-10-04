@@ -55,9 +55,34 @@ python3 bin/fm-primary.py discover --home /absolute/path/to/firstmate-home
 ```
 
 Its JSON row contains `machine`, `label`, `fm_home`, `task_id: null`, and the host-only `primary_registration` path.
-Keep that path on the host; the browser selects only the machine/label identity, never an executable, home path, capability, PID or arbitrary argv.
+Keep that path on the host; the browser selects only the machine/label identity and the discovery-provided execution id, never an executable, home path, capability, PID or arbitrary argv.
 The host integration must preserve registry uniqueness and same-origin authorization before dispatching to this owner.
-UI routing integration is a separate required acceptance surface; discovery output alone does not make an unmodified host router support primary lifecycle.
+For a new host registry, create an exclusive private file from the discovery row, then use the host's browser-safe discovery command:
+
+```sh
+HOME_PATH=/absolute/path/to/firstmate-home
+HOST_REGISTRY=/absolute/path/to/new-managed-primary-registry.json
+python3 bin/fm-primary.py discover --home "$HOME_PATH" | \
+  python3 -c 'import json, os, sys; row=json.load(sys.stdin); fd=os.open(sys.argv[1], os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600); json.dump([row], os.fdopen(fd, "w"))' "$HOST_REGISTRY"
+python3 bin/fm-ui-host-control.py --registry "$HOST_REGISTRY" targets
+```
+
+This refuses to overwrite an existing registry.
+If the UI already has a registry, an authorized host operator must merge the discovered binding into it without losing existing exact task or captain-call bindings; the host rejects duplicate identities and owners.
+The `targets` result advertises supported managed-primary lifecycle operations and Deck native steering, plus the exact execution id, while keeping the registration path and capability private.
+The UI must use that execution id in its managed-primary control payloads; the [host executable header](../bin/fm-ui-host-control.py) owns their exact schema.
+For example, after browser authorization, the host can submit an execution-bound lifecycle record to the command stream:
+
+```sh
+python3 - "$HOST_REGISTRY" <<'PY' | python3 bin/fm-ui-host-control.py --registry "$HOST_REGISTRY" command
+import json, subprocess, sys
+row = json.loads(subprocess.check_output(["python3", "bin/fm-ui-host-control.py", "--registry", sys.argv[1], "targets"], text=True))[0]
+print(json.dumps({"record": "command", "command_id": "primary-interrupt-001", "identity": {"parent_mate_id": row["machine"], "leaf_worker_id": row["machine"] + "/" + row["label"]}, "payload": {"kind": "interrupt", "execution_id": row["execution_id"]}}))
+PY
+```
+
+The same authorized host path routes exit, relaunch, recover-missing and Deck steer through the registered owner rather than through task metadata.
+Use a new command id for a new intended action and retain the original command id for reconciliation of the same action.
 
 For a direct host control call, read the current execution id privately and bind the request to it:
 
@@ -65,7 +90,7 @@ For a direct host control call, read the current execution id privately and bind
 HOME_PATH=/absolute/path/to/firstmate-home
 EXECUTION_ID=$(python3 -c 'import json, pathlib, sys; print(json.loads((pathlib.Path(sys.argv[1]) / "state/primary-owner/registration.json").read_text())["execution_id"])' "$HOME_PATH")
 python3 bin/fm-primary.py control --home "$HOME_PATH" \
-  --execution-id "$EXECUTION_ID" interrupt
+  --execution-id "$EXECUTION_ID" --command-id direct-interrupt-001 interrupt
 ```
 
 `exit` stops only the owned primary child and keeps the manager capability available for a later `relaunch` or `recover-missing`.
@@ -86,6 +111,9 @@ A `pending` result is not evidence of application.
 Repeat the same order id and exact text to reconcile the original Deck turn's handled proof; do not mint a new id to retry an unconfirmed steer.
 An inactive receiver, unsupported adapter or stale execution is never replaced by PTY typing.
 An unconfirmed lifecycle reply requires inspecting the registration and actual owner state before retrying, because the original request may have acted.
+Retain its command id and original execution id: the live owner's receipt reconciles a confirmed result without repeating the action, even after a replacement execution was created.
+A reserved but unconfirmed action remains pending instead of being replayed blindly.
+If direct CLI control omits `--command-id`, it mints an id and returns it in the result; retaining an explicit id is easier when a reply could be lost.
 
 ## Owner lifetime and refusals
 
@@ -96,13 +124,14 @@ Investigate a retained unknown-owner record before any explicit operator cleanup
 Sending SIGTERM or SIGINT to the launcher itself requests a clean shutdown of its own child and retires only its own registration.
 The normal primary `exit` action deliberately does not stop the manager.
 
-## Verification and outstanding acceptance
+## Verification and scope
 
 [`tests/fm-primary.test.sh`](../tests/fm-primary.test.sh) exercises the runnable launcher against a real isolated stream hub, PTY and standby harness executables.
-It proves genuine endpoint registration, private discovery shape, exact profile replay, owned-child interrupt/exit/relaunch/recover-missing, stale-execution refusal, duplicate and unregistered refusals, native Deck application and unsupported-adapter refusal.
+It proves genuine endpoint registration, private discovery shape, exact profile replay, owned-child interrupt/exit/relaunch/recover-missing through the UI host route, lifecycle command-id reconciliation without duplicate relaunch, stale-execution refusal, duplicate and unregistered refusals, native Deck application and unsupported-adapter refusal.
 Only bootstrap/watcher infrastructure is stubbed inside a throwaway home; no live-fleet endpoint is controlled.
 Run it with `bin/fm-test-run.sh tests/fm-primary.test.sh`.
 
 This is the primary-control successor to task `fm-ui-host-control-primary-coverage` and [PR65](https://github.com/bastotec/firstmate/pull/65), whose scope is bounded discovery only.
 The acceptance criterion is “Delegate and implement the minimal primary lifecycle and execution-bound native-steering support before treating this requirement as complete”.
-The broader requirement remains open until host UI integration and its end-to-end acceptance test are implemented and validated; these owner-level guarantees alone are not a claim that the UI requirement is complete.
+The managed setup and host UI routing implement that bounded acceptance surface; unrelated adapter-native receivers, adoption of existing primaries and recovery of a missing owner are not claimed.
+Passing these fixture tests is not a claim that validation or delivery has completed.
