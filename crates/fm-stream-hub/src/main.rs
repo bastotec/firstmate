@@ -314,6 +314,33 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
             json!({"ok":true,"machines":machines})
         });
     }
+    if let Some(encoded_id) = path.strip_prefix("/v1/orders/").filter(|_| method == "GET") {
+        require(h, r, q, "subscribe", false)?;
+        // Use the existing URL decoder with path (not form) '+' semantics.
+        let query = format!("id={}", encoded_id.replace('+', "%2B").replace('&', "%26"));
+        let order_id = form_urlencoded::parse(query.as_bytes())
+            .next()
+            .map(|(_, value)| value.into_owned())
+            .unwrap_or_default();
+        let s = h.state.lock().unwrap();
+        let mut record = None;
+        for order in &s.orders {
+            let order = order.lock().unwrap();
+            if order.id == order_id {
+                record = Some(Hub::order_record(&s, &order));
+                break;
+            }
+        }
+        let mut record = record.ok_or_else(|| {
+            Error::new(
+                404,
+                "no_such_order",
+                "this order id is not in the bounded journal",
+            )
+        })?;
+        record["ok"] = json!(true);
+        return answer(record);
+    }
     if path == "/v1/orders" && method == "POST" {
         require(h, r, q, "control", false)?;
         let p = body(r)?;

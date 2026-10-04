@@ -10,7 +10,7 @@ both directions: hub in, wire records out for the feed, and command records in,
 acknowledgements out for the composer.
 
 THE TWO DIRECTIONS ARE SEPARATE CREDENTIALS AND SEPARATE COMMANDS.  `serve`,
-`snapshot`, `translate` and `compare` only read, hold a subscribe-class token,
+`snapshot`, `translate`, `reconcile` and `compare` only read, hold a subscribe-class token,
 and send nothing to any worker.  Only `command` steers, and it needs a
 control-class token; a home that never runs it cannot order anything with the
 credential the feed uses.  Both write one record per line (NDJSON) to stdout,
@@ -66,6 +66,7 @@ Commands:
 
   fm-stream-bridge.py serve [options]      poll the hub and stream records
   fm-stream-bridge.py command [options]    read command records, place orders
+  fm-stream-bridge.py reconcile [options]  read an existing order's current fate
   fm-stream-bridge.py snapshot [options]   emit one tick of records and exit
   fm-stream-bridge.py translate [options]  replay recorded hub listings
   fm-stream-bridge.py compare [options]    compare against fm-crew-state.sh
@@ -141,6 +142,25 @@ command id stays visibly pending, which is the only honest answer.  Re-sending
 a command id the hub already holds returns that order's own fate rather than
 delivering it twice.
 
+command exits at stdin EOF by default, retaining persistent command streams.
+For spawned UI processes whose stdin remains open, set --stdin-idle-ms N to
+exit after N milliseconds without a new line following a processed record,
+including an unconfirmed result.  The default 0 disables the idle bound.
+The idle bound starts after processing, not during the hub acknowledgement wait.
+
+reconcile --hub URL --token-file PATH --fleet-id F --command-id ID reads only
+GET /v1/health and GET /v1/orders/<encoded-ID>, using a subscribe-class token.
+It never resubmits or retries placement, including after a hub outage or restart.
+A settled journal result emits the same command_ack/command_nack as command
+and exits 0.  An unconfirmed result emits {"record":"command_pending",
+"command_id":ID} and exits 3, also when an older deployed hub has no journal
+read route (HTTP 404 no_such_route).
+An absent journal id emits {"record":"command_not_found","command_id":ID},
+exiting 4; absence can mean journal eviction or hub restart, not
+that the worker is gone.  Usage, credential, protocol, malformed
+answer and transport errors exit 2 without a record.  Fleet identity is the
+operator's namespace for this hub, not a field stored by its order journal.
+
 compare is the Phase 2 comparison harness.  It reads this home's task records
 (<home>/state/*.meta) for stream-backed tasks, takes the adapter's rendered
 state for each endpoint from --feed FILE (recorded NDJSON; the last record per
@@ -178,8 +198,11 @@ import http.client
 import json
 import math
 import os
+import queue
 import re
 import subprocess
+import threading
+import urllib.parse
 import sys
 import time
 import urllib.error
@@ -375,13 +398,22 @@ class HubClient:
             reason = getattr(exc, "reason", exc)
             raise HubUnreachable("cannot reach the hub at %s: %s" % (self.url, reason))
 
-    def get(self, path: str) -> dict:
+    def get(self, path: str, missing_order: bool = False) -> dict:
         request = urllib.request.Request(
             self.url + path, headers={"Authorization": "Bearer " + self.token})
         try:
             with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECS) as response:
                 body = response.read()
         except urllib.error.HTTPError as exc:
+            if missing_order and exc.code == 404:
+                try:
+                    missing = json.loads(exc.read().decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    missing = {}
+                if isinstance(missing, dict) and missing.get("error") in (
+                        "no_such_order", "no_such_route"):
+                    return missing
+                raise BridgeError("the hub returned an unreadable order journal refusal")
             if exc.code in (401, 403):
                 raise BridgeError(
                     "the hub at %s refused the credential for %s (HTTP %d): the "
@@ -571,7 +603,39 @@ def cmd_command(options: argparse.Namespace) -> int:
     client = HubClient(options.hub, read_token(options.token_file))
     client.check_compatibility(require_result_retry=True)
     commander = Commander(client, options.fleet_id)
-    for line in sys.stdin:
+    if options.stdin_idle_ms < 0:
+        raise BridgeError("--stdin-idle-ms must not be negative")
+    lines = queue.Queue()
+
+    def read_lines() -> None:
+        buffered = b""
+        try:
+            while True:
+                chunk = os.read(sys.stdin.fileno(), 65536)
+                if not chunk:
+                    if buffered:
+                        lines.put(buffered.decode("utf-8", errors="replace"))
+                    return
+                buffered += chunk
+                while b"\n" in buffered:
+                    line, buffered = buffered.split(b"\n", 1)
+                    lines.put(line.decode("utf-8", errors="replace"))
+        finally:
+            lines.put(None)
+
+    # A UI may keep its input pipe open while waiting for this process to exit.
+    # Read the fd, not buffered stdin: a blocked daemon must not hold stdin's
+    # Python lock during interpreter shutdown.
+    threading.Thread(target=read_lines, daemon=True).start()
+    timeout = None
+    while True:
+        try:
+            line = lines.get(timeout=timeout)
+        except queue.Empty:
+            break
+        if line is None:
+            break
+        timeout = options.stdin_idle_ms / 1000.0 or None
         line = line.strip()
         if not line:
             continue
@@ -595,6 +659,41 @@ def cmd_command(options: argparse.Namespace) -> int:
         except BridgeError as exc:
             print("fm-stream-bridge: %s" % exc, file=sys.stderr)
     return 0
+
+
+def cmd_reconcile(options: argparse.Namespace) -> int:
+    """Read the existing order's current fate, never place or retry an order."""
+    if not options.command_id:
+        raise BridgeError("--command-id must not be empty")
+    client = HubClient(options.hub, read_token(options.token_file))
+    try:
+        client.check_compatibility()
+        body = client.get("/v1/orders/" + urllib.parse.quote(options.command_id, safe=""),
+                          missing_order=True)
+    except HubUnreachable as exc:
+        print("fm-stream-bridge: %s" % exc, file=sys.stderr)
+        return 2
+    if body.get("error") == "no_such_order":
+        emit([{"record": "command_not_found", "command_id": options.command_id}])
+        return 4
+    if body.get("error") == "no_such_route":
+        # An older deployed hub has no passive journal route. It cannot prove
+        # absence or delivery; never retry placement to discover either.
+        emit([{"record": "command_pending", "command_id": options.command_id}])
+        return 3
+    if body.get("order_id") != options.command_id:
+        raise BridgeError("the journal returned another order id")
+    leaf = body.get("leaf_worker_id")
+    if not isinstance(leaf, str) or not leaf:
+        raise BridgeError("the journal returned an order without a leaf")
+    if body.get("outcome") not in ("accepted", "refused", "unconfirmed"):
+        raise BridgeError("the journal returned an unknown order outcome")
+    answer = Commander(client, options.fleet_id).answer(options.command_id, leaf, 200, body)
+    if answer:
+        emit(answer)
+        return 0
+    emit([{"record": "command_pending", "command_id": options.command_id}])
+    return 3
 
 
 def cmd_serve(options: argparse.Namespace) -> int:
@@ -811,6 +910,13 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--token-file", required=True,
                          help="file whose first line is a CONTROL-class token")
     command.add_argument("--fleet-id", default=DEFAULT_FLEET_ID)
+    command.add_argument("--stdin-idle-ms", type=int, default=0,
+                         help="exit after this post-record stdin idle wait; 0 waits for EOF")
+
+    reconcile = commands.add_parser("reconcile", help="read an existing order's fate; never submit")
+    hub_options(reconcile, True)
+    reconcile.add_argument("--fleet-id", default=DEFAULT_FLEET_ID)
+    reconcile.add_argument("--command-id", required=True)
 
     compare = commands.add_parser("compare", help="compare against fm-crew-state.sh")
     hub_options(compare, False)
@@ -832,7 +938,7 @@ def main(argv: list) -> int:
         return 0
     handlers = {"serve": cmd_serve, "snapshot": cmd_snapshot,
                 "translate": cmd_translate, "compare": cmd_compare,
-                "command": cmd_command}
+                "command": cmd_command, "reconcile": cmd_reconcile}
     handler = handlers.get(options.command)
     if handler is None:
         parser.print_help(sys.stderr)
