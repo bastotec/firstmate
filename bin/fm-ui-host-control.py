@@ -38,7 +38,8 @@ resolve-key actions require a task_id binding in the decision-owning home.
 Primary interrupt, exit, relaunch and recover-missing explicitly refuse with
 primary-lifecycle-owner-absent; primary steer (text) explicitly refuses with
 primary-not-stream-registered. No primary task or endpoint is synthesized.
-Every (machine, label) and (fm_home, task_id) must be unique. Unknown, ambiguous,
+Every (machine, label) and (fm_home, task_id or captain_call_id) must be unique.
+Unknown, ambiguous,
 or malformed bindings refuse before dispatch, as does missing regular task
 metadata for actions that require it. Stale captain calls and deeper task
 eligibility checks are decided by the owner; nonzero owner exits stay pending
@@ -121,7 +122,7 @@ def bindings(filename):
         if task is not None and row['label'] != 'fm-' + task:
             raise Refused('task label does not match the stream publisher label')
         leaf = row['machine'], row['label']
-        owner = str(Path(home).resolve()), task
+        owner = str(Path(home).resolve()), task or row.get('captain_call_id')
         if leaf in leaves or owner in owners:
             raise Refused('ambiguous registry binding')
         leaves.add(leaf)
@@ -161,7 +162,6 @@ def targets(filename):
         home, _, _ = owner_context(row)
         task = row['task_id']
         operations = ['note']
-        call = task is not None or 'captain_call_id' in row
         target_class = 'primary'
         if task is not None:
             meta = task_metadata(home, task)
@@ -171,6 +171,7 @@ def targets(filename):
                 raise Refused('registered task has ambiguous or unsupported target class')
             target_class = 'secondmate' if kinds[0] == 'secondmate' else 'worker'
             operations += ['resolve-key', 'interrupt', 'exit', 'relaunch', 'recover-missing']
+        call = target_class == 'worker' or 'captain_call_id' in row
         if call:
             operations += ['answer', 'release']
         result.append(dict(machine=row['machine'], label=row['label'],

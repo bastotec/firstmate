@@ -569,8 +569,9 @@ values = discover([primary, task, mate])
 assert [value['target_class'] for value in values] == ['primary', 'worker', 'secondmate'], values
 assert values[0]['supported_operations'] == ['note'] and not values[0]['call_available'], values
 expected = {'note', 'resolve-key', 'interrupt', 'exit', 'relaunch', 'recover-missing', 'answer', 'release'}
-assert all(set(value['supported_operations']) == expected and value['call_available']
-           for value in values[1:]), values
+assert set(values[1]['supported_operations']) == expected and values[1]['call_available'], values
+assert set(values[2]['supported_operations']) == expected - {'answer', 'release'}, values
+assert not values[2]['call_available'], values
 values = discover([dict(primary, captain_call_id='private-call')])
 assert values[0]['supported_operations'] == ['note', 'answer', 'release'], values
 assert values[0]['call_available'], values
@@ -586,10 +587,41 @@ discover([primary, task], 'no regular owner metadata')
 discover([primary, task], 'no regular owner metadata')
 (home / 'state/sample.meta').unlink()
 (home / 'state/sample.meta').write_text('kind=ship\n')
-for rows in ([primary, primary], [primary, dict(primary, label='alias', captain_call_id='private-call')],
-             [dict(primary, captain_call_id='one'), dict(primary, label='alias', captain_call_id='two')],
-             [task, task]):
+for rows in ([primary, primary], [primary, dict(primary, label='alias')],
+             [dict(primary, captain_call_id='one'), dict(primary, label='alias', captain_call_id='one')],
+             [dict(primary, captain_call_id='sample'), task], [task, task]):
     discover(rows, 'ambiguous registry')
+values = discover([primary, dict(primary, label='alias', captain_call_id='private-call'), task])
+assert [value['call_available'] for value in values] == [False, True, True], values
+primary_calls = [dict(primary, captain_call_id='one'),
+                 dict(primary, label='alias', captain_call_id='two')]
+values = discover([*primary_calls, task])
+assert [value['label'] for value in values] == ['supervisor', 'alias', 'fm-sample'], values
+assert all(value['call_available'] for value in values), values
+spy_log.write_text('')
+write([*primary_calls, task])
+for row, action in ((primary_calls[0], 'answer'), (primary_calls[1], 'release'), (task, 'interrupt')):
+    payload = dict(kind=action)
+    if action in ('answer', 'release'):
+        payload['text'] = 'Exact words for ' + row['label']
+    record = dict(record='command', command_id='multi-call-' + row['label'],
+                  identity=dict(parent_mate_id='fixture-host',
+                                leaf_worker_id='fixture-host/' + row['label']), payload=payload)
+    result = subprocess.run([str(spy_router), '--registry', str(registry), 'command'],
+                            env=spy_env, input=json.dumps(record) + '\n',
+                            text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result
+    ack = json.loads(result.stdout)
+    assert ack['state'] == 'accepted' and ack['command_id'] == record['command_id'], result
+    assert ack['leaf_worker_id'] == record['identity']['leaf_worker_id'], ack
+invocations = [json.loads(line) for line in spy_log.read_text().splitlines()]
+assert len(invocations) == 3, invocations
+for invocation, row in zip(invocations[:2], primary_calls):
+    assert invocation['argv'][:2] == ['answer', row['captain_call_id']], invocation
+    assert invocation['answer'] == 'Exact words for ' + row['label'], invocation
+assert '--release' not in invocations[0]['argv'] and invocations[1]['argv'][-1] == '--release', invocations
+assert invocations[2]['argv'] == ['sample', 'interrupt'], invocations
+assert all(entry['home'] == str(home) and entry['actor'] == 'main' for entry in invocations), invocations
 discover([dict(task, label='sample')], 'publisher label')
 discover([dict(primary, secret='private-secret')], 'malformed registry')
 (home / 'config/stream-machine').write_text('other-machine\n')
