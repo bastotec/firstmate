@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
 """Host-only owner routing for a same-origin, local UI adapter.
 
-Usage: fm-ui-host-control.py --registry FILE command
+Usage: fm-ui-host-control.py --registry FILE command|targets
+
+targets emits one browser-safe JSON array, with machine, label, target_class
+(primary/secondmate/worker), supported_operations and boolean call_available.
+It validates the whole registry and owning-home identities before publishing;
+no paths, task ids, captain-call ids, credentials or owner output are emitted.
+Operations describe routing capability, not current owner eligibility.
+Task metadata must contain exactly one kind=ship, kind=scout or kind=secondmate;
+ship/scout classify as worker, secondmate as secondmate, and task_id null as
+primary. Every target advertises note; task targets additionally advertise
+resolve-key, interrupt, exit, relaunch and recover-missing. Only workers and
+primaries with captain_call_id advertise answer/release and call_available=true.
+A secondmate runtime id alone binds no captain call in its owning home.
+call_available means an exact decision target is bound, not that it is held.
 
 command consumes NDJSON command records with command_id, identity containing
 parent_mate_id and leaf_worker_id (machine/label), and payload containing kind
 plus exactly the fields listed for its kind:
+  steer (primary refusal only): text;
   note: text; resolve-key: key and text; answer/release: text;
   interrupt/exit: no additional fields; relaunch/recover-missing: note.
 Required text and note fields must be nonblank strings. No request supplies
@@ -28,10 +42,14 @@ A primary supervisor has task_id null and accepts note, plus answer/release
 when its binding includes "captain_call_id": EXACT_CAPTAIN_CALL_ID in that
 home's backlog. The browser cannot select or override that id. Task-key
 resolve-key actions require a task_id binding in the decision-owning home.
-Primary interrupt, exit/shutdown, relaunch/restart, recover-missing, and native
-mid-turn steering are unsupported. Every (machine, label) and
-(fm_home, task_id or captain_call_id) must be unique. Unknown, ambiguous,
-or malformed bindings refuse before dispatch, as does missing regular task
+Primary interrupt, exit, relaunch and recover-missing explicitly refuse with
+primary-lifecycle-owner-absent; primary steer (text) explicitly refuses with
+primary-not-stream-registered. Payload validation precedes these refusals;
+no primary task or endpoint is synthesized and no PTY fallback is attempted.
+Every (machine, label) and (fm_home, task_id or captain_call_id) must be unique.
+Distinct primary captain-call bindings may share a home when their labels and
+call ids differ; selecting machine/label still resolves one exact call.
+Unknown, ambiguous or malformed bindings refuse before dispatch, as does missing regular task
 metadata for actions that require it. Stale captain calls and deeper task
 eligibility checks are decided by the owner; nonzero owner exits stay pending
 under the result contract above. For a task, label must equal fm-<task_id>,
@@ -121,11 +139,7 @@ def bindings(filename):
     return rows
 
 
-def route(rows, machine, label, payload):
-    matches = [row for row in rows if (row['machine'], row['label']) == (machine, label)]
-    if len(matches) != 1:
-        raise Refused('unknown or ambiguous target')
-    row = matches[0]
+def owner_context(row):
     home = Path(row['fm_home']).resolve()
     scripts = Path(__file__).resolve().parent
     env = os.environ.copy()
@@ -139,15 +153,53 @@ def route(rows, machine, label, payload):
                               capture_output=True, check=False)
     if identity.returncode:
         raise Refused('owning home stream machine identity unavailable')
-    if identity.stdout != machine:
+    if identity.stdout != row['machine']:
         raise Refused('registry machine disagrees with owning home')
+    return home, scripts, env
+
+
+def task_metadata(home, task):
+    meta = home / 'state' / (task + '.meta')
+    if not meta.is_file() or meta.is_symlink():
+        raise Refused('registered task has no regular owner metadata')
+    return meta
+
+
+def targets(filename):
+    result = []
+    for row in bindings(filename):
+        home, _, _ = owner_context(row)
+        task = row['task_id']
+        operations = ['note']
+        target_class = 'primary'
+        if task is not None:
+            meta = task_metadata(home, task)
+            kinds = [line[5:] for line in meta.read_text(encoding='utf-8').splitlines()
+                     if line.startswith('kind=')]
+            if len(kinds) != 1 or kinds[0] not in ('ship', 'scout', 'secondmate'):
+                raise Refused('registered task has ambiguous or unsupported target class')
+            target_class = 'secondmate' if kinds[0] == 'secondmate' else 'worker'
+            operations += ['resolve-key', 'interrupt', 'exit', 'relaunch', 'recover-missing']
+        call = target_class == 'worker' or 'captain_call_id' in row
+        if call:
+            operations += ['answer', 'release']
+        result.append(dict(machine=row['machine'], label=row['label'],
+                           target_class=target_class, supported_operations=operations,
+                           call_available=call))
+    print(json.dumps(result), flush=True)
+    return 0
+
+
+def route(rows, machine, label, payload):
+    matches = [row for row in rows if (row['machine'], row['label']) == (machine, label)]
+    if len(matches) != 1:
+        raise Refused('unknown or ambiguous target')
+    row = matches[0]
+    home, scripts, env = owner_context(row)
     action = payload.get('kind')
     task = row['task_id']
-    if task is None and action not in ('note', 'answer', 'release'):
-        raise Refused('primary interrupt, exit/shutdown, relaunch/restart, recover-missing, '
-                      'and native mid-turn steering are unsupported; task-key decisions '
-                      'require an exact task binding')
     fields = {
+        'steer': {'kind', 'text'},
         'note': {'kind', 'text'},
         'resolve-key': {'kind', 'key', 'text'},
         'answer': {'kind', 'text'},
@@ -162,13 +214,20 @@ def route(rows, machine, label, payload):
     text = payload.get('text', payload.get('note'))
     if fields[action] & {'text', 'note'} and (not isinstance(text, str) or not text.strip()):
         raise Refused('note or answer must not be blank')
+    if task is None:
+        if action in ('interrupt', 'exit', 'relaunch', 'recover-missing'):
+            raise Refused('primary-lifecycle-owner-absent')
+        if action == 'steer':
+            raise Refused('primary-not-stream-registered')
+        if action == 'resolve-key':
+            raise Refused('task-key decisions require an exact task binding')
+    elif action == 'steer':
+        raise Refused('unsupported action or payload fields')
     call = row.get('captain_call_id') if task is None else task
     if action in ('answer', 'release') and call is None:
         raise Refused('primary decision requires an exact captain-call id in the host registry')
     if task is not None and action not in ('answer', 'release'):
-        meta = home / 'state' / (task + '.meta')
-        if not meta.is_file() or meta.is_symlink():
-            raise Refused('registered task has no regular owner metadata')
+        task_metadata(home, task)
     decision_file = None
     if action == 'note':
         argv = [str(scripts / 'fm-inbox.sh'), 'note', '-']
@@ -252,8 +311,14 @@ def command_stream(filename):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--registry', required=True)
-    parser.add_argument('action', choices=['command'])
+    parser.add_argument('action', choices=['command', 'targets'])
     args = parser.parse_args()
+    if args.action == 'targets':
+        try:
+            return targets(args.registry)
+        except (Refused, OSError, ValueError) as exc:
+            raise Refused(str(exc) if isinstance(exc, Refused)
+                          else 'host discovery unavailable or malformed registry') from None
     return command_stream(args.registry)
 
 
