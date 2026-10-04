@@ -1,0 +1,13 @@
+FM_TEST_BEGIN 2026-10-04T22:55:26Z tests/fm-stream-hub-rust.test.sh family=unclassified expected_gate_skip=none
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.21s
+python passive journal: [200, {"delivered": true, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "late", "outcome": "accepted", "requested_at": 1791154528.167695, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+python passive journal: [200, {"delivered": false, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "nack", "outcome": "refused", "reason": "agent_refused", "reason_message": "agent says no", "requested_at": 1791154528.564426, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+rust passive journal: [200, {"delivered": true, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "late", "outcome": "accepted", "requested_at": 1791154537.008982, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+rust passive journal: [200, {"delivered": false, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "nack", "outcome": "refused", "reason": "agent_refused", "reason_message": "agent says no", "requested_at": 1791154537.411115, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+differential: 187 HTTP/stream observations and Python agent/bridge lifecycle match
+measurements: {"python": {"frame_mib_per_second": 0.7, "rss_kib": 33440, "startup_ms": 249.38}, "rust": {"frame_mib_per_second": 0.28, "rss_kib": 6000, "startup_ms": 92.58}}
+ok - Rust hub: HTTP, stream, order and Python peer compatibility
+FM_TEST_END 2026-10-04T22:55:53Z tests/fm-stream-hub-rust.test.sh exit=0 duration_ms=26681 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=26836
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=26681 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-hub-rust.test.sh duration_ms=26681

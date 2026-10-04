@@ -1,0 +1,96 @@
+FM_TEST_BEGIN 2026-10-04T22:46:06Z tests/fm-stream-bridge.test.sh family=unclassified expected_gate_skip=none
+ok - bridge: recorded hub traffic replays into the Bridge UI's record shape
+ok - bridge: only an exit the owning agent reported becomes Stopped or Failed
+ok - bridge: malformed recordings are refused and malformed endpoints left out
+ok - bridge: a leaf is emitted once from the hub's current execution
+ok - bridge: a snapshot reads a real hub's registrations and closes
+ok - bridge: a real agent's reported worker exit reaches the Bridge
+ok - bridge: serve streams every tick and goes silent while the hub is gone
+ok - bridge: wrong credentials and incompatible hubs are refused during negotiation
+ok - bridge: commands rebind atomically to the active hub generation
+ok - bridge: a composer command reaches the worker and is acknowledged
+ok - bridge: a reused command id refuses a different payload
+ok - bridge: a command for a worker its agent reported gone is nacked
+ok - bridge: a command aimed at a replaced execution is refused without claiming absence
+ok - bridge: commands require the execution they were composed against
+ok - bridge: commands for another or missing fleet are nacked
+ok - bridge: command exits on EOF or bounded post-record stdin inactivity
+ok - bridge: an unconfirmed order settles passively after its late native result
+ok - bridge: passive reconciliation failures preserve honest pending/error semantics
+ok - bridge: a command that names no worker stays pending rather than nacked
+ok - bridge: the comparison harness sets rendered states against crew state
+FM_TEST_END 2026-10-04T22:47:21Z tests/fm-stream-bridge.test.sh exit=0 duration_ms=74377 gate_skip=false
+FM_TEST_BEGIN 2026-10-04T22:47:21Z tests/fm-stream-hub-rust.test.sh family=unclassified expected_gate_skip=none
+   Compiling libc v0.2.189
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.26
+   Compiling itoa v1.0.18
+   Compiling pin-project-lite v0.2.17
+   Compiling futures-core v0.3.34
+   Compiling serde_core v1.0.229
+   Compiling bytes v1.12.1
+   Compiling zmij v1.0.23
+   Compiling httparse v1.10.1
+   Compiling try-lock v0.2.5
+   Compiling once_cell v1.21.4
+   Compiling getrandom v0.4.3
+   Compiling serde_json v1.0.151
+   Compiling serde v1.0.229
+   Compiling tracing-core v0.1.36
+   Compiling http v1.5.0
+   Compiling want v0.3.1
+   Compiling futures-channel v0.3.34
+   Compiling signal-hook v0.3.18
+   Compiling errno v0.3.14
+   Compiling socket2 v0.6.5
+   Compiling syn v3.0.6
+   Compiling signal-hook-registry v1.4.8
+   Compiling mio v1.2.3
+   Compiling atomic-waker v1.1.2
+   Compiling futures-task v0.3.34
+   Compiling smallvec v1.16.1
+   Compiling cfg-if v1.0.5
+   Compiling memchr v2.8.3
+   Compiling httpdate v1.0.3
+   Compiling unicode-general-category v1.1.0
+   Compiling http-body v1.1.0
+   Compiling futures-util v0.3.34
+   Compiling tracing v0.1.44
+   Compiling tinyvec v1.13.3
+   Compiling tower-service v0.3.3
+   Compiling percent-encoding v2.3.2
+   Compiling form_urlencoded v1.2.2
+   Compiling http-body-util v0.1.5
+   Compiling uuid v1.26.1
+   Compiling unicode-normalization v0.1.25
+   Compiling east-asian-width v0.1.0
+   Compiling base64 v0.22.1
+   Compiling subtle v2.6.1
+   Compiling tokio-macros v2.7.2
+   Compiling serde_derive v1.0.229
+   Compiling tokio v1.53.1
+   Compiling fm-stream-wire v0.1.0 (/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44GS85Y01PBHHZ2RY20E1EQ/crates/fm-stream-wire)
+   Compiling hyper v1.11.1
+   Compiling tokio-stream v0.1.19
+   Compiling hyper-util v0.1.20
+   Compiling fm-stream-hub v2.0.0 (/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44GS85Y01PBHHZ2RY20E1EQ/crates/fm-stream-hub)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 40.20s
+Traceback (most recent call last):
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44GS85Y01PBHHZ2RY20E1EQ/tests/assets/stream-hub-differential.py", line 531, in <module>
+    main()
+    ~~~~^^
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44GS85Y01PBHHZ2RY20E1EQ/tests/assets/stream-hub-differential.py", line 520, in main
+    assert python == rust, (index, python, rust)
+           ^^^^^^^^^^^^^^
+AssertionError: (163, [504, {'delivered': False, 'error': 'no_agent_ack', 'execution_id': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'leaf_worker_id': 'box/sibling', 'message': 'timed-out untaken command (measured age)', 'ok': False, 'order_id': 'never', 'outcome': 'refused', 'reason': 'no_agent_ack', 'reason_message': 'the agent on machine box did not acknowledge within 0.25s (last heard from 0.3s ago); the steer was NOT delivered', 'requested_at': 'clock', 'requested_execution_id': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'worker_gone': False}], [504, {'delivered': False, 'error': 'no_agent_ack', 'execution_id': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'leaf_worker_id': 'box/sibling', 'message': 'timed-out untaken command (measured age)', 'ok': False, 'order_id': 'never', 'outcome': 'refused', 'reason': 'no_agent_ack', 'reason_message': 'the agent on machine box did not acknowledge within 0.25s (last heard from 0.4s ago); the steer was NOT delivered', 'requested_at': 'clock', 'requested_execution_id': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'worker_gone': False}])
+FM_TEST_END 2026-10-04T22:48:30Z tests/fm-stream-hub-rust.test.sh exit=1 duration_ms=69330 gate_skip=false
+FM_TEST_BEGIN 2026-10-04T22:48:30Z tests/fm-stream-deck-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+skip: live: disabled by FM_LIVE=0
+FM_TEST_END 2026-10-04T22:48:31Z tests/fm-stream-deck-live-e2e.test.sh exit=0 duration_ms=300 gate_skip=true
+FM_TEST_SUMMARY total=3 failed=1 skipped_gate=1 duration_ms=144661
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=1 duration_ms=300 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=2 duration_ms=143707 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-bridge.test.sh duration_ms=74377
+FM_TEST_SLOWEST rank=2 script=tests/fm-stream-hub-rust.test.sh duration_ms=69330
+FM_TEST_SLOWEST rank=3 script=tests/fm-stream-deck-live-e2e.test.sh duration_ms=300

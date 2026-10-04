@@ -1,0 +1,17 @@
+FM_TEST_BEGIN 2026-10-04T22:57:07Z tests/fm-stream-hub-rust.test.sh family=unclassified expected_gate_skip=none
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+python passive journal: [200, {"delivered": true, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "late", "outcome": "accepted", "requested_at": 1791154628.873627, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+python passive bridge: {"record":"command_ack","command_id":"late","leaf_worker_id":"box/worker","state":"accepted","received_at_utc":"2026-10-04T22:57:09Z"}
+python passive journal: [200, {"delivered": false, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "nack", "outcome": "refused", "reason": "agent_refused", "reason_message": "agent says no", "requested_at": 1791154629.375148, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+python passive bridge: {"record":"command_ack","command_id":"nack","leaf_worker_id":"box/worker","state":"refused","received_at_utc":"2026-10-04T22:57:09Z","reason":"agent_refused: agent says no"}
+rust passive journal: [200, {"delivered": true, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "late", "outcome": "accepted", "requested_at": 1791154637.356574, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+rust passive bridge: {"record":"command_ack","command_id":"late","leaf_worker_id":"box/worker","state":"accepted","received_at_utc":"2026-10-04T22:57:17Z"}
+rust passive journal: [200, {"delivered": false, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "nack", "outcome": "refused", "reason": "agent_refused", "reason_message": "agent says no", "requested_at": 1791154637.961247, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+rust passive bridge: {"record":"command_ack","command_id":"nack","leaf_worker_id":"box/worker","state":"refused","received_at_utc":"2026-10-04T22:57:18Z","reason":"agent_refused: agent says no"}
+differential: 187 HTTP/stream observations and Python agent/bridge lifecycle match
+measurements: {"python": {"frame_mib_per_second": 1.25, "rss_kib": 33232, "startup_ms": 89.9}, "rust": {"frame_mib_per_second": 0.55, "rss_kib": 5984, "startup_ms": 82.53}}
+ok - Rust hub: HTTP, stream, order and Python peer compatibility
+FM_TEST_END 2026-10-04T22:57:33Z tests/fm-stream-hub-rust.test.sh exit=0 duration_ms=25690 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=25779
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=25690 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-hub-rust.test.sh duration_ms=25690

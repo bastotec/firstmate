@@ -1,0 +1,9 @@
+usage: fm-stream-bridge.py reconcile [-h] --hub HUB --token-file TOKEN_FILE
+                                     --command-id COMMAND_ID
+
+options:
+  -h, --help            show this help message and exit
+  --hub HUB             hub base URL
+  --token-file TOKEN_FILE
+                        file whose first line is a subscribe-class token
+  --command-id COMMAND_ID
