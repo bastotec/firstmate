@@ -1,0 +1,267 @@
+{
+  "current_product_results": [
+    {
+      "surface": "command",
+      "exit_code": 0,
+      "stdout": "{\"record\": \"command_ack\", \"command_id\": \"fixture-command\", \"leaf_worker_id\": \"fixture-host/supervisor\", \"state\": \"refused\", \"reason\": \"primary-lifecycle-owner-absent\", \"received_at_utc\": \"2026-10-04T21:55:43.551900+00:00\"}\n",
+      "stderr": "",
+      "request": {
+        "record": "command",
+        "command_id": "fixture-command",
+        "identity": {
+          "parent_mate_id": "fixture-host",
+          "leaf_worker_id": "fixture-host/supervisor"
+        },
+        "payload": {
+          "kind": "interrupt"
+        }
+      }
+    },
+    {
+      "surface": "command",
+      "exit_code": 0,
+      "stdout": "{\"record\": \"command_ack\", \"command_id\": \"fixture-command\", \"leaf_worker_id\": \"fixture-host/supervisor\", \"state\": \"refused\", \"reason\": \"primary-lifecycle-owner-absent\", \"received_at_utc\": \"2026-10-04T21:55:43.968018+00:00\"}\n",
+      "stderr": "",
+      "request": {
+        "record": "command",
+        "command_id": "fixture-command",
+        "identity": {
+          "parent_mate_id": "fixture-host",
+          "leaf_worker_id": "fixture-host/supervisor"
+        },
+        "payload": {
+          "kind": "exit"
+        }
+      }
+    },
+    {
+      "surface": "command",
+      "exit_code": 0,
+      "stdout": "{\"record\": \"command_ack\", \"command_id\": \"fixture-command\", \"leaf_worker_id\": \"fixture-host/supervisor\", \"state\": \"refused\", \"reason\": \"primary-lifecycle-owner-absent\", \"received_at_utc\": \"2026-10-04T21:55:44.513454+00:00\"}\n",
+      "stderr": "",
+      "request": {
+        "record": "command",
+        "command_id": "fixture-command",
+        "identity": {
+          "parent_mate_id": "fixture-host",
+          "leaf_worker_id": "fixture-host/supervisor"
+        },
+        "payload": {
+          "kind": "relaunch",
+          "note": "fixture checkpoint"
+        }
+      }
+    },
+    {
+      "surface": "command",
+      "exit_code": 0,
+      "stdout": "{\"record\": \"command_ack\", \"command_id\": \"fixture-command\", \"leaf_worker_id\": \"fixture-host/supervisor\", \"state\": \"refused\", \"reason\": \"primary-lifecycle-owner-absent\", \"received_at_utc\": \"2026-10-04T21:55:44.974251+00:00\"}\n",
+      "stderr": "",
+      "request": {
+        "record": "command",
+        "command_id": "fixture-command",
+        "identity": {
+          "parent_mate_id": "fixture-host",
+          "leaf_worker_id": "fixture-host/supervisor"
+        },
+        "payload": {
+          "kind": "recover-missing",
+          "note": "fixture checkpoint"
+        }
+      }
+    },
+    {
+      "surface": "command",
+      "exit_code": 0,
+      "stdout": "{\"record\": \"command_ack\", \"command_id\": \"fixture-command\", \"leaf_worker_id\": \"fixture-host/supervisor\", \"state\": \"refused\", \"reason\": \"primary-not-stream-registered\", \"received_at_utc\": \"2026-10-04T21:55:45.669773+00:00\"}\n",
+      "stderr": "",
+      "request": {
+        "record": "command",
+        "command_id": "fixture-command",
+        "identity": {
+          "parent_mate_id": "fixture-host",
+          "leaf_worker_id": "fixture-host/supervisor"
+        },
+        "payload": {
+          "kind": "steer",
+          "text": "fixture mid-turn intent"
+        }
+      }
+    },
+    {
+      "surface": "command",
+      "exit_code": 0,
+      "stdout": "{\"record\": \"command_ack\", \"command_id\": \"fixture-command\", \"leaf_worker_id\": \"fixture-host/supervisor\", \"state\": \"accepted\", \"received_at_utc\": \"2026-10-04T21:55:47.599122+00:00\"}\n",
+      "stderr": "{\"record\": \"host_owner_result\", \"command_id\": \"fixture-command\", \"leaf_worker_id\": \"fixture-host/supervisor\", \"exit_code\": 0, \"state\": \"confirmed\", \"stdout\": \"queued 1791150947-DqgPlh\\n  exact intent second line\\n  firstmate will pick this up at its next check.\\n\", \"stderr\": \"\"}\n",
+      "request": {
+        "record": "command",
+        "command_id": "fixture-command",
+        "identity": {
+          "parent_mate_id": "fixture-host",
+          "leaf_worker_id": "fixture-host/supervisor"
+        },
+        "payload": {
+          "kind": "note",
+          "text": "exact intent\nsecond line"
+        }
+      }
+    },
+    {
+      "surface": "owning-home-inbox-list",
+      "exit_code": 0,
+      "stdout": "1791150947-DqgPlh\n    exact intent\n    second line\n",
+      "stderr": ""
+    },
+    {
+      "surface": "targets",
+      "exit_code": 0,
+      "stdout": "[{\"machine\": \"fixture-host\", \"label\": \"supervisor\", \"target_class\": \"primary\", \"supported_operations\": [\"note\"], \"call_available\": false}, {\"machine\": \"fixture-host\", \"label\": \"fm-sample\", \"target_class\": \"worker\", \"supported_operations\": [\"note\", \"resolve-key\", \"interrupt\", \"exit\", \"relaunch\", \"recover-missing\", \"answer\", \"release\"], \"call_available\": true}, {\"machine\": \"fixture-host\", \"label\": \"fm-mate\", \"target_class\": \"secondmate\", \"supported_operations\": [\"note\", \"resolve-key\", \"interrupt\", \"exit\", \"relaunch\", \"recover-missing\"], \"call_available\": false}]\n",
+      "stderr": ""
+    },
+    {
+      "surface": "targets",
+      "exit_code": 0,
+      "stdout": "[{\"machine\": \"fixture-host\", \"label\": \"supervisor\", \"target_class\": \"primary\", \"supported_operations\": [\"note\", \"answer\", \"release\"], \"call_available\": true}]\n",
+      "stderr": ""
+    },
+    {
+      "surface": "targets",
+      "exit_code": 0,
+      "stdout": "[{\"machine\": \"fixture-host\", \"label\": \"fm-sample\", \"target_class\": \"worker\", \"supported_operations\": [\"note\", \"resolve-key\", \"interrupt\", \"exit\", \"relaunch\", \"recover-missing\", \"answer\", \"release\"], \"call_available\": true}]\n",
+      "stderr": ""
+    },
+    {
+      "surface": "targets",
+      "exit_code": 0,
+      "stdout": "[{\"machine\": \"fixture-host\", \"label\": \"fm-sample\", \"target_class\": \"worker\", \"supported_operations\": [\"note\", \"resolve-key\", \"interrupt\", \"exit\", \"relaunch\", \"recover-missing\", \"answer\", \"release\"], \"call_available\": true}]\n",
+      "stderr": ""
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: registered task has ambiguous or unsupported target class\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: registered task has ambiguous or unsupported target class\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: registered task has ambiguous or unsupported target class\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: registered task has ambiguous or unsupported target class\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: registered task has no regular owner metadata\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: registered task has no regular owner metadata\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: ambiguous registry binding\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: ambiguous registry binding\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: ambiguous registry binding\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: ambiguous registry binding\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: ambiguous registry binding\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 0,
+      "stdout": "[{\"machine\": \"fixture-host\", \"label\": \"supervisor\", \"target_class\": \"primary\", \"supported_operations\": [\"note\"], \"call_available\": false}, {\"machine\": \"fixture-host\", \"label\": \"alias\", \"target_class\": \"primary\", \"supported_operations\": [\"note\", \"answer\", \"release\"], \"call_available\": true}, {\"machine\": \"fixture-host\", \"label\": \"fm-sample\", \"target_class\": \"worker\", \"supported_operations\": [\"note\", \"resolve-key\", \"interrupt\", \"exit\", \"relaunch\", \"recover-missing\", \"answer\", \"release\"], \"call_available\": true}]\n",
+      "stderr": ""
+    },
+    {
+      "surface": "targets",
+      "exit_code": 0,
+      "stdout": "[{\"machine\": \"fixture-host\", \"label\": \"supervisor\", \"target_class\": \"primary\", \"supported_operations\": [\"note\", \"answer\", \"release\"], \"call_available\": true}, {\"machine\": \"fixture-host\", \"label\": \"alias\", \"target_class\": \"primary\", \"supported_operations\": [\"note\", \"answer\", \"release\"], \"call_available\": true}, {\"machine\": \"fixture-host\", \"label\": \"fm-sample\", \"target_class\": \"worker\", \"supported_operations\": [\"note\", \"resolve-key\", \"interrupt\", \"exit\", \"relaunch\", \"recover-missing\", \"answer\", \"release\"], \"call_available\": true}]\n",
+      "stderr": ""
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: task label does not match the stream publisher label\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: malformed registry binding\n"
+    },
+    {
+      "surface": "targets",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: registry machine disagrees with owning home\n"
+    },
+    {
+      "surface": "targets-insecure-registry",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "REFUSED: registry must be an owned single-link regular 0600 file\n"
+    }
+  ],
+  "before_change_failures": {
+    "141470141558344859580b49c06471ed74fbd618": {
+      "surface": "command",
+      "exit_code": 0,
+      "stdout": "{\"record\": \"command_ack\", \"command_id\": \"fixture-command\", \"leaf_worker_id\": \"fixture-host/supervisor\", \"state\": \"refused\", \"reason\": \"primary interrupt, exit/shutdown, relaunch/restart, recover-missing, and native mid-turn steering are unsupported; task-key decisions require an exact task binding\", \"received_at_utc\": \"2026-10-04T21:54:03.529039+00:00\"}\n",
+      "stderr": "",
+      "request": {
+        "record": "command",
+        "command_id": "fixture-command",
+        "identity": {
+          "parent_mate_id": "fixture-host",
+          "leaf_worker_id": "fixture-host/supervisor"
+        },
+        "payload": {
+          "kind": "interrupt"
+        }
+      }
+    },
+    "45a96423": {
+      "surface": "targets",
+      "exit_code": 0,
+      "stdout": "[{\"machine\": \"fixture-host\", \"label\": \"supervisor\", \"target_class\": \"primary\", \"supported_operations\": [\"note\"], \"call_available\": false}, {\"machine\": \"fixture-host\", \"label\": \"fm-sample\", \"target_class\": \"worker\", \"supported_operations\": [\"note\", \"resolve-key\", \"interrupt\", \"exit\", \"relaunch\", \"recover-missing\", \"answer\", \"release\"], \"call_available\": true}, {\"machine\": \"fixture-host\", \"label\": \"fm-mate\", \"target_class\": \"secondmate\", \"supported_operations\": [\"note\", \"resolve-key\", \"interrupt\", \"exit\", \"relaunch\", \"recover-missing\", \"answer\", \"release\"], \"call_available\": true}]\n",
+      "stderr": ""
+    }
+  }
+}

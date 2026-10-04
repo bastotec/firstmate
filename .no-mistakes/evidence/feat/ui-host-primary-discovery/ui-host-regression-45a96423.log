@@ -1,0 +1,13 @@
+FM_TEST_BEGIN 2026-10-04T21:54:03Z tests/fm-ui-host-control.test.sh family=unclassified expected_gate_skip=none
+NDJSON routing, exclusive CLI, lifecycle refusals and harness-specific dollar answers passed
+nonnull text, authoritative machine identities and independent-host lease preservation passed
+exact retirement, legacy selector compatibility and locked harness-switch races passed
+open command stream stdin isolation and correlated host-only success/failure diagnostics passed
+skip: tasks-axi not found (primary captain-call owner integration)
+Traceback (most recent call last):
+  File "<stdin>", line 585, in <module>
+AssertionError: [{'machine': 'fixture-host', 'label': 'supervisor', 'target_class': 'primary', 'supported_operations': ['note'], 'call_available': False}, {'machine': 'fixture-host', 'label': 'fm-sample', 'target_class': 'worker', 'supported_operations': ['note', 'resolve-key', 'interrupt', 'exit', 'relaunch', 'recover-missing', 'answer', 'release'], 'call_available': True}, {'machine': 'fixture-host', 'label': 'fm-mate', 'target_class': 'secondmate', 'supported_operations': ['note', 'resolve-key', 'interrupt', 'exit', 'relaunch', 'recover-missing', 'answer', 'release'], 'call_available': True}]
+FM_TEST_END 2026-10-04T21:54:39Z tests/fm-ui-host-control.test.sh exit=1 duration_ms=35747 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=35834
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=35747 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-ui-host-control.test.sh duration_ms=35747
