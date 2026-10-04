@@ -148,7 +148,7 @@ exit after N milliseconds without a new line following a processed record,
 including an unconfirmed result.  The default 0 disables the idle bound.
 The idle bound starts after processing, not during the hub acknowledgement wait.
 
-reconcile --hub URL --token-file PATH --fleet-id F --command-id ID reads only
+reconcile --hub URL --token-file PATH --command-id ID reads only
 GET /v1/health and GET /v1/orders/<encoded-ID>, using a subscribe-class token.
 It never resubmits or retries placement, including after a hub outage or restart.
 A settled journal result emits the same command_ack/command_nack as command
@@ -158,8 +158,7 @@ read route (HTTP 404 no_such_route).
 An absent journal id emits {"record":"command_not_found","command_id":ID},
 exiting 4; absence can mean journal eviction or hub restart, not
 that the worker is gone.  Usage, credential, protocol, malformed
-answer and transport errors exit 2 without a record.  Fleet identity is the
-operator's namespace for this hub, not a field stored by its order journal.
+answer and transport errors exit 2 without a record.
 
 compare is the Phase 2 comparison harness.  It reads this home's task records
 (<home>/state/*.meta) for stream-backed tasks, takes the adapter's rendered
@@ -572,7 +571,8 @@ class Commander:
         raise BridgeError("the hub generation could not be established for command %s"
                           % command_id)
 
-    def answer(self, command_id: str, leaf: str, status: int, body: dict) -> list:
+    @classmethod
+    def answer(cls, command_id: str, leaf: str, status: int, body: dict) -> list:
         outcome = body.get("outcome")
         response_leaf = body.get("leaf_worker_id")
         recorded_leaf = (response_leaf
@@ -581,7 +581,7 @@ class Commander:
             if not isinstance(response_leaf, str) or not response_leaf:
                 raise BridgeError("the hub accepted command %s without naming the leaf "
                                   "that received it" % command_id)
-            return [self.ack(command_id, recorded_leaf, "accepted")]
+            return [cls.ack(command_id, recorded_leaf, "accepted")]
         if outcome == "unconfirmed":
             # The hub has it and cannot say whether the worker took it. Saying
             # either would be a guess, so the id stays pending and nothing is
@@ -591,10 +591,10 @@ class Commander:
         # other refusal is a refusal WITHOUT a membership claim, because the
         # hub reaching no verdict is not the same as a verdict of absence.
         if body.get("worker_gone"):
-            return [self.nack(command_id, NACK_NO_SUCH_WORKER)]
+            return [cls.nack(command_id, NACK_NO_SUCH_WORKER)]
         reason = body.get("reason") or body.get("error") or ("HTTP %d" % status)
         message = body.get("reason_message") or body.get("message") or ""
-        return [self.ack(command_id, recorded_leaf, "refused",
+        return [cls.ack(command_id, recorded_leaf, "refused",
                          "%s: %s" % (reason, message) if message else str(reason))]
 
 
@@ -688,7 +688,7 @@ def cmd_reconcile(options: argparse.Namespace) -> int:
         raise BridgeError("the journal returned an order without a leaf")
     if body.get("outcome") not in ("accepted", "refused", "unconfirmed"):
         raise BridgeError("the journal returned an unknown order outcome")
-    answer = Commander(client, options.fleet_id).answer(options.command_id, leaf, 200, body)
+    answer = Commander.answer(options.command_id, leaf, 200, body)
     if answer:
         emit(answer)
         return 0
@@ -915,7 +915,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     reconcile = commands.add_parser("reconcile", help="read an existing order's fate; never submit")
     hub_options(reconcile, True)
-    reconcile.add_argument("--fleet-id", default=DEFAULT_FLEET_ID)
     reconcile.add_argument("--command-id", required=True)
 
     compare = commands.add_parser("compare", help="compare against fm-crew-state.sh")

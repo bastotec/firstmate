@@ -727,13 +727,13 @@ PY
     "an order the hub could not settle must produce no record at all"
   local code command_id
   out=$(python3 "$BRIDGE" reconcile --hub "$URL" --token-file "$CASE_DIR/view-token" \
-    --fleet-id test-fleet --command-id c-pending)
+    --command-id c-pending)
   code=$?
   assert_equals "$code" 3 "a taken unanswered order must remain pending"
   assert_equals "$out" '{"record":"command_pending","command_id":"c-pending"}' \
     "reconcile must report pending without fabricating an acknowledgement"
   out=$(python3 "$BRIDGE" reconcile --hub "$URL" --token-file "$CASE_DIR/view-token" \
-    --fleet-id test-fleet --command-id never-submitted)
+    --command-id never-submitted)
   assert_equals "$?" 4 "an absent journal id must be distinct from pending"
   assert_equals "$out" '{"record":"command_not_found","command_id":"never-submitted"}' \
     "a missing journal record is not a membership nack"
@@ -757,7 +757,7 @@ PY
   assert_equals "$(jq -r '.ok' "$CASE_DIR/late-result.json")" true \
     "the original command's late native result must be acknowledged by the hub"
   out=$(python3 "$BRIDGE" reconcile --hub "$URL" --token-file "$CASE_DIR/view-token" \
-    --fleet-id test-fleet --command-id c-pending)
+    --command-id c-pending)
   assert_equals "$?" 0 "a late result must settle through a subscribe-only read"
   assert_equals "$(printf '%s' "$out" | jq -r '.record + "/" + .state + "/" + .command_id')" \
     command_ack/accepted/c-pending "passive reconciliation must expose the original result"
@@ -862,6 +862,10 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 command = [sys.executable, sys.argv[1], "reconcile", "--hub",
            "http://127.0.0.1:%d" % server.server_port, "--token-file", sys.argv[2]]
 try:
+    result = subprocess.run(command + ["--command-id", "refused", "--fleet-id", "test-fleet"],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 2 and not result.stdout, result
+    assert "unrecognized arguments: --fleet-id test-fleet" in result.stderr, result
     for identity, code in [("legacy", 3), ("unauthorized", 2), ("wrong-id", 2),
                            ("malformed", 2), ("refused", 0)]:
         result = subprocess.run(command + ["--command-id", identity],
