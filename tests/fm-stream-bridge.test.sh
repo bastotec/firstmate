@@ -687,7 +687,7 @@ test_an_order_the_hub_cannot_settle_is_left_pending_rather_than_answered() {
   capability=$(curl -sS -m 30 -H "Authorization: Bearer $PUBLISH_TOKEN" \
     -H 'Content-Type: application/json' --data-binary "$(jq -nc \
       --arg id "$endpoint" --arg label "frozen-$RUN" \
-      '{protocol: 3, endpoint_id: $id, machine: "box-a", label: $label, cwd: "/tmp", capabilities: ["idempotent_command_results"]}')" \
+      '{protocol: 3, endpoint_id: $id, machine: "box-a", label: $label, cwd: "/tmp", capabilities: ["idempotent_command_results", "native_steering_receiver"]}')" \
     "$URL/v1/agent/endpoints" | jq -er '.command_capability') \
     || fail "could not register the test endpoint"
   printf '%s\n' "$(composer_command c-pending "box-a/frozen-$RUN" "echo MAYBE" "$endpoint")" \
