@@ -12,6 +12,8 @@
 #
 # Each case gets its own hub on an ephemeral port, so nothing depends on a fixed
 # port being free and no case can see another's endpoints.
+# FM_TEST_STREAM_HUB_BINARY selects an isolated Rust hub for HTTP cases;
+# the Python-only accelerated retention case still exercises the reference.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -63,7 +65,11 @@ spawn_hub() {
   local waited=0 host bound pid
   HUB_READY="$CASE_DIR/ready"
   rm -f "$HUB_READY"
-  python3 "$HUB" serve --bind 127.0.0.1 --port "$port" \
+  local hub_command=(python3 "$HUB")
+  if [ -n "${FM_TEST_STREAM_HUB_BINARY:-}" ]; then
+    hub_command=("$FM_TEST_STREAM_HUB_BINARY")
+  fi
+  "${hub_command[@]}" serve --bind 127.0.0.1 --port "$port" \
     --token-file "$CASE_DIR/tokens" --ready-file "$HUB_READY" "$@" \
     >> "$CASE_DIR/log" 2>&1 &
   pid=$!

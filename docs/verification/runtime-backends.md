@@ -1804,6 +1804,39 @@ The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
 
 ## stream
 
+### Rust hub isolated compatibility
+
+Measured 2026-10-01 on macOS with Rust 1.96.0 and Python 3.9.6 against Hub 2.0.0, protocol 3.
+The Rust binary was a debug build; these single-run observations describe an isolated loopback pilot, not a production capacity guarantee or target budget.
+The driver measures ready-file startup, `ps -o rss=` resident KiB before frame traffic, and 100 sequential 4096-byte published frames through the HTTP and screen-rendering path.
+
+```sh
+bash tests/fm-stream-hub-rust.test.sh
+cargo +stable fmt --all --check
+cargo +stable clippy -p fm-stream-hub --all-targets --no-deps -- -D warnings
+cargo +stable test --workspace --locked
+```
+
+Observed parity output:
+
+```text
+differential: 165 HTTP/stream observations and Python agent/bridge lifecycle match
+measurements: {"python": {"frame_mib_per_second": 0.53, "rss_kib": 22464, "startup_ms": 95.88}, "rust": {"frame_mib_per_second": 0.46, "rss_kib": 5856, "startup_ms": 16.87}}
+ok - Rust hub: HTTP, stream, order and Python peer compatibility
+```
+
+The hub crate's tests cover expiry boundaries, capability revocation, authoritative close preservation, late-result uncertainty, and an active order whose id is evicted from the bounded journal.
+`crates/fm-stream-hub/tests/cli.rs` covers executable-level JSON compatibility, allocation refusals, terminal parameters, live SSE output, and request liveness with idle command polls.
+Its deep-command regression checks byte-exact payloads through 200,000 nested arrays, overwritten duplicate-key values, malformed nested-body refusal, and subsequent health/task reads.
+`tests/assets/stream-hub-differential.py` checks forwarded command bytes for non-finite numbers, lone surrogates, and deeply nested composites against the Python hub, including `POST status` with `note=[NaN, "\ud800"]`; its Python-peer case also compares the resulting durable status bytes.
+The HTTP regressions in `crates/fm-stream-hub/src/main.rs` cover deletion across reap/re-registration and SSE endpoint-incarnation binding.
+The differential driver's terminal cases compare Unicode width, ANSI rendering, oversized CSI integers, and OSC/DCS boundaries against the Python reference.
+Its native-steering cases compare execution/order-bound `steer` command payloads, refusal without a receiver, and refusal when re-registration changes receiver capabilities.
+The existing bridge suite also passes with `FM_TEST_STREAM_HUB_BINARY="$PWD/target/debug/fm-stream-hub" bin/fm-test-run.sh tests/fm-stream-bridge.test.sh`.
+A complete hub-suite invocation on this host stops at the existing shell-died-at-birth refusal case documented below, after the earlier HTTP/body, stream, capture, registry, and state-read cases pass against Rust.
+This is not a claim that every stream suite passes on macOS: the backend suite requires `setsid`, and the existing Rust-bridge HTTPS fixture cannot validate its generated certificate with this host's Python trust store.
+The pilot and replacement prerequisites remain owned by [the stream guide](../stream-backend.md#rust-hub-pilot).
+
 ### Deck home-host lifecycle
 
 Measured 2026-09-24 on macOS with Bash 3.2.57 and Python 3.14.2 using the portable fixtures, not live model calls.

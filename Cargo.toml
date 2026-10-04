@@ -1,6 +1,6 @@
 [workspace]
 # The stream backend is moving from Python to Rust one piece at a time.
-# This workspace contains the shared wire crate and opt-in bridge/agent ports;
+# This workspace contains the shared wire crate and opt-in bridge/agent/hub ports;
 # docs/stream-backend.md owns its operator-facing status and limits.
 #
 # Cargo.lock is committed so binary builds are reproducible from a clean
@@ -9,6 +9,7 @@ resolver = "2"
 members = [
     "crates/fm-stream-wire",
     "crates/fm-stream-bridge",
+    "crates/fm-stream-hub",
     "crates/fm-stream-agent",
 ]
 

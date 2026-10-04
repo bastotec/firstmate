@@ -1,20 +1,51 @@
-//! A scanner that renders CPython's exact `json.JSONDecodeError` messages.
+//! A stack-safe compatibility scanner for CPython's `json.JSONDecodeError` messages.
 //!
 //! `serde_json` and CPython disagree on both messages and the set of accepted
 //! documents (Python takes `NaN`/`Infinity` literals and lone surrogate
 //! escapes), and the adapters surface those messages verbatim (`line %d is
 //! not JSON: %s`, `cannot read the feed %s: %s`).  So when `serde_json`
-//! rejects a line, this scanner either produces Python's own refusal, byte
-//! for byte, or - when it finds the line Python-valid - says `None`, and the
-//! caller knows the failure is one of Python's non-standard extensions.
+//! rejects a document, this scanner produces Python's own refusal, or says
+//! `None` when Python would accept the document. Container scanning uses an
+//! explicit stack so deeply nested command values do not exhaust the call stack.
 //!
 //! Positions are character-based, like Python's, and `lineno`/`colno` follow
-//! CPython's arithmetic even though the call sites always hand over a single
-//! line.
+//! CPython's arithmetic, including for multiline hub request bodies.
 
-/// Python's error message for a rejected document, or `None` when Python's
-/// parser would have accepted it.
+/// Python's error message, or a safety refusal above 128 nested containers.
+/// This entry point retains the bridge's bounded Serde-value contract.
 pub fn python_json_error(text: &str) -> Option<String> {
+    let mut depth: usize = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for byte in text.bytes() {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                quoted = false;
+            }
+        } else {
+            match byte {
+                b'"' => quoted = true,
+                b'[' | b'{' => {
+                    depth += 1;
+                    if depth > 128 {
+                        return Some("maximum JSON nesting depth exceeded".into());
+                    }
+                }
+                b']' | b'}' => depth = depth.saturating_sub(1),
+                _ => (),
+            }
+        }
+    }
+    python_json_error_unbounded(text)
+}
+
+/// Python's error message, or `None` for a Python-valid document.
+/// Use only with stack-safe value parsing, encoding, and destruction.
+pub fn python_json_error_unbounded(text: &str) -> Option<String> {
     let chars: Vec<char> = text.chars().collect();
     match scan_value(&chars, skip_ws(&chars, 0)) {
         Ok(mut pos) => {
@@ -32,10 +63,19 @@ pub fn python_json_error(text: &str) -> Option<String> {
 /// `NaN`/`Infinity`/-`Infinity` tokens and numbers whose value overflows a
 /// finite f64 become `null`, and unpaired surrogate escapes inside strings
 /// become `\uFFFD`, so a Python-valid document that `serde_json` rejected
-/// can be re-parsed.  Downstream, `null` reaches the same refusals Python's
-/// non-finite values reach (`must be a finite, non-negative number`, the
-/// not-an-int exit-code reading), which is what makes the rewrite safe.
+/// can be re-parsed.
 pub fn python_reparse(text: &str) -> Result<serde_json::Value, ()> {
+    reparse(text, "null")
+}
+
+/// Reparse with non-finite values represented by a truthy number instead of null.
+/// Use only to recover consumed boolean fields: this is not a numeric-value
+/// representation and must not replace the bridge's null-based reparse.
+pub fn python_reparse_truthy(text: &str) -> Result<serde_json::Value, ()> {
+    reparse(text, "1")
+}
+
+fn reparse(text: &str, nonfinite: &str) -> Result<serde_json::Value, ()> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut index = 0;
@@ -79,6 +119,12 @@ pub fn python_reparse(text: &str) -> Result<serde_json::Value, ()> {
                         }
                     }
                 }
+                if c == '\\' && index + 1 < chars.len() {
+                    out.push(c);
+                    out.push(chars[index + 1]);
+                    index += 2;
+                    continue;
+                }
                 out.push(c);
                 index += 1;
             }
@@ -86,7 +132,7 @@ pub fn python_reparse(text: &str) -> Result<serde_json::Value, ()> {
         }
         if ch == '-' || ch.is_ascii_digit() || ch == 'N' || ch == 'I' {
             // A bare number or non-standard literal outside strings: replace
-            // the ones serde cannot hold with null, copy the rest through.
+            // the ones serde cannot hold with the caller's sentinel.
             let start = index;
             if ch == '-' {
                 index += 1;
@@ -95,7 +141,7 @@ pub fn python_reparse(text: &str) -> Result<serde_json::Value, ()> {
                 while index < chars.len() && chars[index].is_ascii_alphabetic() {
                     index += 1;
                 }
-                out.push_str("null");
+                out.push_str(nonfinite);
                 continue;
             }
             while index < chars.len()
@@ -107,9 +153,7 @@ pub fn python_reparse(text: &str) -> Result<serde_json::Value, ()> {
             let token: String = chars[start..index].iter().collect();
             match token.parse::<f64>() {
                 Ok(value) if value.is_finite() => out.push_str(&token),
-                // Overflow beyond f64: Python holds inf, every consumer of
-                // it refuses it as non-finite, null reaches the same words.
-                _ => out.push_str("null"),
+                _ => out.push_str(nonfinite),
             }
             continue;
         }
@@ -158,30 +202,84 @@ fn skip_ws(chars: &[char], mut pos: usize) -> usize {
 /// A parse failure: Python's message and the character it points at.
 type ScanError = (&'static str, usize);
 
-fn scan_value(chars: &[char], pos: usize) -> Result<usize, ScanError> {
-    let Some(&ch) = chars.get(pos) else {
-        return Err(("Expecting value", pos));
-    };
-    match ch {
-        '"' => scan_string(chars, pos),
-        '{' => scan_object(chars, pos),
-        '[' => scan_array(chars, pos),
-        't' => scan_literal(chars, pos, "true"),
-        'f' => scan_literal(chars, pos, "false"),
-        'n' => scan_literal(chars, pos, "null"),
-        'N' => scan_literal(chars, pos, "NaN"),
-        'I' => scan_literal(chars, pos, "Infinity"),
-        '-' => {
-            // Python special-cases -Infinity before its number grammar.
-            if chars.get(pos + 1) == Some(&'I') {
-                scan_literal(chars, pos, "-Infinity")
-            } else {
-                scan_number(chars, pos)
+fn scan_value(chars: &[char], mut pos: usize) -> Result<usize, ScanError> {
+    // Each entry is the closer to expect after this container's next value.
+    let mut containers = Vec::new();
+    loop {
+        match chars.get(pos) {
+            Some('{') => {
+                containers.push('}');
+                pos = skip_ws(chars, pos + 1);
+                if chars.get(pos) != Some(&'}') {
+                    pos = scan_key(chars, pos)?;
+                    continue;
+                }
+                pos += 1;
+                containers.pop();
             }
+            Some('[') => {
+                containers.push(']');
+                pos = skip_ws(chars, pos + 1);
+                if chars.get(pos) != Some(&']') {
+                    continue;
+                }
+                pos += 1;
+                containers.pop();
+            }
+            Some('"') => pos = scan_string(chars, pos)?,
+            Some('t') => pos = scan_literal(chars, pos, "true")?,
+            Some('f') => pos = scan_literal(chars, pos, "false")?,
+            Some('n') => pos = scan_literal(chars, pos, "null")?,
+            Some('N') => pos = scan_literal(chars, pos, "NaN")?,
+            Some('I') => pos = scan_literal(chars, pos, "Infinity")?,
+            Some('-') if chars.get(pos + 1) == Some(&'I') => {
+                pos = scan_literal(chars, pos, "-Infinity")?;
+            }
+            Some('-' | '0'..='9') => pos = scan_number(chars, pos)?,
+            _ => return Err(("Expecting value", pos)),
         }
-        '0'..='9' => scan_number(chars, pos),
-        _ => Err(("Expecting value", pos)),
+        loop {
+            let Some(&closer) = containers.last() else {
+                return Ok(pos);
+            };
+            pos = skip_ws(chars, pos);
+            if chars.get(pos) == Some(&closer) {
+                containers.pop();
+                pos += 1;
+                continue;
+            }
+            if chars.get(pos) != Some(&',') {
+                return Err(("Expecting ',' delimiter", pos));
+            }
+            let comma = pos;
+            pos = skip_ws(chars, pos + 1);
+            if chars.get(pos) == Some(&closer) {
+                return Err((
+                    if closer == '}' {
+                        "Illegal trailing comma before end of object"
+                    } else {
+                        "Illegal trailing comma before end of array"
+                    },
+                    comma,
+                ));
+            }
+            if closer == '}' {
+                pos = scan_key(chars, pos)?;
+            }
+            break;
+        }
     }
+}
+
+fn scan_key(chars: &[char], pos: usize) -> Result<usize, ScanError> {
+    if chars.get(pos) != Some(&'"') {
+        return Err(("Expecting property name enclosed in double quotes", pos));
+    }
+    let pos = skip_ws(chars, scan_string(chars, pos)?);
+    if chars.get(pos) != Some(&':') {
+        return Err(("Expecting ':' delimiter", pos));
+    }
+    Ok(skip_ws(chars, pos + 1))
 }
 
 fn scan_literal(chars: &[char], pos: usize, word: &str) -> Result<usize, ScanError> {
@@ -264,60 +362,6 @@ fn scan_string(chars: &[char], start: usize) -> Result<usize, ScanError> {
             }
             c if (c as u32) < 0x20 => return Err(("Invalid control character at", pos)),
             _ => pos += 1,
-        }
-    }
-}
-
-fn scan_object(chars: &[char], open: usize) -> Result<usize, ScanError> {
-    let mut pos = skip_ws(chars, open + 1);
-    loop {
-        match chars.get(pos) {
-            Some('}') => return Ok(pos + 1),
-            Some('"') => {}
-            _ => return Err(("Expecting property name enclosed in double quotes", pos)),
-        }
-        pos = scan_string(chars, pos)?;
-        pos = skip_ws(chars, pos);
-        if chars.get(pos) != Some(&':') {
-            return Err(("Expecting ':' delimiter", pos));
-        }
-        pos = skip_ws(chars, pos + 1);
-        pos = scan_value(chars, pos)?;
-        pos = skip_ws(chars, pos);
-        match chars.get(pos) {
-            Some(',') => {
-                let comma = pos;
-                pos = skip_ws(chars, pos + 1);
-                if chars.get(pos) == Some(&'}') {
-                    // The refusal points at the comma, where the ill-formed
-                    // pair began, not at the closer it was reaching for.
-                    return Err(("Illegal trailing comma before end of object", comma));
-                }
-            }
-            Some('}') => return Ok(pos + 1),
-            _ => return Err(("Expecting ',' delimiter", pos)),
-        }
-    }
-}
-
-fn scan_array(chars: &[char], open: usize) -> Result<usize, ScanError> {
-    let mut pos = skip_ws(chars, open + 1);
-    if chars.get(pos) == Some(&']') {
-        return Ok(pos + 1);
-    }
-    loop {
-        pos = scan_value(chars, pos)?;
-        pos = skip_ws(chars, pos);
-        match chars.get(pos) {
-            Some(',') => {
-                let comma = pos;
-                pos = skip_ws(chars, pos + 1);
-                if chars.get(pos) == Some(&']') {
-                    return Err(("Illegal trailing comma before end of array", comma));
-                }
-            }
-            Some(']') => return Ok(pos + 1),
-            _ => return Err(("Expecting ',' delimiter", pos)),
         }
     }
 }
@@ -451,9 +495,61 @@ mod tests {
     }
 
     #[test]
+    fn nesting_is_scanned_without_recursion_or_counting_string_contents() {
+        let nested = format!("{}0{}", "[".repeat(200_000), "]".repeat(200_000));
+        assert_eq!(python_json_error_unbounded(&nested), None);
+        assert_eq!(
+            python_json_error(&nested).as_deref(),
+            Some("maximum JSON nesting depth exceeded")
+        );
+        let mixed = format!("{}0{}", "{\"x\":[".repeat(100_000), "]}".repeat(100_000));
+        assert_eq!(python_json_error_unbounded(&mixed), None);
+        let malformed = format!("{}0,{}", "[".repeat(150), "]".repeat(150));
+        assert_eq!(
+            python_json_error_unbounded(&malformed).as_deref(),
+            Some("Illegal trailing comma before end of array: line 1 column 152 (char 151)")
+        );
+        let quoted =
+            serde_json::json!({"text": format!("\\\"{}", "[".repeat(200_000))}).to_string();
+        assert_eq!(python_json_error(&quoted), None);
+        let bounded = format!("{}NaN{}", "[".repeat(64), "]".repeat(64));
+        assert_eq!(python_json_error(&bounded), None);
+        assert!(python_reparse(&bounded).is_ok());
+    }
+
+    #[test]
+    fn reparse_preserves_literal_escapes_and_escaped_quotes() {
+        let text =
+            r#"{"text":"\\ud800 \\udfff \\ud83d\\ude00 \\\"NaN Infinity","keys":["\ud800"]}"#;
+        assert_eq!(python_json_error(text), None);
+        let value = python_reparse(text).unwrap();
+        assert_eq!(
+            value["text"],
+            "\\ud800 \\udfff \\ud83d\\ude00 \\\"NaN Infinity"
+        );
+        assert_eq!(value["keys"][0], "\u{fffd}");
+        let escaped_quote = r#"{"text":"a\"NaN Infinity b","unused":NaN}"#;
+        let value = python_reparse(escaped_quote).unwrap();
+        assert_eq!(value["text"], "a\"NaN Infinity b");
+    }
+
+    #[test]
+    fn truthy_reparse_does_not_change_bridge_nonfinite_conversion() {
+        let text = "[NaN, Infinity, -Infinity, 1e999, -1e999, 0, 1e-999]";
+        let bridge = python_reparse(text).unwrap();
+        let truthy = python_reparse_truthy(text).unwrap();
+        for index in 0..5 {
+            assert!(bridge[index].is_null());
+            assert_eq!(truthy[index], 1);
+        }
+        for index in 5..7 {
+            assert_eq!(bridge[index].as_f64(), Some(0.));
+            assert_eq!(truthy[index].as_f64(), Some(0.));
+        }
+    }
+
+    #[test]
     fn reparse_holds_pythons_nonstandard_documents() {
-        // Non-finite literals become null, which every consumer refuses the
-        // same way Python's finite check refuses the original.
         let value = python_reparse("{\"at_ms\": NaN}").unwrap();
         assert_eq!(value["at_ms"], serde_json::Value::Null);
         let value = python_reparse("[Infinity, -Infinity]").unwrap();
