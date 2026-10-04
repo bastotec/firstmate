@@ -431,7 +431,7 @@ class Owner:
                             if len(line) > 131072 or not line.endswith(b'\n'):
                                 raise Refused('invalid/oversized primary command')
                             answer = self.dispatch(json.loads(line, object_pairs_hook=unique_fields))
-                    except (ValueError, OSError, RuntimeError) as exc:
+                    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
                         answer = {'state': 'pending' if self.action_started else 'refused',
                                   'message': str(exc)}
                     try:

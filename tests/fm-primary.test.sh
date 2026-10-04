@@ -186,6 +186,39 @@ try:
  alive=control(eid,'recover-missing',success=False)
  assert 'registered_primary_is_alive' in alive['message']
  native_args=('--order-id','fixture-order','--text','native fixture steer')
+ receiver=pathlib.Path(first['status_path']).parent/'primary.inbox'/('deck-'+eid)
+ active=wait(lambda: (json.loads((receiver/'active.json').read_text())
+                     if (receiver/'active.json').exists() else None),'native receiver active')
+ assert active['active'] and active['supported'],active
+ order_id='ui-'+hashlib.sha256(('fixture-steer-'+eid).encode()).hexdigest()
+ reservation=receiver/('order-'+hashlib.sha256(order_id.encode()).hexdigest()+'.json')
+ inbox_library=bin/'fm-task-inbox-lib.sh'
+ saved_library=bin/'fixture-task-inbox-lib.sh'
+ inbox_library.rename(saved_library)
+ executable(inbox_library, '''#!/bin/sh
+fm_task_inbox_write_idempotent() {
+ printf 'fixture enqueue failure\n' >&2
+ return 73
+}
+''')
+ try:
+  failed_steer=control(eid,'steer','--order-id',order_id,'--text','native fixture steer')
+  assert failed_steer['state']=='pending' and 'non-zero exit status 73' in failed_steer['message'],failed_steer
+  stored=json.loads(reservation.read_text())
+  assert stored['binding']=={'order_id':order_id,'execution':eid,'turn':active['turn']},stored
+  pending_ui=ui_result('steer',eid,text='native fixture steer')
+  assert not pending_ui.stdout,pending_ui.stdout
+  diagnostic=json.loads(pending_ui.stderr)
+  assert diagnostic['state']=='unconfirmed' and diagnostic['command_id']=='fixture-steer-'+eid,diagnostic
+  pending=json.loads(diagnostic['stdout'])
+  assert pending['state']=='pending' and 'non-zero exit status 73' in pending['message'],pending
+  assert owner.poll() is None and record()==first,'enqueue failure stopped the lifecycle owner'
+  child_pid=json.loads((fixture/(eid+'.started')).read_text())['pid']
+  os.kill(child_pid,0)
+  assert json.loads((receiver/'active.json').read_text())==active,'enqueue failure retired the native turn'
+  assert not list(receiver.parent.glob('*.msg')) and not (fixture/(eid+'.steered')).exists()
+ finally:
+  saved_library.replace(inbox_library)
  result=ui('steer',eid,text='native fixture steer')
  assert not result or result[0]['state']=='accepted',result
  wait(lambda:(fixture/(eid+'.steered')).exists(),'execution-bound native application')
@@ -235,6 +268,7 @@ try:
  print('PASS managed setup/discovery, genuine endpoint registration, duplicate and unregistered refusals')
  print('PASS owned-child interrupt/exit/relaunch/recover-missing, exact profile replay, stale execution refusal')
  print('PASS browser-safe storage refusal, correlated host-only owner diagnostics and safe named categories')
+ print('PASS enqueue subprocess failure stays pending, preserves owner/child and reconciles the original order')
  print('PASS execution-bound Deck native acceptance and unsupported-adapter no-fallback refusal')
 finally:
  # Reap only children this fixture created. Owners reap their own PTY children.
