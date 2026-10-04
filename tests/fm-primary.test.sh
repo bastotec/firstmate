@@ -87,11 +87,11 @@ def control(execution,action,*args,success=True):
  return command('control','--home',str(home),'--execution-id',execution,action,*args,success=success)
 registry=lab/'ui-registry.json'
 router=[sys.executable,str(bin/'fm-ui-host-control.py'),'--registry',str(registry)]
-def ui_result(action,execution,**extra):
+def ui_result(action,execution,*,command_id=None,**extra):
  payload=dict(kind=action,execution_id=execution)
  if action in ('relaunch','recover-missing'): payload['note']='fixture lifecycle checkpoint'
  payload.update(extra)
- request=dict(record='command',command_id='fixture-'+action+'-'+execution,
+ request=dict(record='command',command_id=command_id or 'fixture-'+action+'-'+execution,
               identity=dict(parent_mate_id='fixture-machine',leaf_worker_id='fixture-machine/fixture-primary'),
               payload=payload)
  result=subprocess.run(router+['command'],input=json.dumps(request)+'\n',env=env,
@@ -237,7 +237,30 @@ fm_task_inbox_write_idempotent() {
  assert ui('exit',eid)[0]['state']=='refused'
  assert ui('exit',eid2)[0]['state']=='accepted' and record()['state']=='exited'
  assert owner.poll() is None,'exit must retain manager capability for relaunch'
- assert ui('recover-missing',eid2)[0]['state']=='accepted'
+ exited=record()
+ owner_socket=pathlib.Path(exited['socket'])
+ saved_token=lab/'token.restore'
+ token.rename(saved_token)
+ try:
+  standalone=subprocess.run([sys.executable,str(bin/'fm-stream-agent.py'),'serve',
+       '--hub',url,'--token-file',str(token),'--label','fixture-standalone','--cwd',str(home)],
+       env=env,capture_output=True,text=True,timeout=10)
+  assert standalone.returncode==1 and not standalone.stdout and 'cannot read --token-file' in standalone.stderr,standalone
+  failed_recovery=ui_result('recover-missing',eid2)
+  assert not failed_recovery.stdout,failed_recovery.stdout
+  diagnostic=json.loads(failed_recovery.stderr)
+  pending=json.loads(diagnostic['stdout'])
+  assert diagnostic['state']=='unconfirmed' and diagnostic['command_id']=='fixture-recover-missing-'+eid2,diagnostic
+  assert pending['state']=='pending' and 'cannot read --token-file' in pending['message'],pending
+  assert owner.poll() is None and record()==exited and owner_socket.is_socket(),'token failure retired the manager'
+  assert command('discover','--home',str(home))==discovered,'token failure lost discoverable ownership'
+  assert control('0'*32,'interrupt',success=False)['state']=='refused','manager stopped handling requests'
+ finally:
+  saved_token.replace(token)
+ retained=ui_result('recover-missing',eid2)
+ assert not retained.stdout and json.loads(json.loads(retained.stderr)['stdout'])==pending,'pending receipt repeated lifecycle'
+ assert record()==exited and owner_socket.is_socket() and owner.poll() is None
+ assert ui('recover-missing',eid2,command_id='fixture-restored-token-'+eid2)[0]['state']=='accepted'
  third=record(); eid3=third['execution_id']; assert eid3 not in (eid,eid2)
  wait(lambda:(fixture/(eid3+'.started')).exists(),'recover missing owned child')
  assert third['profile']==first['profile']
@@ -269,6 +292,7 @@ fm_task_inbox_write_idempotent() {
  print('PASS owned-child interrupt/exit/relaunch/recover-missing, exact profile replay, stale execution refusal')
  print('PASS browser-safe storage refusal, correlated host-only owner diagnostics and safe named categories')
  print('PASS enqueue subprocess failure stays pending, preserves owner/child and reconciles the original order')
+ print('PASS token failure retains manager/socket and pending receipt; restored fixture token permits authorized recovery')
  print('PASS execution-bound Deck native acceptance and unsupported-adapter no-fallback refusal')
 finally:
  # Reap only children this fixture created. Owners reap their own PTY children.

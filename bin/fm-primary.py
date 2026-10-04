@@ -280,7 +280,11 @@ class Owner:
                                   cwd=self.home, rows=40, cols=200, status_path=status_path,
                                   state_interval=1.0, poll_secs=1,
                                   primary_native_only=True, primary_adapter=captured['adapter'])
-        hub = stream.HubClient(options.hub, stream.read_token(options))
+        try:
+            token = stream.read_token(options)
+        except SystemExit as exc:
+            raise Refused(str(exc)) from exc
+        hub = stream.HubClient(options.hub, token)
         hub.begin_startup()
         health = hub.call('GET', '/v1/health')
         if (health.get('protocol') != stream.AGENT_PROTOCOL
