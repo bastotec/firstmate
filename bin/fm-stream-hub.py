@@ -20,6 +20,13 @@ router:
 
 docs/stream-backend.md owns setup, security, and limits.
 
+GET /v1/orders/<percent-encoded-order-id> requires subscribe and reads the
+bounded in-memory order journal without placing, retrying or waiting on an
+order.  It returns the same live Order.describe fields as placement (including
+late acknowledgement changes); HTTP 404 no_such_order means only that this id
+is absent, possibly evicted or lost on restart, never that its worker is gone.
+No command text or endpoint capability is exposed by this read.
+
 The five-point backend lifecycle contract in docs/codex-app-backend.md maps
 onto these routes:
 
@@ -1959,6 +1966,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "machines": [m.describe(hub.options.state_max_age_secs)
                              for m in hub.list_machines()],
             })
+            return
+
+        if path.startswith("/v1/orders/") and method == "GET":
+            # Read only the existing journal: never place, retry, reap or wait.
+            self._require(CLASS_SUBSCRIBE, query)
+            order_id = urllib.parse.unquote(path[len("/v1/orders/"):])
+            with hub.lock:
+                order = hub.orders.get(order_id)
+                if order is None:
+                    raise HubError(HTTPStatus.NOT_FOUND, "no_such_order",
+                                   "this order id is not in the bounded journal")
+                record = order.describe()
+            self._json(HTTPStatus.OK, dict(record, ok=True))
             return
 
         if path == "/v1/orders" and method == "POST":

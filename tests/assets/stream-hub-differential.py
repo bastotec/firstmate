@@ -10,6 +10,7 @@ import concurrent.futures
 import http.client
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -30,9 +31,16 @@ CLOCKS = {"created_at", "closed_at", "requested_at", "started_at", "first_seen",
 def normalized(value, identities=None):
     identities = identities or {}
     if isinstance(value, dict):
-        return {k: (None if v is None else "clock") if k in CLOCKS else
-                normalized(v, identities) for k, v in value.items()
-                if k not in ("command_capability", "generation")}
+        result = {k: (None if v is None else "clock") if k in CLOCKS else
+                  normalized(v, identities) for k, v in value.items()
+                  if k not in ("command_capability", "generation")}
+        # Order.describe repeats the measured agent age in reason_message.
+        # Keep the diagnostic and configured timeout, dropping only that age.
+        if value.get("reason") == "no_agent_ack" and isinstance(result.get("reason_message"), str):
+            result["reason_message"] = re.sub(
+                r"last heard from [0-9]+\.[0-9]+s ago",
+                "last heard from <measured-age>s ago", result["reason_message"])
+        return result
     if isinstance(value, (list, tuple)):
         return [normalized(v, identities) for v in value]
     if isinstance(value, str):
@@ -331,6 +339,15 @@ def exercise(p):
             save(f.result())
     save(p.take(a))
     save(p.order(a))
+    journal = save(p.api("GET", "/v1/orders/%6Frder", token="view"))
+    assert journal[0] == 200 and journal[1]["outcome"] == "accepted"
+    assert journal[1]["requested_execution_id"] == a
+    assert "text" not in journal[1] and "command_capability" not in journal[1]
+    assert p.take(a)[1]["commands"] == []
+    denied = save(p.api("GET", "/v1/orders/order", token="pub"))
+    assert denied[0] == 403
+    missing = save(p.api("GET", "/v1/orders/absent", token="view"))
+    assert missing[0] == 404 and missing[1]["error"] == "no_such_order"
     save(p.order(a, text="changed"))
     save(p.order(a, oid="stale-gen", hub_generation="stale"))
     save(p.order(c, oid="stale-execution"))
@@ -353,9 +370,30 @@ def exercise(p):
                 # and refusal remain compared while that time is rounded away.
                 timed_out[1]["message"] = "timed-out taken command (measured age)"
                 save(timed_out)
+                journal = save(p.api("GET", "/v1/orders/" + oid, token="view"))
+                assert journal[0] == 200 and journal[1]["outcome"] == "unconfirmed"
+                assert journal[1]["requested_execution_id"] == a
             save(p.result(cid, a, ok, "" if ok else "agent says no"))
             if not ok:
                 save(future.result())
+            journal = save(p.api("GET", "/v1/orders/" + oid, token="view"))
+            assert journal[0] == 200
+            assert journal[1]["outcome"] == ("accepted" if ok else "refused")
+            assert journal[1]["requested_execution_id"] == a
+            assert p.take(a)[1]["commands"] == []
+            print(p.directory.name + " passive journal: " + json.dumps(journal, sort_keys=True))
+            bridge = subprocess.run([sys.executable, str(ROOT / "bin/fm-stream-bridge.py"),
+                "reconcile", "--hub", p.url, "--token-file", str(p.directory / "view"),
+                "--command-id", oid], capture_output=True, text=True, timeout=10)
+            assert bridge.returncode == 0, bridge
+            answer = json.loads(bridge.stdout)
+            assert answer["record"] == "command_ack" and answer["command_id"] == oid
+            assert answer["state"] == ("accepted" if ok else "refused")
+            assert answer["leaf_worker_id"] == "box/worker"
+            if not ok:
+                assert answer["reason"] == "agent_refused: agent says no"
+            print(p.directory.name + " passive bridge: " + bridge.stdout.strip())
+            assert p.take(a)[1]["commands"] == []
             save(p.order(a, oid))
     # Never taken means NOT delivered, unlike the taken timeout above.
     timeout = p.order(b, "never", leaf_worker_id="box/sibling")
