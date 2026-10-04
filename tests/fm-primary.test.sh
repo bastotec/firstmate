@@ -7,7 +7,7 @@ set -eu
 LAB=$(fm_test_tmproot fm-primary)
 trap fm_test_cleanup EXIT
 python3 - "$ROOT" "$LAB" <<'PY'
-import json, os, pathlib, shutil, signal, socket, subprocess, sys, time, urllib.request
+import hashlib, json, os, pathlib, shutil, signal, socket, subprocess, sys, time, urllib.request
 root, lab = map(pathlib.Path, sys.argv[1:])
 bundle = lab/'bundle'
 shutil.copytree(root/'bin', bundle/'bin')
@@ -87,7 +87,7 @@ def control(execution,action,*args,success=True):
  return command('control','--home',str(home),'--execution-id',execution,action,*args,success=success)
 registry=lab/'ui-registry.json'
 router=[sys.executable,str(bin/'fm-ui-host-control.py'),'--registry',str(registry)]
-def ui(action,execution,**extra):
+def ui_result(action,execution,**extra):
  payload=dict(kind=action,execution_id=execution)
  if action in ('relaunch','recover-missing'): payload['note']='fixture lifecycle checkpoint'
  payload.update(extra)
@@ -97,6 +97,10 @@ def ui(action,execution,**extra):
  result=subprocess.run(router+['command'],input=json.dumps(request)+'\n',env=env,
                        capture_output=True,text=True,timeout=130)
  assert result.returncode==0,(result.stdout,result.stderr)
+ return result
+
+def ui(action,execution,**extra):
+ result=ui_result(action,execution,**extra)
  return [json.loads(line) for line in result.stdout.splitlines()]
 def publish_ui_binding(binding):
  registry.write_text(json.dumps([binding])); registry.chmod(0o600)
@@ -144,8 +148,29 @@ try:
    'fm_home':str(home),'task_id':None,'primary_registration':str(registration)}
  target=publish_ui_binding(discovered)
  assert set(target['supported_operations'])=={'note','interrupt','exit','relaunch','recover-missing','steer'}
- assert ui('interrupt','0'*32)[0]['state']=='refused'
- assert ui('recover-missing',eid)[0]['state']=='refused'
+ assert ui('interrupt','0'*32)[0]['reason']=='stale_primary_execution: refresh discovery before control'
+ assert ui('recover-missing',eid)[0]['reason']=='registered_primary_is_alive: recover-missing refused'
+ receipt_root=registration.parent/'commands'/hashlib.sha256(first['capability'].encode()).hexdigest()
+ command_id='fixture-interrupt-'+eid
+ receipt=receipt_root/(hashlib.sha256(command_id.encode()).hexdigest()+'.json')
+ receipt.mkdir()
+ try:
+  failure=ui_result('interrupt',eid)
+  ack=json.loads(failure.stdout)
+  assert ack['state']=='refused' and ack['reason']=='primary owner refused',ack
+  assert ack['command_id']==command_id and ack['leaf_worker_id']=='fixture-machine/fixture-primary',ack
+  diagnostic=json.loads(failure.stderr)
+  assert diagnostic['record']=='host_owner_result' and diagnostic['state']=='unconfirmed',diagnostic
+  assert diagnostic['command_id']==command_id and diagnostic['leaf_worker_id']==ack['leaf_worker_id'],diagnostic
+  assert diagnostic['exit_code']==1 and not diagnostic['stderr'],diagnostic
+  owner_error=json.loads(diagnostic['stdout'])
+  assert owner_error['state']=='refused' and str(receipt) in owner_error['message'],owner_error
+  for secret in (str(home),str(registration),str(receipt),first['capability'],
+                 first['profile']['executable'],'fixture-secret'):
+   assert secret not in failure.stdout,'owner-private diagnostic reached browser stdout'
+  assert record()==first and not (fixture/(eid+'.interrupted')).exists(),'failed receipt mutated child'
+ finally:
+  receipt.rmdir()
  # The captured private registration is genuine: the actual isolated hub has
  # exactly this endpoint, not invented task metadata.
  request=urllib.request.Request(url+'/v1/tasks',headers={'Authorization':'Bearer fixture-secret'})
@@ -201,10 +226,15 @@ try:
  pathlib.Path(unsupported['socket']).unlink()  # Fixture-owned capability only.
  unreachable=control(eidpi,'recover-missing',success=False)
  assert 'primary_owner_unreachable' in unreachable['message']
+ unreachable_ui=ui_result('recover-missing',eidpi)
+ assert json.loads(unreachable_ui.stdout)['reason']=='primary_owner_unreachable: no adoption, PID kill or PTY fallback'
+ assert json.loads(json.loads(unreachable_ui.stderr)['stdout'])['message']==unreachable['message']
+ assert unsupported['capability'] not in unreachable_ui.stdout and str(home) not in unreachable_ui.stdout
  assert sentinel.poll() is None,'lifecycle touched an unrelated fixture process'
  owner2.terminate(); owner2.wait(timeout=15)
  print('PASS managed setup/discovery, genuine endpoint registration, duplicate and unregistered refusals')
  print('PASS owned-child interrupt/exit/relaunch/recover-missing, exact profile replay, stale execution refusal')
+ print('PASS browser-safe storage refusal, correlated host-only owner diagnostics and safe named categories')
  print('PASS execution-bound Deck native acceptance and unsupported-adapter no-fallback refusal')
 finally:
  # Reap only children this fixture created. Owners reap their own PTY children.

@@ -1,0 +1,87 @@
++ set -eu
+++ dirname tests/fm-primary.test.sh
++ . tests/lib.sh
+++ '[' -n '' ']'
+++ FM_TEST_LIB_SOURCED=1
+++ umask 022
++++ dirname tests/lib.sh
+++ . tests/git-config-helpers.sh
++++ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
++++ GIT_CONFIG_GLOBAL=/dev/null
++++ GIT_CONFIG_NOSYSTEM=1
+++ export FM_GATE_REFUSE_BYPASS=1
+++ FM_GATE_REFUSE_BYPASS=1
+++ export FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ unset FM_ASK_TRIAGE_HELPER FM_ASK_TRIAGE_KEY_VAR
+++ unset FM_TASK_ID
+++ unset TASKS_AXI_FILE TASKS_AXI_BACKEND
+++++ dirname tests/lib.sh
++++ cd tests/..
++++ pwd
+++ ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P
+++ FM_TEST_CLEANUP_DIRS=()
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-cleanup.84940.XXXXXX
+++ FM_TEST_CLEANUP_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-cleanup.84940.qBurDo
++++ fm_test_pid_identity 84940
++++ local pid=84940
++++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47
++++ bash -c '. "$1"; fm_pid_identity "$2"' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/bin/fm-wake-lib.sh 84940
+++ FM_TEST_OWNER_IDENTITY='Sun Oct  4 20:29:03 2026     bash -x tests/fm-primary.test.sh'
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-helpers.84940.XXXXXX
+++ FM_TEST_HELPER_PID_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-helpers.84940.igtI9H
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-procevent.84940.XXXXXX
+++ FM_TEST_PROCEVENT_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-procevent.84940.iTEupT
+++ FM_TEST_STUB_MAX_BLOCK_SECONDS=120
+++ export FM_TEST_STUB_MAX_BLOCK_SECONDS
+++ trap fm_test_cleanup EXIT
+++ trap 'fm_test_cleanup; exit 130' INT
+++ trap 'fm_test_cleanup; exit 143' TERM
+++ trap 'fm_test_cleanup; exit 129' HUP
+++ trap 'fm_test_cleanup; exit 131' QUIT
+++ FM_TEST_ORPHAN_MAX_AGE_SECONDS=3600
+++ '[' 1 '!=' 1 ']'
+++ fm_test_tmproot fm-primary
+++ local prefix=fm-primary root tmp_base
+++ tmp_base=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47
+++ tmp_base=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47
++++ mktemp -d /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/fm-primary.XXXXXX
+++ root=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/fm-primary.BGe1UM
++++ cd -P -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/fm-primary.BGe1UM
++++ pwd -P
+++ root=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/fm-primary.BGe1UM
+++ printf '%s\n%s\n' 84940 'Sun Oct  4 20:29:03 2026     bash -x tests/fm-primary.test.sh'
+++ printf '%s\n' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/fm-primary.BGe1UM
+++ printf '%s\n' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/fm-primary.BGe1UM
++ LAB=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/fm-primary.BGe1UM
++ trap fm_test_cleanup EXIT
++ python3 - /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/fm-primary.BGe1UM
+PASS managed setup/discovery, genuine endpoint registration, duplicate and unregistered refusals
+PASS owned-child interrupt/exit/relaunch/recover-missing, exact profile replay, stale execution refusal
+PASS browser-safe storage refusal, correlated host-only owner diagnostics and safe named categories
+PASS execution-bound Deck native acceptance and unsupported-adapter no-fallback refusal
++ fm_test_cleanup
++ local d
++ fm_test_reap_procevent_homes
++ local home claim_root $'seen=\n'
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-procevent.84940.iTEupT ']'
++ IFS=$'\t'
++ read -r home claim_root
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-procevent.84940.iTEupT
++ for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"
++ '[' -n '' ']'
++ fm_test_reap_helper_pids
++ local pid
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-helpers.84940.igtI9H ']'
++ IFS=
++ read -r pid
++ :
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-helpers.84940.igtI9H
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-cleanup.84940.qBurDo ']'
++ IFS=
++ read -r d
++ '[' -n /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/fm-primary.BGe1UM ']'
++ rm -rf /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/fm-primary.BGe1UM
++ IFS=
++ read -r d
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44JG8AM3VN3QZYBG4S6ES1P/.tmp-verify/primary-refusal.qrfG47/.fm-test-cleanup.84940.qBurDo

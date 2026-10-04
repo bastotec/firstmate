@@ -114,6 +114,24 @@ def unique_fields(pairs):
 
 
 PRIMARY_OWNER = None
+PRIMARY_SAFE_REFUSALS = frozenset({
+    'stale_primary_execution: refresh discovery before control',
+    'primary_adapter_has_no_native_receiver: no PTY fallback',
+    'registered_primary_is_alive: recover-missing refused',
+    'primary_owner_unreachable: no adoption, PID kill or PTY fallback',
+    'unregistered_primary: launch this home through fm-primary.py first',
+})
+
+
+def refuse_primary_owner(answer, command_id, machine, label):
+    print(json.dumps({'record': 'host_owner_result', 'command_id': command_id,
+                      'leaf_worker_id': machine + '/' + label, 'exit_code': 1,
+                      'state': 'unconfirmed', 'stdout': json.dumps(answer), 'stderr': ''}),
+          file=sys.stderr, flush=True)
+    message = answer.get('message')
+    if isinstance(message, str) and message in PRIMARY_SAFE_REFUSALS:
+        raise Refused(message)
+    raise Refused('primary owner refused')
 
 
 def primary_binding(row):
@@ -298,9 +316,9 @@ def route(rows, machine, label, payload, command_id=None):
                                      order_id=order_id, text=text if action == 'steer' else None,
                                      command_id=command_id)
         except primary.Refused as exc:
-            raise Refused(str(exc)) from exc
+            refuse_primary_owner({'state': 'refused', 'message': str(exc)}, command_id, machine, label)
         if answer.get('state') == 'refused':
-            raise Refused(answer.get('message', 'primary owner refused'))
+            refuse_primary_owner(answer, command_id, machine, label)
         # Pending native application or a lost lifecycle response MUST NOT be
         # advertised as accepted by the host's existing command_ack contract.
         return subprocess.CompletedProcess(['managed-primary', action],
