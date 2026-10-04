@@ -1,0 +1,12 @@
+python-reference depth= 125 HTTP 200 {'appended': 'c02519fef1b7d5a1ce2cce9cf0da71a4', 'ok': True}
+Owner durable record matches exact submitted value
+python-reference depth= 150 HTTP 200 {'appended': 'c02519fef1b7d5a1ce2cce9cf0da71a4', 'ok': True}
+Owner durable record matches exact submitted value
+rust-current depth= 125 HTTP 200 {'appended': 'e41df0a2098484d64232e899311b277b', 'ok': True}
+Owner durable record matches exact submitted value
+rust-current depth= 150 HTTP 400 {'error': 'bad_json', 'message': 'malformed JSON body: maximum JSON nesting depth exceeded', 'ok': False}
+Traceback (most recent call last):
+  File "/Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/nested-status-repro.py", line 53, in <module>
+    assert outcomes['python-reference', 150] == outcomes['rust-current', 150] == 200, outcomes
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {('python-reference', 125): 200, ('python-reference', 150): 200, ('rust-current', 125): 200, ('rust-current', 150): 400}

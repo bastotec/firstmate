@@ -1,0 +1,30 @@
+Observed public status-command results (target e27dcaa9727db89737526d433cc8c76b5f8c1a04):
+
+Nested note                        Python hub    Rust 5b5eef06    Rust e27dcaa9
+[NaN, "\ud800"]                     HTTP 200      HTTP 200         HTTP 200
+125 arrays around the same note   HTTP 200      HTTP 200         HTTP 200
+150 arrays around the same note   HTTP 200      HTTP 400         HTTP 200
+
+At 150 levels, the pre-fix refusal was:
+{"error":"bad_json","message":"malformed JSON body: maximum JSON nesting depth exceeded","ok":false}
+No command was queued. The current hub forwarded the exact Python JSON bytes and accepted the agent acknowledgement.
+See json-counterfactual.json for requests, forwarded command envelopes, responses, and health results.
+
+Both real owning Python agents appended this first durable line without substituting null or U+FFFD:
+working: [nan, '\ud800']
+
+The next durable line retained all 150 arrays around 'ordinary'.
+Python and current Rust hub durable records were byte-identical (345 bytes):
+sha256=641811b392454d12afd622ef2bbbfa4511c12df12cdee4a843e371a3f0ce5964
+See python-durable.status and current-e27dcaa9-durable.status.
+
+The browser sent printf through the Rust hub to a real Python-agent PTY.
+The actual shell response UI-ROUNDTRIP:é-中 appeared through capture and live SSE.
+After exit 0, the owning agent reported closed_by=agent and the viewer disabled input.
+Screenshots: rust-hub-ui-roundtrip.png and rust-hub-ui-closed.png.
+
+Baseline limitation, not newly attributed to this migration:
+The full hub lifecycle suite stopped at its broken-shell startup refusal assertion.
+The same named case failed against the Python reference and the Rust hub; the initial test-library initialization failure also prevented the first lifecycle invocation from running, but initialization succeeded on retry.
+The remaining selected migration lifecycle cases passed; this does not claim that the full lifecycle suite or serial-5 CI is green, waive a red check, or authorize landing.
+No source changes or shared runtime operations were made in this validation pass.

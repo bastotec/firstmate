@@ -1,0 +1,6 @@
+Reference hub, same named shell-startup case:
+not ok - an endpoint whose shell died at birth should not report success
+reference_exit=1
+Rust hub, same named shell-startup case:
+not ok - an endpoint whose shell died at birth should not report success
+rust_exit=1

@@ -1,0 +1,64 @@
+$ agent-browser open http://127.0.0.1:55815/ui#pilot-control-private
+✓ Firstmate stream
+  http://127.0.0.1:55815/ui#pilot-control-private
+
+$ agent-browser set viewport 1200 800
+✓ Done
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser wait --text worker
+worker
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser snapshot -i
+- heading "FLEET" [level=1, ref=e1]
+- button "worker" [ref=e2]
+- textbox "Select a worker to type into it" [disabled, ref=e3]
+- button "Send" [ref=e4]
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser find role button click --name worker --exact
+✓ Done
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser wait --fn document.querySelector('#out').textContent.includes('RUST-HUB-BROWSER-READY')
+true
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser fill #line printf '\nUI-ROUNDTRIP:%s\n' 'é-中'
+✓ Done
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser click button.send
+✓ Done
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser wait --fn document.querySelector('#out').textContent.includes('\nUI-ROUNDTRIP:é-中')
+true
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser screenshot /Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/rust-hub-ui-roundtrip.png
+✓ Screenshot saved to /Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/rust-hub-ui-roundtrip.png
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser fill #line exit 0
+✓ Done
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser click button.send
+✓ Done
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser wait --fn document.querySelector('#line').disabled && document.querySelector('#list .gone') !== null
+true
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+$ agent-browser screenshot /Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/rust-hub-ui-closed.png
+✓ Screenshot saved to /Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/rust-hub-ui-closed.png
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+
+Browser sent real PTY input; UTF-8 appeared in capture/SSE; agent close disabled the input.
+$ agent-browser close
+✓ Browser closed
+⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+

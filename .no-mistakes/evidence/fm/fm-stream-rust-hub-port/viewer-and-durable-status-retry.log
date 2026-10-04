@@ -1,0 +1,14 @@
+ACTUAL PYTHON AGENT DURABLE STATUS BYTES: b"working: [nan, '\\ud800']\n"
+BROWSER ('open', 'http://127.0.0.1:59524/ui#ctl') exit= 0 ✓ Firstmate stream
+  http://127.0.0.1:59524/ui#ctl 
+BROWSER ('wait', 'button.ep') exit= 0 ✓ Done ⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+BROWSER ('click', 'button.ep') exit= 0 ✓ Done ⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+BROWSER ('wait', '1000') exit= 0 ✓ Done ⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+BROWSER ('get', 'text', '#out') exit= 0 exit
+exit ⚠ --executable-path, --profile ignored: daemon already running. Use 'agent-browser close' first to restart with new options.
+Traceback (most recent call last):
+  File "<stdin>", line 27, in <module>
+AssertionError: exit
+exit
+
+

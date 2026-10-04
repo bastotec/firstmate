@@ -1,0 +1,49 @@
+   Compiling fm-stream-hub v2.0.0 (/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/crates/fm-stream-hub)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.47s
+     Running unittests src/main.rs (target/debug/deps/fm_stream_hub-86308cdc7fa1ad54)
+
+running 24 tests
+test model::tests::command_traffic_prunes_expired_results_without_health_poll ... ok
+test model::tests::order_holds_authoritative_close_after_endpoint_retention_expires ... ok
+test model::tests::close_moves_from_presumption_to_fact_and_revokes_capability ... ok
+test model::tests::completed_orders_keep_their_journal_without_global_command_payloads ... ok
+test screen::tests::allocation_layout_failures_are_fallible ... ok
+test model::tests::silence_releases_identity_without_claiming_worker_gone ... ok
+test model::tests::completed_commands_release_payloads_and_preserve_result_retries ... ok
+test screen::tests::ansi_rendering_preserves_styles_unicode_and_trimmed_spaces ... ok
+test screen::tests::malformed_utf8_decodes_consistently_across_frame_boundaries ... ok
+test screen::tests::one_column_wide_glyph_accepts_backspace_and_combining_marks ... ok
+test screen::tests::control_strings_preserve_character_limits_and_reset_for_csi ... ok
+test screen::tests::spacing_marks_still_occupy_a_column ... ok
+test screen::tests::widths_follow_east_asian_categories_without_terminal_exceptions ... ok
+test screen::tests::zero_width_marks_and_format_characters_do_not_wrap ... ok
+test model::tests::withdrawn_orders_release_global_commands_and_never_redeliver ... ok
+test model::tests::pending_commands_and_journal_keep_their_own_reference_lifetimes ... ok
+test tests::stream_never_reads_a_replacement_incarnation ... ok
+test screen::tests::repeated_large_control_strings_never_leak_payloads ... ok
+test model::tests::an_active_order_answers_even_after_the_journal_evicts_its_id ... ok
+test tests::idle_polls_do_not_block_frames_health_or_acknowledgements ... ok
+test screen::tests::binary_chunks_preserve_replacements_and_incomplete_suffixes ... ok
+test model::tests::listing_selects_current_execution_once_per_retained_leaf ... ok
+test screen::tests::ansi_capture_preserves_full_width_retained_rows ... ok
+test tests::deletion_survives_retention_and_never_closes_or_commands_a_replacement ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.30s
+
+     Running tests/cli.rs (target/debug/deps/cli-844c7b4c0725012f)
+
+running 10 tests
+test documented_options_reach_value_validation ... ok
+test deeply_nested_requests_are_refused_without_losing_hub_state ... ok
+test live_stream_keeps_output_published_after_response_headers ... ok
+test malformed_input_is_rejected_and_python_valid_extensions_still_reparse ... ok
+test unallocatable_screens_leave_registry_and_command_routes_healthy ... ok
+test protocol_and_version_are_top_level_only ... ok
+test compatibility_input_preserves_literal_text_and_nonfinite_boolean_fields ... ok
+test extreme_negative_csi_parameters_preserve_screen_and_fleet_state ... ok
+test option_aliases_are_rejected ... ok
+513 idle polls: health=(200, Object {"capabilities": Array [String("current_execution"), String("idempotent_command_results"), String("result_retry_orderability"), String("endpoint_command_auth"), String("deck_midturn_orders")], "command_ack_secs": Number(5.0), "endpoints": Number(1), "generation": String("e944efff4eef45138fbc8bd5c50f24ad"), "ok": Bool(true), "protocol": Number(3), "started_at": Number(1791071591.603094), "state_max_age_secs": Number(30.0), "version": String("2.0.0")}); frame=(200, Object {"accepted": Number(1), "ok": Bool(true)}); acknowledgement=(200, Object {"ok": Bool(true)}); input=(200, Object {"delivered": String("99999999999999999999999999999999"), "ok": Bool(true)})
+test idle_agent_polls_leave_the_executable_healthy_and_commands_acknowledgeable ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+

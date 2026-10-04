@@ -1,0 +1,18 @@
+ok - hub: steering needs the control class, and a viewing token holds none of it
+ok - hub: capture answers a well-formed screen while frames are still arriving
+ok - hub: the status return channel is written locally by the owning agent
+ok - hub: kill closes the exact endpoint and leaves its sibling running
+ok - hub: a kill the agent never answers closes the record and says so
+ok - hub: a silent agent reads unreadable and is never reported dead
+ok - hub: the event stream replays the ring, delivers live frames, and is the only route taking a query credential
+ok - hub: terminal content is never persisted outside the in-memory ring
+order response: {"delivered": true, "execution_id": "acde1d6711512687fee0abbf6b59c3dd", "leaf_worker_id": "box-a/ordered-10130", "ok": true, "order_id": "order-9e84cd5d94534db8aae09cd801780173", "outcome": "accepted", "requested_at": 1791071613.896572, "requested_execution_id": "acde1d6711512687fee0abbf6b59c3dd", "worker_gone": false}
+worker capture:
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ echo ORDER-LANDED
+ORDER-LANDED
+bash-3.2$
+ok - hub: an order addressed by leaf reaches that leaf's worker
+superseded execution response: {"delivered": false, "error": "execution_superseded", "execution_id": "31cf2853bfd7d531d8e22635a10b5e7f", "leaf_worker_id": "box-a/relaunched-10130", "message": "leaf box-a/relaunched-10130 is now execution 31cf2853bfd7d531d8e22635a10b5e7f; the order was aimed at de049ed15656013654a089f3f2686b49 and was not delivered", "ok": false, "order_id": "order-7ef6ff82a7648366fde5c40ae8e37492", "outcome": "refused", "reason": "execution_superseded", "reason_message": "leaf box-a/relaunched-10130 is now execution 31cf2853bfd7d531d8e22635a10b5e7f; the order was aimed at de049ed15656013654a089f3f2686b49 and was not delivered", "requested_at": 1791071618.724823, "requested_execution_id": "de049ed15656013654a089f3f2686b49", "worker_gone": false}
+ok - hub: an order aimed at a replaced execution is refused and never lands in its replacement

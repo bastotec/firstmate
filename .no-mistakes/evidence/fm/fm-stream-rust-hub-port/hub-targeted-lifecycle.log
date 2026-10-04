@@ -1,0 +1,33 @@
+ok - hub: the status return channel is written locally by the owning agent
+ok - hub: kill closes the exact endpoint and leaves its sibling running
+ok - hub: a kill the agent never answers closes the record and says so
+ok - hub: terminal content is never persisted outside the in-memory ring
+ok - hub: malformed bodies and unknown routes are refused without acting
+ok - hub: the subscriber view is static and carries no terminal content
+ok - hub: a worker whose hub restarted comes back under its own endpoint id and steers again
+ok - hub: command result acknowledgements are idempotent
+ok - hub: completed results survive later machine command volume
+retained-client order response: {"delivered": false, "error": "endpoint_not_orderable", "execution_id": "e6314cc8d86cfaed1b1bec08f26eb5e2", "leaf_worker_id": "retained/recovering", "message": "execution e6314cc8d86cfaed1b1bec08f26eb5e2 has no native steering receiver; retained agents remain available for input, status and kill, but this order was not delivered; upgrade the agent at a safe worker boundary", "ok": false, "order_id": "retained-native-contract", "outcome": "refused", "reason": "endpoint_not_orderable", "reason_message": "execution e6314cc8d86cfaed1b1bec08f26eb5e2 has no native steering receiver; retained agents remain available for input, status and kill, but this order was not delivered; upgrade the agent at a safe worker boundary", "requested_at": 1791073982.10778, "requested_execution_id": "e6314cc8d86cfaed1b1bec08f26eb5e2", "worker_gone": false}
+ok - hub: endpoint registration controls Bridge orderability
+order response: {"delivered": true, "execution_id": "f4c45491ccf809631a5c589e94662852", "leaf_worker_id": "box-a/ordered-47347", "ok": true, "order_id": "order-621e0f13254324264bfc5e999b513766", "outcome": "accepted", "requested_at": 1791073984.160265, "requested_execution_id": "f4c45491ccf809631a5c589e94662852", "worker_gone": false}
+worker capture:
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ echo ORDER-LANDED
+ORDER-LANDED
+bash-3.2$
+ok - hub: an order addressed by leaf reaches that leaf's worker
+superseded execution response: {"delivered": false, "error": "execution_superseded", "execution_id": "b070caee6ca374639fcd00ff4bca448d", "leaf_worker_id": "box-a/relaunched-47347", "message": "leaf box-a/relaunched-47347 is now execution b070caee6ca374639fcd00ff4bca448d; the order was aimed at d65003eb8283c853cd717cdde0346db4 and was not delivered", "ok": false, "order_id": "order-2a26a2191cdcf66be3706a7ff889c720", "outcome": "refused", "reason": "execution_superseded", "reason_message": "leaf box-a/relaunched-47347 is now execution b070caee6ca374639fcd00ff4bca448d; the order was aimed at d65003eb8283c853cd717cdde0346db4 and was not delivered", "requested_at": 1791073989.020012, "requested_execution_id": "d65003eb8283c853cd717cdde0346db4", "worker_gone": false}
+ok - hub: an order aimed at a replaced execution is refused and never lands in its replacement
+ok - hub: an order to a worker its own agent reported gone is refused as gone
+ok - hub: a leaf the hub cannot resolve stays pending
+ok - hub: unresolved orders preserve id binding across retry
+ok - hub: an order no agent took is refused as undelivered
+ok - hub: an unconfirmed order reconciles through a resend after its acknowledgement lands
+ok - hub: an order id deduplicates identical payloads and refuses conflicts
+first placement response: {"delivered": true, "execution_id": "c79d0685b2bea7ed837db745eb9a163a", "leaf_worker_id": "box-a/racing-47347", "ok": true, "order_id": "sent-while-placing", "outcome": "accepted", "requested_at": 1791074016.83706, "requested_execution_id": "c79d0685b2bea7ed837db745eb9a163a", "worker_gone": false}
+resend response: {"delivered": true, "execution_id": "c79d0685b2bea7ed837db745eb9a163a", "leaf_worker_id": "box-a/racing-47347", "ok": true, "order_id": "sent-while-placing", "outcome": "accepted", "requested_at": 1791074016.83706, "requested_execution_id": "c79d0685b2bea7ed837db745eb9a163a", "worker_gone": false}
+worker-written execution ledger:
+landed
+ok - hub: a resend overtaking a placement in flight is answered, not retyped
+ok - hub: ordering needs control, generation, and the narrow Bridge request shape

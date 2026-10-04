@@ -1,0 +1,31 @@
+$ agent-browser open http://127.0.0.1:55764/ui#pilot-control-private
+✗ Session name 'fmhubtest' is too long. Socket path would be 130 bytes (max 103).
+Use a shorter session name or set AGENT_BROWSER_SOCKET_DIR to a shorter path.
+
+$ agent-browser close
+✗ Session name 'fmhubtest' is too long. Socket path would be 130 bytes (max 103).
+Use a shorter session name or set AGENT_BROWSER_SOCKET_DIR to a shorter path.
+
+Traceback (most recent call last):
+  File "/Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/targeted-probe.py", line 112, in <module>
+    run('open', rig.url + '/ui#' + agent.CTL)
+    ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/targeted-probe.py", line 106, in run
+    assert result.returncode == 0, result.stderr
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ✗ Session name 'fmhubtest' is too long. Socket path would be 130 bytes (max 103).
+Use a shorter session name or set AGENT_BROWSER_SOCKET_DIR to a shorter path.
+
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/targeted-probe.py", line 132, in <module>
+    run('close')
+    ~~~^^^^^^^^^
+  File "/Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/targeted-probe.py", line 106, in run
+    assert result.returncode == 0, result.stderr
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ✗ Session name 'fmhubtest' is too long. Socket path would be 130 bytes (max 103).
+Use a shorter session name or set AGENT_BROWSER_SOCKET_DIR to a shorter path.
+

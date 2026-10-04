@@ -1,0 +1,7 @@
+ACTUAL PYTHON AGENT DURABLE STATUS BYTES: b"working: [nan, '\\ud800']\n"
+BROWSER ('open', 'http://127.0.0.1:59373/ui#ctl') exit= 1  ✗ Session name 'fm-hub-validation-01M420' is too long. Socket path would be 145 bytes (max 103).
+Use a shorter session name or set AGENT_BROWSER_SOCKET_DIR to a shorter path.
+Traceback (most recent call last):
+  File "<stdin>", line 23, in <module>
+  File "<stdin>", line 14, in browser
+AssertionError

@@ -1,0 +1,42 @@
+BROWSER ('--profile', '/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/browser-profile', '--executable-path', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'open', 'http://127.0.0.1:59793/ui#ctl') exit= 0 ✓ Firstmate stream
+  http://127.0.0.1:59793/ui#ctl 
+BROWSER ('set', 'viewport', '1440', '900') exit= 0 ✓ Done 
+BROWSER ('wait', 'button.ep') exit= 0 ✓ Done 
+BROWSER ('click', 'button.ep') exit= 0 ✓ Done 
+BROWSER ('wait', '1000') exit= 0 ✓ Done 
+BROWSER ('get', 'text', '#out') exit= 0 The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ printf 'PYTHON-PEER-OK:%s:%s:%s\n' "$HOME" "$SHELL" "$HISTFILE"
+PYTHON-PEER-OK:/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/viewer-validation-d1e9d2te/rust/peer-home:/bin/bash:/dev/null
+bash-3.2$ 
+BROWSER ('is', 'enabled', '#line') exit= 0 true 
+BROWSER ('fill', '#line', "printf 'BROWSER-UI-OK\\n'") exit= 0 ✓ Done 
+BROWSER ('click', 'button.send') exit= 0 ✓ Done 
+BROWSER ('get', 'text', '#out') exit= 0 The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ printf 'PYTHON-PEER-OK:%s:%s:%s\n' "$HOME" "$SHELL" "$HISTFILE"
+PYTHON-PEER-OK:/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/viewer-validation-d1e9d2te/rust/peer-home:/bin/bash:/dev/null
+bash-3.2$
+printf 'BROWSER-UI-OK\n'
+BROWSER-UI-OK
+bash-3.2$ 
+BROWSER ('screenshot', '/Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/rust-hub-viewer-live-worker.png') exit= 0 ✓ Screenshot saved to /Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/rust-hub-viewer-live-worker.png 
+LIVE VIEWER: replay visible; browser Send executed in the real PTY and output arrived via SSE
+ACTUAL PYTHON AGENT DURABLE STATUS BYTES: b"working: [nan, '\\ud800']\n"
+BROWSER ('open', 'http://127.0.0.1:59793/ui#ctl') exit= 0 ✓ Firstmate stream
+  http://127.0.0.1:59793/ui#ctl 
+BROWSER ('wait', 'button.ep') exit= 0 ✓ Done 
+BROWSER ('click', 'button.ep') exit= 0 ✓ Done 
+BROWSER ('wait', '500') exit= 0 ✓ Done 
+BROWSER ('get', 'text', '#out') exit= 0 exit
+exit 
+BROWSER ('is', 'enabled', '#line') exit= 0 false 
+BROWSER ('screenshot', '/Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/rust-hub-viewer-closed-worker.png') exit= 0 ✓ Screenshot saved to /Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/rust-hub-viewer-closed-worker.png 
+CLOSED VIEWER: final real PTY output visible; send input disabled
+BROWSER ('errors',) exit= 0  
+BROWSER ('open', 'http://127.0.0.1:59793/ui') exit= 0 ✓ Firstmate stream
+  http://127.0.0.1:59793/ui 
+BROWSER ('get', 'text', '#list') exit= 0 No token in the URL fragment. 
+BROWSER ('screenshot', '/Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/rust-hub-viewer-missing-token.png') exit= 0 ✓ Screenshot saved to /Users/bastotecnologia/.no-mistakes/evidence/01M420X5T39662CF6NV695GWJ5/rust-hub-viewer-missing-token.png 

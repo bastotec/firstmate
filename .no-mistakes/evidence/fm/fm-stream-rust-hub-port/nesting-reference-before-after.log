@@ -1,0 +1,14 @@
+python-reference depth= 125 HTTP 200 {'appended': '9302f44457dcc0b869a02b4bbb27a4d9', 'ok': True}
+python-reference durable owner record ends in EXACT status note; line bytes= 270
+python-reference depth= 150 HTTP 200 {'appended': '9302f44457dcc0b869a02b4bbb27a4d9', 'ok': True}
+python-reference durable owner record ends in EXACT status note; line bytes= 320
+python-reference health after both notes= 200
+rust-before-R21 depth= 125 HTTP 200 {'appended': '998ccbaa35b58490b48dbdd4a09950ca', 'ok': True}
+rust-before-R21 durable owner record ends in EXACT status note; line bytes= 270
+rust-before-R21 depth= 150 HTTP 400 {'error': 'bad_json', 'message': 'malformed JSON body: maximum JSON nesting depth exceeded', 'ok': False}
+rust-before-R21 health after both notes= 200
+rust-current depth= 125 HTTP 200 {'appended': '478926c23d7d2eb0d94dee7e64870c74', 'ok': True}
+rust-current durable owner record ends in EXACT status note; line bytes= 270
+rust-current depth= 150 HTTP 400 {'error': 'bad_json', 'message': 'malformed JSON body: maximum JSON nesting depth exceeded', 'ok': False}
+rust-current health after both notes= 200
+REAL RUST HUB: lifecycle Python/Rust peer observations MATCH: ('working: one local record\nworking: 42\n', 'agent', 7, 0, -15)

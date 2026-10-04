@@ -1,0 +1,19 @@
+FM_TEST_BEGIN 2026-10-03T23:46:12Z tests/fm-stream-hub-rust.test.sh family=unclassified expected_gate_skip=none
+error: rustup could not choose a version of cargo to run, because one wasn't specified explicitly, and no default is configured.
+help: run 'rustup default stable' to download the latest stable release of Rust and set it as your default toolchain.
+FM_TEST_END 2026-10-03T23:46:13Z tests/fm-stream-hub-rust.test.sh exit=1 duration_ms=309 gate_skip=false
+FM_TEST_BEGIN 2026-10-03T23:46:13Z tests/fm-stream-agent-rust.test.sh family=unclassified expected_gate_skip=none
+error: rustup could not choose a version of cargo to run, because one wasn't specified explicitly, and no default is configured.
+help: run 'rustup default stable' to download the latest stable release of Rust and set it as your default toolchain.
+not ok - Rust agent build failed
+FM_TEST_END 2026-10-03T23:46:13Z tests/fm-stream-agent-rust.test.sh exit=1 duration_ms=245 gate_skip=false
+FM_TEST_BEGIN 2026-10-03T23:46:13Z tests/fm-stream-bridge-rust.test.sh family=unclassified expected_gate_skip=none
+error: rustup could not choose a version of cargo to run, because one wasn't specified explicitly, and no default is configured.
+help: run 'rustup default stable' to download the latest stable release of Rust and set it as your default toolchain.
+not ok - cargo build of the Rust bridge failed
+FM_TEST_END 2026-10-03T23:46:13Z tests/fm-stream-bridge-rust.test.sh exit=1 duration_ms=263 gate_skip=false
+FM_TEST_SUMMARY total=3 failed=3 skipped_gate=0 duration_ms=1132
+FM_TEST_SUMMARY_FAMILY family=unclassified count=3 duration_ms=817 failed=3
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-hub-rust.test.sh duration_ms=309
+FM_TEST_SLOWEST rank=2 script=tests/fm-stream-bridge-rust.test.sh duration_ms=263
+FM_TEST_SLOWEST rank=3 script=tests/fm-stream-agent-rust.test.sh duration_ms=245

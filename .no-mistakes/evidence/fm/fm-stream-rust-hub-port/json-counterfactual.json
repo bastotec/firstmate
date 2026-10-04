@@ -1,0 +1,300 @@
+[
+  {
+    "hub": "python",
+    "depth": 0,
+    "request": "{\"state\":\"working\",\"note\":[NaN, \"\\ud800\"]}",
+    "commands": "{\"commands\": [{\"command_id\": \"command\", \"endpoint_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"kind\": \"status\", \"payload\": {\"note\": [NaN, \"\\ud800\"], \"state\": \"working\"}}], \"ok\": true}",
+    "response": [
+      200,
+      {
+        "appended": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ok": true
+      }
+    ],
+    "health": [
+      200,
+      {
+        "capabilities": [
+          "current_execution",
+          "idempotent_command_results",
+          "result_retry_orderability",
+          "endpoint_command_auth",
+          "deck_midturn_orders"
+        ],
+        "command_ack_secs": 0.25,
+        "endpoints": 1,
+        "generation": "a6971380fc1246028a838151e5343cbc",
+        "ok": true,
+        "protocol": 3,
+        "started_at": 1791073829.9688199,
+        "state_max_age_secs": 0.5,
+        "version": "2.0.0"
+      }
+    ]
+  },
+  {
+    "hub": "python",
+    "depth": 125,
+    "request": "{\"state\":\"working\",\"note\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[NaN, \"\\ud800\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+    "commands": "{\"commands\": [{\"command_id\": \"command\", \"endpoint_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"kind\": \"status\", \"payload\": {\"note\": [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[NaN, \"\\ud800\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]], \"state\": \"working\"}}], \"ok\": true}",
+    "response": [
+      200,
+      {
+        "appended": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ok": true
+      }
+    ],
+    "health": [
+      200,
+      {
+        "capabilities": [
+          "current_execution",
+          "idempotent_command_results",
+          "result_retry_orderability",
+          "endpoint_command_auth",
+          "deck_midturn_orders"
+        ],
+        "command_ack_secs": 0.25,
+        "endpoints": 1,
+        "generation": "a6971380fc1246028a838151e5343cbc",
+        "ok": true,
+        "protocol": 3,
+        "started_at": 1791073829.9688199,
+        "state_max_age_secs": 0.5,
+        "version": "2.0.0"
+      }
+    ]
+  },
+  {
+    "hub": "python",
+    "depth": 150,
+    "request": "{\"state\":\"working\",\"note\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[NaN, \"\\ud800\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+    "commands": "{\"commands\": [{\"command_id\": \"command\", \"endpoint_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"kind\": \"status\", \"payload\": {\"note\": [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[NaN, \"\\ud800\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]], \"state\": \"working\"}}], \"ok\": true}",
+    "response": [
+      200,
+      {
+        "appended": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ok": true
+      }
+    ],
+    "health": [
+      200,
+      {
+        "capabilities": [
+          "current_execution",
+          "idempotent_command_results",
+          "result_retry_orderability",
+          "endpoint_command_auth",
+          "deck_midturn_orders"
+        ],
+        "command_ack_secs": 0.25,
+        "endpoints": 1,
+        "generation": "a6971380fc1246028a838151e5343cbc",
+        "ok": true,
+        "protocol": 3,
+        "started_at": 1791073829.9688199,
+        "state_max_age_secs": 0.5,
+        "version": "2.0.0"
+      }
+    ]
+  },
+  {
+    "hub": "pre-fix-5b5eef06",
+    "depth": 0,
+    "request": "{\"state\":\"working\",\"note\":[NaN, \"\\ud800\"]}",
+    "commands": "{\"commands\": [{\"command_id\": \"command\", \"endpoint_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"kind\": \"status\", \"payload\": {\"note\": [NaN, \"\\ud800\"], \"state\": \"working\"}}], \"ok\": true}",
+    "response": [
+      200,
+      {
+        "appended": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ok": true
+      }
+    ],
+    "health": [
+      200,
+      {
+        "capabilities": [
+          "current_execution",
+          "idempotent_command_results",
+          "result_retry_orderability",
+          "endpoint_command_auth",
+          "deck_midturn_orders"
+        ],
+        "command_ack_secs": 0.25,
+        "endpoints": 1,
+        "generation": "61c1eedfa5f54641b485e1934f676eee",
+        "ok": true,
+        "protocol": 3,
+        "started_at": 1791073833.551481,
+        "state_max_age_secs": 0.5,
+        "version": "2.0.0"
+      }
+    ]
+  },
+  {
+    "hub": "pre-fix-5b5eef06",
+    "depth": 125,
+    "request": "{\"state\":\"working\",\"note\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[NaN, \"\\ud800\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+    "commands": "{\"commands\": [{\"command_id\": \"command\", \"endpoint_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"kind\": \"status\", \"payload\": {\"note\": [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[NaN, \"\\ud800\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]], \"state\": \"working\"}}], \"ok\": true}",
+    "response": [
+      200,
+      {
+        "appended": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ok": true
+      }
+    ],
+    "health": [
+      200,
+      {
+        "capabilities": [
+          "current_execution",
+          "idempotent_command_results",
+          "result_retry_orderability",
+          "endpoint_command_auth",
+          "deck_midturn_orders"
+        ],
+        "command_ack_secs": 0.25,
+        "endpoints": 1,
+        "generation": "61c1eedfa5f54641b485e1934f676eee",
+        "ok": true,
+        "protocol": 3,
+        "started_at": 1791073833.551481,
+        "state_max_age_secs": 0.5,
+        "version": "2.0.0"
+      }
+    ]
+  },
+  {
+    "hub": "pre-fix-5b5eef06",
+    "depth": 150,
+    "request": "{\"state\":\"working\",\"note\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[NaN, \"\\ud800\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+    "commands": "{\"commands\": [], \"ok\": true}",
+    "response": [
+      400,
+      {
+        "error": "bad_json",
+        "message": "malformed JSON body: maximum JSON nesting depth exceeded",
+        "ok": false
+      }
+    ],
+    "health": [
+      200,
+      {
+        "capabilities": [
+          "current_execution",
+          "idempotent_command_results",
+          "result_retry_orderability",
+          "endpoint_command_auth",
+          "deck_midturn_orders"
+        ],
+        "command_ack_secs": 0.25,
+        "endpoints": 1,
+        "generation": "61c1eedfa5f54641b485e1934f676eee",
+        "ok": true,
+        "protocol": 3,
+        "started_at": 1791073833.551481,
+        "state_max_age_secs": 0.5,
+        "version": "2.0.0"
+      }
+    ]
+  },
+  {
+    "hub": "current-e27dcaa9",
+    "depth": 0,
+    "request": "{\"state\":\"working\",\"note\":[NaN, \"\\ud800\"]}",
+    "commands": "{\"commands\": [{\"command_id\": \"command\", \"endpoint_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"kind\": \"status\", \"payload\": {\"note\": [NaN, \"\\ud800\"], \"state\": \"working\"}}], \"ok\": true}",
+    "response": [
+      200,
+      {
+        "appended": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ok": true
+      }
+    ],
+    "health": [
+      200,
+      {
+        "capabilities": [
+          "current_execution",
+          "idempotent_command_results",
+          "result_retry_orderability",
+          "endpoint_command_auth",
+          "deck_midturn_orders"
+        ],
+        "command_ack_secs": 0.25,
+        "endpoints": 1,
+        "generation": "d0dd0b8dfc7b4b7ba498c9da5147e05c",
+        "ok": true,
+        "protocol": 3,
+        "started_at": 1791073834.944507,
+        "state_max_age_secs": 0.5,
+        "version": "2.0.0"
+      }
+    ]
+  },
+  {
+    "hub": "current-e27dcaa9",
+    "depth": 125,
+    "request": "{\"state\":\"working\",\"note\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[NaN, \"\\ud800\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+    "commands": "{\"commands\": [{\"command_id\": \"command\", \"endpoint_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"kind\": \"status\", \"payload\": {\"note\": [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[NaN, \"\\ud800\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]], \"state\": \"working\"}}], \"ok\": true}",
+    "response": [
+      200,
+      {
+        "appended": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ok": true
+      }
+    ],
+    "health": [
+      200,
+      {
+        "capabilities": [
+          "current_execution",
+          "idempotent_command_results",
+          "result_retry_orderability",
+          "endpoint_command_auth",
+          "deck_midturn_orders"
+        ],
+        "command_ack_secs": 0.25,
+        "endpoints": 1,
+        "generation": "d0dd0b8dfc7b4b7ba498c9da5147e05c",
+        "ok": true,
+        "protocol": 3,
+        "started_at": 1791073834.944507,
+        "state_max_age_secs": 0.5,
+        "version": "2.0.0"
+      }
+    ]
+  },
+  {
+    "hub": "current-e27dcaa9",
+    "depth": 150,
+    "request": "{\"state\":\"working\",\"note\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[NaN, \"\\ud800\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+    "commands": "{\"commands\": [{\"command_id\": \"command\", \"endpoint_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"kind\": \"status\", \"payload\": {\"note\": [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[NaN, \"\\ud800\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]], \"state\": \"working\"}}], \"ok\": true}",
+    "response": [
+      200,
+      {
+        "appended": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ok": true
+      }
+    ],
+    "health": [
+      200,
+      {
+        "capabilities": [
+          "current_execution",
+          "idempotent_command_results",
+          "result_retry_orderability",
+          "endpoint_command_auth",
+          "deck_midturn_orders"
+        ],
+        "command_ack_secs": 0.25,
+        "endpoints": 1,
+        "generation": "d0dd0b8dfc7b4b7ba498c9da5147e05c",
+        "ok": true,
+        "protocol": 3,
+        "started_at": 1791073834.944507,
+        "state_max_age_secs": 0.5,
+        "version": "2.0.0"
+      }
+    ]
+  }
+]

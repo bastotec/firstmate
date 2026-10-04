@@ -1,0 +1,351 @@
++ set -u
+++ dirname tests/fm-stream-hub.test.sh
++ . tests/lib.sh
+++ '[' -n '' ']'
+++ FM_TEST_LIB_SOURCED=1
+++ umask 022
++++ dirname tests/lib.sh
+++ . tests/git-config-helpers.sh
++++ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
++++ GIT_CONFIG_GLOBAL=/dev/null
++++ GIT_CONFIG_NOSYSTEM=1
+++ export FM_GATE_REFUSE_BYPASS=1
+++ FM_GATE_REFUSE_BYPASS=1
+++ export FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ unset FM_ASK_TRIAGE_HELPER FM_ASK_TRIAGE_KEY_VAR
+++ unset FM_TASK_ID
+++ unset TASKS_AXI_FILE TASKS_AXI_BACKEND
+++++ dirname tests/lib.sh
++++ cd tests/..
++++ pwd
+++ ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5
+++ FM_TEST_CLEANUP_DIRS=()
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-cleanup.1986.XXXXXX
+++ FM_TEST_CLEANUP_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-cleanup.1986.wuJpAN
++++ fm_test_pid_identity 1986
++++ local pid=1986
++++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp
++++ bash -c '. "$1"; fm_pid_identity "$2"' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/bin/fm-wake-lib.sh 1986
+++ FM_TEST_OWNER_IDENTITY='Sat Oct  3 21:28:34 2026     bash -x tests/fm-stream-hub.test.sh test_an_endpoint_runs_the_operators_own_shell_and_a_dead_one_is_refused'
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-helpers.1986.XXXXXX
+++ FM_TEST_HELPER_PID_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-helpers.1986.ACAitL
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-procevent.1986.XXXXXX
+++ FM_TEST_PROCEVENT_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-procevent.1986.i7FYL0
+++ FM_TEST_STUB_MAX_BLOCK_SECONDS=120
+++ export FM_TEST_STUB_MAX_BLOCK_SECONDS
+++ trap fm_test_cleanup EXIT
+++ trap 'fm_test_cleanup; exit 130' INT
+++ trap 'fm_test_cleanup; exit 143' TERM
+++ trap 'fm_test_cleanup; exit 129' HUP
+++ trap 'fm_test_cleanup; exit 131' QUIT
+++ FM_TEST_ORPHAN_MAX_AGE_SECONDS=3600
+++ '[' 0 '!=' 1 ']'
+++ fm_test_reap_orphans
+++ local marker dir mtime now owner_pid owner_identity current_identity
++++ date +%s
+++ now=1791073714
+++ for marker in "${TMPDIR:-/tmp}"/fm-*/.fm-test-fixture
+++ '[' -e '/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-*/.fm-test-fixture' ']'
+++ continue
++ command -v python3
++ command -v curl
++ command -v jq
+++ fm_test_tmproot fm-stream-hub-tests
+++ local prefix=fm-stream-hub-tests root tmp_base
+++ tmp_base=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp
+++ tmp_base=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp
++++ mktemp -d /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.XXXXXX
+++ root=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg
++++ cd -P -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg
++++ pwd -P
+++ root=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg
+++ printf '%s\n%s\n' 1986 'Sat Oct  3 21:28:34 2026     bash -x tests/fm-stream-hub.test.sh test_an_endpoint_runs_the_operators_own_shell_and_a_dead_one_is_refused'
+++ printf '%s\n' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg
+++ printf '%s\n' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg
++ TMP_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg
++ HUB=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/bin/fm-stream-hub.py
++ AGENT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/bin/fm-stream-agent.py
++ PUBLISH_TOKEN=pub-1986
++ VIEW_TOKEN=view-1986
++ VIEW_ONLY_TOKEN=viewonly-1986
++ API_CODE_FILE=
++ CASE_DIR=
++ URL=
++ HUB_PID=
++ HUB_READY=
++ HUB_ARGS=()
++ STUB_JOURNAL=
++ RUN=1986
++ trap 'cleanup_helpers; fm_test_cleanup' EXIT INT TERM
++ AGENT_SEQ=0
++ '[' 1 -gt 0 ']'
++ for selected in "$@"
++ case "$selected" in
++ declare -F test_an_endpoint_runs_the_operators_own_shell_and_a_dead_one_is_refused
++ test_an_endpoint_runs_the_operators_own_shell_and_a_dead_one_is_refused
++ start_hub shell
++ local name=shell
++ shift
++ HUB_ARGS=("$@")
++ cleanup_helpers
++ fm_test_reap_helper_pids
++ local pid
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-helpers.1986.ACAitL ']'
++ IFS=
++ read -r pid
++ :
++ CASE_DIR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell
++ mkdir -p /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/state /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/cwd
++ printf 'publish:%s\nsubscribe,control:%s\n%s\n' pub-1986 view-1986 viewonly-1986
++ chmod 600 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/tokens
++ printf '%s\n' pub-1986
++ chmod 600 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/publish-token
++ API_CODE_FILE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/http-code
++ spawn_hub 0
++ local port=0
++ shift
++ local waited=0 host bound pid
++ HUB_READY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/ready
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/ready
++ hub_command=('python3' '/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/bin/fm-stream-hub.py')
++ local hub_command
++ '[' -n '' ']'
++ pid=2138
++ disown 2138
++ fm_test_track_helper_pid 2138
++ case ${1:-} in
++ printf '%s\n' 2138
++ python3 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/bin/fm-stream-hub.py serve --bind 127.0.0.1 --port 0 --token-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/tokens --ready-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/ready
++ '[' 0 -lt 150 ']'
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/ready ']'
++ sleep 0.1
++ waited=1
++ '[' 1 -lt 150 ']'
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/ready ']'
++ sleep 0.1
++ waited=2
++ '[' 2 -lt 150 ']'
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/ready ']'
++ break
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/ready ']'
++ read -r host bound
++ URL=http://127.0.0.1:54965
++ HUB_PID=2138
++ local other_shell ready endpoint out
++ other_shell=
++ for candidate in /bin/dash /usr/bin/dash /bin/zsh /usr/bin/zsh /bin/sh
++ '[' -x /bin/dash ']'
++ case "$("$candidate" -c 'echo $0' 2> /dev/null)" in
+++ /bin/dash -c 'echo $0'
++ other_shell=/bin/dash
++ break
++ '[' -n /bin/dash ']'
++ ready=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/other-shell.ready
++ local agent_pid=2483
++ disown 2483
++ SHELL=/bin/dash
++ python3 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/bin/fm-stream-agent.py serve --hub http://127.0.0.1:54965 --token-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/publish-token --machine box-a --label othershell-1986 --cwd /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/cwd --ready-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/other-shell.ready --state-interval 1 --poll-secs 3
++ fm_test_track_helper_pid 2483
++ case ${1:-} in
++ printf '%s\n' 2483
++ local waited=0
++ '[' 0 -lt 150 ']'
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/other-shell.ready ']'
++ sleep 0.1
++ waited=1
++ '[' 1 -lt 150 ']'
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/other-shell.ready ']'
++ sleep 0.1
++ waited=2
++ '[' 2 -lt 150 ']'
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/other-shell.ready ']'
++ sleep 0.1
++ waited=3
++ '[' 3 -lt 150 ']'
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/other-shell.ready ']'
++ sleep 0.1
++ waited=4
++ '[' 4 -lt 150 ']'
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/other-shell.ready ']'
++ break
++ '[' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/other-shell.ready ']'
++ read -r _ endpoint
++ view POST /v1/tasks/76e83e339a1dd09315c68ada36814249/input '{"text":"echo OTHER-SHELL-ALIVE","submit":true}'
++ api view-1986 POST /v1/tasks/76e83e339a1dd09315c68ada36814249/input '{"text":"echo OTHER-SHELL-ALIVE","submit":true}'
++ local token=view-1986 method=POST path=/v1/tasks/76e83e339a1dd09315c68ada36814249/input 'body={"text":"echo OTHER-SHELL-ALIVE","submit":true}' raw
++ '[' /v1/tasks/76e83e339a1dd09315c68ada36814249/input = /v1/agent/endpoints ']'
++ '[' -n '{"text":"echo OTHER-SHELL-ALIVE","submit":true}' ']'
+++ printf %s '{"text":"echo OTHER-SHELL-ALIVE","submit":true}'
+++ curl -sS -m 30 -X POST -H 'Authorization: Bearer view-1986' -H 'X-Endpoint-Capability: ' -H 'Content-Type: application/json' --data-binary @- -w '\n%{http_code}' http://127.0.0.1:54965/v1/tasks/76e83e339a1dd09315c68ada36814249/input
++ raw=$'{"delivered": "76e83e339a1dd09315c68ada36814249", "ok": true}\n200'
++ printf %s 200
++ printf %s '{"delivered": "76e83e339a1dd09315c68ada36814249", "ok": true}'
+++ api_code
+++ cat /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/http-code
++ assert_equals 200 200 'an endpoint under /bin/dash should accept input'
++ '[' 200 = 200 ']'
++ wait_for_capture 76e83e339a1dd09315c68ada36814249 OTHER-SHELL-ALIVE
++ local endpoint=76e83e339a1dd09315c68ada36814249 needle=OTHER-SHELL-ALIVE waited=0 out
++ '[' 0 -lt 150 ']'
+++ view GET '/v1/tasks/76e83e339a1dd09315c68ada36814249/capture?lines=40'
+++ api view-1986 GET '/v1/tasks/76e83e339a1dd09315c68ada36814249/capture?lines=40'
+++ local token=view-1986 method=GET 'path=/v1/tasks/76e83e339a1dd09315c68ada36814249/capture?lines=40' body= raw
+++ '[' '/v1/tasks/76e83e339a1dd09315c68ada36814249/capture?lines=40' = /v1/agent/endpoints ']'
+++ '[' -n '' ']'
++++ curl -sS -m 30 -X GET -H 'Authorization: Bearer view-1986' -H 'X-Endpoint-Capability: ' -w '\n%{http_code}' 'http://127.0.0.1:54965/v1/tasks/76e83e339a1dd09315c68ada36814249/capture?lines=40'
+++ raw=$'$ echo OTHER-SHELL-ALIVE\nOTHER-SHELL-ALIVE\n$\n\n200'
+++ printf %s 200
+++ printf %s $'$ echo OTHER-SHELL-ALIVE\nOTHER-SHELL-ALIVE\n$\n'
++ out=$'$ echo OTHER-SHELL-ALIVE\nOTHER-SHELL-ALIVE\n$'
++ case "$out" in
++ return 0
++ printf '#!/bin/sh\necho "cannot start here" >&2\nexit 3\n'
++ chmod +x /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/broken-shell
+++ SHELL=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/broken-shell
+++ python3 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/bin/fm-stream-agent.py serve --hub http://127.0.0.1:54965 --token-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/publish-token --machine box-a --label brokenshell-1986 --cwd /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/cwd --ready-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg/shell/broken.ready
++ out='fm-stream-agent 2.1.0 endpoint f8e8bbd1d3f40732825b4d1bcc6e1a8c on box-a -> http://127.0.0.1:54965'
++ fail 'an endpoint whose shell died at birth should not report success'
++ printf 'not ok - %s\n' 'an endpoint whose shell died at birth should not report success'
+not ok - an endpoint whose shell died at birth should not report success
++ exit 1
++ cleanup_helpers
++ fm_test_reap_helper_pids
++ local pid
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-helpers.1986.ACAitL ']'
++ IFS=
++ read -r pid
++ '[' -n 2138 ']'
++ fm_test_kill_foreign_pids 2138
++ local pid why
++ for pid in "$@"
++ fm_test_pid_is_foreign 2138 why
++ local pid=2138 reason_var=why reason= cursor ppid hops
++ :
++ case $pid in
++ '[' 2138 = 1986 ']'
++ '[' 2138 = 1 ']'
++ ps -o pid= -p 2138
++ cursor=1986
++ hops=0
++ '[' 1986 -gt 1 ']'
++ '[' 0 -lt 64 ']'
+++ ps -o ppid= -p 1986
+++ tr -d ' '
++ ppid=1985
++ '[' -n 1985 ']'
++ '[' 1985 = 2138 ']'
++ cursor=1985
++ hops=1
++ '[' 1985 -gt 1 ']'
++ '[' 1 -lt 64 ']'
+++ ps -o ppid= -p 1985
+++ tr -d ' '
++ ppid=29707
++ '[' -n 29707 ']'
++ '[' 29707 = 2138 ']'
++ cursor=29707
++ hops=2
++ '[' 29707 -gt 1 ']'
++ '[' 2 -lt 64 ']'
+++ ps -o ppid= -p 29707
+++ tr -d ' '
++ ppid=1499
++ '[' -n 1499 ']'
++ '[' 1499 = 2138 ']'
++ cursor=1499
++ hops=3
++ '[' 1499 -gt 1 ']'
++ '[' 3 -lt 64 ']'
+++ ps -o ppid= -p 1499
+++ tr -d ' '
++ ppid=1
++ '[' -n 1 ']'
++ '[' 1 = 2138 ']'
++ cursor=1
++ hops=4
++ '[' 1 -gt 1 ']'
++ return 0
++ kill -9 2138
++ IFS=
++ read -r pid
++ '[' -n 2483 ']'
++ fm_test_kill_foreign_pids 2483
++ local pid why
++ for pid in "$@"
++ fm_test_pid_is_foreign 2483 why
++ local pid=2483 reason_var=why reason= cursor ppid hops
++ :
++ case $pid in
++ '[' 2483 = 1986 ']'
++ '[' 2483 = 1 ']'
++ ps -o pid= -p 2483
++ cursor=1986
++ hops=0
++ '[' 1986 -gt 1 ']'
++ '[' 0 -lt 64 ']'
+++ ps -o ppid= -p 1986
+++ tr -d ' '
++ ppid=1985
++ '[' -n 1985 ']'
++ '[' 1985 = 2483 ']'
++ cursor=1985
++ hops=1
++ '[' 1985 -gt 1 ']'
++ '[' 1 -lt 64 ']'
+++ ps -o ppid= -p 1985
+++ tr -d ' '
++ ppid=29707
++ '[' -n 29707 ']'
++ '[' 29707 = 2483 ']'
++ cursor=29707
++ hops=2
++ '[' 29707 -gt 1 ']'
++ '[' 2 -lt 64 ']'
+++ ps -o ppid= -p 29707
+++ tr -d ' '
++ ppid=1499
++ '[' -n 1499 ']'
++ '[' 1499 = 2483 ']'
++ cursor=1499
++ hops=3
++ '[' 1499 -gt 1 ']'
++ '[' 3 -lt 64 ']'
+++ ps -o ppid= -p 1499
+++ tr -d ' '
++ ppid=1
++ '[' -n 1 ']'
++ '[' 1 = 2483 ']'
++ cursor=1
++ hops=4
++ '[' 1 -gt 1 ']'
++ return 0
++ kill -9 2483
++ IFS=
++ read -r pid
++ :
++ fm_test_cleanup
++ local d
++ fm_test_reap_procevent_homes
++ local home claim_root $'seen=\n'
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-procevent.1986.i7FYL0 ']'
++ IFS=$'\t'
++ read -r home claim_root
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-procevent.1986.i7FYL0
++ for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"
++ '[' -n '' ']'
++ fm_test_reap_helper_pids
++ local pid
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-helpers.1986.ACAitL ']'
++ IFS=
++ read -r pid
++ :
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-helpers.1986.ACAitL
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-cleanup.1986.wuJpAN ']'
++ IFS=
++ read -r d
++ '[' -n /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg ']'
++ rm -rf /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/fm-stream-hub-tests.bcDsIg
++ IFS=
++ read -r d
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M420X5T39662CF6NV695GWJ5/.test-tmp/.fm-test-cleanup.1986.wuJpAN

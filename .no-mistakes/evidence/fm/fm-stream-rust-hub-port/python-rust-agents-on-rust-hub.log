@@ -1,0 +1,7 @@
+REAL RUST HUB: native_orders Python/Rust peer observations MATCH: {'native': 'accepted', 'duplicate': 'accepted-once', 'stale': 'refused', 'rejected': 'refused', 'ended': 'unconfirmed-not-gone', 'late': 'accepted-original-only', 'unsupported': 'refused-no-PTY-fallback'}
+Traceback (most recent call last):
+  File "<stdin>", line 15, in <module>
+  File "tests/assets/stream-agent-rust-parity.py", line 271, in command_values
+    assert code == 200 and body["ok"] and body["appended"] == endpoint, body
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'error': 'bad_json', 'message': 'malformed JSON body: maximum JSON nesting depth exceeded', 'ok': False}
