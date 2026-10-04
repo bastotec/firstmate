@@ -32,7 +32,9 @@
 #
 # USAGE (bin/fm-spawn.sh builds this; the brief arrives already encoded)
 #   fm-deck-worker.sh --id <task-id> --state <state-dir> --gen <busy-gen>
-#       --deck <deck-binary> [--model <route>] [--secondmate] -- <first-prompt>
+#       --deck <deck-binary> [--model <route>] [--secondmate | --primary] -- <first-prompt>
+# --primary is used only by the managed primary launcher; it shares the stable
+# home-host driver with --secondmate, without selecting a secondmate role.
 # --secondmate requires FM_HOME and hosts that home, leaving --state pointed
 # at the parent task state for busy/progress and failure publication.
 # Startup runs once before the first turn. A tracked watcher stays armed through
@@ -83,6 +85,7 @@ BUSY_EVENT="$SCRIPT_DIR/fm-busy-event.sh"
 STATE_IO="$SCRIPT_DIR/fm-state-io.py"
 
 ID='' STATE='' GEN='' DECK='' MODEL=''
+PRIMARY=0
 SECONDMATE=0 WATCH_PID='' WATCH_PREDECESSOR_ARM_PID='' INPUT_PID='' TURN_PID='' TURN_RENDER_PID=''
 WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 # shellcheck source=bin/fm-session-lock-lib.sh
@@ -90,6 +93,7 @@ WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --secondmate) SECONDMATE=1; shift ;;
+    --primary) PRIMARY=1; SECONDMATE=1; shift ;;
     --id) ID=${2-}; shift 2 ;;
     --state) STATE=${2-}; shift 2 ;;
     --gen) GEN=${2-}; shift 2 ;;
@@ -390,9 +394,11 @@ for seq, line in enumerate(sys.stdin):
     cat "$WORK/startup" >&2
     host_failure 'session start did not publish a complete digest'; exit 1
   fi
+  HOST_ROLE=secondmate
+  [ "$PRIMARY" != 1 ] || HOST_ROLE='managed primary'
   PROMPT="$PROMPT
 
-The task steering inbox is $STATE/$ID.inbox. It belongs to this secondmate even outside its home. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
+The execution steering inbox is $STATE/$ID.inbox. It belongs to this $HOST_ROLE. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
 The Deck host already ran bin/fm-session-start.sh exactly once for this session.
 Read the complete digest below; do not run session start again.
 $(cat "$WORK/startup")"

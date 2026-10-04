@@ -1,6 +1,6 @@
-Mode: Deck secondmate driver-owned wake turns.
+Mode: Deck home-driver-owned wake turns.
 
-`bin/fm-deck-worker.sh --secondmate` owns startup, the session lock lifetime, and watcher continuity; its header owns the mechanism and invariants.
+`bin/fm-deck-worker.sh --secondmate` and the managed-primary entry point `--primary` own startup, the session lock lifetime, and watcher continuity; the driver's header owns the mechanism and invariants.
 The complete session-start digest is already in the first turn: read it once and do not run session start again.
 When a turn dies before Deck opens a session, that digest reaches no conversation, so the host repeats the same launch brief once underneath the next wake; it is still the one digest, and running session start yourself is still wrong.
 On every watcher turn, drain `bin/fm-wake-drain.sh` before investigating or steering.
@@ -11,4 +11,4 @@ Do not arm a watcher manually or keep a tool call open to wait; the persistent d
 The driver's header owns terminal host failures and recoverable watcher handoffs; recovery after the driver stops belongs to the parent's guarded relaunch path.
 A failed turn is reported to the parent the same way but does not stop this driver: it returns to its prompt keeping its Deck session, so the next wake is simply the next turn, and only a failure it could not report stops it.
 A failure that opened no session at all stops this driver after its one repeated launch brief, so the home returns to the parent's guarded relaunch path rather than parking blind.
-This protocol is for persistent secondmates, not an authorization to migrate the main primary session.
+This protocol applies to persistent secondmates and explicitly managed primaries; [`docs/managed-primary.md`](../managed-primary.md) owns the opt-in setup and never authorizes adoption of an existing primary.

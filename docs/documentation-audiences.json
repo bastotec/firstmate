@@ -530,6 +530,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/managed-primary.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/stream-backend.md",
       "audience": "operator-current"
     },
