@@ -1,0 +1,19 @@
+FM_TEST_BEGIN 2026-10-04T22:58:03Z .tmp-stream-validation-round3/detached-observation.test.sh family=unclassified expected_gate_skip=none
+{"target": "127.0.0.1-65017:5a836681e567da476211b3022d80f23a", "pid": 25465, "pgid": 25465, "sid": 25465, "parent_subshell_has_returned": true, "process": "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/bin/backends/../fm-stream-agent.py serve --hub http://127.0.0.1:65017 --token-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.tmp-stream-validation-round3/tmp/fm-stream-tok.8BuiIb --machine box-test --label fm-detached-round3-25105 --cwd /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.tmp-stream-validation-round3/tmp/fm-backend-stream-tests.0XoHxn/detached-observation/cwd --status-path  --ready-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.tmp-stream-validation-round3/tmp/fm-stream-ready.QCAymR"}
+--- Endpoint capture after launch subshell returned:
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ echo ROUND3-DETACHED-ALIVE
+ROUND3-DETACHED-ALIVE
+bash-3.2$
+FM_TEST_END 2026-10-04T22:58:09Z .tmp-stream-validation-round3/detached-observation.test.sh exit=0 duration_ms=5435 gate_skip=false
+FM_TEST_BEGIN 2026-10-04T22:58:09Z .tmp-stream-validation-round3/base-regression.test.sh family=unclassified expected_gate_skip=none
+pre-fix create_task exit=1
+error: the stream agent refused to start an endpoint for 'fm-base-round3-26345': /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.tmp-stream-validation-round3/base-stream.sh: line 332: setsid: command not found
+{"machines": [], "ok": true, "tasks": []}FM_TEST_END 2026-10-04T22:58:47Z .tmp-stream-validation-round3/base-regression.test.sh exit=0 duration_ms=38613 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=44270
+FM_TEST_SUMMARY_FAMILY family=unclassified count=2 duration_ms=44048 failed=0
+FM_TEST_SLOWEST rank=1 script=.tmp-stream-validation-round3/base-regression.test.sh duration_ms=38613
+FM_TEST_SLOWEST rank=2 script=.tmp-stream-validation-round3/detached-observation.test.sh duration_ms=5435

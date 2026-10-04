@@ -1,0 +1,30 @@
+REAL macOS fallback:
+0
+{"pid": 53749, "pgid": 53749, "sid": 53749, "argv": ["one two", "literal;$(must-not-run)", "", "-dash"]}
+
+
+REAL kernel setsid denial (caller already session leader):
+1
+
+setsid: Operation not permitted
+
+command executed=False
+NON-LIVE utility-branch dispatch check:
+0
+{"pid": 53895, "pgid": 53895, "sid": 53895, "argv": ["one two", "literal;$(must-not-run)", "", "-dash"]}
+
+SIMULATED setsid(1) branch: argc=7
+
+NON-LIVE setsid return -1:
+1
+
+setsid: Operation not permitted
+
+command executed=False
+NON-LIVE setsid return undef:
+1
+
+setsid: Operation not permitted
+
+command executed=False
+Direct helper checks completed; real setsid(1) utility remains unavailable on this host.

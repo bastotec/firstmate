@@ -1,0 +1,36 @@
+Endpoint agent after spawn subshell exited: PID=92114 PGID=92114 SID=92114
+92114 92107 92114 /opt/homebrew/Cellar/python@3.14/3.14.8/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/bin/backends/../fm-stream-agent.py serve --hub http://127.0.0.1:64852 --token-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.t/stream-validation-round4/fm-stream-tok.5oj57w --machine box-test --label fm-round4-detach-91316 --cwd /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.t/stream-validation-round4/fm-backend-stream-tests.0qQ4wR/round4-detachment/cwd --status-path  --ready-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.t/stream-validation-round4/fm-stream-ready.XOvgSr
+Hub-bound target: 127.0.0.1-64852:3b29560138f39b09f86e8feec8063fc2
+Actual worker terminal output:
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ printf "ROUND4-ACTUAL-WORKER-%s\n" "command executed"
+ROUND4-ACTUAL-WORKER-command executed
+bash-3.2$
+{
+  "ok": true,
+  "task": {
+    "endpoint_id": "3b29560138f39b09f86e8feec8063fc2",
+    "label": "fm-round4-detach-91316",
+    "machine": "box-test",
+    "closed_at": null
+  }
+}
+ok - macOS fallback creates a detached session-leader agent and keeps its endpoint steerable
+Session-leader launch refusal exit=1
+error: the stream agent refused to start an endpoint for 'fm-round4-kernel-refusal-91316': setsid: Operation not permitted
+ok - a real failed setsid refuses endpoint launch and reports EPERM without running the command
+Pre-change adapter launch exit=1
+error: the stream agent refused to start an endpoint for 'fm-round4-baseline-91316': /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.t/stream-validation-round4/baseline-stream.sh: line 332: setsid: command not found
+{
+  "tasks": [
+    {
+      "label": "fm-round4-detach-91316",
+      "endpoint_id": "3b29560138f39b09f86e8feec8063fc2",
+      "closed_at": null
+    }
+  ]
+}
+ok - same real hub and macOS PATH reproduce the missing-setsid regression without the fix

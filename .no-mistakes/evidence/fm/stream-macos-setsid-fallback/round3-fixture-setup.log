@@ -1,0 +1,32 @@
++ . tests/lib.sh
+++ '[' -n '' ']'
+++ FM_TEST_LIB_SOURCED=1
+++ umask 022
++++ dirname tests/lib.sh
+++ . tests/git-config-helpers.sh
++++ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
++++ GIT_CONFIG_GLOBAL=/dev/null
++++ GIT_CONFIG_NOSYSTEM=1
+++ export FM_GATE_REFUSE_BYPASS=1
+++ FM_GATE_REFUSE_BYPASS=1
+++ export FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ unset FM_ASK_TRIAGE_HELPER FM_ASK_TRIAGE_KEY_VAR
+++ unset FM_TASK_ID
+++ unset TASKS_AXI_FILE TASKS_AXI_BACKEND
+++++ dirname tests/lib.sh
++++ cd tests/..
++++ pwd
+++ ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z
+++ FM_TEST_CLEANUP_DIRS=()
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.tmp-stream-validation-round3/tmp/.fm-test-cleanup.913.XXXXXX
+++ FM_TEST_CLEANUP_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.tmp-stream-validation-round3/tmp/.fm-test-cleanup.913.IAl2TQ
++++ fm_test_pid_identity 913
++++ local pid=913
++++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.tmp-stream-validation-round3/tmp
++++ bash -c '. "$1"; fm_pid_identity "$2"' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/bin/fm-wake-lib.sh 913
+++ FM_TEST_OWNER_IDENTITY=
+++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.tmp-stream-validation-round3/tmp/.fm-test-cleanup.913.IAl2TQ
+++ return 1
++ type fm_test_tmproot
+bash: line 1: type: fm_test_tmproot: not found

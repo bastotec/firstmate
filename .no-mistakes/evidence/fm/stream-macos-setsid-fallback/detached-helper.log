@@ -1,0 +1,7 @@
+spawn subshell exited before endpoint observation: pid=47262 exit=0
+{"pid": 47363, "pgid": 47363, "sid": 47363, "ppid": 47359, "argv": ["two words", "literal;$(no-command)", "", "quote'"], "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z", "marker": "detachment preserved"}
+real macOS fallback: session leader, PGID==PID, survived spawn caller exit, exact argv/env/cwd preserved
+fallback command exit propagated: 37
+kernel setsid rejection: exit=1 stdout='' stderr='setsid: Operation not permitted\n'
+setsid-present dispatch (function shim, not native setsid(1)): {"pid": 48759, "pgid": 48759, "sid": 48759, "ppid": 48706, "argv": ["two words", ""], "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z", "marker": "detachment preserved"} stderr='setsid branch selected\n'
+injected undef rejection (non-live syscall injection): exit=1 stdout='' stderr='setsid: Operation not permitted\n'

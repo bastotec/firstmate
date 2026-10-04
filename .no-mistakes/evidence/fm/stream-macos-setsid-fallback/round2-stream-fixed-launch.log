@@ -1,0 +1,11 @@
+FM_TEST_BEGIN 2026-10-04T22:35:26Z tests/.validation-stream-launch.test.sh family=unclassified expected_gate_skip=none
+Registered target: 127.0.0.1-58708:4831342667d8c62f3a3aa854b77bb926
+Publisher after creation subshell exit:
+  PID  PPID  PGID ARGS
+97036 97028 97036 /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/bin/backends/../fm-stream-agent.py serve --hub http://127.0.0.1:58708 --token-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.test-stream-round2/tmp/fm-stream-tok.4ZtgVf --machine box-test --label fm-create-95990 --cwd /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.test-stream-round2/tmp/fm-backend-stream-tests.F7j25m/create/cwd --status-path  --ready-file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.test-stream-round2/tmp/fm-stream-ready.mL7DtM
+{"pid": 97036, "pgid": 97036, "sid": 97036}
+{"ok": true, "task": {"agent_silent_for_secs": 0.55, "closed_at": null, "closed_by": null, "cols": 200, "created_at": 1791153328.262518, "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.test-stream-round2/tmp/fm-backend-stream-tests.F7j25m/create/cwd", "endpoint_id": "4831342667d8c62f3a3aa854b77bb926", "exit_code": null, "label": "fm-create-95990", "machine": "box-test", "rows": 40, "state_age_secs": 0.553, "stream_offset": 201}}ok - stream: create yields a hub-bound target the dispatcher can resolve
+FM_TEST_END 2026-10-04T22:35:29Z tests/.validation-stream-launch.test.sh exit=0 duration_ms=2198 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=2520
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=2198 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/.validation-stream-launch.test.sh duration_ms=2198

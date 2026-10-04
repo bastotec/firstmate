@@ -1,0 +1,484 @@
++ set -u
+++ dirname tests/fm-backend-stream.test.sh
++ . tests/lib.sh
+++ '[' -n '' ']'
+++ FM_TEST_LIB_SOURCED=1
+++ umask 022
++++ dirname tests/lib.sh
+++ . tests/git-config-helpers.sh
++++ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
++++ GIT_CONFIG_GLOBAL=/dev/null
++++ GIT_CONFIG_NOSYSTEM=1
+++ export FM_GATE_REFUSE_BYPASS=1
+++ FM_GATE_REFUSE_BYPASS=1
+++ export FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ unset FM_ASK_TRIAGE_HELPER FM_ASK_TRIAGE_KEY_VAR
+++ unset FM_TASK_ID
+++ unset TASKS_AXI_FILE TASKS_AXI_BACKEND
+++++ dirname tests/lib.sh
++++ cd tests/..
++++ pwd
+++ ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z
+++ FM_TEST_CLEANUP_DIRS=()
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.test-tmp/.fm-test-cleanup.2422.XXXXXX
+++ FM_TEST_CLEANUP_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.test-tmp/.fm-test-cleanup.2422.joz92W
++++ fm_test_pid_identity 2422
++++ local pid=2422
++++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.test-tmp
++++ bash -c '. "$1"; fm_pid_identity "$2"' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/bin/fm-wake-lib.sh 2422
+++ FM_TEST_OWNER_IDENTITY=
+++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/.test-tmp/.fm-test-cleanup.2422.joz92W
+++ return 1
++ command -v python3
++ command -v curl
++ command -v jq
+++ fm_test_tmproot fm-backend-stream-tests
+tests/fm-backend-stream.test.sh: line 24: fm_test_tmproot: command not found
++ TMP_ROOT=
++ BASE_PATH=/usr/bin:/bin:/usr/sbin:/sbin
++ HUB=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/bin/fm-stream-hub.py
++ TOKEN=adapter-token-2422
++ CASE_DIR=
++ URL=
++ HUB_PID=
++ SLOW_URL=
++ trap 'cleanup_helpers; fm_test_cleanup' EXIT INT TERM
++ test_spawn_hosts_a_deck_secondmate
++ local id=host-2422 home code fakebin target out pid
++ start_case_hub secondmate
++ local name=secondmate
++ shift
++ local ready waited=0 host port pid
++ cleanup_helpers
++ fm_test_reap_helper_pids
+tests/fm-backend-stream.test.sh: line 34: fm_test_reap_helper_pids: command not found
++ CASE_DIR=/secondmate
++ mkdir -p /secondmate/home/config /secondmate/home/state /secondmate/cwd
+mkdir: /secondmate: Read-only file system
+mkdir: /secondmate: Read-only file system
+mkdir: /secondmate: Read-only file system
++ printf 'publish,subscribe,control:%s\n' adapter-token-2422
+tests/fm-backend-stream.test.sh: line 62: /secondmate/tokens: No such file or directory
++ chmod 600 /secondmate/tokens
+chmod: /secondmate/tokens: No such file or directory
++ ready=/secondmate/ready
++ pid=2443
++ HUB_PID=2443
++ disown 2443
++ fm_test_track_helper_pid 2443
++ python3 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/bin/fm-stream-hub.py serve --bind 127.0.0.1 --port 0 --token-file /secondmate/tokens --ready-file /secondmate/ready
+tests/fm-backend-stream.test.sh: line 65: /secondmate/log: No such file or directory
+tests/fm-backend-stream.test.sh: line 71: fm_test_track_helper_pid: command not found
++ '[' 0 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=1
++ '[' 1 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=2
++ '[' 2 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=3
++ '[' 3 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=4
++ '[' 4 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=5
++ '[' 5 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=6
++ '[' 6 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=7
++ '[' 7 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=8
++ '[' 8 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=9
++ '[' 9 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=10
++ '[' 10 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=11
++ '[' 11 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=12
++ '[' 12 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=13
++ '[' 13 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=14
++ '[' 14 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=15
++ '[' 15 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=16
++ '[' 16 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=17
++ '[' 17 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=18
++ '[' 18 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=19
++ '[' 19 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=20
++ '[' 20 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=21
++ '[' 21 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=22
++ '[' 22 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=23
++ '[' 23 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=24
++ '[' 24 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=25
++ '[' 25 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=26
++ '[' 26 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=27
++ '[' 27 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=28
++ '[' 28 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=29
++ '[' 29 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=30
++ '[' 30 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=31
++ '[' 31 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=32
++ '[' 32 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=33
++ '[' 33 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=34
++ '[' 34 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=35
++ '[' 35 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=36
++ '[' 36 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=37
++ '[' 37 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=38
++ '[' 38 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=39
++ '[' 39 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=40
++ '[' 40 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=41
++ '[' 41 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=42
++ '[' 42 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=43
++ '[' 43 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=44
++ '[' 44 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=45
++ '[' 45 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=46
++ '[' 46 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=47
++ '[' 47 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=48
++ '[' 48 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=49
++ '[' 49 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=50
++ '[' 50 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=51
++ '[' 51 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=52
++ '[' 52 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=53
++ '[' 53 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=54
++ '[' 54 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=55
++ '[' 55 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=56
++ '[' 56 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=57
++ '[' 57 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=58
++ '[' 58 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=59
++ '[' 59 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=60
++ '[' 60 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=61
++ '[' 61 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=62
++ '[' 62 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=63
++ '[' 63 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=64
++ '[' 64 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=65
++ '[' 65 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=66
++ '[' 66 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=67
++ '[' 67 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=68
++ '[' 68 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=69
++ '[' 69 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=70
++ '[' 70 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=71
++ '[' 71 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=72
++ '[' 72 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=73
++ '[' 73 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=74
++ '[' 74 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=75
++ '[' 75 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=76
++ '[' 76 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=77
++ '[' 77 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=78
++ '[' 78 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=79
++ '[' 79 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=80
++ '[' 80 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=81
++ '[' 81 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=82
++ '[' 82 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=83
++ '[' 83 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=84
++ '[' 84 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=85
++ '[' 85 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=86
++ '[' 86 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=87
++ '[' 87 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=88
++ '[' 88 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=89
++ '[' 89 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=90
++ '[' 90 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=91
++ '[' 91 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=92
++ '[' 92 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=93
++ '[' 93 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=94
++ '[' 94 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=95
++ '[' 95 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=96
++ '[' 96 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=97
++ '[' 97 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=98
++ '[' 98 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=99
++ '[' 99 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
++ sleep 0.1
++ waited=100
++ '[' 100 -lt 100 ']'
++ '[' -s /secondmate/ready ']'
+++ cat /secondmate/log
++ fail 'hub did not report ready for case secondmate: '
++ printf 'not ok - %s\n' 'hub did not report ready for case secondmate: '
+not ok - hub did not report ready for case secondmate: 
++ exit 1
++ cleanup_helpers
++ fm_test_reap_helper_pids
+tests/fm-backend-stream.test.sh: line 34: fm_test_reap_helper_pids: command not found
++ fm_test_cleanup
+tests/lib.sh: line 1: fm_test_cleanup: command not found

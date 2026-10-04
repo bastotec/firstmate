@@ -1,0 +1,6 @@
+Real Perl fallback: argv/environment/stdin/cwd/exit status and PID==PGID==SID exit=37 stdout={"pid": 12987, "pgid": 12987, "sid": 12987, "argv": ["argument with spaces", "", "quote\"$;*\\value"], "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z", "env": "value with spaces", "stdin": "stdin survived\n"} stderr=
+PATH-present setsid dispatch (function stand-in, NOT real setsid binary) exit=37 stdout={"pid": 13090, "pgid": 13090, "sid": 13090, "argv": ["argument with spaces", "", "quote\"$;*\\value"], "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z", "env": "value with spaces", "stdin": "stdin survived\n"} stderr=
+AlreadyLeader exit=1 stdout='' stderr='setsid: Operation not permitted\n'
+UndefinedSetsid exit=1 stdout='' stderr='setsid: Operation not permitted\n'
+exec failure: exit=2 stderr='exec: No such file or directory\n'
+All focused helper executable checks passed. Native-binary behavior remains untested on this macOS host.

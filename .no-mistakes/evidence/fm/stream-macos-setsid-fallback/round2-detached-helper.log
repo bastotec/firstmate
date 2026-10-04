@@ -1,0 +1,9 @@
+spawn subshell exited before endpoint observation: pid=46228 exit=0
+{"pid": 46301, "pgid": 46301, "sid": 46301, "ppid": 46298, "argv": ["two words", "literal;$(no-command)", "", "quote'"], "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z", "marker": "detachment preserved"}
+PASS real macOS fallback: session leader, PGID==PID, survived spawn caller exit, exact argv/env/cwd preserved
+PASS command exit status propagated: 37
+PASS missing command refuses: 2 exec: No such file or directory
+PASS real kernel setsid rejection: 1 stdout= '' stderr= 'setsid: Operation not permitted\n'
+PASS setsid-present selection (non-native function shim): {"pid": 47004, "pgid": 47004, "sid": 47004, "ppid": 46967, "argv": ["two words", "literal;$(no-command)", "", "quote'"], "cwd": "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z", "marker": "detachment preserved"} stderr= 'setsid branch selected\n'
+PASS injected undef setsid result: 1 stdout= '' stderr= 'setsid: Operation not permitted\n'
+PASS injected -1 setsid result: 1 stdout= '' stderr= 'setsid: Operation not permitted\n'

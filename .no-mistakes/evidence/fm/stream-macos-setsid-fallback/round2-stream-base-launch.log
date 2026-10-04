@@ -1,0 +1,8 @@
+FM_TEST_BEGIN 2026-10-04T22:34:17Z tests/.validation-stream-launch.test.sh family=unclassified expected_gate_skip=none
+error: the stream agent refused to start an endpoint for 'fm-create-16076': /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/bin/backends/.validation-stream-base.sh: line 332: setsid: command not found
+not ok - creating endpoint fm-create-16076 failed
+not ok - the created target should carry the tag of the hub it was created on (expected '', got '127.0.0.1-57978')
+FM_TEST_END 2026-10-04T22:34:45Z tests/.validation-stream-launch.test.sh exit=1 duration_ms=27791 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=27904
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=27791 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/.validation-stream-launch.test.sh duration_ms=27791

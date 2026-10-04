@@ -1,0 +1,31 @@
+FM_TEST_BEGIN 2026-10-04T22:15:06Z tests/.validation-stream-regression.test.sh family=unclassified expected_gate_skip=none
+BASELINE launch exit=1: error: the stream agent refused to start an endpoint for 'fm-base-22868': /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44F1145XGBPK6GYB7P8PE4Z/bin/backends/.validation-stream-base.sh: line 332: setsid: command not found
+FIXED target=127.0.0.1-57791:999b07caf57e92af9ab43c2ac9f14954 (spawn command substitution returned)
+REGISTERED AGENT KERNEL STATE {"agent_pid": 73602, "pgid": 73602, "sid": 73602}
+
+CAPTURE FROM REAL ENDPOINT:
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ echo LIVE-''MACOS-survived
+LIVE-MACOS-survived
+bash-3.2$
+
+HUB REGISTRY AFTER SPAWN CALLER EXIT:
+{
+  "ok": true,
+  "tasks": [
+    {
+      "endpoint_id": "999b07caf57e92af9ab43c2ac9f14954",
+      "label": "fm-fixed-22868",
+      "machine": "box-test",
+      "closed_at": null
+    }
+  ]
+}
+ok - same real hub: base fails missing setsid; fixed agent is a session leader, survives spawn, executes input and publishes capture
+FM_TEST_END 2026-10-04T22:15:47Z tests/.validation-stream-regression.test.sh exit=0 duration_ms=40869 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=41002
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=40869 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/.validation-stream-regression.test.sh duration_ms=40869
