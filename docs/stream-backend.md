@@ -155,8 +155,10 @@ The opt-in `fm-stream-hub` workspace binary implements the hub HTTP surfaces alo
 Rust 1.96 or newer is required to build it.
 The binary's `--help` owns its CLI flags, and it shares the protocol constant and identity validation with `fm-stream-wire`.
 [Security](#security) applies to both hubs, including the plain-HTTP transport boundary.
+CLI option names must be supplied in full with a separate value, rather than argparse-style abbreviations or `--name=value` forms.
 Rust query integers (`wait` and `lines`) must fit signed 64-bit values before clamping, unlike Python's arbitrary-precision query parsing.
-Forwarded input and status values use stack-safe parsing, encoding, and destruction, preserving Python-supported nested notes without inheriting the control-field parser's 128-container limit.
+Forwarded input and status values preserve Python JSON semantics, including `NaN`, `Infinity`, `-Infinity`, and escaped lone surrogates, so the owning Python agent receives the original values rather than null or replacement characters.
+Their parsing, encoding, and destruction are stack-safe, preserving Python-supported nested notes without inheriting the control-field parser's 128-container limit; genuinely malformed JSON still returns `bad_json`.
 
 Run an isolated pilot with a newly created token file, an ephemeral loopback port, and ready/pid paths belonging only to that pilot:
 
