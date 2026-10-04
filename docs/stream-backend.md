@@ -251,7 +251,7 @@ This executable is a host-side routing surface, not an HTTP endpoint or an authe
 Its header and `--help` own the operator-maintained 0600 binding registry, exact target resolution, and supported verbs.
 The host resolves `(machine, label)` to an explicit `FM_HOME` and exact task or captain-call binding; neither the registry's home paths nor control-class credentials are supplied by or returned to the browser.
 Invalid registry bindings refuse before dispatch; stale captain calls and deeper task eligibility are checked by the existing owners.
-Lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or remote-secondmate refusal checks.
+Task lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or remote-secondmate refusal checks.
 The host adapter must keep backend credentials in host-only 0600 files and must never send them in page content, browser environment, or browser storage.
 
 Decision actions carry the captain's authenticated exact answer to the existing send or captain-hold owner; the [host executable's header and help](../bin/fm-ui-host-control.py) own payload fields, delegation, acknowledgement framing, host-only diagnostics, and retry limits.
@@ -262,9 +262,25 @@ A crew-owned `no-mistakes axi respond` remains worker-owned and is never invoked
 Existing owner guards remain authoritative, including endpoint retirement and stand-down refusals; the host route does not bypass those refusals to revive or reassign workers.
 
 Full primary control is not yet implemented.
-The runtime/control-plane owner owns these explicit capability gaps: primary interrupt, primary exit/shutdown, primary relaunch/restart, primary missing-endpoint recovery, and primary native mid-turn steering.
+Valid primary `interrupt`, `exit`, `relaunch`, and `recover-missing` requests return `command_ack` refused with `primary-lifecycle-owner-absent`; valid primary `steer` requests return refused with `primary-not-stream-registered`.
+Malformed payloads still refuse through normal payload validation before those capability checks.
+Neither refusal invokes a task owner, synthesizes task metadata, infers an endpoint from the label, or falls back to PTY input.
 Primary decision control is supported through an explicit host-registry captain-call binding under the primary owner's `FM_HOME`, while task-key decisions use an exact task binding in their owning home.
 Notes-only and worker-only bindings do not constitute full primary control.
+
+The read-only `targets` subcommand provides browser-safe discovery for registered primaries, secondmates, and workers even when they are absent from the hub feed.
+Its header owns the exact row schema; supported operations describe routing capability rather than current eligibility, and call availability describes a bound decision target rather than proving a currently held call.
+Discovery validates the entire registry, home machine identities, and task metadata classifications before emitting any rows; it never returns private registry contents or paths.
+
+#### Primary owner prerequisites
+
+A future authoritative primary lifecycle owner must provide an exact home-bound endpoint identity and execution generation, a serialized action/ownership guard, authoritative alive/stopped/missing classification, verified per-harness interrupt and exit mechanics, and explicit refused versus unconfirmed results.
+Relaunch and missing-endpoint recovery must preserve unlanded work and prove launch authority and stopped/missing postconditions before replacement, with idempotent retry and recovery after partial failure.
+The README launch command remains the primary launch owner, including the signed-primary boundary; primary launch reconstruction is not implemented by this router, and `fm-spawn.sh` remains task-only.
+
+A future primary endpoint registration record must bind the owning home to its exact stream machine, label, endpoint and execution generation, plus authenticated receiver capability and receiver binding independently of any task status path.
+It must supply authoritative freshness, retirement and replacement checks so native steering binds to the registered execution, preserves command-id deduplication and application acknowledgement, and refuses missing or stale capability without PTY fallback.
+Until those owners and records exist, the named primary refusals remain the supported contract.
 
 The Bridge command plane remains `steer` only.
 The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.

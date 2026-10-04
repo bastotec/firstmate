@@ -83,11 +83,22 @@ refused('supervisor', 'host routing unavailable', note)
 registry.unlink()
 link.rename(registry)
 refused('missing', 'unknown or ambiguous', note)
-for action in ('interrupt', 'exit', 'shutdown', 'relaunch', 'restart', 'recover-missing', 'steer'):
-    result, records = stream_command('supervisor', dict(kind=action))
-    assert records[0]['state'] == 'refused', result
-    for gap in ('interrupt', 'exit/shutdown', 'relaunch/restart', 'recover-missing', 'native mid-turn steering'):
-        assert gap in records[0]['reason'], records
+for action in ('interrupt', 'exit', 'relaunch', 'recover-missing', 'steer'):
+    payload = dict(kind=action)
+    if action in ('relaunch', 'recover-missing'):
+        payload['note'] = 'fixture checkpoint'
+    if action == 'steer':
+        payload['text'] = 'fixture mid-turn intent'
+    reason = 'primary-not-stream-registered' if action == 'steer' else 'primary-lifecycle-owner-absent'
+    for attempt in range(2):
+        refused('supervisor', reason, payload)
+    refused('supervisor', 'unsupported action or payload fields', dict(payload, task_id='sample'))
+    if action in ('relaunch', 'recover-missing', 'steer'):
+        field = 'text' if action == 'steer' else 'note'
+        refused('supervisor', 'note or answer must not be blank', dict(payload, **{field: ' '}))
+    assert not list((home / 'state').iterdir()), 'primary refusal wrote runtime state'
+for action in ('shutdown', 'restart'):
+    refused('supervisor', 'unsupported action or payload fields', dict(kind=action))
 for action in ('answer', 'release'):
     refused('supervisor', 'exact captain-call id', dict(kind=action, text='Approved'))
 refused('supervisor', 'exact task binding', dict(kind='resolve-key', key='fixture-key', text='Approved'))
@@ -520,7 +531,7 @@ if shutil.which('tasks-axi'):
         other_mode = 'release' if action == 'answer' else 'answer'
         result, records = stream_command('supervisor', dict(kind=other_mode, text=words))
         assert not records and 'unconfirmed' in result.stderr, result
-        refused('supervisor', 'primary interrupt', dict(kind='exit'))
+        refused('supervisor', 'primary-lifecycle-owner-absent', dict(kind='exit'))
         write([dict(task, label='fm-' + call, task_id=call)])
         result, records = stream_command('fm-' + call, dict(kind=action, text=words))
         assert records and records[0]['state'] == 'accepted', result
@@ -532,4 +543,93 @@ if shutil.which('tasks-axi'):
     print('primary captain-call answer/release: exact words, guarded owner transitions and idempotent replay passed')
 else:
     print('skip: tasks-axi not found (primary captain-call owner integration)')
+
+# Discovery is all-or-nothing, browser-safe and independent of the hub feed.
+def discover(rows, reason=None):
+    write(rows)
+    result = subprocess.run([str(router), '--registry', str(registry), 'targets'],
+                            env=env, text=True, capture_output=True, timeout=20)
+    if reason is not None:
+        assert result.returncode == 2 and not result.stdout, result
+        assert reason in result.stderr, result
+        assert str(home) not in result.stderr and str(registry) not in result.stderr, result
+        return
+    assert result.returncode == 0 and not result.stderr, result
+    values = json.loads(result.stdout)
+    assert all(set(value) == {'machine', 'label', 'target_class',
+                             'supported_operations', 'call_available'} for value in values), values
+    assert all(type(value['call_available']) is bool for value in values), values
+    assert str(home) not in result.stdout and 'private-call' not in result.stdout, result
+    return values
+
+(home / 'state/sample.meta').write_text('kind=ship\n')
+(home / 'state/mate.meta').write_text('kind=secondmate\n')
+mate = dict(task, label='fm-mate', task_id='mate')
+values = discover([primary, task, mate])
+assert [value['target_class'] for value in values] == ['primary', 'worker', 'secondmate'], values
+assert values[0]['supported_operations'] == ['note'] and not values[0]['call_available'], values
+expected = {'note', 'resolve-key', 'interrupt', 'exit', 'relaunch', 'recover-missing', 'answer', 'release'}
+assert all(set(value['supported_operations']) == expected and value['call_available']
+           for value in values[1:]), values
+values = discover([dict(primary, captain_call_id='private-call')])
+assert values[0]['supported_operations'] == ['note', 'answer', 'release'], values
+assert values[0]['call_available'], values
+for kind in ('scout', 'ship'):
+    (home / 'state/sample.meta').write_text('kind=' + kind + '\n')
+    assert discover([task])[0]['target_class'] == 'worker'
+for contents in ('', 'kind=unknown\n', 'kind=ship\nkind=ship\n', 'kind=ship\nkind=secondmate\n'):
+    (home / 'state/sample.meta').write_text(contents)
+    discover([primary, task], 'target class')
+(home / 'state/sample.meta').unlink()
+discover([primary, task], 'no regular owner metadata')
+(home / 'state/sample.meta').symlink_to(home / 'state/mate.meta')
+discover([primary, task], 'no regular owner metadata')
+(home / 'state/sample.meta').unlink()
+(home / 'state/sample.meta').write_text('kind=ship\n')
+for rows in ([primary, primary], [primary, dict(primary, label='alias', captain_call_id='private-call')],
+             [dict(primary, captain_call_id='one'), dict(primary, label='alias', captain_call_id='two')],
+             [task, task]):
+    discover(rows, 'ambiguous registry')
+discover([dict(task, label='sample')], 'publisher label')
+discover([dict(primary, secret='private-secret')], 'malformed registry')
+(home / 'config/stream-machine').write_text('other-machine\n')
+discover([primary], 'disagrees')
+(home / 'config/stream-machine').write_text('fixture-host\n')
+write([primary])
+registry.chmod(0o644)
+result = subprocess.run([str(router), '--registry', str(registry), 'targets'],
+                        env=env, text=True, capture_output=True, timeout=20)
+assert result.returncode == 2 and not result.stdout and '0600' in result.stderr, result
+write([primary])
+# Named primary refusals remain explicit while stdin stays open, never invoking owners.
+spy_log.write_text('')
+process = subprocess.Popen([str(spy_router), '--registry', str(registry), 'command'], env=spy_env,
+                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+try:
+    for action in ('interrupt', 'exit', 'relaunch', 'recover-missing', 'steer'):
+        payload = dict(kind=action)
+        if action in ('relaunch', 'recover-missing'):
+            payload['note'] = 'checkpoint'
+        if action == 'steer':
+            payload['text'] = 'native intent'
+        record = dict(record='command', command_id='duplicate-primary',
+                      identity=dict(parent_mate_id='fixture-host', leaf_worker_id='fixture-host/supervisor'),
+                      payload=payload)
+        for attempt in range(2):
+            process.stdin.write(json.dumps(record) + '\n')
+            process.stdin.flush()
+            assert select.select([process.stdout], [], [], 5)[0], 'primary refusal blocked'
+            ack = json.loads(process.stdout.readline())
+            assert ack['state'] == 'refused' and ack['command_id'] == 'duplicate-primary', ack
+            assert ack['reason'] == ('primary-not-stream-registered' if action == 'steer'
+                                     else 'primary-lifecycle-owner-absent'), ack
+    process.stdin.close()
+    process.stdin = None
+    stdout, stderr = process.communicate(timeout=10)
+    assert not stdout and not stderr and not spy_log.read_bytes(), (stdout, stderr)
+finally:
+    if process.poll() is None:
+        process.kill()
+        process.communicate()
+print('browser-safe discovery, fail-closed classification and repeated primary capability refusals passed')
 PY
