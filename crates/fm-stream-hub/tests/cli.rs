@@ -118,27 +118,80 @@ fn malformed_input_is_rejected_and_python_valid_extensions_still_reparse() {
 }
 
 #[test]
-fn deeply_nested_requests_are_refused_without_losing_hub_state() {
-    let server = Server::start();
+fn deeply_nested_commands_are_forwarded_without_losing_hub_state() {
+    let server = Server::start_with_ack("5");
     let eid = "c".repeat(32);
-    assert_eq!(
-        server
-            .api(
-                "POST",
-                "/v1/agent/endpoints",
-                &json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker"})
-                    .to_string(),
-                ""
-            )
-            .0,
-        201
+    let (status, registered) = server.api(
+        "POST",
+        "/v1/agent/endpoints",
+        &json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker"})
+            .to_string(),
+        "",
     );
-    let raw = format!(
-        "{{\"text\":\"echo ok\",\"unused\":{}0{}}}",
-        "[".repeat(200_000),
-        "]".repeat(200_000)
+    assert_eq!(status, 201);
+    let cap = registered["command_capability"].as_str().unwrap();
+    for (open, close, depth) in [
+        ("[", "]", 150),
+        ("{\"x\": [", "]}", 10_000),
+        ("[", "]", 200_000),
+    ] {
+        let note = format!(
+            r#"{}[NaN, "\ud800"]{}"#,
+            open.repeat(depth),
+            close.repeat(depth)
+        );
+        for kind in ["status", "input"] {
+            let (request, payload) = if kind == "status" {
+                (
+                    // Duplicate keys exercise stack-safe destruction of the old value.
+                    format!(r#"{{"state":"working","note":{note},"note":{note}}}"#),
+                    format!(r#"{{"note": {note}, "state": "working"}}"#),
+                )
+            } else {
+                (
+                    format!(r#"{{"text":{note},"submit":NaN}}"#),
+                    format!(r#"{{"keys": null, "submit": true, "text": {note}}}"#),
+                )
+            };
+            std::thread::scope(|scope| {
+                let submit = scope.spawn(|| {
+                    server.api("POST", &format!("/v1/tasks/{eid}/{kind}"), &request, "")
+                });
+                let (status, raw) = server.api_raw(
+                    "GET",
+                    &format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=3"),
+                    "",
+                    cap,
+                );
+                assert_eq!(status, 200);
+                let cid = raw
+                    .split("\"command_id\": \"")
+                    .nth(1)
+                    .unwrap()
+                    .split('"')
+                    .next()
+                    .unwrap();
+                assert_eq!(
+                    raw,
+                    format!(r#"{{"commands": [{{"command_id": "{cid}", "endpoint_id": "{eid}", "kind": "{kind}", "payload": {payload}}}], "ok": true}}"#)
+                );
+                let result = json!({"machine":"box","command_id":cid,"ok":true}).to_string();
+                assert_eq!(server.api("POST", "/v1/agent/results", &result, cap).0, 200);
+                assert_eq!(submit.join().unwrap().0, 200);
+            });
+        }
+    }
+    let malformed = format!(
+        "{{\"state\":\"working\",\"note\":{}0,{}}}",
+        "[".repeat(150),
+        "]".repeat(150)
     );
-    let (status, response) = server.api("POST", &format!("/v1/tasks/{eid}/input"), &raw, "");
+    let (status, response) = server.api(
+        "POST",
+        &format!("/v1/tasks/{eid}/status"),
+        &malformed,
+        "",
+    );
     assert_eq!(status, 400);
     assert_eq!(response["error"], "bad_json");
     let (status, health) = server.api("GET", "/v1/health", "", "");

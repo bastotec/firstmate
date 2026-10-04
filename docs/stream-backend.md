@@ -119,7 +119,7 @@ The Cargo workspace shares the protocol handshake and heartbeat wire mapping in 
 The bridge uses Tokio, Hyper, and rustls for HTTP and HTTPS access and Serde JSON for parsing, without an LLM framework.
 It follows HTTP redirects and accepts argparse-style unique long-option abbreviations.
 Epochs remain limited to signed 64-bit integers, unlike Python's arbitrary-precision values.
-The shared Rust JSON compatibility scanner bounds nesting at 128 containers before recursive scanning, so deeply nested documents accepted by Python can be refused by either Rust binary.
+The bridge retains a 128-container nesting bound at its shared JSON compatibility entry point, matching its Serde value parser's supported depth.
 `tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
 Live comparisons exclude process-local clocks; help presentation, top-level command choices, and transport-library error details are not byte contracts.
 
@@ -156,6 +156,7 @@ Rust 1.96 or newer is required to build it.
 The binary's `--help` owns its CLI flags, and it shares the protocol constant and identity validation with `fm-stream-wire`.
 [Security](#security) applies to both hubs, including the plain-HTTP transport boundary.
 Rust query integers (`wait` and `lines`) must fit signed 64-bit values before clamping, unlike Python's arbitrary-precision query parsing.
+Forwarded input and status values use stack-safe parsing, encoding, and destruction, preserving Python-supported nested notes without inheriting the control-field parser's 128-container limit.
 
 Run an isolated pilot with a newly created token file, an ephemeral loopback port, and ready/pid paths belonging only to that pilot:
 

@@ -24,13 +24,31 @@ struct Request {
 }
 impl Request {
     fn forwarded(&self) -> Result<payload::Json> {
+        if let Some(error) = &self.body_error {
+            return Err(error.clone());
+        }
         let text = if self.raw.is_empty() {
             "{}"
         } else {
             std::str::from_utf8(&self.raw)
                 .map_err(|e| Error::new(400, "bad_json", format!("malformed JSON body: {e}")))?
         };
-        payload::Json::parse(text)
+        let parsed = payload::Json::parse(text)?;
+        if !matches!(parsed, payload::Json::Object(_)) {
+            return Err(Error::new(400, "bad_json", "the body must be a JSON object"));
+        }
+        Ok(parsed)
+    }
+    fn command_body(&self, fields: &[&str]) -> Result<(Value, payload::Json)> {
+        let forwarded = self.forwarded()?;
+        // Only consumed controls need serde values. Opaque worker input must not
+        // inherit serde's recursive parsing limit or lossy compatibility rewrite.
+        let controls = fields
+            .iter()
+            .map(|field| (*field, forwarded.get(field).encode()))
+            .collect::<Vec<_>>();
+        let parsed = parse_body(&payload::object(&controls))?;
+        Ok((parsed, forwarded))
     }
     fn method(&self) -> &hyper::Method {
         &self.method
@@ -97,6 +115,9 @@ fn body(r: &mut Request) -> Result<Value> {
     }
     let text = std::str::from_utf8(raw)
         .map_err(|e| Error::new(400, "bad_json", format!("malformed JSON body: {e}")))?;
+    parse_body(text)
+}
+fn parse_body(text: &str) -> Result<Value> {
     let p = serde_json::from_str::<Value>(text).or_else(|_| {
         if let Some(error) = fm_stream_wire::python_json::python_json_error(text) {
             return Err(Error::new(
@@ -399,8 +420,7 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
             Hub::get(&s, eid)?;
         }
         if tail == "input" && method == "POST" {
-            let p = body(r)?;
-            let forwarded = r.forwarded()?;
+            let (p, forwarded) = r.command_body(&["submit"])?;
             if matches!(forwarded.get("text"), payload::Json::Null)
                 && matches!(forwarded.get("keys"), payload::Json::Null)
             {
@@ -422,7 +442,7 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
             return answer(json!({"ok":true,"delivered":eid}));
         }
         if tail == "status" && method == "POST" {
-            let p = body(r)?;
+            let (p, forwarded) = r.command_body(&["state"])?;
             let state = string(&p["state"]);
             let states = [
                 "working",
@@ -444,7 +464,6 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
                     ),
                 ));
             }
-            let forwarded = r.forwarded()?;
             let note = forwarded.get("note");
             h.submit_encoded(
                 eid,

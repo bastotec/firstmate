@@ -9,9 +9,11 @@ pub enum Json {
     Array(Vec<Json>),
     Object(BTreeMap<Vec<u32>, Json>),
 }
+static NULL: Json = Json::Null;
+
 impl Json {
     pub fn parse(text: &str) -> Result<Self> {
-        if let Some(error) = fm_stream_wire::python_json::python_json_error(text) {
+        if let Some(error) = fm_stream_wire::python_json::python_json_error_unbounded(text) {
             return Err(Error::new(
                 400,
                 "bad_json",
@@ -25,8 +27,8 @@ impl Json {
         match self {
             Self::Object(fields) => fields
                 .get(&field.chars().map(u32::from).collect::<Vec<_>>())
-                .unwrap_or(&Self::Null),
-            _ => &Self::Null,
+                .unwrap_or(&NULL),
+            _ => &NULL,
         }
     }
     pub fn truth(&self) -> bool {
@@ -40,27 +42,64 @@ impl Json {
         }
     }
     pub fn encode(&self) -> String {
+        enum Piece<'a> {
+            Value(&'a Json),
+            Key(&'a [u32]),
+            Text(&'static str),
+        }
+        let mut out = String::new();
+        let mut pending = vec![Piece::Value(self)];
+        while let Some(piece) = pending.pop() {
+            match piece {
+                Piece::Text(text) => out.push_str(text),
+                Piece::Key(key) => out.push_str(&string(key)),
+                Piece::Value(value) => match value {
+                    Self::Null => out.push_str("null"),
+                    Self::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+                    Self::Number(value) => out.push_str(value),
+                    Self::String(value) => out.push_str(&string(value)),
+                    Self::Array(values) => {
+                        out.push('[');
+                        pending.push(Piece::Text("]"));
+                        for (index, value) in values.iter().enumerate().rev() {
+                            pending.push(Piece::Value(value));
+                            if index > 0 {
+                                pending.push(Piece::Text(", "));
+                            }
+                        }
+                    }
+                    Self::Object(fields) => {
+                        out.push('{');
+                        pending.push(Piece::Text("}"));
+                        for (index, (key, value)) in fields.iter().enumerate().rev() {
+                            pending.push(Piece::Value(value));
+                            pending.push(Piece::Text(": "));
+                            pending.push(Piece::Key(key));
+                            if index > 0 {
+                                pending.push(Piece::Text(", "));
+                            }
+                        }
+                    }
+                },
+            }
+        }
+        out
+    }
+    fn drain_children(&mut self, pending: &mut Vec<Json>) {
         match self {
-            Self::Null => "null".into(),
-            Self::Bool(value) => value.to_string(),
-            Self::Number(value) => value.clone(),
-            Self::String(value) => string(value),
-            Self::Array(values) => format!(
-                "[{}]",
-                values
-                    .iter()
-                    .map(Self::encode)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Self::Object(fields) => format!(
-                "{{{}}}",
-                fields
-                    .iter()
-                    .map(|(key, value)| format!("{}: {}", string(key), value.encode()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            Self::Array(values) => pending.append(values),
+            Self::Object(fields) => pending.extend(std::mem::take(fields).into_values()),
+            _ => (),
+        }
+    }
+}
+impl Drop for Json {
+    fn drop(&mut self) {
+        // Destruction must be stack-safe too, including overwritten duplicate keys.
+        let mut pending = Vec::new();
+        self.drain_children(&mut pending);
+        while let Some(mut value) = pending.pop() {
+            value.drain_children(&mut pending);
         }
     }
 }
@@ -152,75 +191,91 @@ impl Parser<'_> {
         }
         points
     }
-    fn value(&mut self) -> Json {
+    fn key(&mut self) -> Vec<u32> {
+        let key = self.string();
         self.ws();
-        match self.text.as_bytes()[self.pos] {
-            b'"' => Json::String(self.string()),
-            b'{' => {
-                self.pos += 1;
-                let mut fields = BTreeMap::new();
-                self.ws();
-                while self.text.as_bytes()[self.pos] != b'}' {
-                    let key = self.string();
-                    self.ws();
+        self.pos += 1; // colon; the compatibility scanner validated the grammar
+        key
+    }
+    fn value(&mut self) -> Json {
+        let mut containers = Vec::new();
+        loop {
+            self.ws();
+            let mut value = match self.text.as_bytes()[self.pos] {
+                b'"' => Json::String(self.string()),
+                b'{' | b'[' => {
+                    let object = self.text.as_bytes()[self.pos] == b'{';
                     self.pos += 1;
-                    fields.insert(key, self.value());
                     self.ws();
-                    if self.text.as_bytes()[self.pos] != b',' {
-                        break;
+                    let value = if object {
+                        Json::Object(BTreeMap::new())
+                    } else {
+                        Json::Array(Vec::new())
+                    };
+                    let closer = if object { b'}' } else { b']' };
+                    if self.text.as_bytes()[self.pos] == closer {
+                        self.pos += 1;
+                        value
+                    } else {
+                        let key = if object { Some(self.key()) } else { None };
+                        containers.push((value, key));
+                        continue;
                     }
-                    self.pos += 1;
-                    self.ws();
                 }
-                self.pos += 1;
-                Json::Object(fields)
-            }
-            b'[' => {
-                self.pos += 1;
-                let mut values = Vec::new();
-                self.ws();
-                while self.text.as_bytes()[self.pos] != b']' {
-                    values.push(self.value());
-                    self.ws();
-                    if self.text.as_bytes()[self.pos] != b',' {
-                        break;
+                _ => self.scalar(),
+            };
+            loop {
+                let Some((parent, key)) = containers.last_mut() else {
+                    return value;
+                };
+                match parent {
+                    Json::Object(fields) => {
+                        fields.insert(key.take().unwrap(), value);
                     }
-                    self.pos += 1;
+                    Json::Array(values) => values.push(value),
+                    _ => unreachable!(),
                 }
-                self.pos += 1;
-                Json::Array(values)
+                self.ws();
+                if self.text.as_bytes()[self.pos] == b',' {
+                    self.pos += 1;
+                    self.ws();
+                    if matches!(parent, Json::Object(_)) {
+                        *key = Some(self.key());
+                    }
+                    break;
+                }
+                self.pos += 1; // closer
+                value = containers.pop().unwrap().0;
             }
+        }
+    }
+    fn scalar(&mut self) -> Json {
+        let start = self.pos;
+        while self.text.as_bytes().get(self.pos).is_some_and(|b| {
+            !matches!(b, b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n')
+        }) {
+            self.pos += 1;
+        }
+        let token = &self.text[start..self.pos];
+        match token {
+            "null" => Json::Null,
+            "true" => Json::Bool(true),
+            "false" => Json::Bool(false),
+            "NaN" | "Infinity" | "-Infinity" => Json::Number(token.into()),
             _ => {
-                let start = self.pos;
-                while self.text.as_bytes().get(self.pos).is_some_and(|b| {
-                    !matches!(b, b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n')
-                }) {
-                    self.pos += 1;
-                }
-                let token = &self.text[start..self.pos];
-                match token {
-                    "null" => Json::Null,
-                    "true" => Json::Bool(true),
-                    "false" => Json::Bool(false),
-                    "NaN" | "Infinity" | "-Infinity" => Json::Number(token.into()),
-                    _ => {
-                        let float = token.contains(['.', 'e', 'E']);
-                        let number = if float
-                            && token.parse::<f64>().is_ok_and(|value| value.is_infinite())
-                        {
-                            if token.starts_with('-') {
-                                "-Infinity".into()
-                            } else {
-                                "Infinity".into()
-                            }
-                        } else {
-                            crate::encode(
-                                &serde_json::from_str::<serde_json::Value>(token).unwrap(),
-                            )
-                        };
-                        Json::Number(number)
+                let float = token.contains(['.', 'e', 'E']);
+                let number = if float
+                    && token.parse::<f64>().is_ok_and(|value| value.is_infinite())
+                {
+                    if token.starts_with('-') {
+                        "-Infinity".into()
+                    } else {
+                        "Infinity".into()
                     }
-                }
+                } else {
+                    crate::encode(&serde_json::from_str::<serde_json::Value>(token).unwrap())
+                };
+                Json::Number(number)
             }
         }
     }

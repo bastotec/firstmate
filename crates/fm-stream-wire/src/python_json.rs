@@ -1,19 +1,18 @@
-//! A bounded compatibility scanner for CPython's `json.JSONDecodeError` messages.
+//! A stack-safe compatibility scanner for CPython's `json.JSONDecodeError` messages.
 //!
 //! `serde_json` and CPython disagree on both messages and the set of accepted
 //! documents (Python takes `NaN`/`Infinity` literals and lone surrogate
 //! escapes), and the adapters surface those messages verbatim (`line %d is
 //! not JSON: %s`, `cannot read the feed %s: %s`).  So when `serde_json`
-//! rejects a document, this scanner produces Python's own refusal within its
-//! supported nesting, or says `None` when Python would accept the document.
-//! The nesting guard rejects deeper input before recursive scanning to protect
-//! callers from stack exhaustion; that refusal is not CPython's wording.
+//! rejects a document, this scanner produces Python's own refusal, or says
+//! `None` when Python would accept the document. Container scanning uses an
+//! explicit stack so deeply nested command values do not exhaust the call stack.
 //!
 //! Positions are character-based, like Python's, and `lineno`/`colno` follow
 //! CPython's arithmetic, including for multiline hub request bodies.
 
 /// Python's error message, or a safety refusal above 128 nested containers.
-/// Returns `None` when the bounded scan finds a Python-valid document.
+/// This entry point retains the bridge's bounded Serde-value contract.
 pub fn python_json_error(text: &str) -> Option<String> {
     let mut depth: usize = 0;
     let mut quoted = false;
@@ -41,6 +40,12 @@ pub fn python_json_error(text: &str) -> Option<String> {
             }
         }
     }
+    python_json_error_unbounded(text)
+}
+
+/// Python's error message, or `None` for a Python-valid document.
+/// Use only with stack-safe value parsing, encoding, and destruction.
+pub fn python_json_error_unbounded(text: &str) -> Option<String> {
     let chars: Vec<char> = text.chars().collect();
     match scan_value(&chars, skip_ws(&chars, 0)) {
         Ok(mut pos) => {
@@ -197,30 +202,84 @@ fn skip_ws(chars: &[char], mut pos: usize) -> usize {
 /// A parse failure: Python's message and the character it points at.
 type ScanError = (&'static str, usize);
 
-fn scan_value(chars: &[char], pos: usize) -> Result<usize, ScanError> {
-    let Some(&ch) = chars.get(pos) else {
-        return Err(("Expecting value", pos));
-    };
-    match ch {
-        '"' => scan_string(chars, pos),
-        '{' => scan_object(chars, pos),
-        '[' => scan_array(chars, pos),
-        't' => scan_literal(chars, pos, "true"),
-        'f' => scan_literal(chars, pos, "false"),
-        'n' => scan_literal(chars, pos, "null"),
-        'N' => scan_literal(chars, pos, "NaN"),
-        'I' => scan_literal(chars, pos, "Infinity"),
-        '-' => {
-            // Python special-cases -Infinity before its number grammar.
-            if chars.get(pos + 1) == Some(&'I') {
-                scan_literal(chars, pos, "-Infinity")
-            } else {
-                scan_number(chars, pos)
+fn scan_value(chars: &[char], mut pos: usize) -> Result<usize, ScanError> {
+    // Each entry is the closer to expect after this container's next value.
+    let mut containers = Vec::new();
+    loop {
+        match chars.get(pos) {
+            Some('{') => {
+                containers.push('}');
+                pos = skip_ws(chars, pos + 1);
+                if chars.get(pos) != Some(&'}') {
+                    pos = scan_key(chars, pos)?;
+                    continue;
+                }
+                pos += 1;
+                containers.pop();
             }
+            Some('[') => {
+                containers.push(']');
+                pos = skip_ws(chars, pos + 1);
+                if chars.get(pos) != Some(&']') {
+                    continue;
+                }
+                pos += 1;
+                containers.pop();
+            }
+            Some('"') => pos = scan_string(chars, pos)?,
+            Some('t') => pos = scan_literal(chars, pos, "true")?,
+            Some('f') => pos = scan_literal(chars, pos, "false")?,
+            Some('n') => pos = scan_literal(chars, pos, "null")?,
+            Some('N') => pos = scan_literal(chars, pos, "NaN")?,
+            Some('I') => pos = scan_literal(chars, pos, "Infinity")?,
+            Some('-') if chars.get(pos + 1) == Some(&'I') => {
+                pos = scan_literal(chars, pos, "-Infinity")?;
+            }
+            Some('-' | '0'..='9') => pos = scan_number(chars, pos)?,
+            _ => return Err(("Expecting value", pos)),
         }
-        '0'..='9' => scan_number(chars, pos),
-        _ => Err(("Expecting value", pos)),
+        loop {
+            let Some(&closer) = containers.last() else {
+                return Ok(pos);
+            };
+            pos = skip_ws(chars, pos);
+            if chars.get(pos) == Some(&closer) {
+                containers.pop();
+                pos += 1;
+                continue;
+            }
+            if chars.get(pos) != Some(&',') {
+                return Err(("Expecting ',' delimiter", pos));
+            }
+            let comma = pos;
+            pos = skip_ws(chars, pos + 1);
+            if chars.get(pos) == Some(&closer) {
+                return Err((
+                    if closer == '}' {
+                        "Illegal trailing comma before end of object"
+                    } else {
+                        "Illegal trailing comma before end of array"
+                    },
+                    comma,
+                ));
+            }
+            if closer == '}' {
+                pos = scan_key(chars, pos)?;
+            }
+            break;
+        }
     }
+}
+
+fn scan_key(chars: &[char], pos: usize) -> Result<usize, ScanError> {
+    if chars.get(pos) != Some(&'"') {
+        return Err(("Expecting property name enclosed in double quotes", pos));
+    }
+    let pos = skip_ws(chars, scan_string(chars, pos)?);
+    if chars.get(pos) != Some(&':') {
+        return Err(("Expecting ':' delimiter", pos));
+    }
+    Ok(skip_ws(chars, pos + 1))
 }
 
 fn scan_literal(chars: &[char], pos: usize, word: &str) -> Result<usize, ScanError> {
@@ -303,60 +362,6 @@ fn scan_string(chars: &[char], start: usize) -> Result<usize, ScanError> {
             }
             c if (c as u32) < 0x20 => return Err(("Invalid control character at", pos)),
             _ => pos += 1,
-        }
-    }
-}
-
-fn scan_object(chars: &[char], open: usize) -> Result<usize, ScanError> {
-    let mut pos = skip_ws(chars, open + 1);
-    loop {
-        match chars.get(pos) {
-            Some('}') => return Ok(pos + 1),
-            Some('"') => {}
-            _ => return Err(("Expecting property name enclosed in double quotes", pos)),
-        }
-        pos = scan_string(chars, pos)?;
-        pos = skip_ws(chars, pos);
-        if chars.get(pos) != Some(&':') {
-            return Err(("Expecting ':' delimiter", pos));
-        }
-        pos = skip_ws(chars, pos + 1);
-        pos = scan_value(chars, pos)?;
-        pos = skip_ws(chars, pos);
-        match chars.get(pos) {
-            Some(',') => {
-                let comma = pos;
-                pos = skip_ws(chars, pos + 1);
-                if chars.get(pos) == Some(&'}') {
-                    // The refusal points at the comma, where the ill-formed
-                    // pair began, not at the closer it was reaching for.
-                    return Err(("Illegal trailing comma before end of object", comma));
-                }
-            }
-            Some('}') => return Ok(pos + 1),
-            _ => return Err(("Expecting ',' delimiter", pos)),
-        }
-    }
-}
-
-fn scan_array(chars: &[char], open: usize) -> Result<usize, ScanError> {
-    let mut pos = skip_ws(chars, open + 1);
-    if chars.get(pos) == Some(&']') {
-        return Ok(pos + 1);
-    }
-    loop {
-        pos = scan_value(chars, pos)?;
-        pos = skip_ws(chars, pos);
-        match chars.get(pos) {
-            Some(',') => {
-                let comma = pos;
-                pos = skip_ws(chars, pos + 1);
-                if chars.get(pos) == Some(&']') {
-                    return Err(("Illegal trailing comma before end of array", comma));
-                }
-            }
-            Some(']') => return Ok(pos + 1),
-            _ => return Err(("Expecting ',' delimiter", pos)),
         }
     }
 }
@@ -490,14 +495,20 @@ mod tests {
     }
 
     #[test]
-    fn nesting_is_bounded_without_counting_string_contents() {
+    fn nesting_is_scanned_without_recursion_or_counting_string_contents() {
         let nested = format!("{}0{}", "[".repeat(200_000), "]".repeat(200_000));
+        assert_eq!(python_json_error_unbounded(&nested), None);
         assert_eq!(
             python_json_error(&nested).as_deref(),
             Some("maximum JSON nesting depth exceeded")
         );
-        let mixed = format!("{}0{}", "{\"x\":[".repeat(100), "]}".repeat(100));
-        assert!(python_json_error(&mixed).is_some());
+        let mixed = format!("{}0{}", "{\"x\":[".repeat(100_000), "]}".repeat(100_000));
+        assert_eq!(python_json_error_unbounded(&mixed), None);
+        let malformed = format!("{}0,{}", "[".repeat(150), "]".repeat(150));
+        assert_eq!(
+            python_json_error_unbounded(&malformed).as_deref(),
+            Some("Illegal trailing comma before end of array: line 1 column 152 (char 151)")
+        );
         let quoted =
             serde_json::json!({"text": format!("\\\"{}", "[".repeat(200_000))}).to_string();
         assert_eq!(python_json_error(&quoted), None);

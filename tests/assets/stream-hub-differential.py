@@ -191,6 +191,12 @@ def command_json_compatibility(p, eid):
     notes = [b'[NaN, "\\ud800"]', b'NaN', b'Infinity', b'-Infinity', b'1e999',
              b'-1e999', b'{"\\udfff": [NaN, Infinity, -Infinity, "\\ud800", "\\ud83d\\ude00"], "literal": "\\\\ud800 NaN"}',
              b'{"duplicate": NaN, "duplicate": "\\udfff"}', b'0', b'1e-999']
+    nested = [float("nan"), "\ud800"]
+    mixed = nested
+    for _ in range(150):
+        nested = [nested]
+        mixed = {"x": [mixed]}
+    notes += [json.dumps(nested).encode(), json.dumps(mixed).encode()]
     cases = [("status", b'{"state":"working","note":' + note + b'}') for note in notes]
     cases += [("input", b'{"text":NaN,"keys":["\\ud800",Infinity],"submit":NaN}'),
               ("input", b'{"text":"\\ud800","keys":null,"submit":Infinity}')]
@@ -453,10 +459,16 @@ def peers(p):
     assert matching, records
     out = normalized(matching, {eid: "python-peer"})
     note = [float("nan"), "\ud800"]
-    result = p.api("POST", "/v1/tasks/" + eid + "/status", {"state": "working", "note": note})
-    assert result[0] == 200, result
+    nested = "ordinary"
+    for _ in range(150):
+        nested = [nested]
+    expected_durable = b""
+    for value in (note, nested):
+        result = p.api("POST", "/v1/tasks/" + eid + "/status", {"state": "working", "note": value})
+        assert result[0] == 200, result
+        expected_durable += ("working: " + str(value) + "\n").encode()
+        assert status.read_bytes() == expected_durable, status.read_bytes()
     durable = status.read_bytes()
-    assert durable == ("working: " + str(note) + "\n").encode(), durable
     # Restart preserves the worker. Its Python agent must rejoin an empty hub.
     port = int(p.url.rsplit(":", 1)[1])
     p.stop()
