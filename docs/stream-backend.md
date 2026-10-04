@@ -81,7 +81,7 @@ A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoi
 The feed direction only reads the hub: `serve`, `snapshot`, and `compare` in live mode hold a `subscribe` credential, open no listening socket, and send nothing to any worker.
 `translate` is offline and needs no hub credential.
 Writing is the adapter's other direction, a separate command with its own credential, which [Command path](#command-path) owns.
-Before any live feed or command does work, the adapter negotiates both the hub protocol and the advertised `current_execution` capability; [Command path](#command-path) owns the additional order compatibility requirements.
+Before any live bridge subcommand does work, the adapter negotiates both the hub protocol and the advertised `current_execution` capability; [Command path](#command-path) owns the additional order compatibility requirements.
 It rejects an older running hub before processing records and directs the operator to restart or upgrade it rather than guessing which execution is current or placing an order without reliable acknowledgement.
 Its header owns the record mapping and every field the hub cannot supply; the short version is that the `/v1/tasks` listing this bridge consumes carries no token counters, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
 When the hub cannot be read it emits nothing.
@@ -114,6 +114,7 @@ Nothing runs it automatically.
 
 The opt-in Rust bridge builds with `cargo build --release --locked -p fm-stream-bridge` (Rust 1.96 or newer).
 Use `target/release/fm-stream-bridge` in place of `bin/fm-stream-bridge.py` for the read-only `serve`, `snapshot`, `translate`, and `compare` subcommands with explicit hub, token-file, and fleet-id flags; this does not replace or restart any deployed Python process.
+Order placement and passive reconciliation remain Python-only bridge subcommands.
 Install it beside the existing scripts in `bin/` if using `compare`'s executable-relative home default, or pass `--home` and `--crew-state` explicitly.
 The Cargo workspace shares the protocol handshake and heartbeat wire mapping in `crates/fm-stream-wire`.
 The bridge uses Tokio, Hyper, and rustls for HTTP and HTTPS access and Serde JSON for parsing, without an LLM framework.
@@ -214,7 +215,9 @@ Watch them with `bin/fm-stream.sh tasks`; the opencode adapter exits when its se
 
 The reading half of the Bridge chain is the feed above; the writing half is `bin/fm-stream-bridge.py command`.
 It reads one `command` record per line on stdin - the composer's order - places valid orders with the hub, and writes each resulting `command_ack` or `command_nack` to stdout in the feed's NDJSON framing.
-The adapter's header owns the three record shapes, required identity and payload fields, and the rule that decides whether an input is acknowledged, refused, nacked, or left pending.
+The [adapter's header and help](../bin/fm-stream-bridge.py) own the command record shapes, required identity and payload fields, acknowledgement rules, and process lifetime options.
+By default, `command` keeps reading until stdin EOF; an opt-in post-record idle bound lets a newly spawned UI command process exit even if its caller keeps stdin open.
+That bound does not wait for or reconcile a late result, and enabling it does not change an already-running bridge.
 
 At operator level, every order names both a worker by `leaf_worker_id` - `<machine>/<label>`, from the same machine and label the feed emits and `fm-stream.sh tasks` lists - and the exact execution the feed showed.
 That binding prevents an order composed for one run from being typed into its replacement.
@@ -223,7 +226,7 @@ Native Deck acceptance is execution-bound through the durable receiver, never a 
 Native steering requires a Deck build supporting `deck run --steer-dir`; an unavailable interface is refused without changing the running turn or falling back to PTY input.
 Native text must be nonblank and fit below Deck's 64 KiB projection ceiling, with space reserved for source paths and acknowledgement guidance; that limit does not apply to other harnesses' PTY orders.
 The adapter header owns acceptance and hub capability negotiation, and `bin/fm_stream_deck.py` owns Deck's durable source, original-turn binding, idempotency, reconciliation, and refusal mechanics.
-The owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership or application produces no record and remains pending.
+In `command` mode, the owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership or application produces no record and remains pending.
 Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
 The PTY agent advertises both reliable result acknowledgement and `native_steering_receiver` on every endpoint registration, and the hub requires both per-endpoint capabilities before placing Bridge orders.
 Retained protocol-3 agents without the receiver capability can re-register and retain input, status, and kill support, but Bridge orders are refused before routing rather than sent through legacy PTY input; upgrade those agents only at a safe worker boundary.
@@ -232,6 +235,11 @@ Each internal HTTP order carries the hub generation returned by compatibility ne
 
 The Bridge order journal lives in the hub's memory, not on disk; Deck's local durable source and receiver records do not replace it.
 The journal retains bindings for the most recent 512 orders.
+After an unconfirmed placement, `bin/fm-stream-bridge.py reconcile` reads the original order's current fate with a `subscribe` credential, independently of the still-open command process.
+It reads once per invocation, so a UI can poll the original command id for late acceptance or refusal without resubmitting an order, changing its execution, or stopping or restarting its bridge.
+Both Python and Rust hubs support this passive journal read; a compatible older deployed hub without the route leaves reconciliation pending rather than triggering placement or a restart.
+The [adapter's header and help](../bin/fm-stream-bridge.py) own the exact reconcile interface, output records, and exit statuses; pending and missing-journal records are lookup diagnostics, not worker-membership verdicts.
+`tests/fm-stream-bridge.test.sh` pins late-result reads, error handling, optional stdin bounds, and repeated reconciliation while the original command process and endpoint remain open; `tests/assets/stream-hub-differential.py` compares journal reads and bridge reconciliation across both hubs.
 While an id remains there, an identical resend is answered from the original order, including when it overtakes the original placement; reuse with a different leaf, execution, or text is refused as an idempotency conflict.
 A retry after more than 512 newer orders is not guaranteed to be deduplicated.
 An order whose membership remains unresolved keeps that binding, while an identical resend may retry placement because no command was created.
@@ -286,7 +294,7 @@ The hub binds `127.0.0.1` by default and every data route requires a bearer toke
 Tokens are class-scoped, and there are three classes:
 
 - `publish` registers endpoints and publishes frames. Agents and tail adapters hold it; nobody else needs it.
-- `subscribe` reads only: list, stream, capture, screen, and state.
+- `subscribe` reads only: list, stream, capture, screen, state, and the order journal.
 - `control` steers: sending input to a worker, appending a status line, closing an endpoint, and placing a leaf-addressed order.
 
 A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, so an operator credential is written `subscribe,control:<token>` and a home's own client credential, which both publishes and steers, is `publish,subscribe,control:<token>`.

@@ -136,11 +136,11 @@ FIVE PROPERTIES DECIDE EVERY ANSWER, and none of them is a matter of taste:
   took it without answering, has not delivered it and never reports that it
   did.
 
-An order the hub can neither confirm nor rule out gets NO record at all, and
-neither does one the hub could not be asked about.  That is deliberate: the
-command id stays visibly pending, which is the only honest answer.  Re-sending
-a command id the hub already holds returns that order's own fate rather than
-delivering it twice.
+In command mode, an order the hub can neither confirm nor rule out gets NO
+record at all, and neither does one the hub could not be asked about.  That is
+deliberate: the command id stays visibly pending, which is the only honest
+answer.  Re-sending a command id the hub already holds returns that order's own
+fate rather than delivering it twice.
 
 command exits at stdin EOF by default, retaining persistent command streams.
 For spawned UI processes whose stdin remains open, set --stdin-idle-ms N to

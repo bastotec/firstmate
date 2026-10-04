@@ -57,7 +57,9 @@ start_hub() {
   if [ -n "${FM_TEST_STREAM_HUB_BINARY:-}" ]; then
     hub_command=("$FM_TEST_STREAM_HUB_BINARY")
   fi
-  "${hub_command[@]}" serve --bind 127.0.0.1 --port 0 \
+  local ack_options=()
+  [ -z "${2:-}" ] || ack_options=(--command-ack-secs "$2")
+  "${hub_command[@]}" serve --bind 127.0.0.1 --port 0 "${ack_options[@]+"${ack_options[@]}"}" \
     --token-file "$CASE_DIR/tokens" --ready-file "$ready" > "$CASE_DIR/log" 2>&1 &
   pid=$!
   disown "$pid" 2>/dev/null || true
@@ -890,6 +892,99 @@ PY
   pass "bridge: passive reconciliation failures preserve honest pending/error semantics"
 }
 
+test_reconcile_preserves_the_open_original_command_process() {
+  start_hub reconcile-open-stream 1
+  python3 - "$BRIDGE" "$URL" "$CASE_DIR" "$RUN" <<'PY'
+import json, select, subprocess, sys, time, urllib.request
+bridge, url, directory, run = sys.argv[1:]
+endpoint = "1234567890abcdef1234567890abcdef"
+leaf = "box-a/open-" + run
+
+def api(method, path, payload=None, token="pub", capability=None):
+    token = open(directory + "/" + {"pub": "publish", "view": "view"}[token] + "-token").read().strip()
+    headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
+    if capability:
+        headers["X-Endpoint-Capability"] = capability
+    request = urllib.request.Request(url + path, headers=headers, method=method,
+        data=None if payload is None else json.dumps(payload).encode())
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.load(response)
+
+registration = api("POST", "/v1/agent/endpoints", {
+    "protocol": 3, "endpoint_id": endpoint, "machine": "box-a", "label": "open-" + run,
+    "cwd": directory, "capabilities": ["idempotent_command_results", "native_steering_receiver"]})
+capability = registration["command_capability"]
+record = {"record": "command", "command_id": "open-original",
+          "identity": {"fleet_id": "test-fleet", "leaf_worker_id": leaf, "execution_id": endpoint},
+          "payload": {"kind": "steer", "text": "original preserved"}}
+process = subprocess.Popen([sys.executable, bridge, "command", "--hub", url,
+    "--token-file", directory + "/control-token", "--fleet-id", "test-fleet"],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+def reconcile(code, expected):
+    result = subprocess.run([sys.executable, bridge, "reconcile", "--hub", url,
+        "--token-file", directory + "/view-token", "--command-id", "open-original"],
+        capture_output=True, text=True, timeout=10)
+    print("open original reconcile exit=%d stdout=%s" % (result.returncode, result.stdout.strip()), flush=True)
+    assert result.returncode == code, result
+    answer = json.loads(result.stdout)
+    if code == 0:
+        from datetime import datetime
+        datetime.fromisoformat(answer.pop("received_at_utc").replace("Z", "+00:00"))
+    assert answer == expected, result
+
+try:
+    process.stdin.write(json.dumps(record) + "\n")
+    process.stdin.flush()
+    commands = []
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        commands = api("GET", "/v1/agent/commands?machine=box-a&endpoint=" + endpoint + "&wait=0",
+                       capability=capability)["commands"]
+        if commands:
+            break
+        time.sleep(.01)
+    assert len(commands) == 1, commands
+    # The POST has timed out; the original bridge is blocked on still-open stdin.
+    time.sleep(1.5)
+    assert process.poll() is None, "original command process exited"
+    assert not select.select([process.stdout], [], [], 0)[0], "original command invented an answer"
+    reconcile(3, {"record": "command_pending", "command_id": "open-original"})
+    assert process.poll() is None
+    result = api("POST", "/v1/agent/results", {
+        "machine": "box-a", "endpoint_id": endpoint, "command_id": commands[0]["command_id"], "ok": True},
+        capability=capability)
+    assert result["ok"], result
+    reconcile(0, {"record": "command_ack", "command_id": "open-original", "leaf_worker_id": leaf,
+                  "state": "accepted"})
+    reconcile(0, {"record": "command_ack", "command_id": "open-original", "leaf_worker_id": leaf,
+                  "state": "accepted"})
+    journal = api("GET", "/v1/orders/open-original", token="view")
+    print("open original journal=" + json.dumps(journal, sort_keys=True), flush=True)
+    assert journal["outcome"] == "accepted" and journal["requested_execution_id"] == endpoint
+    assert "text" not in journal and "command_capability" not in journal
+    queued = api("GET", "/v1/agent/commands?machine=box-a&endpoint=" + endpoint + "&wait=0",
+                 capability=capability)["commands"]
+    assert queued == [], queued
+    assert process.poll() is None, "reconcile stopped the original process"
+    task = api("GET", "/v1/tasks/" + endpoint, token="view")["task"]
+    assert task["endpoint_id"] == endpoint and task["closed_at"] is None
+    print("after repeated reconciliation: commands=" + json.dumps(queued) +
+          " original_process_running=true endpoint=" + endpoint + " closed_at=null", flush=True)
+    process.stdin.close()
+    process.wait(timeout=5)
+    assert process.returncode == 0 and process.stdout.read() == "", process.stderr.read()
+finally:
+    if process.poll() is None:
+        process.kill()
+    process.wait()
+    if not process.stdin.closed:
+        process.stdin.close()
+PY
+  assert_equals "$?" 0 "passive reconciliation must leave the original process and execution untouched"
+  pass "bridge: repeated passive reconciliation preserves the open original command process"
+}
+
 test_a_command_that_names_no_worker_is_left_pending_not_nacked() {
   # The id is addressable but the worker is not: a composer bug that drops
   # identity.leaf_worker_id is not evidence any worker ended, and a nack is a
@@ -957,6 +1052,12 @@ SH
   pass "bridge: the comparison harness sets rendered states against crew state"
 }
 
+# Focus the pending-original regression without running unrelated feed cases.
+if [ "${FM_TEST_BRIDGE_SCENARIO:-}" = open-original ]; then
+  test_reconcile_preserves_the_open_original_command_process
+  exit 0
+fi
+
 test_recorded_traffic_replays_into_the_bridge_record_shape
 test_only_an_agent_reported_exit_is_a_verdict
 test_malformed_input_is_refused_or_left_out
@@ -975,5 +1076,6 @@ test_a_command_for_another_or_missing_fleet_is_nacked_without_asking_the_hub
 test_command_exits_after_eof_or_bounded_open_stdin
 test_an_order_the_hub_cannot_settle_is_left_pending_rather_than_answered
 test_reconcile_read_failures_never_submit
+test_reconcile_preserves_the_open_original_command_process
 test_a_command_that_names_no_worker_is_left_pending_not_nacked
 test_compare_sets_rendered_states_against_crew_state
