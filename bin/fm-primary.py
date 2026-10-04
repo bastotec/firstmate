@@ -221,11 +221,22 @@ class Owner:
         self.action_started = False
         self.stopping = False
 
-    def publish(self):
+    def publish(self, **changes):
+        candidate = dict(self.record, **changes)
         if self.saved_record is not None and read_record(self.path) != self.saved_record:
             raise Refused('primary registration changed; publication refused')
-        write_record(self.path, self.record)
-        self.saved_record = json.loads(json.dumps(self.record))
+        try:
+            write_record(self.path, candidate)
+        except (ValueError, OSError):
+            try:
+                if read_record(self.path) == candidate:
+                    self.record = candidate
+                    self.saved_record = json.loads(json.dumps(candidate))
+            except (ValueError, OSError):
+                pass
+            raise
+        self.record = candidate
+        self.saved_record = json.loads(json.dumps(candidate))
 
     def reserve(self):
         fd = os.open(self.root / '.owner.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -304,14 +315,13 @@ class Owner:
             hub.call('POST', '/v1/agent/endpoints', stream.registration(options, endpoint))
             agent = stream.Agent(options, hub, child, endpoint)
             agent.publish_initial_state()
+            hub.end_startup()
+            self.publish(execution_id=endpoint, endpoint_generation=endpoint,
+                         status_path=status_path, state='running')
         except BaseException:
             stream._abandon_startup(child, hub, options, endpoint)
             raise
-        hub.end_startup()
         self.agent = agent
-        self.record.update(execution_id=endpoint, endpoint_generation=endpoint,
-                           status_path=status_path, state='running')
-        self.publish()
         self.thread = threading.Thread(target=agent.run, kwargs={'install_signals': False}, daemon=True)
         self.thread.start()
 
@@ -325,8 +335,7 @@ class Owner:
                 raise Refused('primary publisher did not drain; replacement refused')
         if self.agent is not None and self.agent.pty.alive():
             raise Refused('owned primary child has not exited; replacement refused')
-        self.record['state'] = 'exited'
-        self.publish()
+        self.publish(state='exited')
 
     def dispatch(self, request):
         self.action_started = False
@@ -420,8 +429,11 @@ class Owner:
             self.start()
             while not self.stopping:
                 if self.thread and not self.thread.is_alive() and self.record['state'] == 'running':
-                    self.record['state'] = 'failed' if self.agent.pty.alive() else 'exited'
-                    self.publish()
+                    try:
+                        self.publish(state='failed' if self.agent.pty.alive() else 'exited')
+                    except (ValueError, OSError, RuntimeError) as exc:
+                        print('managed-primary: registration publication pending: %s' % exc,
+                              file=sys.stderr, flush=True)
                 try:
                     connection, _ = self.socket.accept()
                 except socket.timeout:
@@ -472,29 +484,35 @@ def discover(home):
 
 
 def control(home, execution, action, order_id=None, text=None, command_id=None):
-    require_lifecycle_authority()
-    record = read_record(record_path(Path(home).resolve()))
-    if record['home'] != str(Path(home).resolve()):
-        raise Refused('primary registration belongs to a different home')
     command_id = command_id or order_id or secrets.token_hex(16)
-    request = {'capability': record['capability'], 'execution_id': execution, 'kind': action,
-               'command_id': command_id}
-    if action == 'steer':
-        request.update(order_id=order_id, text=text)
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(125)
-        try:
-            client.connect(record['socket'])
-        except OSError as exc:
-            raise Refused('primary_owner_unreachable: no adoption, PID kill or PTY fallback') from exc
-        try:
-            client.sendall((json.dumps(request) + '\n').encode())
-            with client.makefile('rb') as file:
-                return json.loads(file.readline(131073), object_pairs_hook=unique_fields)
-        except (ValueError, OSError):
-            return {'state': 'pending', 'message':
-                    'primary owner result unconfirmed; inspect registration before retrying lifecycle',
-                    'execution_id': execution, 'command_id': command_id}
+    try:
+        require_lifecycle_authority()
+        record = read_record(record_path(Path(home).resolve()))
+        if record['home'] != str(Path(home).resolve()):
+            raise Refused('primary registration belongs to a different home')
+        request = {'capability': record['capability'], 'execution_id': execution, 'kind': action,
+                   'command_id': command_id}
+        if action == 'steer':
+            request.update(order_id=order_id, text=text)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(125)
+            try:
+                client.connect(record['socket'])
+            except OSError as exc:
+                raise Refused('primary_owner_unreachable: no adoption, PID kill or PTY fallback') from exc
+            try:
+                client.sendall((json.dumps(request) + '\n').encode())
+                with client.makefile('rb') as file:
+                    answer = json.loads(file.readline(131073), object_pairs_hook=unique_fields)
+                answer['command_id'] = command_id
+                return answer
+            except (ValueError, OSError):
+                return {'state': 'pending', 'message':
+                        'primary owner result unconfirmed; inspect registration before retrying lifecycle',
+                        'execution_id': execution, 'command_id': command_id}
+    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return {'state': 'refused', 'message': str(exc),
+                'execution_id': execution, 'command_id': command_id}
 
 
 def main():

@@ -54,6 +54,26 @@ import os, pathlib, time
 pathlib.Path(__file__).with_name(os.environ['FM_STREAM_ENDPOINT_ID']+'.pi').touch()
 while True: time.sleep(1)
 ''')
+publication_fault=lab/'publication-fault.json'
+publication_attempts=lab/'publication-attempts'; publication_attempts.mkdir()
+executable(bin/'fixture-primary-launch.py', '''#!/usr/bin/env python3
+import errno, importlib.util, json, os, pathlib, sys
+spec=importlib.util.spec_from_file_location('fixture_primary',pathlib.Path(__file__).with_name('fm-primary.py'))
+owner=importlib.util.module_from_spec(spec); spec.loader.exec_module(owner)
+write=owner.write_record
+fault=pathlib.Path(os.environ['FM_TEST_PUBLICATION_FAULT'])
+attempts=pathlib.Path(os.environ['FM_TEST_PUBLICATION_ATTEMPTS'])
+def inject(path,record):
+ if path.name=='registration.json' and fault.exists():
+  rule=json.loads(fault.read_text())
+  if record['state']==rule['state']:
+   write(attempts/(str(len(list(attempts.glob('*.json'))))+'.json'),record)
+   if rule['phase']=='after': write(path,record)
+   raise OSError(errno.ENOSPC,'fixture registration storage failure',str(path))
+ write(path,record)
+owner.write_record=inject
+sys.exit(owner.main())
+''')
 # Launch a real isolated stream hub on an ephemeral loopback port.
 token=lab/'token'; token.write_text('fixture-secret\n'); token.chmod(0o600)
 hub_tokens=lab/'hub-tokens'; hub_tokens.write_text('publish,subscribe,control:fixture-secret\n'); hub_tokens.chmod(0o600)
@@ -67,7 +87,9 @@ sentinel=subprocess.Popen(['sleep','300'])
 processes.append(sentinel)
 logs=[]
 env=dict(os.environ, PATH=str(fixture)+os.pathsep+os.environ['PATH'],
-         TMPDIR=str(lab), FM_TASK_ID='must-not-leak', FM_HOME='must-not-leak')
+         TMPDIR=str(lab), FM_TASK_ID='must-not-leak', FM_HOME='must-not-leak',
+         FM_TEST_PUBLICATION_FAULT=str(publication_fault),
+         FM_TEST_PUBLICATION_ATTEMPTS=str(publication_attempts))
 registration=home/'state/primary-owner/registration.json'
 cli=[sys.executable,str(bin/'fm-primary.py')]
 def wait(predicate, note):
@@ -114,7 +136,7 @@ def publish_ui_binding(binding):
  return safe[0]
 def launch(adapter='deck'):
  logfile=lab/(adapter+'-owner.log'); log=logfile.open('w'); logs.append(log)
- proc=subprocess.Popen(cli+['launch','--home',str(home),'--machine','fixture-machine',
+ proc=subprocess.Popen([sys.executable,str(bin/'fixture-primary-launch.py'),'launch','--home',str(home),'--machine','fixture-machine',
         '--label','fixture-primary','--hub',url,'--token-file',str(token),
         '--adapter',adapter,'--model','fixture-model','--prompt','fixture primary'],
         env=env,stdout=log,stderr=log)
@@ -126,7 +148,7 @@ try:
  refusal=command('discover','--home',str(home),success=False)
  assert 'unregistered_primary' in refusal['message']
  refusal=control('missing','exit',success=False)
- assert 'unregistered_primary' in refusal['message']
+ assert 'unregistered_primary' in refusal['message'] and len(refusal['command_id'])==32
  gate_env=dict(env,NO_MISTAKES_GATE='fixture-gate',FM_GATE_REFUSE_BYPASS='')
  gate=subprocess.run(cli+['control','--home',str(home),'--execution-id','missing','exit'],
                      env=gate_env,capture_output=True,text=True,timeout=10)
@@ -264,7 +286,68 @@ fm_task_inbox_write_idempotent() {
  third=record(); eid3=third['execution_id']; assert eid3 not in (eid,eid2)
  wait(lambda:(fixture/(eid3+'.started')).exists(),'recover missing owned child')
  assert third['profile']==first['profile']
- assert ui('exit',eid3)[0]['state']=='accepted'
+ publication_fault.write_text(json.dumps({'state':'exited','phase':'before'}))
+ try:
+  failed_exit=control(eid3,'exit')
+  assert failed_exit['state']=='pending' and 'fixture registration storage failure' in failed_exit['message'],failed_exit
+  assert len(failed_exit['command_id'])==32,failed_exit
+  wait(lambda:len(list(publication_attempts.glob('*.json')))>=2,'monitoring retries failed exit publication')
+  assert record()==third and owner.poll() is None and pathlib.Path(third['socket']).is_socket()
+  stage=registration.with_suffix('.fixture')
+  foreign=dict(third,label='foreign-fixture')
+  stage.write_text(json.dumps(foreign)); stage.chmod(0o600); stage.replace(registration)
+  try:
+   refused_foreign=control(eid3,'exit',success=False)
+   assert 'registration changed' in refused_foreign['message'] and refused_foreign['command_id'],refused_foreign
+   assert record()==foreign and owner.poll() is None,'foreign registration was overwritten or retired'
+  finally:
+   stage.write_text(json.dumps(third)); stage.chmod(0o600); stage.replace(registration)
+ finally:
+  publication_fault.unlink()
+ wait(lambda:(r if (r:=record()) and r['state']=='exited' else None),'monitoring recovers after restored storage')
+ assert control(eid3,'exit','--command-id',failed_exit['command_id'])==failed_exit,'pending exit receipt repeated lifecycle'
+ assert control(eid3,'recover-missing')['state']=='accepted'
+ for phase in ('before','after'):
+  original=record(); original_id=original['execution_id']
+  wait(lambda:(fixture/(original_id+'.started')).exists(),'publication fixture child')
+  attempt_count=len(list(publication_attempts.glob('*.json')))
+  publication_fault.write_text(json.dumps({'state':'running','phase':phase}))
+  try:
+   failed_relaunch=control(original_id,'relaunch')
+   assert failed_relaunch['state']=='pending' and 'fixture registration storage failure' in failed_relaunch['message'],failed_relaunch
+   candidate=json.loads((publication_attempts/(str(attempt_count)+'.json')).read_text())
+   failed_id=candidate['execution_id']; assert failed_id!=original_id
+   request=urllib.request.Request(url+'/v1/tasks/'+failed_id,headers={'Authorization':'Bearer fixture-secret'})
+   with urllib.request.urlopen(request) as response: failed_endpoint=json.load(response)['task']
+   assert failed_endpoint['closed_by']=='agent','unpublished replacement was left running'
+   committed=wait(lambda:(r if (r:=record()) and r['state']=='exited' else None),'failed relaunch reconciles committed identity')
+   assert committed['execution_id']==(original_id if phase=='before' else failed_id),committed
+   assert committed['profile']==original['profile'] and owner.poll() is None
+   assert pathlib.Path(committed['socket']).is_socket()
+  finally:
+   publication_fault.unlink()
+  assert control(original_id,'relaunch','--command-id',failed_relaunch['command_id'])==failed_relaunch
+  assert control(committed['execution_id'],'recover-missing')['state']=='accepted'
+ helper=bin/'fm-busy-event.sh'; saved_helper=bin/'fixture-busy-event.sh'
+ helper.rename(saved_helper)
+ executable(helper, '#!/bin/sh\nexit 74\n')
+ original=record(); original_id=original['execution_id']
+ try:
+  helper_failure=control(original_id,'relaunch')
+  assert helper_failure['state']=='pending' and 'non-zero exit status 74' in helper_failure['message'],helper_failure
+  assert len(helper_failure['command_id'])==32,helper_failure
+  submitted_failure=control(original_id,'relaunch','--command-id','fixture-submitted-helper-failure')
+  assert submitted_failure['state']=='pending' and submitted_failure['command_id']=='fixture-submitted-helper-failure',submitted_failure
+  assert 'non-zero exit status 74' in submitted_failure['message'],submitted_failure
+  assert record()['state']=='exited' and record()['execution_id']==original_id and owner.poll() is None
+ finally:
+  saved_helper.replace(helper)
+ reconciled=control(original_id,'relaunch','--command-id',helper_failure['command_id'])
+ assert reconciled['state']=='pending' and reconciled['command_id']==helper_failure['command_id'],reconciled
+ assert record()['execution_id']==original_id,'helper failure reconciliation started another child'
+ explicit=control(original_id,'relaunch','--command-id','fixture-explicit-helper-recovery')
+ assert explicit['state']=='accepted' and explicit['command_id']=='fixture-explicit-helper-recovery',explicit
+ assert control(record()['execution_id'],'exit')['state']=='accepted'
  owner.terminate(); owner.wait(timeout=15)
  assert not registration.exists(),'clean owner stop must retire registration'
  owner2=launch('pi')
@@ -281,7 +364,7 @@ fm_task_inbox_write_idempotent() {
  assert control(eidpi,'exit')['state']=='accepted'
  pathlib.Path(unsupported['socket']).unlink()  # Fixture-owned capability only.
  unreachable=control(eidpi,'recover-missing',success=False)
- assert 'primary_owner_unreachable' in unreachable['message']
+ assert 'primary_owner_unreachable' in unreachable['message'] and len(unreachable['command_id'])==32
  unreachable_ui=ui_result('recover-missing',eidpi)
  assert json.loads(unreachable_ui.stdout)['reason']=='primary_owner_unreachable: no adoption, PID kill or PTY fallback'
  assert json.loads(json.loads(unreachable_ui.stderr)['stdout'])['message']==unreachable['message']
@@ -293,6 +376,7 @@ fm_task_inbox_write_idempotent() {
  print('PASS browser-safe storage refusal, correlated host-only owner diagnostics and safe named categories')
  print('PASS enqueue subprocess failure stays pending, preserves owner/child and reconciles the original order')
  print('PASS token failure retains manager/socket and pending receipt; restored fixture token permits authorized recovery')
+ print('PASS transactional publication, monitoring storage recovery, foreign-registration refusal and CLI reconciliation identities')
  print('PASS execution-bound Deck native acceptance and unsupported-adapter no-fallback refusal')
 finally:
  # Reap only children this fixture created. Owners reap their own PTY children.
