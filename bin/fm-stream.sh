@@ -133,7 +133,7 @@ cmd_hub_start() {
         --token-file "$hub_tokens" --ready-file "$READY_FILE" --pid-file "$PID_FILE"
     fi
     (
-      setsid python3 "$HUB" serve --bind "$bind" --port "$port" \
+      fm_backend_stream_detached python3 "$HUB" serve --bind "$bind" --port "$port" \
         --token-file "$hub_tokens" --ready-file "$READY_FILE" --pid-file "$PID_FILE" \
         >> "$LOG_FILE" 2>&1 < /dev/null &
     )
@@ -146,7 +146,7 @@ cmd_hub_start() {
         --ready-file "$READY_FILE" --pid-file "$PID_FILE"
     fi
     (
-      FM_STREAM_TOKEN="$single" setsid python3 "$HUB" serve --bind "$bind" --port "$port" \
+      FM_STREAM_TOKEN="$single" fm_backend_stream_detached python3 "$HUB" serve --bind "$bind" --port "$port" \
         --ready-file "$READY_FILE" --pid-file "$PID_FILE" \
         >> "$LOG_FILE" 2>&1 < /dev/null &
     )
