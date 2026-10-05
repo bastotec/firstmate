@@ -21,6 +21,9 @@
 #     source following and excluding SC1091, SC2034, SC2153 and SC2329.
 #   Explicit paths: exactly those roots, no workflow check.
 #   --fast: local-only, disables extended analysis but preserves source following.
+#   --shard <k>/<n>: after selection, keep every n-th root starting at the k-th,
+#     so n CI runners split one selection; workflow lint and backend purity run
+#     only in shard 1. Explicit paths do not take --shard.
 # Empty selections skip ShellCheck but still check backend purity and workflows.
 # Backend purity rejects direct Beads CLI use in core bin/ and bin/backends/.
 #
@@ -56,6 +59,7 @@
 #   fm-lint.sh                         lint the context-selected file set
 #   fm-lint.sh --full                  full canonical lint
 #   fm-lint.sh --changed <base>        source-aware affected-root lint
+#   fm-lint.sh --full --shard 2/3      the second of three slices of full lint
 #   fm-lint.sh --fast [path]...         local lint without extended analysis
 #   fm-lint.sh <path>...                lint explicit roots
 #   fm-lint.sh --jobs <count> [path]... lower CPU concurrency
@@ -161,6 +165,7 @@ fm_lint_usage() {
 # ShellCheck-only override so callers can target one shell root.
 fm_lint_run_workflows() {
   [ "$EXPLICIT_PATHS" -eq 0 ] || return 0
+  [ "$LINT_SHARD_INDEX" -eq 1 ] || return 0
   "$SELF_DIR/fm-lint-workflows.sh"
 }
 
@@ -170,6 +175,7 @@ fm_lint_run_workflows() {
 fm_lint_run_backend_purity() {
   local findings path canonical
   local -a purity_roots
+  [ "$LINT_SHARD_INDEX" -eq 1 ] || return 0
   purity_roots=()
   if [ "$EXPLICIT_PATHS" -eq 0 ]; then
     purity_roots=(bin/*.sh bin/backends/*.sh)
@@ -414,6 +420,9 @@ CHANGE_BASE=
 FAST=0
 ANALYSIS_MODE=full
 LIST_FILES=0
+LINT_SHARD_SPEC=
+LINT_SHARD_INDEX=1
+LINT_SHARD_TOTAL=1
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --full)
@@ -453,6 +462,15 @@ while [ "$#" -gt 0 ]; do
       LIST_FILES=1
       shift
       ;;
+    --shard)
+      [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --shard requires <index>/<count>.\n' >&2; exit 2; }
+      LINT_SHARD_SPEC=$2
+      shift 2
+      ;;
+    --shard=*)
+      LINT_SHARD_SPEC=${1#*=}
+      shift
+      ;;
     --help|-h)
       fm_lint_usage
       exit 0
@@ -481,6 +499,22 @@ JOBS=$((10#$JOBS))
 ADMISSION_BUDGET_MIB=$((10#$ADMISSION_BUDGET_MIB))
 [ "$JOBS" -gt 0 ] && [ "$ADMISSION_BUDGET_MIB" -gt 0 ] || exit 2
 [ "$JOBS" -le "$CPU_COUNT" ] || JOBS=$CPU_COUNT
+
+if [ -n "$LINT_SHARD_SPEC" ]; then
+  case "$LINT_SHARD_SPEC" in
+    [1-9]/[1-9]|[1-9]/[1-9][0-9]|[1-9][0-9]/[1-9][0-9]) ;;
+    *)
+      printf 'fm-lint.sh: --shard takes <index>/<count> with 1 <= index <= count <= 99, got %s.\n' "$LINT_SHARD_SPEC" >&2
+      exit 2
+      ;;
+  esac
+  LINT_SHARD_INDEX=$((10#${LINT_SHARD_SPEC%/*}))
+  LINT_SHARD_TOTAL=$((10#${LINT_SHARD_SPEC#*/}))
+  if [ "$LINT_SHARD_INDEX" -gt "$LINT_SHARD_TOTAL" ]; then
+    printf 'fm-lint.sh: --shard index %s is above its count %s.\n' "$LINT_SHARD_INDEX" "$LINT_SHARD_TOTAL" >&2
+    exit 2
+  fi
+fi
 
 if [ "$FAST" -eq 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; }; then
   printf 'fm-lint.sh: --fast is local-only; CI uses full ShellCheck analysis.\n' >&2
@@ -528,6 +562,7 @@ FOLLOW_SOURCES=1
 EXCLUDE_CODES=
 if [ "$#" -gt 0 ]; then
   [ "$SELECTION" = auto ] || { printf 'fm-lint.sh: selection modes do not accept explicit paths.\n' >&2; exit 2; }
+  [ -z "$LINT_SHARD_SPEC" ] || { printf 'fm-lint.sh: --shard does not accept explicit paths.\n' >&2; exit 2; }
   EXPLICIT_PATHS=1
   ROOTS=("$@")
 else
@@ -572,6 +607,20 @@ else
     done < <(git diff --name-only --diff-filter=ACMR -z "$merge_base" -- 2>/dev/null | LC_ALL=C sort -z)
   fi
 fi
+if [ "$LINT_SHARD_TOTAL" -gt 1 ]; then
+  # Round-robin over the selection order spreads neighbouring heavy roots.
+  shard_roots=()
+  shard_position=0
+  for path in "${ROOTS[@]:-}"; do
+    [ -n "$path" ] || continue
+    if [ "$((shard_position % LINT_SHARD_TOTAL + 1))" -eq "$LINT_SHARD_INDEX" ]; then
+      shard_roots+=("$path")
+    fi
+    shard_position=$((shard_position + 1))
+  done
+  ROOTS=()
+  [ "${#shard_roots[@]}" -eq 0 ] || ROOTS=("${shard_roots[@]}")
+fi
 if [ "$CHANGED_MODE" -eq 1 ] && [ "$FAST" -eq 0 ]; then
   FOLLOW_SOURCES=0
   EXCLUDE_CODES=$LOCAL_NOX_EXCLUDE
@@ -615,7 +664,11 @@ else
 fi
 
 if [ "$ROOT_COUNT" -eq 0 ]; then
-  printf 'fm-lint.sh: no changed lint targets\n'
+  if [ "$LINT_SHARD_TOTAL" -gt 1 ]; then
+    printf 'fm-lint.sh: no lint targets in shard %s/%s\n' "$LINT_SHARD_INDEX" "$LINT_SHARD_TOTAL"
+  else
+    printf 'fm-lint.sh: no changed lint targets\n'
+  fi
   overall_rc=0
   fm_lint_run_backend_purity || overall_rc=$?
   fm_lint_run_workflows || overall_rc=$?

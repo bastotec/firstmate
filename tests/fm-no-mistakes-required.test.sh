@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Regression tests for the pinned shared no-mistakes gate action.
+# Regression tests for the pinned shared no-mistakes gate action, and for
+# bin/fm-nm-trusted-test-skip.sh, which lets a Test step skipped by the trusted
+# default-branch test.skip satisfy that action and nothing else.
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -66,7 +68,92 @@ test_missing_head_fails() {
   pass "shared action rejects an attestation with no head_sha"
 }
 
+SKIP_HELPER="$ROOT/bin/fm-nm-trusted-test-skip.sh"
+SKIP_REASON='CI runs the full behavior suite on every PR; see .github/workflows/ci.yml'
+
+write_trusted_config() {  # <path> <skip> <reason>
+  printf 'test:\n  skip: %s\n  skip_reason: "%s"\n' "$2" "$3" > "$1"
+}
+
+attested_body() {  # <test-status-json-or-empty> <test-line>
+  local steps='{"step":"review","status":"completed"}'
+  [ -z "$1" ] || steps="$steps,{\"step\":\"test\",\"status\":\"$1\"}"
+  steps="$steps,{\"step\":\"document\",\"status\":\"completed\"}"
+  printf '%s\n## Pipeline\n%s\n<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"%s","steps":[%s]} -->\n' \
+    "$SIGNATURE" "$2" "$NEW_SHA" "$steps"
+}
+
+# Runs the helper the way the workflow does, then the pinned verifier on its
+# output. Prints the helper decision line followed by the verifier output.
+run_checked() {  # <config> <body>
+  local body_in="$TMP_ROOT/body-in.md" body_out="$TMP_ROOT/body-out.md" decision rc=0 out
+  printf '%s' "$2" > "$body_in"
+  decision=$("$SKIP_HELPER" "$1" "$body_in" "$body_out") \
+    || fail "trusted-skip helper failed"$'\n'"$decision"
+  printf '%s\n' "$decision"
+  out=$(run_verifier "$(cat "$body_out")" "$NEW_SHA") || rc=$?
+  printf '%s\nverifier_rc=%s\n' "$out" "$rc"
+}
+
+test_trusted_test_skip_satisfies_the_check() {
+  local config="$TMP_ROOT/skip.yaml" output
+  write_trusted_config "$config" true "$SKIP_REASON"
+  output=$(run_checked "$config" "$(attested_body skipped "⏭️ **Test** - skipped: test.skip: $SKIP_REASON")")
+  assert_contains "$output" "trusted-test-skip: accepted" "trusted skip was not accepted"
+  assert_contains "$output" "verifier_rc=0" "verifier rejected a Test step skipped by trusted config"
+  pass "a Test step skipped by trusted test.skip with its reason satisfies the check"
+}
+
+test_skip_without_trusted_config_still_fails() {
+  local config="$TMP_ROOT/noskip.yaml" output
+  printf 'test:\n  evidence:\n    store_in_repo: true\n' > "$config"
+  output=$(run_checked "$config" "$(attested_body skipped "⏭️ **Test** - skipped: test.skip: $SKIP_REASON")")
+  assert_contains "$output" "not configured" "helper did not report the missing trusted config"
+  assert_contains "$output" "test (status=skipped)" "verifier did not name the skipped Test step"
+  assert_not_contains "$output" "verifier_rc=0" "a skipped Test step passed without trusted config"
+  rm -f "$TMP_ROOT/absent.yaml"
+  output=$(run_checked "$TMP_ROOT/absent.yaml" "$(attested_body skipped "⏭️ **Test** - skipped: test.skip: $SKIP_REASON")")
+  assert_not_contains "$output" "verifier_rc=0" "a skipped Test step passed with no trusted config file"
+  pass "a skipped Test step still fails when the trusted config does not set test.skip"
+}
+
+test_skip_with_other_reason_still_fails() {
+  local config="$TMP_ROOT/skip.yaml" output
+  write_trusted_config "$config" true "$SKIP_REASON"
+  output=$(run_checked "$config" "$(attested_body skipped "⏭️ **Test** - skipped: skipped by --skip")")
+  assert_contains "$output" "refused" "helper accepted a skip that did not come from test.skip"
+  assert_not_contains "$output" "verifier_rc=0" "a per-run Test skip passed the check"
+  output=$(run_checked "$config" "$(attested_body skipped "⏭️ **Test** - skipped: test.skip: some older reason")")
+  assert_not_contains "$output" "verifier_rc=0" "a Test skip with a stale reason passed the check"
+  output=$(run_checked "$config" "$(attested_body skipped "⏭️ **Test** - skipped: test.skip: $SKIP_REASON and more")")
+  assert_not_contains "$output" "verifier_rc=0" "a Test skip with an extended reason passed the check"
+  write_trusted_config "$config" true ""
+  output=$(run_checked "$config" "$(attested_body skipped "⏭️ **Test** - skipped: test.skip: ")")
+  assert_not_contains "$output" "verifier_rc=0" "test.skip without a reason passed the check"
+  pass "a Test skip whose reason is not the trusted test.skip reason still fails"
+}
+
+test_failed_or_missing_test_still_fails_with_trusted_skip() {
+  local config="$TMP_ROOT/skip.yaml" output
+  write_trusted_config "$config" true "$SKIP_REASON"
+  output=$(run_checked "$config" "$(attested_body failed "⏭️ **Test** - skipped: test.skip: $SKIP_REASON")")
+  assert_contains "$output" "test (status=failed)" "verifier did not report the failed Test step"
+  assert_not_contains "$output" "verifier_rc=0" "a failed Test step passed under trusted test.skip"
+  output=$(run_checked "$config" "$(attested_body "" "⏭️ **Test** - skipped: test.skip: $SKIP_REASON")")
+  assert_contains "$output" "test (missing)" "verifier did not report the missing Test step"
+  assert_not_contains "$output" "verifier_rc=0" "a missing Test step passed under trusted test.skip"
+  output=$(run_checked "$config" "$(attested_body running "⏳ **Test** - running")")
+  assert_not_contains "$output" "verifier_rc=0" "an incomplete Test step passed under trusted test.skip"
+  output=$(run_checked "$config" "$(attested_body completed "✅ **Test** - passed")")
+  assert_contains "$output" "verifier_rc=0" "a completed Test step stopped passing under trusted test.skip"
+  pass "failed, missing, and incomplete Test steps still fail under trusted test.skip"
+}
+
 fetch_shared_verifier
 test_matching_head_and_completed_steps_pass
 test_mismatched_head_fails_with_both_shas
 test_missing_head_fails
+test_trusted_test_skip_satisfies_the_check
+test_skip_without_trusted_config_still_fails
+test_skip_with_other_reason_still_fails
+test_failed_or_missing_test_still_fails_with_trusted_skip

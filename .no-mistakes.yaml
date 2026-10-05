@@ -33,12 +33,20 @@ document:
 commands:
   lint: 'bin/fm-lint.sh'
 
-# Trusted scope bound for the Test step; this block owns that policy.
+# Trusted-only, like disable_project_settings: no-mistakes records the Test step
+# as skipped with this reason instead of running it, because CI runs the complete
+# behavior suite on every PR. The firstmate-coding-guidelines skill owns this
+# policy; .github/workflows/no-mistakes-required.yml accepts the skip only with
+# this exact reason (bin/fm-nm-trusted-test-skip.sh).
+#
+# The instructions below bound the Test step whenever skip is turned off.
 # With no commands.test the step decides what to run, and on terminal, pane, process
 # or worktree lifecycle changes that invites standing up live rigs until the agent
 # budget runs out. Keep it to the targeted-validation scope plus the concrete
 # out-of-scope list below.
 test:
+  skip: true
+  skip_reason: "CI runs the full behavior suite on every PR; see .github/workflows/ci.yml"
   instructions: |
     The repository's suites under tests/ are the rig for this product: they drive
     the real firstmate scripts against real worktrees and real processes, with

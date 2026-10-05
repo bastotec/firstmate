@@ -489,6 +489,55 @@ test_list_files_respects_changed_mode() {
   pass "fm-lint.sh --list-files reports the would-be changed set in changed mode"
 }
 
+test_shards_partition_the_full_selection() {
+  local full union shard listed dups
+  full=$(CI=true "$LINT" --full --list-files | LC_ALL=C sort)
+  union=""
+  for shard in 1 2 3; do
+    listed=$(CI=true "$LINT" --full --shard "$shard/3" --list-files)
+    [ -n "$listed" ] || fail "--shard $shard/3 selected no roots from the full set"
+    union=$(printf '%s\n%s' "$union" "$listed")
+  done
+  union=$(printf '%s\n' "$union" | grep -v '^$' || true)
+  dups=$(printf '%s\n' "$union" | LC_ALL=C sort | uniq -d || true)
+  [ -z "$dups" ] || fail "lint shards selected the same root twice: $dups"
+  [ "$(printf '%s\n' "$union" | LC_ALL=C sort)" = "$full" ] \
+    || fail "lint shards 1/3..3/3 must together equal the full selection"
+  pass "fm-lint.sh --shard slices partition the full selection"
+}
+
+test_shard_refuses_bad_specs_and_explicit_paths() {
+  local spec rc out
+  for spec in 0/3 4/3 3 x/2 2/0 1/100; do
+    rc=0
+    out=$("$LINT" --full --shard "$spec" --list-files 2>&1) || rc=$?
+    [ "$rc" -eq 2 ] || fail "--shard $spec must refuse with exit 2, got $rc"$'\n'"$out"
+  done
+  rc=0
+  out=$("$LINT" --shard 1/2 bin/fm-lint.sh 2>&1) || rc=$?
+  [ "$rc" -eq 2 ] || fail "--shard with explicit paths must refuse with exit 2, got $rc"$'\n'"$out"
+  pass "fm-lint.sh --shard refuses malformed specs and explicit paths"
+}
+
+test_workflow_lint_runs_only_in_first_shard() {
+  local tmp fakebin diff_file first second
+  tmp=$(fm_test_tmproot fm-lint-shard-workflows)
+  fakebin=$(fm_fakebin "$tmp")
+  fm_lint_stub_git "$fakebin"
+  diff_file="$tmp/diff.nul"
+  : > "$diff_file"
+  first=$(PATH="$fakebin:$PATH" GITHUB_ACTIONS='' CI='' FM_TEST_GIT_BRANCH=feature \
+    FM_TEST_GIT_DIFF_FILE="$diff_file" "$LINT" --shard 1/2 2>&1) \
+    || fail "first lint shard failed"$'\n'"$first"
+  second=$(PATH="$fakebin:$PATH" GITHUB_ACTIONS='' CI='' FM_TEST_GIT_BRANCH=feature \
+    FM_TEST_GIT_DIFF_FILE="$diff_file" "$LINT" --shard 2/2 2>&1) \
+    || fail "second lint shard failed"$'\n'"$second"
+  assert_contains "$first" "workflow files valid" "shard 1/2 skipped workflow lint"
+  assert_not_contains "$second" "workflow files valid" "shard 2/2 repeated workflow lint"
+  assert_contains "$second" "no lint targets in shard 2/2" "empty shard did not say so"
+  pass "fm-lint.sh runs workflow lint once, in shard 1"
+}
+
 fm_lint_assert_flag_log() {
   local flag_log=$1 expected_follow=$2 expected_exclude=$3
   [ -s "$flag_log" ] || fail "ShellCheck was not invoked; flag log is empty"
@@ -1816,6 +1865,9 @@ test_main_branch_forces_full_lint
 test_explicit_path_bypasses_changed_logic
 test_zero_changed_files_exits_clean
 test_list_files_respects_changed_mode
+test_shards_partition_the_full_selection
+test_shard_refuses_bad_specs_and_explicit_paths
+test_workflow_lint_runs_only_in_first_shard
 test_changed_mode_drops_external_sources_and_excludes_cross_file_codes
 test_changed_mode_invokes_shellcheck_once_per_root
 test_ci_keeps_external_sources_without_local_exclusions
