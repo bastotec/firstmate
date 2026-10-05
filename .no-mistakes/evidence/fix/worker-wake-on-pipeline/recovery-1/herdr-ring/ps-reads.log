@@ -1,0 +1,7 @@
+ps -p 50850 -o pid=,ppid=,comm= exit=0
+50850 47541 sleep
+ps -p 50850 -o pid=,ppid=,comm= exit=0
+50850 47541 sleep
+ps -p 50850,51064 -o pid=,ppid=,comm= exit=0
+50850 47541 sleep
+51064 47541 fm-deck-worker

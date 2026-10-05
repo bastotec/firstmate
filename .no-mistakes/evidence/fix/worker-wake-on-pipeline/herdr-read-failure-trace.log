@@ -1,0 +1,52 @@
+Diagnostic trace of the original Herdr test (before any experimental fixture changes). Full process table omitted for brevity. The real ps command produced rows but returned nonzero, and the backend correctly kept that read indeterminate.
++ driver=
++ '[' -n '' ']'
++ fg='{"pid":23098,"name":"zsh","argv0":"zsh"}'
++ printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":%s,"foreground_processes":[%s]}}}' 23098 '{"pid":23098,"name":"zsh","argv0":"zsh"}'
+++++ err=
+++++ '[' 0 -ne 0 ']'
+++++ '[' -z '' ']'
+++++ return 0
++++ info='{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":23098,"foreground_processes":[{"pid":23098,"name":"zsh","argv0":"zsh"}]}}}'
++++ printf %s '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":23098,"foreground_processes":[{"pid":23098,"name":"zsh","argv0":"zsh"}]}}}'
++++ jq -e --arg pane w1:p2 $'\n    .result.type == "pane_process_info"\n    and .result.process_info.pane_id == $pane\n  '
++++ ps_bin=ps
+++++ LC_ALL=C
+++++ ps -axo pid=,ppid=,comm=
++++ rows=$'    1     0 /sbin/launchd\n  349     1 /usr/libexec/logd\n  351     1 /usr/libexec/smd\n  352     1 /usr/libexec/UserEventAgent\n  354     1 /System/Library/Frameworks/C ... [full process-table body omitted; original line length 64521]
++++ return 1
+++ case "$presence" in
+++ pids=
+++ printf unknown
+++ return 0
++ verdict=unknown
++ case "$verdict" in
++ case "$(fm_backend_herdr_server_running_state "$FM_BACKEND_HERDR_SESSION")" in
+++ fm_backend_herdr_server_running_state fmtest
+++ local session=fmtest status
+++ command -v jq
++++ fm_backend_herdr_cli fmtest status --json
++++ local session=fmtest rc=0 err failed_bin selected_bin client_bin=herdr
++++ shift
++++ '[' '' = fmtest ']'
++++ '[' status = server ']'
++++ failed_bin=herdr
+++++ HERDR_SESSION=fmtest
+++++ herdr status --json --session fmtest
++ case "$1 $2" in
++ printf '{"client":{"protocol":14},"server":{"running":true}}'
++++ err=
++++ '[' 0 -ne 0 ']'
++++ '[' -z '' ']'
++++ return 0
+++ status='{"client":{"protocol":14},"server":{"running":true}}'
+++ printf %s '{"client":{"protocol":14},"server":{"running":true}}'
+++ jq -r $'\n    if .server.running == true then "running"\n    elif .server.running == false then "stopped"\n    else "unknown"\n    end\n  '
++ case "$verdict" in
++ case "$(fm_backend_herdr_server_running_state "$FM_BACKEND_HERDR_SESSION")" in
++ printf unreadable
++ out=unreadable
++ '[' unreadable = dead ']'
++ fail 'absent Deck ship driver became unreadable with registry missing'
++ printf 'not ok - %s\n' 'absent Deck ship driver became unreadable with registry missing'
++ exit 1

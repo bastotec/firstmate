@@ -1,0 +1,7 @@
+FM_TEST_BEGIN 2026-10-05T16:42:44Z tests/fm-deck-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - Herdr Deck recovery proves driver identity; dead and non-Deck paths remain conservative
+not ok - spaced code root: an absent driver with stale busy records was not dead
+FM_TEST_END 2026-10-05T16:42:52Z tests/fm-deck-harness.test.sh exit=1 duration_ms=8054 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=8172
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=8054 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-harness.test.sh duration_ms=8054

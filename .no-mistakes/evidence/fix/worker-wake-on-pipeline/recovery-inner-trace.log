@@ -1,0 +1,205 @@
+FM_TEST_BEGIN 2026-10-05T17:33:32Z tests/fm-deck-harness.test.sh family=pure-contract-unit expected_gate_skip=none
++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-backend.sh
+++ FM_BACKEND_SCRIPT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-backend.sh
+++++ dirname /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-backend.sh
++++ cd /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin
++++ pwd
+++ FM_BACKEND_LIB_DIR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin
+++ unset FM_BACKEND_SCRIPT
++++ cd /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/..
++++ pwd
+++ FM_BACKEND_DEFAULT_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery
+++ FM_BACKEND_CONFIG_DIR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery/config
+++ FM_BACKEND_KNOWN='tmux herdr zellij orca cmux stream'
+++ FM_BACKEND_SPAWN='tmux herdr zellij orca cmux stream'
+++ FM_BACKEND_CMUX_BUNDLE_ID=com.cmuxterm.app
++ fm_backend_agent_state herdr fmtest:w1:p2
++ local backend=herdr target=fmtest:w1:p2
++ fm_backend_source herdr
++ local name=herdr
++ fm_backend_validate herdr
++ local name=herdr
++ fm_backend_is_known herdr
++ fm_backend_list_contains 'tmux herdr zellij orca cmux stream' herdr
++ local 'list=tmux herdr zellij orca cmux stream' name=herdr
++ case "$name" in
++ case " $list " in
++ return 0
++ return 0
++ case "$name" in
++ '[' -z '' ']'
++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/backends/herdr.sh
+++++ dirname /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/backends/herdr.sh
++++ cd /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/backends/../..
++++ pwd
+++ FM_BACKEND_HERDR_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery
+++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-composer-lib.sh
++++ FM_COMPOSER_UNICODE_SPACES=()
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0302\0205'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0302\0240'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0341\0232\0200'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0200'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0201'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0202'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0203'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0204'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0205'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0206'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0207'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0210'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0211'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0212'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0250'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0251'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0257'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0342\0201\0237'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
++++ printf -v _fm_composer_space_utf8 %b '\0343\0200\0200'
++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
++++ unset -v _fm_composer_space_octal _fm_composer_space_utf8
++++ FM_DELIVERY_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working(\.\.\.|…)|Ctrl\+c:cancel|ctrl\+c to stop|esc[[:space:]]+to[[:space:]]+cancel'
++++ FM_DELIVERY_CLAUDE_BUSY_REGEX_DEFAULT='esc to interrupt|…[[:space:]]+\([0-9]+[smh]'
++++ FM_DELIVERY_CODEX_BUSY_REGEX_DEFAULT='esc to interrupt'
++++ FM_DELIVERY_OPENCODE_BUSY_REGEX_DEFAULT='esc interrupt'
++++ FM_DELIVERY_PI_BUSY_REGEX_DEFAULT='Working\.\.\.'
++++ FM_OMP_SPINNER_FRAMES_RE='(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)'
++++ FM_DELIVERY_OMP_BUSY_REGEX_DEFAULT='Working…|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)[[:space:]]+[0-9]+[smh]'
++++ FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
++++ FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT='ctrl\+c to stop'
++++ FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT='esc[[:space:]]+to[[:space:]]+cancel'
++++ FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
+++++ printf '%s\n' ❯ › ⟩ →
++++ FM_COMPOSER_AGENT_PROMPT_GLYPHS=$'❯\n›\n⟩\n→'
+++++ printf '%s\n' '>' '$' % '#'
++++ FM_COMPOSER_SHELL_PROMPT_GLYPHS=$'>\n$\n%\n#'
++++ FM_COMPOSER_IDLE_RE_DEFAULT='^Type a message\.\.\.$|^Ask anything(\.\.\.|…)|^Plan, search, build anything$|^Add a follow-up$'
++++ FM_COMPOSER_LEFTBAR_FOOTER_RE_DEFAULT='^(Build|Plan)[[:space:]]+·[[:space:]]+'
++++ FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K'
++++ FM_COMPOSER_CAPTURE_LINES=20
++++ FM_COMPOSER_PI_MAX_LINES=8
++++ FM_COMPOSER_GROK_TITLE_OVERHANG=3
+++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-busy-lib.sh
++++ FM_BUSY_LIB_VERSION=v1
++++ FM_BUSY_KIMI_VERIFIED_VERSIONS=
+++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-transition-lib.sh
++++ FM_TRANSITION_FIELD_SEP=$'\t'
+++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-agent-process-lib.sh
+++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-agent-process-lib.sh
++++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-session-lock-lib.sh
++++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-session-lock-lib.sh
+++++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-cursor-lib.sh
++++++ FM_CURSOR_PROBE_TIMEOUT=10
+++++ FM_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$|^omp$|^fm-deck-worker$'
+++++ FM_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi omp fm-deck-worker)
+++++ FM_HARNESS_IS_CLAUDE=0
+++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-agent-process-lib.sh
++++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-gemini-lib.sh
+++ FM_BACKEND_HERDR_MIN_PROTOCOL=14
+++ FM_BACKEND_HERDR_MIN_EVENTS_PROTOCOL=16
+++ FM_BACKEND_HERDR_MIN_WORKSPACE_MOVE_PROTOCOL=16
+++ FM_BACKEND_HERDR_MIN_PRESENTATION_PROTOCOL=19
+++ FM_BACKEND_HERDR_MIN_PRESENTATION_VERSION=0.8.0
+++ FM_BACKEND_HERDR_PRESENTATION_FLOOR_MARKER_PREFIX=.herdr-presentation-floor-
+++ FM_BACKEND_HERDR_ESCALATED_PREFIX=.herdr-escalated-
+++ FM_BACKEND_HERDR_SECONDMATE_MARKER=.fm-secondmate-home
+++ FM_BACKEND_HERDR_PRESENTATION_JOURNAL_SUFFIX=.herdr-presentation
+++ FM_BACKEND_HERDR_PRESENTATION_CONFIG=herdr-presentation-spaces
+++ FM_BACKEND_HERDR_SUBMIT_POLLS=6
+++ FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.6
++ _FM_BACKEND_HERDR_SOURCED=1
++ case "$backend" in
++ fm_backend_herdr_agent_state fmtest:w1:p2
++ local target=fmtest:w1:p2 state=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery/state meta= id verdict
++ fm_backend_herdr_parse_target fmtest:w1:p2
++ local target=fmtest:w1:p2
++ FM_BACKEND_HERDR_SESSION=fmtest
++ FM_BACKEND_HERDR_PANE=w1:p2
++ '[' -n fmtest ']'
++ '[' -n w1:p2 ']'
++ '[' w1:p2 '!=' fmtest:w1:p2 ']'
++ declare -F fm_backend_meta_for_window
+++ fm_backend_meta_for_window fmtest:w1:p2 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery/state
++ meta=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery/state/t1.meta
++ '[' -n /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery/state/t1.meta ']'
+++ fm_meta_get /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery/state/t1.meta harness
+++ local meta=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery/state/t1.meta key=harness line value=
+++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery/state/t1.meta ']'
+++ printf %s deck
++ '[' deck = deck ']'
++ id=t1.meta
++ id=t1
+++ fm_backend_herdr_deck_pane_agent_state fmtest w1:p2 /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery/state t1
+++ local session=fmtest pane=w1:p2 state=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.uU1tQB/herdr-recovery/state id=t1 presence pids pid gen record busy source rest info
++++ fm_backend_herdr_pane_presence_state fmtest w1:p2
++++ local session=fmtest pane_id=w1:p2 out code pid
+++++ fm_backend_herdr_cli fmtest pane get w1:p2
++++ out=$'++++ local session=fmtest rc=0 err failed_bin selected_bin client_bin=herdr\n++++ shift\n++++ \'[\' \'\' = fmtest \']\'\n++++ \'[\' pane = server \']\'\n++++ failed_bin=herdr\n+++++ HERDR_SESSION=fmtest\n+++++ herdr pane get w1:p2 --session fmtest\n{"result":{"pane":{"pane_id":"w1:p2"}}}\n++++ err=\n++++ \'[\' 0 -ne 0 \']\'\n++++ \'[\' -z \'\' \']\'\n++++ return 0'
+++++ printf %s $'++++ local session=fmtest rc=0 err failed_bin selected_bin client_bin=herdr\n++++ shift\n++++ \'[\' \'\' = fmtest \']\'\n++++ \'[\' pane = server \']\'\n++++ failed_bin=herdr\n+++++ HERDR_SESSION=fmtest\n+++++ herdr pane get w1:p2 --session fmtest\n{"result":{"pane":{"pane_id":"w1:p2"}}}\n++++ err=\n++++ \'[\' 0 -ne 0 \']\'\n++++ \'[\' -z \'\' \']\'\n++++ return 0'
+++++ jq -r '.error.code // empty'
++++ code=
++++ '[' -n '' ']'
+++++ printf %s $'++++ local session=fmtest rc=0 err failed_bin selected_bin client_bin=herdr\n++++ shift\n++++ \'[\' \'\' = fmtest \']\'\n++++ \'[\' pane = server \']\'\n++++ failed_bin=herdr\n+++++ HERDR_SESSION=fmtest\n+++++ herdr pane get w1:p2 --session fmtest\n{"result":{"pane":{"pane_id":"w1:p2"}}}\n++++ err=\n++++ \'[\' 0 -ne 0 \']\'\n++++ \'[\' -z \'\' \']\'\n++++ return 0'
+++++ jq -r '.result.pane.pane_id // empty'
++++ pid=
++++ '[' '' = w1:p2 ']'
++++ printf unknown
+++ presence=unknown
+++ case "$presence" in
+++ printf unknown
+++ return 0
++ verdict=unknown
++ case "$verdict" in
++ case "$(fm_backend_herdr_server_running_state "$FM_BACKEND_HERDR_SESSION")" in
+++ fm_backend_herdr_server_running_state fmtest
+++ local session=fmtest status
+++ command -v jq
++++ fm_backend_herdr_cli fmtest status --json
+++ status='{"client":{"protocol":14},"server":{"running":true}}'
+++ printf %s '{"client":{"protocol":14},"server":{"running":true}}'
+++ jq -r $'\n    if .server.running == true then "running"\n    elif .server.running == false then "stopped"\n    else "unknown"\n    end\n  '
++ printf unreadable
+not ok - absent Deck driver with stale busy/progress must be dead: unreadable
+FM_TEST_END 2026-10-05T17:33:33Z tests/fm-deck-harness.test.sh exit=1 duration_ms=893 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=1003
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=893 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-harness.test.sh duration_ms=893

@@ -1,0 +1,15 @@
+FM_TEST_BEGIN 2026-10-05T16:57:01Z tests/fm-deck-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - Deck host preserves handling-successor supervision without parent turn-end wakes
+ok - fm-deck-worker: a run leaving working wakes the idle worker once per change, naming run id and state
+ok - fm-deck-worker: a terminal run id is omitted when a live successor is working
+ok - fm-deck-worker: typed input preempts the pipeline wait, /quit still exits, and the wait is bounded
+ok - fm-deck-worker: a failed run wakes once and stays idle afterward
+ok - fm-deck-worker: inconclusive reads neither wake nor abandon the watch
+ok - fm-deck-worker: input queued during a state probe takes priority over an automatic wake
+ok - fm-deck-worker: a state probe that outlives the deadline cannot trigger a turn
+ok - fm-deck-worker: composer clear discards input and the doorbell preempts polling
+ok - fm-deck-worker: disabled waits, scouts, and initially parked runs never arm a wake
+FM_TEST_END 2026-10-05T16:58:45Z tests/fm-deck-harness.test.sh exit=0 duration_ms=103520 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=105140
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=103520 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-harness.test.sh duration_ms=103520

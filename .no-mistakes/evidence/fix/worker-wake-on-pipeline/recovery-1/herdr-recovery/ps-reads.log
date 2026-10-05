@@ -1,0 +1,55 @@
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585,47744 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+47744 47541 fm-deck-worker
+ps -p 47585,47744 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+47744 47541 fm-deck-worker
+ps -p 47585,47744 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+47744 47541 fm-deck-worker
+ps -p 47585,47744 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+47744 47541 fm-deck-worker
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+ps -p 47585,49889 -o pid=,ppid=,comm= exit=0
+47585 47541 sleep
+49889 47541 fm-deck-worker

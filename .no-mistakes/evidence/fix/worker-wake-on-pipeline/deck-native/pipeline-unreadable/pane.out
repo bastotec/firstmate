@@ -1,0 +1,15 @@
+
+⛵ deck working - ctrl+c to stop
+echo: write-status
+── turn finished 2026-09-24T17:01Z (1 model calls)
+
+⛵ no-mistakes run 01PIPE still working; the next turn starts when it changes state.
+
+idle since 2026-10-05T17:44Z
+❯ 
+⛵ deck working - ctrl+c to stop
+echo: Your no-mistakes run 01PIPE changed state while this session was idle: state: parked · source: run-step · parked at review. Check it with no-mistakes axi status and continue per your brief, then append the matching status line.
+── turn finished 2026-09-24T17:01Z (1 model calls)
+
+idle since 2026-10-05T17:44Z
+❯ 

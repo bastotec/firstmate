@@ -1,0 +1,19 @@
+
+⛵ deck working - ctrl+c to stop
+echo: write-status
+── turn finished 2026-09-24T17:01Z (1 model calls)
+
+⛵ no-mistakes run 01PIPE still working; the next turn starts when it changes state.
+
+idle since 2026-10-05T17:45Z
+❯ 
+idle since 2026-10-05T17:45Z
+❯ 
+⛵ deck working - ctrl+c to stop
+echo: FIRSTMATE_OP: v1 inbox-doorbell write-status
+── turn finished 2026-09-24T17:01Z (1 model calls)
+
+⛵ no-mistakes run 01PIPE still working; the next turn starts when it changes state.
+
+idle since 2026-10-05T17:45Z
+❯ 

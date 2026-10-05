@@ -1,0 +1,6 @@
+FM_TEST_BEGIN 2026-10-05T16:46:34Z tests/fm-deck-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+not ok - absent driver must skip the doorbell (rc 3), got 2
+FM_TEST_END 2026-10-05T16:46:35Z tests/fm-deck-harness.test.sh exit=1 duration_ms=841 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=943
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=841 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-harness.test.sh duration_ms=841

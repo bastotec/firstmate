@@ -1,0 +1,14 @@
+ps -p 50093 -o pid=,ppid=,comm= exit=0
+50093 47541 sleep
+ps -p 50093 -o pid=,ppid=,comm= exit=0
+50093 47541 sleep
+ps -p 50093,50258 -o pid=,ppid=,comm= exit=0
+50093 47541 sleep
+50258 47541 fm-deck-worker
+ps -p 50093 -o pid=,ppid=,comm= exit=0
+50093 47541 sleep
+ps -p 50093 -o pid=,ppid=,comm= exit=0
+50093 47541 sleep
+ps -p 50093,50632 -o pid=,ppid=,comm= exit=0
+50093 47541 sleep
+50632 47541 fm-deck-worker

@@ -1,0 +1,844 @@
++ set -u
+++ dirname tests/fm-deck-harness.test.sh
++ . tests/lib.sh
+++ '[' -n '' ']'
+++ FM_TEST_LIB_SOURCED=1
+++ umask 022
++++ dirname tests/lib.sh
+++ . tests/git-config-helpers.sh
++++ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
++++ GIT_CONFIG_GLOBAL=/dev/null
++++ GIT_CONFIG_NOSYSTEM=1
+++ export FM_GATE_REFUSE_BYPASS=1
+++ FM_GATE_REFUSE_BYPASS=1
+++ export FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ unset FM_ASK_TRIAGE_HELPER FM_ASK_TRIAGE_KEY_VAR
+++ unset FM_TASK_ID
+++ unset TASKS_AXI_FILE TASKS_AXI_BACKEND
+++++ dirname tests/lib.sh
++++ cd tests/..
++++ pwd
+++ ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_TEST_CLEANUP_DIRS=()
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-cleanup.21816.XXXXXX
+++ FM_TEST_CLEANUP_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-cleanup.21816.o4NtUL
++++ fm_test_pid_identity 21816
++++ local pid=21816
++++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp
++++ bash -c '. "$1"; fm_pid_identity "$2"' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-wake-lib.sh 21816
+++ FM_TEST_OWNER_IDENTITY='Mon Oct  5 14:24:04 2026     bash -x tests/fm-deck-harness.test.sh'
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-helpers.21816.XXXXXX
+++ FM_TEST_HELPER_PID_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-helpers.21816.kwwDSU
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-procevent.21816.XXXXXX
+++ FM_TEST_PROCEVENT_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-procevent.21816.yIDyeW
+++ FM_TEST_STUB_MAX_BLOCK_SECONDS=120
+++ export FM_TEST_STUB_MAX_BLOCK_SECONDS
+++ trap fm_test_cleanup EXIT
+++ trap 'fm_test_cleanup; exit 130' INT
+++ trap 'fm_test_cleanup; exit 143' TERM
+++ trap 'fm_test_cleanup; exit 129' HUP
+++ trap 'fm_test_cleanup; exit 131' QUIT
+++ FM_TEST_ORPHAN_MAX_AGE_SECONDS=3600
+++ '[' 0 '!=' 1 ']'
+++ fm_test_reap_orphans
+++ local marker dir mtime now owner_pid owner_identity current_identity
++++ date +%s
+++ now=1791221044
+++ for marker in "${TMPDIR:-/tmp}"/fm-*/.fm-test-fixture
+++ '[' -e '/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-*/.fm-test-fixture' ']'
+++ continue
++ unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_INVOKED_AS ATLASSIAN_AGENT_TYPE ROVODEV_CLI GEMINI_CLI AGENT FM_OMP_HARNESS
++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-control-lib.sh
++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-busy-lib.sh
+++ FM_BUSY_LIB_VERSION=v1
+++ FM_BUSY_KIMI_VERIFIED_VERSIONS=
++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-composer-lib.sh
+++ FM_COMPOSER_UNICODE_SPACES=()
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0302\0205'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0302\0240'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0341\0232\0200'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0200'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0201'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0202'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0203'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0204'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0205'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0206'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0207'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0210'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0211'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0212'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0250'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0251'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0257'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0342\0201\0237'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++ printf -v _fm_composer_space_utf8 %b '\0343\0200\0200'
+++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++ unset -v _fm_composer_space_octal _fm_composer_space_utf8
+++ FM_DELIVERY_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working(\.\.\.|…)|Ctrl\+c:cancel|ctrl\+c to stop|esc[[:space:]]+to[[:space:]]+cancel'
+++ FM_DELIVERY_CLAUDE_BUSY_REGEX_DEFAULT='esc to interrupt|…[[:space:]]+\([0-9]+[smh]'
+++ FM_DELIVERY_CODEX_BUSY_REGEX_DEFAULT='esc to interrupt'
+++ FM_DELIVERY_OPENCODE_BUSY_REGEX_DEFAULT='esc interrupt'
+++ FM_DELIVERY_PI_BUSY_REGEX_DEFAULT='Working\.\.\.'
+++ FM_OMP_SPINNER_FRAMES_RE='(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)'
+++ FM_DELIVERY_OMP_BUSY_REGEX_DEFAULT='Working…|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)[[:space:]]+[0-9]+[smh]'
+++ FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
+++ FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT='ctrl\+c to stop'
+++ FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT='esc[[:space:]]+to[[:space:]]+cancel'
+++ FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
++++ printf '%s\n' ❯ › ⟩ →
+++ FM_COMPOSER_AGENT_PROMPT_GLYPHS=$'❯\n›\n⟩\n→'
++++ printf '%s\n' '>' '$' % '#'
+++ FM_COMPOSER_SHELL_PROMPT_GLYPHS=$'>\n$\n%\n#'
+++ FM_COMPOSER_IDLE_RE_DEFAULT='^Type a message\.\.\.$|^Ask anything(\.\.\.|…)|^Plan, search, build anything$|^Add a follow-up$'
+++ FM_COMPOSER_LEFTBAR_FOOTER_RE_DEFAULT='^(Build|Plan)[[:space:]]+·[[:space:]]+'
+++ FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K'
+++ FM_COMPOSER_CAPTURE_LINES=20
+++ FM_COMPOSER_PI_MAX_LINES=8
+++ FM_COMPOSER_GROK_TITLE_OVERHANG=3
++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-agent-process-lib.sh
++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-agent-process-lib.sh
+++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-session-lock-lib.sh
+++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-session-lock-lib.sh
++++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-cursor-lib.sh
+++++ FM_CURSOR_PROBE_TIMEOUT=10
++++ FM_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$|^omp$|^fm-deck-worker$'
++++ FM_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi omp fm-deck-worker)
++++ FM_HARNESS_IS_CLAUDE=0
++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-agent-process-lib.sh
+++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-gemini-lib.sh
++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-backend.sh
+++ FM_BACKEND_SCRIPT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-backend.sh
+++++ dirname /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-backend.sh
++++ cd /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin
++++ pwd
+++ FM_BACKEND_LIB_DIR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin
+++ unset FM_BACKEND_SCRIPT
++++ cd /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/..
++++ pwd
+++ FM_BACKEND_DEFAULT_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_BACKEND_CONFIG_DIR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/config
+++ FM_BACKEND_KNOWN='tmux herdr zellij orca cmux stream'
+++ FM_BACKEND_SPAWN='tmux herdr zellij orca cmux stream'
+++ FM_BACKEND_CMUX_BUNDLE_ID=com.cmuxterm.app
++ fm_backend_source tmux
++ local name=tmux
++ fm_backend_validate tmux
++ local name=tmux
++ fm_backend_is_known tmux
++ fm_backend_list_contains 'tmux herdr zellij orca cmux stream' tmux
++ local 'list=tmux herdr zellij orca cmux stream' name=tmux
++ case "$name" in
++ case " $list " in
++ return 0
++ return 0
++ case "$name" in
++ '[' -z '' ']'
++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/backends/tmux.sh
+++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-tmux-lib.sh
+++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-tmux-lib.sh
++++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-composer-lib.sh
+++++ FM_COMPOSER_UNICODE_SPACES=()
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0302\0205'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0302\0240'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0341\0232\0200'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0200'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0201'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0202'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0203'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0204'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0205'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0206'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0207'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0210'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0211'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0212'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0250'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0251'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0200\0257'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0342\0201\0237'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ for _fm_composer_space_octal in '\0302\0205' '\0302\0240' '\0341\0232\0200' '\0342\0200\0200' '\0342\0200\0201' '\0342\0200\0202' '\0342\0200\0203' '\0342\0200\0204' '\0342\0200\0205' '\0342\0200\0206' '\0342\0200\0207' '\0342\0200\0210' '\0342\0200\0211' '\0342\0200\0212' '\0342\0200\0250' '\0342\0200\0251' '\0342\0200\0257' '\0342\0201\0237' '\0343\0200\0200'
+++++ printf -v _fm_composer_space_utf8 %b '\0343\0200\0200'
+++++ FM_COMPOSER_UNICODE_SPACES+=("$_fm_composer_space_utf8")
+++++ unset -v _fm_composer_space_octal _fm_composer_space_utf8
+++++ FM_DELIVERY_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working(\.\.\.|…)|Ctrl\+c:cancel|ctrl\+c to stop|esc[[:space:]]+to[[:space:]]+cancel'
+++++ FM_DELIVERY_CLAUDE_BUSY_REGEX_DEFAULT='esc to interrupt|…[[:space:]]+\([0-9]+[smh]'
+++++ FM_DELIVERY_CODEX_BUSY_REGEX_DEFAULT='esc to interrupt'
+++++ FM_DELIVERY_OPENCODE_BUSY_REGEX_DEFAULT='esc interrupt'
+++++ FM_DELIVERY_PI_BUSY_REGEX_DEFAULT='Working\.\.\.'
+++++ FM_OMP_SPINNER_FRAMES_RE='(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)'
+++++ FM_DELIVERY_OMP_BUSY_REGEX_DEFAULT='Working…|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)[[:space:]]+[0-9]+[smh]'
+++++ FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
+++++ FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT='ctrl\+c to stop'
+++++ FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT='esc[[:space:]]+to[[:space:]]+cancel'
+++++ FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
++++++ printf '%s\n' ❯ › ⟩ →
+++++ FM_COMPOSER_AGENT_PROMPT_GLYPHS=$'❯\n›\n⟩\n→'
++++++ printf '%s\n' '>' '$' % '#'
+++++ FM_COMPOSER_SHELL_PROMPT_GLYPHS=$'>\n$\n%\n#'
+++++ FM_COMPOSER_IDLE_RE_DEFAULT='^Type a message\.\.\.$|^Ask anything(\.\.\.|…)|^Plan, search, build anything$|^Add a follow-up$'
+++++ FM_COMPOSER_LEFTBAR_FOOTER_RE_DEFAULT='^(Build|Plan)[[:space:]]+·[[:space:]]+'
+++++ FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|⣾|⣽|⣻|⢿|⡿|⣟|⣯|⣷)[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K'
+++++ FM_COMPOSER_CAPTURE_LINES=20
+++++ FM_COMPOSER_PI_MAX_LINES=8
+++++ FM_COMPOSER_GROK_TITLE_OVERHANG=3
+++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-tmux-lib.sh
++++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-cursor-lib.sh
+++++ FM_CURSOR_PROBE_TIMEOUT=10
+++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-tmux-lib.sh
++++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-busy-lib.sh
+++++ FM_BUSY_LIB_VERSION=v1
+++++ FM_BUSY_KIMI_VERIFIED_VERSIONS=
+++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-session-lock-lib.sh
+++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-session-lock-lib.sh
++++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-cursor-lib.sh
+++++ FM_CURSOR_PROBE_TIMEOUT=10
++++ FM_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$|^omp$|^fm-deck-worker$'
++++ FM_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi omp fm-deck-worker)
++++ FM_HARNESS_IS_CLAUDE=0
+++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-agent-process-lib.sh
+++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-agent-process-lib.sh
++++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-session-lock-lib.sh
++++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-session-lock-lib.sh
+++++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-cursor-lib.sh
++++++ FM_CURSOR_PROBE_TIMEOUT=10
+++++ FM_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$|^omp$|^fm-deck-worker$'
+++++ FM_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi omp fm-deck-worker)
+++++ FM_HARNESS_IS_CLAUDE=0
+++++ dirname -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-agent-process-lib.sh
++++ . /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-gemini-lib.sh
++ _FM_BACKEND_TMUX_SOURCED=1
++ WORKER=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-deck-worker.sh
++ BUSY_EVENT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-busy-event.sh
++ SPAWN=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-spawn.sh
+++ fm_test_tmproot fm-deck-harness
+++ local prefix=fm-deck-harness root tmp_base
+++ tmp_base=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp
+++ tmp_base=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp
++++ mktemp -d /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.XXXXXX
+++ root=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI
++++ cd -P -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI
++++ pwd -P
+++ root=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI
+++ printf '%s\n%s\n' 21816 'Mon Oct  5 14:24:04 2026     bash -x tests/fm-deck-harness.test.sh'
+++ printf '%s\n' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI
+++ printf '%s\n' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI
++ TMP_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI
++++ command -v jq
+++ dirname /opt/homebrew/bin/jq
++ JQ_DIR=/opt/homebrew/bin
++ '[' -n test_herdr_deck_recovery ']'
++ for test_case in $FM_TEST_DECK_CASES
++ case "$test_case" in
++ declare -F test_herdr_deck_recovery
++ test_herdr_deck_recovery
++ local dir=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery gen shell_pid driver out record
++ mkdir -p /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin
++ make_fake_deck /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
++ local dir=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
++ mkdir -p /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
++ cat
++ chmod +x /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/deck
++ shell_pid=21860
++ fm_test_track_helper_pid 21860
++ case ${1:-} in
++ printf '%s\n' 21860
++ printf '%s\n' 21860
++ sleep 300
++ cat
++ chmod +x /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin/herdr
++ printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=secondmate\n'
+++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-busy-event.sh arm /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++ gen=g1791221044.21863.17005
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-busy-event.sh progress /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1 --gen g1791221044.21863.17005
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ out=dead
++ '[' dead = dead ']'
++ mkfifo /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/input
++ exec
++ driver=21995
++ fm_test_track_helper_pid 21995
++ case ${1:-} in
++ printf '%s\n' 21995
++ FM_TEST_STATUS=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.status
++ printf '%s\n' 21995
++ bash -c 'exec -a fm-deck-worker bash "$@"' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-deck-worker.sh --id t1 --state /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state --gen g1791221044.21863.17005 --deck /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/deck -- write-status
+++ seq 1 100
++ for _ in $(seq 1 100)
+++ fm_busy_record_read /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++ local state=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state id=t1 rec gen line extra ver f
+++ local r_gen= r_seq= r_state= r_source= r_event= r_ts=
++++ fm_busy_record_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ printf %s/%s.busy-state /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++ rec=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-state
+++ '[' '!' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-state ']'
++++ fm_busy_current_gen /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ local gen_file gen
+++++ fm_busy_gen_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++++ printf %s/%s.busy-gen /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ gen_file=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-gen
++++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-gen ']'
++++ IFS=
++++ read -r gen
++++ fm_busy_token_valid g1791221044.21863.17005
++++ case "${1:-}" in
++++ return 0
++++ printf %s g1791221044.21863.17005
+++ gen=g1791221044.21863.17005
+++ local -a fields
+++ IFS=' '
+++ read -r -a fields
+++ ver=v1
+++ '[' v1 = v1 ']'
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_gen=g1791221044.21863.17005
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_seq=1
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_state=busy
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_source=fm-spawn
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_event=launch-brief
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_ts=1791221044
+++ fm_busy_token_valid g1791221044.21863.17005
+++ case "${1:-}" in
+++ return 0
+++ fm_busy_token_valid fm-spawn
+++ case "${1:-}" in
+++ return 0
+++ fm_busy_token_valid launch-brief
+++ case "${1:-}" in
+++ return 0
+++ case "$r_seq" in
+++ case "$r_ts" in
+++ case "$r_state" in
+++ :
+++ '[' g1791221044.21863.17005 '!=' g1791221044.21863.17005 ']'
+++ printf '%s %s %s %s' busy fm-spawn launch-brief 1
++ record='busy fm-spawn launch-brief 1'
++ case "$record" in
++ sleep 0.1
++ for _ in $(seq 1 100)
+++ fm_busy_record_read /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++ local state=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state id=t1 rec gen line extra ver f
+++ local r_gen= r_seq= r_state= r_source= r_event= r_ts=
++++ fm_busy_record_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ printf %s/%s.busy-state /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++ rec=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-state
+++ '[' '!' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-state ']'
++++ fm_busy_current_gen /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ local gen_file gen
+++++ fm_busy_gen_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++++ printf %s/%s.busy-gen /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ gen_file=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-gen
++++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-gen ']'
++++ IFS=
++++ read -r gen
++++ fm_busy_token_valid g1791221044.21863.17005
++++ case "${1:-}" in
++++ return 0
++++ printf %s g1791221044.21863.17005
+++ gen=g1791221044.21863.17005
+++ local -a fields
+++ IFS=' '
+++ read -r -a fields
+++ ver=v1
+++ '[' v1 = v1 ']'
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_gen=g1791221044.21863.17005
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_seq=2
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_state=busy
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_source=deck-wrapper
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_event=turn-start
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_ts=1791221045
+++ fm_busy_token_valid g1791221044.21863.17005
+++ case "${1:-}" in
+++ return 0
+++ fm_busy_token_valid deck-wrapper
+++ case "${1:-}" in
+++ return 0
+++ fm_busy_token_valid turn-start
+++ case "${1:-}" in
+++ return 0
+++ case "$r_seq" in
+++ case "$r_ts" in
+++ case "$r_state" in
+++ :
+++ '[' g1791221044.21863.17005 '!=' g1791221044.21863.17005 ']'
+++ printf '%s %s %s %s' busy deck-wrapper turn-start 2
++ record='busy deck-wrapper turn-start 2'
++ case "$record" in
++ sleep 0.1
++ for _ in $(seq 1 100)
+++ fm_busy_record_read /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++ local state=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state id=t1 rec gen line extra ver f
+++ local r_gen= r_seq= r_state= r_source= r_event= r_ts=
++++ fm_busy_record_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ printf %s/%s.busy-state /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++ rec=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-state
+++ '[' '!' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-state ']'
++++ fm_busy_current_gen /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ local gen_file gen
+++++ fm_busy_gen_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++++ printf %s/%s.busy-gen /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ gen_file=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-gen
++++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-gen ']'
++++ IFS=
++++ read -r gen
++++ fm_busy_token_valid g1791221044.21863.17005
++++ case "${1:-}" in
++++ return 0
++++ printf %s g1791221044.21863.17005
+++ gen=g1791221044.21863.17005
+++ local -a fields
+++ IFS=' '
+++ read -r -a fields
+++ ver=v1
+++ '[' v1 = v1 ']'
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_gen=g1791221044.21863.17005
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_seq=2
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_state=busy
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_source=deck-wrapper
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_event=turn-start
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_ts=1791221045
+++ fm_busy_token_valid g1791221044.21863.17005
+++ case "${1:-}" in
+++ return 0
+++ fm_busy_token_valid deck-wrapper
+++ case "${1:-}" in
+++ return 0
+++ fm_busy_token_valid turn-start
+++ case "${1:-}" in
+++ return 0
+++ case "$r_seq" in
+++ case "$r_ts" in
+++ case "$r_state" in
+++ :
+++ '[' g1791221044.21863.17005 '!=' g1791221044.21863.17005 ']'
+++ printf '%s %s %s %s' busy deck-wrapper turn-start 2
++ record='busy deck-wrapper turn-start 2'
++ case "$record" in
++ sleep 0.1
++ for _ in $(seq 1 100)
+++ fm_busy_record_read /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++ local state=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state id=t1 rec gen line extra ver f
+++ local r_gen= r_seq= r_state= r_source= r_event= r_ts=
++++ fm_busy_record_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ printf %s/%s.busy-state /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++ rec=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-state
+++ '[' '!' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-state ']'
++++ fm_busy_current_gen /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ local gen_file gen
+++++ fm_busy_gen_path /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
+++++ printf %s/%s.busy-gen /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1
++++ gen_file=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-gen
++++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.busy-gen ']'
++++ IFS=
++++ read -r gen
++++ fm_busy_token_valid g1791221044.21863.17005
++++ case "${1:-}" in
++++ return 0
++++ printf %s g1791221044.21863.17005
+++ gen=g1791221044.21863.17005
+++ local -a fields
+++ IFS=' '
+++ read -r -a fields
+++ ver=v1
+++ '[' v1 = v1 ']'
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_gen=g1791221044.21863.17005
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_seq=3
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_state=idle
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_source=deck-wrapper
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_event=turn-end
+++ for f in "${fields[@]:1}"
+++ case "$f" in
+++ r_ts=1791221045
+++ fm_busy_token_valid g1791221044.21863.17005
+++ case "${1:-}" in
+++ return 0
+++ fm_busy_token_valid deck-wrapper
+++ case "${1:-}" in
+++ return 0
+++ fm_busy_token_valid turn-end
+++ case "${1:-}" in
+++ return 0
+++ case "$r_seq" in
+++ case "$r_ts" in
+++ case "$r_state" in
+++ :
+++ '[' g1791221044.21863.17005 '!=' g1791221044.21863.17005 ']'
+++ printf '%s %s %s %s' idle deck-wrapper turn-end 3
++ record='idle deck-wrapper turn-end 3'
++ case "$record" in
++ break
++ case "$record" in
++ :
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ out=alive
++ '[' alive = alive ']'
++ '[' '!' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/registry.log ']'
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-busy-event.sh apply /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1 busy --gen g1791221044.21863.17005 --source deck-wrapper --event turn-start
++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/bin/fm-busy-event.sh progress /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state t1 --gen g1791221044.21863.17005
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ '[' alive = alive ']'
++ printf 'error\n'
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ '[' unreadable = unreadable ']'
++ printf 'missing\n'
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ '[' missing = missing ']'
++ rm /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/presence
++ touch /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/process-error
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ '[' unreadable = unreadable ']'
++ rm /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/process-error
++ mv /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.meta /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t2.meta
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ '[' unreadable '!=' alive ']'
++ mv /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t2.meta /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state/t1.meta
++ printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=pi\nkind=secondmate\n'
++ for record in missing empty error live
++ printf '%s\n' missing
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ out=dead
++ case "$record:$out" in
++ for record in missing empty error live
++ printf '%s\n' empty
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ out=unreadable
++ case "$record:$out" in
++ for record in missing empty error live
++ printf '%s\n' error
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ out=unreadable
++ case "$record:$out" in
++ for record in missing empty error live
++ printf '%s\n' live
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ out=alive
++ case "$record:$out" in
++ printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=ship\n'
++ printf 'missing\n'
++ :
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ '[' alive = alive ']'
++ '[' '!' -s /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/registry.log ']'
++ printf '/quit\n'
++ wait 21995
++ rm /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/driver
++ for kind in secondmate ship scout
++ printf 'backend=herdr\nwindow=fmtest:w1:p2\nharness=deck\nkind=%s\n' secondmate
++ for record in missing empty error
++ printf '%s\n' missing
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ out=dead
++ '[' dead = dead ']'
++ for record in missing empty error
++ printf '%s\n' empty
+++ herdr_deck_verdict
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ FM_ROOT_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
+++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/state
+++ FM_TEST_HERDR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI/herdr-recovery/bin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state herdr fmtest:w1:p2' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV
++ out=unreadable
++ '[' unreadable = dead ']'
++ fail 'absent Deck secondmate driver became unreadable with registry empty'
++ printf 'not ok - %s\n' 'absent Deck secondmate driver became unreadable with registry empty'
+not ok - absent Deck secondmate driver became unreadable with registry empty
++ exit 1
++ fm_test_cleanup
++ local d
++ fm_test_reap_procevent_homes
++ local home claim_root $'seen=\n'
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-procevent.21816.yIDyeW ']'
++ IFS=$'\t'
++ read -r home claim_root
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-procevent.21816.yIDyeW
++ for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"
++ '[' -n '' ']'
++ fm_test_reap_helper_pids
++ local pid
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-helpers.21816.kwwDSU ']'
++ IFS=
++ read -r pid
++ '[' -n 21860 ']'
++ fm_test_kill_foreign_pids 21860
++ local pid why
++ for pid in "$@"
++ fm_test_pid_is_foreign 21860 why
++ local pid=21860 reason_var=why reason= cursor ppid hops
++ :
++ case $pid in
++ '[' 21860 = 21816 ']'
++ '[' 21860 = 1 ']'
++ ps -o pid= -p 21860
++ cursor=21816
++ hops=0
++ '[' 21816 -gt 1 ']'
++ '[' 0 -lt 64 ']'
+++ ps -o ppid= -p 21816
+++ tr -d ' '
++ ppid=21815
++ '[' -n 21815 ']'
++ '[' 21815 = 21860 ']'
++ cursor=21815
++ hops=1
++ '[' 21815 -gt 1 ']'
++ '[' 1 -lt 64 ']'
+++ ps -o ppid= -p 21815
+++ tr -d ' '
++ ppid=6886
++ '[' -n 6886 ']'
++ '[' 6886 = 21860 ']'
++ cursor=6886
++ hops=2
++ '[' 6886 -gt 1 ']'
++ '[' 2 -lt 64 ']'
+++ ps -o ppid= -p 6886
+++ tr -d ' '
++ ppid=2811
++ '[' -n 2811 ']'
++ '[' 2811 = 21860 ']'
++ cursor=2811
++ hops=3
++ '[' 2811 -gt 1 ']'
++ '[' 3 -lt 64 ']'
+++ ps -o ppid= -p 2811
+++ tr -d ' '
++ ppid=1
++ '[' -n 1 ']'
++ '[' 1 = 21860 ']'
++ cursor=1
++ hops=4
++ '[' 1 -gt 1 ']'
++ return 0
++ kill -9 21860
++ IFS=
++ read -r pid
++ '[' -n 21995 ']'
++ fm_test_kill_foreign_pids 21995
++ local pid why
++ for pid in "$@"
++ fm_test_pid_is_foreign 21995 why
++ local pid=21995 reason_var=why reason= cursor ppid hops
++ :
++ case $pid in
++ '[' 21995 = 21816 ']'
++ '[' 21995 = 1 ']'
++ ps -o pid= -p 21995
++ reason='pid 21995 is already gone'
++ break
++ '[' -z why ']'
++ printf -v why %s 'pid 21995 is already gone'
++ return 1
++ '[' -n 'pid 21995 is already gone' ']'
++ case $why in
++ IFS=
++ read -r pid
++ :
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-helpers.21816.kwwDSU
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-cleanup.21816.o4NtUL ']'
++ IFS=
++ read -r d
++ '[' -n /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI ']'
++ rm -rf /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/fm-deck-harness.NWFWXI
++ IFS=
++ read -r d
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/.fm-test-cleanup.21816.o4NtUL

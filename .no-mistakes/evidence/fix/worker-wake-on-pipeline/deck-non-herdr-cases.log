@@ -1,0 +1,26 @@
+FM_TEST_BEGIN 2026-10-05T16:47:23Z tests/fm-deck-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - Deck idle Ctrl+C stays a signal, not fake input, while partial input remains visible
+ok - Deck host preserves handling-successor supervision without parent turn-end wakes
+ok - fm-deck-worker: a secondmate records a failed turn and waits at its prompt for the next wake
+ok - fm-deck-worker: a secondmate replaces its watcher when the successor refuses its handoff
+ok - fm-deck-worker: a secondmate with no session repeats its launch brief on the next wake
+ok - fm-deck-worker: a secondmate that cannot open a session stops for the guarded relaunch
+ok - fm-deck-worker: a secondmate that cannot publish a failed turn stops instead of looping
+ok - fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model
+ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
+ok - fm-deck-worker: busy-state failures stop turns and publish status evidence
+ok - fm-deck-worker: turn-end publication refuses unsafe targets
+ok - fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported
+ok - fm-deck-worker: Deck stderr cannot break completion-blocked rendering
+ok - fm-deck-worker: Firstmate bookkeeping cannot satisfy worker evidence
+ok - fm-deck-worker: the finished-turn line carries the UTC completion time and degrades safely without it
+ok - fm-deck-worker: the idle prompt notes the UTC idle instant beside the bare ❯ prompt
+ok - fm-deck-worker: status evidence never follows symlinked or non-regular paths
+ok - fm-deck-worker: silent and failed turns gain status evidence before turn-end
+ok - fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt
+error connecting to /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46D889CR2WGCE7JDHQJBAVV/.test-tmp/tmux/tmux-501/default (File name too long)
+not ok - could not start the Deck terminal fixture
+FM_TEST_END 2026-10-05T16:48:28Z tests/fm-deck-harness.test.sh exit=1 duration_ms=64151 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=64250
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=64151 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-harness.test.sh duration_ms=64151
