@@ -9,12 +9,12 @@ Balance hints come from serial runs of the real lanes on `ubuntu-latest`.
 The concurrent isolation proof in [fm-test-isolation-proof.md](fm-test-isolation-proof.md) establishes concurrency safety, not serial CI duration.
 Local timings are not interchangeable with CI timings: platform and machine load can affect each script differently and change their relative weights.
 
-The retained hints are the slowest completed value each script reached across six CI runs on 2026-09-10: [34459949083](https://github.com/kunchenguid/firstmate/actions/runs/34459949083), [34460760299](https://github.com/kunchenguid/firstmate/actions/runs/34460760299), [34462530836](https://github.com/kunchenguid/firstmate/actions/runs/34462530836), [34462758357](https://github.com/kunchenguid/firstmate/actions/runs/34462758357), [34466966385](https://github.com/kunchenguid/firstmate/actions/runs/34466966385), and [34470382458](https://github.com/kunchenguid/firstmate/actions/runs/34470382458).
+The parallel hint baseline uses the slowest completed value each script reached across six CI runs on 2026-09-10; later replacements are recorded under [Parallel lanes](#parallel-lanes): [34459949083](https://github.com/kunchenguid/firstmate/actions/runs/34459949083), [34460760299](https://github.com/kunchenguid/firstmate/actions/runs/34460760299), [34462530836](https://github.com/kunchenguid/firstmate/actions/runs/34462530836), [34462758357](https://github.com/kunchenguid/firstmate/actions/runs/34462758357), [34466966385](https://github.com/kunchenguid/firstmate/actions/runs/34466966385), and [34470382458](https://github.com/kunchenguid/firstmate/actions/runs/34470382458).
 Shard 2 completed in all six, so its scripts come from the uploaded `fm-test-timing-portable-parallel-2` artifacts.
 Shard 1 was cancelled at its job cap in five of the six, so its scripts come from the `FM_TEST_END duration_ms=` markers in each cancelled job's log, which record every script that finished before the cancellation, plus the one complete `fm-test-timing-portable-parallel-1` artifact from run 34462758357.
 Observed maxima provide conservative packing weights, not an upper bound on future durations.
 
-The measurements cover all 24 candidates, with six samples per script except:
+Those six runs cover all 24 candidates, with six samples per script except:
 
 | Samples | Scripts |
 |---:|---|
@@ -30,6 +30,8 @@ The complete historical run supplies tail-script hints, not a completion time fo
 ## Parallel lanes
 
 The two parallel lanes use longest-processing-time assignment over those hints.
+The hints for `tests/fm-lint.test.sh` and `tests/fm-test-run.test.sh` were refreshed to 212915 ms and 151312 ms from the completed script markers in [run 37361945831, parallel job 1](https://github.com/bastotec/firstmate/actions/runs/37361945831/job/111938422392), which reached its old 10-minute cap after 583 seconds of script time.
+Repacking with those hints estimates about 469 seconds per lane and retains `tests/fm-pi-primary-types.test.sh` in lane 1, where CI installs Pi.
 [`bin/fm-test-run.sh`](../bin/fm-test-run.sh) holds the duration values in `portable_parallel_weight_hints` and the ordered memberships and lane-specific prerequisite constraints beside `list_portable_parallel_1` and `list_portable_parallel_2`.
 Read the derived packing estimates with that runner's `--check-coverage`; its header and `--help` own the output fields and the selection-specific `--list-scheduled` weight rules.
 The largest individual hint sets a lower bound on the estimated duration of any split, regardless of how evenly the remaining work is assigned.
@@ -57,7 +59,7 @@ Each shard is still strictly serial in itself, and separate runners mean no two 
 `.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the required suite unrun.
 
 Assignment is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`.
-The embedded hints include the slowest measurements retained from the `fm-test-timing-portable-serial-*` artifacts of three green CI runs on 2026-09-01, [33558082172](https://github.com/kunchenguid/firstmate/actions/runs/33558082172), [33523597838](https://github.com/kunchenguid/firstmate/actions/runs/33523597838), and [33463326167](https://github.com/kunchenguid/firstmate/actions/runs/33463326167), the completed-script measurements from [run 34342484144](https://github.com/kunchenguid/firstmate/actions/runs/34342484144), plus the 5121 ms native-Windows focused runner measurement for `tests/fm-pi-windows-shell-invocation.test.sh` from 2026-09-06T21:02Z.
+The embedded hints are the slowest completed `duration_ms` per script from the `fm-test-timing-portable-serial-*` artifacts of four green CI runs on 2026-10-04 and 2026-10-05, [37272453924](https://github.com/bastotec/firstmate/actions/runs/37272453924), [37251695405](https://github.com/bastotec/firstmate/actions/runs/37251695405), [37253443319](https://github.com/bastotec/firstmate/actions/runs/37253443319), and [37247916281](https://github.com/bastotec/firstmate/actions/runs/37247916281), plus the 5121 ms native-Windows focused runner measurement for `tests/fm-pi-windows-shell-invocation.test.sh` from 2026-09-06T21:02Z.
 Taking the slowest of several CI runs rather than a single run keeps the balance honest on a slow runner.
 A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
@@ -67,13 +69,9 @@ That is not hypothetical: by 2026-09-01 the lane had grown from 116 to 139 scrip
 Refresh the hints whenever the serial lane gains scripts, rather than waiting for that bound to trip.
 
 `bin/fm-test-run.sh` owns the per-shard packing, so its `--check-coverage` output is the current account of lane size, shard composition, and balance rather than a copied table.
-PR 29 runs [35815524672](https://github.com/bastotec/firstmate/actions/runs/35815524672) and [35817972433](https://github.com/bastotec/firstmate/actions/runs/35817972433) exposed renewed imbalance when serial shard 1 reached the 30-minute job cap twice.
-The first run recorded 1,794,971 ms of passing shard 1 work, while the second run measured the other four shards at 1,025,813 ms, 985,229 ms, 1,043,983 ms, and 1,666,131 ms.
-Those completed measurements total about 108 minutes across five shards, so the lane now uses six shards to restore about an 18-minute average without raising the timeout.
-The Deck host regression increased `tests/fm-deck-harness.test.sh` from its old 12,000 ms hint to a measured 29,898 ms, and its hint now reflects that CI result.
-Run 34342484144 observed a shard reach about 20 minutes of passing work, so the 30-minute job cap keeps meaningful hang-tripwire margin for job setup and runner-speed spread.
-
-The single longest retained hint remains the floor for any shard count.
+Those four runs measured the lane at 121-127 minutes of script time, and their six shards ran 14-29 minutes because `tests/fm-watch-triage.test.sh` had grown from its 262,626 ms hint to 694,233 ms.
+With refreshed hints the lane now uses twelve shards: `--check-coverage` packs `tests/fm-watch-triage.test.sh` alone at about 11.6 minutes and every other shard at about 11.2 minutes of slowest-run hints.
+That longest script is the floor for any shard count; adding shards beyond twelve leaves the critical path unchanged until it is split or made faster.
 
 Refresh the CI-derived hints by downloading the per-shard timing artifacts from several green CI runs and replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the slowest measured `duration_ms` per `path`:
 
@@ -89,9 +87,7 @@ bin/fm-test-run.sh --check-coverage
 
 A timed-out shard uploads no artifact, so pick runs where every serial shard is green or the lane's slowest scripts go unmeasured in exactly the shard that needs them most.
 Measure native-Windows-only scripts through the focused Git Bash runner and retain that `duration_ms` separately, because the portable CI shards skip them.
-The two stream Deck suites use completed measurements from the green serial shards 1 and 2 of [run 36642742794](https://github.com/bastotec/firstmate/actions/runs/36642742794): 4208 ms for `tests/fm-stream-deck.test.sh` and 79 ms for `tests/fm-stream-deck-live-e2e.test.sh`.
-The latter measures the credential-free CI opt-in skip, not native Deck execution.
-The managed-primary suite uses its completed 43,047 ms measurement from the green serial shard 2 of [run 37249323291](https://github.com/bastotec/firstmate/actions/runs/37249323291), rather than an unmeasured default.
+Opt-in live-harness timing hints can measure credential-free CI skips, not native harness execution; `tests/lib.sh`'s `fm_live_gate` owns that skip policy.
 
 ## Coverage guard
 
@@ -116,7 +112,7 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 | Lane | Bound | Rationale |
 |---|---|---|
 | portable parallel 1/2 | See [CI workflow](../.github/workflows/ci.yml) | The workflow owns the parallel cap rationale and its evidence limits. |
-| portable serial 1-6 | job `timeout-minutes: 30` | Current runners average about 18 minutes after the six-way split; the 30-minute cap remains a hang tripwire while leaving margin for job setup and runner-speed spread. |
+| portable serial shards | See [CI workflow](../.github/workflows/ci.yml) | The workflow owns the serial cap and its setup and runner-speed margin; the packing evidence is above. |
 | Herdr | family-run step `timeout-minutes: 20`; job `timeout-minutes: 75` backstop | Healthy runs finished around 7 minutes before this lane gained `fm-backend-herdr-focus-flash-e2e`, which measures about 2 minutes against a real lab locally, so the step bound is still the hang tripwire (cleanup and timing artifacts still upload) while the job cap stays a last-resort backstop. Refresh this figure from the lane's uploaded timing artifact. |
 
 Timeouts are intended as hang tripwires; a passing coverage guard does not establish a healthy job duration.

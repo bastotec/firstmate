@@ -10,10 +10,10 @@ permissions:
   contents: read
 
 # Per-PR supersession: a new push to the same PR replaces that PR's in-flight
-# CI instead of letting superseded heads keep 13 jobs of hosted-runner work.
+# CI instead of letting superseded heads keep their hosted-runner jobs.
 # The group uses the PR number for pull_request events, so every run of one PR
 # shares a group, and falls back to the unique run id for push events, so each
-# main push gets its own group and is never cancelled. Cancellation is likewise
+# main push gets its own group and is never cancelled by a newer push. Cancellation is likewise
 # limited to pull_request events. Evidence and rationale: the September 12
 # Actions starvation report, section 3 "Workflow mechanics to ship first".
 # The compliance workflow deliberately keeps its own event-specific groups; do
@@ -22,6 +22,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# These jobs are the one full behavior-suite run for every PR: the tracked
+# .no-mistakes.yaml skips the gate's own Test step (test.skip), and the coverage
+# guard proves the portable and Herdr lanes partition tests/*.test.sh exactly
+# once. The Rust parity and stock macOS Bash jobs add focused cross-environment
+# coverage, not another full-suite run.
 jobs:
   rust-stream:
     name: Rust stream parity
@@ -44,11 +49,18 @@ jobs:
         run: FM_LIVE=0 bin/fm-test-run.sh tests/fm-stream-agent-rust.test.sh
 
   lint:
-    name: Lint
+    name: Lint ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # Hang tripwire only: lint executions measured at 14-16 minutes in the
-    # September 12 starvation report, so this leaves deliberate margin.
-    timeout-minutes: 25
+    # Full lint on main measured 19-26 minutes on one runner (most roots have no
+    # measured memory reservation, so they run one at a time) and kept hitting
+    # the old 25-minute cap. Three runners split any selection round-robin with
+    # bin/fm-lint.sh --shard; a full slice is expected to take about 7 minutes,
+    # to be confirmed by CI telemetry. This cap is the hang tripwire.
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -70,12 +82,14 @@ jobs:
       - name: Lint affected roots on pull requests, all roots on main
         env:
           LINT_BASE: ${{ github.event.pull_request.base.sha }}
+          # job-total rather than a literal, so the matrix size is the shard count.
+          LINT_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         run: |
           trap 'test ! -f "$RUNNER_TEMP/lint.tsv" || cat "$RUNNER_TEMP/lint.tsv"' EXIT
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            bin/fm-lint.sh --changed "$LINT_BASE" --telemetry "$RUNNER_TEMP/lint.tsv"
+            bin/fm-lint.sh --changed "$LINT_BASE" --shard "$LINT_SHARD" --telemetry "$RUNNER_TEMP/lint.tsv"
           else
-            bin/fm-lint.sh --full --telemetry "$RUNNER_TEMP/lint.tsv"
+            bin/fm-lint.sh --full --shard "$LINT_SHARD" --telemetry "$RUNNER_TEMP/lint.tsv"
           fi
 
   # Deterministic proof that portable parallel shards + portable serial + Herdr
@@ -96,14 +110,12 @@ jobs:
   tests-portable-parallel-1:
     name: Behavior portable parallel 1
     runs-on: ubuntu-latest
-    # This cap is intended as a hang tripwire, but the previous lane 1 reached
-    # it; the former "~1 min of serial sum" estimate no longer applies.
-    # Compare it with the derived hints from fm-test-run.sh --check-coverage
-    # and completed job timings, allowing for setup and runner-speed spread.
-    # A packed hint sum is not a measured job wall time or proof of headroom.
+    # Lane 1 reached the old 10-minute cap after 583 seconds of script time.
+    # Refreshed hints and LPT packing estimate about 469 seconds per lane.
+    # This 15-minute cap is a hang tripwire with setup and runner-speed margin,
+    # not the expected healthy duration or proof of measured job headroom.
     # Evidence and refresh procedure: docs/fm-test-portable-shards.md.
-    # Changes to this cap or the lane count require a separate scope decision.
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -147,7 +159,7 @@ jobs:
     name: Behavior portable parallel 2
     runs-on: ubuntu-latest
     # Same timeout rationale as portable parallel shard 1 above.
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -190,15 +202,16 @@ jobs:
   tests-portable-serial:
     name: Behavior portable serial ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # Current runners can take ~20 min for a balanced shard. This 30-minute cap
-    # preserves the timeout as a hang tripwire while allowing runner-speed and
-    # job-setup margin; it is not the expected healthy end of the lane.
-    timeout-minutes: 30
+    # Twelve shards pack to about 11 minutes each; the longest single script
+    # (tests/fm-watch-triage.test.sh, ~11.6 min) is the floor for any count.
+    # This 20-minute cap is a hang tripwire with runner-speed and setup margin,
+    # not the expected healthy end of the lane.
+    timeout-minutes: 20
     strategy:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - uses: actions/checkout@v6
         with:

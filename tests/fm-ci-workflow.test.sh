@@ -13,7 +13,7 @@
 set -u
 
 # shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 
 CI_WORKFLOW="$ROOT/.github/workflows/ci.yml"
 
@@ -115,7 +115,6 @@ end
   pass "every ci.yml job carries a finite timeout"
 }
 
-# The four jobs the incident found unbounded, at the report's recommended caps.
 test_previously_unbounded_jobs_keep_their_caps() {
   local job expected actual
   while read -r job expected; do
@@ -124,17 +123,17 @@ test_previously_unbounded_jobs_keep_their_caps() {
     [ "$actual" = "$expected" ] \
       || fail "$job timeout must stay $expected minutes, got $actual"
   done <<'CAPS'
-lint 25
+lint 15
 test-coverage 5
 tests-timing-aggregate 5
 invariants 5
 CAPS
-  pass "the incident's unbounded jobs keep their recommended caps"
+  pass "the incident's unbounded jobs keep their authorized caps"
 }
 
 # Cancellation makes an undersized cap costlier: a falsely tripped job now also
 # discards a run nobody replaced. These bounds were measured, not guessed.
-test_measured_lanes_keep_their_existing_bounds() {
+test_measured_lanes_keep_their_authorized_bounds() {
   local job expected actual
   while read -r job expected; do
     [ -n "$job" ] || continue
@@ -142,17 +141,17 @@ test_measured_lanes_keep_their_existing_bounds() {
     [ "$actual" = "$expected" ] \
       || fail "$job timeout must stay $expected minutes, got $actual"
   done <<'CAPS'
-tests-portable-parallel-1 10
-tests-portable-parallel-2 10
-tests-portable-serial 30
+tests-portable-parallel-1 15
+tests-portable-parallel-2 15
+tests-portable-serial 20
 tests-herdr 75
 macos-stock-bash 10
 CAPS
-  pass "the already-measured lane bounds are unchanged"
+  pass "the measured lane bounds match their authorized caps"
 }
 
 test_lint_event_modes_execute_the_owner() {
-  local tmp event args base
+  local tmp event args base shard expected_shard
   tmp=$(fm_test_tmproot fm-ci-lint-events)
   mkdir -p "$tmp/bin"
   cat > "$tmp/bin/fm-lint.sh" <<'SH'
@@ -162,28 +161,48 @@ SH
   chmod +x "$tmp/bin/fm-lint.sh"
   # shellcheck disable=SC2016 # Resolve GitHub expressions in Ruby, not Bash.
   ruby -ryaml -e '
-steps = YAML.load_file(ARGV[0]).fetch("jobs").fetch("lint").fetch("steps")
+jobs = YAML.load_file(ARGV[0]).fetch("jobs")
+job = jobs.fetch("lint")
+strategy = job.fetch("strategy")
+shards = strategy.fetch("matrix").fetch("shard")
+abort "lint needs three shards" unless shards == (1..3).to_a
+abort "lint must report every shard" unless strategy.fetch("fail-fast") == false
+serial = jobs.fetch("tests-portable-serial").fetch("strategy")
+abort "serial needs twelve shards" unless serial.fetch("matrix").fetch("shard") == (1..12).to_a
+abort "serial must report every shard" unless serial.fetch("fail-fast") == false
+steps = job.fetch("steps")
 checkout = steps.find { |s| s.fetch("uses", "").start_with?("actions/checkout@") }
 abort "affected lint needs history" unless checkout.fetch("with").fetch("fetch-depth") == 0
 lint = steps.last
-base = lint.fetch("env").fetch("LINT_BASE").gsub("${{ github.event.pull_request.base.sha }}", "abc123")
 File.write(ARGV[1], lint.fetch("run"))
-puts base
-' "$CI_WORKFLOW" "$tmp/step.sh" > "$tmp/base" || fail "could not resolve lint step"
-  base=$(cat "$tmp/base")
-  for event in pull_request push; do
-    (cd "$tmp" && GITHUB_EVENT_NAME="$event" LINT_BASE="$base" RUNNER_TEMP="$tmp" bash -e step.sh) \
-      || fail "lint workflow failed for $event"
-    args=$(cat "$tmp/invocation")
-    if [ "$event" = pull_request ]; then
-      [ "$args" = "--changed"$'\n'"abc123"$'\n'"--telemetry"$'\n'"$tmp/lint.tsv" ] \
-        || fail "PR did not select the owner's affected-root mode: $args"
-    else
-      [ "$args" = "--full"$'\n'"--telemetry"$'\n'"$tmp/lint.tsv" ] \
-        || fail "main push did not select full canonical lint: $args"
-    fi
-  done
-  pass "PR and main push steps execute affected and full owner modes with history"
+shards.each do |shard|
+  context = {
+    "github.event.pull_request.base.sha" => "abc123",
+    "matrix.shard" => shard.to_s,
+    "strategy.job-total" => shards.length.to_s,
+  }
+  env = lint.fetch("env").transform_values do |raw|
+    raw.gsub(/\$\{\{(.+?)\}\}/) { context.fetch(Regexp.last_match(1).strip) }
+  end
+  puts [env.fetch("LINT_BASE"), env.fetch("LINT_SHARD"), "#{shard}/#{shards.length}"].join("\t")
+end
+' "$CI_WORKFLOW" "$tmp/step.sh" > "$tmp/env" || fail "could not resolve lint matrix step"
+  while IFS=$'\t' read -r base shard expected_shard; do
+    [ "$shard" = "$expected_shard" ] || fail "lint shard must resolve to $expected_shard, got $shard"
+    for event in pull_request push; do
+      (cd "$tmp" && GITHUB_EVENT_NAME="$event" LINT_BASE="$base" LINT_SHARD="$shard" RUNNER_TEMP="$tmp" bash -e step.sh) \
+        || fail "lint workflow failed for $event shard $shard"
+      args=$(cat "$tmp/invocation")
+      if [ "$event" = pull_request ]; then
+        [ "$args" = "--changed"$'\n'"abc123"$'\n'"--shard"$'\n'"$shard"$'\n'"--telemetry"$'\n'"$tmp/lint.tsv" ] \
+          || fail "PR did not select the owner's affected-root shard: $args"
+      else
+        [ "$args" = "--full"$'\n'"--shard"$'\n'"$shard"$'\n'"--telemetry"$'\n'"$tmp/lint.tsv" ] \
+          || fail "main push did not select the full canonical lint shard: $args"
+      fi
+    done
+  done < "$tmp/env"
+  pass "PR and main push steps execute all affected and full owner shards with history"
 }
 
 test_lint_event_modes_execute_the_owner
@@ -192,4 +211,4 @@ test_separate_prs_do_not_cancel_each_other
 test_main_pushes_are_never_cancelled
 test_every_job_has_a_finite_timeout
 test_previously_unbounded_jobs_keep_their_caps
-test_measured_lanes_keep_their_existing_bounds
+test_measured_lanes_keep_their_authorized_bounds

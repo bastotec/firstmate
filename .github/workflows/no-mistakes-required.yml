@@ -26,5 +26,39 @@ jobs:
       github.event.pull_request.user.login != 'github-actions[bot]' &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      # no-mistakes honors test.skip only from the default-branch copy, so the
+      # policy is read from the base commit, never from the PR head.
+      - name: Read the trusted default-branch .no-mistakes.yaml
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .fm-trusted-base
+          sparse-checkout: .no-mistakes.yaml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      # The shared verifier below requires review, test, and document to be
+      # completed. bin/fm-nm-trusted-test-skip.sh owns the one exception: a Test
+      # step skipped by the trusted test.skip with its exact reason. Every other
+      # Test state reaches the verifier unchanged.
+      - name: Accept a Test step skipped by trusted repo config
+        id: body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -eu
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          bin/fm-nm-trusted-test-skip.sh .fm-trusted-base/.no-mistakes.yaml \
+            "$RUNNER_TEMP/pr-body.md" "$RUNNER_TEMP/pr-body-checked.md"
+          delimiter="FM_PR_BODY_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          {
+            printf 'body<<%s\n' "$delimiter"
+            cat "$RUNNER_TEMP/pr-body-checked.md"
+            printf '\n%s\n' "$delimiter"
+          } >> "$GITHUB_OUTPUT"
       - name: Verify no-mistakes signature and pipeline attestation
         uses: kunchenguid/no-mistakes/.github/actions/require-no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6 # post-v1.57.1, untagged (action added in #819)
+        with:
+          pr-body: ${{ steps.body.outputs.body }}

@@ -1135,15 +1135,14 @@ test_portable_serial_shards_partition_the_serial_lane() {
   [ "$(printf '%s\n' "$union" | LC_ALL=C sort)" = "$serial" ] \
     || fail "portable serial shards must exactly cover the portable serial lane"
 
-  # Every shard carries a real share of the lane, so no degenerate partition
-  # leaves one runner doing nearly all of the work the split exists to spread.
+  # No degenerate partition leaves one runner doing nearly all of the work the
+  # split exists to spread. A shard may hold a single script: the longest
+  # serial script sets the floor for any shard count and can fill one alone.
   total=$(printf '%s\n' "$serial" | wc -l | tr -d ' ')
   cap=$((total * 6 / 10))
   shard=1
   while [ "$shard" -le "$count" ]; do
     listed=$("$RUNNER" --list --lane "portable-serial-${shard}of${count}" | wc -l | tr -d ' ')
-    [ "$listed" -ge 2 ] \
-      || fail "portable-serial-${shard}of${count} holds only $listed script(s)"
     [ "$listed" -le "$cap" ] \
       || fail "portable-serial-${shard}of${count} holds $listed of $total scripts"
     shard=$((shard + 1))
@@ -1216,7 +1215,7 @@ test_portable_serial_shard_lane_refusals() {
 }
 
 test_jobs_requires_proven_isolated() {
-  local tmp rc shard_lane
+  local tmp rc shard_lane lane
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-jobs.XXXXXX")
   set +e
   "$RUNNER" --jobs 2 --lane portable-serial >"$tmp/out" 2>"$tmp/err"
@@ -1231,7 +1230,16 @@ test_jobs_requires_proven_isolated() {
   set -e
   [ "$rc" -eq 2 ] || fail "--jobs on a family with no recorded proof must refuse, got $rc"
   # Sharding across runners never relaxes the serial rule inside one shard.
-  shard_lane=$("$RUNNER" --list-lanes | grep -m1 '^portable-serial-[0-9]*of[0-9]*$')
+  # Use a shard holding at least two scripts: a single-script shard has nothing
+  # to run concurrently.
+  shard_lane=
+  for lane in $("$RUNNER" --list-lanes | grep '^portable-serial-[0-9]*of[0-9]*$'); do
+    if [ "$("$RUNNER" --list --lane "$lane" | wc -l | tr -d ' ')" -ge 2 ]; then
+      shard_lane=$lane
+      break
+    fi
+  done
+  [ -n "$shard_lane" ] || fail "no portable serial shard holds two or more scripts"
   set +e
   "$RUNNER" --jobs 2 --lane "$shard_lane" >"$tmp/out3" 2>"$tmp/err3"
   rc=$?
