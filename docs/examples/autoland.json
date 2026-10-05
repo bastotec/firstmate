@@ -1,0 +1,22 @@
+{
+  "repos": [
+    {
+      "repo": "your-account/firstmate",
+      "authority": "captain ruling 2026-01-01: firstmate PRs merge when no-mistakes is green and the change is low risk",
+      "attestation": true,
+      "hook": "firstmate"
+    },
+    {
+      "repo": "your-account/side-project",
+      "project": "side-project",
+      "attestation": true,
+      "method": "merge",
+      "hook": "side-project"
+    },
+    {
+      "repo": "your-account/web-app",
+      "project": "web-app",
+      "max_risk": "medium"
+    }
+  ]
+}

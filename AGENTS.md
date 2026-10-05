@@ -30,7 +30,7 @@ Hard rules, in priority order:
    Those paths never authorize forcing, stashing, discarding unlanded work, or hand-writing a project's `AGENTS.md`.
    Firstmate may directly edit, create, move, or delete project files or directories only when the captain clearly and concretely approves, in the moment, for a specific project, either a specific operation or a concrete scope whose authorized action needs no inference; firstmate performs exactly that approval with its own file tools, never infers or broadens it, and gains no standing authority, while the force, discard, unlanded-work, merge-authority, destructive, irreversible, and security-sensitive boundaries remain independently in force.
 2. **Never merge a PR without the captain's explicit word.**
-   A project's captain-approved `yolo` posture is the only standing relaxation for merge authority; section 7 owns delivery and merge defaults, while the captain-instruction precedence rule below owns when a current explicit captain instruction overrides a conflicting Firstmate-written standing rule within its exact scope.
+   Standing merge authority is limited to section 7's approved paths; that section owns delivery and merge defaults, while the captain-instruction precedence rule below owns when a current explicit captain instruction overrides a conflicting Firstmate-written standing rule within its exact scope.
 3. **Never tear down unlanded work.**
    Uncommitted changes are never landed, and `bin/fm-teardown.sh` owns the complete landed-work test.
    Never bypass a refusal or use `--force` unless the captain explicitly authorized discarding that work.
@@ -85,6 +85,7 @@ config/turnend-churn-absorb  optional presence flag opting this home into the de
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
 config/stream-hub config/stream-token config/stream-hub-tokens config/stream-machine  stream backend hub address, credentials, and fleet name: the fleet hub's base URL, this home's own client token, on the host that runs the hub the class-scoped "<classes>:<token>" lines it serves, and the name this home's endpoints are grouped under (default hostname); LOCAL, gitignored, never committed, and not inherited; see docs/stream-backend.md
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
+config/autoland.json config/post-merge/  optional auto-land repositories with their merge authority, and the per-project post-merge hooks they name; LOCAL, gitignored, and NOT inherited by secondmate homes; see docs/configuration.md "Auto-land"
 config/watched-tools.json  optional list of the tools this home depends on, read by the update check armed with bin/fm-tool-update-check.sh; LOCAL, gitignored, firstmate-maintained but human-editable, and NOT inherited by secondmate homes; see docs/configuration.md "Watched tool updates"
 config/ask-triage-key-var  optional name of the ~/.secrets variable holding the gateway key that opts this home into the possible-ask pass; LOCAL, gitignored, and not inherited; see docs/configuration.md "Possible-ask ranking"
 config/wake-gate-key-var config/wake-gate-mode  local opt-in and mode for the possible-wedge wake gate; LOCAL, gitignored, and not inherited; see docs/configuration.md "Wake gate"
@@ -133,6 +134,7 @@ state/               runtime records and signals; gitignored
   voice-gate/        optional hybrid-engine fast-layer usage and shadow-decision logs; written only by bin/fm_voice_gate.py (docs/voice-relay.md)
   x-watch.check.sh   generated Relay poll shim; present only when opted in (section 14)
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
+  autoland.check.sh  generated auto-land shim and its .check-trust binding, present only after bin/fm-autoland.sh arm; deploy records, hook logs, and reports live under autoland/ (bin/fm-autoland.sh)
   mail.check.sh      generated received-mail poll shim and its .check-trust binding; present only after bin/fm-mail-check.sh arm; report record .mail-check (mail schema: docs/configuration.md "Mail plane")
   .mail-seen .mail-woken .mail-retry .mail-retry-pos .mail-turn .mail-seen.lock  mail-plane poll cursor, emission journal, transient-fetch retry set, retry-scan position, contended-slot turn flag, and overlapping-poll lock; written only by bin/fm-mail.sh (mail schema: docs/configuration.md "Mail plane")
   pending-replies/   parent-owned secondmate pending-reply records (correlation id, delivery vs reply, recovery, escalation); fm-pending-reply-lib.sh
@@ -360,6 +362,7 @@ When no-mistakes is selected, no-mistakes alone owns review, fixes, tests, docum
 Never hold work outside no-mistakes for a manual clean verdict, stack serial manual reviews, or infer authority for one from security, architecture, or risk alone.
 A separate review or audit is allowed only when the captain explicitly requests that deliverable or the authorized task is a knowledge-only review; one named question remains scoped to that question.
 If fast-path risk needs more rigor, escalate whether to use no-mistakes instead of inventing a manual gate.
+A worker opens its PR ready for review and never parks a green PR as a draft or behind a gate its brief does not name.
 The path's worker, automated gates, and captain approval remain authoritative:
 
 - **no-mistakes** runs the full pipeline through a PR, then waits for the configured merge authority.
@@ -367,13 +370,15 @@ The path's worker, automated gates, and captain approval remain authoritative:
 - **local-only** has the worker stop with a clean ready branch, then waits for the configured merge authority before firstmate uses the guarded fast-forward merge path.
 
 Delivery mode and `yolo` are orthogonal.
-`yolo` governs merge authority only: with it off, the captain approves every PR merge and every local-only landing; with it on, firstmate merges green, in-scope work itself.
+`yolo` governs routine task merge authority only: with it off, the captain approves every PR merge and every local-only landing; with it on, firstmate merges green, in-scope work itself.
+For optional auto-land, [`docs/configuration.md` "Auto-land"](docs/configuration.md#auto-land-configautolandjson-configpost-merge) owns the alternative cited standing-ruling authority and its exact scope.
 Never merge a red PR under either setting unless a current explicit captain instruction names the single GitHub check waived through `fm-pr-merge.sh --allow-red`; that attended-only waiver still requires every other check green.
 Destructive, irreversible, and security-sensitive merges still escalate.
 Without a current explicit captain instruction that states the concrete merge, the green default stands, and standing `yolo` cannot authorize a red merge; section 1 owns when such an instruction overrides a Firstmate-written standing rule within its exact scope.
 Load `ask-user-authority` before deciding any ask-user finding; the implementation worker never answers its own finding.
 Use `bin/fm-pr-merge.sh` for every task PR merge so merge metadata is recorded and an unproved merge is refused instead of reported as landed, and use `bin/fm-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
+A home armed with `bin/fm-autoland.sh` merges green PRs in merge-authorized projects and runs their post-merge deploys without a model turn ([`docs/configuration.md`](docs/configuration.md) "Auto-land"); its `check:` wake reports merges, deploy outcomes, and held green PRs with their reasons, and a reported PR is yours to decide in the same turn rather than leave waiting on its owner.
 
 ### Validate
 
@@ -406,7 +411,7 @@ The worker reports the PR when CI first becomes green rather than waiting for me
 For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done: PR <url> checks green` after CI is green, while `direct-PR` reports `done: PR <url>` after opening the PR.
 Run `bin/fm-pr-check.sh <id> <PR url>` with the URL copied from that ready signal - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
 Tell the captain the PR's full `https://...` URL copied from the worker's ready line or the task's `pr=` metadata, a concise outcome summary, and the no-mistakes risk level when applicable.
-A captain instruction to merge is explicit authority; `yolo` is the only standing routine merge authority.
+A captain instruction to merge is explicit authority; the standing-authority paths are owned by "Selected delivery path and merge authority" above.
 For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when firstmate should wake, print nothing otherwise, finish before `FM_CHECK_TIMEOUT`, then bind its current bytes with `bin/fm-check-register.sh <id>` before the watcher may execute it.
 Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm-teardown.sh` for a spawned task); never hand-compose an `rm` with `$STATE`/`$ID`.
 
@@ -575,7 +580,7 @@ The scaffold is a safety contract, not a suggestion.
 
 Firstmate's shared instruction surface reaches running homes only after it lands on the default branch and those homes fast-forward.
 Only `AGENTS.md`, `bin/`, and `.agents/skills/` are loaded by a running firstmate; public `skills/` is an installer-facing surface.
-When the captain invokes `/updatefirstmate` or asks to update firstmate, load the `/updatefirstmate` skill.
+When the captain invokes `/updatefirstmate` or asks to update firstmate, or an auto-land notification reports a Firstmate deploy, load the `/updatefirstmate` skill.
 The skill owns the guarded fleet update and restart procedure; it never touches anything under `projects/`.
 
 ## 13. Agent-only reference skills

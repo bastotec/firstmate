@@ -262,6 +262,7 @@ Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
+Open it ready for review, never as a draft, and hold it behind no check, proof, or approval this brief does not name: once its checks are green it is ready to merge.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
       ;;
@@ -312,6 +313,7 @@ Two firstmate-specific rules layer on top of that guidance:
 - NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide.
   It auto-resolves every gate including ask-user findings with no escalation, and answering your own ask-user finding is a hard rule violation.
 
+Leave the PR no-mistakes opens ready for review: never convert it to a draft or hold it behind a check, proof, or approval this brief does not name, because a green PR is ready to merge.
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
 EOF
       ;;

@@ -707,6 +707,87 @@ A fail-closed poll that already queued a wake, and a timeout, always print so th
 `FM_MAIL_CHECK_BUDGET` (default 15, valid 5..25) bounds one standing poll and is cut down to fit `FM_CHECK_TIMEOUT`.
 `bin/fm-mail-check.sh disarm` removes the standing check.
 
+## Auto-land (config/autoland.json, config/post-merge/)
+
+[`bin/fm-autoland.sh`](../bin/fm-autoland.sh) lands green PRs as soon as they are ready and deploys what landed, without a model turn.
+It is a standing watcher check: `bin/fm-autoland.sh arm` writes `state/autoland.check.sh` and binds it with `bin/fm-check-register.sh`, and `disarm` removes it.
+The watcher runs that one check when `FM_AUTOLAND_INTERVAL` seconds (default 90) have elapsed, or during a full `FM_CHECK_INTERVAL` sweep, and turns the line it prints into a `check:` wake without speeding up other checks.
+The cadence is checked on watcher polls, so polling and other sweep work can delay a tick.
+Auto-land is main-owned: a tick invoked as the Pi supervision branch does nothing, including no deployment scan (actor handling is owned by the script header).
+Each tick makes one batched GraphQL discovery call; merge attempts add live PR reads and merge calls, including a queue query when a task-owned PR remains open.
+The discovery snapshot is unpaginated: at most 100 open PRs across the configured owners, 100 check contexts per head, and 20 labels per PR.
+`bin/fm-autoland.sh status` prints each repository's authority, the deployed commit and last run of each hook, and the recent reports.
+
+This section is the single owner of the `config/autoland.json` schema and the post-merge hook contract; the script's header owns the landing and deploy mechanics.
+The file is local and gitignored, and it is not inherited by secondmate homes; arm it in the primary home only.
+See [`docs/examples/autoland.json`](examples/autoland.json) for a starting point.
+
+```json
+{
+  "repos": [
+    {
+      "repo": "<owner>/<name>",
+      "project": "<data/projects.md name whose +yolo grants merge authority>",
+      "authority": "<or: the captain ruling that grants it, cited>",
+      "attestation": true,
+      "max_risk": "low",
+      "method": "squash",
+      "hook": "<optional post-merge hook name>"
+    }
+  ]
+}
+```
+
+Every entry needs `repo` and at least one of `project` or `authority`.
+Repository names must be unique, and each nonempty `hook` name may belong to only one entry.
+Without a nonempty `authority`, the repository merges only while its `project` registry entry carries `+yolo`, read at every tick, so dropping `+yolo` stops auto-merge without editing this file.
+A nonempty `authority` cites a real captain ruling granting standing merge authority, as for the Firstmate repository itself; it grants authority independently of `project`, so removing `+yolo` alone does not revoke it.
+The PR body's no-mistakes attestation must name the current head with review and document `completed` and test either `completed` or `skipped` when `attestation: true` or the entry's `project` is registered as `no-mistakes` or `no-mistakes-prod-only`, read at every tick.
+A skipped Test step is deliberately accepted for repositories whose trusted default-branch pipeline configuration skips that step; head CI must still be green.
+An omitted or false `attestation` disables that requirement only for registered `direct-PR`/`local-only` projects or authority-only entries; it cannot override a registered no-mistakes delivery requirement.
+When attestation is required, a missing Risk Assessment section holds the PR rather than treating it as low risk.
+The no-mistakes risk rating is capped at `max_risk` (`low`, `medium`, or `high`; default `low`).
+`method` is `squash` (default), `merge`, or `rebase`, matching what the repository allows.
+
+Only open PRs authored by the authenticated `gh` account into a configured repository's default branch are considered.
+A PR merges when it is not a draft, GitHub calls it mergeable and not blocked, behind, or conflicting, at least one check is reported and every check on its head is green, no hold label (`do-not-merge`, `hold`, `on-hold`, `wip`, `blocked`, `security`, `destructive`, `breaking`, `breaking-change`, including supported space variants) is set, and its attestation and risk pass.
+The shared green-check rule is owned by [`fm_pr_github_checks_not_green` in `bin/fm-pr-lib.sh`](../bin/fm-pr-lib.sh).
+Pending or red checks are left to the PR's owner, silently.
+A PR owned by a task in this home merges through `bin/fm-pr-merge.sh`, so captain holds, away posture, and merge records still apply.
+A successful task helper call is confirmed live as merged before auto-land reports a landed merge; a confirmed merge-queue entry is reported as queued instead, and deployment waits for the default-branch head to advance.
+Destructive, irreversible, and security-sensitive work keeps escalating through the risk cap and the hold labels: a PR no-mistakes rates above `max_risk`, or one carrying a hold label, wakes the supervisor instead of merging.
+When attestation is not required, a missing risk section is treated as unrated, but a present risk rating still must pass the cap; use this posture only for a repository where every otherwise eligible green PR is safe to merge.
+A held green PR wakes the supervisor with `green PR not landing: <url> because <reason>`, once per head and reason, and again after `FM_AUTOLAND_RENOTIFY` seconds (default 21600).
+Unknown mergeability waits silently for a later tick, as do candidates not reached within the merge budget; the script header owns those bounds and candidate rotation.
+Decide that PR at once rather than leaving it waiting on its owner.
+
+### Post-merge hooks
+
+An entry with `hook` deploys its default branch whenever that branch's head differs from the commit the hook last deployed, regardless of who merged it or whether the entry currently has merge authority.
+Deployment is discovered from the next tick's default-branch snapshot, not synchronously inside the merge call, and its result is reported on a subsequent tick.
+The tick starts a detached runner, which first refreshes `projects/<project>` through `bin/fm-fleet-sync.sh` when the entry names `project` and that clone exists in this home, then runs `config/post-merge/<hook>.sh <commit>`.
+Fleet sync is bounded to 300 seconds; failure or timeout is logged as a continuing warning before the hook runs.
+The hook must be an executable regular file that is not writable by group or others.
+It runs with its working directory in `state/autoland/` and these variables set:
+
+```sh
+FM_HOME                 # this home
+FM_AUTOLAND_CODE_ROOT   # tracked checkout containing the runner's bin/ scripts
+FM_AUTOLAND_REPO        # <owner>/<name>
+FM_AUTOLAND_TARGET      # the commit to deploy, also $1
+FM_AUTOLAND_DEPLOYED    # the commit this hook last deployed, empty when none is recorded
+FM_AUTOLAND_APPROVED    # 1 only for `bin/fm-autoland.sh deploy <hook> --approved`
+```
+
+Exit 0 means the commit is deployed, exit 75 means "not now" (for example, a shared service with work in flight), and any other exit is a failure.
+The hook's last nonblank output line is its summary in the wake, capped at 200 characters; its whole output is `state/autoland/<hook>.log`, with the preceding run retained as `.log.prev`.
+A deferral is retried every `FM_AUTOLAND_DEFER_RETRY` seconds (default 300); a failure is reported once and is retried only when the head moves or an operator runs `bin/fm-autoland.sh deploy <hook>`, which runs the hook in the foreground.
+`FM_AUTOLAND_HOOK_TIMEOUT` (default 1800) bounds one run.
+A hook must be idempotent, install atomically (stage beside the target and rename, keeping the previous copy), leave the old install in place when anything fails, and never restart a shared service while work is in flight; a hook with nothing to deploy still exists, prints why, and exits 0, so the record says so.
+These are obligations of the captain-private hook, not properties the runner can prove: after a fleet-sync warning the hook must verify that its inputs match the requested commit and fail closed if they do not.
+Use `deploy <hook> --approved` only for a captain-approved restart window; the flag signals that approval to the hook and does not waive its in-flight-work or installation safety obligations.
+[`docs/examples/post-merge/firstmate.sh`](examples/post-merge/firstmate.sh) deploys the Firstmate repository itself through `bin/fm-update.sh`, leaving the second-mate restarts to `/updatefirstmate`.
+
 ## Relay (.env)
 
 Relay lets a firstmate instance answer public mentions and act on normal reversible mention requests through firstmate's normal lifecycle.
@@ -1145,6 +1226,12 @@ FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls
 FM_TASK_INBOX_GRACE_SECS=90   # seconds an unhandled steering-inbox message may sit before the watcher attempts doorbell delivery on an idle pane; also the minimum spacing between attempts
 FM_TASK_INBOX_RING_MAX=3      # watcher delivery attempts without an acknowledgement before the task surfaces as a stale wake for recovery
 FM_CHECK_TIMEOUT=30     # seconds allowed per slow check script
+FM_AUTOLAND_INTERVAL=90   # seconds between auto-land ticks when state/autoland.check.sh is armed; runs between full check sweeps
+FM_AUTOLAND_MERGE_BUDGET=12   # seconds of merge work after the query/deploy scan before no further merge starts
+FM_AUTOLAND_RENOTIFY=21600   # seconds before the same green-but-not-landing PR is reported again
+FM_AUTOLAND_DEFER_RETRY=300   # seconds between retries of a post-merge hook that deferred (exit 75)
+FM_AUTOLAND_HOOK_TIMEOUT=1800   # seconds allowed for one post-merge hook run
+FM_AUTOLAND_QUERY_TIMEOUT=15   # seconds allowed for a tick's GraphQL call
 FM_MAIL_CHECK_BUDGET=15   # seconds allowed for one standing mail poll; valid 5..25, cut to fit FM_CHECK_TIMEOUT
 FM_MAIL_POLL_MAX_WAKES=20   # per-poll wake cap for a mail poll; valid 1..200, keeps a flood from flooding firstmate
 FM_MAIL_TIMEOUT=20   # mail-plane IMAP/SMTP socket timeout in seconds; invalid or non-positive values become 20

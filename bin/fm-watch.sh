@@ -259,6 +259,13 @@ HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
+# The armed auto-land check (bin/fm-autoland.sh, state/autoland.check.sh) is
+# the one check that also runs on its own shorter cadence between full sweeps,
+# because a green PR waiting a whole CHECK_INTERVAL is the latency it removes.
+AUTOLAND_INTERVAL=${FM_AUTOLAND_INTERVAL:-90}
+case "$AUTOLAND_INTERVAL" in
+  ''|*[!0-9]*|0) AUTOLAND_INTERVAL=90 ;;
+esac
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
   ''|*[!0-9]*|0) HOME_SUMMARY_INTERVAL=300 ;;
@@ -2392,10 +2399,22 @@ while :; do
   # keeps producing signals - the slow poll (e.g. merge detection) would then
   # never run until the fleet went quiet. Checks are due only every
   # CHECK_INTERVAL, so most cycles skip this block and fall straight through.
+  # Between full sweeps, an armed autoland.check.sh alone is due every
+  # AUTOLAND_INTERVAL; that narrow sweep leaves .last-check alone so it never
+  # postpones the full one.
+  check_sweep=
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
+    check_sweep=all
+  elif [ -e "$STATE/autoland.check.sh" ] \
+    && [ "$(age_of "$STATE/.last-autoland-check")" -ge "$AUTOLAND_INTERVAL" ]; then
+    check_sweep=autoland
+  fi
+  if [ -n "$check_sweep" ]; then
     rejected_checks=
+    touch "$STATE/.last-autoland-check"
     for c in "$STATE"/*.check.sh; do
       [ -e "$c" ] || continue
+      [ "$check_sweep" = all ] || [ "$(basename "$c")" = autoland.check.sh ] || continue
       is_pr_poll=0
       if [ "$(basename "$c")" = x-watch.check.sh ]; then
         if fmx_poll_shim_valid "$c" "$FM_HOME" "$FM_ROOT" \
@@ -2461,7 +2480,7 @@ while :; do
           fi
           retire_merged_pr_poll "$id"
           pr_poll_control_release || exit 1
-          touch "$STATE/.last-check"
+          [ "$check_sweep" != all ] || touch "$STATE/.last-check"
           if [ "$FM_MERGE_OUTCOME_ALREADY_RECORDED" = true ]; then
             triage_log "absorbed duplicate merged PR poll result for $id"
             continue
@@ -2470,7 +2489,7 @@ while :; do
         fi
         pr_poll_control_release || exit 1
         fm_wake_append check "$c" "$reason" || exit 1
-        touch "$STATE/.last-check"
+        [ "$check_sweep" != all ] || touch "$STATE/.last-check"
         wake "$reason"
       fi
       pr_poll_control_release || exit 1
@@ -2478,10 +2497,10 @@ while :; do
     if [ -n "$rejected_checks" ]; then
       reason="check: rejected unauthenticated state checks:$rejected_checks"
       fm_wake_append check unauthenticated-state-checks "$reason" || exit 1
-      touch "$STATE/.last-check"
+      [ "$check_sweep" != all ] || touch "$STATE/.last-check"
       wake "$reason"
     fi
-    touch "$STATE/.last-check"
+    [ "$check_sweep" != all ] || touch "$STATE/.last-check"
   fi
 
   # On the first changed signal, linger one grace period and re-scan before

@@ -2,7 +2,7 @@
 name: updatefirstmate
 description: >-
   Self-update a running firstmate and its secondmates to the latest from origin.
-  Use when the captain invokes /updatefirstmate (e.g. "/updatefirstmate", "update firstmate", "pull the latest firstmate").
+  Use when the captain invokes /updatefirstmate (e.g. "/updatefirstmate", "update firstmate", "pull the latest firstmate") or an auto-land notification reports a Firstmate deploy.
   Updates this firstmate repo's default branch and every local or remote secondmate through its guarded convergence path (never forced, never disruptive), then re-reads AGENTS.md and restarts every live second mate through the persist-gated restart, with a fallback re-read nudge only where a restart cannot be proven.
 user-invocable: true
 metadata:
@@ -12,7 +12,8 @@ metadata:
 # updatefirstmate
 
 Self-update firstmate in place.
-Firstmate is its own repo, behind the same no-mistakes gate as any project, so new tracked material (`AGENTS.md`, `bin/`, `.agents/skills/`, and public `skills/`) reaches `main` and then sits there until each running firstmate pulls it.
+Firstmate is its own repo, behind the same no-mistakes gate as any project, so new tracked material (`AGENTS.md`, `bin/`, `.agents/skills/`, and public `skills/`) reaches `main` before the guarded updater brings it into running homes.
+The optional [auto-land hook](../../../docs/configuration.md#post-merge-hooks) can run that mechanical update automatically.
 Only `AGENTS.md`, `bin/`, and `.agents/skills/` are a running firstmate instruction surface; public `skills/` is installer-facing and is not loaded by firstmate.
 This skill performs that pull for the running main firstmate and every secondmate, without disturbing any in-flight work.
 
@@ -36,6 +37,9 @@ A tracked-files fast-forward leaves the gitignored operational dirs (data/, stat
 This touches only the firstmate repo and its own worktrees, never anything under `projects/`.
 
 ## What it does
+
+When an auto-land notification reports a successful deploy through the [tracked Firstmate example hook](../../../docs/examples/post-merge/firstmate.sh), step 1 already ran; read its full updater output in `state/autoland/firstmate.log` for the action lines used by steps 2-4, then continue from step 2.
+Do not infer those lists from a capped notification summary, assume skipped homes advanced, or assume a custom hook ran the same updater.
 
 1. **Run the updater:**
    ```sh

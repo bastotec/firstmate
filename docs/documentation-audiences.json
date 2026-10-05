@@ -347,7 +347,15 @@
       "audience": "operator-example"
     },
     {
+      "path": "docs/examples/autoland.json",
+      "audience": "operator-example"
+    },
+    {
       "path": "docs/examples/crew-dispatch.json",
+      "audience": "operator-example"
+    },
+    {
+      "path": "docs/examples/post-merge/firstmate.sh",
       "audience": "operator-example"
     },
     {
