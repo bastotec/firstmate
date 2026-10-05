@@ -1,0 +1,9 @@
+FM_TEST_BEGIN 2026-10-05T21:20:06Z tests/fm-deck-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+Traceback (most recent call last):
+  File "<stdin>", line 13, in <module>
+AssertionError: ('config-dir', [], '/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46YSSMC98MWZHJZDT5YZHP5/.test-tmp/fm-deck-harness.5cBxNm/mcp-resolution/custom config/deck-mcp.json')
+not ok - MCP config directory resolution changed
+FM_TEST_END 2026-10-05T21:20:17Z tests/fm-deck-harness.test.sh exit=1 duration_ms=11462 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=11810
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=11462 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-harness.test.sh duration_ms=11462
