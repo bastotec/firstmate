@@ -33,7 +33,14 @@ case "$1 $2" in
   "pr view")
     case "$*" in
       *"--json state -q .state"*) printf '%s\n' "${FM_TEST_AFTER_STATE:-MERGED}" ;;
-      *) sleep "${FM_TEST_VIEW_DELAY:-0}"; cat "$FM_TEST_LIVE" ;;
+      *)
+        sleep "${FM_TEST_VIEW_DELAY:-0}"
+        if [ -n "${FM_TEST_LIVE_DIR:-}" ]; then
+          cat "$FM_TEST_LIVE_DIR/${3##*/}.json"
+        else
+          cat "$FM_TEST_LIVE"
+        fi
+        ;;
     esac
     exit 0
     ;;
@@ -274,6 +281,34 @@ test_blocking_reasons_are_named() {
   pass "fm-autoland: every green-but-held PR names its reason and does not merge"
 }
 
+test_malformed_attestations_do_not_interrupt_the_batch() {
+  local payloads payload home node good out i=0
+  payloads=$(jq -cn --arg head "$HEAD_A" '
+    [{head_sha:$head, steps:[{step:"review",status:4}]},
+     {head_sha:$head, steps:[{step:"review",status:"completed"},{step:"test",status:4}]},
+     {head_sha:$head, steps:[{step:"review",status:"completed"},{step:"test",status:"completed"},{step:"document",status:4}]},
+     {head_sha:$head, steps:[{step:4,status:"completed"}]},
+     {head_sha:4, steps:[]}][]')
+  while IFS= read -r payload; do
+    home=$(make_home "malformed-$i")
+    i=$((i + 1))
+    write_config "$home" "$CONFIG_AUTH"
+    node=$(pr_node "$HEAD_A" | jq --argjson attestation "$payload" '
+      .body = "## Risk Assessment\n\nLow: bounded\n\n<!-- no-mistakes-pipeline-attestation:v1 " + ($attestation | tojson) + " -->"')
+    good=$(pr_node "$HEAD_B" url=https://github.com/o/r/pull/8)
+    write_gql "$home" "$MAIN_1" "$node" "$good"
+    write_live "$home" "$good"
+    out=$(tick "$home")
+    assert_contains "$out" "https://github.com/o/r/pull/7 because its no-mistakes attestation cannot be read" "malformed attestation $i is reported"
+    assert_contains "$out" "merged https://github.com/o/r/pull/8" "the healthy PR survives malformed attestation $i"
+    [ "$(merges "$home")" = 1 ] || fail "malformed attestation $i disrupted landing"
+    grep -q '^pr merge https://github.com/o/r/pull/8 ' "$home/gh.log" || fail "malformed PR was merged instead of the healthy PR"
+  done <<EOF
+$payloads
+EOF
+  pass "fm-autoland: malformed attestation fields hold one PR without dropping the batch"
+}
+
 test_refused_merge_is_reported() {
   local home node out
   home=$(make_home refused)
@@ -413,19 +448,27 @@ test_live_policy_applies_to_both_merge_paths() {
     write_config "$home" "$CONFIG_AUTH"
     node=$(pr_node "$HEAD_A")
     write_gql "$home" "$MAIN_1" "$node"
-    for variant in label risk missing-risk attestation head; do
+    for variant in label risk missing-risk attestation malformed-attestation head base; do
       case "$variant" in
         label) live=$(pr_node "$HEAD_A" label=security) ;;
         risk) live=$(pr_node "$HEAD_A" risk='High: dangerous') ;;
         missing-risk) live=$(pr_node "$HEAD_A" | jq '.body |= sub("## Risk Assessment[^<]*"; "")') ;;
         attestation) live=$(pr_node "$HEAD_A" attest_head="$HEAD_B") ;;
+        malformed-attestation) live=$(pr_node "$HEAD_A" | jq --arg head "$HEAD_A" '
+          .body = "## Risk Assessment\n\nLow: bounded\n\n<!-- no-mistakes-pipeline-attestation:v1 "
+            + ({head_sha:$head, steps:[{step:"review", status:4}]} | tojson) + " -->"') ;;
         head) live=$(pr_node "$HEAD_B") ;;
+        base) live=$(pr_node "$HEAD_A" base=feature) ;;
       esac
       write_live "$home" "$live"
       out=$(tick "$home" "$script")
       assert_contains "$out" "green PR not landing:" "$path live $variant is reported"
       if [ "$variant" = missing-risk ]; then
         assert_contains "$out" "its no-mistakes risk assessment is missing" "$path missing live risk is held"
+      elif [ "$variant" = malformed-attestation ]; then
+        assert_contains "$out" "its no-mistakes attestation cannot be read" "$path malformed live attestation is held"
+      elif [ "$variant" = base ]; then
+        assert_contains "$out" "its base branch changed while it was being checked" "$path retargeted live base is held"
       fi
       [ "$(merges "$home")" = 0 ] || fail "$path live $variant merged"
       [ ! -e "$home/pr-merge.log" ] || fail "task helper ran despite live $variant"
@@ -442,6 +485,57 @@ test_duplicate_hooks_are_rejected() {
   assert_contains "$out" "config/autoland.json is not valid" "duplicate hook rejected"
   [ ! -s "$home/gh.log" ] || fail "invalid config contacted GitHub"
   pass "fm-autoland: each hook has one repository owner"
+}
+
+test_rotation_gives_each_pr_a_merge_turn() {
+  local home script slow fast out
+  home=$(make_home rotation)
+  script="$(owned_bin "$home")/fm-autoland.sh"
+  write_config "$home" "$CONFIG_AUTH"
+  mkdir -p "$home/clockbin" "$home/live"
+  cat > "$home/clockbin/date" <<'SH'
+#!/usr/bin/env bash
+if [ "$*" = +%s ]; then
+  cat "$FM_TEST_CLOCK_FILE"
+else
+  exec "$FM_TEST_REAL_DATE" "$@"
+fi
+SH
+  chmod +x "$home/clockbin/date"
+  slow=$(pr_node "$HEAD_A")
+  fast=$(pr_node "$HEAD_B" url=https://github.com/o/r/pull/8)
+  write_gql "$home" "$MAIN_1" "$slow" "$fast"
+  write_live "$home" "$slow"
+  cp "$home/live.json" "$home/live/7.json"
+  write_live "$home" "$fast"
+  cp "$home/live.json" "$home/live/8.json"
+  printf '4500\n' > "$home/clock"
+  out=$(tick "$home" "$script" FM_AUTOLAND_INTERVAL=90 FM_CHECK_TIMEOUT=40 FM_AUTOLAND_MERGE_BUDGET=100 \
+    FM_TEST_OWNED_DELAY=90 FM_TEST_LIVE_DIR="$home/live" FM_TEST_CLOCK_FILE="$home/clock" \
+    FM_TEST_REAL_DATE="$(command -v date)" "PATH=$home/clockbin:$FAKEBIN:$PATH")
+  assert_contains "$out" "merge operation timed out" "slow first candidate consumes the first tick"
+  [ "$(merges "$home")" = 0 ] || fail "rotation fixture did not exhaust the first tick"
+  printf '4590\n' > "$home/clock"
+  out=$(tick "$home" "$script" FM_AUTOLAND_INTERVAL=90 FM_CHECK_TIMEOUT=40 FM_AUTOLAND_MERGE_BUDGET=100 \
+    FM_TEST_OWNED_DELAY=90 FM_TEST_LIVE_DIR="$home/live" FM_TEST_CLOCK_FILE="$home/clock" \
+    FM_TEST_REAL_DATE="$(command -v date)" "PATH=$home/clockbin:$FAKEBIN:$PATH")
+  assert_contains "$out" "merged https://github.com/o/r/pull/8" "the next tick starts at the fast candidate"
+  [ "$(merges "$home")" = 1 ] || fail "a slow candidate starved the fast PR"
+  [ "$(grep -c '^api graphql' "$home/gh.log")" = 2 ] || fail "rotation issued extra batched queries"
+  [ "$(wc -l < "$home/pr-merge.log" | tr -d ' ')" = 2 ] || fail "rotation bypassed the slow candidate's task helper"
+  pass "fm-autoland: stateless tick rotation prevents a slow first candidate from starving others"
+}
+
+test_notification_timestamps_use_the_real_clock() {
+  local home before after epoch out
+  home=$(make_home real-clock)
+  before=$(date +%s)
+  out=$(tick "$home" "$AUTOLAND" FM_AUTOLAND_NOW=1)
+  after=$(date +%s)
+  assert_contains "$out" "config/autoland.json is missing" "real-clock fixture emits a notification"
+  epoch=$(cut -f1 "$home/state/autoland/notified")
+  [ "$epoch" -ge "$before" ] && [ "$epoch" -le "$after" ] || fail "notification used an alternate clock"
+  pass "fm-autoland: notification timestamps use real time despite the removed clock override"
 }
 
 test_merges_are_bounded_and_notifications_follow_output() {
@@ -728,6 +822,7 @@ test_green_pr_merges_once
 test_pending_and_red_checks_stay_silent
 test_green_draft_wakes_once_per_head
 test_blocking_reasons_are_named
+test_malformed_attestations_do_not_interrupt_the_batch
 test_refused_merge_is_reported
 test_authority_follows_the_registry
 test_other_base_and_other_repo_are_ignored
@@ -736,6 +831,8 @@ test_risk_section_is_required_for_attestation
 test_attestation_follows_registered_mode
 test_live_policy_applies_to_both_merge_paths
 test_duplicate_hooks_are_rejected
+test_rotation_gives_each_pr_a_merge_turn
+test_notification_timestamps_use_the_real_clock
 test_merges_are_bounded_and_notifications_follow_output
 test_deploy_runs_after_merge_and_reports
 test_fleet_sync_timeout_is_a_continuing_warning

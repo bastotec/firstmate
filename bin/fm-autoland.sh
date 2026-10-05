@@ -103,13 +103,6 @@ HOOK_TIMEOUT=$(num_or "${FM_AUTOLAND_HOOK_TIMEOUT:-}" 1800)
 DEFER_RETRY=$(num_or "${FM_AUTOLAND_DEFER_RETRY:-}" 300)
 QUERY_TIMEOUT=$(num_or "${FM_AUTOLAND_QUERY_TIMEOUT:-}" 15)
 
-now() {
-  case "${FM_AUTOLAND_NOW:-}" in
-    ''|*[!0-9]*) date +%s ;;
-    *) printf '%s\n' "$FM_AUTOLAND_NOW" ;;
-  esac
-}
-
 MSGS=
 NOTIFY_KEYS=
 MERGE_DEADLINE=0
@@ -124,7 +117,7 @@ add_msg() {
 notified_recent() {  # <key> <window-seconds; 0 = forever>
   local key=$1 window=$2 line epoch k t
   [ -f "$AL/notified" ] || return 1
-  t=$(now)
+  t=$(date +%s)
   while IFS= read -r line; do
     epoch=${line%%$'\t'*}
     k=${line#*$'\t'}
@@ -141,7 +134,7 @@ notified_record() {  # <key>
   tmp=$(mktemp "$AL/.notified.XXXXXX") || return 1
   {
     [ -f "$AL/notified" ] && awk -F '\t' -v k="$1" '$2 != k' "$AL/notified" | tail -n 499
-    printf '%s\t%s\n' "$(now)" "$1"
+    printf '%s\t%s\n' "$(date +%s)" "$1"
   } > "$tmp" && mv -f -- "$tmp" "$AL/notified"
 }
 
@@ -257,9 +250,10 @@ search_string() {  # <entries-file>
 # shellcheck disable=SC2016  # jq program text.
 PR_JQ='
   def attest($head):
+    try (
     ([(.body // "") | scan("<!-- no-mistakes-pipeline-attestation:v1 (\\{.*?\\}) -->")] | last) as $m
     | if $m == null then "missing"
-      else (try ($m[0] | fromjson) catch null) as $j
+      else ($m[0] | fromjson) as $j
       | if ($j | type) != "object" then "unreadable"
         elif ($j.head_sha // "") != $head then "stale:" + (($j.head_sha // "none")[0:7])
         else ([$j.steps[]? | {(.step): .status}] | add // {}) as $s
@@ -268,7 +262,7 @@ PR_JQ='
           elif ($s.document // "") != "completed" then "incomplete:document " + ($s.document // "missing")
           else "ok" end
         end
-      end;
+      end) catch "unreadable";
   def risk:
     (((.body // "") | capture("## Risk Assessment[ \t]*\r?\n[ \t\r\n]*(?<r>[^\n]*)")? | .r) // null) as $r
     | if $r == null then "none"
@@ -372,7 +366,7 @@ task_for_pr() {  # <url>; prints the owning task id in this home, if any
 }
 
 MERGE_ERROR=
-merge_pr() {  # <url> <head> <method> <attestation> <max_risk>
+merge_pr() {  # <url> <head> <method> <attestation> <max_risk> <base>
   local remaining out rc=0
   MERGE_ERROR=
   remaining=$((MERGE_DEADLINE - SECONDS))
@@ -387,8 +381,8 @@ merge_pr() {  # <url> <head> <method> <attestation> <max_risk>
   return 1
 }
 
-merge_attempt() {  # <url> <head> <method> <attestation> <max_risk>
-  local url=$1 head=$2 method=$3 need_attest=$4 max_risk=$5 id out live rec state
+merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
+  local url=$1 head=$2 method=$3 need_attest=$4 max_risk=$5 base=$6 id out live rec state
   MERGE_ERROR=
   if ! live=$(gh pr view "$url" \
       --json url,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,body,labels,statusCheckRollup 2>/dev/null); then
@@ -400,6 +394,10 @@ merge_attempt() {  # <url> <head> <method> <attestation> <max_risk>
   rec=$(printf '%s' "$live" | jq -c "$PR_JQ") || { MERGE_ERROR="its live state could not be parsed"; return 1; }
   if [ "$(printf '%s' "$rec" | jq -r .head)" != "$head" ]; then
     MERGE_ERROR="its head moved while it was being checked"
+    return 1
+  fi
+  if [ "$(printf '%s' "$rec" | jq -r .base)" != "$base" ]; then
+    MERGE_ERROR="its base branch changed while it was being checked"
     return 1
   fi
   decide "$rec" "$need_attest" "$max_risk"
@@ -443,7 +441,7 @@ result_write() {  # <hook> <status> <oid> <summary>
   summary=$(printf '%s' "$4" | tr '\t\n' '  ')
   fm_cap_line_var "$summary" 200
   tmp=$(mktemp "$AL/.result.XXXXXX") || return 1
-  printf '%s\t%s\t%s\t%s\n' "$2" "$3" "$(now)" "$FM_LINE_CAP_LINE" > "$tmp" && mv -f -- "$tmp" "$AL/$1.result"
+  printf '%s\t%s\t%s\t%s\n' "$2" "$3" "$(date +%s)" "$FM_LINE_CAP_LINE" > "$tmp" && mv -f -- "$tmp" "$AL/$1.result"
 }
 
 deployed_read() {  # <hook>
@@ -610,7 +608,7 @@ tick_deploys() {  # <entries-file> <response-file>
     if result_read "$hook" && [ "$R_OID" = "$oid" ]; then
       case "$R_STATUS" in
         failed) continue ;;
-        deferred) [ $(($(now) - R_EPOCH)) -ge "$DEFER_RETRY" ] || continue ;;
+        deferred) [ $(($(date +%s) - R_EPOCH)) -ge "$DEFER_RETRY" ] || continue ;;
       esac
     fi
     spawn_runner "$hook" "$oid" || add_msg "could not start the $hook deploy runner"
@@ -636,7 +634,7 @@ action_check() {
 }
 
 tick() {  # <entries-file> <response-file>
-  local entries=$1 resp=$2 query search err rc nodes rec url repo head entry project authority method attest max_risk hook started
+  local entries=$1 resp=$2 query search err rc nodes rec url repo head base entry project authority method attest max_risk hook started tick_epoch
   if ! config_entries > "$entries"; then
     notify "config|$CONFIG_ERROR" "$RENOTIFY" "autoland is armed but $CONFIG_ERROR"
     return 0
@@ -651,8 +649,8 @@ tick() {  # <entries-file> <response-file>
     # Transient API trouble is retried every tick; it is only worth a wake once
     # it has persisted for an hour.
     if [ ! -f "$AL/query-failing-since" ]; then
-      now > "$AL/query-failing-since"
-    elif [ $(($(now) - $(cat "$AL/query-failing-since" 2>/dev/null || now))) -ge 3600 ]; then
+      date +%s > "$AL/query-failing-since"
+    elif [ $(($(date +%s) - $(cat "$AL/query-failing-since" 2>/dev/null || date +%s))) -ge 3600 ]; then
       notify "query-failing" "$RENOTIFY" "autoland cannot read GitHub for over an hour: ${err:-unreadable response}"
     fi
     return 0
@@ -662,12 +660,17 @@ tick() {  # <entries-file> <response-file>
   tick_deploys "$entries" "$resp"
 
   started=0   # the budget counts from the start of the tick
-  nodes=$(jq -c ".data.search.nodes[] | select(.url) | $PR_JQ" "$resp")
+  tick_epoch=$(( $(date +%s) / $(num_or "${FM_AUTOLAND_INTERVAL:-}" 90) ))
+  nodes=$(jq -c --argjson tick "$tick_epoch" "[.data.search.nodes[] | select(.url) | $PR_JQ]"'
+    | length as $n
+    | if $n == 0 then empty
+      else ($tick % $n) as $start | (.[$start:] + .[:$start])[] end' "$resp")
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
     url=$(printf '%s' "$rec" | jq -r .url)
     repo=$(printf '%s' "$rec" | jq -r .repo)
     head=$(printf '%s' "$rec" | jq -r .head)
+    base=$(printf '%s' "$rec" | jq -r .base)
     entry=$(awk -F "$US" -v r="$repo" 'tolower($1) == tolower(r)' "$entries" | head -n 1)
     [ -n "$entry" ] || continue
     IFS=$US read -r _ project authority method attest max_risk hook <<EOF
@@ -685,7 +688,7 @@ EOF
         if [ $((SECONDS - started)) -ge "$MERGE_BUDGET" ] || [ $((MERGE_DEADLINE - SECONDS)) -lt 2 ]; then
           continue
         fi
-        if merge_pr "$url" "$head" "$method" "$attest" "$max_risk"; then
+        if merge_pr "$url" "$head" "$method" "$attest" "$max_risk" "$base"; then
           notify "merged|$url" 0 "merged $url${hook:+ (deploy follows)}"
         else
           notify "hold|$url|$head|$MERGE_ERROR" "$RENOTIFY" "green PR not landing: $url because $MERGE_ERROR"
@@ -828,7 +831,7 @@ case "${1:-check}" in
   status) action_status ;;
   deploy) shift; action_deploy "$@" ;;
   merge-run)
-    [ "$#" -eq 6 ] && fm_pr_head_valid "$3" || exit 2
+    [ "$#" -eq 7 ] && fm_pr_head_valid "$3" || exit 2
     shift
     if ! merge_attempt "$@"; then
       printf '%s\n' "$MERGE_ERROR"
