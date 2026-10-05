@@ -7,7 +7,8 @@
 # here against a fake deck binary:
 #   1. The driver runs the brief as the first turn and every later prompt line
 #      as the next turn of the SAME Deck session, with the evidence gate and the
-#      progress hook attached to every run.
+#      progress hook attached to every run, plus the home's config/deck-mcp.json
+#      as `--mcp-config` unless FM_DECK_MCP_CONFIG overrides or disables it.
 #   2. It is the task's semantic busy source (deck-wrapper): a turn opens busy
 #      and closes idle, a finished turn touches the turn-end notification, and
 #      /quit records session-end.
@@ -38,7 +39,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 
 unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_INVOKED_AS \
-  ATLASSIAN_AGENT_TYPE ROVODEV_CLI GEMINI_CLI AGENT FM_OMP_HARNESS
+  ATLASSIAN_AGENT_TYPE ROVODEV_CLI GEMINI_CLI AGENT FM_OMP_HARNESS FM_DECK_MCP_CONFIG FM_CONFIG_OVERRIDE
 
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
@@ -149,6 +150,31 @@ test_turns_share_one_session_and_carry_the_hooks() {
   assert_grep 'echo: /exit' "$dir/pane.out" "/exit must be delivered as an ordinary Deck prompt"
   assert_grep 'echo: second' "$dir/pane.out" "the pane did not render the turn's text"
   pass "fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model"
+}
+
+test_turns_carry_the_home_mcp_config() {
+  local dir="$TMP_ROOT/mcp" home
+  home="$dir/home"
+  mkdir -p "$home/config"
+  printf '{"servers":{}}\n' > "$home/config/deck-mcp.json"
+  make_fake_deck "$dir/present"
+  FM_HOME="$home" run_worker "$dir/present" $'next\n/quit\n' \
+    || fail "the driver did not exit cleanly with a home MCP config"
+  grep -c -- "--mcp-config $home/config/deck-mcp.json" "$dir/present/argv.log" | grep -qx 2 \
+    || fail "every turn must carry the home's deck-mcp.json: $(cat "$dir/present/argv.log")"
+  make_fake_deck "$dir/absent"
+  FM_HOME="$dir/absent" run_worker "$dir/absent" $'/quit\n' \
+    || fail "the driver did not exit cleanly without a home MCP config"
+  assert_not_contains "$(cat "$dir/absent/argv.log")" '--mcp-config' "a home without deck-mcp.json passed --mcp-config"
+  make_fake_deck "$dir/override"
+  FM_HOME="$home" FM_DECK_MCP_CONFIG="$dir/other.json" run_worker "$dir/override" $'/quit\n' \
+    || fail "the driver did not exit cleanly with an MCP config override"
+  assert_grep "--mcp-config $dir/other.json" "$dir/override/argv.log" "FM_DECK_MCP_CONFIG did not override the home file"
+  make_fake_deck "$dir/disabled"
+  FM_HOME="$home" FM_DECK_MCP_CONFIG='' run_worker "$dir/disabled" $'/quit\n' \
+    || fail "the driver did not exit cleanly with MCP disabled"
+  assert_not_contains "$(cat "$dir/disabled/argv.log")" '--mcp-config' "an empty FM_DECK_MCP_CONFIG did not disable MCP"
+  pass "fm-deck-worker: every turn carries the home's deck-mcp.json unless FM_DECK_MCP_CONFIG overrides or disables it"
 }
 
 test_turns_drive_the_busy_record_and_turn_end() {
@@ -1981,6 +2007,7 @@ test_secondmate_repeats_its_launch_brief_after_a_session_less_failure
 test_secondmate_stops_when_a_repeated_launch_brief_opens_no_session
 test_secondmate_stops_when_a_failed_turn_cannot_be_recorded
 test_turns_share_one_session_and_carry_the_hooks
+test_turns_carry_the_home_mcp_config
 test_turns_drive_the_busy_record_and_turn_end
 test_busy_state_failures_stop_turns_and_publish_status
 test_turnend_signal_refuses_unsafe_paths

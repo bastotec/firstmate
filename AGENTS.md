@@ -88,6 +88,7 @@ config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCA
 config/watched-tools.json  optional list of the tools this home depends on, read by the update check armed with bin/fm-tool-update-check.sh; LOCAL, gitignored, firstmate-maintained but human-editable, and NOT inherited by secondmate homes; see docs/configuration.md "Watched tool updates"
 config/ask-triage-key-var  optional name of the ~/.secrets variable holding the gateway key that opts this home into the possible-ask pass; LOCAL, gitignored, and not inherited; see docs/configuration.md "Possible-ask ranking"
 config/wake-gate-key-var config/wake-gate-mode  local opt-in and mode for the possible-wedge wake gate; LOCAL, gitignored, and not inherited; see docs/configuration.md "Wake gate"
+config/deck-mcp.json  optional Deck MCP server config passed as --mcp-config to every Deck turn this home launches; LOCAL, gitignored, and not inherited; see docs/configuration.md "Harness support"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history

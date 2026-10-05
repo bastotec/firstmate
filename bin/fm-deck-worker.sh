@@ -86,6 +86,9 @@
 #                           still-working no-mistakes run (default 45)
 #   FM_DECK_PIPELINE_WAIT_SECS  bound on one such wait (default 21600; 0
 #                           disables the pipeline wake)
+#   FM_DECK_MCP_CONFIG     Deck MCP server config passed as `--mcp-config` on
+#                           every turn (default: the home's config/deck-mcp.json
+#                           when that file exists; an empty value disables it)
 #   FM_STREAM_ENDPOINT_ID  set by the owning stream agent, enabling receiver
 #                           start/end registration for each driver turn
 #   PROXAI_BASE_URL, PROXAI_MODEL, PROXAI_API_KEY_FILE, PROXAI_API_KEY
@@ -143,6 +146,14 @@ PIPELINE_POLL=${FM_DECK_PIPELINE_POLL_SECS:-45}
 PIPELINE_WAIT=${FM_DECK_PIPELINE_WAIT_SECS:-21600}
 case "$PIPELINE_POLL" in ''|*[!0-9]*|0) PIPELINE_POLL=45 ;; esac
 case "$PIPELINE_WAIT" in ''|*[!0-9]*) PIPELINE_WAIT=21600 ;; esac
+# The home's gitignored config/deck-mcp.json, resolved like every other home
+# config file, gives each turn Deck's MCP servers.
+if [ "${FM_DECK_MCP_CONFIG+set}" = set ]; then
+  MCP_CONFIG=$FM_DECK_MCP_CONFIG
+else
+  MCP_CONFIG="${FM_CONFIG_OVERRIDE:-${FM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}/config}/deck-mcp.json"
+  [ -f "$MCP_CONFIG" ] || MCP_CONFIG=''
+fi
 if [ -z "${PROXAI_API_KEY_FILE:-}${PROXAI_API_KEY:-}" ] && [ -f "$HOME/.config/proxai/client.key" ]; then
   export PROXAI_API_KEY_FILE="$HOME/.config/proxai/client.key"
 fi
@@ -449,6 +460,7 @@ run_turn() {  # <prompt>
   local -a args=(run "$prompt" --max-turns "$MAX_TURNS" --deadline-secs "$DEADLINE" --hook "pre_complete=$EVIDENCE_HOOK")
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
   [ -z "$MODEL" ] || args+=(--model "$MODEL")
+  [ -z "$MCP_CONFIG" ] || args+=(--mcp-config "$MCP_CONFIG")
   [ -z "$SESSION" ] || args+=(--session "$SESSION")
   if [ -n "${FM_STREAM_ENDPOINT_ID:-}" ]; then
     local steer_supported=0 steer_turn steer_dir
