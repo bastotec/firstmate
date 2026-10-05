@@ -677,6 +677,58 @@ test_deploy_runs_after_merge_and_reports() {
   pass "fm-autoland: a new default-branch head deploys once, records the commit, and reports"
 }
 
+test_detached_hook_survives_check_process_group_termination() {
+  local home check_pid runner_pid check_group runner_group rc=0
+  home=$(make_home detached-runner)
+  write_config "$home" '{"repos":[{"repo":"o/r","authority":"r","hook":"svc"}]}'
+  write_waiting_hook "$home"
+  write_gql "$home" "$MAIN_1"
+  env FM_HOME="$home" FM_TEST_GH_LOG="$home/gh.log" FM_TEST_GQL="$home/gql.json" \
+    FM_TEST_LIVE="$home/live.json" PATH="$FAKEBIN:$PATH" \
+    perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die $!' \
+    bash -c '"$1" check; touch "$FM_HOME/check-finished"; sleep 30' _ "$AUTOLAND" \
+    > "$home/check.out" 2>&1 &
+  check_pid=$!
+  fm_test_track_helper_pid "$check_pid"
+  wait_file "$home/check-finished" || fail "detached fixture check did not return"
+  wait_file "$home/hook-entered" || fail "detached hook did not start"
+  runner_pid=$(cat "$home/state/autoland/svc.lock/pid")
+  fm_test_track_helper_pid "$runner_pid"
+  check_group=$(ps -o pgid= -p "$check_pid" | tr -d ' ')
+  runner_group=$(ps -o pgid= -p "$runner_pid" | tr -d ' ')
+  [ "$check_group" = "$check_pid" ] || fail "check fixture did not create its own process group"
+  [ -n "$runner_group" ] && [ "$runner_group" != "$check_group" ] \
+    || fail "deploy runner shares its check's process group"
+  printf 'check pid=%s pgid=%s; runner pid=%s pgid=%s\n' \
+    "$check_pid" "$check_group" "$runner_pid" "$runner_group" > "$home/survival.out"
+  fm_test_pid_is_foreign "$check_pid" || fail "refusing to signal a non-fixture check process"
+  kill -TERM -- "-$check_group" || fail "could not terminate the check process group"
+  wait "$check_pid" 2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ] || fail "check fixture did not observe process-group termination"
+  kill -0 "$runner_pid" || fail "check process-group termination killed the deploy runner"
+  [ ! -e "$home/state/autoland/svc.deployed" ] || fail "waiting hook was prematurely marked deployed"
+  touch "$home/release-hook"
+  wait_result "$home" svc deployed || fail "detached hook did not finish after check termination"
+  [ "$(cat "$home/state/autoland/svc.deployed")" = "$MAIN_1" ] || fail "detached hook did not record its target"
+  printf 'check group terminated; runner survived; deployed=%s\n' "$MAIN_1" >> "$home/survival.out"
+  pass "fm-autoland: the detached hook survives check process-group termination and records deployment"
+}
+
+test_hook_timeout_fails_without_recording_deployment() {
+  local home out rc=0
+  home=$(make_home hook-timeout)
+  write_config "$home" '{"repos":[{"repo":"o/r","authority":"r","hook":"svc"}]}'
+  write_waiting_hook "$home"
+  out=$(FM_HOME="$home" FM_AUTOLAND_HOOK_TIMEOUT=1 "$AUTOLAND" deploy-run svc "$MAIN_1" 2>&1) || rc=$?
+  expect_code 1 "$rc" "timed-out hook classification ($out)"
+  [ -e "$home/hook-entered" ] || fail "timeout fixture never executed its hook"
+  [ "$(cut -f1 "$home/state/autoland/svc.result")" = failed ] || fail "hook timeout was not recorded as failed"
+  assert_contains "$(cat "$home/state/autoland/svc.result")" "timed out after 1s" "hook timeout names its bound"
+  [ ! -e "$home/state/autoland/svc.deployed" ] || fail "timed-out hook was recorded as deployed"
+  [ ! -e "$home/state/autoland/svc.lock" ] || fail "timed-out runner retained its lock"
+  pass "fm-autoland: a hook timeout fails closed without recording deployment and releases its lock"
+}
+
 test_fleet_sync_timeout_is_a_continuing_warning() {
   local home tmpbin out
   home=$(make_home sync-timeout '- proj [direct-PR +yolo] - project')
@@ -979,6 +1031,8 @@ test_rotation_gives_each_pr_a_merge_turn
 test_notification_timestamps_use_the_real_clock
 test_merges_are_bounded_and_notifications_follow_output
 test_deploy_runs_after_merge_and_reports
+test_detached_hook_survives_check_process_group_termination
+test_hook_timeout_fails_without_recording_deployment
 test_fleet_sync_timeout_is_a_continuing_warning
 test_hook_lock_publication_and_stale_reclaim_are_serialized
 test_hook_lock_release_preserves_another_owner

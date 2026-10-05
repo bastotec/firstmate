@@ -377,7 +377,7 @@ Without a current explicit captain instruction that states the concrete merge, t
 Load `ask-user-authority` before deciding any ask-user finding; the implementation worker never answers its own finding.
 Use `bin/fm-pr-merge.sh` for every task PR merge so merge metadata is recorded and an unproved merge is refused instead of reported as landed, and use `bin/fm-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
-A home armed with `bin/fm-autoland.sh` merges green PRs in merge-authorized projects and runs their post-merge deploys without a model turn ([`docs/configuration.md`](docs/configuration.md) "Auto-land"); its `check:` wake reports merges, deploy outcomes, and each green PR that cannot land with the reason, and that PR is yours to decide in the same turn rather than leave waiting on its owner.
+A home armed with `bin/fm-autoland.sh` merges green PRs in merge-authorized projects and runs their post-merge deploys without a model turn ([`docs/configuration.md`](docs/configuration.md) "Auto-land"); its `check:` wake reports merges, deploy outcomes, and held green PRs with their reasons, and a reported PR is yours to decide in the same turn rather than leave waiting on its owner.
 
 ### Validate
 
@@ -579,7 +579,7 @@ The scaffold is a safety contract, not a suggestion.
 
 Firstmate's shared instruction surface reaches running homes only after it lands on the default branch and those homes fast-forward.
 Only `AGENTS.md`, `bin/`, and `.agents/skills/` are loaded by a running firstmate; public `skills/` is an installer-facing surface.
-When the captain invokes `/updatefirstmate` or asks to update firstmate, load the `/updatefirstmate` skill.
+When the captain invokes `/updatefirstmate` or asks to update firstmate, or an auto-land notification reports a Firstmate deploy, load the `/updatefirstmate` skill.
 The skill owns the guarded fleet update and restart procedure; it never touches anything under `projects/`.
 
 ## 13. Agent-only reference skills

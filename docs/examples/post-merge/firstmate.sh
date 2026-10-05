@@ -4,8 +4,8 @@
 # "hook": "firstmate" in config/autoland.json.
 #
 # It runs the mechanical half of /updatefirstmate: bin/fm-update.sh
-# fast-forwards this home and every registered local and remote second-mate
-# home, never forcing, stashing, or discarding. The restart of live second
+# fast-forwards the runner's tracked code checkout and every registered local
+# and remote second-mate home, never forcing, stashing, or discarding. The restart of live second
 # mates and the AGENTS.md re-read stay with the supervisor, so the summary line
 # names what /updatefirstmate still has to do.
 set -u

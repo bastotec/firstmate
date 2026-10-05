@@ -18,34 +18,28 @@
 # when nothing needs the supervisor.
 #
 # Configuration is the home's private config/autoland.json (schema and the
-# post-merge hook contract: docs/configuration.md "Auto-land"). Each entry names
-# one GitHub repository and where its standing merge authority comes from:
-# "project" ties it to that data/projects.md entry, which must carry +yolo at
-# tick time (fm-project-mode.sh), and "authority" cites a captain ruling that
-# grants it outright. An entry with "hook" also gets post-merge deployment.
+# post-merge hook contract: docs/configuration.md "Auto-land").
 #
-# Each tick makes one GraphQL call: a search for open PRs authored by the
+# Each tick makes one batched GraphQL discovery call: a search for open PRs authored by the
 # authenticated account in the configured owners, plus every hooked repository's
 # default-branch head. Only fleet-authored PRs into a configured repository's
 # default branch are considered.
 #
-# Landing. A PR merges when it is not a draft, GitHub reports it MERGEABLE and
-# not BLOCKED, BEHIND, or DIRTY, every check on its head is green
-# (fm_pr_github_checks_not_green in bin/fm-pr-lib.sh; at least one check must
-# exist), no hold label is set, and - for an entry with "attestation": true or
-# a registered no-mistakes/no-mistakes-prod-only project - its no-mistakes
-# attestation is bound to the current head with review, test,
-# and document finished and its stated risk is at or under "max_risk" (default
-# low). A PR owned by a task in this home merges through bin/fm-pr-merge.sh, so
+# Landing. docs/configuration.md "Auto-land" owns eligibility, including
+# authority, attestation, risk, and hold-label policy. Both merge paths use
+# fm_pr_github_checks_not_green in bin/fm-pr-lib.sh for the green-check rule.
+# A PR owned by a task in this home merges through bin/fm-pr-merge.sh, so
 # captain holds, away posture, and merge records apply unchanged; any other PR
 # is re-read live and merged with gh pinned to the verified head. Pending or red
-# checks are left to the PR's owner and stay silent. A green PR that cannot
-# land - a draft, a stale or incomplete attestation, a risk above the cap, a
+# checks are left to the PR's owner and stay silent. A held green PR
+# - a draft, a stale or incomplete attestation, a risk above the cap, a
 # hold label, conflicts, a required review, a refused merge - produces one
 # "green PR not landing: <url> because <reason>" line, repeated only when its
 # head or reason changes or after FM_AUTOLAND_RENOTIFY seconds (default 21600).
 # Merges stop starting once FM_AUTOLAND_MERGE_BUDGET seconds (default 12) of
-# merge work after the query/deploy scan are spent; the rest land next tick.
+# merge work after the query/deploy scan are spent; remaining candidates wait
+# for a later tick. The starting candidate rotates by tick epoch modulo the
+# discovery snapshot's PR count, without adding a persistent cursor.
 # Each complete merge operation is also bounded to
 # the time remaining before FM_CHECK_TIMEOUT minus three seconds.
 # A Pi supervision branch's watcher
@@ -61,9 +55,9 @@
 # deployed, exit 75 records a deferral that later ticks retry every
 # FM_AUTOLAND_DEFER_RETRY seconds (default 300), and anything else records a
 # failure that is reported once and not retried until the head moves or an
-# operator runs `deploy`. The hook's last output line is its summary; its full
-# output is state/autoland/<hook>.log. One runner per hook at a time
-# (state/autoland/<hook>.lock).
+# operator runs `deploy`. Output and summary handling follow the hook contract
+# in docs/configuration.md; one runner per hook at a time is enforced through
+# state/autoland/<hook>.lock.
 set -u
 export LC_ALL=C
 
