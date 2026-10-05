@@ -85,6 +85,7 @@ config/turnend-churn-absorb  optional presence flag opting this home into the de
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
 config/stream-hub config/stream-token config/stream-hub-tokens config/stream-machine  stream backend hub address, credentials, and fleet name: the fleet hub's base URL, this home's own client token, on the host that runs the hub the class-scoped "<classes>:<token>" lines it serves, and the name this home's endpoints are grouped under (default hostname); LOCAL, gitignored, never committed, and not inherited; see docs/stream-backend.md
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
+config/autoland.json config/post-merge/  optional auto-land repositories with their merge authority, and the per-project post-merge hooks they name; LOCAL, gitignored, and NOT inherited by secondmate homes; see docs/configuration.md "Auto-land"
 config/watched-tools.json  optional list of the tools this home depends on, read by the update check armed with bin/fm-tool-update-check.sh; LOCAL, gitignored, firstmate-maintained but human-editable, and NOT inherited by secondmate homes; see docs/configuration.md "Watched tool updates"
 config/ask-triage-key-var  optional name of the ~/.secrets variable holding the gateway key that opts this home into the possible-ask pass; LOCAL, gitignored, and not inherited; see docs/configuration.md "Possible-ask ranking"
 config/wake-gate-key-var config/wake-gate-mode  local opt-in and mode for the possible-wedge wake gate; LOCAL, gitignored, and not inherited; see docs/configuration.md "Wake gate"
@@ -133,6 +134,7 @@ state/               runtime records and signals; gitignored
   voice-gate/        optional hybrid-engine fast-layer usage and shadow-decision logs; written only by bin/fm_voice_gate.py (docs/voice-relay.md)
   x-watch.check.sh   generated Relay poll shim; present only when opted in (section 14)
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
+  autoland.check.sh  generated auto-land shim and its .check-trust binding, present only after bin/fm-autoland.sh arm; deploy records, hook logs, and reports live under autoland/ (bin/fm-autoland.sh)
   mail.check.sh      generated received-mail poll shim and its .check-trust binding; present only after bin/fm-mail-check.sh arm; report record .mail-check (mail schema: docs/configuration.md "Mail plane")
   .mail-seen .mail-woken .mail-retry .mail-retry-pos .mail-turn .mail-seen.lock  mail-plane poll cursor, emission journal, transient-fetch retry set, retry-scan position, contended-slot turn flag, and overlapping-poll lock; written only by bin/fm-mail.sh (mail schema: docs/configuration.md "Mail plane")
   pending-replies/   parent-owned secondmate pending-reply records (correlation id, delivery vs reply, recovery, escalation); fm-pending-reply-lib.sh
@@ -360,6 +362,7 @@ When no-mistakes is selected, no-mistakes alone owns review, fixes, tests, docum
 Never hold work outside no-mistakes for a manual clean verdict, stack serial manual reviews, or infer authority for one from security, architecture, or risk alone.
 A separate review or audit is allowed only when the captain explicitly requests that deliverable or the authorized task is a knowledge-only review; one named question remains scoped to that question.
 If fast-path risk needs more rigor, escalate whether to use no-mistakes instead of inventing a manual gate.
+A worker opens its PR ready for review and never parks a green PR as a draft or behind a gate its brief does not name.
 The path's worker, automated gates, and captain approval remain authoritative:
 
 - **no-mistakes** runs the full pipeline through a PR, then waits for the configured merge authority.
@@ -374,6 +377,7 @@ Without a current explicit captain instruction that states the concrete merge, t
 Load `ask-user-authority` before deciding any ask-user finding; the implementation worker never answers its own finding.
 Use `bin/fm-pr-merge.sh` for every task PR merge so merge metadata is recorded and an unproved merge is refused instead of reported as landed, and use `bin/fm-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
+A home armed with `bin/fm-autoland.sh` merges green PRs in merge-authorized projects and runs their post-merge deploys without a model turn ([`docs/configuration.md`](docs/configuration.md) "Auto-land"); its `check:` wake reports merges, deploy outcomes, and each green PR that cannot land with the reason, and that PR is yours to decide in the same turn rather than leave waiting on its owner.
 
 ### Validate
 

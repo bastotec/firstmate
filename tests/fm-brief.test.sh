@@ -303,6 +303,8 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
   brief="$home/data/$id/brief.md"
   assert_grep "The configured merge authority decides whether to merge the PR; firstmate relays the outcome." "$brief" \
     "direct-PR brief lost configured merge authority"
+  assert_grep "Open it ready for review, never as a draft" "$brief" \
+    "direct-PR brief must have the worker open the PR ready, not as a draft"
   assert_no_grep "The captain reviews and merges the PR" "$brief" \
     "direct-PR brief hard-coded captain-only authority"
   id="brief-local-authority-a4"
@@ -393,6 +395,8 @@ test_no_mistakes_done_is_green_pr_and_worker_starts_pipeline() {
 
   assert_contains "$dod" "a local commit is not done" \
     "no-mistakes DOD must say a bare local commit is not done"
+  assert_contains "$dod" "never convert it to a draft or hold it behind a check, proof, or approval this brief does not name" \
+    "no-mistakes DOD must forbid parking a green PR as a draft or behind an invented gate"
   assert_contains "$dod" "start the no-mistakes pipeline yourself right away" \
     "no-mistakes DOD must have the worker start the pipeline after its implementation commit"
   assert_contains "$dod" "firstmate does not trigger it" \

@@ -37,6 +37,8 @@ This touches only the firstmate repo and its own worktrees, never anything under
 
 ## What it does
 
+When an auto-land notification reports a Firstmate deploy, its post-merge hook already ran step 1 and named the step 2 and 3 lists in its summary; continue from step 2.
+
 1. **Run the updater:**
    ```sh
    bin/fm-update.sh
