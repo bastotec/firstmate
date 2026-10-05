@@ -68,6 +68,11 @@ make_fake_deck() {  # <dir>
 #!/usr/bin/env bash
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/argv.log"
+python3 - "$dir/argv.jsonl" "$@" <<'PYTHON'
+import json, sys
+with open(sys.argv[1], 'a') as output:
+    output.write(json.dumps(sys.argv[2:]) + '\n')
+PYTHON
 prompt=$2; session=''; gate=''; progress=''
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -174,7 +179,67 @@ test_turns_carry_the_home_mcp_config() {
   FM_HOME="$home" FM_DECK_MCP_CONFIG='' run_worker "$dir/disabled" $'/quit\n' \
     || fail "the driver did not exit cleanly with MCP disabled"
   assert_not_contains "$(cat "$dir/disabled/argv.log")" '--mcp-config' "an empty FM_DECK_MCP_CONFIG did not disable MCP"
+  # Inspect the argv protocol, not the implementation, including argument
+  # boundaries when the explicit path contains spaces and does not exist.
+  make_fake_deck "$dir/spaced"
+  FM_HOME="$home" FM_DECK_MCP_CONFIG='relative missing config.json' run_worker "$dir/spaced" $'next\n/quit\n' \
+    || fail "the driver did not exit cleanly with a spaced relative override"
+  python3 - "$dir" <<'PYTHON' || fail "MCP argv boundaries or precedence changed"
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+expected = {'present': str(root / 'home/config/deck-mcp.json'),
+            'absent': None, 'override': str(root / 'other.json'),
+            'disabled': None, 'spaced': 'relative missing config.json'}
+for case, path in expected.items():
+    rows = [json.loads(line) for line in (root / case / 'argv.jsonl').read_text().splitlines()]
+    for args in rows:
+        values = [args[i + 1] for i, arg in enumerate(args) if arg == '--mcp-config']
+        assert values == ([] if path is None else [path]), (case, values, path)
+        print(json.dumps({'case': case, 'mcp_config_arguments': values}))
+PYTHON
   pass "fm-deck-worker: every turn carries the home's deck-mcp.json unless FM_DECK_MCP_CONFIG overrides or disables it"
+}
+
+test_mcp_config_directory_precedence_and_scout_scope() {
+  local dir="$TMP_ROOT/mcp-resolution" home config code variant
+  home="$dir/home"; config="$dir/custom config"; code="$dir/code"
+  mkdir -p "$home/config" "$config" "$code/bin" "$code/config"
+  printf '{"servers":{}}\n' > "$home/config/deck-mcp.json"
+  printf '{"servers":{}}\n' > "$config/deck-mcp.json"
+  printf '{"servers":{}}\n' > "$code/config/deck-mcp.json"
+  cp -R "$ROOT/bin/." "$code/bin/"
+  for variant in config-dir missing-config-dir empty-config-dir code-root scout; do
+    make_fake_deck "$dir/$variant"
+  done
+  FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" run_worker "$dir/config-dir" $'next\n/quit\n' \
+    || fail "FM_CONFIG_OVERRIDE launch failed"
+  FM_HOME="$home" FM_CONFIG_OVERRIDE="$dir/missing" run_worker "$dir/missing-config-dir" $'/quit\n' \
+    || fail "missing FM_CONFIG_OVERRIDE launch failed"
+  FM_HOME="$home" FM_CONFIG_OVERRIDE='' run_worker "$dir/empty-config-dir" $'/quit\n' \
+    || fail "empty FM_CONFIG_OVERRIDE launch failed"
+  (unset FM_HOME FM_CONFIG_OVERRIDE; WORKER="$code/bin/fm-deck-worker.sh" run_worker "$dir/code-root" $'/quit\n') \
+    || fail "code-root fallback launch failed"
+  mkdir -p "$dir/scout/state"
+  fm_write_meta "$dir/scout/state/t1.meta" "kind=scout"
+  FM_HOME="$home" run_worker "$dir/scout" $'next\n/quit\n' \
+    || fail "scout with its own home MCP config failed"
+  python3 - "$dir" <<'PYTHON' || fail "MCP config directory resolution changed"
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+expected = {'config-dir': str(root / 'custom config/deck-mcp.json'),
+            'missing-config-dir': None,
+            'empty-config-dir': str(root / 'home/config/deck-mcp.json'),
+            'code-root': str(root / 'code/config/deck-mcp.json'),
+            'scout': str(root / 'home/config/deck-mcp.json')}
+for case, path in expected.items():
+    rows = [json.loads(line) for line in (root / case / 'argv.jsonl').read_text().splitlines()]
+    assert len(rows) == (2 if case in ['config-dir', 'scout'] else 1), case
+    for args in rows:
+        values = [args[i + 1] for i, arg in enumerate(args) if arg == '--mcp-config']
+        assert values == ([] if path is None else [path]), (case, values, path)
+        print(json.dumps({'case': case, 'mcp_config_arguments': values}))
+PYTHON
+  pass "Deck MCP config follows config override, home, and code-root precedence for workers and scouts"
 }
 
 test_turns_drive_the_busy_record_and_turn_end() {
@@ -1254,7 +1319,9 @@ if records:
         os.kill(successor, 0)
 with (home / 'turns').open('a') as f:
     f.write(json.dumps({'prompt': prompt, 'session': session,
-                        'resumed': '--session' in args, 'inbox': body}) + '\n')
+                        'resumed': '--session' in args, 'inbox': body,
+                        'mcp_config_arguments': [args[i + 1] for i, arg in enumerate(args)
+                                                 if arg == '--mcp-config']}) + '\n')
 for record in records:
     record.rename(inbox / 'handled' / record.name)
 if not (home / 'no-session').exists():
@@ -1278,6 +1345,59 @@ for i, arg in enumerate(args):
 print(json.dumps({'type': 'run_finished', 'turns': 1}), flush=True)
 PYTHON
   chmod +x "$dir/bin/fm-session-start.sh" "$dir/bin/fm-watch-arm.sh" "$dir/deck"
+}
+
+test_secondmate_mcp_config_on_startup_steer_and_wake() {
+  local dir="$TMP_ROOT/host-mcp"
+  make_secondmate_host_fixture "$dir"
+  printf '{"servers":{}}\n' > "$dir/home/config/deck-mcp.json"
+  python3 - "$dir" <<'PYTHON' || fail "Deck secondmate MCP config integration failed"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def idle():
+    path = root/'parent/host.busy-state'
+    return path.exists() and 'state=idle' in path.read_text()
+def wait_for(check, label):
+    deadline = time.monotonic() + 240
+    while time.monotonic() < deadline:
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+': '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: len(rows()) == 1 and idle(), 'startup turn')
+        p.stdin.write('ordinary-steer\n'); p.stdin.flush()
+        wait_for(lambda: len(rows()) == 2 and idle(), 'steer turn')
+        (home/'trigger').touch()
+        wait_for(lambda: len(rows()) == 3 and idle(), 'watcher turn')
+        assert rows()[1]['prompt'] == 'ordinary-steer'
+        assert 'Firstmate instruction waiting:' in rows()[2]['prompt']
+        assert all(row['mcp_config_arguments'] == [str(home/'config/deck-mcp.json')] for row in rows()), rows()
+        for kind, row in zip(['startup', 'steer', 'watcher-wake'], rows()):
+            print(json.dumps({'case': 'secondmate-'+kind, 'resumed': row['resumed'],
+                              'mcp_config_arguments': row['mcp_config_arguments']}))
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=60) == 0
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGTERM)
+            try: p.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  pass "Deck secondmate uses its own MCP config on startup, ordinary steering, and watcher turns"
 }
 
 test_secondmate_host_serializes_wakes_and_steering() {
@@ -2001,6 +2121,7 @@ test_herdr_deck_recovery_spaced_paths
 test_herdr_deck_ring_rings_live_driver
 test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
+test_secondmate_mcp_config_on_startup_steer_and_wake
 test_secondmate_survives_a_failed_turn
 test_secondmate_survives_a_refused_handling_confirmation
 test_secondmate_repeats_its_launch_brief_after_a_session_less_failure
@@ -2008,6 +2129,7 @@ test_secondmate_stops_when_a_repeated_launch_brief_opens_no_session
 test_secondmate_stops_when_a_failed_turn_cannot_be_recorded
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_carry_the_home_mcp_config
+test_mcp_config_directory_precedence_and_scout_scope
 test_turns_drive_the_busy_record_and_turn_end
 test_busy_state_failures_stop_turns_and_publish_status
 test_turnend_signal_refuses_unsafe_paths

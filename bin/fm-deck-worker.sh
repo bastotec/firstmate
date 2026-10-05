@@ -86,9 +86,13 @@
 #                           still-working no-mistakes run (default 45)
 #   FM_DECK_PIPELINE_WAIT_SECS  bound on one such wait (default 21600; 0
 #                           disables the pipeline wake)
-#   FM_DECK_MCP_CONFIG     Deck MCP server config passed as `--mcp-config` on
-#                           every turn (default: the home's config/deck-mcp.json
-#                           when that file exists; an empty value disables it)
+#   FM_DECK_MCP_CONFIG     when set, pass a non-empty value as-is to every
+#                           `deck run --mcp-config`, even if the path is missing;
+#                           an empty value disables MCP. When unset, use
+#                           deck-mcp.json only if it exists in the config dir:
+#                           non-empty FM_CONFIG_OVERRIDE, else FM_HOME/config,
+#                           else the tracked code root's config/ directory.
+#                           Resolution happens once at driver startup.
 #   FM_STREAM_ENDPOINT_ID  set by the owning stream agent, enabling receiver
 #                           start/end registration for each driver turn
 #   PROXAI_BASE_URL, PROXAI_MODEL, PROXAI_API_KEY_FILE, PROXAI_API_KEY
@@ -146,8 +150,8 @@ PIPELINE_POLL=${FM_DECK_PIPELINE_POLL_SECS:-45}
 PIPELINE_WAIT=${FM_DECK_PIPELINE_WAIT_SECS:-21600}
 case "$PIPELINE_POLL" in ''|*[!0-9]*|0) PIPELINE_POLL=45 ;; esac
 case "$PIPELINE_WAIT" in ''|*[!0-9]*) PIPELINE_WAIT=21600 ;; esac
-# The home's gitignored config/deck-mcp.json, resolved like every other home
-# config file, gives each turn Deck's MCP servers.
+# Match the stream backend's config-directory resolution, not the parent task's
+# --state directory: a secondmate host and its workers use its own home.
 if [ "${FM_DECK_MCP_CONFIG+set}" = set ]; then
   MCP_CONFIG=$FM_DECK_MCP_CONFIG
 else
