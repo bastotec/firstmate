@@ -168,6 +168,51 @@ assert artifact["scripts"][0]["exit"] == 1
   pass "family pool JSON scopes jobs admission to proven concurrency"
 }
 
+# A candidate that adds a tests/*.test.sh script, even briefly, changes the
+# inventory fm-test-run.sh enumerates, so a concurrent coverage guard can see it
+# mid-run. The proof must refuse that candidate even when it cleans up after.
+test_transient_test_inventory_write_fails_the_proof() {
+  local tmp repo proof rc
+  tmp=$(fm_test_tmproot fm-test-isolation-proof-inventory)
+  repo="$tmp/repo"
+  proof="$repo/bin/fm-test-isolation-proof.sh"
+  mkdir -p "$repo/bin" "$repo/tests"
+  cp "$PROOF" "$proof"
+  cat >"$repo/bin/fm-test-run.sh" <<'SH'
+#!/usr/bin/env bash
+if { [ "$1" = --list ] || [ "$1" = --list-scheduled ]; } && [ "$2" = --family ] \
+  && [ "$3" = inventory-family ]; then
+  printf '%s\n' tests/fm-proof-writer.test.sh tests/fm-proof-clean.test.sh
+  exit 0
+fi
+exit 2
+SH
+  cat >"$repo/tests/fm-proof-writer.test.sh" <<'SH'
+#!/usr/bin/env bash
+printf '#!/usr/bin/env bash\n' > tests/fm-proof-transient.test.sh
+sleep 0.5
+rm -f tests/fm-proof-transient.test.sh
+echo "ok - writer proof fixture"
+SH
+  cat >"$repo/tests/fm-proof-clean.test.sh" <<'SH'
+#!/usr/bin/env bash
+echo "ok - clean proof fixture"
+SH
+  chmod +x "$proof" "$repo/bin/fm-test-run.sh" "$repo/tests/fm-proof-"*.test.sh
+  set +e
+  "$proof" --pool inventory-family --jobs 2 >"$tmp/out" 2>"$tmp/err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 1 ] || fail "a transient tests/*.test.sh write must fail the proof, got $rc: $(cat "$tmp/err")"
+  grep -Fq 'tests/*.test.sh inventory changed' "$tmp/err" \
+    || fail "proof did not report the inventory change: $(cat "$tmp/err")"
+  grep -Fq 'tests/fm-proof-transient.test.sh' "$tmp/err" \
+    || fail "proof did not name the transient script: $(cat "$tmp/err")"
+  [ ! -e "$repo/tests/fm-proof-transient.test.sh" ] \
+    || fail "writer fixture did not clean up its transient script"
+  pass "a transient tests/*.test.sh write fails the isolation proof"
+}
+
 test_list_candidates_nonempty_and_stable() {
   local listed count sorted
   listed=$("$PROOF" --list)
@@ -288,6 +333,7 @@ test_fixture_repo_branch_is_pinned() {
 
 test_unknown_pool_is_refused
 test_family_pool_json_identifies_admission
+test_transient_test_inventory_write_fails_the_proof
 test_list_candidates_nonempty_and_stable
 test_candidates_exclude_serial_classes
 test_extra_hermetic_candidates_present
