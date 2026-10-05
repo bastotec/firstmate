@@ -71,9 +71,8 @@
 #   --per-script-timeout-secs N
 #                   terminate a script that runs longer than N seconds and
 #                   record it as exit 124 (0 disables, the default). The
-#                   --changed applies 900s automatically: no real script
-#                   approaches it, so it only converts a HUNG
-#                   script into a bounded failure. --max-wall-ms is checked
+#                   --changed applies 900s automatically as a per-script hang
+#                   tripwire, not a speed control. --max-wall-ms is checked
 #                   after the run and so cannot catch a hang on its own.
 #                   External interruption cleanup is outside this runner's
 #                   guarantee; configured per-script bounds remain authoritative.
@@ -181,15 +180,11 @@ JOBS_EXPLICIT=0
 JOBS_MAX=8
 MAX_WALL_MS=
 PER_SCRIPT_TIMEOUT_SECS=0
-# Bound applied automatically on the automatic --changed path, derived from
-# measured healthy runtimes with margin rather than picked: the slowest measured
-# behavior test is the 341s Herdr presentation E2E, and the slowest script in a
-# runner-file changed selection is tests/fm-calm-pi-extension.test.sh at 77s
-# once its Chrome reap terminates. 900s leaves roughly 2.6x headroom over the
-# slowest real script, so this can only ever fire on a script that is genuinely
-# stuck. It is a guard, not a speed control: a HUNG script becomes a bounded
-# failure instead of an unbounded suite, which is the shape that silently
-# outruns a caller's invocation budget.
+# Bound applied automatically on the --changed path to turn a hung script into
+# a bounded failure rather than silently outrunning the caller's budget.
+# portable_serial_weight_hints and docs/fm-test-portable-shards.md own retained
+# CI durations and their provenance; they are not upper bounds on future runs,
+# so exceeding this tripwire does not by itself prove a script is hung.
 CHANGED_DEFAULT_TIMEOUT_SECS=900
 
 # How many separate-runner shards the portable serial remainder splits into.
