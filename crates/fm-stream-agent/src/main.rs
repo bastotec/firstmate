@@ -106,9 +106,7 @@ impl Hub {
                 // (see Error::Unmatched), so it takes its own class rather
                 // than the definitive rejection one.
                 "no_such_command" => Error::Unmatched,
-                "result_conflict" | "bad_command_id" | "endpoint_unauthorized" => {
-                    Error::Rejected
-                }
+                "result_conflict" | "bad_command_id" | "endpoint_unauthorized" => Error::Rejected,
                 _ => Error::Other(format!(
                     "hub refused {method} {path}: HTTP {}",
                     status.as_u16()

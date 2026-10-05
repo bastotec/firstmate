@@ -346,12 +346,12 @@ impl Hub {
                 .pending
                 .iter()
                 .filter(|(cid, _)| {
-                    s.commands
-                        .get(*cid)
-                        .is_some_and(|c| !c.lock().unwrap().done && {
+                    s.commands.get(*cid).is_some_and(|c| {
+                        !c.lock().unwrap().done && {
                             let c = c.lock().unwrap();
                             c.taken > 0. && now() - c.taken >= 900.
-                        })
+                        }
+                    })
                 })
                 .map(|(cid, _)| cid.clone())
                 .collect();
@@ -732,17 +732,14 @@ impl Hub {
         let mut s = self.state.lock().unwrap();
         Self::touch(&mut s, machine);
         let before = now() - 900.;
-        s.machines
-            .get_mut(machine)
-            .unwrap()
-            .retained_retire(before);
+        s.machines.get_mut(machine).unwrap().retained_retire(before);
         s.machines
             .get_mut(machine)
             .unwrap()
             .completed
             .retain(|_, c| c.2 >= before);
         let m = &s.machines[machine];
-        if m.pending.get(cid).is_none() && m.retire_position(cid).is_some() {
+        if !m.pending.contains_key(cid) && m.retire_position(cid).is_some() {
             // A retired command is still completable while the order journal
             // holds its Command: the object carries the endpoint binding the
             // capability below is checked against, so this is the same
@@ -1322,9 +1319,9 @@ mod tests {
             let order_hub = hub.clone();
             let execution = eid.clone();
             let id = format!("order-{age}");
-            let request = std::thread::spawn(move || {
-                order_hub.place("box/worker", &execution, "hello", &id)
-            });            let mut commands = vec![];
+            let request =
+                std::thread::spawn(move || order_hub.place("box/worker", &execution, "hello", &id));
+            let mut commands = vec![];
             for _ in 0..100 {
                 commands = hub.take("box", &eid, 0., &cap).unwrap();
                 if !commands.is_empty() {
@@ -1332,8 +1329,7 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(1));
             }
-            let cid = serde_json::from_str::<Value>(&commands[0]).unwrap()
-                ["command_id"]
+            let cid = serde_json::from_str::<Value>(&commands[0]).unwrap()["command_id"]
                 .as_str()
                 .unwrap()
                 .to_owned();
@@ -1368,8 +1364,7 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(1));
         }
-        let cid = serde_json::from_str::<Value>(&commands[0]).unwrap()
-            ["command_id"]
+        let cid = serde_json::from_str::<Value>(&commands[0]).unwrap()["command_id"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -1382,7 +1377,9 @@ mod tests {
         // The capability binding survives retirement: a wrong capability is
         // still refused, exactly as for a prompt completion.
         assert_eq!(
-            hub.complete("box", &cid, true, "", "wrong").unwrap_err().code,
+            hub.complete("box", &cid, true, "", "wrong")
+                .unwrap_err()
+                .code,
             "endpoint_unauthorized"
         );
         hub.complete("box", &cid, true, "", &cap).unwrap();
@@ -1413,8 +1410,7 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(1));
         }
-        let cid = serde_json::from_str::<Value>(&commands[0]).unwrap()
-            ["command_id"]
+        let cid = serde_json::from_str::<Value>(&commands[0]).unwrap()["command_id"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -1437,9 +1433,7 @@ mod tests {
             assert!(s.machines["box"].retired.is_empty());
         }
         assert_eq!(
-            hub.complete("box", &cid, true, "", &cap)
-                .unwrap_err()
-                .code,
+            hub.complete("box", &cid, true, "", &cap).unwrap_err().code,
             "no_such_command"
         );
         // The retired set is capped at 512 with the oldest evicted first.
