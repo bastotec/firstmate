@@ -844,6 +844,10 @@ const { default: registerGuard, PiTerminalResponseInputFilter } = await import(p
 const ESC = "\x1b";
 const BEL = "\x07";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const overlapPrefixes = [
+  `${ESC}]`, `${ESC}]1`, `${ESC}]4`, `${ESC}]10`, `${ESC}]11`,
+  `${ESC}]4;38;`, `${ESC}]10;`, `${ESC}]11;`,
+];
 const makeFilter = (timeout = 30) => {
   const forwarded = [];
   const filter = new PiTerminalResponseInputFilter(
@@ -991,16 +995,36 @@ const makeFilter = (timeout = 30) => {
   commandStdin.destroy();
   await sleep(650);
 
-  resetEditor();
-  const preflushCommandStdin = new StdinBuffer({ timeout: 10, escapeTimeout: 2 });
-  preflushCommandStdin.on("data", dispatch);
-  preflushCommandStdin.process(`${ESC}]4;38;`);
-  for (const character of "/quit\r") preflushCommandStdin.process(character);
-  await sleep(30);
-  assert.deepEqual(submissions, ["/quit"]);
-  assert.equal(editor.getText(), "");
-  assert.equal(pasteCalls, 1);
-  preflushCommandStdin.destroy();
+  for (const prefix of overlapPrefixes) {
+    for (const command of ["/quit", "/new"]) {
+      for (const combinedEnter of [true, false]) {
+        resetEditor();
+        const callbacks = [];
+        const stdin = new StdinBuffer({ timeout: 10, escapeTimeout: 2 });
+        stdin.on("data", (data) => {
+          callbacks.push(data);
+          dispatch(data);
+        });
+        try {
+          stdin.process(prefix);
+          for (const character of command) stdin.process(character);
+          if (combinedEnter) stdin.process("\r");
+          await sleep(30);
+          assert.deepEqual(callbacks, [prefix + command + (combinedEnter ? "\r" : "")]);
+          if (!combinedEnter) {
+            assert.equal(editor.getText(), command);
+            assert.deepEqual(submissions, []);
+            stdin.process("\r");
+          }
+          assert.deepEqual(submissions, [command], `${JSON.stringify(prefix)}: recover ${command}`);
+          assert.equal(editor.getText(), "");
+          assert.equal(pasteCalls, combinedEnter ? 1 : 0);
+        } finally {
+          stdin.destroy();
+        }
+      }
+    }
+  }
 
   resetEditor();
   const terminatedTail = `rgb:0000/afaf/d7d7${BEL}`;
@@ -1051,6 +1075,26 @@ const makeFilter = (timeout = 30) => {
   tui.addChild(editor);
   tui.setFocus(editor);
   const input = (data) => process.stdin.emit("data", data);
+  const exercisePreflushCommands = async (phase) => {
+    for (const prefix of overlapPrefixes) {
+      for (const command of ["/quit", "/new"]) {
+        for (const combinedEnter of [true, false]) {
+          input(prefix);
+          for (const character of command) input(character);
+          if (combinedEnter) input("\r");
+          await sleep(70);
+          if (!combinedEnter) {
+            assert.equal(editor.getText(), command, `${phase}: recover buffered command text`);
+            assert.deepEqual(submissions, []);
+            input("\r");
+          }
+          assert.deepEqual(submissions, [command], `${phase}: ${JSON.stringify(prefix)} preserves ${command}`);
+          assert.equal(editor.getText(), "");
+          submissions.length = 0;
+        }
+      }
+    }
+  };
   try {
     tui.start();
     const colors = typeof tui.queryTerminalColors === "function"
@@ -1078,6 +1122,7 @@ const makeFilter = (timeout = 30) => {
     }
     assert.equal(editor.getText(), "");
     assert.deepEqual(submissions, []);
+    await exercisePreflushCommands("startup");
 
     input(`${ESC}]4;38;`);
     input("/quit\r");
@@ -1097,6 +1142,7 @@ const makeFilter = (timeout = 30) => {
     });
     input(`4;38;rgb:0000/afaf/d7d7${ESC}\\`);
     assert.equal(editor.getText(), "");
+    await exercisePreflushCommands("session_start");
     for (const literal of [
       "4;38;rgb:0000/afaf/d7d7 is a real draft",
       "10;rgb:0000/afaf/d7d7 is a real draft",

@@ -55,7 +55,7 @@ export class PiTerminalResponseInputFilter {
       this.scheduleFlush();
       return;
     }
-    if (OSC_COLOR_PREFIXES.some((prefix) => data.startsWith(prefix.slice(0, -1)))) {
+    if (data.startsWith(`${ESC}]`)) {
       this.consumePaletteCandidate(`${ESC}]`, data.slice(2));
       if (this.pending) this.scheduleFlush();
       return;
