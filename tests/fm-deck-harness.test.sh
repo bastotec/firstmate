@@ -1734,14 +1734,14 @@ deck_runs() {  # <dir>
 }
 
 wait_deck_runs() {  # <dir> <count>
-  local i
-  for i in $(seq 300); do [ "$(deck_runs "$1")" -ge "$2" ] && return 0; sleep 0.1; done
+  local _
+  for _ in $(seq 300); do [ "$(deck_runs "$1")" -ge "$2" ] && return 0; sleep 0.1; done
   return 1
 }
 
 wait_pane_count() {  # <dir> <pattern> <count>
-  local i
-  for i in $(seq 300); do [ "$(grep -c -- "$2" "$1/pane.out" 2>/dev/null)" -ge "$3" ] && return 0; sleep 0.1; done
+  local _
+  for _ in $(seq 300); do [ "$(grep -c -- "$2" "$1/pane.out" 2>/dev/null)" -ge "$3" ] && return 0; sleep 0.1; done
   return 1
 }
 
@@ -1877,7 +1877,7 @@ test_pipeline_inconclusive_read_keeps_watching() {
 }
 
 test_pipeline_input_wins_during_state_probe() {
-  local dir command i
+  local dir command _
   for command in /quit 'steer write-status'; do
     case "$command" in /quit) dir="$TMP_ROOT/pipeline-probe-quit" ;; *) dir="$TMP_ROOT/pipeline-probe-steer" ;; esac
     make_pipeline_case "$dir"
@@ -1885,11 +1885,11 @@ test_pipeline_input_wins_during_state_probe() {
     wait_pane_count "$dir" 'no-mistakes run 01PIPE still working' 1 || fail "the wait was not armed"
     pipeline_run "$dir" parked
     printf '2\n' > "$dir/nm-delay"
-    for i in $(seq 100); do [ ! -f "$dir/nm-probe-started" ] || break; sleep 0.05; done
+    for _ in $(seq 100); do [ ! -f "$dir/nm-probe-started" ] || break; sleep 0.05; done
     [ -f "$dir/nm-probe-started" ] || fail "the delayed state probe never started"
     printf '%s\n' "$command" >&3
     if [ "$command" = /quit ]; then
-      for i in $(seq 100); do kill -0 "$PIPELINE_WORKER_PID" 2>/dev/null || break; sleep 0.05; done
+      for _ in $(seq 100); do kill -0 "$PIPELINE_WORKER_PID" 2>/dev/null || break; sleep 0.05; done
       kill -0 "$PIPELINE_WORKER_PID" 2>/dev/null && fail "queued /quit did not exit after the probe"
       wait "$PIPELINE_WORKER_PID" || fail "queued /quit exited with a failure"
       exec 3>&-
@@ -1906,13 +1906,13 @@ test_pipeline_input_wins_during_state_probe() {
 }
 
 test_pipeline_deadline_expiring_during_probe_does_not_wake() {
-  local dir="$TMP_ROOT/pipeline-probe-bound" i
+  local dir="$TMP_ROOT/pipeline-probe-bound" _
   make_pipeline_case "$dir"
   start_pipeline_worker "$dir" 1 4
   wait_pane_count "$dir" 'no-mistakes run 01PIPE still working' 1 || fail "the wait was not armed"
   pipeline_run "$dir" parked
   printf '5\n' > "$dir/nm-delay"
-  for i in $(seq 100); do [ ! -f "$dir/nm-probe-started" ] || break; sleep 0.05; done
+  for _ in $(seq 100); do [ ! -f "$dir/nm-probe-started" ] || break; sleep 0.05; done
   [ -f "$dir/nm-probe-started" ] || fail "the delayed state probe never started"
   sleep 6
   [ "$(deck_runs "$dir")" = 1 ] || fail "a state probe completing after the bound triggered a wake"
