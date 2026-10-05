@@ -28,10 +28,14 @@
 #   7. Ordinary Deck dispatch launches the driver with the resolved deck
 #      binary, busy gen, and model, records effort without passing it, and arms
 #      the busy contract.
+#   8. A ship worker whose turn ends while its no-mistakes run is still working
+#      gets exactly one next turn, naming the run id and state, when the run
+#      leaves working; a run that stays parked never re-wakes, typed input is
+#      still taken immediately while the driver waits, and the wait is bounded.
 set -u
 
 # shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 
 unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_INVOKED_AS \
   ATLASSIAN_AGENT_TYPE ROVODEV_CLI GEMINI_CLI AGENT FM_OMP_HARNESS
@@ -48,7 +52,7 @@ unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_IN
 . "$ROOT/bin/fm-backend.sh"
 fm_backend_source tmux || fail "could not load the tmux backend"
 
-WORKER="$ROOT/bin/fm-deck-worker.sh"
+WORKER=${FM_TEST_DECK_WORKER:-"$ROOT/bin/fm-deck-worker.sh"}
 BUSY_EVENT="$ROOT/bin/fm-busy-event.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-deck-harness)
@@ -85,7 +89,7 @@ case "$prompt" in
     "$FM_TEST_BUSY_EVENT" arm "$(dirname "$FM_TEST_STATUS")" t1 >/dev/null
     ;;
   *legacy-finish-write-status*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
-  *write-status*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
+  *write-status*|*'changed state while this session was idle'*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
   *resolve-only*) printf 'resolved [key=choice]: answered: yes\n' >> "$FM_TEST_STATUS" ;;
   *sleep*)
     bash -c 'printf "%s\n" "$$" > "$1/interrupt-ready"; exec sleep 30' _ "$dir"
@@ -509,6 +513,7 @@ test_driver_stop_terminates_active_deck_and_resolves_spaced_paths() {
   stop="$install/fm-deck-stop.py"
   mkdir -p "$install" "$physical"
   cp "$WORKER" "$BUSY_EVENT" "$ROOT/bin/fm-busy-lib.sh" \
+    "$ROOT/bin/fm-session-lock-lib.sh" "$ROOT/bin/fm-cursor-lib.sh" "$ROOT/bin/fm-nm-run-lib.sh" \
     "$ROOT/bin/fm-state-io.py" "$ROOT/bin/fm-deck-stop.py" "$install/"
   ln -s "$physical" "$alias"
   cat > "$deck" <<'PY'
@@ -1252,11 +1257,16 @@ PYTHON
 test_secondmate_host_serializes_wakes_and_steering() {
   local dir="$TMP_ROOT/host"
   make_secondmate_host_fixture "$dir"
+  # A working ship record must not opt a home-host driver into worker polling.
+  make_pipeline_case "$dir/pipeline"
+  fm_write_meta "$dir/parent/host.meta" "window=fm:fm-host" "worktree=$dir/pipeline/wt" "kind=ship"
+  cp "$dir/pipeline/fakebin/no-mistakes" "$dir/bin/no-mistakes"
   python3 - "$dir" <<'PYTHON' || fail "Deck secondmate host integration failed"
 import json, os, pathlib, signal, subprocess, sys, time
 root = pathlib.Path(sys.argv[1])
 home = root / 'home'
-env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           FM_TEST_NM_RUN=str(root/'pipeline/nm-run'), PATH=str(root/'bin')+os.pathsep+os.environ['PATH'])
 gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
 cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
 def rows():
@@ -1329,6 +1339,7 @@ with (root/'pane').open('w') as output:
         assert (home/'startups').read_text() == 'startup\n'
         assert (home/'state/.lock').read_text().strip() == str(p.pid), 'lock is not driver-owned'
         assert not (root/'parent/host.status').exists(), 'idle supervisor manufactured status'
+        assert not (root/'pipeline/nm-queries.log').exists(), 'home-host driver polled a worker pipeline'
         (home/'in-turn').unlink()
         (home/'release').unlink()
         p.stdin.write('slow-steer\n'); p.stdin.flush()
@@ -1650,6 +1661,315 @@ PYTHON
   pass "fm-deck-worker: a secondmate that cannot publish a failed turn stops instead of looping"
 }
 
+# A ship task bound to a real worktree, with a fake no-mistakes whose `axi
+# status` serves the run object in <dir>/nm-run (rewritten mid-test), so the
+# driver's pipeline wake reads the run through the real bin/fm-crew-state.sh.
+make_pipeline_case() {  # <dir>
+  local dir=$1 head
+  make_fake_deck "$dir"
+  mkdir -p "$dir/state" "$dir/fakebin" "$dir/wt"
+  fm_git_identity
+  git -C "$dir/wt" init -q
+  git -C "$dir/wt" commit -q --allow-empty -m init
+  git -C "$dir/wt" checkout -q -b fm/t1
+  fm_write_meta "$dir/state/t1.meta" "window=fm:fm-t1" "worktree=$dir/wt" "kind=ship"
+  cat > "$dir/fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+dir=$(dirname "$FM_TEST_NM_RUN")
+printf '%s\n' "$*" >> "$dir/nm-queries.log"
+[ ! -f "$dir/nm-unreadable" ] || exit 1
+case "$1 ${2:-}" in
+  'axi status')
+    if [ -f "$dir/nm-delay" ]; then
+      delay=$(cat "$dir/nm-delay")
+      rm "$dir/nm-delay"
+      : > "$dir/nm-probe-started"
+      sleep "$delay"
+    fi
+    cat "$FM_TEST_NM_RUN" ;;
+  'runs '*) [ ! -f "$(dirname "$FM_TEST_NM_RUN")/nm-runs" ] || cat "$(dirname "$FM_TEST_NM_RUN")/nm-runs" ;;
+esac
+exit 0
+SH
+  printf '#!/usr/bin/env bash\nprintf "all quiet\\n> \\n"\n' > "$dir/fakebin/tmux"
+  chmod +x "$dir/fakebin/no-mistakes" "$dir/fakebin/tmux"
+  head=$(git -C "$dir/wt" rev-parse HEAD)
+  printf '%s' "$head" > "$dir/head"
+  pipeline_run "$dir" running
+}
+
+pipeline_run() {  # <dir> <running|parked|passed|failed>
+  local dir=$1 head extra=''
+  head=$(cat "$dir/head")
+  case "$2" in
+    running) extra='  status: running' ;;
+    parked) extra='  status: awaiting_approval
+  awaiting_agent: parked 0m1s
+gate: review' ;;
+    passed) extra='  status: completed
+outcome: passed' ;;
+    failed) extra='  status: failed
+outcome: failed' ;;
+  esac
+  printf 'run:\n  id: "01PIPE"\n  branch: fm/t1\n  head: "%s"\n  pr: ""\n  findings: none\n%s\n' \
+    "$head" "$extra" > "$dir/nm-run.tmp"
+  mv -f "$dir/nm-run.tmp" "$dir/nm-run"
+}
+
+start_pipeline_worker() {  # <dir> <poll-secs> <wait-secs>
+  local dir=$1 gen
+  gen=$("$BUSY_EVENT" arm "$dir/state" t1)
+  mkfifo "$dir/in"
+  exec 3<>"$dir/in"
+  PATH="$dir/fakebin:$PATH" FM_TEST_NM_RUN="$dir/nm-run" FM_TEST_STATUS="$dir/state/t1.status" \
+    FM_DECK_PIPELINE_POLL_SECS=$2 FM_DECK_PIPELINE_WAIT_SECS=$3 \
+    "$WORKER" --id t1 --state "$dir/state" --gen "$gen" \
+      --deck "$dir/deck" -- write-status < "$dir/in" > "$dir/pane.out" 2>&1 &
+  PIPELINE_WORKER_PID=$!
+  fm_test_track_helper_pid "$PIPELINE_WORKER_PID"
+}
+
+deck_runs() {  # <dir>
+  wc -l < "$1/argv.log" 2>/dev/null | tr -d ' ' || printf '0'
+}
+
+wait_deck_runs() {  # <dir> <count>
+  local _
+  for _ in $(seq 300); do [ "$(deck_runs "$1")" -ge "$2" ] && return 0; sleep 0.1; done
+  return 1
+}
+
+wait_pane_count() {  # <dir> <pattern> <count>
+  local _
+  for _ in $(seq 300); do [ "$(grep -c -- "$2" "$1/pane.out" 2>/dev/null)" -ge "$3" ] && return 0; sleep 0.1; done
+  return 1
+}
+
+pipeline_evidence() {  # <dir>
+  local dir=$1 evidence=${FM_TEST_DECK_EVIDENCE_DIR:-} file
+  [ -n "$evidence" ] || return 0
+  mkdir -p "$evidence/$(basename "$dir")"
+  for file in pane.out argv.log nm-queries.log nm-run inconclusive-state.out state/t1.busy-state; do
+    [ ! -f "$dir/$file" ] || cp "$dir/$file" "$evidence/$(basename "$dir")/$(basename "$file")"
+  done
+}
+
+stop_pipeline_worker() {  # <dir>
+  printf '/quit\n' >&3
+  wait "$PIPELINE_WORKER_PID" 2>/dev/null
+  exec 3>&-
+  pipeline_evidence "$1"
+}
+
+test_pipeline_state_change_wakes_an_idle_worker_once() {
+  local dir="$TMP_ROOT/pipeline-wake" wake
+  make_pipeline_case "$dir"
+  start_pipeline_worker "$dir" 1 600
+  wait_pane_count "$dir" 'no-mistakes run 01PIPE still working' 1 \
+    || fail "a turn that ended with its run working did not arm the pipeline wait: $(cat "$dir/pane.out")"
+  [ "$(deck_runs "$dir")" = 1 ] || fail "the driver started a turn while the run was still working"
+  pipeline_run "$dir" parked
+  wait_deck_runs "$dir" 2 || fail "a run parked at a gate did not wake the idle worker: $(cat "$dir/pane.out")"
+  wake=$(sed -n 2p "$dir/argv.log")
+  assert_contains "$wake" 'Your no-mistakes run 01PIPE changed state' "the wake did not name the run id"
+  assert_contains "$wake" 'state: parked · source: run-step · parked at review' "the wake did not carry the run state"
+  assert_contains "$wake" '--session s-fake-' "the wake did not resume the worker's Deck session"
+  # The run stays parked: no working -> other transition, so no second wake.
+  wait_pane_count "$dir" 'idle since' 2 || fail "the wake turn did not return to the prompt"
+  sleep 3
+  [ "$(deck_runs "$dir")" = 2 ] || fail "a run that stayed parked woke the worker again: $(cat "$dir/argv.log")"
+  # A steer that leaves the run working re-arms, and the next change wakes once.
+  pipeline_run "$dir" running
+  printf 'answer write-status\n' >&3
+  wait_deck_runs "$dir" 3 || fail "the steer did not start a turn"
+  wait_pane_count "$dir" 'no-mistakes run 01PIPE still working' 2 || fail "the steer turn did not re-arm the wait"
+  pipeline_run "$dir" passed
+  wait_deck_runs "$dir" 4 || fail "a finished run did not wake the idle worker"
+  assert_contains "$(sed -n 4p "$dir/argv.log")" 'state: done · source: run-step' "the second wake did not carry the done state"
+  wait_pane_count "$dir" 'idle since' 4 || fail "the second wake turn did not return to the prompt"
+  sleep 2
+  [ "$(deck_runs "$dir")" = 4 ] || fail "a finished run woke the worker more than once"
+  stop_pipeline_worker "$dir"
+  pass "fm-deck-worker: a run leaving working wakes the idle worker once per change, naming run id and state"
+}
+
+test_pipeline_omits_terminal_id_when_a_live_successor_is_working() {
+  local dir="$TMP_ROOT/pipeline-successor" head successor wake
+  make_pipeline_case "$dir"
+  head=$(cat "$dir/head")
+  git -C "$dir/wt" commit -q --allow-empty -m successor
+  successor=$(git -C "$dir/wt" rev-parse HEAD)
+  git -C "$dir/wt" reset -q --hard "$head"
+  printf 'run:\n  id: "01STALE"\n  branch: fm/t1\n  head: "%s"\n  status: failed\noutcome: failed\n' \
+    "$head" > "$dir/nm-run"
+  printf 'failed fm/t1 %s 2026-08-05 11:20\nrunning fm/t1 %s 2026-08-05 10:05\n' \
+    "$head" "$successor" > "$dir/nm-runs"
+  start_pipeline_worker "$dir" 1 600
+  wait_pane_count "$dir" 'no-mistakes run (id unavailable) still working' 1 \
+    || fail "the live successor was not watched without the terminal run's id: $(cat "$dir/pane.out")"
+  assert_not_contains "$(cat "$dir/pane.out")" 'run 01STALE still working' "the terminal run was named as working"
+  pipeline_run "$dir" parked
+  wait_deck_runs "$dir" 2 || fail "the successor parking did not wake the worker"
+  wake=$(sed -n 2p "$dir/argv.log")
+  assert_contains "$wake" 'Your no-mistakes run 01PIPE changed state' "the matching active run id was omitted"
+  assert_contains "$wake" 'state: parked · source: run-step' "the wake lost the authoritative parked state"
+  stop_pipeline_worker "$dir"
+  pass "fm-deck-worker: a terminal run id is omitted when a live successor is working"
+}
+
+test_pipeline_wait_takes_input_immediately_and_is_bounded() {
+  local dir="$TMP_ROOT/pipeline-steer" bounded="$TMP_ROOT/pipeline-bound"
+  make_pipeline_case "$dir"
+  start_pipeline_worker "$dir" 600 21600
+  wait_pane_count "$dir" 'no-mistakes run 01PIPE still working' 1 || fail "the pipeline wait was not armed"
+  printf 'steer write-status\n' >&3
+  wait_deck_runs "$dir" 2 || fail "a steer waited behind the pipeline poll instead of starting a turn"
+  assert_contains "$(sed -n 2p "$dir/argv.log")" 'steer write-status' "the steer was not delivered as typed"
+  stop_pipeline_worker "$dir"
+  kill -0 "$PIPELINE_WORKER_PID" 2>/dev/null && fail "/quit did not end a worker waiting on its pipeline"
+
+  make_pipeline_case "$bounded"
+  start_pipeline_worker "$bounded" 4 1
+  wait_pane_count "$bounded" 'no-mistakes run 01PIPE still working' 1 || fail "the bounded wait was not armed"
+  sleep 3
+  pipeline_run "$bounded" parked
+  sleep 3
+  [ "$(deck_runs "$bounded")" = 1 ] || fail "the pipeline wait outlived its bound: $(cat "$bounded/argv.log")"
+  stop_pipeline_worker "$bounded"
+  pass "fm-deck-worker: typed input preempts the pipeline wait, /quit still exits, and the wait is bounded"
+}
+
+test_pipeline_failed_run_wakes_once() {
+  local dir="$TMP_ROOT/pipeline-failed"
+  make_pipeline_case "$dir"
+  start_pipeline_worker "$dir" 1 30
+  wait_pane_count "$dir" 'no-mistakes run 01PIPE still working' 1 || fail "the wait was not armed"
+  pipeline_run "$dir" failed
+  wait_deck_runs "$dir" 2 || fail "a failed run did not wake its worker"
+  assert_contains "$(sed -n 2p "$dir/argv.log")" 'state: failed · source: run-step' "the wake omitted the failure state"
+  wait_pane_count "$dir" 'idle since' 2 || fail "the failed-run wake did not finish"
+  sleep 2
+  [ "$(deck_runs "$dir")" = 2 ] || fail "a failed run re-woke without a working transition"
+  stop_pipeline_worker "$dir"
+  pass "fm-deck-worker: a failed run wakes once and stays idle afterward"
+}
+
+test_pipeline_inconclusive_read_keeps_watching() {
+  local dir="$TMP_ROOT/pipeline-unreadable" before after line
+  make_pipeline_case "$dir"
+  start_pipeline_worker "$dir" 1 30
+  wait_pane_count "$dir" 'no-mistakes run 01PIPE still working' 1 || fail "the wait was not armed"
+  before=$(wc -l < "$dir/nm-queries.log")
+  touch "$dir/nm-unreadable"
+  line=$(PATH="$dir/fakebin:$PATH" FM_TEST_NM_RUN="$dir/nm-run" FM_STATE_OVERRIDE="$dir/state" "$ROOT/bin/fm-crew-state.sh" t1)
+  assert_not_contains "$line" 'source: run-step' "the unreadable fixture still yielded a run-step"
+  printf '%s\n' "$line" > "$dir/inconclusive-state.out"
+  sleep 3
+  after=$(wc -l < "$dir/nm-queries.log")
+  [ "$after" -gt "$((before + 2))" ] || fail "polling stopped after the inconclusive sample"
+  [ "$(deck_runs "$dir")" = 1 ] || fail "an inconclusive sample woke the worker"
+  pipeline_run "$dir" parked
+  rm "$dir/nm-unreadable"
+  wait_deck_runs "$dir" 2 || fail "the watch was lost when the reader recovered"
+  wait_pane_count "$dir" 'idle since' 2 || fail "the recovered wake did not finish"
+  stop_pipeline_worker "$dir"
+  pass "fm-deck-worker: inconclusive reads neither wake nor abandon the watch"
+}
+
+test_pipeline_input_wins_during_state_probe() {
+  local dir command _
+  for command in /quit 'steer write-status'; do
+    case "$command" in /quit) dir="$TMP_ROOT/pipeline-probe-quit" ;; *) dir="$TMP_ROOT/pipeline-probe-steer" ;; esac
+    make_pipeline_case "$dir"
+    start_pipeline_worker "$dir" 1 30
+    wait_pane_count "$dir" 'no-mistakes run 01PIPE still working' 1 || fail "the wait was not armed"
+    pipeline_run "$dir" parked
+    printf '2\n' > "$dir/nm-delay"
+    for _ in $(seq 100); do [ ! -f "$dir/nm-probe-started" ] || break; sleep 0.05; done
+    [ -f "$dir/nm-probe-started" ] || fail "the delayed state probe never started"
+    printf '%s\n' "$command" >&3
+    if [ "$command" = /quit ]; then
+      for _ in $(seq 100); do kill -0 "$PIPELINE_WORKER_PID" 2>/dev/null || break; sleep 0.05; done
+      kill -0 "$PIPELINE_WORKER_PID" 2>/dev/null && fail "queued /quit did not exit after the probe"
+      wait "$PIPELINE_WORKER_PID" || fail "queued /quit exited with a failure"
+      exec 3>&-
+      [ "$(deck_runs "$dir")" = 1 ] || fail "an automatic wake ran before queued /quit"
+      pipeline_evidence "$dir"
+    else
+      wait_deck_runs "$dir" 2 || fail "the queued steer was not delivered"
+      assert_contains "$(sed -n 2p "$dir/argv.log")" "$command" "an automatic wake took priority over the queued steer"
+      wait_pane_count "$dir" 'idle since' 2 || fail "the steer did not finish"
+      stop_pipeline_worker "$dir"
+    fi
+  done
+  pass "fm-deck-worker: input queued during a state probe takes priority over an automatic wake"
+}
+
+test_pipeline_deadline_expiring_during_probe_does_not_wake() {
+  local dir="$TMP_ROOT/pipeline-probe-bound" _
+  make_pipeline_case "$dir"
+  start_pipeline_worker "$dir" 1 4
+  wait_pane_count "$dir" 'no-mistakes run 01PIPE still working' 1 || fail "the wait was not armed"
+  pipeline_run "$dir" parked
+  printf '5\n' > "$dir/nm-delay"
+  for _ in $(seq 100); do [ ! -f "$dir/nm-probe-started" ] || break; sleep 0.05; done
+  [ -f "$dir/nm-probe-started" ] || fail "the delayed state probe never started"
+  sleep 6
+  [ "$(deck_runs "$dir")" = 1 ] || fail "a state probe completing after the bound triggered a wake"
+  stop_pipeline_worker "$dir"
+  pass "fm-deck-worker: a state probe that outlives the deadline cannot trigger a turn"
+}
+
+test_pipeline_clear_and_doorbell_preempt_polling() {
+  local dir="$TMP_ROOT/pipeline-clear-doorbell"
+  make_pipeline_case "$dir"
+  start_pipeline_worker "$dir" 600 21600
+  wait_pane_count "$dir" 'no-mistakes run 01PIPE still working' 1 || fail "the wait was not armed"
+  printf 'discard write-status\025\n' >&3
+  wait_pane_count "$dir" 'idle since' 2 || fail "composer clear did not repaint immediately"
+  [ "$(deck_runs "$dir")" = 1 ] || fail "composer clear submitted the discarded text"
+  printf 'FIRSTMATE_OP: v1 inbox-doorbell write-status\n' >&3
+  wait_deck_runs "$dir" 2 || fail "the inbox doorbell waited behind the poll interval"
+  assert_contains "$(sed -n 2p "$dir/argv.log")" 'FIRSTMATE_OP: v1 inbox-doorbell write-status' "the doorbell prompt was changed"
+  wait_pane_count "$dir" 'no-mistakes run 01PIPE still working' 2 || fail "the doorbell turn did not re-arm"
+  stop_pipeline_worker "$dir"
+  pass "fm-deck-worker: composer clear discards input and the doorbell preempts polling"
+}
+
+test_pipeline_disabled_scout_and_already_parked_do_not_wake() {
+  local dir variant wait
+  for variant in disabled scout parked; do
+    dir="$TMP_ROOT/pipeline-no-watch-$variant"
+    make_pipeline_case "$dir"
+    wait=30
+    case "$variant" in
+      disabled) wait=0 ;;
+      scout) fm_write_meta "$dir/state/t1.meta" "window=fm:fm-t1" "worktree=$dir/wt" "kind=scout" ;;
+      parked) pipeline_run "$dir" parked ;;
+    esac
+    start_pipeline_worker "$dir" 1 "$wait"
+    wait_pane_count "$dir" 'idle since' 1 || fail "$variant never reached its idle prompt"
+    sleep 1
+    pipeline_run "$dir" passed
+    sleep 2
+    [ "$(deck_runs "$dir")" = 1 ] || fail "$variant woke without arming a working transition"
+    assert_not_contains "$(cat "$dir/pane.out")" 'still working; the next turn' "$variant armed a pipeline watch"
+    stop_pipeline_worker "$dir"
+  done
+  pass "fm-deck-worker: disabled waits, scouts, and initially parked runs never arm a wake"
+}
+
+# Optional named cases and worker override support focused regressions against
+# a previous executable without creating a second test rig.
+if [ -n "${FM_TEST_DECK_CASES:-}" ]; then
+  for test_case in $FM_TEST_DECK_CASES; do
+    case "$test_case" in test_*) ;; *) fail "invalid test case: $test_case" ;; esac
+    declare -F "$test_case" >/dev/null || fail "unknown test case: $test_case"
+    "$test_case"
+  done
+  exit 0
+fi
+
 test_herdr_deck_recovery
 test_herdr_deck_recovery_spaced_paths
 test_herdr_deck_ring_rings_live_driver
@@ -1682,4 +2002,13 @@ test_control_busy_and_delivery_tables_name_deck
 test_deck_supervision_model_is_scoped_to_secondmate_launches
 test_spawn_launches_the_driver_with_binary_gen_and_model
 test_spawn_refuses_deck_effort
+test_pipeline_state_change_wakes_an_idle_worker_once
+test_pipeline_omits_terminal_id_when_a_live_successor_is_working
+test_pipeline_wait_takes_input_immediately_and_is_bounded
+test_pipeline_failed_run_wakes_once
+test_pipeline_inconclusive_read_keeps_watching
+test_pipeline_input_wins_during_state_probe
+test_pipeline_deadline_expiring_during_probe_does_not_wake
+test_pipeline_clear_and_doorbell_preempt_polling
+test_pipeline_disabled_scout_and_already_parked_do_not_wake
 echo "fm-deck-harness: all cases passed"

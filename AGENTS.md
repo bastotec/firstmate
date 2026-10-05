@@ -300,6 +300,8 @@ Proceed on one confident match while naming the project in plain language; ask o
 Route by the nature of the work against each registered secondmate scope, not by a non-exclusive clone list.
 Keep `local-only` work in the main home.
 Send in-scope work to the fitting secondmate unless it is blocked or the captain explicitly redirects it; do not read the secondmate's chat because marked routed replies return through its status or referenced document.
+The exception is a small single-repo ship or scout in a project this home has cloned: spawn it directly and send the owning secondmate a one-line FYI through `fm-send`, because the hop costs more than the task.
+Large or multi-step domain work, and projects cloned only in a secondmate's home, still go to the secondmate.
 If no secondmate scope fits, use the main home or discuss creating an appropriate persistent secondmate.
 For one-off or infrequent operational work, start with the simplest direct end-to-end path.
 Do not build wrappers, control planes, policy layers, custom verifiers, or automation unless the direct path exposes a concrete blocker or repeated need that justifies the added machinery.

@@ -28,7 +28,20 @@
 #     the driver backstops failed, refused, and interrupted turns with a failure
 #     status when Deck exits without one;
 #   - Ctrl+C cancels the running turn and returns to the prompt; `/quit` at the
-#     prompt ends the worker.
+#     prompt ends the worker;
+#   - an ordinary ship worker (not a --secondmate or --primary home host) whose
+#     turn ends while its no-mistakes run is still working
+#     (bin/fm-crew-state.sh reads `state: working · source: run-step`) is not
+#     left idle until a steer: the driver polls that same reader at the idle
+#     prompt and, when the reader reports a run-step state other than working
+#     or unknown (such as parked at a gate, done, failed), starts ONE next turn
+#     of the same session with that state line and a run id when safely available.
+#     Only a working -> other transition observed after a turn wakes, so a run
+#     that stays parked or done never re-wakes; typed input (a steer, the doorbell,
+#     /quit, the composer clear) preempts the poll delay, and input queued during
+#     synchronous probes is handled before any automatic wake. Inconclusive reads
+#     keep polling; the wait gives up silently at its bound and never wakes after
+#     the deadline, even if a probe finishes late.
 #
 # USAGE (bin/fm-spawn.sh builds this; the brief arrives already encoded)
 #   fm-deck-worker.sh --id <task-id> --state <state-dir> --gen <busy-gen>
@@ -69,6 +82,10 @@
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
 #   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600)
+#   FM_DECK_PIPELINE_POLL_SECS  idle-prompt poll interval for a ship worker's
+#                           still-working no-mistakes run (default 45)
+#   FM_DECK_PIPELINE_WAIT_SECS  bound on one such wait (default 21600; 0
+#                           disables the pipeline wake)
 #   FM_STREAM_ENDPOINT_ID  set by the owning stream agent, enabling receiver
 #                           start/end registration for each driver turn
 #   PROXAI_BASE_URL, PROXAI_MODEL, PROXAI_API_KEY_FILE, PROXAI_API_KEY
@@ -90,6 +107,8 @@ SECONDMATE=0 WATCH_PID='' WATCH_PREDECESSOR_ARM_PID='' INPUT_PID='' TURN_PID='' 
 WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+# shellcheck source=bin/fm-nm-run-lib.sh
+. "$SCRIPT_DIR/fm-nm-run-lib.sh"
 while [ $# -gt 0 ]; do
   case "$1" in
     --secondmate) SECONDMATE=1; shift ;;
@@ -120,6 +139,10 @@ MAX_TURNS=${FM_DECK_MAX_TURNS:-200}
 DEADLINE=${FM_DECK_DEADLINE_SECS:-3600}
 case "$MAX_TURNS" in ''|*[!0-9]*) MAX_TURNS=200 ;; esac
 case "$DEADLINE" in ''|*[!0-9]*) DEADLINE=3600 ;; esac
+PIPELINE_POLL=${FM_DECK_PIPELINE_POLL_SECS:-45}
+PIPELINE_WAIT=${FM_DECK_PIPELINE_WAIT_SECS:-21600}
+case "$PIPELINE_POLL" in ''|*[!0-9]*|0) PIPELINE_POLL=45 ;; esac
+case "$PIPELINE_WAIT" in ''|*[!0-9]*) PIPELINE_WAIT=21600 ;; esac
 if [ -z "${PROXAI_API_KEY_FILE:-}${PROXAI_API_KEY:-}" ] && [ -f "$HOME/.config/proxai/client.key" ]; then
   export PROXAI_API_KEY_FILE="$HOME/.config/proxai/client.key"
 fi
@@ -552,6 +575,94 @@ run_turn() {  # <prompt>
   publish_turnend || return 1
 }
 
+# Pipeline wake (header bullet): a ship worker's turn that ends while its
+# no-mistakes run is still working arms one bounded idle-prompt wait.
+PIPELINE_WATCH=0 PIPELINE_UNTIL=0 PIPELINE_WAKE_PROMPT=''
+pipeline_meta() {  # <key>
+  sed -n "s/^$1=//p" "$STATE/$ID.meta" 2>/dev/null | tail -1
+}
+
+pipeline_state() {
+  FM_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/fm-crew-state.sh" "$ID" 2>/dev/null | tail -1
+}
+
+# State attribution stays with fm-crew-state.sh. This separate id query may see
+# an older terminal run while the reader selected a live successor, so withhold
+# the id unless shared branch/head-or-custody binding holds and a working or
+# parked state is accompanied by an active run.
+pipeline_run_id() {  # <state-line>
+  local wt branch out head
+  wt=$(pipeline_meta worktree)
+  [ -n "$wt" ] && [ -d "$wt" ] || return 0
+  branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 0
+  out=$(fm_nm_run "$wt" 10 axi status)
+  [ "$(fm_nm_strip_quotes "$(fm_nm_field "$out" branch)")" = "$branch" ] || return 0
+  head=$(fm_nm_strip_quotes "$(fm_nm_field "$out" head)")
+  { fm_nm_head_matches_worktree "$wt" "$head" || fm_nm_run_is_pipeline_owned_active "$out"; } || return 0
+  case "$1" in
+    'state: working · source: run-step'*|'state: parked · source: run-step'*)
+      fm_nm_run_is_active "$out" || return 0 ;;
+  esac
+  fm_nm_strip_quotes "$(fm_nm_field "$out" id)"
+}
+
+pipeline_arm() {
+  local line run
+  PIPELINE_WATCH=0
+  [ "$SECONDMATE" != 1 ] && [ "$PIPELINE_WAIT" -gt 0 ] || return 0
+  [ "$(pipeline_meta kind)" = ship ] && command -v no-mistakes >/dev/null 2>&1 || return 0
+  line=$(pipeline_state)
+  case "$line" in 'state: working · source: run-step'*) ;; *) return 0 ;; esac
+  run=$(pipeline_run_id "$line")
+  PIPELINE_WATCH=1
+  PIPELINE_UNTIL=$(( $(date +%s) + PIPELINE_WAIT ))
+  printf '\n⛵ no-mistakes run %s still working; the next turn starts when it changes state.\n' "${run:-(id unavailable)}"
+}
+
+# 0 when stdin has input within <secs>, 1 on timeout, 3 when interrupted.
+stdin_ready_within() {  # <secs>
+  python3 -c '
+import select, signal, sys
+signal.signal(signal.SIGINT, lambda *_: sys.exit(3))
+ready, _, _ = select.select([0], [], [], float(sys.argv[1]))
+sys.exit(0 if ready else 1)
+' "$1"
+}
+
+# 0 with PIPELINE_WAKE_PROMPT set when the watched run left working; 1 when
+# input is waiting, no run is watched, or the wait ended without a wake.
+pipeline_wait() {
+  local rc line run remaining wait_secs
+  [ "$PIPELINE_WATCH" = 1 ] || return 1
+  while :; do
+    remaining=$(( PIPELINE_UNTIL - $(date +%s) ))
+    [ "$remaining" -gt 0 ] || break
+    wait_secs=$PIPELINE_POLL
+    [ "$wait_secs" -le "$remaining" ] || wait_secs=$remaining
+    rc=0
+    stdin_ready_within "$wait_secs" || rc=$?
+    [ "$rc" -ne 0 ] || return 1
+    [ "$rc" -eq 1 ] || continue
+    [ "$(date +%s)" -lt "$PIPELINE_UNTIL" ] || break
+    line=$(pipeline_state)
+    stdin_ready_within 0 && return 1
+    [ "$(date +%s)" -lt "$PIPELINE_UNTIL" ] || break
+    case "$line" in
+      'state: working · source: run-step'*|'state: unknown · source: run-step'*) continue ;;
+      'state: '*' · source: run-step'*)
+        run=$(pipeline_run_id "$line")
+        stdin_ready_within 0 && return 1
+        [ "$(date +%s)" -lt "$PIPELINE_UNTIL" ] || break
+        PIPELINE_WATCH=0
+        PIPELINE_WAKE_PROMPT="Your no-mistakes run ${run:-for this task} changed state while this session was idle: ${line}. Check it with no-mistakes axi status and continue per your brief, then append the matching status line."
+        return 0
+        ;;
+    esac
+  done
+  PIPELINE_WATCH=0
+  return 1
+}
+
 # Every turn, including the first, goes through this: a recoverable failure
 # returns to the prompt loop so the next wake becomes the next turn, and any
 # other failure stops the driver.
@@ -572,6 +683,7 @@ $1"
   fi
   run_turn "$prompt" || rc=$?
   if [ "$rc" -eq 0 ]; then
+    pipeline_arm
     return 0
   fi
   [ "$rc" -eq "$TURN_RECOVERABLE" ] || exit 1
@@ -633,6 +745,11 @@ while :; do
       sleep 0.1
       continue
     fi
+  elif pipeline_wait; then
+    drive_turn "$PIPELINE_WAKE_PROMPT"
+    PIPELINE_WAKE_PROMPT=''
+    show_prompt=1
+    continue
   elif ! IFS= read -r line; then
     [ "$INTERRUPTED" = 1 ] && continue
     record_busy_event idle session-end || exit 1

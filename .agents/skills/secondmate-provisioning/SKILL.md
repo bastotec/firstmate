@@ -205,15 +205,14 @@ Treat an inherited queue that carries plans with no matching delivery record as 
 ## Backlog handoff
 
 Apply `AGENTS.md` section 10's work-items-only backlog contract before creation or handoff.
-When a secondmate is created for a domain, existing main-backlog items that fall under its scope should become its work instead of staying stranded in the main backlog.
-Scope-matching is firstmate's judgment against the secondmate's natural-language scope, not a keyword rule.
-Read `data/backlog.md`, pick queued items that fit the new scope, and move them with:
+When a secondmate is created for a domain, select existing queued main-backlog items for delegation using [AGENTS.md section 7's intake rules](../../../AGENTS.md#intake-and-authority).
+Read `data/backlog.md` and move those selected items with:
 
 ```sh
 bin/fm-backlog-handoff.sh <secondmate-id> <item-key>...
 ```
 
-After seeding, run this handoff for the new secondmate's in-scope queued items.
+After seeding, run this handoff for the queued items selected for delegation.
 For an existing or inherited domain, complete record intake first so no already-shipped plan row is handed off as open work.
 For a local route, the helper resolves and validates the secondmate home from `data/secondmates.md`, then delegates the item move to `tasks-axi mv` (the single owner of the backlog format), which moves each named item - and a whole connected set, blocker plus dependents, atomically - from the main `data/backlog.md` into the secondmate home's `data/backlog.md`.
 For a remote route, the same helper first moves the dependency-closed set atomically from the main backlog into `data/handoff/<id>.outbox.md`, then transfers that backlog-format outbox through `fm-on.sh` and lets the remote home's `fm-backlog-receive.sh` move every not-already-present key under the destination lock.
