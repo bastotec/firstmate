@@ -285,6 +285,7 @@ A crew-owned `no-mistakes axi respond` remains worker-owned and is never invoked
 Existing owner guards remain authoritative, including endpoint retirement and stand-down refusals; the host route does not bypass those refusals to revive or reassign workers.
 
 Managed primary lifecycle and Deck native steering are available through the opt-in owner described in [managed primary setup](managed-primary.md).
+A `deck chat` primary can also run inside a stream endpoint through `bin/fm-deck-chat.sh --stream`; see [deck chat primary](managed-primary.md#deck-chat-primary).
 The [host executable's header and help](../bin/fm-ui-host-control.py) own discovery, execution-bound payloads and the honest refusal boundary for unregistered sessions.
 Primary decision control is supported through an explicit host-registry captain-call binding under the primary owner's `FM_HOME`, while task-key decisions use an exact task binding in their owning home.
 Notes-only, worker-only and unregistered primary bindings do not constitute managed primary control.
