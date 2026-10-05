@@ -194,6 +194,59 @@ for embedded in (False, True):
                    for frame in hub.frames))
 
 
+class StartupAgent(agent.Agent):
+    def command_loop(self):
+        self.stop.wait()
+
+
+for failed_name in ('pty-reader', 'state', 'commands'):
+    pty = make_pty(['sleep', '300'])
+    descriptor = pty.master_fd
+    hub = ShutdownHub()
+    options = SimpleNamespace(machine='fixture', status_path='', state_interval=60)
+    publisher = StartupAgent(options, hub, pty, 'fixture-startup')
+    started = []
+    original_start = threading.Thread.start
+
+    def injected_start(thread):
+        if thread.name == failed_name:
+            raise RuntimeError('fixture internal thread start failure')
+        original_start(thread)
+        started.append(thread)
+
+    descriptor_open = True
+    try:
+        threading.Thread.start = injected_start
+        error = ''
+        try:
+            publisher.run(install_signals=False)
+        except RuntimeError as exc:
+            error = str(exc)
+        try:
+            os.fstat(descriptor)
+        except OSError:
+            descriptor_open = False
+        expected = {'pty-reader': [], 'state': ['pty-reader'],
+                    'commands': ['pty-reader', 'state']}[failed_name]
+        report('partial-startup-'+failed_name,
+               error == 'fixture internal thread start failure'
+               and [thread.name for thread in started] == expected
+               and all(not thread.is_alive() for thread in started)
+               and publisher.stop.is_set() and not pty.alive()
+               and not descriptor_open and hub.closing.is_set(),
+               'error=%r threads=%r descriptor_open=%r closed=%r' % (
+                   error, [(thread.name, thread.is_alive()) for thread in started],
+                   descriptor_open, hub.closing.is_set()))
+    finally:
+        threading.Thread.start = original_start
+        publisher.halt()
+        pty.close('KILL')
+        for thread in started:
+            thread.join(5)
+        if descriptor_open:
+            pty.release()
+
+
 def read_until(pty, marker, timeout):
     """Accumulate pty output until <marker> appears or <timeout> expires."""
     output = b""
@@ -339,6 +392,7 @@ rc=$?
 [ "$rc" -eq 0 ] || fail "the kill-safety driver did not finish: $(head -5 "$CASE_DIR/drive.err" 2>/dev/null)"
 
 for case_name in partial-write-completes \
+  partial-startup-pty-reader partial-startup-state partial-startup-commands \
   standalone-probe-blocked standalone-pty-closed standalone-shutdown-retirement standalone-shutdown-completes \
   embedded-probe-blocked embedded-pty-closed embedded-shutdown-retirement embedded-shutdown-completes \
   child-ready-with-parent-sigint-0 child-ready-with-parent-sigint-1 \

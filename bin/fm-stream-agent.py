@@ -1211,45 +1211,52 @@ class Agent:
     def run(self, install_signals: bool = True) -> int:
         # A managed primary embeds this same publisher in its lifecycle owner.
         # That owner keeps the signal handlers and controls only this Pty child.
-        reader = threading.Thread(target=self.read_loop, name="pty-reader", daemon=True)
-        state = threading.Thread(target=self.state_loop, name="state", daemon=True)
-        commands = threading.Thread(target=self.command_loop, name="commands", daemon=True)
-        reader.start()
-        state.start()
-        commands.start()
+        reader = state = commands = None
+        started = []
+        try:
+            reader = threading.Thread(target=self.read_loop, name="pty-reader", daemon=True)
+            state = threading.Thread(target=self.state_loop, name="state", daemon=True)
+            commands = threading.Thread(target=self.command_loop, name="commands", daemon=True)
+            for thread in (reader, state, commands):
+                thread.start()
+                started.append(thread)
 
-        def _signalled(signum, frame) -> None:  # noqa: ARG001
+            def _signalled(signum, frame) -> None:  # noqa: ARG001
+                self.halt()
+                self.pty.close()
+
+            if install_signals:
+                signal.signal(signal.SIGTERM, _signalled)
+                signal.signal(signal.SIGINT, _signalled)
+
+            self.stop.wait()
+        finally:
             self.halt()
+            # A command poll already in flight can return one command after stop is
+            # set, so shutdown joins its thread rather than sampling transient work.
+            deadline = time.monotonic() + RESULT_RETRY_SHUTDOWN_SECS
+            with self._result_retry_condition:
+                self._result_retry_deadline = deadline
+                self._result_retry_condition.notify_all()
+            until = deadline + 2 * RESULT_POST_TIMEOUT_SECS + 1.0
+            if commands in started:
+                commands.join(timeout=max(0.0, until - time.monotonic()))
             self.pty.close()
-
-        if install_signals:
-            signal.signal(signal.SIGTERM, _signalled)
-            signal.signal(signal.SIGINT, _signalled)
-
-        self.stop.wait()
-        # A command poll already in flight can return one command after stop is
-        # set, so shutdown joins its thread rather than sampling transient work.
-        deadline = time.monotonic() + RESULT_RETRY_SHUTDOWN_SECS
-        with self._result_retry_condition:
-            self._result_retry_deadline = deadline
-            self._result_retry_condition.notify_all()
-        until = deadline + 2 * RESULT_POST_TIMEOUT_SECS + 1.0
-        commands.join(timeout=max(0.0, until - time.monotonic()))
-        self.pty.close()
-        # Join the reader before releasing the descriptor: see Pty.close.
-        self.reader_done.wait(5.0)
-        reader.join(timeout=5.0)
-        if not install_signals:
-            reader.join()  # Managed replacement requires definitive reader retirement.
-            state.join()
-        self.pty.release()
-        self._post_frames([{
-            "endpoint_id": self.endpoint_id,
-            "closed": True,
-            "exit_code": self.pty.exit_code,
-            "state": {"alive": False, "foreground": [], "cwd": "",
-                      "published_at": _now()},
-        }])
+            # Join the reader before releasing the descriptor: see Pty.close.
+            if reader in started:
+                self.reader_done.wait(5.0)
+                reader.join(timeout=5.0)
+            if not install_signals:
+                for thread in started:
+                    thread.join()
+            self.pty.release()
+            self._post_frames([{
+                "endpoint_id": self.endpoint_id,
+                "closed": True,
+                "exit_code": self.pty.exit_code,
+                "state": {"alive": False, "foreground": [], "cwd": "",
+                          "published_at": _now()},
+            }])
         return 0
 
 

@@ -109,10 +109,15 @@ thread_fault=attempts.parent/'thread-start-fault'
 thread_attempt=attempts.parent/'thread-start-attempt.json'
 def inject_thread_start(thread):
  target=getattr(thread,'_target',None)
- if thread_fault.exists() and getattr(target,'__func__',None) is owner.stream.Agent.run:
-  agent=target.__self__
-  write(thread_attempt,{'endpoint_id':agent.endpoint_id,'pid':agent.pty.pid})
-  raise RuntimeError('fixture publisher thread start failure')
+ function=getattr(target,'__func__',None)
+ if thread_fault.exists():
+  mode=thread_fault.read_text().strip()
+  expected={'':owner.stream.Agent.run,'pty-reader':owner.stream.Agent.read_loop,
+            'state':owner.stream.Agent.state_loop,'commands':owner.stream.Agent.command_loop}.get(mode)
+  if expected is not None and function is expected:
+   agent=target.__self__
+   write(thread_attempt,{'endpoint_id':agent.endpoint_id,'pid':agent.pty.pid,'thread':mode})
+   raise RuntimeError('fixture publisher thread start failure')
  return thread_start(thread)
 owner.threading.Thread.start=inject_thread_start
 sys.exit(owner.main())
@@ -437,6 +442,36 @@ fm_task_inbox_write_idempotent() {
   replacement=record(); assert replacement['state']=='running' and replacement['execution_id']!=failed_id
   wait(lambda:(fixture/(replacement['execution_id']+'.started')).exists(),'restored publisher child')
   assert replacement['profile']==original['profile'] and owner.poll() is None
+ for internal in ('pty-reader','state','commands'):
+  original=record(); original_id=original['execution_id']
+  wait(lambda:(fixture/(original_id+'.started')).exists(),'internal-start fixture child')
+  command_id='fixture-internal-start-'+internal
+  thread_fault.write_text(internal)
+  try:
+   result=control(original_id,'relaunch','--command-id',command_id)
+   assert result['command_id']==command_id and result['state'] in ('accepted','pending'),result
+   attempt=wait(lambda:(a if (p:=lab/'thread-start-attempt.json').exists()
+                       and (a:=json.loads(p.read_text()))['thread']==internal else None),
+                'internal thread failure reached injected boundary')
+   failed_id=attempt['endpoint_id']; assert failed_id!=original_id
+   wait(lambda:(r if (r:=record()) and r['execution_id']==failed_id and r['state']=='exited' else None),
+        'embedded publisher completes only after retirement')
+   try:
+    os.kill(attempt['pid'],0)
+   except ProcessLookupError:
+    pass
+   else:
+    raise AssertionError('partial internal startup left its owned child alive')
+   request=urllib.request.Request(url+'/v1/tasks/'+failed_id,headers={'Authorization':'Bearer fixture-secret'})
+   with urllib.request.urlopen(request) as response: endpoint=json.load(response)['task']
+   assert endpoint['closed_by']=='agent' and endpoint['closed_at'] is not None,endpoint
+   assert owner.poll() is None and pathlib.Path(record()['socket']).is_socket()
+  finally:
+   thread_fault.unlink()
+  recovered=control(failed_id,'recover-missing')
+  assert recovered['state']=='accepted',recovered
+  replacement=record(); assert replacement['execution_id']!=failed_id and replacement['profile']==original['profile']
+  wait(lambda:(fixture/(replacement['execution_id']+'.started')).exists(),'immediate recovery after internal startup failure')
  helper=bin/'fm-busy-event.sh'; saved_helper=bin/'fixture-busy-event.sh'
  helper.rename(saved_helper)
  executable(helper, '#!/bin/sh\nexit 74\n')
@@ -488,6 +523,7 @@ fm_task_inbox_write_idempotent() {
  print('PASS transactional publication, monitoring storage recovery, foreign-registration refusal and CLI reconciliation identities')
  print('PASS atomic replacement survives directory-fsync/readback EIO, refuses foreign records and restores authorized lifecycle')
  print('PASS publisher Thread.start failure cleans up only its owned child and permits exit/relaunch/recover-missing')
+ print('PASS partial reader/state/command startup closes the endpoint before immediate authorized recovery')
  print('PASS execution-bound Deck native acceptance and unsupported-adapter no-fallback refusal')
 finally:
  # Reap only children this fixture created. Owners reap their own PTY children.
