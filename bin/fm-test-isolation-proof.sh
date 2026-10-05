@@ -494,6 +494,7 @@ worker_pid_is_running() {
 wait_one_completed_slot() {
   local slot work
   while :; do
+    check_test_inventory
     for slot in "${!WORKER_PIDS[@]}"; do
       work="$PROOF_ROOT/w${WORKER_IDX[$slot]}"
       if [ -f "$work/out/exit" ] || ! worker_pid_is_running "${WORKER_PIDS[$slot]}"; then
@@ -501,7 +502,6 @@ wait_one_completed_slot() {
         return
       fi
     done
-    check_test_inventory
     sleep 0.01
   done
 }
