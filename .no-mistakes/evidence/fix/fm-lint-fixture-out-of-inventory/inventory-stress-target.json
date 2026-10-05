@@ -1,0 +1,40 @@
+{
+  "families": [
+    {
+      "count": 2,
+      "duration_ms": 103758,
+      "failed": 0,
+      "name": "pure-contract-unit"
+    }
+  ],
+  "finished_at": "2026-10-05T19:36:23Z",
+  "run_id": "fm-test-run-1791228927712-15720",
+  "scripts": [
+    {
+      "duration_ms": 47932,
+      "exit": 0,
+      "expected_gate_skip": "none",
+      "family": "pure-contract-unit",
+      "gate_skip": false,
+      "gate_skip_reason": "",
+      "path": "tests/fm-lint.test.sh"
+    },
+    {
+      "duration_ms": 55826,
+      "exit": 0,
+      "expected_gate_skip": "none",
+      "family": "pure-contract-unit",
+      "gate_skip": false,
+      "gate_skip_reason": "",
+      "path": "tests/fm-test-run.test.sh"
+    }
+  ],
+  "selection": "scripts;jobs=4",
+  "started_at": "2026-10-05T19:35:27Z",
+  "summary": {
+    "duration_ms": 56062,
+    "failed": 0,
+    "skipped_gate": 0,
+    "total": 2
+  }
+}

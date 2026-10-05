@@ -1,0 +1,45 @@
++ . bin/fm-wake-lib.sh
+++ case "${BASH_SOURCE[0]}" in
+++ FM_WAKE_LIB_DIR=bin
+++ '[' -n bin ']'
+++ case "$FM_WAKE_LIB_DIR" in
+++ FM_WAKE_LIB_DIR=bin
+++ '[' bin = . ']'
+++ '[' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA = / ']'
+++ FM_WAKE_LIB_DIR=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/bin
+++ FM_WAKE_DEFAULT_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA
+++ '[' -n /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA ']'
+++ FM_ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA
+++ FM_HOME=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA
+++ STATE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase
+++ FM_WAKE_QUEUE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.wake-queue
+++ FM_WAKE_QUEUE_LOCK=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.wake-queue.lock
+++ FM_LOCK_STALE_AFTER=2
++++ uname
+++ _FM_UNAME=Darwin
+++ mkdir -p /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase
+++ FM_WATCHER_MATCHED_IDENTITY=
+++ FM_WATCHER_HEALTHY_PID=
+++ FM_WATCHER_HEALTHY_IDENTITY=
+++ FM_WATCHER_VERDICT_OK=false
+++ FM_WATCHER_VERDICT_REASON=stale-beacon
+++ FM_RECOVERY_MARKER_TOKEN=
+++ FM_RECOVERY_MARKER_ACTION=none
+++ FM_INBOX_OVERDUE_DEFAULT=600
+++ FM_WAKE_STATUS_KEY=
+++ FM_WAKE_STATUS_HISTORICAL=false
+++ FM_WAKE_EVENT_LINE=
+++ FM_WAKE_UNREAD_LINES=
++ fm_pid_identity 94908
++ local pid=94908 out proc_root stat_line starttime cmdline_hex identity_key
++ local -a stat_fields
++ case "$pid" in
++ proc_root=/proc
++ '[' -r /proc/94908/stat ']'
+++ LC_ALL=C
+++ ps -p 94908 -o lstart= -o command=
++ out='Mon Oct  5 16:32:03 2026     /bin/bash -c rg -n '\''fm_pid_identity|ps .*lstart|PID_IDENTITY|return'\'' bin/fm-wake-lib.sh | head -45; ps -p $$ -o lstart=; FM_STATE_OVERRIDE="$PWD/.tmp-test-phase" bash -xc '\''. bin/fm-wake-lib.sh; fm_pid_identity "$PPID"'\'' > /Users/bastotecnologia/.no-mistakes/evidence/01M46Q2XHFD82QPTH8MD7GY2KA/pid-diagnostic.log 2>&1; tail -45 /Users/bastotecnologia/.no-mistakes/evidence/01M46Q2XHFD82QPTH8MD7GY2KA/pid-diagnostic.log'
++ '[' -n 'Mon Oct  5 16:32:03 2026     /bin/bash -c rg -n '\''fm_pid_identity|ps .*lstart|PID_IDENTITY|return'\'' bin/fm-wake-lib.sh | head -45; ps -p $$ -o lstart=; FM_STATE_OVERRIDE="$PWD/.tmp-test-phase" bash -xc '\''. bin/fm-wake-lib.sh; fm_pid_identity "$PPID"'\'' > /Users/bastotecnologia/.no-mistakes/evidence/01M46Q2XHFD82QPTH8MD7GY2KA/pid-diagnostic.log 2>&1; tail -45 /Users/bastotecnologia/.no-mistakes/evidence/01M46Q2XHFD82QPTH8MD7GY2KA/pid-diagnostic.log' ']'
++ printf '%s\n' 'Mon Oct  5 16:32:03 2026     /bin/bash -c rg -n '\''fm_pid_identity|ps .*lstart|PID_IDENTITY|return'\'' bin/fm-wake-lib.sh | head -45; ps -p $$ -o lstart=; FM_STATE_OVERRIDE="$PWD/.tmp-test-phase" bash -xc '\''. bin/fm-wake-lib.sh; fm_pid_identity "$PPID"'\'' > /Users/bastotecnologia/.no-mistakes/evidence/01M46Q2XHFD82QPTH8MD7GY2KA/pid-diagnostic.log 2>&1; tail -45 /Users/bastotecnologia/.no-mistakes/evidence/01M46Q2XHFD82QPTH8MD7GY2KA/pid-diagnostic.log'
++ sed 's/^[[:space:]]*//'
+Mon Oct  5 16:32:03 2026     /bin/bash -c rg -n 'fm_pid_identity|ps .*lstart|PID_IDENTITY|return' bin/fm-wake-lib.sh | head -45; ps -p $$ -o lstart=; FM_STATE_OVERRIDE="$PWD/.tmp-test-phase" bash -xc '. bin/fm-wake-lib.sh; fm_pid_identity "$PPID"' > /Users/bastotecnologia/.no-mistakes/evidence/01M46Q2XHFD82QPTH8MD7GY2KA/pid-diagnostic.log 2>&1; tail -45 /Users/bastotecnologia/.no-mistakes/evidence/01M46Q2XHFD82QPTH8MD7GY2KA/pid-diagnostic.log

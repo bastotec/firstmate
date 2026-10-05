@@ -1,0 +1,10 @@
+ok - unknown candidate pools are refused
+ok - family pool JSON scopes jobs admission to proven concurrency
+ok - a transient tests/*.test.sh write fails the proof during worker replacement
+ok - candidate --list is non-empty, sorted, unique, and real
+ok - serial classes remain excluded from the parallel candidate set
+ok - audited fake-backend and stub-network extras are candidates
+ok - exclusion list documents serial reasons
+ok - isolation-proof contract test is family-mapped
+ok - parallel shards consume the proven-isolated set only
+ok - fixture repositories pin their initial branch to main

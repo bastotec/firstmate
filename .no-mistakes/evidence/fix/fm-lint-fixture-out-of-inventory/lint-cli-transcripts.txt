@@ -1,0 +1,47 @@
+Captured real fm-lint CLI outputs from the focused existing behavioral test (ShellCheck 0.11.0).
+
+Changed-file and explicit-path executions
+=========================================
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: local changed-file mode; ShellCheck source following disabled
+fm-lint.sh: 1 of 1 roots have no measured reservation; each will run alone.
+
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+fm-lint.sh: 1 of 1 roots have no measured reservation; each will run alone.
+
+In /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/tests/fm-lint-local-exclude-fixture.test.sh line 3:
+cross_file_only=1
+^-------------^ SC2034 (warning): cross_file_only appears unused. Verify use (or export if used externally).
+
+
+In /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/tests/fm-lint-local-exclude-fixture.test.sh line 7:
+    cross_file_helper() {
+    ^-- SC2329 (info): This function is never invoked. Check usage (or ignored if invoked indirectly).
+
+For more information:
+  https://www.shellcheck.net/wiki/SC2034 -- cross_file_only appears unused. V...
+  https://www.shellcheck.net/wiki/SC2329 -- This function is never invoked. C...
+
+CI execution with CI=true and GITHUB_ACTIONS=true
+=================================================
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: local changed-file mode; ShellCheck source following disabled
+fm-lint.sh: 1 of 1 roots have no measured reservation; each will run alone.
+
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+fm-lint.sh: 1 of 1 roots have no measured reservation; each will run alone.
+
+In /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.NQpDo5/repo/tests/fm-lint-local-exclude-fixture.test.sh line 3:
+cross_file_only=1
+^-------------^ SC2034 (warning): cross_file_only appears unused. Verify use (or export if used externally).
+
+
+In /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.NQpDo5/repo/tests/fm-lint-local-exclude-fixture.test.sh line 7:
+    cross_file_helper() {
+    ^-- SC2329 (info): This function is never invoked. Check usage (or ignored if invoked indirectly).
+
+For more information:
+  https://www.shellcheck.net/wiki/SC2034 -- cross_file_only appears unused. V...
+  https://www.shellcheck.net/wiki/SC2329 -- This function is never invoked. C...

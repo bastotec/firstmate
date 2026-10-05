@@ -1,0 +1,25 @@
+Executable regression check: . tests/lib.sh || exit 2; LINT="$ROOT/bin/fm-lint.sh"; eval "$(head -n 727 tests/fm-lint.test.sh | tail -n +21)"; test_changed_mode_hides_cross_file_codes_that_ci_still_sees
+not ok - changed-mode local lint failed a cross-file-only fixture
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: local changed-file mode; ShellCheck source following disabled
+fm-lint.sh: 1 of 1 roots have no measured reservation; each will run alone.
+
+In tests/fm-lint-local-exclude-fixture.test.sh line 3:
+cross_file_only=1
+^-------------^ SC2034 (warning): cross_file_only appears unused. Verify use (or export if used externally).
+
+
+In tests/fm-lint-local-exclude-fixture.test.sh line 7:
+    cross_file_helper() {
+    ^-- SC2329 (info): This function is never invoked. Check usage (or ignored if invoked indirectly).
+
+For more information:
+  https://www.shellcheck.net/wiki/SC2034 -- cross_file_only appears unused. V...
+  https://www.shellcheck.net/wiki/SC2329 -- This function is never invoked. C...
+
+Regression-check exit=1 (expected 1)
+
+Executable regression check: . tests/lib.sh || exit 2; eval "$(head -n 244 tests/fm-test-isolation-proof.test.sh | tail -n +8)"; test_transient_test_inventory_write_fails_the_proof
+not ok - a transient tests/*.test.sh write must fail the proof, got 0: fm-test-isolation-proof: wrote isolation proof artifact: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-test-isolation-proof-inventory.wJ3LKE/proof.json
+
+Regression-check exit=1 (expected 1)

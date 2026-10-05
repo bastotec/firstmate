@@ -1,0 +1,98 @@
++ test_changed_mode_hides_cross_file_codes_that_ci_still_sees
++ pinned_ready
++ command -v shellcheck
+++ shellcheck --version
+++ awk '/^version:/ {print $2; exit}'
++ '[' 0.11.0 = 0.11.0 ']'
++ local tmp repo lint_copy fakebin diff_file fixture out rc
+++ fm_test_tmproot fm-lint-local-exclude-behavior
+++ local prefix=fm-lint-local-exclude-behavior root tmp_base
+++ tmp_base=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase
+++ tmp_base=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase
++++ mktemp -d /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.XXXXXX
+++ root=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1
++++ cd -P -- /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1
++++ pwd -P
+++ root=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1
+++ printf '%s\n%s\n' 97001 'Mon Oct  5 16:32:13 2026     bash -c . tests/lib.sh || { echo "lib failed"; exit 2; }; LINT="$ROOT/bin/fm-lint.sh"; eval "$(head -n 727 tests/fm-lint.test.sh | tail -n +21)"; set -x; test_changed_mode_hides_cross_file_codes_that_ci_still_sees'
+++ printf '%s\n' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1
+++ printf '%s\n' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1
++ tmp=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1
++ repo=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo
++ mkdir -p /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/bin/backends /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/tests
++ lint_copy=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/bin/fm-lint.sh
++ cp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/bin/fm-lint.sh /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/bin/fm-lint-plan.pl /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/bin/fm-lint-memory.tsv /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/bin/
++ printf '#!/usr/bin/env bash\nexit 0\n'
++ printf '#!/usr/bin/env bash\nexit 0\n'
++ chmod +x /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/bin/fm-lint.sh /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/bin/fm-lint-workflows.sh
++ fixture=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/tests/fm-lint-local-exclude-fixture.test.sh
++ cat
+++ fm_fakebin /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1
+++ local dir=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1 fakebin=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/fakebin
+++ mkdir -p /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/fakebin
+++ printf '%s\n' /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/fakebin
++ fakebin=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/fakebin
++ fm_lint_stub_git /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/fakebin
++ local fakebin=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/fakebin
++ cat
++ chmod +x /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/fakebin/git
++ diff_file=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/diff.nul
++ fm_lint_write_diff_file /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/diff.nul tests/fm-lint-local-exclude-fixture.test.sh
++ local file=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/diff.nul
++ shift
++ printf '%s\0' tests/fm-lint-local-exclude-fixture.test.sh
++ rc=0
+++ PATH=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/fakebin:/Users/bastotecnologia/.pi/agent/bin:/Users/bastotecnologia/.local/bin:/Users/bastotecnologia/go/bin:/Users/bastotecnologia/.cargo/bin:/Users/bastotecnologia/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+++ GITHUB_ACTIONS=
+++ CI=
+++ FM_LINT_JOBS=1
+++ FM_TEST_GIT_BRANCH=feature
+++ FM_TEST_GIT_DIFF_FILE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/diff.nul
+++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/bin/fm-lint.sh
++ out=$'fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)\nfm-lint.sh: local changed-file mode; ShellCheck source following disabled\nfm-lint.sh: 1 of 1 roots have no measured reservation; each will run alone.'
++ '[' 0 -eq 0 ']'
++ assert_not_contains $'fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)\nfm-lint.sh: local changed-file mode; ShellCheck source following disabled\nfm-lint.sh: 1 of 1 roots have no measured reservation; each will run alone.' SC2034 'changed-mode local lint still reported SC2034'
++ case "$1" in
++ :
++ assert_not_contains $'fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)\nfm-lint.sh: local changed-file mode; ShellCheck source following disabled\nfm-lint.sh: 1 of 1 roots have no measured reservation; each will run alone.' SC2329 'changed-mode local lint still reported SC2329'
++ case "$1" in
++ :
++ rc=0
+++ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/bin/fm-lint.sh /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/tests/fm-lint-local-exclude-fixture.test.sh
++ out=$'fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)\nfm-lint.sh: full ShellCheck extended analysis enabled\nfm-lint.sh: 1 of 1 roots have no measured reservation; each will run alone.\n\nIn /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/tests/fm-lint-local-exclude-fixture.test.sh line 3:\ncross_file_only=1\n^-------------^ SC2034 (warning): cross_file_only appears unused. Verify use (or export if used externally).\n\n\nIn /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/tests/fm-lint-local-exclude-fixture.test.sh line 7:\n    cross_file_helper() {\n    ^-- SC2329 (info): This function is never invoked. Check usage (or ignored if invoked indirectly).\n\nFor more information:\n  https://www.shellcheck.net/wiki/SC2034 -- cross_file_only appears unused. V...\n  https://www.shellcheck.net/wiki/SC2329 -- This function is never invoked. C...'
++ rc=1
++ '[' 1 -ne 0 ']'
++ assert_contains $'fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)\nfm-lint.sh: full ShellCheck extended analysis enabled\nfm-lint.sh: 1 of 1 roots have no measured reservation; each will run alone.\n\nIn /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/tests/fm-lint-local-exclude-fixture.test.sh line 3:\ncross_file_only=1\n^-------------^ SC2034 (warning): cross_file_only appears unused. Verify use (or export if used externally).\n\n\nIn /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/tests/fm-lint-local-exclude-fixture.test.sh line 7:\n    cross_file_helper() {\n    ^-- SC2329 (info): This function is never invoked. Check usage (or ignored if invoked indirectly).\n\nFor more information:\n  https://www.shellcheck.net/wiki/SC2034 -- cross_file_only appears unused. V...\n  https://www.shellcheck.net/wiki/SC2329 -- This function is never invoked. C...' SC2034 'explicit-path lint did not keep SC2034'
++ case "$1" in
++ :
++ assert_contains $'fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)\nfm-lint.sh: full ShellCheck extended analysis enabled\nfm-lint.sh: 1 of 1 roots have no measured reservation; each will run alone.\n\nIn /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/tests/fm-lint-local-exclude-fixture.test.sh line 3:\ncross_file_only=1\n^-------------^ SC2034 (warning): cross_file_only appears unused. Verify use (or export if used externally).\n\n\nIn /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1/repo/tests/fm-lint-local-exclude-fixture.test.sh line 7:\n    cross_file_helper() {\n    ^-- SC2329 (info): This function is never invoked. Check usage (or ignored if invoked indirectly).\n\nFor more information:\n  https://www.shellcheck.net/wiki/SC2034 -- cross_file_only appears unused. V...\n  https://www.shellcheck.net/wiki/SC2329 -- This function is never invoked. C...' SC2329 'explicit-path lint did not keep SC2329'
++ case "$1" in
++ :
++ pass 'fm-lint.sh changed mode excludes cross-file codes that explicit paths still report'
++ printf 'ok - %s\n' 'fm-lint.sh changed mode excludes cross-file codes that explicit paths still report'
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
++ fm_test_cleanup
++ local d
++ fm_test_reap_procevent_homes
++ local home claim_root $'seen=\n'
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-procevent.97001.XSomW3 ']'
++ IFS=$'\t'
++ read -r home claim_root
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-procevent.97001.XSomW3
++ for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"
++ '[' -n '' ']'
++ fm_test_reap_helper_pids
++ local pid
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-helpers.97001.wE4mTH ']'
++ IFS=
++ read -r pid
++ :
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-helpers.97001.wE4mTH
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-cleanup.97001.O7AtoK ']'
++ IFS=
++ read -r d
++ '[' -n /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1 ']'
++ rm -rf /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-lint-local-exclude-behavior.876AP1
++ IFS=
++ read -r d
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-cleanup.97001.O7AtoK

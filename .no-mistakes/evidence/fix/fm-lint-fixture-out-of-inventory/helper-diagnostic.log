@@ -1,0 +1,145 @@
++ . tests/lib.sh
+++ '[' -n '' ']'
+++ FM_TEST_LIB_SOURCED=1
+++ umask 022
++++ dirname tests/lib.sh
+++ . tests/git-config-helpers.sh
++++ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
++++ GIT_CONFIG_GLOBAL=/dev/null
++++ GIT_CONFIG_NOSYSTEM=1
+++ export FM_GATE_REFUSE_BYPASS=1
+++ FM_GATE_REFUSE_BYPASS=1
+++ export FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+++ unset FM_ASK_TRIAGE_HELPER FM_ASK_TRIAGE_KEY_VAR
+++ unset FM_TASK_ID
+++ unset TASKS_AXI_FILE TASKS_AXI_BACKEND
+++++ dirname tests/lib.sh
++++ cd tests/..
++++ pwd
+++ ROOT=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA
+++ FM_TEST_CLEANUP_DIRS=()
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-cleanup.83309.XXXXXX
+++ FM_TEST_CLEANUP_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-cleanup.83309.V01DwA
++++ fm_test_pid_identity 83309
++++ local pid=83309
++++ FM_STATE_OVERRIDE=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase
++++ bash -c '. "$1"; fm_pid_identity "$2"' _ /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/bin/fm-wake-lib.sh 83309
+++ FM_TEST_OWNER_IDENTITY='Mon Oct  5 16:31:36 2026     bash -xc . tests/lib.sh; rc=$?; printf "lib rc=%s\n" "$rc"; type fm_live_gate'
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-helpers.83309.XXXXXX
+++ FM_TEST_HELPER_PID_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-helpers.83309.Vc6gCW
++++ mktemp /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-procevent.83309.XXXXXX
+++ FM_TEST_PROCEVENT_REGISTRY=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-procevent.83309.kQHE36
+++ FM_TEST_STUB_MAX_BLOCK_SECONDS=120
+++ export FM_TEST_STUB_MAX_BLOCK_SECONDS
+++ trap fm_test_cleanup EXIT
+++ trap 'fm_test_cleanup; exit 130' INT
+++ trap 'fm_test_cleanup; exit 143' TERM
+++ trap 'fm_test_cleanup; exit 129' HUP
+++ trap 'fm_test_cleanup; exit 131' QUIT
+++ FM_TEST_ORPHAN_MAX_AGE_SECONDS=3600
+++ '[' 0 '!=' 1 ']'
+++ fm_test_reap_orphans
+++ local marker dir mtime now owner_pid owner_identity current_identity
++++ date +%s
+++ now=1791228696
+++ for marker in "${TMPDIR:-/tmp}"/fm-*/.fm-test-fixture
+++ '[' -e '/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-*/.fm-test-fixture' ']'
+++ continue
++ rc=0
++ printf 'lib rc=%s\n' 0
+lib rc=0
++ type fm_live_gate
+fm_live_gate is a function
+fm_live_gate () 
+{ 
+    local policy=$1 vars=$2;
+    shift 2;
+    local var value rest primary requested=0 disabled_by='' tool;
+    local -a var_list=();
+    case "$policy" in 
+        default-on | opt-in)
+
+        ;;
+        *)
+            fail "fm_live_gate: unknown policy '$policy' (expected default-on or opt-in)"
+        ;;
+    esac;
+    rest=$vars;
+    while [ -n "$rest" ]; do
+        var=${rest%%,*};
+        if [ "$var" = "$rest" ]; then
+            rest='';
+        else
+            rest=${rest#*,};
+        fi;
+        [ -n "$var" ] && var_list+=("$var");
+    done;
+    [ "${#var_list[@]}" -gt 0 ] || fail "fm_live_gate: at least one control variable is required";
+    primary=${var_list[0]};
+    for var in "${var_list[@]}";
+    do
+        value=${!var:-};
+        case "$value" in 
+            1)
+                requested=1
+            ;;
+            0)
+                [ -n "$disabled_by" ] || disabled_by=$var
+            ;;
+        esac;
+    done;
+    if [ "$requested" -eq 0 ]; then
+        if [ -n "$disabled_by" ]; then
+            printf 'skip: live: disabled by %s=0\n' "$disabled_by";
+            exit 0;
+        fi;
+        case "${FM_LIVE:-}" in 
+            0)
+                printf 'skip: live: disabled by FM_LIVE=0\n';
+                exit 0
+            ;;
+            1)
+                requested=1
+            ;;
+            *)
+                if [ "$policy" = opt-in ]; then
+                    printf 'skip: live: opt-in; set %s=1 to run\n' "$primary";
+                    exit 0;
+                fi
+            ;;
+        esac;
+    fi;
+    for tool in "$@";
+    do
+        command -v "$tool" > /dev/null 2>&1 && continue;
+        if [ "$requested" -eq 1 ]; then
+            printf 'not ok - %s was requested but %s is not installed\n' "$primary" "$tool" 1>&2;
+            exit 1;
+        fi;
+        printf 'skip: live: %s absent\n' "$tool";
+        exit 0;
+    done;
+    return 0
+}
++ fm_test_cleanup
++ local d
++ fm_test_reap_procevent_homes
++ local home claim_root $'seen=\n'
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-procevent.83309.kQHE36 ']'
++ IFS=$'\t'
++ read -r home claim_root
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-procevent.83309.kQHE36
++ for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"
++ '[' -n '' ']'
++ fm_test_reap_helper_pids
++ local pid
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-helpers.83309.Vc6gCW ']'
++ IFS=
++ read -r pid
++ :
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-helpers.83309.Vc6gCW
++ '[' -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-cleanup.83309.V01DwA ']'
++ IFS=
++ read -r d
++ rm -f /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/.fm-test-cleanup.83309.V01DwA

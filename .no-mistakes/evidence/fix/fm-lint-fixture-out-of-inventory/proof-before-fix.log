@@ -1,0 +1,4 @@
+Executable regression check: . tests/lib.sh || exit 2; eval "$(head -n 244 tests/fm-test-isolation-proof.test.sh | tail -n +8)"; test_transient_test_inventory_write_fails_the_proof
+not ok - a transient tests/*.test.sh write must fail the proof, got 0: fm-test-isolation-proof: wrote isolation proof artifact: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46Q2XHFD82QPTH8MD7GY2KA/.tmp-test-phase/fm-test-isolation-proof-inventory.wJ3LKE/proof.json
+
+Regression-check exit=1 (expected 1)

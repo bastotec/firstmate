@@ -1,0 +1,10 @@
+Existing-suite stress: selected changed-mode fixture test runs 40 times concurrently with coverage scenarios.
+bin/fm-test-run.sh tests/fm-lint.test.sh tests/fm-test-run.test.sh --json /Users/bastotecnologia/.no-mistakes/evidence/01M46Q2XHFD82QPTH8MD7GY2KA/inventory-stress-base.json
+FM_TEST_BEGIN 2026-10-05T19:36:23Z tests/fm-lint.test.sh family=pure-contract-unit expected_gate_skip=none
+FM_TEST_BEGIN 2026-10-05T19:36:23Z tests/fm-test-run.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - exact suite coverage: --all lists every tests/*.test.sh once
+ok - portable shard union, disjointness, and coverage guard hold
+ok - portable serial shards are a deterministic disjoint cover of the serial lane
+FM_TEST_END 2026-10-05T19:37:40Z tests/fm-test-run.test.sh exit=0 duration_ms=76060 gate_skip=false
+
+Baseline stress interrupted at 180 seconds; coverage checks had passed, so the original coverage-guard race was not reproduced. Only owned remaining processes were terminated.

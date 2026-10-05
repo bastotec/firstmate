@@ -1,0 +1,56 @@
+Existing-suite stress: selected changed-mode fixture test runs 40 times concurrently with coverage scenarios.
+bin/fm-test-run.sh tests/fm-lint.test.sh tests/fm-test-run.test.sh --json /Users/bastotecnologia/.no-mistakes/evidence/01M46Q2XHFD82QPTH8MD7GY2KA/inventory-stress-target.json
+FM_TEST_BEGIN 2026-10-05T19:35:27Z tests/fm-lint.test.sh family=pure-contract-unit expected_gate_skip=none
+FM_TEST_BEGIN 2026-10-05T19:35:27Z tests/fm-test-run.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+FM_TEST_END 2026-10-05T19:36:15Z tests/fm-lint.test.sh exit=0 duration_ms=47932 gate_skip=false
+ok - exact suite coverage: --all lists every tests/*.test.sh once
+ok - portable shard union, disjointness, and coverage guard hold
+ok - portable serial shards are a deterministic disjoint cover of the serial lane
+FM_TEST_END 2026-10-05T19:36:23Z tests/fm-test-run.test.sh exit=0 duration_ms=55826 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=56062
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=2 duration_ms=103758 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-test-run.test.sh duration_ms=55826
+FM_TEST_SLOWEST rank=2 script=tests/fm-lint.test.sh duration_ms=47932
+fm-test-run: wrote timing artifact: /Users/bastotecnologia/.no-mistakes/evidence/01M46Q2XHFD82QPTH8MD7GY2KA/inventory-stress-target.json
+
+Invocation exit=0
