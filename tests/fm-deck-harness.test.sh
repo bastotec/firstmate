@@ -242,6 +242,33 @@ PYTHON
   pass "Deck MCP config follows config override, home, and code-root precedence for workers and scouts"
 }
 
+test_mcp_config_is_not_inherited_into_secondmate_homes() (
+  local dir="$TMP_ROOT/mcp-inheritance" src home
+  src="$dir/primary/config"; home="$dir/secondmate"
+  mkdir -p "$src" "$home/config"
+  git init -q "$home" || fail "could not initialize the secondmate config fixture"
+  printf 'config/\n' > "$home/.gitignore"
+  printf 'deck\n' > "$src/crew-harness"
+  printf '{"servers":{"primary-only":{}}}\n' > "$src/deck-mcp.json"
+  unset FM_INHERITABLE_CONFIG
+  # shellcheck source=bin/fm-config-inherit-lib.sh
+  . "$ROOT/bin/fm-config-inherit-lib.sh"
+  propagate_inheritable_config "$src" "$home/config" || fail "config propagation failed"
+  [ -f "$home/config/crew-harness" ] || fail "the shared config did not propagate"
+  [ ! -e "$home/config/deck-mcp.json" ] || fail "the primary MCP config was inherited"
+  printf '{"servers":{"secondmate-only":{}}}\n' > "$home/config/deck-mcp.json"
+  cp "$home/config/deck-mcp.json" "$dir/local-before.json"
+  propagate_inheritable_config "$src" "$home/config" || fail "config re-propagation failed"
+  cmp -s "$dir/local-before.json" "$home/config/deck-mcp.json" \
+    || fail "propagation overwrote the secondmate's local MCP config"
+  rm "$src/deck-mcp.json"
+  propagate_inheritable_config "$src" "$home/config" || fail "config absence propagation failed"
+  cmp -s "$dir/local-before.json" "$home/config/deck-mcp.json" \
+    || fail "primary MCP absence removed the secondmate's local config"
+  printf '{"case":"mcp-inheritance","empty_home_received_mcp":false,"local_mcp_preserved_after_push_and_primary_removal":true}\n'
+  pass "Deck MCP config stays home-local during config propagation and absence mirroring"
+)
+
 test_turns_drive_the_busy_record_and_turn_end() {
   local dir="$TMP_ROOT/busy" rec
   make_fake_deck "$dir"
@@ -2130,6 +2157,7 @@ test_secondmate_stops_when_a_failed_turn_cannot_be_recorded
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_carry_the_home_mcp_config
 test_mcp_config_directory_precedence_and_scout_scope
+test_mcp_config_is_not_inherited_into_secondmate_homes
 test_turns_drive_the_busy_record_and_turn_end
 test_busy_state_failures_stop_turns_and_publish_status
 test_turnend_signal_refuses_unsafe_paths
