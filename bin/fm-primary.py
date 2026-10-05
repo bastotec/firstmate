@@ -142,7 +142,7 @@ def read_record(path):
     return record
 
 
-def write_record(path, record):
+def write_record(path, record, on_replace=None):
     body = json.dumps(record, sort_keys=True) + '\n'
     if len(body.encode('utf-8')) > 131072:
         raise Refused('primary record exceeds size limit')
@@ -153,6 +153,8 @@ def write_record(path, record):
             file.flush()
             os.fsync(file.fileno())
         os.replace(tmp, path)
+        if on_replace is not None:
+            on_replace()
         directory = os.open(path.parent, os.O_RDONLY)
         try:
             os.fsync(directory)
@@ -218,25 +220,37 @@ class Owner:
         self.socket = None
         self.socket_path = None
         self.saved_record = None
+        self.pending_record = None
         self.action_started = False
         self.stopping = False
 
+    def replaced_registration(self, record):
+        self.record = json.loads(json.dumps(record))
+        if self.saved_record is None:
+            self.saved_record = json.loads(json.dumps(record))
+
+    def commit_registration(self, record):
+        self.record = json.loads(json.dumps(record))
+        self.saved_record = json.loads(json.dumps(record))
+
+    def reconcile_registration(self):
+        actual = read_record(self.path)
+        if self.pending_record is not None and actual == self.pending_record:
+            self.commit_registration(self.pending_record)
+        elif actual == self.saved_record:
+            self.record = json.loads(json.dumps(self.saved_record))
+        else:
+            raise Refused('primary registration changed; capability refused')
+        self.pending_record = None
+
     def publish(self, **changes):
-        candidate = dict(self.record, **changes)
-        if self.saved_record is not None and read_record(self.path) != self.saved_record:
-            raise Refused('primary registration changed; publication refused')
-        try:
-            write_record(self.path, candidate)
-        except (ValueError, OSError):
-            try:
-                if read_record(self.path) == candidate:
-                    self.record = candidate
-                    self.saved_record = json.loads(json.dumps(candidate))
-            except (ValueError, OSError):
-                pass
-            raise
-        self.record = candidate
-        self.saved_record = json.loads(json.dumps(candidate))
+        if self.saved_record is not None or self.pending_record is not None:
+            self.reconcile_registration()
+        candidate = json.loads(json.dumps(dict(self.record, **changes)))
+        self.pending_record = candidate
+        write_record(self.path, candidate, on_replace=lambda: self.replaced_registration(candidate))
+        self.commit_registration(candidate)
+        self.pending_record = None
 
     def reserve(self):
         fd = os.open(self.root / '.owner.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -342,8 +356,7 @@ class Owner:
         if (not isinstance(request, dict) or not isinstance(request.get('command_id'), str)
                 or not request['command_id'] or len(request['command_id']) > 256):
             raise Refused('primary control requires a stable command id')
-        if read_record(self.path) != self.record:
-            raise Refused('primary registration changed; capability refused')
+        self.reconcile_registration()
         if not secrets.compare_digest(str(request.get('capability')), self.record['capability']):
             raise Refused('invalid primary control capability')
         if request.get('kind') == 'steer':
@@ -375,8 +388,7 @@ class Owner:
 
     def apply(self, request):
         self.action_started = False
-        if read_record(self.path) != self.record:
-            raise Refused('primary registration changed; capability refused')
+        self.reconcile_registration()
         if not isinstance(request, dict):
             raise Refused('invalid primary control request')
         required = {'capability', 'execution_id', 'kind', 'command_id'}
@@ -428,9 +440,12 @@ class Owner:
             self.reserve()
             self.start()
             while not self.stopping:
-                if self.thread and not self.thread.is_alive() and self.record['state'] == 'running':
+                if self.pending_record is not None or (
+                        self.thread and not self.thread.is_alive() and self.record['state'] == 'running'):
                     try:
-                        self.publish(state='failed' if self.agent.pty.alive() else 'exited')
+                        self.reconcile_registration()
+                        if self.thread and not self.thread.is_alive() and self.record['state'] == 'running':
+                            self.publish(state='failed' if self.agent.pty.alive() else 'exited')
                     except (ValueError, OSError, RuntimeError) as exc:
                         print('managed-primary: registration publication pending: %s' % exc,
                               file=sys.stderr, flush=True)

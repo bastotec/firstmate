@@ -57,21 +57,53 @@ while True: time.sleep(1)
 publication_fault=lab/'publication-fault.json'
 publication_attempts=lab/'publication-attempts'; publication_attempts.mkdir()
 executable(bin/'fixture-primary-launch.py', '''#!/usr/bin/env python3
-import errno, importlib.util, json, os, pathlib, sys
+import errno, importlib.util, json, os, pathlib, stat, sys
 spec=importlib.util.spec_from_file_location('fixture_primary',pathlib.Path(__file__).with_name('fm-primary.py'))
 owner=importlib.util.module_from_spec(spec); spec.loader.exec_module(owner)
 write=owner.write_record
+read=owner.read_record
+fsync=os.fsync
 fault=pathlib.Path(os.environ['FM_TEST_PUBLICATION_FAULT'])
 attempts=pathlib.Path(os.environ['FM_TEST_PUBLICATION_ATTEMPTS'])
-def inject(path,record):
+read_errors=attempts.parent/'readback-errors'
+sync_target=None
+unreadable=None
+unreadable_rule=None
+
+def inject_sync(fd):
+ global unreadable, unreadable_rule
+ if sync_target is not None:
+  info=os.fstat(fd); parent=sync_target.parent.stat()
+  if stat.S_ISDIR(info.st_mode) and (info.st_dev,info.st_ino)==(parent.st_dev,parent.st_ino):
+   unreadable=sync_target
+   unreadable_rule=json.loads(fault.read_text())
+   raise OSError(errno.EIO,'fixture registration directory fsync failure',str(sync_target))
+ fsync(fd)
+
+def inject_read(path):
+ if path==unreadable and fault.exists() and json.loads(fault.read_text())==unreadable_rule:
+  count=int(read_errors.read_text()) if read_errors.exists() else 0
+  staged=read_errors.with_suffix('.next'); staged.write_text(str(count+1)); staged.replace(read_errors)
+  raise OSError(errno.EIO,'fixture registration readback failure',str(path))
+ return read(path)
+
+def inject(path,record,on_replace=None):
+ global sync_target
  if path.name=='registration.json' and fault.exists():
   rule=json.loads(fault.read_text())
   if record['state']==rule['state']:
    write(attempts/(str(len(list(attempts.glob('*.json'))))+'.json'),record)
-   if rule['phase']=='after': write(path,record)
+   if rule['phase']=='fsync-readback':
+    sync_target=path
+    try: write(path,record,**({'on_replace':on_replace} if on_replace is not None else {}))
+    finally: sync_target=None
+    return
+   if rule['phase']=='after': write(path,record,**({'on_replace':on_replace} if on_replace is not None else {}))
    raise OSError(errno.ENOSPC,'fixture registration storage failure',str(path))
- write(path,record)
+ write(path,record,**({'on_replace':on_replace} if on_replace is not None else {}))
 owner.write_record=inject
+owner.read_record=inject_read
+owner.os.fsync=inject_sync
 sys.exit(owner.main())
 ''')
 # Launch a real isolated stream hub on an ephemeral loopback port.
@@ -328,6 +360,38 @@ fm_task_inbox_write_idempotent() {
    publication_fault.unlink()
   assert control(original_id,'relaunch','--command-id',failed_relaunch['command_id'])==failed_relaunch
   assert control(committed['execution_id'],'recover-missing')['state']=='accepted'
+ for action in ('exit','relaunch'):
+  original=record(); original_id=original['execution_id']
+  wait(lambda:(fixture/(original_id+'.started')).exists(),'EIO fixture child')
+  attempt_count=len(list(publication_attempts.glob('*.json')))
+  read_errors=lab/'readback-errors'; read_errors.unlink(missing_ok=True)
+  publication_fault.write_text(json.dumps({'state':'exited' if action=='exit' else 'running',
+                                           'phase':'fsync-readback'}))
+  try:
+   failed=control(original_id,action)
+   assert failed['state']=='pending' and 'directory fsync failure' in failed['message'],failed
+   candidate=json.loads((publication_attempts/(str(attempt_count)+'.json')).read_text())
+   assert record()==candidate,'atomic replacement did not publish the owner-authored candidate'
+   wait(lambda:read_errors.exists() and int(read_errors.read_text())>=2,
+        'monitoring retries unavailable readback even after exit')
+   assert owner.poll() is None and pathlib.Path(candidate['socket']).is_socket()
+   stage=registration.with_suffix('.fixture')
+   foreign=dict(candidate,label='foreign-eio-fixture')
+   stage.write_text(json.dumps(foreign)); stage.chmod(0o600); stage.replace(registration)
+  finally:
+   publication_fault.unlink()
+  try:
+   refused=control(candidate['execution_id'],'exit',success=False)
+   assert 'registration changed' in refused['message'],refused
+   assert record()==foreign and owner.poll() is None,'uncertain publication adopted or overwrote a foreign record'
+  finally:
+   restored=original if action=='exit' else candidate
+   stage.write_text(json.dumps(restored)); stage.chmod(0o600); stage.replace(registration)
+  committed=wait(lambda:(r if (r:=record()) and r['state']=='exited' else None),
+                 'EIO publication reconciles after storage restoration')
+  assert committed['execution_id']==candidate['execution_id'] and committed['profile']==original['profile']
+  assert control(original_id,action,'--command-id',failed['command_id'])==failed,'EIO pending receipt repeated lifecycle'
+  assert control(committed['execution_id'],'relaunch')['state']=='accepted'
  helper=bin/'fm-busy-event.sh'; saved_helper=bin/'fixture-busy-event.sh'
  helper.rename(saved_helper)
  executable(helper, '#!/bin/sh\nexit 74\n')
@@ -377,6 +441,7 @@ fm_task_inbox_write_idempotent() {
  print('PASS enqueue subprocess failure stays pending, preserves owner/child and reconciles the original order')
  print('PASS token failure retains manager/socket and pending receipt; restored fixture token permits authorized recovery')
  print('PASS transactional publication, monitoring storage recovery, foreign-registration refusal and CLI reconciliation identities')
+ print('PASS atomic replacement survives directory-fsync/readback EIO, refuses foreign records and restores authorized lifecycle')
  print('PASS execution-bound Deck native acceptance and unsupported-adapter no-fallback refusal')
 finally:
  # Reap only children this fixture created. Owners reap their own PTY children.
