@@ -104,6 +104,17 @@ def inject(path,record,on_replace=None):
 owner.write_record=inject
 owner.read_record=inject_read
 owner.os.fsync=inject_sync
+thread_start=owner.threading.Thread.start
+thread_fault=attempts.parent/'thread-start-fault'
+thread_attempt=attempts.parent/'thread-start-attempt.json'
+def inject_thread_start(thread):
+ target=getattr(thread,'_target',None)
+ if thread_fault.exists() and getattr(target,'__func__',None) is owner.stream.Agent.run:
+  agent=target.__self__
+  write(thread_attempt,{'endpoint_id':agent.endpoint_id,'pid':agent.pty.pid})
+  raise RuntimeError('fixture publisher thread start failure')
+ return thread_start(thread)
+owner.threading.Thread.start=inject_thread_start
 sys.exit(owner.main())
 ''')
 # Launch a real isolated stream hub on an ephemeral loopback port.
@@ -392,6 +403,40 @@ fm_task_inbox_write_idempotent() {
   assert committed['execution_id']==candidate['execution_id'] and committed['profile']==original['profile']
   assert control(original_id,action,'--command-id',failed['command_id'])==failed,'EIO pending receipt repeated lifecycle'
   assert control(committed['execution_id'],'relaunch')['state']=='accepted'
+ thread_fault=lab/'thread-start-fault'
+ for recovery in ('exit','relaunch','recover-missing'):
+  original=record(); original_id=original['execution_id']
+  wait(lambda:(fixture/(original_id+'.started')).exists(),'thread-start fixture child')
+  command_id='fixture-thread-failure-'+recovery
+  thread_fault.touch()
+  try:
+   failed=control(original_id,'relaunch','--command-id',command_id)
+   assert failed['state']=='pending' and failed['command_id']==command_id,failed
+   assert 'fixture publisher thread start failure' in failed['message'],failed
+   attempt=json.loads((lab/'thread-start-attempt.json').read_text())
+   failed_id=attempt['endpoint_id']; assert failed_id!=original_id
+   try:
+    os.kill(attempt['pid'],0)
+   except ProcessLookupError:
+    pass
+   else:
+    raise AssertionError('failed publisher left its owned PTY child alive')
+   request=urllib.request.Request(url+'/v1/tasks/'+failed_id,headers={'Authorization':'Bearer fixture-secret'})
+   with urllib.request.urlopen(request) as response: endpoint=json.load(response)['task']
+   assert endpoint['closed_by']=='agent' and endpoint['closed_at'] is not None,endpoint
+   assert owner.poll() is None and record()['execution_id']==failed_id
+   assert pathlib.Path(record()['socket']).is_socket()
+   assert control(original_id,'relaunch','--command-id',command_id)==failed,'thread failure receipt repeated lifecycle'
+  finally:
+   thread_fault.unlink()
+  recovered=control(failed_id,recovery)
+  assert recovered['state']=='accepted',recovered
+  if recovery=='exit':
+   assert record()['state']=='exited' and record()['execution_id']==failed_id
+   assert control(failed_id,'recover-missing')['state']=='accepted'
+  replacement=record(); assert replacement['state']=='running' and replacement['execution_id']!=failed_id
+  wait(lambda:(fixture/(replacement['execution_id']+'.started')).exists(),'restored publisher child')
+  assert replacement['profile']==original['profile'] and owner.poll() is None
  helper=bin/'fm-busy-event.sh'; saved_helper=bin/'fixture-busy-event.sh'
  helper.rename(saved_helper)
  executable(helper, '#!/bin/sh\nexit 74\n')
@@ -442,6 +487,7 @@ fm_task_inbox_write_idempotent() {
  print('PASS token failure retains manager/socket and pending receipt; restored fixture token permits authorized recovery')
  print('PASS transactional publication, monitoring storage recovery, foreign-registration refusal and CLI reconciliation identities')
  print('PASS atomic replacement survives directory-fsync/readback EIO, refuses foreign records and restores authorized lifecycle')
+ print('PASS publisher Thread.start failure cleans up only its owned child and permits exit/relaunch/recover-missing')
  print('PASS execution-bound Deck native acceptance and unsupported-adapter no-fallback refusal')
 finally:
  # Reap only children this fixture created. Owners reap their own PTY children.

@@ -332,12 +332,13 @@ class Owner:
             hub.end_startup()
             self.publish(execution_id=endpoint, endpoint_generation=endpoint,
                          status_path=status_path, state='running')
+            publisher = threading.Thread(target=agent.run, kwargs={'install_signals': False}, daemon=True)
+            publisher.start()
         except BaseException:
             stream._abandon_startup(child, hub, options, endpoint)
             raise
         self.agent = agent
-        self.thread = threading.Thread(target=agent.run, kwargs={'install_signals': False}, daemon=True)
-        self.thread.start()
+        self.thread = publisher
 
     def end_child(self):
         if self.agent is not None:
