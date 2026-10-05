@@ -318,7 +318,7 @@ owned_bin() {
   local tmpbin="$1/bin" lib
   mkdir -p "$tmpbin"
   cp "$AUTOLAND" "$tmpbin/"
-  for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh fm-project-mode.sh fm-fleet-sync.sh; do
+  for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh fm-project-mode.sh fm-fleet-sync.sh fm-wake-lib.sh; do
     ln -s "$ROOT/bin/$lib" "$tmpbin/$lib"
   done
   cat > "$tmpbin/fm-pr-merge.sh" <<'SH'
@@ -362,7 +362,7 @@ test_task_owned_pr_uses_fm_pr_merge() {
   pass "fm-autoland: task-owned PRs use the head-pinned helper and report its refusals"
 }
 
-test_risk_section_is_optional() {
+test_risk_section_is_required_for_attestation() {
   local home node out
   home=$(make_home norisk)
   write_config "$home" "$CONFIG_AUTH"
@@ -370,14 +370,15 @@ test_risk_section_is_optional() {
   write_gql "$home" "$MAIN_1" "$node"
   write_live "$home" "$node"
   out=$(tick "$home")
-  assert_contains "$out" "merged https://github.com/o/r/pull/7" "attested PR without risk section is retained"
+  assert_contains "$out" "because its no-mistakes risk assessment is missing" "attested PR without risk section is held and reported"
+  [ "$(merges "$home")" = 0 ] || fail "an attestation-required PR merged without a risk rating"
   write_config "$home" '{"repos":[{"repo":"o/r","authority":"r"}]}'
   node=$(pr_node "$HEAD_B" | jq '.body = "ordinary direct-PR body"')
   write_gql "$home" "$MAIN_1" "$node"
   write_live "$home" "$node"
   tick "$home" >/dev/null
-  [ "$(merges "$home")" = 2 ] || fail "a PR with no risk section disappeared"
-  pass "fm-autoland: normalization retains PRs without a risk section"
+  [ "$(merges "$home")" = 1 ] || fail "a direct PR with no risk section disappeared"
+  pass "fm-autoland: unrated PRs are retained but held when attestation is required"
 }
 
 test_attestation_follows_registered_mode() {
@@ -412,16 +413,20 @@ test_live_policy_applies_to_both_merge_paths() {
     write_config "$home" "$CONFIG_AUTH"
     node=$(pr_node "$HEAD_A")
     write_gql "$home" "$MAIN_1" "$node"
-    for variant in label risk attestation head; do
+    for variant in label risk missing-risk attestation head; do
       case "$variant" in
         label) live=$(pr_node "$HEAD_A" label=security) ;;
         risk) live=$(pr_node "$HEAD_A" risk='High: dangerous') ;;
+        missing-risk) live=$(pr_node "$HEAD_A" | jq '.body |= sub("## Risk Assessment[^<]*"; "")') ;;
         attestation) live=$(pr_node "$HEAD_A" attest_head="$HEAD_B") ;;
         head) live=$(pr_node "$HEAD_B") ;;
       esac
       write_live "$home" "$live"
       out=$(tick "$home" "$script")
       assert_contains "$out" "green PR not landing:" "$path live $variant is reported"
+      if [ "$variant" = missing-risk ]; then
+        assert_contains "$out" "its no-mistakes risk assessment is missing" "$path missing live risk is held"
+      fi
       [ "$(merges "$home")" = 0 ] || fail "$path live $variant merged"
       [ ! -e "$home/pr-merge.log" ] || fail "task helper ran despite live $variant"
     done
@@ -526,6 +531,121 @@ SH
   pass "fm-autoland: a bounded fleet sync timeout warns and continues to the hook"
 }
 
+wait_file() {
+  local i=0
+  while [ "$i" -lt 200 ]; do
+    [ -e "$1" ] && return 0
+    sleep 0.05
+    i=$((i + 1))
+  done
+  return 1
+}
+
+write_waiting_hook() {
+  cat > "$1/config/post-merge/svc.sh" <<'SH'
+#!/usr/bin/env bash
+if ! mkdir "$FM_HOME/hook-active"; then
+  touch "$FM_HOME/overlapping-hooks"
+fi
+touch "$FM_HOME/hook-entered"
+while [ ! -e "$FM_HOME/release-hook" ]; do sleep 0.05; done
+rmdir "$FM_HOME/hook-active" 2>/dev/null || true
+SH
+  chmod 0755 "$1/config/post-merge/svc.sh"
+}
+
+test_hook_lock_publication_and_stale_reclaim_are_serialized() {
+  local stage home first second owner first_rc second_rc tool
+  for stage in fresh stale; do
+    home=$(make_home "lock-$stage")
+    write_config "$home" '{"repos":[{"repo":"o/r","authority":"r","hook":"svc"}]}'
+    write_waiting_hook "$home"
+    mkdir -p "$home/fakebin" "$home/state/autoland"
+    if [ "$stage" = stale ]; then
+      mkdir "$home/state/autoland/svc.lock"
+      printf '99999999\n' > "$home/state/autoland/svc.lock/pid"
+    fi
+    cat > "$home/fakebin/lock-barrier" <<'SH'
+#!/usr/bin/env bash
+touch "$FM_HOME/lock-operation-paused"
+while [ ! -e "$FM_HOME/release-lock-operation" ]; do sleep 0.05; done
+SH
+    cat > "$home/fakebin/mkdir" <<'SH'
+#!/usr/bin/env bash
+"$FM_TEST_REAL_MKDIR" "$@" || exit $?
+if [ "${FM_TEST_LOCK_PAUSE:-0}" = 1 ] && [ "${!#}" = "$FM_HOME/state/autoland/svc.lock" ]; then
+  lock-barrier
+fi
+SH
+    cat > "$home/fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+"$FM_TEST_REAL_MV" "$@" || exit $?
+if [ "${FM_TEST_LOCK_PAUSE:-0}" = 1 ]; then
+  case "${!#}" in
+    "$FM_HOME/state/autoland/svc.lock"|"$FM_HOME/state/autoland/".svc.stale.*/lock) lock-barrier ;;
+  esac
+fi
+SH
+    cat > "$home/fakebin/rm" <<'SH'
+#!/usr/bin/env bash
+if [ "${FM_TEST_LOCK_PAUSE:-0}" = 1 ] && [ "${!#}" = "$FM_HOME/state/autoland/svc.lock" ]; then
+  lock-barrier
+fi
+exec "$FM_TEST_REAL_RM" "$@"
+SH
+    for tool in mkdir mv rm lock-barrier; do chmod +x "$home/fakebin/$tool"; done
+    FM_HOME="$home" FM_TEST_LOCK_PAUSE=1 FM_TEST_REAL_MKDIR="$(command -v mkdir)" \
+      FM_TEST_REAL_MV="$(command -v mv)" FM_TEST_REAL_RM="$(command -v rm)" \
+      PATH="$home/fakebin:$PATH" "$AUTOLAND" deploy-run svc "$MAIN_1" > "$home/first.out" 2>&1 &
+    first=$!
+    fm_test_track_helper_pid "$first"
+    wait_file "$home/lock-operation-paused" || fail "$stage lock operation never reached its barrier"
+    owner=$(cat "$home/state/autoland/svc.lock/pid" 2>/dev/null || true)
+    (
+      second_rc=0
+      FM_HOME="$home" "$AUTOLAND" deploy-run svc "$MAIN_1" > "$home/second.out" 2>&1 || second_rc=$?
+      printf '%s\n' "$second_rc" > "$home/second.rc"
+    ) &
+    second=$!
+    fm_test_track_helper_pid "$second"
+    for ((tool=0; tool<200; tool++)); do
+      [ -e "$home/second.rc" ] || [ -e "$home/hook-entered" ] || { sleep 0.05; continue; }
+      break
+    done
+    touch "$home/release-lock-operation"
+    wait_file "$home/hook-entered" || fail "$stage lock winner never started the hook"
+    touch "$home/release-hook"
+    first_rc=0
+    wait "$first" || first_rc=$?
+    wait "$second" || fail "$stage competing runner fixture failed"
+    expect_code 0 "$first_rc" "$stage first runner"
+    expect_code 3 "$(cat "$home/second.rc")" "$stage competing runner must be busy"
+    [ ! -e "$home/overlapping-hooks" ] || fail "$stage hook ran concurrently"
+    [ ! -e "$home/state/autoland/svc.lock" ] || fail "$stage winner did not release its lock"
+    if [ "$stage" = fresh ]; then
+      [ "$owner" = "$first" ] || fail "a fresh lock became visible without its owner pid"
+    fi
+  done
+  pass "fm-autoland: owner publication and stale reclaim exclude concurrent hook runners"
+}
+
+test_hook_lock_release_preserves_another_owner() {
+  local home runner rc=0
+  home=$(make_home lock-release)
+  write_config "$home" '{"repos":[{"repo":"o/r","authority":"r","hook":"svc"}]}'
+  write_waiting_hook "$home"
+  FM_HOME="$home" "$AUTOLAND" deploy-run svc "$MAIN_1" > "$home/runner.out" 2>&1 &
+  runner=$!
+  fm_test_track_helper_pid "$runner"
+  wait_file "$home/hook-entered" || fail "lock-release hook did not start"
+  printf '%s\n' "$$" > "$home/state/autoland/svc.lock/pid"
+  touch "$home/release-hook"
+  wait "$runner" || rc=$?
+  expect_code 0 "$rc" "lock-release runner"
+  [ "$(cat "$home/state/autoland/svc.lock/pid" 2>/dev/null)" = "$$" ] || fail "runner removed another owner's lock"
+  pass "fm-autoland: a runner releases only its own hook lock"
+}
+
 test_failed_and_deferred_hooks() {
   local home out
   home=$(make_home deployfail)
@@ -612,13 +732,15 @@ test_refused_merge_is_reported
 test_authority_follows_the_registry
 test_other_base_and_other_repo_are_ignored
 test_task_owned_pr_uses_fm_pr_merge
-test_risk_section_is_optional
+test_risk_section_is_required_for_attestation
 test_attestation_follows_registered_mode
 test_live_policy_applies_to_both_merge_paths
 test_duplicate_hooks_are_rejected
 test_merges_are_bounded_and_notifications_follow_output
 test_deploy_runs_after_merge_and_reports
 test_fleet_sync_timeout_is_a_continuing_warning
+test_hook_lock_publication_and_stale_reclaim_are_serialized
+test_hook_lock_release_preserves_another_owner
 test_failed_and_deferred_hooks
 test_unsafe_hook_and_foreground_deploy
 test_watcher_runs_autoland_between_full_sweeps

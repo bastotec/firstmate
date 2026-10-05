@@ -333,6 +333,11 @@ EOF
     esac
     return 0
   fi
+  if [ "$need_attest" = true ] && [ "$risk" = none ]; then
+    VERDICT=hold
+    REASON="its no-mistakes risk assessment is missing"
+    return 0
+  fi
   if [ "$(risk_rank "$risk")" -gt "$(risk_rank "$max_risk")" ]; then
     VERDICT=hold
     REASON="no-mistakes rated it $risk risk (auto-merge cap: $max_risk)"
@@ -456,17 +461,42 @@ lock_alive() {  # <hook>
 }
 
 lock_take() {  # <hook>
-  local d="$AL/$1.lock"
-  if ! mkdir "$d" 2>/dev/null; then
-    lock_alive "$1" && return 1
-    rm -rf -- "$d"
-    mkdir "$d" 2>/dev/null || return 1
+  local d="$AL/$1.lock" guard="$AL/$1.lock.guard" tmp stale rc=1
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  fm_lock_try_acquire "$guard" || return 1
+  if lock_alive "$1"; then
+    fm_lock_release "$guard"
+    return 1
   fi
-  printf '%s\n' "$$" > "$d/pid"
+  if [ -e "$d" ] || [ -L "$d" ]; then
+    stale=$(mktemp -d "$AL/.$1.stale.XXXXXX") || { fm_lock_release "$guard"; return 1; }
+    if ! mv -- "$d" "$stale/lock"; then
+      rmdir "$stale"
+      fm_lock_release "$guard"
+      return 1
+    fi
+    rm -rf -- "$stale"
+  fi
+  tmp=$(mktemp -d "$AL/.$1.lock.XXXXXX") || { fm_lock_release "$guard"; return 1; }
+  if printf '%s\n' "$$" > "$tmp/pid" && mv -- "$tmp" "$d"; then
+    rc=0
+  else
+    rm -rf -- "$tmp"
+  fi
+  fm_lock_release "$guard"
+  return "$rc"
 }
 
 lock_drop() {
-  rm -rf -- "$AL/$1.lock"
+  local d="$AL/$1.lock" guard="$AL/$1.lock.guard" pid
+  fm_lock_acquire_wait_bounded "$guard" 2 || return 1
+  pid=$(cat "$d/pid" 2>/dev/null || true)
+  if [ "$pid" = "$$" ]; then
+    rm -f -- "$d/pid"
+    rmdir "$d"
+  fi
+  fm_lock_release "$guard"
 }
 
 hook_file_valid() {  # <path>

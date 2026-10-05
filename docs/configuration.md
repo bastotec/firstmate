@@ -741,6 +741,7 @@ With `project`, the repository merges only while that registry entry carries `+y
 With `authority`, the cited captain ruling is the standing merge authority, as for the Firstmate repository itself.
 The PR body's no-mistakes attestation must name the current head with review, test, and document finished when `attestation: true` or the entry's `project` is registered as `no-mistakes` or `no-mistakes-prod-only`, read at every tick.
 An omitted or false `attestation` disables that requirement only for registered `direct-PR`/`local-only` projects or authority-only entries; it cannot override a registered no-mistakes delivery requirement.
+When attestation is required, a missing Risk Assessment section holds the PR rather than treating it as low risk.
 The no-mistakes risk rating is capped at `max_risk` (`low`, `medium`, or `high`; default `low`).
 `method` is `squash` (default), `merge`, or `rebase`, matching what the repository allows.
 
