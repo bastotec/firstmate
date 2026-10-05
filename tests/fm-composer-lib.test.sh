@@ -839,7 +839,7 @@ test_pi_terminal_response_input_filter() {
     || fail "Pi terminal-response input filter regression failed"
 import assert from "node:assert/strict";
 const { CustomEditor } = await import(process.env.PI_PACKAGE);
-const { StdinBuffer } = await import(process.env.TUI);
+const { StdinBuffer, ProcessTerminal, TuiMainScreen, TUI } = await import(process.env.TUI);
 const { default: registerGuard, PiTerminalResponseInputFilter } = await import(process.env.FILTER);
 const ESC = "\x1b";
 const BEL = "\x07";
@@ -1033,6 +1033,96 @@ const makeFilter = (timeout = 30) => {
   resetEditor();
   dispatch("q");
   assert.equal(editor.getText(), "q");
+}
+{
+  const handlers = new Map();
+  registerGuard({ on(event, handler) { handlers.set(event, handler); } });
+  const terminal = new ProcessTerminal();
+  const tui = new (TuiMainScreen ?? TUI)(terminal);
+  tui.requestRender = () => {};
+  tui.requestImmediateRender = () => {};
+  const editor = new CustomEditor(
+    tui,
+    { borderColor: (text) => text, selectList: {} },
+    { matches: () => false },
+  );
+  const submissions = [];
+  editor.onSubmit = (text) => submissions.push(text);
+  tui.addChild(editor);
+  tui.setFocus(editor);
+  const input = (data) => process.stdin.emit("data", data);
+  try {
+    tui.start();
+    const colors = typeof tui.queryTerminalColors === "function"
+      ? tui.queryTerminalColors({ timeoutMs: 100 })
+      : undefined;
+    await sleep(10);
+    input(`${ESC}]4;0;`);
+    await sleep(70);
+    input(`rgb:0000/afaf/d7d7${BEL}`);
+    for (let index = 1; index < 16; index += 1) {
+      input(`${ESC}]4;${index};rgb:1111/2222/3333${BEL}`);
+    }
+    if (colors) {
+      const result = await colors;
+      assert.deepEqual(result.palette[0], { r: 0, g: 175, b: 215 });
+    }
+    assert.equal(editor.getText(), "");
+    assert.deepEqual(submissions, []);
+
+    input(`${ESC}]4;38;`);
+    input("/quit\r");
+    await sleep(70);
+    assert.deepEqual(submissions, ["/quit"]);
+    assert.equal(editor.getText(), "");
+    submissions.length = 0;
+
+    input(`${ESC}]`);
+    await sleep(70);
+    handlers.get("session_start")({}, {
+      mode: "tui",
+      ui: {
+        onTerminalInput: (handler) => tui.addInputListener(handler),
+        pasteToEditor: (data) => editor.handleInput(`${ESC}[200~${data}${ESC}[201~`),
+      },
+    });
+    input(`4;38;rgb:0000/afaf/d7d7${ESC}\\`);
+    assert.equal(editor.getText(), "");
+    input("4;38;rgb:0000/afaf/d7d7 is a real draft");
+    assert.equal(editor.getText(), "4;38;rgb:0000/afaf/d7d7 is a real draft");
+    editor.setText("");
+
+    input(`${ESC}]4;38;`);
+    input("/quit\r");
+    await sleep(70);
+    assert.deepEqual(submissions, ["/quit"]);
+    assert.equal(editor.getText(), "");
+    submissions.length = 0;
+
+    input(`${ESC}]4;38;`);
+    await sleep(70);
+    input("/quit\r");
+    assert.deepEqual(submissions, ["/quit"]);
+    assert.equal(editor.getText(), "");
+    submissions.length = 0;
+
+    input(`${ESC}]4;38;`);
+    input(`/quit\rrgb:0000/afaf/d7d7${ESC}\\`);
+    await sleep(70);
+    assert.deepEqual(submissions, ["/quit"]);
+    assert.equal(editor.getText(), "rgb:0000/afaf/d7d7");
+    editor.setText("");
+    submissions.length = 0;
+
+    input(`${ESC}]4;38;`);
+    await sleep(70);
+    handlers.get("session_shutdown")();
+    input("q");
+    assert.equal(editor.getText(), "q");
+  } finally {
+    handlers.get("session_shutdown")();
+    tui.stop();
+  }
 }
 JS
   pass "Pi input filter consumes fragmented palette replies under the accepted worker-input policy"

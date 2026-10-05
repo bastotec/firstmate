@@ -4,6 +4,7 @@
 // intentionally absorbed with that candidate; firstmate-launched workers have
 // no concurrent human typing, and preserving split terminal replies wins.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { ProcessTerminal, StdinBuffer } from "@earendil-works/pi-tui";
 
 const ESC = "\x1b";
 const OSC_PALETTE_PREFIX = `${ESC}]4;`;
@@ -25,19 +26,23 @@ export class PiTerminalResponseInputFilter {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly forward: InputForwarder;
   private readonly timeoutMs: number;
+  private readonly response: (data: string) => void;
 
   constructor(
     forward: InputForwarder,
     timeoutMs = OSC_PALETTE_FRAGMENT_TIMEOUT_MS,
+    response: (data: string) => void = () => {},
   ) {
     this.forward = forward;
     this.timeoutMs = timeoutMs;
+    this.response = response;
   }
 
   handleInput(data: string): void {
     if (OSC_PALETTE_RESPONSE.test(data)) {
       this.clearTimer();
       this.pending = "";
+      this.response(data);
       return;
     }
     if (this.pending) {
@@ -68,6 +73,7 @@ export class PiTerminalResponseInputFilter {
       if (OSC_PALETTE_RESPONSE.test(next)) {
         this.clearTimer();
         this.pending = "";
+        this.response(next);
         const remainder = data.slice(offset + 1);
         if (remainder) this.forward(remainder, true);
         return;
@@ -174,11 +180,53 @@ export function installPiTerminalResponseInputGuard(ctx: ExtensionContext): () =
   };
 }
 
+function installPiStartupTerminalResponseInputGuard(): () => void {
+  const start = ProcessTerminal.prototype.start;
+  const filters = new Map<ProcessTerminal, PiTerminalResponseInputFilter>();
+  let active = true;
+  const guardedStart: typeof start = function (this: ProcessTerminal, onInput, onResize) {
+    filters.get(this)?.dispose();
+    const filter = new PiTerminalResponseInputFilter((data, recovered = false) => {
+      if (!recovered) {
+        onInput(data);
+        return;
+      }
+      const keys = new StdinBuffer();
+      keys.on("data", onInput);
+      keys.on("paste", (text) => onInput(`${ESC}[200~${text}${ESC}[201~`));
+      try {
+        keys.process(data);
+        for (const key of keys.flush()) onInput(key);
+      } finally {
+        keys.destroy();
+      }
+    }, OSC_PALETTE_FRAGMENT_TIMEOUT_MS, onInput);
+    filters.set(this, filter);
+    start.call(this, (data) => {
+      if (active) filter.handleInput(data);
+      else onInput(data);
+    }, onResize);
+  };
+  ProcessTerminal.prototype.start = guardedStart;
+  return () => {
+    active = false;
+    if (ProcessTerminal.prototype.start === guardedStart) {
+      ProcessTerminal.prototype.start = start;
+    }
+    for (const filter of filters.values()) filter.dispose();
+    filters.clear();
+  };
+}
+
 export default function registerPiTerminalResponseInputGuard(pi: ExtensionAPI): void {
+  const disposeStartup = installPiStartupTerminalResponseInputGuard();
   let dispose = () => {};
   pi.on("session_start", (_event, ctx) => {
     dispose();
     dispose = installPiTerminalResponseInputGuard(ctx);
   });
-  pi.on("session_shutdown", () => dispose());
+  pi.on("session_shutdown", () => {
+    dispose();
+    disposeStartup();
+  });
 }
