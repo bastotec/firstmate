@@ -26,11 +26,8 @@ enum Error {
     Superseded,
     Forgotten,
     Rejected,
-    /// The hub could not match this result to a command it still holds. Not a
-    /// verdict on the result body: a hub restart, a retention boundary or a
-    /// stale view all say `no_such_command` while the worker's real outcome
-    /// remains the only truth, so such a result stays retryable the way any
-    /// undelivered one does and settles only by acceptance or honest expiry.
+    /// The hub did not judge the result body, so this stays retryable rather
+    /// than settling it; see docs/stream-backend.md "Command path".
     Unmatched,
     Other(String),
 }

@@ -435,13 +435,9 @@ class ResultRejected(RuntimeError):
 
 
 class ResultUnknown(ResultRejected):
-    """The hub could not match this result to a command it still holds.
+    """An unmatched command id is not a verdict on the result body.
 
-    Distinct from a definitive rejection because the result body itself was
-    never judged: a hub that restarted, reaped its pending window or is reading
-    a stale view says the same code while the worker's real outcome remains
-    the only truth. Such a result stays retryable - reporting it settled is
-    what stranded a real applied steer as unconfirmed forever.
+    See docs/stream-backend.md "Command path" for the retry contract.
     """
 
 
@@ -1009,16 +1005,8 @@ class Agent:
                           timeout=RESULT_POST_TIMEOUT_SECS)
             return True
         except ResultRejected as exc:
-            # A definitive rejection of the RESULT BODY settles: the hub has
-            # seen this command's outcome and will not accept this answer, so
-            # retrying can never change anything. no_such_command is not that
-            # verdict - it says the hub's command router no longer holds the
-            # command, which a hub restart, a retention boundary or a
-            # transiently stale view each produce while the original result is
-            # still the only truth about what the worker did. Reporting it as
-            # settled is what froze a real applied steer as unconfirmed
-            # forever, so it stays retryable like any undelivered result and
-            # settles only by later acceptance or by honest expiry.
+            # An unmatched id is not a verdict on the result body; do not mark
+            # the durable outcome settled merely because routing is unknown.
             sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
             return not isinstance(exc, ResultUnknown)
         except RuntimeError as exc:
@@ -1036,8 +1024,9 @@ class Agent:
         turns and transient storage failures reconcile at a five-second cadence.
         Result posts are single bounded attempts; with a status path their retry
         state is durable in the receiver's existing per-order records, not a
-        second command store. Retry rejection or expiry ends posting, not the
-        worker's turn. tests/fm-stream-deck.test.sh pins these safety boundaries.
+        second command store. Definitive rejection or expiry ends posting, not
+        the worker's turn; an unmatched id is not definitive (see ResultUnknown).
+        tests/fm-stream-deck.test.sh pins these safety boundaries.
         """
         path = ("/v1/agent/commands?machine=%s&endpoint=%s&wait=%d"
                 % (urllib.parse.quote(self.machine), self.endpoint_id,

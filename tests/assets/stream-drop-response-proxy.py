@@ -5,6 +5,7 @@ import argparse
 import http.client
 import http.server
 import json
+from pathlib import Path
 import socketserver
 import threading
 import urllib.parse
@@ -29,6 +30,16 @@ class Proxy(http.server.BaseHTTPRequestHandler):
         state = self.server.state
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else None
+        if self.path.split("?", 1)[0] == state["drop_path"] and state["unmatched_until"]:
+            # Exercise the real hub's no_such_command response without applying
+            # the original result until the test releases this transport gate.
+            result = json.loads(body)
+            with state["lock"]:
+                with open(state["dropped_file"], "a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(result, sort_keys=True) + "\n")
+            if not Path(state["unmatched_until"]).exists():
+                result["command_id"] = "f" * 32
+                body = json.dumps(result).encode()
         target = state["target"]
         connection = http.client.HTTPConnection(target.hostname, target.port, timeout=35)
         headers = {
@@ -59,7 +70,7 @@ class Proxy(http.server.BaseHTTPRequestHandler):
 
         path = self.path.split("?", 1)[0]
         drop = False
-        if path == state["drop_path"]:
+        if path == state["drop_path"] and not state["unmatched_until"]:
             with state["lock"]:
                 state["matches"] += 1
                 drop = state["matches"] == state["drop_number"]
@@ -91,6 +102,7 @@ def main() -> int:
     parser.add_argument("--drop-number", type=int, required=True)
     parser.add_argument("--dropped-file", required=True)
     parser.add_argument("--ready-file", required=True)
+    parser.add_argument("--unmatched-until", help="return real hub no_such_command until this file exists")
     options = parser.parse_args()
     target = urllib.parse.urlparse(options.target)
     if target.scheme != "http" or not target.hostname or not target.port:
@@ -103,6 +115,7 @@ def main() -> int:
         "drop_number": options.drop_number,
         "dropped_file": options.dropped_file,
         "matches": 0,
+        "unmatched_until": options.unmatched_until,
         "lock": threading.Lock(),
     }
     host, port = server.server_address

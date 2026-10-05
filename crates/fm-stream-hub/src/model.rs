@@ -346,11 +346,8 @@ impl Hub {
             })
             .collect();
         for m in s.machines.values_mut() {
-            // A command past the retention retires instead of being dropped:
-            // the order journal may still hold its Command, and while it does
-            // an authenticated late result must still be able to complete it.
-            // Retiring only happens for a command that is still referenced,
-            // so `retained` below keeps the Command alive with it.
+            // Keep only journal-referenced bindings for late authenticated
+            // completion; `retained` below preserves their original Commands.
             let stale: Vec<String> = m
                 .pending
                 .iter()
@@ -749,6 +746,9 @@ impl Hub {
             .completed
             .retain(|_, c| c.2 >= before);
         let m = &s.machines[machine];
+        // Resolve the original binding without reinserting it into pending:
+        // authorization must precede routing mutation to prevent a rejected
+        // result from renewing retirement.
         let command = if m.pending.contains_key(cid) {
             s.commands.get(cid).cloned()
         } else if m.retire_position(cid).is_some() {

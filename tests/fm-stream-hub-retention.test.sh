@@ -6,10 +6,11 @@
 # while the order journal still held it, so the real result - arriving after
 # the boundary, as a long Deck turn's does - was refused as no_such_command
 # and the order stayed unconfirmed for its whole journal life. These cases
-# drive the reference hub's in-memory model under a simulated clock so the
-# 899/901/>1060-second boundary, the bounded retired set, the ownership
-# binding and duplicate handling are all deterministic, no wall clock
-# involved. The sibling regressions for the Rust hub live beside its model.
+# drive the reference hub's model with a simulated clock and its real HTTP
+# routes with an injected clock offset, covering the 899/901/>1060-second
+# boundary without waiting out production retention. Ownership, duplicates,
+# expiry, and journal-only bounded retirement are covered through production
+# reap. The sibling Rust regressions live beside its model and HTTP routes.
 set -eu
 
 # shellcheck source=tests/lib.sh
@@ -17,7 +18,7 @@ set -eu
 
 command -v python3 >/dev/null 2>&1 || { echo "skip: python3 not found (required by the stream hub)"; exit 0; }
 
-python3 - "$ROOT/bin/fm-stream-hub.py" <<'PY'
+python3 - "${FM_TEST_STREAM_HUB:-$ROOT/bin/fm-stream-hub.py}" <<'PY'
 import collections
 import importlib.util
 import sys
@@ -225,3 +226,5 @@ else:
 print("PASS retirement boundary, real-order timing, duplicates, ownership, "
       "bounded retention, and journal binding")
 PY
+
+python3 "$ROOT/tests/assets/stream-retention-http.py" "$ROOT"

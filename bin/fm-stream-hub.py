@@ -145,18 +145,11 @@ DEFAULT_ENDPOINT_RETENTION = 3600.0
 # rather than guessing or sending the order twice, which is a short-lived need;
 # it is not a history of the fleet and nothing is persisted.
 ORDER_JOURNAL_MAX = 512
-# How long a command an agent took but never acknowledged remains referenced by
-# the command router. Past it the entry RETIRES from the pending map: it stops
-# counting as work in flight, but it is never dropped while the order journal
-# still holds the command, because that journal entry is exactly the record a
-# late acknowledgement must still be able to settle. Retiring is bookkeeping,
-# not a verdict: the order keeps reading unconfirmed until an authenticated
-# result lands, the journal evicts the order, or the retired entry ages out.
+# Pending and retired commands use separate bounded windows: retaining a
+# journal reference alone must not grant indefinite completion eligibility.
+# docs/stream-backend.md "Command path" owns the operator retention contract.
 UNACKNOWLEDGED_COMMAND_RETENTION = 900.0
-# How many retired-but-still-answerable commands one machine may hold. A taken
-# command retires only after the retention above, and an order holding it lives
-# at most ORDER_JOURNAL_MAX placements, so the same bound keeps the retired set
-# proportional to the journal it serves rather than growing with fleet age.
+# Keep retired routing proportional to the journal it serves, not fleet age.
 RETIRED_COMMAND_MAX = ORDER_JOURNAL_MAX
 # How much longer than a placement's own worst case a resend of that order id
 # waits for the call still placing it to answer. Placing is bounded by the
@@ -1384,15 +1377,10 @@ class Hub:
                     if (e.closed_at and e.closed_at < cutoff)
                     or e.agent_silent_for() > DEFAULT_ENDPOINT_RETENTION]:
                 self.endpoints.pop(endpoint_id, None)
-            # Commands an agent took and never answered remain answerable well
-            # past the initial window, because that is the command whose fate a
-            # caller most needs to settle. Past the retention they RETIRE from
-            # the pending map instead of being dropped: the order journal may
-            # still hold the command, and as long as it does, an authenticated
-            # late result must still be able to complete it. A retired entry
-            # whose own retention has also lapsed is dropped - the caller that
-            # needed it has had a full second window to ask - and the retired
-            # set stays bounded by the journal it serves.
+            # Preserve journal-referenced bindings for late authenticated
+            # completion without treating retirement as a delivery verdict.
+            # Prune ineligible retirements before capping so they cannot evict
+            # a command whose journal still needs its original result.
             stale = _now() - UNACKNOWLEDGED_COMMAND_RETENTION
             journal = self._journal_commands()
             for machine in self.machines.values():
@@ -1533,15 +1521,9 @@ class Hub:
                 self._prune_completed(machine, stale)
             command = machine.pending.get(command_id) if machine else None
             if command is None:
-                # A command that retired past the retention window is still
-                # completable while it stays referenced here: its order is in
-                # the journal, and discarding a real authenticated result for
-                # no reason other than its arrival time is what strands a
-                # taken order as unconfirmed forever. The Command object
-                # itself is the authority - it carries the endpoint binding
-                # the capability below is checked against - so this is the
-                # same authenticated completion as any prompt one, not a
-                # replay and not a synthesized result.
+                # Resolve the original journal-held binding without moving it
+                # back to pending: authorization below must precede any routing
+                # mutation, or a rejected result could renew retirement.
                 retired_at = machine.retired.get(command_id) if machine else None
                 if retired_at is not None:
                     command = journal.get(command_id)
