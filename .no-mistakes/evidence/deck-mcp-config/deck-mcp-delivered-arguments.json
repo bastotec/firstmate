@@ -1,0 +1,104 @@
+{
+  "boundary": "Real Firstmate driver processes; Deck and watcher transports are suite fixtures, not live Deck/OAuth.",
+  "observed_deck_invocations": [
+    {
+      "case": "present",
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp/home/config/deck-mcp.json"
+      ]
+    },
+    {
+      "case": "present",
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp/home/config/deck-mcp.json"
+      ]
+    },
+    {
+      "case": "absent",
+      "mcp_config_arguments": []
+    },
+    {
+      "case": "override",
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp/other.json"
+      ]
+    },
+    {
+      "case": "disabled",
+      "mcp_config_arguments": []
+    },
+    {
+      "case": "spaced",
+      "mcp_config_arguments": [
+        "relative missing config.json"
+      ]
+    },
+    {
+      "case": "spaced",
+      "mcp_config_arguments": [
+        "relative missing config.json"
+      ]
+    },
+    {
+      "case": "config-dir",
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/custom config/deck-mcp.json"
+      ]
+    },
+    {
+      "case": "config-dir",
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/custom config/deck-mcp.json"
+      ]
+    },
+    {
+      "case": "missing-config-dir",
+      "mcp_config_arguments": []
+    },
+    {
+      "case": "empty-config-dir",
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/home/config/deck-mcp.json"
+      ]
+    },
+    {
+      "case": "code-root",
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/code/config/deck-mcp.json"
+      ]
+    },
+    {
+      "case": "scout",
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/home/config/deck-mcp.json"
+      ]
+    },
+    {
+      "case": "scout",
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/home/config/deck-mcp.json"
+      ]
+    },
+    {
+      "case": "secondmate-startup",
+      "resumed": false,
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.sFCB4K/host-mcp/home/config/deck-mcp.json"
+      ]
+    },
+    {
+      "case": "secondmate-steer",
+      "resumed": true,
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.sFCB4K/host-mcp/home/config/deck-mcp.json"
+      ]
+    },
+    {
+      "case": "secondmate-watcher-wake",
+      "resumed": true,
+      "mcp_config_arguments": [
+        "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.sFCB4K/host-mcp/home/config/deck-mcp.json"
+      ]
+    }
+  ]
+}

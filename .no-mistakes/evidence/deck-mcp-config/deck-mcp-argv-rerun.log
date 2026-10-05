@@ -1,0 +1,21 @@
+FM_TEST_BEGIN 2026-10-05T20:07:53Z tests/fm-deck-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+{"case": "present", "mcp_config_arguments": ["/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp/home/config/deck-mcp.json"]}
+{"case": "present", "mcp_config_arguments": ["/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp/home/config/deck-mcp.json"]}
+{"case": "absent", "mcp_config_arguments": []}
+{"case": "override", "mcp_config_arguments": ["/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp/other.json"]}
+{"case": "disabled", "mcp_config_arguments": []}
+{"case": "spaced", "mcp_config_arguments": ["relative missing config.json"]}
+{"case": "spaced", "mcp_config_arguments": ["relative missing config.json"]}
+ok - fm-deck-worker: every turn carries the home's deck-mcp.json unless FM_DECK_MCP_CONFIG overrides or disables it
+{"case": "config-dir", "mcp_config_arguments": ["/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/custom config/deck-mcp.json"]}
+{"case": "config-dir", "mcp_config_arguments": ["/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/custom config/deck-mcp.json"]}
+{"case": "missing-config-dir", "mcp_config_arguments": []}
+{"case": "empty-config-dir", "mcp_config_arguments": ["/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/home/config/deck-mcp.json"]}
+{"case": "code-root", "mcp_config_arguments": ["/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/code/config/deck-mcp.json"]}
+{"case": "scout", "mcp_config_arguments": ["/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/home/config/deck-mcp.json"]}
+{"case": "scout", "mcp_config_arguments": ["/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M46T1NN5KBDV0N5QSKP3GG7C/.tmp-deck-validation/fm-deck-harness.Pz6kLA/mcp-resolution/home/config/deck-mcp.json"]}
+ok - Deck MCP config follows config override, home, and code-root precedence for workers and scouts
+FM_TEST_END 2026-10-05T20:14:11Z tests/fm-deck-harness.test.sh exit=0 duration_ms=376526 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=380772
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=376526 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-harness.test.sh duration_ms=376526
