@@ -649,6 +649,8 @@ list_portable_serial() {
   emit_via_file list_portable_serial_unbuffered
 }
 
+# Invoked indirectly by emit_via_file.
+# shellcheck disable=SC2329
 list_portable_serial_unbuffered() {
   local s base fam
   while IFS= read -r s; do
@@ -915,6 +917,8 @@ portable_serial_assignments() {
   emit_via_file portable_serial_assignments_unbuffered
 }
 
+# Invoked indirectly by emit_via_file.
+# shellcheck disable=SC2329
 portable_serial_weights_unbuffered() {
   local script
   while IFS= read -r script; do
@@ -923,6 +927,8 @@ portable_serial_weights_unbuffered() {
   done < <(list_portable_serial)
 }
 
+# Invoked indirectly by emit_via_file.
+# shellcheck disable=SC2329
 portable_serial_assignments_unbuffered() {
   local ms script i best best_load
   local -a loads=()
