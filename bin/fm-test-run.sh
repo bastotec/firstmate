@@ -915,6 +915,14 @@ portable_serial_assignments() {
   emit_via_file portable_serial_assignments_unbuffered
 }
 
+portable_serial_weights_unbuffered() {
+  local script
+  while IFS= read -r script; do
+    [ -n "$script" ] || continue
+    printf '%s\t%s\n' "$(portable_serial_weight_for "$script")" "$script"
+  done < <(list_portable_serial)
+}
+
 portable_serial_assignments_unbuffered() {
   local ms script i best best_load
   local -a loads=()
@@ -938,10 +946,7 @@ portable_serial_assignments_unbuffered() {
     loads[best]=$((best_load + ms))
     printf '%s\t%s\n' "$best" "$script"
   done < <(
-    while IFS= read -r script; do
-      [ -n "$script" ] || continue
-      printf '%s\t%s\n' "$(portable_serial_weight_for "$script")" "$script"
-    done < <(list_portable_serial) | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2
+    emit_via_file portable_serial_weights_unbuffered | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2
   )
 }
 

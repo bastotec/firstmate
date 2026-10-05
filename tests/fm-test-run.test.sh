@@ -1238,21 +1238,26 @@ shard_weight_sort_under() {
 # only then does the producer resume and exit. Long names push the assignments
 # past one 64 KiB pipe buffer while the weight list still fits in two.
 test_portable_serial_shard_survives_a_stalled_consumer() {
-  local tmp repo pad i pid found sort_pid producer waited listed shell
+  local tmp repo pad i pid found sort_pid producer waited listed shell count lane fixture_size expected
   tmp=$(fm_test_tmproot fm-test-run-shard-eintr)
   repo="$tmp/repo"
   mkdir -p "$repo/bin" "$repo/tests"
   cp "$RUNNER" "$repo/bin/fm-test-run.sh"
+  shell=bash
+  [ -x /bin/bash ] && shell=/bin/bash
+  count=$("$shell" "$repo/bin/fm-test-run.sh" --list-lanes | grep -c '^portable-serial-[0-9]*of[0-9]*$')
+  [ "$count" -gt 0 ] || fail "copied runner must expose portable serial shard lanes"
+  lane="portable-serial-1of${count}"
+  fixture_size=$(((360 + count - 1) / count * count))
+  expected=$((fixture_size / count))
   pad=$(printf '%0230d' 0)
   i=100
-  while [ "$i" -lt 460 ]; do
+  while [ "$i" -lt "$((100 + fixture_size))" ]; do
     printf '#!/usr/bin/env bash\nexit 0\n' >"$repo/tests/fm-eintr-$pad-$i.test.sh"
     i=$((i + 1))
   done
-  shell=bash
-  [ -x /bin/bash ] && shell=/bin/bash
 
-  "$shell" "$repo/bin/fm-test-run.sh" --list --lane portable-serial-1of6 \
+  "$shell" "$repo/bin/fm-test-run.sh" --list --lane "$lane" \
     >"$tmp/out" 2>"$tmp/err" &
   pid=$!
   found=""
@@ -1284,8 +1289,8 @@ test_portable_serial_shard_survives_a_stalled_consumer() {
   ! grep -q 'write error' "$tmp/err" \
     || fail "shard assignment writes must survive a child exiting mid-write: $(cat "$tmp/err")"
   listed=$(wc -l <"$tmp/out" | tr -d ' ')
-  [ "$listed" -eq 60 ] \
-    || fail "portable-serial-1of6 under a stalled consumer listed $listed of 60 scripts"
+  [ "$listed" -eq "$expected" ] \
+    || fail "$lane under a stalled consumer listed $listed of $expected scripts"
   pass "portable serial shard assignment survives a stalled consumer and a child exit"
 }
 
