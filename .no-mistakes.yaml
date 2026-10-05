@@ -33,11 +33,9 @@ document:
 commands:
   lint: 'bin/fm-lint.sh'
 
-# Trusted-only, like disable_project_settings: no-mistakes records the Test step
-# as skipped with this reason instead of running it, because CI runs the complete
-# behavior suite on every PR. The firstmate-coding-guidelines skill owns this
-# policy; .github/workflows/no-mistakes-required.yml accepts the skip only with
-# this exact reason (bin/fm-nm-trusted-test-skip.sh).
+# Trusted Test policy: .agents/skills/firstmate-coding-guidelines/SKILL.md.
+# bin/fm-nm-trusted-test-skip.sh's header owns the skip acceptance contract;
+# docs/configuration.md "Gate defaults" owns default-branch trust semantics.
 #
 # The instructions below bound the Test step whenever skip is turned off.
 # With no commands.test the step decides what to run, and on terminal, pane, process

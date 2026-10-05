@@ -6,7 +6,8 @@
 # analysis. Explicit paths and full/affected modes keep --external-sources and
 # every finding code. Tests may bound imported production analysis with their
 # source=/dev/null directives; each production module remains a canonical root.
-# Without explicit paths, always check backend purity and GitHub workflows too.
+# Without explicit paths, check backend purity and GitHub workflows too, once
+# per selection (only shard 1 when sharded).
 #
 # Selection:
 #   --full: all canonical roots, including on pushes to main.
@@ -23,8 +24,11 @@
 #   --fast: local-only, disables extended analysis but preserves source following.
 #   --shard <k>/<n>: after selection, keep every n-th root starting at the k-th,
 #     so n CI runners split one selection; workflow lint and backend purity run
-#     only in shard 1. Explicit paths do not take --shard.
-# Empty selections skip ShellCheck but still check backend purity and workflows.
+#     only in shard 1. Explicit paths do not take --shard. Specs must use decimal
+#     integers without leading zeros, with 1 <= k <= n <= 99; malformed specs
+#     (including an empty value) and explicit paths are refused with exit 2.
+# Empty selections skip ShellCheck; shard 1 still checks backend purity and
+# workflows (an unsharded invocation is shard 1).
 # Backend purity rejects direct Beads CLI use in core bin/ and bin/backends/.
 #
 # Scheduling: one fresh process per root. Default concurrency is detected CPUs;

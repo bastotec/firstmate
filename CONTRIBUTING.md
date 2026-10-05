@@ -11,7 +11,7 @@ Pushing through it runs an AI-driven review/test/lint pipeline in an isolated wo
 
 A GitHub Actions check (`Require no-mistakes`) runs on PRs targeting `main` and requires both the deterministic signature and a parseable structured attestation from no-mistakes v1.46.0 or newer.
 The attestation must bind to the current PR head commit and report the review, test, and document steps as completed, so a stale attestation, a missing `head_sha`, or a skipped required step fails.
-The one exception is a Test step skipped by this repository's trusted default-branch `test.skip` with its exact reason, because CI runs the full behavior suite on every PR.
+The one exception is the trusted default-branch Test skip, governed by [`bin/fm-nm-trusted-test-skip.sh`](bin/fm-nm-trusted-test-skip.sh)'s header; other skipped, failed, or missing required steps still fail.
 It evaluates every PR opening and body edit independently, reruns after head synchronization or reopening, and prevents a later edit from replacing an earlier pending compliance check.
 GitHub Actions and Dependabot are exempt so their automation keeps working, but other contributor PRs that do not satisfy the attestation contract will not be reviewed or merged.
 
@@ -72,9 +72,9 @@ When supervising live crewmates, keep firstmate's own long validation or build c
 Crewmate validation follows the installed no-mistakes version's SKILL.md and live `axi` help instead of duplicating gate mechanics in firstmate docs.
 Firstmate's wrapper still matters: crewmates route every `ask-user` finding to firstmate, which applies `ask-user-authority`, and crewmates never pass `--yes` or `-y` because either flag bypasses that check and any required captain escalation.
 [`docs/configuration.md`](docs/configuration.md#gate-defaults-no-mistakesyaml) owns the tracked `.no-mistakes.yaml` gate defaults.
-The `firstmate-coding-guidelines` skill owns the no-mistakes Test policy: no `commands.test`, a trusted `test.skip` on firstmate itself because CI runs the full suite on every PR, and targeted local suites before pushing.
-Verify the same way the gate does: reach for `bin/fm-test-run.sh` with the subjects you care about rather than chaining `bash tests/a.test.sh && bash tests/b.test.sh`, because a list of script paths gets the same bounded concurrency as `--changed`.
-The pipeline publishes that evidence itself, so never hand-commit `.no-mistakes/` paths onto a feature branch; CI rejects them as tracked personal fleet paths.
+The [`firstmate-coding-guidelines` skill](.agents/skills/firstmate-coding-guidelines/SKILL.md#no-mistakes-test-configuration) owns the no-mistakes Test policy.
+For targeted local validation, reach for `bin/fm-test-run.sh` with the subjects you care about rather than chaining `bash tests/a.test.sh && bash tests/b.test.sh`, because a list of script paths gets the same bounded concurrency as `--changed`.
+When the gate's Test step runs, the pipeline publishes its evidence itself; never hand-commit `.no-mistakes/` paths onto a feature branch, because CI rejects them as tracked personal fleet paths.
 
 Before pushing, run `bin/fm-lint.sh` and only the suites for the area you touched with `FM_LIVE=0 bin/fm-test-run.sh tests/<a>.test.sh ...`.
 CI runs the complete suite on every PR, so `--all` and the CI lanes are for reproducing CI, not a pre-push step.

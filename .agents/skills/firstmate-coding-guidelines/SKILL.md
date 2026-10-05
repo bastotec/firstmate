@@ -119,7 +119,7 @@ CI owns broad deterministic regression coverage.
 Firstmate PR #3644 demonstrated the cost: pinning a 75-162-script walk took 32.7 minutes per validation, while removing it restored the 3.6-minute targeted-validation posture.
 
 Firstmate's own `.no-mistakes.yaml` sets the trusted `test.skip`, because [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml) runs the complete behavior suite on every PR and a gate Test step only repeated part of it.
-[`.github/workflows/no-mistakes-required.yml`](../../../.github/workflows/no-mistakes-required.yml) accepts that skipped Test step only with the exact trusted `skip_reason`; any other skipped, failed, or missing Test step still fails the check.
+[`bin/fm-nm-trusted-test-skip.sh`](../../../bin/fm-nm-trusted-test-skip.sh)'s header owns the strict trusted-skip acceptance contract used by [`.github/workflows/no-mistakes-required.yml`](../../../.github/workflows/no-mistakes-required.yml).
 Before committing a firstmate change for no-mistakes, run only the suites for the area you touched, naming them in one call such as `FM_LIVE=0 bin/fm-test-run.sh tests/<a>.test.sh tests/<b>.test.sh`, plus `bin/fm-lint.sh`.
 Do not run `--all` or a CI lane locally as a pre-push step; CI runs the rest.
 

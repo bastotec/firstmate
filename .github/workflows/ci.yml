@@ -24,7 +24,9 @@ concurrency:
 
 # These jobs are the one full behavior-suite run for every PR: the tracked
 # .no-mistakes.yaml skips the gate's own Test step (test.skip), and the coverage
-# guard proves the lanes below run every tests/*.test.sh exactly once.
+# guard proves the portable and Herdr lanes partition tests/*.test.sh exactly
+# once. The Rust parity and stock macOS Bash jobs add focused cross-environment
+# coverage, not another full-suite run.
 jobs:
   rust-stream:
     name: Rust stream parity
@@ -52,8 +54,8 @@ jobs:
     # Full lint on main measured 19-26 minutes on one runner (most roots have no
     # measured memory reservation, so they run one at a time) and kept hitting
     # the old 25-minute cap. Three runners split any selection round-robin with
-    # bin/fm-lint.sh --shard, so a full slice is about 7 minutes; this cap is
-    # the hang tripwire.
+    # bin/fm-lint.sh --shard; a full slice is expected to take about 7 minutes,
+    # to be confirmed by CI telemetry. This cap is the hang tripwire.
     timeout-minutes: 15
     strategy:
       fail-fast: false
