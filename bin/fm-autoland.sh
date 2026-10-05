@@ -32,8 +32,9 @@
 # Landing. A PR merges when it is not a draft, GitHub reports it MERGEABLE and
 # not BLOCKED, BEHIND, or DIRTY, every check on its head is green
 # (fm_pr_github_checks_not_green in bin/fm-pr-lib.sh; at least one check must
-# exist), no hold label is set, and - for an entry with "attestation": true -
-# its no-mistakes attestation is bound to the current head with review, test,
+# exist), no hold label is set, and - for an entry with "attestation": true or
+# a registered no-mistakes/no-mistakes-prod-only project - its no-mistakes
+# attestation is bound to the current head with review, test,
 # and document finished and its stated risk is at or under "max_risk" (default
 # low). A PR owned by a task in this home merges through bin/fm-pr-merge.sh, so
 # captain holds, away posture, and merge records apply unchanged; any other PR
@@ -45,7 +46,9 @@
 # head or reason changes or after FM_AUTOLAND_RENOTIFY seconds (default 21600).
 # Merges stop starting once FM_AUTOLAND_MERGE_BUDGET seconds (default 12) of the
 # tick are spent, so the tick stays inside the watcher's FM_CHECK_TIMEOUT; the
-# rest land on the next tick. A Pi supervision branch's watcher
+# rest land on the next tick. Each complete merge operation is also bounded to
+# the time remaining before FM_CHECK_TIMEOUT minus three seconds.
+# A Pi supervision branch's watcher
 # (FM_SUPERVISION_ACTOR=branch) skips the tick, because merging is main-owned.
 #
 # Deploying. For a hooked entry whose default-branch head differs from the
@@ -108,6 +111,8 @@ now() {
 }
 
 MSGS=
+NOTIFY_KEYS=
+MERGE_DEADLINE=0
 
 add_msg() {
   MSGS="${MSGS:+$MSGS; }$1"
@@ -143,7 +148,8 @@ notified_record() {  # <key>
 notify() {  # <key> <window> <message>
   notified_recent "$1" "$2" && return 0
   add_msg "$3"
-  notified_record "$1" || true
+  NOTIFY_KEYS="${NOTIFY_KEYS:+$NOTIFY_KEYS
+}$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -173,6 +179,7 @@ config_entries() {  # prints repo US project US authority US method US attestati
         and ((.attestation // false) | type == "boolean")
         and ((.hook // "") | test("^([a-z0-9][a-z0-9._-]*)?$"))))
       and ([.repos[].repo | ascii_downcase] | length == (unique | length))
+      and ([.repos[].hook // "" | select(. != "")] | length == (unique | length))
     ' "$CONFIG" >/dev/null 2>&1; then
     CONFIG_ERROR="config/autoland.json is not valid (see docs/configuration.md \"Auto-land\")"
     return 1
@@ -188,6 +195,22 @@ entry_authorized() {  # <project> <authority>
   [ -n "$project" ] || return 1
   posture=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-project-mode.sh" "$project" 2>/dev/null) || return 1
   [ "${posture##* }" = on ]
+}
+
+entry_attestation() {
+  local project=$1 configured=$2 posture
+  if [ "$configured" = true ]; then
+    printf 'true\n'
+    return
+  fi
+  if [ -n "$project" ]; then
+    posture=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-project-mode.sh" --raw "$project" 2>/dev/null) || posture='no-mistakes off'
+    case "${posture%% *}" in
+      direct-PR|local-only) ;;
+      *) printf 'true\n'; return ;;
+    esac
+  fi
+  printf 'false\n'
 }
 
 risk_rank() {
@@ -247,7 +270,7 @@ PR_JQ='
         end
       end;
   def risk:
-    ((.body // "") | capture("## Risk Assessment[ \t]*\r?\n[ \t\r\n]*(?<r>[^\n]*)")? | .r) as $r
+    (((.body // "") | capture("## Risk Assessment[ \t]*\r?\n[ \t\r\n]*(?<r>[^\n]*)")? | .r) // null) as $r
     | if $r == null then "none"
       else ($r | capture("^\\s*(?:\\S+\\s+)?(?<l>Low|Medium|High)\\b")? | .l | ascii_downcase) // "unknown"
       end;
@@ -345,17 +368,24 @@ task_for_pr() {  # <url>; prints the owning task id in this home, if any
 
 MERGE_ERROR=
 merge_pr() {  # <url> <head> <method> <attestation> <max_risk>
+  local remaining out rc=0
+  MERGE_ERROR=
+  remaining=$((MERGE_DEADLINE - SECONDS))
+  [ "$remaining" -ge 2 ] || return 2
+  out=$(fm_run_timed "$remaining" env FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-autoland.sh" merge-run "$@" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  if [ "$rc" -eq 124 ]; then
+    MERGE_ERROR="the merge operation timed out before the check deadline"
+  else
+    MERGE_ERROR=${out:-"the merge operation refused it"}
+  fi
+  return 1
+}
+
+merge_attempt() {  # <url> <head> <method> <attestation> <max_risk>
   local url=$1 head=$2 method=$3 need_attest=$4 max_risk=$5 id out live rec state
   MERGE_ERROR=
-  if id=$(task_for_pr "$url"); then
-    if out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-pr-merge.sh" "$id" "$url" -- "--$method" 2>&1); then
-      return 0
-    fi
-    MERGE_ERROR=$(printf '%s\n' "$out" | grep -m1 -E '^error:|refus' | sed 's/^error: //')
-    [ -n "$MERGE_ERROR" ] || MERGE_ERROR="bin/fm-pr-merge.sh refused it"
-    return 1
-  fi
-  if ! live=$(fm_run_timed 10 gh pr view "$url" \
+  if ! live=$(gh pr view "$url" \
       --json url,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,body,labels,statusCheckRollup 2>/dev/null); then
     MERGE_ERROR="its live state could not be read before merging"
     return 1
@@ -372,11 +402,19 @@ merge_pr() {  # <url> <head> <method> <attestation> <max_risk>
     MERGE_ERROR=${REASON:-"its live checks are no longer all green"}
     return 1
   fi
-  if ! out=$(fm_run_timed 20 gh pr merge "$url" "--$method" --match-head-commit "$head" 2>&1); then
+  if id=$(task_for_pr "$url"); then
+    if out=$(FM_HOME="$FM_HOME" FM_PR_MERGE_EXPECT_HEAD="$head" "$SCRIPT_DIR/fm-pr-merge.sh" "$id" "$url" -- "--$method" 2>&1); then
+      return 0
+    fi
+    MERGE_ERROR=$(printf '%s\n' "$out" | grep -m1 -E '^error:|refus' | sed 's/^error: //')
+    [ -n "$MERGE_ERROR" ] || MERGE_ERROR="bin/fm-pr-merge.sh refused it"
+    return 1
+  fi
+  if ! out=$(gh pr merge "$url" "--$method" --match-head-commit "$head" 2>&1); then
     MERGE_ERROR="gh refused the merge: $(printf '%s\n' "$out" | head -n 1)"
     return 1
   fi
-  state=$(fm_run_timed 10 gh pr view "$url" --json state -q .state 2>/dev/null || true)
+  state=$(gh pr view "$url" --json state -q .state 2>/dev/null || true)
   [ "$state" = MERGED ] || { MERGE_ERROR="gh accepted the merge but the PR reads as ${state:-unreadable}"; return 1; }
   return 0
 }
@@ -457,7 +495,7 @@ entry_for_hook() {  # <hook>; sets E_REPO E_PROJECT
 # Run one hook for one commit; the caller already decided it is due.
 # Returns the hook's classification: 0 deployed, 75 deferred, 3 busy, 1 failed.
 run_hook() {  # <hook> <oid> <approved 0|1>
-  local hook=$1 oid=$2 approved=$3 file log rc summary deployed
+  local hook=$1 oid=$2 approved=$3 file log rc summary deployed sync_rc
   mkdir -p "$AL" || return 1
   entry_for_hook "$hook" || { result_write "$hook" failed "$oid" "no config/autoland.json entry names hook $hook"; return 1; }
   lock_take "$hook" || return 3
@@ -469,7 +507,13 @@ run_hook() {  # <hook> <oid> <approved 0|1>
   {
     printf '== %s autoland deploy %s %s (previously %s)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$hook" "$oid" "${deployed:-unrecorded}"
     if [ -n "$E_PROJECT" ] && [ -d "$FM_HOME/projects/$E_PROJECT" ]; then
-      FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-fleet-sync.sh" "$E_PROJECT" 2>&1 || printf 'fleet sync of projects/%s failed (continuing)\n' "$E_PROJECT"
+      sync_rc=0
+      fm_run_timed 300 env FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-fleet-sync.sh" "$E_PROJECT" 2>&1 || sync_rc=$?
+      case "$sync_rc" in
+        0) ;;
+        124) printf 'fleet sync of projects/%s timed out after 300s (continuing)\n' "$E_PROJECT" ;;
+        *) printf 'fleet sync of projects/%s failed (continuing)\n' "$E_PROJECT" ;;
+      esac
     fi
   } >> "$log" 2>&1
   if ! hook_file_valid "$file"; then
@@ -547,7 +591,9 @@ tick_deploys() {  # <entries-file> <response-file>
 # One tick.
 
 action_check() {
-  local entries resp
+  local entries resp check_timeout
+  check_timeout=$(num_or "${FM_CHECK_TIMEOUT:-}" 30)
+  MERGE_DEADLINE=$((SECONDS + check_timeout - 3))
   # Merging is main-owned (bin/fm-lease-lib.sh); a Pi supervision branch's
   # watcher leaves auto-land to main's.
   [ "${FM_SUPERVISION_ACTOR:-main}" = branch ] && return 0
@@ -599,13 +645,14 @@ $entry
 EOF
     [ "$(printf '%s' "$rec" | jq -r '.base == .default')" = true ] || continue
     entry_authorized "$project" "$authority" || continue
+    attest=$(entry_attestation "$project" "$attest")
     decide "$rec" "$attest" "$max_risk"
     case "$VERDICT" in
       hold)
         notify "hold|$url|$head|$REASON" "$RENOTIFY" "green PR not landing: $url because $REASON"
         ;;
       merge)
-        if [ $((SECONDS - started)) -ge "$MERGE_BUDGET" ]; then
+        if [ $((SECONDS - started)) -ge "$MERGE_BUDGET" ] || [ $((MERGE_DEADLINE - SECONDS)) -lt 2 ]; then
           continue
         fi
         if merge_pr "$url" "$head" "$method" "$attest" "$max_risk"; then
@@ -621,15 +668,21 @@ EOF
 }
 
 emit() {
+  local key
   [ -n "$MSGS" ] || return 0
   printf '%s autoland: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MSGS" >> "$AL/report.log" 2>/dev/null || true
   tail -n 200 "$AL/report.log" > "$AL/.report.tmp" 2>/dev/null && mv -f -- "$AL/.report.tmp" "$AL/report.log"
   fm_cap_line_var "autoland: $MSGS" "$MAX_LINE"
   if [ "$FM_LINE_CAP_LINE" != "autoland: $MSGS" ]; then
-    printf '%s (full: bin/fm-autoland.sh status)\n' "$FM_LINE_CAP_LINE"
+    printf '%s (full: bin/fm-autoland.sh status)\n' "$FM_LINE_CAP_LINE" || return 1
   else
-    printf '%s\n' "$FM_LINE_CAP_LINE"
+    printf '%s\n' "$FM_LINE_CAP_LINE" || return 1
   fi
+  while IFS= read -r key; do
+    [ -z "$key" ] || notified_record "$key" || true
+  done <<EOF
+$NOTIFY_KEYS
+EOF
 }
 
 # ---------------------------------------------------------------------------
@@ -652,13 +705,13 @@ action_deploy() {  # <hook> [--approved]
     return 1
   fi
   result_read "$hook"
+  printf '%s %s %s: %s\n' "$hook" "$R_STATUS" "$(short "$R_OID")" "$R_SUMMARY" || return 1
+  printf 'log: %s\n' "$AL/$hook.log" || return 1
   # The operator is looking at this outcome now, so later ticks do not repeat it.
   case "$R_STATUS" in
     failed) notified_record "deploy|$hook|$R_OID|failed|$R_EPOCH" || true ;;
     *) notified_record "deploy|$hook|$R_OID|$R_STATUS" || true ;;
   esac
-  printf '%s %s %s: %s\n' "$hook" "$R_STATUS" "$(short "$R_OID")" "$R_SUMMARY"
-  printf 'log: %s\n' "$AL/$hook.log"
   [ "$rc" -eq 0 ] || [ "$rc" -eq 75 ]
 }
 
@@ -670,6 +723,7 @@ action_status() {
   else
     while IFS=$US read -r repo project authority method attest max_risk hook; do
       if entry_authorized "$project" "$authority"; then auth=merges; else auth="no merge authority (project $project is not +yolo)"; fi
+      attest=$(entry_attestation "$project" "$attest")
       printf '%s: %s; method=%s attestation=%s max_risk=%s hook=%s\n' \
         "$repo" "$auth" "$method" "$attest" "$max_risk" "${hook:-none}"
       if [ -n "$hook" ]; then
@@ -743,6 +797,14 @@ case "${1:-check}" in
   disarm) action_disarm ;;
   status) action_status ;;
   deploy) shift; action_deploy "$@" ;;
+  merge-run)
+    [ "$#" -eq 6 ] && fm_pr_head_valid "$3" || exit 2
+    shift
+    if ! merge_attempt "$@"; then
+      printf '%s\n' "$MERGE_ERROR"
+      exit 1
+    fi
+    ;;
   deploy-run)
     if [ "$#" -ne 3 ] || ! fm_pr_head_valid "$3"; then
       printf 'fm-autoland: deploy-run <hook> <oid>\n' >&2

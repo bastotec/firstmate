@@ -16,8 +16,10 @@
 # Every failing condition is reported, not
 # just the first. The verified head is then passed to gh as
 # --match-head-commit, so a push that lands between that read and the merge
-# fails the merge instead of landing commits nothing verified. Reading that
-# state needs gh and jq, and either one absent stops the merge before any
+# fails the merge instead of landing commits nothing verified.
+# Optional FM_PR_MERGE_EXPECT_HEAD refuses the merge unless the live head
+# verified by this script equals that caller-supplied commit.
+# Reading that state needs gh and jq, and either one absent stops the merge before any
 # state is recorded. An attended --allow-red <check-name> may be passed once,
 # with the name as a separate argument; it waives only checks with that exact
 # name, still requires every other check green, and still binds the head. It is
@@ -385,6 +387,12 @@ fi
 # the merge request. Sets FM_PR_MERGE_HEAD to the verified head on success and
 # returns non-zero after reporting every condition that failed.
 FM_PR_MERGE_HEAD=
+require_expected_head() {
+  [ -z "${FM_PR_MERGE_EXPECT_HEAD:-}" ] || [ "$1" = "$FM_PR_MERGE_EXPECT_HEAD" ] || {
+    echo "error: live head $1 does not match expected head $FM_PR_MERGE_EXPECT_HEAD; refusing to merge" >&2
+    return 1
+  }
+}
 FM_PR_GITLAB_ASYNC_CONFIGURED=false
 gitlab_verify_mergeable() {
   local json fields line
@@ -449,6 +457,7 @@ FIELDS
     echo "error: could not read the GitLab merge request head commit before merging" >&2
     return 1
   fi
+  require_expected_head "$live_head" || return 1
   # A rebase moves the head and leaves the recorded value behind, so the
   # disagreement is reported and the live head is what gets verified and merged.
   if [ -n "$RECORDED_HEAD" ] && [ "$RECORDED_HEAD" != "$live_head" ]; then
@@ -536,6 +545,7 @@ FIELDS
     echo "error: could not read the GitHub pull request head commit before merging" >&2
     return 1
   fi
+  require_expected_head "$live_head" || return 1
   if ! red=$(fm_pr_github_checks_not_green "$json"); then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1

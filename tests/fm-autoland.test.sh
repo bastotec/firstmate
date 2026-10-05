@@ -29,11 +29,11 @@ cat > "$FAKEBIN/gh" <<'SH'
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case "$1 $2" in
   "api graphql") cat "$FM_TEST_GQL"; exit 0 ;;
-  "pr merge") exit "${FM_TEST_MERGE_RC:-0}" ;;
+  "pr merge") sleep "${FM_TEST_MERGE_DELAY:-0}"; exit "${FM_TEST_MERGE_RC:-0}" ;;
   "pr view")
     case "$*" in
       *"--json state -q .state"*) printf '%s\n' "${FM_TEST_AFTER_STATE:-MERGED}" ;;
-      *) cat "$FM_TEST_LIVE" ;;
+      *) sleep "${FM_TEST_VIEW_DELAY:-0}"; cat "$FM_TEST_LIVE" ;;
     esac
     exit 0
     ;;
@@ -64,7 +64,7 @@ write_config() {  # <home> <json>
 pr_node() {
   local head=$1 url=https://github.com/o/r/pull/7 repo=o/r draft=false mergeable=MERGEABLE
   local mstate=CLEAN base=main check=SUCCESS status=COMPLETED attest_head=$1 risk='✅ Low: small change' label=''
-  local review=completed kv
+  local review=completed test=completed document=completed kv
   shift
   for kv in "$@"; do
     case "$kv" in
@@ -80,15 +80,18 @@ pr_node() {
       risk=*) risk=${kv#risk=} ;;
       label=*) label=${kv#label=} ;;
       review=*) review=${kv#review=} ;;
+      test=*) test=${kv#test=} ;;
+      document=*) document=${kv#document=} ;;
     esac
   done
   jq -cn --arg url "$url" --arg repo "$repo" --argjson draft "$draft" --arg m "$mergeable" \
     --arg ms "$mstate" --arg head "$head" --arg base "$base" --arg check "$check" --arg status "$status" \
-    --arg ah "$attest_head" --arg risk "$risk" --arg label "$label" --arg review "$review" '
+    --arg ah "$attest_head" --arg risk "$risk" --arg label "$label" --arg review "$review" \
+    --arg test "$test" --arg document "$document" '
     {url: $url, isDraft: $draft, mergeable: $m, mergeStateStatus: $ms, headRefOid: $head, baseRefName: $base,
      body: ("## What Changed\n\n- x\n\n## Risk Assessment\n\n" + $risk + "\n\n<!-- no-mistakes-pipeline-attestation:v1 "
-       + ({head_sha: $ah, steps: [{step: "review", status: $review}, {step: "test", status: "completed"},
-           {step: "document", status: "completed"}, {step: "pr", status: "running"}]} | tojson) + " -->"),
+       + ({head_sha: $ah, steps: [{step: "review", status: $review}, {step: "test", status: $test},
+           {step: "document", status: $document}, {step: "pr", status: "running"}]} | tojson) + " -->"),
      repository: {nameWithOwner: $repo, defaultBranchRef: {name: "main"}},
      labels: {nodes: (if $label == "" then [] else [{name: $label}] end)},
      commits: {nodes: [{commit: {statusCheckRollup: {contexts: {nodes: [
@@ -249,6 +252,25 @@ test_blocking_reasons_are_named() {
   out=$(tick "$home")
   assert_contains "$out" "blocked by a branch rule" "blocked"
   [ "$(merges "$home")" = 0 ] || fail "a held PR was merged"
+  write_gql "$home" "$MAIN_1" "$(pr_node "$HEAD_A" mstate=BEHIND)"
+  out=$(tick "$home")
+  assert_contains "$out" "its branch is behind the base" "behind"
+  write_gql "$home" "$MAIN_1" "$(pr_node "$HEAD_A" test=pending)"
+  out=$(tick "$home")
+  assert_contains "$out" "attestation shows test pending" "incomplete test"
+  write_gql "$home" "$MAIN_1" "$(pr_node "$HEAD_A" document=skipped)"
+  out=$(tick "$home")
+  assert_contains "$out" "attestation shows document skipped" "incomplete document"
+  write_gql "$home" "$MAIN_1" "$(pr_node "$HEAD_A" | jq '.body = "ordinary PR body"')"
+  out=$(tick "$home")
+  assert_contains "$out" "it carries no no-mistakes attestation" "missing attestation without risk section"
+  write_gql "$home" "$MAIN_1" "$(pr_node "$HEAD_A" | jq '.body = "<!-- no-mistakes-pipeline-attestation:v1 {broken} -->"')"
+  out=$(tick "$home")
+  assert_contains "$out" "its no-mistakes attestation cannot be read" "unreadable attestation"
+  write_gql "$home" "$MAIN_1" "$(pr_node "$HEAD_A" | jq '.commits.nodes[0].commit.statusCheckRollup.contexts.nodes = []')"
+  out=$(tick "$home")
+  assert_contains "$out" "no CI checks are reported on its head" "no CI"
+  [ "$(merges "$home")" = 0 ] || fail "a held PR was merged"
   pass "fm-autoland: every green-but-held PR names its reason and does not merge"
 }
 
@@ -292,28 +314,156 @@ test_other_base_and_other_repo_are_ignored() {
   pass "fm-autoland: stacked PRs and unconfigured repositories are left alone"
 }
 
-test_task_owned_pr_uses_fm_pr_merge() {
-  local home tmpbin lib node out
-  home=$(make_home owned)
-  tmpbin="$TMP_ROOT/owned-bin"
+owned_bin() {
+  local tmpbin="$1/bin" lib
   mkdir -p "$tmpbin"
   cp "$AUTOLAND" "$tmpbin/"
   for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh fm-project-mode.sh fm-fleet-sync.sh; do
     ln -s "$ROOT/bin/$lib" "$tmpbin/$lib"
   done
-  # shellcheck disable=SC2016  # the stub's own expansions
-  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$FM_HOME/pr-merge.log"\n' > "$tmpbin/fm-pr-merge.sh"
+  cat > "$tmpbin/fm-pr-merge.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_HOME/pr-merge.log"
+printf '%s\n' "${FM_PR_MERGE_EXPECT_HEAD:-unset}" >> "$FM_HOME/expected-head.log"
+if [ -n "${FM_TEST_OWNED_DELAY:-}" ]; then
+  if [ -f "$FM_HOME/state/autoland/notified" ]; then
+    cp "$FM_HOME/state/autoland/notified" "$FM_HOME/notified-at-merge"
+  else
+    printf 'absent\n' > "$FM_HOME/notified-at-merge"
+  fi
+  sleep "$FM_TEST_OWNED_DELAY"
+fi
+if [ "${FM_TEST_OWNED_RC:-0}" != 0 ]; then
+  echo 'error: task task-x is still held for the captain; release it before merging' >&2
+  exit "$FM_TEST_OWNED_RC"
+fi
+SH
   chmod +x "$tmpbin/fm-pr-merge.sh"
-  printf 'pr=https://github.com/o/r/pull/7\n' > "$home/state/task-x.meta"
+  printf 'pr=https://github.com/o/r/pull/7\n' > "$1/state/task-x.meta"
+  printf '%s\n' "$tmpbin"
+}
+
+test_task_owned_pr_uses_fm_pr_merge() {
+  local home tmpbin node out
+  home=$(make_home owned)
+  tmpbin=$(owned_bin "$home")
   write_config "$home" "$CONFIG_AUTH"
   node=$(pr_node "$HEAD_A")
   write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
   out=$(tick "$home" "$tmpbin/fm-autoland.sh")
   assert_contains "$out" "merged https://github.com/o/r/pull/7" "task-owned merge reported"
   grep -qxF "task-x https://github.com/o/r/pull/7 -- --squash" "$home/pr-merge.log" \
     || fail "fm-pr-merge.sh was not used: $(cat "$home/pr-merge.log" 2>/dev/null)"
+  grep -qxF "$HEAD_A" "$home/expected-head.log" || fail "task merge was not pinned to the tick head"
+  out=$(tick "$home" "$tmpbin/fm-autoland.sh" FM_TEST_OWNED_RC=1)
+  assert_contains "$out" "because task task-x is still held for the captain" "task helper refusal reported"
   [ "$(merges "$home")" = 0 ] || fail "gh merged around fm-pr-merge.sh"
-  pass "fm-autoland: a PR owned by a task here merges through fm-pr-merge.sh"
+  pass "fm-autoland: task-owned PRs use the head-pinned helper and report its refusals"
+}
+
+test_risk_section_is_optional() {
+  local home node out
+  home=$(make_home norisk)
+  write_config "$home" "$CONFIG_AUTH"
+  node=$(pr_node "$HEAD_A" | jq '.body |= sub("## Risk Assessment[^<]*"; "")')
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  out=$(tick "$home")
+  assert_contains "$out" "merged https://github.com/o/r/pull/7" "attested PR without risk section is retained"
+  write_config "$home" '{"repos":[{"repo":"o/r","authority":"r"}]}'
+  node=$(pr_node "$HEAD_B" | jq '.body = "ordinary direct-PR body"')
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  tick "$home" >/dev/null
+  [ "$(merges "$home")" = 2 ] || fail "a PR with no risk section disappeared"
+  pass "fm-autoland: normalization retains PRs without a risk section"
+}
+
+test_attestation_follows_registered_mode() {
+  local home mode setting out node
+  node=$(pr_node "$HEAD_A" | jq '.body = "ordinary PR body"')
+  for mode in no-mistakes no-mistakes-prod-only direct-PR local-only; do
+    for setting in omitted false true; do
+      home=$(make_home "mode-$mode-$setting" "- proj [$mode +yolo] - project")
+      write_config "$home" "$(jq -cn --arg setting "$setting" '
+        {repos:[{repo:"o/r", project:"proj", authority:"standing ruling"}
+          + (if $setting == "omitted" then {} else {attestation:($setting == "true")} end)]}')"
+      write_gql "$home" "$MAIN_1" "$node"
+      write_live "$home" "$node"
+      out=$(tick "$home")
+      if [ "$setting" = true ] || [ "$mode" = no-mistakes ] || [ "$mode" = no-mistakes-prod-only ]; then
+        assert_contains "$out" "it carries no no-mistakes attestation" "registered $mode with $setting"
+        [ "$(merges "$home")" = 0 ] || fail "registered attestation requirement was bypassed"
+      else
+        [ "$(merges "$home")" = 1 ] || fail "$mode with $setting did not merge: $out"
+      fi
+    done
+  done
+  pass "fm-autoland: configuration cannot disable registered no-mistakes attestation"
+}
+
+test_live_policy_applies_to_both_merge_paths() {
+  local home script path variant node live out
+  for path in unowned owned; do
+    home=$(make_home "live-$path")
+    script=$AUTOLAND
+    [ "$path" != owned ] || script="$(owned_bin "$home")/fm-autoland.sh"
+    write_config "$home" "$CONFIG_AUTH"
+    node=$(pr_node "$HEAD_A")
+    write_gql "$home" "$MAIN_1" "$node"
+    for variant in label risk attestation head; do
+      case "$variant" in
+        label) live=$(pr_node "$HEAD_A" label=security) ;;
+        risk) live=$(pr_node "$HEAD_A" risk='High: dangerous') ;;
+        attestation) live=$(pr_node "$HEAD_A" attest_head="$HEAD_B") ;;
+        head) live=$(pr_node "$HEAD_B") ;;
+      esac
+      write_live "$home" "$live"
+      out=$(tick "$home" "$script")
+      assert_contains "$out" "green PR not landing:" "$path live $variant is reported"
+      [ "$(merges "$home")" = 0 ] || fail "$path live $variant merged"
+      [ ! -e "$home/pr-merge.log" ] || fail "task helper ran despite live $variant"
+    done
+  done
+  pass "fm-autoland: both merge paths re-read live head, labels, risk, and attestation"
+}
+
+test_duplicate_hooks_are_rejected() {
+  local home out
+  home=$(make_home duplicate-hooks)
+  write_config "$home" '{"repos":[{"repo":"o/r","authority":"r","hook":"svc"},{"repo":"o/other","authority":"r","hook":"svc"}]}'
+  out=$(tick "$home")
+  assert_contains "$out" "config/autoland.json is not valid" "duplicate hook rejected"
+  [ ! -s "$home/gh.log" ] || fail "invalid config contacted GitHub"
+  pass "fm-autoland: each hook has one repository owner"
+}
+
+test_merges_are_bounded_and_notifications_follow_output() {
+  local home script node out started elapsed path
+  for path in owned unowned; do
+    home=$(make_home "deadline-$path")
+    script=$AUTOLAND
+    [ "$path" != owned ] || script="$(owned_bin "$home")/fm-autoland.sh"
+    write_config "$home" "$CONFIG_AUTH"
+    node=$(pr_node "$HEAD_A")
+    write_gql "$home" "$MAIN_1" "$(pr_node "$HEAD_B" draft=true url=https://github.com/o/r/pull/8)" "$node"
+    write_live "$home" "$node"
+    started=$SECONDS
+    out=$(tick "$home" "$script" FM_CHECK_TIMEOUT=8 FM_AUTOLAND_MERGE_BUDGET=100 \
+      FM_TEST_OWNED_DELAY=30 FM_TEST_VIEW_DELAY=1 FM_TEST_MERGE_DELAY=30)
+    elapsed=$((SECONDS - started))
+    [ "$elapsed" -lt 8 ] || fail "$path merge exceeded the check deadline ($elapsed seconds)"
+    assert_contains "$out" "it is still a draft" "draft survives slow merge"
+    assert_contains "$out" "merge operation timed out" "complete $path operation is bounded"
+    grep -q 'hold|https://github.com/o/r/pull/8|' "$home/state/autoland/notified" || fail "emitted hold was not recorded"
+    if [ "$path" = owned ]; then
+      [ "$(cat "$home/notified-at-merge")" = absent ] || fail "hold marked delivered before output"
+    fi
+    out=$(tick "$home" "$script" FM_CHECK_TIMEOUT=3 FM_AUTOLAND_MERGE_BUDGET=100)
+    [ -z "$out" ] || fail "already delivered draft repeated: $out"
+  done
+  pass "fm-autoland: complete merges respect the deadline and queued notifications are not pre-marked"
 }
 
 write_hook() {  # <home> <name> <exit> [<mode>]
@@ -342,6 +492,38 @@ test_deploy_runs_after_merge_and_reports() {
   wait_deployed "$home" svc "$MAIN_2" || fail "a new default-branch head was not deployed"
   grep -q "prev=$MAIN_1" "$home/state/autoland/svc.log" || fail "hook did not see the previous deploy"
   pass "fm-autoland: a new default-branch head deploys once, records the commit, and reports"
+}
+
+test_fleet_sync_timeout_is_a_continuing_warning() {
+  local home tmpbin out
+  home=$(make_home sync-timeout '- proj [direct-PR +yolo] - project')
+  tmpbin=$(owned_bin "$home")
+  mkdir -p "$home/projects/proj" "$home/fakebin"
+  rm "$tmpbin/fm-fleet-sync.sh"
+  printf '#!/usr/bin/env bash\nsleep 30\n' > "$tmpbin/fm-fleet-sync.sh"
+  chmod +x "$tmpbin/fm-fleet-sync.sh"
+  cat > "$home/fakebin/timeout" <<'SH'
+#!/usr/bin/env bash
+seconds=$3
+shift 3
+if [ "$seconds" = 300 ]; then
+  printf '%s\n' "$seconds" > "$FM_HOME/sync-bound"
+  seconds=1
+fi
+. "$FM_TEST_ROOT/bin/fm-timeout-lib.sh"
+FM_TIMEOUT_MECHANISM_OVERRIDE=bash
+fm_run_timed "$seconds" "$@"
+SH
+  chmod +x "$home/fakebin/timeout"
+  write_config "$home" '{"repos":[{"repo":"o/r","project":"proj","hook":"svc"}]}'
+  write_hook "$home" svc 0
+  out=$(FM_HOME="$home" FM_TEST_ROOT="$ROOT" PATH="$home/fakebin:$PATH" \
+    "$tmpbin/fm-autoland.sh" deploy-run svc "$MAIN_1" 2>&1) || fail "sync timeout blocked deployment: $out"
+  [ "$(cat "$home/sync-bound")" = 300 ] || fail "fleet sync was not bounded to 300 seconds"
+  grep -q 'fleet sync of projects/proj timed out after 300s (continuing)' "$home/state/autoland/svc.log" || fail "sync timeout warning missing"
+  [ "$(cat "$home/state/autoland/svc.deployed")" = "$MAIN_1" ] || fail "hook did not deploy after sync timeout"
+  [ ! -e "$home/state/autoland/svc.lock" ] || fail "runner retained its hook lock"
+  pass "fm-autoland: a bounded fleet sync timeout warns and continues to the hook"
 }
 
 test_failed_and_deferred_hooks() {
@@ -430,7 +612,13 @@ test_refused_merge_is_reported
 test_authority_follows_the_registry
 test_other_base_and_other_repo_are_ignored
 test_task_owned_pr_uses_fm_pr_merge
+test_risk_section_is_optional
+test_attestation_follows_registered_mode
+test_live_policy_applies_to_both_merge_paths
+test_duplicate_hooks_are_rejected
+test_merges_are_bounded_and_notifications_follow_output
 test_deploy_runs_after_merge_and_reports
+test_fleet_sync_timeout_is_a_continuing_warning
 test_failed_and_deferred_hooks
 test_unsafe_hook_and_foreground_deploy
 test_watcher_runs_autoland_between_full_sweeps

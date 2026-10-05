@@ -425,6 +425,31 @@ write_away_record() {
     "$ROOT/bin/fm-afk-contract.sh" confirm >/dev/null
 }
 
+test_expected_head_is_required_when_supplied() {
+  local case_dir rc=0
+  case_dir=$(make_case github-expected-head)
+  rm "$case_dir/home/data/backlog.md"
+  add_gh_mocks "$case_dir" "$MR_HEAD"
+  FM_PR_MERGE_EXPECT_HEAD="$MR_STALE_HEAD" run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "a changed live head refuses the caller's expected head"
+  assert_grep "does not match expected head $MR_STALE_HEAD" "$case_dir/stderr" "expected-head refusal names the mismatch"
+  assert_no_grep '^pr merge ' "$case_dir/gh.log" "head mismatch never reaches the forge merge"
+  FM_PR_MERGE_EXPECT_HEAD="$MR_HEAD" run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "matching expected head refused"
+  assert_logged_gh_merge "$case_dir" 9 example/repo --squash
+
+  case_dir=$(make_gitlab_case gitlab-expected-head)
+  rm "$case_dir/home/data/backlog.md"
+  rc=0
+  FM_PR_MERGE_EXPECT_HEAD="$MR_STALE_HEAD" run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "GitLab also refuses a changed expected head"
+  assert_grep "does not match expected head $MR_STALE_HEAD" "$case_dir/stderr" "GitLab expected-head refusal"
+  [ -z "$(glab_merge_line "$case_dir/glab.log")" ] || fail "GitLab merged a different head"
+  pass "fm-pr-merge refuses a moved expected head and accepts the matching live head"
+}
+
 test_verified_merge_records_pr_and_head() {
   local case_dir rc
   case_dir=$(make_case records-before-merge)
@@ -2151,6 +2176,7 @@ test_github_zero_exit_queue_required_refuses_with_exact_retry
 test_github_closed_unqueued_outcome_omits_retry_flags
 test_github_agreeing_queue_rules_keep_retry_guidance
 test_github_conflicting_queue_rules_report_ambiguity
+test_expected_head_is_required_when_supplied
 test_verified_merge_records_pr_and_head
 test_pr_metadata_is_recorded_before_the_forge_call
 test_merge_failure_propagates_after_recording

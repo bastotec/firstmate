@@ -736,9 +736,12 @@ See [`docs/examples/autoland.json`](examples/autoland.json) for a starting point
 ```
 
 Every entry needs `repo` and at least one of `project` or `authority`.
+Repository names must be unique, and each nonempty `hook` name may belong to only one entry.
 With `project`, the repository merges only while that registry entry carries `+yolo`, read at every tick, so dropping `+yolo` stops auto-merge without editing this file.
 With `authority`, the cited captain ruling is the standing merge authority, as for the Firstmate repository itself.
-`attestation: true` requires the PR body's no-mistakes attestation to name the current head with review, test, and document finished, and caps the no-mistakes risk rating at `max_risk` (`low`, `medium`, or `high`; default `low`).
+The PR body's no-mistakes attestation must name the current head with review, test, and document finished when `attestation: true` or the entry's `project` is registered as `no-mistakes` or `no-mistakes-prod-only`, read at every tick.
+An omitted or false `attestation` disables that requirement only for registered `direct-PR`/`local-only` projects or authority-only entries; it cannot override a registered no-mistakes delivery requirement.
+The no-mistakes risk rating is capped at `max_risk` (`low`, `medium`, or `high`; default `low`).
 `method` is `squash` (default), `merge`, or `rebase`, matching what the repository allows.
 
 Only open PRs authored by the authenticated `gh` account into a configured repository's default branch are considered.
@@ -746,7 +749,7 @@ A PR merges when it is not a draft, GitHub calls it mergeable and not blocked, b
 Pending or red checks are left to the PR's owner, silently.
 A PR owned by a task in this home merges through `bin/fm-pr-merge.sh`, so captain holds, away posture, and merge records still apply.
 Destructive, irreversible, and security-sensitive work keeps escalating through the risk cap and the hold labels: a PR no-mistakes rates above `max_risk`, or one carrying a hold label, wakes the supervisor instead of merging.
-An entry without `attestation` has no risk rating to read, so use one only for a repository where every green PR is safe to merge.
+When attestation is not required, a missing risk section is treated as unrated, but a present risk rating still must pass the cap; use this posture only for a repository where every otherwise eligible green PR is safe to merge.
 Every other green PR that cannot land wakes the supervisor with `green PR not landing: <url> because <reason>`, once per head and reason, and again after `FM_AUTOLAND_RENOTIFY` seconds (default 21600).
 Decide that PR at once rather than leaving it waiting on its owner.
 
@@ -754,6 +757,7 @@ Decide that PR at once rather than leaving it waiting on its owner.
 
 An entry with `hook` deploys its default branch whenever that branch's head differs from the commit the hook last deployed, so a merge made here, by a person, or by anyone else all deploy the same way.
 The tick starts a detached runner, which first refreshes the project's clone through `bin/fm-fleet-sync.sh` when this home has one under `projects/`, then runs `config/post-merge/<hook>.sh <commit>`.
+Fleet sync is bounded to 300 seconds; failure or timeout is logged as a continuing warning before the hook runs.
 The hook must be an executable regular file that is not writable by group or others.
 It runs with its working directory in `state/autoland/` and these variables set:
 
