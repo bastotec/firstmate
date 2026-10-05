@@ -86,6 +86,13 @@
 #                           still-working no-mistakes run (default 45)
 #   FM_DECK_PIPELINE_WAIT_SECS  bound on one such wait (default 21600; 0
 #                           disables the pipeline wake)
+#   FM_DECK_MCP_CONFIG     when set, pass a non-empty value as-is to every
+#                           `deck run --mcp-config`, even if the path is missing;
+#                           an empty value disables MCP. When unset, use
+#                           deck-mcp.json only if it exists in the config dir:
+#                           non-empty FM_CONFIG_OVERRIDE, else FM_HOME/config,
+#                           else the tracked code root's config/ directory.
+#                           Resolution happens once at driver startup.
 #   FM_STREAM_ENDPOINT_ID  set by the owning stream agent, enabling receiver
 #                           start/end registration for each driver turn
 #   PROXAI_BASE_URL, PROXAI_MODEL, PROXAI_API_KEY_FILE, PROXAI_API_KEY
@@ -143,6 +150,14 @@ PIPELINE_POLL=${FM_DECK_PIPELINE_POLL_SECS:-45}
 PIPELINE_WAIT=${FM_DECK_PIPELINE_WAIT_SECS:-21600}
 case "$PIPELINE_POLL" in ''|*[!0-9]*|0) PIPELINE_POLL=45 ;; esac
 case "$PIPELINE_WAIT" in ''|*[!0-9]*) PIPELINE_WAIT=21600 ;; esac
+# Match the stream backend's config-directory resolution, not the parent task's
+# --state directory: a secondmate host and its workers use its own home.
+if [ "${FM_DECK_MCP_CONFIG+set}" = set ]; then
+  MCP_CONFIG=$FM_DECK_MCP_CONFIG
+else
+  MCP_CONFIG="${FM_CONFIG_OVERRIDE:-${FM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}/config}/deck-mcp.json"
+  [ -f "$MCP_CONFIG" ] || MCP_CONFIG=''
+fi
 if [ -z "${PROXAI_API_KEY_FILE:-}${PROXAI_API_KEY:-}" ] && [ -f "$HOME/.config/proxai/client.key" ]; then
   export PROXAI_API_KEY_FILE="$HOME/.config/proxai/client.key"
 fi
@@ -449,6 +464,7 @@ run_turn() {  # <prompt>
   local -a args=(run "$prompt" --max-turns "$MAX_TURNS" --deadline-secs "$DEADLINE" --hook "pre_complete=$EVIDENCE_HOOK")
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
   [ -z "$MODEL" ] || args+=(--model "$MODEL")
+  [ -z "$MCP_CONFIG" ] || args+=(--mcp-config "$MCP_CONFIG")
   [ -z "$SESSION" ] || args+=(--session "$SESSION")
   if [ -n "${FM_STREAM_ENDPOINT_ID:-}" ]; then
     local steer_supported=0 steer_turn steer_dir
