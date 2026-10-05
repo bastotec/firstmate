@@ -32,6 +32,7 @@
     "docs/orca-backend.md",
     "docs/cmux-backend.md",
     "docs/stream-backend.md",
+    "docs/managed-primary.md",
     "docs/remote-secondmates.md"
   ],
   "requiredOwnerPointers": [
@@ -527,6 +528,10 @@
     },
     {
       "path": "docs/zellij-backend.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/managed-primary.md",
       "audience": "operator-current"
     },
     {

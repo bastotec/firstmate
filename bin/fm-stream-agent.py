@@ -498,7 +498,9 @@ def registration(options: argparse.Namespace, endpoint_id: str) -> dict:
         "cwd": options.cwd,
         "rows": options.rows,
         "cols": options.cols,
-        "capabilities": [IDEMPOTENT_RESULT_CAPABILITY, NATIVE_STEERING_CAPABILITY],
+        "capabilities": [IDEMPOTENT_RESULT_CAPABILITY] + (
+            [] if getattr(options, 'primary_adapter', 'deck') != 'deck'
+            else [NATIVE_STEERING_CAPABILITY]),
         "protocol": AGENT_PROTOCOL,
     }
 
@@ -846,6 +848,9 @@ class Agent:
     # --- commands ---------------------------------------------------------
 
     def deck_receiver(self):
+        if (getattr(getattr(self, 'options', None), 'primary_native_only', False)
+                and self.options.primary_adapter != 'deck'):
+            return None
         if not self.status_path:
             return None
         from fm_stream_deck import Receiver
@@ -858,6 +863,20 @@ class Agent:
         if kind == "steer":
             if command.get("endpoint_id") != self.endpoint_id:
                 return (False, "stale execution; steer was not applied")
+            if getattr(getattr(self, 'options', None), 'primary_native_only', False):
+                if self.options.primary_adapter != 'deck':
+                    return (False, 'registered primary adapter has no native receiver; no PTY fallback')
+                receiver = self.deck_receiver()
+                if receiver is None:
+                    return (False, 'registered primary receiver unavailable; no PTY fallback')
+                result = receiver.apply(str(payload.get('order_id') or command['command_id']),
+                                        str(payload.get('execution_id') or ''),
+                                        str(payload.get('text') or ''), self.pty.alive,
+                                        reconcile_only=reconcile_only,
+                                        reservation=command.setdefault('_steering_reservation', {}),
+                                        command_id=command['command_id'])
+                return result if result is not None else (
+                    False, 'registered primary native receiver inactive; no PTY fallback')
             receiver = None if command.get('_legacy_prepared') else self.deck_receiver()
             if receiver is not None:
                 result = receiver.apply(str(payload.get('order_id') or command['command_id']),
@@ -1189,42 +1208,58 @@ class Agent:
 
     # --- lifecycle --------------------------------------------------------
 
-    def run(self) -> int:
-        reader = threading.Thread(target=self.read_loop, name="pty-reader", daemon=True)
-        state = threading.Thread(target=self.state_loop, name="state", daemon=True)
-        commands = threading.Thread(target=self.command_loop, name="commands", daemon=True)
-        reader.start()
-        state.start()
-        commands.start()
+    def run(self, install_signals: bool = True) -> int:
+        # A managed primary embeds this same publisher in its lifecycle owner.
+        # That owner keeps the signal handlers and controls only this Pty child.
+        reader = state = commands = None
+        started = []
+        try:
+            reader = threading.Thread(target=self.read_loop, name="pty-reader", daemon=True)
+            state = threading.Thread(target=self.state_loop, name="state", daemon=True)
+            commands = threading.Thread(target=self.command_loop, name="commands", daemon=True)
+            for thread in (reader, state, commands):
+                thread.start()
+                started.append(thread)
 
-        def _signalled(signum, frame) -> None:  # noqa: ARG001
+            def _signalled(signum, frame) -> None:  # noqa: ARG001
+                self.halt()
+                self.pty.close()
+
+            if install_signals:
+                signal.signal(signal.SIGTERM, _signalled)
+                signal.signal(signal.SIGINT, _signalled)
+
+            self.stop.wait()
+        finally:
             self.halt()
+            # A command poll already in flight can return one command after stop is
+            # set, so shutdown joins its thread rather than sampling transient work.
+            deadline = time.monotonic() + RESULT_RETRY_SHUTDOWN_SECS
+            with self._result_retry_condition:
+                self._result_retry_deadline = deadline
+                self._result_retry_condition.notify_all()
+            until = deadline + 2 * RESULT_POST_TIMEOUT_SECS + 1.0
+            if commands in started:
+                commands.join(timeout=max(0.0, until - time.monotonic()))
             self.pty.close()
-
-        signal.signal(signal.SIGTERM, _signalled)
-        signal.signal(signal.SIGINT, _signalled)
-
-        self.stop.wait()
-        # A command poll already in flight can return one command after stop is
-        # set, so shutdown joins its thread rather than sampling transient work.
-        deadline = time.monotonic() + RESULT_RETRY_SHUTDOWN_SECS
-        with self._result_retry_condition:
-            self._result_retry_deadline = deadline
-            self._result_retry_condition.notify_all()
-        until = deadline + 2 * RESULT_POST_TIMEOUT_SECS + 1.0
-        commands.join(timeout=max(0.0, until - time.monotonic()))
-        self.pty.close()
-        # Join the reader before releasing the descriptor: see Pty.close.
-        self.reader_done.wait(5.0)
-        reader.join(timeout=5.0)
-        self.pty.release()
-        self._post_frames([{
-            "endpoint_id": self.endpoint_id,
-            "closed": True,
-            "exit_code": self.pty.exit_code,
-            "state": {"alive": False, "foreground": [], "cwd": "",
-                      "published_at": _now()},
-        }])
+            # Join the reader before releasing the descriptor: see Pty.close.
+            if reader in started:
+                self.reader_done.wait(5.0)
+                reader.join(timeout=5.0)
+            # Embedded completion is retirement proof before the owner reuses
+            # descriptors. Drain only successfully started threads, including
+            # partial startup; standalone state probes must not delay shutdown.
+            if not install_signals:
+                for thread in started:
+                    thread.join()
+            self.pty.release()
+            self._post_frames([{
+                "endpoint_id": self.endpoint_id,
+                "closed": True,
+                "exit_code": self.pty.exit_code,
+                "state": {"alive": False, "foreground": [], "cwd": "",
+                          "published_at": _now()},
+            }])
         return 0
 
 

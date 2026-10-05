@@ -2,8 +2,9 @@
 
 Deck (`bastotec/deck`) is a headless Rust coding agent: `deck run "<prompt>"` streams NDJSON events on stdout and exits when the model finishes.
 Firstmate runs it through its own pane driver, `../../../../../bin/fm-deck-worker.sh`, whose header owns the driver's behavior.
-Deck supports crewmates, scouts, and persistent secondmates; the latter use the same driver with `--secondmate`.
-`../../../../../docs/verification/deck.md` owns how every fact below was established.
+Deck supports crewmates, scouts, persistent secondmates, and explicitly managed primaries launched through [`bin/fm-primary.py`](../../../../../bin/fm-primary.py).
+The stable driver uses `--secondmate` for secondmates and `--primary` for that managed primary entry point.
+`../../../../../docs/verification/deck.md` owns the worker and secondmate live evidence; [runtime verification](../../../../../docs/verification/runtime-backends.md#managed-primary-ownership-and-execution-bound-steering) owns managed-primary fixture evidence.
 
 ## Operating facts
 
@@ -40,7 +41,8 @@ A missing key fails the first turn with Deck's own error in the pane; a quota re
 
 ## Primary integration
 
-Persistent secondmates use `../../../../../docs/supervision-protocols/deck.md`; the main primary session remains outside this adapter's supported scope.
+Persistent secondmates and opt-in managed Deck primaries use `../../../../../docs/supervision-protocols/deck.md`.
+[`docs/managed-primary.md`](../../../../../docs/managed-primary.md) owns the managed-primary setup and supported boundary; directly launched, unregistered primary processes cannot be adopted.
 A Deck secondmate uses the same persistent driver and durable inbox wake path on every backend that hosts secondmates: tmux, Herdr, Zellij, or stream locally, and Herdr remotely.
 The driver header owns startup, lock lifetime, watcher wake turns, and the supervisor-specific completion postcondition.
 Daemon-owned away/quiet mode (`state/.afk`) is refused rather than competing with a daemon; clear that posture through the owning supervisor before relaunch.

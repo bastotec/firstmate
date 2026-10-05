@@ -32,7 +32,9 @@
 #
 # USAGE (bin/fm-spawn.sh builds this; the brief arrives already encoded)
 #   fm-deck-worker.sh --id <task-id> --state <state-dir> --gen <busy-gen>
-#       --deck <deck-binary> [--model <route>] [--secondmate] -- <first-prompt>
+#       --deck <deck-binary> [--model <route>] [--secondmate | --primary] -- <first-prompt>
+# --primary is used only by the managed primary launcher; it shares the stable
+# home-host driver with --secondmate, without selecting a secondmate role.
 # --secondmate requires FM_HOME and hosts that home, leaving --state pointed
 # at the parent task state for busy/progress and failure publication.
 # Startup runs once before the first turn. A tracked watcher stays armed through
@@ -41,9 +43,9 @@
 # The driver postcondition does not park without an owned watcher or a pending
 # result. A failed watcher exits loudly rather than leaving an idle host blind.
 #
-# SECOND MATE INVARIANTS (--secondmate)
+# HOME HOST INVARIANTS (--secondmate or --primary)
 # The driver, not a turn-scoped Deck process, owns the home session lock.
-# Watcher results pass through the durable task steering inbox and its ordinary
+# Watcher results pass through the durable execution steering inbox and its ordinary
 # doorbell, retained until acknowledged after a serialized next turn;
 # the durable wake queue is acknowledged only by the model after handling.
 # Exactly one Deck turn runs at a time, including stdin and watcher turns.
@@ -83,6 +85,7 @@ BUSY_EVENT="$SCRIPT_DIR/fm-busy-event.sh"
 STATE_IO="$SCRIPT_DIR/fm-state-io.py"
 
 ID='' STATE='' GEN='' DECK='' MODEL=''
+PRIMARY=0
 SECONDMATE=0 WATCH_PID='' WATCH_PREDECESSOR_ARM_PID='' INPUT_PID='' TURN_PID='' TURN_RENDER_PID=''
 WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 # shellcheck source=bin/fm-session-lock-lib.sh
@@ -90,6 +93,7 @@ WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --secondmate) SECONDMATE=1; shift ;;
+    --primary) PRIMARY=1; SECONDMATE=1; shift ;;
     --id) ID=${2-}; shift 2 ;;
     --state) STATE=${2-}; shift 2 ;;
     --gen) GEN=${2-}; shift 2 ;;
@@ -108,6 +112,8 @@ command -v jq >/dev/null 2>&1 || { echo "fm-deck-worker: jq is required to rende
 command -v python3 >/dev/null 2>&1 || { echo "fm-deck-worker: python3 is required for safe status I/O" >&2; exit 2; }
 [ -f "$STATE_IO" ] && [ ! -L "$STATE_IO" ] || { echo "fm-deck-worker: safe status I/O helper is unavailable" >&2; exit 2; }
 
+HOST_ROLE=secondmate
+[ "$PRIMARY" != 1 ] || HOST_ROLE='managed primary'
 STATUS_FILE="$STATE/$ID.status"
 TURNEND_FILE="$STATE/$ID.turn-ended"
 MAX_TURNS=${FM_DECK_MAX_TURNS:-200}
@@ -216,8 +222,8 @@ q() { printf '%q' "$1"; }
 HOST_FAILURE_UNPUBLISHED=2
 host_failure() {
   printf 'fm-deck-worker: %s\n' "$1" >&2
-  printf 'failed: Deck secondmate %s\n' "$1" | status_append || {
-    printf 'fm-deck-worker: failed to publish secondmate failure\n' >&2
+  printf 'failed: Deck %s %s\n' "$HOST_ROLE" "$1" | status_append || {
+    printf 'fm-deck-worker: failed to publish %s failure\n' "$HOST_ROLE" >&2
     return "$HOST_FAILURE_UNPUBLISHED"
   }
   return 1
@@ -392,7 +398,7 @@ for seq, line in enumerate(sys.stdin):
   fi
   PROMPT="$PROMPT
 
-The task steering inbox is $STATE/$ID.inbox. It belongs to this secondmate even outside its home. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
+The execution steering inbox is $STATE/$ID.inbox. It belongs to this $HOST_ROLE. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
 The Deck host already ran bin/fm-session-start.sh exactly once for this session.
 Read the complete digest below; do not run session start again.
 $(cat "$WORK/startup")"
@@ -403,7 +409,7 @@ fi
 
 SESSION=''
 # run_turn's code for a turn that failed in a way a persistent supervisor is
-# expected to outlive. Only the secondmate role returns it; a crewmate or scout
+# expected to outlive. Only home-host mode returns it; a crewmate or scout
 # driver keeps its existing all-or-nothing turn contract.
 TURN_RECOVERABLE=3
 # 1 while the launch turn is still owed to a session: the brief and the startup
@@ -552,7 +558,7 @@ run_turn() {  # <prompt>
 # An owed launch turn is re-delivered once underneath the wake that follows it,
 # so a mate whose first turn died before Deck opened a session still takes the
 # helm. A second failure that opens no session stops the driver instead, which
-# is what returns the home to the parent's guarded relaunch path.
+# is what returns the home to its lifecycle owner's guarded relaunch path.
 drive_turn() {  # <prompt>
   local rc=0 prompt=$1 relaunch=0
   if [ "$LAUNCH_UNDELIVERED" = 1 ]; then
