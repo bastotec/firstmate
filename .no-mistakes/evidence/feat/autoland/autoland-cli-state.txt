@@ -1,0 +1,338 @@
+Actual Firstmate CLI output and runner state; GitHub discovery/merge outcomes are PATH-fixture-backed. Hooks are executable local plugins from the existing repository suite.
+
+SCENARIO: fm-autoland: arm binds the shim and disarm removes it
+
+$ fm-autoland.sh check (suite case: noconfig)
+exit=0
+autoland: autoland is armed but config/autoland.json is missing
+
+$ fm-autoland.sh check (suite case: noconfig)
+exit=0
+<silent>
+
+SCENARIO: fm-autoland: a missing config is reported once
+
+Persisted contract state/autoland/report.log:
+2026-10-05T21:59:28Z autoland: autoland is armed but config/autoland.json is missing
+
+
+$ fm-autoland.sh check (suite case: green)
+exit=0
+autoland: merged https://github.com/o/r/pull/7
+
+$ fm-autoland.sh check (suite case: green)
+exit=0
+<silent>
+
+SCENARIO: fm-autoland: a green, attested, low-risk PR merges pinned to its head and is reported once
+
+Persisted contract state/autoland/report.log:
+2026-10-05T21:59:29Z autoland: merged https://github.com/o/r/pull/7
+
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because its no-mistakes attestation is for 2222222, not the current head 1111111
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because its no-mistakes attestation shows review skipped
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because no-mistakes rated it medium risk (auto-merge cap: low)
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because it is labelled do-not-merge
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because it has merge conflicts with its base
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because GitHub reports it blocked by a branch rule such as a required review
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because its branch is behind the base and the repository requires it to be up to date
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because its no-mistakes attestation shows test pending
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because its no-mistakes attestation shows document skipped
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because it carries no no-mistakes attestation
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because its no-mistakes attestation cannot be read
+
+$ fm-autoland.sh check (suite case: reasons)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because no CI checks are reported on its head
+
+SCENARIO: fm-autoland: every green-but-held PR names its reason and does not merge
+
+Persisted contract state/autoland/report.log:
+2026-10-05T21:59:30Z autoland: green PR not landing: https://github.com/o/r/pull/7 because its no-mistakes attestation is for 2222222, not the current head 1111111
+2026-10-05T21:59:30Z autoland: green PR not landing: https://github.com/o/r/pull/7 because its no-mistakes attestation shows review skipped
+2026-10-05T21:59:30Z autoland: green PR not landing: https://github.com/o/r/pull/7 because no-mistakes rated it medium risk (auto-merge cap: low)
+2026-10-05T21:59:31Z autoland: green PR not landing: https://github.com/o/r/pull/7 because it is labelled do-not-merge
+2026-10-05T21:59:31Z autoland: green PR not landing: https://github.com/o/r/pull/7 because it has merge conflicts with its base
+2026-10-05T21:59:31Z autoland: green PR not landing: https://github.com/o/r/pull/7 because GitHub reports it blocked by a branch rule such as a required review
+2026-10-05T21:59:31Z autoland: green PR not landing: https://github.com/o/r/pull/7 because its branch is behind the base and the repository requires it to be up to date
+2026-10-05T21:59:32Z autoland: green PR not landing: https://github.com/o/r/pull/7 because its no-mistakes attestation shows test pending
+2026-10-05T21:59:32Z autoland: green PR not landing: https://github.com/o/r/pull/7 because its no-mistakes attestation shows document skipped
+2026-10-05T21:59:32Z autoland: green PR not landing: https://github.com/o/r/pull/7 because it carries no no-mistakes attestation
+2026-10-05T21:59:33Z autoland: green PR not landing: https://github.com/o/r/pull/7 because its no-mistakes attestation cannot be read
+2026-10-05T21:59:33Z autoland: green PR not landing: https://github.com/o/r/pull/7 because no CI checks are reported on its head
+
+
+$ fm-autoland.sh check (suite case: task-queue)
+exit=0
+autoland: queued https://github.com/o/r/pull/7 in GitHub's merge queue
+
+$ fm-autoland.sh check (suite case: task-queue)
+exit=0
+<silent>
+
+$ fm-autoland.sh check (suite case: task-queue)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because gh accepted the merge but the PR reads as OPEN
+
+$ fm-autoland.sh check (suite case: task-queue)
+exit=0
+autoland: green PR not landing: https://github.com/o/r/pull/7 because gh accepted the merge but the PR reads as CLOSED
+
+$ fm-autoland.sh check (suite case: task-queue)
+exit=0
+autoland: merged https://github.com/o/r/pull/7 (deploy follows)
+
+SCENARIO: fm-autoland: helper success is confirmed as landed, queued, or still unlanded
+
+Persisted contract state/autoland/svc.deployed:
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+
+Persisted contract state/autoland/report.log:
+2026-10-05T21:59:34Z autoland: queued https://github.com/o/r/pull/7 in GitHub's merge queue
+2026-10-05T21:59:35Z autoland: green PR not landing: https://github.com/o/r/pull/7 because gh accepted the merge but the PR reads as OPEN
+2026-10-05T21:59:35Z autoland: green PR not landing: https://github.com/o/r/pull/7 because gh accepted the merge but the PR reads as CLOSED
+2026-10-05T21:59:35Z autoland: merged https://github.com/o/r/pull/7 (deploy follows)
+
+
+$ fm-autoland.sh check (suite case: deploy)
+exit=0
+<silent>
+
+$ fm-autoland.sh check (suite case: deploy)
+exit=0
+autoland: deployed svc aaaaaaa: summary for o/r prev=none
+
+$ fm-autoland.sh check (suite case: deploy)
+exit=0
+<silent>
+
+$ fm-autoland.sh check (suite case: deploy)
+exit=0
+<silent>
+
+SCENARIO: fm-autoland: a new default-branch head deploys once, records the commit, and reports
+
+Persisted contract state/autoland/svc.result:
+deployed	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	1791237577	summary for o/r prev=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+
+Persisted contract state/autoland/svc.deployed:
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+
+Persisted contract state/autoland/report.log:
+2026-10-05T21:59:36Z autoland: deployed svc aaaaaaa: summary for o/r prev=none
+
+
+Persisted contract state/autoland/svc.log:
+== 2026-10-05T21:59:37Z autoland deploy svc bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb (previously aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+summary for o/r prev=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+
+SCENARIO: fm-autoland: the detached hook survives check process-group termination and records deployment
+
+Persisted contract survival.out:
+check pid=76221 pgid=76221; runner pid=76590 pgid=76590
+check group terminated; runner survived; deployed=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+
+Persisted contract state/autoland/svc.result:
+deployed	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	1791237578	== 2026-10-05T21:59:38Z autoland deploy svc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (previously unrecorded)
+
+
+Persisted contract state/autoland/svc.deployed:
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+
+Persisted contract state/autoland/svc.log:
+== 2026-10-05T21:59:38Z autoland deploy svc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (previously unrecorded)
+
+
+SCENARIO: fm-autoland: a hook timeout fails closed without recording deployment and releases its lock
+
+Persisted contract state/autoland/svc.result:
+failed	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	1791237579	timed out after 1s: == 2026-10-05T21:59:38Z autoland deploy svc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (previously unrecorded)
+
+
+Persisted contract state/autoland/svc.log:
+== 2026-10-05T21:59:38Z autoland deploy svc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (previously unrecorded)
+
+
+SCENARIO: fm-autoland: owner publication and stale reclaim exclude concurrent hook runners
+
+Persisted contract state/autoland/svc.result:
+deployed	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	1791237582	== 2026-10-05T21:59:42Z autoland deploy svc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (previously unrecorded)
+
+
+Persisted contract state/autoland/svc.deployed:
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+
+Persisted contract state/autoland/svc.log:
+== 2026-10-05T21:59:42Z autoland deploy svc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (previously unrecorded)
+
+
+SCENARIO: fm-autoland: a runner releases only its own hook lock
+
+Persisted contract state/autoland/svc.result:
+deployed	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	1791237583	== 2026-10-05T21:59:42Z autoland deploy svc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (previously unrecorded)
+
+
+Persisted contract state/autoland/svc.deployed:
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+
+Persisted contract state/autoland/svc.log:
+== 2026-10-05T21:59:42Z autoland deploy svc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (previously unrecorded)
+
+
+Persisted contract runner.out:
+
+
+$ fm-autoland.sh check (suite case: completion-race)
+exit=0
+autoland: deploy of svc aaaaaaa deferred: work in flight
+
+$ fm-autoland.sh check (suite case: completion-race)
+exit=0
+<silent>
+
+SCENARIO: fm-autoland: reconciliation re-reads terminal results under the hook lock and preserves retry
+
+Persisted contract state/autoland/svc.result:
+deployed	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	1791237584	summary for o/r prev=none
+
+
+Persisted contract state/autoland/svc.deployed:
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+
+Persisted contract state/autoland/report.log:
+2026-10-05T21:59:43Z autoland: deploy of svc aaaaaaa deferred: work in flight
+
+
+Persisted contract state/autoland/svc.log:
+== 2026-10-05T21:59:44Z autoland deploy svc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (previously unrecorded)
+summary for o/r prev=none
+
+
+$ fm-autoland.sh check (suite case: deployfail)
+exit=0
+<silent>
+
+$ fm-autoland.sh check (suite case: deployfail)
+exit=0
+autoland: deploy of bad aaaaaaa FAILED: exit 3: summary for o/r prev=none (log state/autoland/bad.log; retry bin/fm-autoland.sh deploy bad)
+
+$ fm-autoland.sh check (suite case: deployfail)
+exit=0
+<silent>
+
+$ fm-autoland.sh check (suite case: deploydefer)
+exit=0
+<silent>
+
+$ fm-autoland.sh check (suite case: deploydefer)
+exit=0
+autoland: deploy of later aaaaaaa deferred: summary for o/r prev=none
+
+$ fm-autoland.sh check (suite case: deploydefer)
+exit=0
+<silent>
+
+SCENARIO: fm-autoland: a failed hook reports once without retrying; a deferred one retries
+
+Persisted contract state/autoland/later.result:
+deployed	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	1791237588	summary for o/r prev=none
+
+
+Persisted contract state/autoland/later.deployed:
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+
+Persisted contract state/autoland/later.log:
+== 2026-10-05T21:59:48Z autoland deploy later aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (previously unrecorded)
+summary for o/r prev=none
+
+
+Persisted contract state/autoland/report.log:
+2026-10-05T21:59:46Z autoland: deploy of later aaaaaaa deferred: summary for o/r prev=none
+
+
+$ fm-autoland.sh check (suite case: unsafe)
+exit=0
+<silent>
+
+SCENARIO: fm-autoland: hooks writable by others never run; a foreground deploy is not re-reported
+
+Persisted contract state/autoland/svc.result:
+deployed	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	1791237589	summary for o/r prev=none
+
+
+Persisted contract state/autoland/svc.deployed:
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+
+Persisted contract state/autoland/svc.log:
+== 2026-10-05T21:59:49Z autoland deploy svc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (previously unrecorded)
+summary for o/r prev=none
+
+fm-autoland: note: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M47092E2XZRW57RYN443Q0VS/.tmp-verify/autoland-phase-tmp/fm-autoland.m9phQ9/real-armed-watcher/config/autoland.json does not exist yet; ticks report that until it does
+armed: state/autoland.check.sh
+
+$ fm-watch.sh (real armed shim; full sweep interval=3600, auto-land interval=1)
+exit=0
+check: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M47092E2XZRW57RYN443Q0VS/.tmp-verify/autoland-phase-tmp/fm-autoland.m9phQ9/real-armed-watcher/state/autoland.check.sh: autoland: autoland is armed but config/autoland.json is missing
+
+Durable .wake-queue:
+1791237592	1	check	/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M47092E2XZRW57RYN443Q0VS/.tmp-verify/autoland-phase-tmp/fm-autoland.m9phQ9/real-armed-watcher/state/autoland.check.sh	check: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M47092E2XZRW57RYN443Q0VS/.tmp-verify/autoland-phase-tmp/fm-autoland.m9phQ9/real-armed-watcher/state/autoland.check.sh: autoland: autoland is armed but config/autoland.json is missing
+
+Full sweep marker before=1791237530 after=1791237530
+
+SCENARIO: real watcher dispatches the armed auto-land product check and queues its diagnostic without postponing other checks
+
+Persisted contract state/autoland/report.log:
+2026-10-05T21:59:52Z autoland: autoland is armed but config/autoland.json is missing
+
+
+Persisted contract watch.err:
+
+config: config/autoland.json is missing
+armed: state/autoland.check.sh
+recent reports:
+2026-10-05T21:59:52Z autoland: autoland is armed but config/autoland.json is missing
+disarmed: state/autoland.check.sh

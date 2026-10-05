@@ -1,0 +1,173 @@
+FM_TEST_BEGIN 2026-10-05T21:47:45Z tests/fm-autoland.test.sh family=watcher-wake-lock expected_gate_skip=none
+ok - fm-autoland: help and unknown action
+ok - fm-autoland: arm binds the shim and disarm removes it
+ok - fm-autoland: a missing config is reported once
+ok - fm-autoland: a green, attested, low-risk PR merges pinned to its head and is reported once
+ok - fm-autoland: pending and red checks are left to the owner, silently
+ok - fm-autoland: a green draft wakes once per head and never merges
+ok - fm-autoland: every green-but-held PR names its reason and does not merge
+ok - fm-autoland: malformed attestation fields hold one PR without dropping the batch
+ok - fm-autoland: a refused merge or a moved head is reported, not claimed
+ok - fm-autoland: registry-backed authority needs +yolo at tick time
+ok - fm-autoland: stacked PRs and unconfigured repositories are left alone
+ok - fm-autoland: task-owned PRs use the head-pinned helper and report its refusals
+ok - fm-autoland: slow queries preserve merge-work budget without bypassing the absolute deadline
+ok - fm-autoland: helper success is confirmed as landed, queued, or still unlanded
+ok - fm-autoland: parsed PR identity preserves task guards and recorded URL casing
+ok - fm-autoland: unrated PRs are retained but held when attestation is required
+ok - fm-autoland: configuration cannot disable registered no-mistakes attestation
+ok - fm-autoland: both merge paths re-read live head, labels, risk, and attestation
+ok - fm-autoland: each hook has one repository owner
+ok - fm-autoland: stateless tick rotation prevents a slow first candidate from starving others
+ok - fm-autoland: notification timestamps use real time despite the removed clock override
+ok - fm-autoland: complete merges respect the deadline and queued notifications are not pre-marked
+ok - fm-autoland: a new default-branch head deploys once, records the commit, and reports
+ok - fm-autoland: the detached hook survives check process-group termination and records deployment
+ok - fm-autoland: a hook timeout fails closed without recording deployment and releases its lock
+ok - fm-autoland: a bounded fleet sync timeout warns and continues to the hook
+ok - fm-autoland: owner publication and stale reclaim exclude concurrent hook runners
+ok - fm-autoland: a runner releases only its own hook lock
+ok - fm-autoland: reconciliation re-reads terminal results under the hook lock and preserves retry
+ok - fm-autoland: the example hook updates and verifies code independently of the operational home
+ok - fm-autoland: a failed hook reports once without retrying; a deferred one retries
+ok - fm-autoland: hooks writable by others never run; a foreground deploy is not re-reported
+ok - fm-watch: an armed autoland check runs on its own cadence between full sweeps
+FM_TEST_END 2026-10-05T21:50:15Z tests/fm-autoland.test.sh exit=0 duration_ms=150044 gate_skip=false
+FM_TEST_BEGIN 2026-10-05T21:50:15Z tests/fm-pr-merge.test.sh family=pr-forge expected_gate_skip=none
+ok - fm-pr-merge reports exact queue retry flags after a zero-exit false success
+ok - fm-pr-merge omits merge-queue retry guidance for a closed GitHub PR
+ok - fm-pr-merge aggregates agreeing merge-queue rules
+ok - fm-pr-merge reports ambiguity for conflicting merge-queue rules
+ok - fm-pr-merge refuses a moved expected head and accepts the matching live head
+ok - fm-pr-merge refuses a retargeted base at the same head and accepts the matching base
+ok - fm-pr-merge records pr= and pr_head= for a verified GitHub merge
+ok - fm-pr-merge records pr= before the forge call can land the merge
+ok - fm-pr-merge propagates a real merge failure without silently succeeding
+ok - fm-pr-merge refuses a GitHub merge call that leaves the PR open and unqueued
+ok - fm-pr-merge keeps PR bookkeeping when it cannot read a successful merge call's outcome
+ok - fm-pr-merge refuses with the forge's own output quoted apart from its verdict
+ok - fm-pr-merge quotes the forge output when it cannot read the outcome either
+ok - fm-pr-merge does not echo back queue flags the caller already used
+ok - fm-pr-merge still names retry flags when the caller used a different method
+ok - fm-pr-merge names the queue requirement even when its method is unrecognised
+ok - fm-pr-merge distinguishes unreadable branch rules from a base with no merge queue
+ok - fm-pr-merge reads a plan-gated 403 on branch rules as no merge queue, not unreadable
+ok - fm-pr-merge says nothing about a merge queue when the base branch has no queue rule
+ok - fm-pr-merge accepts only a proved merge from the gh-axi fallback
+ok - fm-pr-merge explains an armed auto-merge that landed nothing on a queue-less base
+ok - fm-pr-merge never reports auto-merge as armed when the merge command failed
+ok - fm-pr-merge claims no acceptance for a failed merge command carrying queue flags
+ok - fm-pr-merge falls back to the gh-axi view when gh's read fails
+ok - fm-pr-merge names a landed state hiding behind a failed GitHub merge command
+ok - fm-pr-merge refuses a GitHub merge when gh is missing, before recording
+ok - fm-pr-merge refuses a GitHub merge when gh is missing rather than merging blind
+ok - fm-pr-merge verifies a genuinely merged GitHub pull request
+ok - fm-pr-merge refuses to claim a merge when poll recording fails
+ok - fm-pr-merge accepts and accurately reports a GitHub merge-queue entry
+ok - fm-pr-merge explains how to retry with the required GitHub merge queue method
+ok - fm-pr-merge refuses branch deletion unless --attended-override is passed
+ok - fm-pr-merge refuses before merging when task meta is missing
+ok - fm-pr-merge refuses malformed PR URLs before calling gh-axi
+ok - fm-pr-merge refuses unsafe PR URL segments before recording state
+ok - fm-pr-merge refuses repo override args before recording state
+ok - fm-pr-merge refuses a bundled short-option repo override and refuses -d unless attended
+ok - fm-pr-merge does not add default --squash when the caller passes an explicit merge method
+ok - fm-pr-merge respects --method=<value> as an explicit merge method
+ok - fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments
+ok - fm-pr-merge refuses a caller --sha on GitHub because the head comes from the live read
+ok - fm-pr-merge merges a GitLab merge request through glab instead of refusing it
+ok - fm-pr-merge takes the GitLab instance from the URL rather than assuming one
+ok - fm-pr-merge imposes no merge method on GitLab, leaving the project's own one
+ok - fm-pr-merge refuses GitLab source-branch deletion unless --attended-override is passed
+ok - fm-pr-merge propagates a real glab merge failure without silently succeeding
+ok - fm-pr-merge refuses on each GitLab pre-merge condition independently
+ok - fm-pr-merge reports every failing GitLab condition, not only the first
+ok - fm-pr-merge reports a stale recorded head and verifies the live one
+ok - fm-pr-merge refuses an unreadable GitLab merge request state rather than merging blind
+ok - fm-pr-merge refuses a GitLab head commit it cannot validate
+ok - fm-pr-merge refuses before recording anything when glab or jq is absent
+ok - fm-pr-merge refuses a GitLab head override before recording state
+ok - a merge a secondmate home performs itself is reported upward exactly once
+ok - a locally routed secondmate home reports the landed PR into its parent's own channel
+ok - a landed GitLab merge request is reported upward on the same channel
+ok - a queued GitLab merge stays silent and leaves confirmation to the armed poll
+ok - a refused or failed merge reports no outcome
+ok - a GitLab merge refused before the forge call reports no outcome
+ok - a merge a main home performs itself leaves one durable wake naming the PR
+ok - a queued GitHub merge stays silent and leaves confirmation to the armed poll
+ok - distinct merged PRs for one task retain distinct captain-facing wakes
+ok - an uncommitted marker retry preserves at least one durable outcome
+ok - a secondmate home that cannot report upward says so instead of merging in silence
+ok - fm-pr-merge proceeds when the home carries no backlog at all
+ok - fm-pr-merge refuses when the backlog exists but cannot be read
+ok - fm-pr-merge refuses when its configured backend cannot be read
+ok - fm-pr-merge refuses when its user backend configuration cannot be read
+ok - fm-pr-merge refuses when its user backend configuration directory cannot be traversed
+ok - fm-pr-merge proceeds once when its user configuration directory and backlog are genuinely absent
+ok - fm-pr-merge honors a backend override over an unreadable user configuration
+ok - fm-pr-merge refuses red GitHub checks and waives only a named --allow-red check
+ok - fm-pr-merge merges when a failed check run was replaced by a passing re-run
+ok - fm-pr-merge never lets a check run supersede a legacy status context
+ok - fm-pr-merge still refuses when a check's current run failed after an earlier pass
+ok - fm-pr-merge uses start order when the old success finishes last
+ok - fm-pr-merge supersedes an old cancellation that finishes last
+ok - fm-pr-merge keeps a check red while its re-run is still in flight
+ok - fm-pr-merge never lets one check's pass clear another check's failure
+ok - fm-pr-merge clears a failure only on a proven later pass of the same check
+ok - fm-pr-merge keeps --allow-red scoped to its named check beside a superseded failure
+ok - fm-pr-merge rechecks away presence before an attended red merge
+ok - fm-pr-merge accepts exactly one separately named red-check waiver
+ok - away merges require yolo or a grant, and --attended-override does not skip that
+ok - away posture permits immediate merges but refuses every asynchronous path
+ok - away merge proceeds on a plan-gated 403 because that repository cannot have a merge queue
+ok - a grant does not bypass red checks, and a recorded pr= must match the URL
+ok - an unreadable away-posture record refuses the merge instead of skipping the grant
+ok - no away-record archive or grant revocation lands between the authority read and the merge
+ok - a grant revoked before the merge's own authority read refuses the merge
+ok - a merge that cannot lock the away record refuses instead of merging unlocked
+ok - fm-pr-merge refuses --allow-red on GitLab
+FM_TEST_END 2026-10-05T21:56:56Z tests/fm-pr-merge.test.sh exit=0 duration_ms=400613 gate_skip=false
+FM_TEST_BEGIN 2026-10-05T21:56:56Z tests/fm-watch-checkpoint.test.sh family=watcher-wake-lock expected_gate_skip=none
+ok - quiet checkpoint exits 124 with a clean checkpoint line and no live lock
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 87404.1791237421.h27SWd
+ok - checkpoint passes through a real watcher wake and leaves the queue for drain
+ok - checkpoint preserves watcher environment for registered custom checks
+ok - checkpoint rejects an existing watcher singleton as unowned
+FM_TEST_END 2026-10-05T21:57:06Z tests/fm-watch-checkpoint.test.sh exit=0 duration_ms=10399 gate_skip=false
+FM_TEST_BEGIN 2026-10-05T21:57:06Z tests/fm-brief.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - fm-brief: scaffolds leave the worker role scope to the launch boundary and keep the secondmate contract
+ok - fm-brief.sh: bash -n succeeds
+/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M47092E2XZRW57RYN443Q0VS/.tmp-verify/autoland-phase-tmp/fm-brief.VTyXWP/heredoc-in-substitution.sh:2
+ok - fm-brief.sh: no heredoc is nested inside a command substitution (Bash 3.2 parse-safe)
+ok - fm-brief.sh: --help renders the complete header
+ok - fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly
+ok - fm-brief.sh: ship --mode is required and closed-set validated
+ok - fm-brief.sh: the explicit ship mode wins over the registered posture
+ok - fm-brief.sh: --yolo and scout/secondmate --mode are refused, never silently dropped
+ok - fm-brief.sh: faster paths use configured authority without stacked review
+ok - fm-brief.sh: no-mistakes DOD keeps its apostrophe prose and bans --yes outright
+ok - fm-brief.sh: no-mistakes done is a green PR the worker drives itself, and the turn stays live while a run is open
+ok - fm-brief.sh: no-mistakes ask-user findings use one event plus a verbatim snapshot
+ok - fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar
+ok - fm-brief.sh: --herdr-lab emits the complete hard safety contract
+ok - fm-brief.sh: --herdr-lab uses its quoted Firstmate-owned helper path
+ok - fm-brief.sh: ship and scout scaffolds make omitted Herdr intent fail-visible
+ok - fm-brief.sh: the documented {TASK} and {FIRSTMATE_SPEC} fills cannot corrupt the Herdr safety gate
+ok - fm-brief.sh: Herdr lab contract covers scouts and rejects secondmate misuse
+ok - fm-brief.sh: --no-projects scaffolds a project-less charter and guards misuse
+ok - fm-brief.sh: marked requests avoid generic acknowledgements and preserve material reporting
+ok - fm-brief.sh: relative directory inputs ignore CDPATH, render stable absolute charter paths, or fail loudly
+ok - fm-brief.sh: custom pause verb renders in every scaffold
+ok - fm-brief.sh: investigation and visual-review completions load the shared decision policy
+ok - fm-brief: scout and secondmate code paths still scaffold well-formed briefs
+ok - fm-brief.sh: scout Lavish hosting follows the bootstrap lavish-axi floor
+ok - fm-brief.sh: ship briefs carry the cross-worker awareness contract, scouts and charters do not
+FM_TEST_END 2026-10-05T21:57:21Z tests/fm-brief.test.sh exit=0 duration_ms=14559 gate_skip=false
+FM_TEST_SUMMARY total=4 failed=0 skipped_gate=0 duration_ms=576784
+FM_TEST_SUMMARY_FAMILY family=pr-forge count=1 duration_ms=400613 failed=0
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=14559 failed=0
+FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 duration_ms=160443 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-pr-merge.test.sh duration_ms=400613
+FM_TEST_SLOWEST rank=2 script=tests/fm-autoland.test.sh duration_ms=150044
+FM_TEST_SLOWEST rank=3 script=tests/fm-brief.test.sh duration_ms=14559
+FM_TEST_SLOWEST rank=4 script=tests/fm-watch-checkpoint.test.sh duration_ms=10399

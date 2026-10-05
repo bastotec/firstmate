@@ -1,0 +1,34 @@
+Run existing base guard behavior against base; forge responses are fixture-backed.
+
+Expectation: an unchanged head with a retargeted base must refuse; expected exit=1 observed exit=0
+
+Public output or persisted contract stdout:
+armed: state/task-x1.check.sh
+verified: https://github.com/example/repo/pull/9 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+
+
+Public output or persisted contract stderr:
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M47092E2XZRW57RYN443Q0VS/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M47092E2XZRW57RYN443Q0VS/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+verified: https://github.com/example/repo/pull/9 is open and mergeable, with every required check green at head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+
+Public output or persisted contract gh.log:
+pr view https://github.com/example/repo/pull/9 --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup
+pr merge 9 --repo example/repo --match-head-commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --squash
+api graphql -f query=query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){state merged isInMergeQueue baseRefName}}} -F owner=example -F repo=repo -F number=9 --jq .data.repository.pullRequest | "state=" + (.state // ""), "merged=" + (.merged | tostring), "queued=" + (.isInMergeQueue | tostring), "base=" + (.baseRefName // "")
+
+
+Public output or persisted contract state/task-x1.meta:
+window=fm-task-x1
+worktree=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M47092E2XZRW57RYN443Q0VS/.tmp-verify/autoland-phase-tmp/fm-pr-merge-tests.f2RpSe/github-expected-base/wt
+project=/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M47092E2XZRW57RYN443Q0VS/.tmp-verify/autoland-phase-tmp/fm-pr-merge-tests.f2RpSe/github-expected-base/project
+kind=ship
+mode=no-mistakes
+pr=https://github.com/example/repo/pull/9
+

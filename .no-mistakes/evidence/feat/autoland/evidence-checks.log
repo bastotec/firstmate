@@ -1,0 +1,14 @@
+ok - fm-autoland: arm binds the shim and disarm removes it
+ok - fm-autoland: a missing config is reported once
+ok - fm-autoland: a green, attested, low-risk PR merges pinned to its head and is reported once
+ok - fm-autoland: every green-but-held PR names its reason and does not merge
+ok - fm-autoland: helper success is confirmed as landed, queued, or still unlanded
+ok - fm-autoland: a new default-branch head deploys once, records the commit, and reports
+ok - fm-autoland: the detached hook survives check process-group termination and records deployment
+ok - fm-autoland: a hook timeout fails closed without recording deployment and releases its lock
+ok - fm-autoland: owner publication and stale reclaim exclude concurrent hook runners
+ok - fm-autoland: a runner releases only its own hook lock
+ok - fm-autoland: reconciliation re-reads terminal results under the hook lock and preserves retry
+ok - fm-autoland: a failed hook reports once without retrying; a deferred one retries
+ok - fm-autoland: hooks writable by others never run; a foreground deploy is not re-reported
+ok - real watcher dispatches the armed auto-land product check and queues its diagnostic without postponing other checks

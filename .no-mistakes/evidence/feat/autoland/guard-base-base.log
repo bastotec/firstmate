@@ -1,0 +1,1 @@
+not ok - an unchanged head with a retargeted base must refuse: expected exit 1, got 0
