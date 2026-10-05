@@ -70,12 +70,12 @@
 #   separated  - pi: content rows between two solid horizontal `─` rules, with
 #                no side border. Pi <=0.84 left the idle region blank; Pi 0.85
 #                draws a `❯` plus a reverse-video blank software-cursor cell.
-#                The latter is furniture only when all of those styled bytes
-#                are present. The shape is provable only with a live agent
-#                identity reporting an idle/done pi (herdr `agent get`; the
-#                tmux foreground-process probe), because a blank region between
-#                two transcript rules is otherwise exactly the strict rule's
-#                unidentifiable blank row.
+#                The blank shape requires a live idle/done Pi identity (herdr
+#                `agent get`; the tmux foreground-process probe), since a blank
+#                region between transcript rules is otherwise unidentifiable.
+#                The styled cursor shape follows _fm_composer_pi_idle_prompt_row;
+#                identity-capable adapters must corroborate Pi's state, while
+#                adapters without identity can prove that exact furniture alone.
 #
 # KNOWN PI DIALOG BOUNDARY: the structurally bounded selector check is a tmux
 # identity primitive and does not run on stream, zellij, cmux, or Orca. A
@@ -1665,7 +1665,8 @@ _fm_composer_classify_bare_pi_overlap() {  # <screen> <styled> <has-identity> <i
 # waiting for a human keystroke: its menu is drawn above the separator pair, so
 # the composer region looks free while the keys would answer the prompt instead
 # of composing (issue #2797). Structure cannot disprove that, so a blocked pi
-# defers rather than claiming empty.
+# is pending, protecting it from steering and guarded exit rather than allowing
+# the verify-then-clear recovery used for unknown composer states.
 _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   local screen=$1 styled=$2 has_identity=$3 identity=$4 agent agent_status state
   if [ "$has_identity" != 1 ]; then

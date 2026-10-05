@@ -632,31 +632,17 @@ ESC[39m ❯ ESC[7m SPACE ESC[0m
 ```
 
 The unchanged classifier read that prompt glyph as pending Pi input, both before and after C-u had cleared a genuine draft, so fresh idle sessions refused steering and guarded relaunch.
-The corrected classifier requires the identity-proven Pi separator pair, an idle or done Pi state, styled capture bytes, exact prompt-only content, and the complete reverse-video blank cell before treating this row as idle furniture.
-cmux and Orca erase that styling, so their `styled=0 identity=0` view of the same plain idle row deliberately remains `unknown`; steering still rings on that verdict.
-Guarded `exit`, `relaunch`, and `recover-missing` are outside those backends' contract because [agent control](../agent-control.md#fail-closed-boundaries) requires a recovery-grade backend and refuses cmux and Orca rather than operating blind.
-Tmux's structurally bounded selector probe recognizes Pi 0.85.1's `Project trust` dialog and its `↑↓ navigate enter save esc cancel` footer only when the Project-trust title, a selected option, and the closing rule all bound the dialog immediately above the composer.
-That structural blocked-dialog probe is tmux-only in this change.
-The same blocked selector plus idle cursor furniture remains `empty` on stream and zellij, so stream guarded exit can submit `/quit` and steering can submit its doorbell plus Enter, activating the highlighted option.
-It remains `unknown` on cmux and Orca, but steering deliberately rings on `unknown` and can activate the highlighted option there as well.
-This is an accepted known limitation because no further Pi lifecycle handling is being added for those backends during the move to Deck.
-An accepted residual limitation remains for a whitespace-only draft after the user moves its cursor to the first space with Home or left navigation.
-Pi renders that first typed space as the same reverse-video blank cell and leaves the remaining spaces after `ESC[0m`; tmux omits those trailing spaces, so the captured row is byte-identical to idle furniture.
-Because the post-render capture cannot distinguish those states, the classifier deliberately keeps that exact capture `empty` to preserve ordinary idle-Pi reachability, and `tests/fm-composer-lib.test.sh` pins the accepted ambiguity.
-A plain `❯` in the older separated shape remains pending, as does `❯ 4;38;rgb:0000/afaf/d7d7 is a real draft`, so neither the glyph nor an RGB-looking payload is discarded by spelling.
+[`bin/fm-composer-lib.sh`](../../bin/fm-composer-lib.sh) owns the styled-cursor proof, backend-specific identity requirements, and accepted selector and Home-position whitespace limitations; [`agent control`](../agent-control.md#fail-closed-boundaries) owns guarded lifecycle eligibility.
+`test_matrix_pi_separated_needs_identity` in `tests/fm-composer-lib.test.sh` pins the corresponding capability profiles, including styled identity-free idle captures, plain captures, and genuine drafts.
+`test_pi_identity_prompt_shape_matrix` in `tests/fm-composer-ghost.test.sh` exercises tmux's bounded selector probe through the public identity and composer readers, including Project trust, approvals, model pickers, wrapped selectors, and a transcript-wording counterexample.
 
 The concurrently reported `4;38;rgb:0000/afaf/d7d7` fragments are a separate terminal-input case, not the cursor-cell cause.
 Pi 0.85.1's terminal sequence buffer flushes an incomplete OSC sequence after 50 ms; when a palette response arrives in slower chunks, its `ESC ] 4 ; <index>` prefix is handled separately and the trailing `;rgb:...` bytes become ordinary editor text.
-The standalone Firstmate Pi input extension wraps `ProcessTerminal.start` once during extension loading, before the initial terminal-input dispatcher and startup color queries, and keeps the session UI listener as a backstop for custom terminals.
-The native interceptor and its candidate state survive session shutdown and rebind, including extension reload; `ProcessTerminal.stop` disposes that terminal's candidate state, and a subsequent start creates a fresh filter.
-The startup filter reconstructs complete OSC 4, 10, and 11 color responses for Pi's native color-query consumer and reparses recovered input with Pi's `StdinBuffer` so Enter remains a separate submission event.
-The filter starts a candidate from a callback containing `ESC ]` or any longer valid OSC 4, 10, or 11 prefix, including a split immediately after `ESC ]`.
-Later callbacks are absorbed byte by byte while the accumulated bytes remain a valid prefix of `ESC ] 4 ; <digits> ; rgb : <1-4 hex> / <1-4 hex> / <1-4 hex> BEL|ST` or the corresponding OSC 10/11 default-color response without a palette index, without extending the original 500 ms deadline; a complete response or a timeout drops the whole candidate, while the first byte that cannot extend that grammar ends the candidate and reaches the editor with the rest of its callback untouched.
-A palette-grammar keystroke that arrives inside that window is an accepted loss because these are firstmate-launched worker panes with no concurrent human typing, and preserving fragmented terminal replies is the chosen priority.
-A literal RGB-looking draft outside an active control candidate bypasses the filter, and malformed control-leading candidates are discarded rather than replayed into the composer.
-As a second defensive layer, a byte-complete OSC control retained by a styled screen capture is removed by the shared composer control-sequence parser before structural and ghost-content classification.
-The portable matrix carries split-after-`ESC ]` and other fragmented replies, both OSC terminators, `/quit` interleaved after a flushed candidate, the accepted grammar-compatible-keystroke loss, the reverse-cell counterfactual, malformed fragments, and a literal RGB-like draft.
-Its real Pi TUI path covers fragmented OSC 10/11 startup replies, native color-query results, shutdown/rebind without terminal restart, extension reload, command submission after replacement, and candidate retirement on terminal stop.
+[`.pi/extensions/lib/fm-terminal-response-input.ts`](../../.pi/extensions/lib/fm-terminal-response-input.ts) owns the input grammar, bounded candidate-loss policy, recovered command-event boundary, and terminal-versus-session lifetime invariant; [`bin/fm-spawn.sh`](../../bin/fm-spawn.sh) owns standalone guard loading for both Pi identities and task kinds.
+`test_pi_terminal_response_input_filter` in `tests/fm-composer-lib.test.sh` exercises split replies with both OSC terminators, malformed candidates, the accepted grammar-compatible-keystroke loss, and literal RGB-looking drafts.
+Its installed Pi TUI path covers fragmented OSC 10/11 startup replies, native color-query results, shutdown/rebind without terminal restart, extension reload, command submission after replacement, and candidate retirement on terminal stop.
+It also drives `/quit` and `/new` overlapping short prefixes (`ESC ]`, `ESC ] 1`, `ESC ] 4`, `ESC ] 10`, and `ESC ] 11`) before the sequence buffer flushes, with Enter either in that callback or delivered separately, alongside the longer-prefix cases.
+These in-process TUI regressions are not evidence of a full interactive Pi session or guarded process exit.
 
 The token-free live guard now starts a local replacement session with `/new`, proves that replacement idle is empty without first clearing it, types the RGB-like draft and proves it pending, then sends C-u and proves the resulting idle composer empty again:
 
@@ -670,7 +656,7 @@ The Pi arm's 2026-09-20 exact output under the then-current multi-callback polic
 ok - pi (0.85.1): replacement idle is empty, RGB-like draft is pending, C-u clears, and a fragmented OSC reply is consumed
 ```
 
-The current live guard again exercises a fragmented response, now beginning with a standalone `ESC ]` callback and keeping the complete sequence within the fixed 500 ms candidate window; it still needs a live refresh under this policy.
+The current live guard exercises a fragmented response beginning with a standalone `ESC ]` callback; the dated output above does not verify the revised input policy or the newer startup and preflush command-overlap cases.
 
 The full matrix command also detected an unrelated OpenCode 1.18.31 idle-composer drift (`pending`), so that full invocation exited nonzero after the Pi arm passed rather than being recorded as an all-harness pass.
 The executable control-path coverage is `tests/fm-composer-lib.test.sh`, `tests/fm-send-inbox.test.sh`, and `tests/fm-control-relaunch.test.sh`; those drive the shared classifier, a steering doorbell, and guarded Pi relaunch respectively.

@@ -283,6 +283,9 @@
 #     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
 #                  written by this script; outside the worktree to avoid pi's trust gate)
 #     __PIGUARD__  absolute path to the tracked Pi terminal-response input guard
+#                  from the active FM_ROOT, even for an unsynchronized secondmate;
+#                  loaded once as a standalone extension for pi and pi-signed,
+#                  never registered again by the generated worker extension
 #     __PITURNEND__ absolute path to .pi/extensions/fm-primary-turnend-guard.ts in a pi secondmate home
 #     __PIWATCH__   absolute path to .pi/extensions/fm-primary-pi-watch.ts in a pi secondmate home
 #     __OMPBIN__   quoted concrete omp executable path resolved from PATH

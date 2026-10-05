@@ -1,8 +1,15 @@
-// The one Firstmate-owned Pi input filter for terminal palette responses that
-// Pi's 50 ms sequence buffer can split into ordinary editor text.
-// A palette-grammar keystroke arriving during the 500 ms candidate window is
-// intentionally absorbed with that candidate; firstmate-launched workers have
-// no concurrent human typing, and preserving split terminal replies wins.
+// Shared Firstmate-owned filter for OSC 4 palette and OSC 10/11 default-color
+// responses that Pi's 50 ms sequence buffer can split into ordinary editor text.
+// Only an ESC-] leading candidate is withheld, for at most 500 ms from its
+// initial callback; printable RGB-looking drafts outside a candidate pass through.
+// Even a short prefix and command can share one preflush callback: discard only
+// the valid control prefix, then recover key-event boundaries from the first
+// divergent byte so /quit or /new and Enter cannot become one editor event.
+// Complete replies reach the native color consumer through the startup guard;
+// the session UI backstop consumes them, and expired candidates are discarded.
+// A color-grammar keystroke arriving during that candidate window is intentionally
+// absorbed; firstmate-launched workers have no concurrent human typing, and
+// preserving split terminal replies wins.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ProcessTerminal, StdinBuffer } from "@earendil-works/pi-tui";
 
@@ -184,6 +191,11 @@ export function installPiTerminalResponseInputGuard(ctx: ExtensionContext): () =
   };
 }
 
+// Install before ProcessTerminal.start and its startup color queries, not only
+// at session_start. Terminal ownership survives /new, /reload, /resume, and
+// /fork: session_shutdown retires only the UI backstop, while terminal stop
+// retires the native candidate. The shared symbol prevents stacking wrappers
+// when extensions reload without restarting the TUI.
 function installPiStartupTerminalResponseInputGuard(): void {
   const prototype = ProcessTerminal.prototype as ProcessTerminal & { [STARTUP_GUARD]?: boolean };
   if (prototype[STARTUP_GUARD]) return;
