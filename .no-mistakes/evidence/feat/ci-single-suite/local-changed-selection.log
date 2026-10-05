@@ -1,0 +1,23 @@
+$ bin/fm-lint.sh --list-files
+bin/fm-lint.sh
+bin/fm-nm-trusted-test-skip.sh
+bin/fm-test-run.sh
+tests/fm-ci-workflow.test.sh
+tests/fm-lint.test.sh
+tests/fm-no-mistakes-required.test.sh
+tests/fm-test-run.test.sh
+exit=0
+$ bin/fm-lint.sh --list-files --shard 1/3
+bin/fm-lint.sh
+tests/fm-ci-workflow.test.sh
+tests/fm-test-run.test.sh
+exit=0
+$ bin/fm-lint.sh --list-files --shard 2/3
+bin/fm-nm-trusted-test-skip.sh
+tests/fm-lint.test.sh
+exit=0
+$ bin/fm-lint.sh --list-files --shard 3/3
+bin/fm-test-run.sh
+tests/fm-no-mistakes-required.test.sh
+exit=0
+Local default selection splits round-robin without invoking any linter.

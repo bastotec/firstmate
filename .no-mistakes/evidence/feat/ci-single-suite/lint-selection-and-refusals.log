@@ -1,0 +1,2 @@
+ok - fm-lint.sh --shard slices partition the full selection
+ok - fm-lint.sh --shard refuses malformed specs and explicit paths
