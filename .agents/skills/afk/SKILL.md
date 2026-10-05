@@ -108,7 +108,8 @@ The operational prefix travels with the message text; it does not rely on harnes
 
 The daemon never injects into an in-use pane. Two checks run before every
 injection, dispatched through `bin/fm-backend.sh` for the supervisor's own
-backend (tmux or herdr; see "Auto-discovered supervisor pane" below):
+backend (tmux or herdr, or the stream endpoint fallback; a deck-chat steer
+uses the steer client's status instead; see "Auto-discovered supervisor pane" below):
 
 - **Primary-pane busy guard** - `pane_is_busy` trusts Herdr native `busy` when available, otherwise matches rendered output against only the detected primary harness's signature.
   This narrow delivery guard never classifies a recorded worker task and never uses a global union of vendor patterns.
@@ -226,7 +227,13 @@ the operational prefix lets firstmate distinguish it from a real captain message
   `"<session>:<pane-id>"` target), then `$TMUX_PANE`, then
   `"${HERDR_SESSION:-default}:${HERDR_PANE_ID}"` under herdr, then a
   `firstmate:0` fallback with a warning. Both resolution sources are logged at
-  startup so a wrong-but-resolving fallback is detectable. Other runtime
+  startup so a wrong-but-resolving fallback is detectable. A stream-hosted
+  primary (`FM_STREAM_ENDPOINT_ID` in the environment, or a live
+  `state/primary-chat.json` deck-chat record) resolves to backend `stream`
+  ahead of `$TMUX_PANE`; its digests go through the steer dir
+  (`bin/fm-primary-steer.sh`), and `bin/fm-afk-launch.sh start` runs the daemon
+  as a detached process (docs/configuration.md "Away-mode supervisor backend"
+  owns the detail). Other runtime
   backends are not yet supported as supervisor backends; the daemon refuses loudly at startup instead of
   misapplying tmux primitives to a pane that isn't one
   (docs/herdr-backend.md "Away-mode supervisor support").

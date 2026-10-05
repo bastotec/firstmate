@@ -197,12 +197,20 @@ Stream has no session layer: one hub serves the whole fleet, each task's pseudot
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
 
 The `/afk` sub-supervisor injects escalation digests into firstmate's own pane independently of where new task endpoints are spawned.
-It currently supports only `tmux` and `herdr` supervisor panes.
-Set `FM_SUPERVISOR_BACKEND=tmux|herdr` and `FM_SUPERVISOR_TARGET=<target>` to override both axes explicitly; for herdr the target is `"<session>:<pane-id>"`.
-Without overrides, backend detection uses `$TMUX_PANE` first, then `HERDR_ENV=1` with `HERDR_PANE_ID`, then falls back to `tmux`.
-That keeps a tmux pane nested inside herdr on the tmux transport, matching the runtime backend's innermost-first rule.
-Target detection uses `FM_SUPERVISOR_TARGET`, then `$TMUX_PANE`, then `"${HERDR_SESSION:-default}:${HERDR_PANE_ID}"` under herdr, then the legacy `firstmate:0` tmux fallback with a warning.
+It supports `tmux`, `herdr`, and `stream` supervisors.
+Set `FM_SUPERVISOR_BACKEND=tmux|herdr|stream` and `FM_SUPERVISOR_TARGET=<target>` to override both axes explicitly; for herdr the target is `"<session>:<pane-id>"`, for stream `"<hub-tag>:<endpoint-id>"`.
+Without overrides, backend detection uses, in order: `FM_STREAM_ENDPOINT_ID` with `FM_STREAM_HUB` (set by the stream agent for the process it hosts), a live `state/primary-chat.json` deck-chat primary record (its `host_pid` alive and not marked stopped), `$TMUX_PANE`, then `HERDR_ENV=1` with `HERDR_PANE_ID`, then falls back to `tmux`.
+The stream signals come first because a stream-hosted process also inherits its launcher's `$TMUX_PANE`, and while a deck-chat primary owns the home the caller's own pane is never the primary.
+A tmux pane nested inside herdr stays on the tmux transport, matching the runtime backend's innermost-first rule.
+Target detection follows the same order: `FM_SUPERVISOR_TARGET`, the stream endpoint from the environment, the record's `endpoint` (or `-` when it has none), `$TMUX_PANE`, `"${HERDR_SESSION:-default}:${HERDR_PANE_ID}"` under herdr, then the legacy `firstmate:0` tmux fallback with a warning.
 Selecting any other supervisor backend refuses at daemon startup instead of trying tmux injection primitives against a non-tmux pane.
+
+On `stream`, a digest goes to the deck-chat primary through `bin/fm-primary-steer.sh publish --kind away` (override the client with `FM_PRIMARY_STEER_BIN`), keeping the typed operational-input prefix so the primary reads it as internal.
+`fm-primary-steer.sh status` is the busy guard: anything but `idle` defers.
+Submit proof is `fm-primary-steer.sh delivered <seq>` within the usual `FM_INJECT_CONFIRM_RETRIES` x `FM_INJECT_CONFIRM_SLEEP` budget.
+An unacknowledged seq is kept in `state/.subsuper-steer-pending` and re-checked on the next flush instead of being published again, so max-defer and the wedge alarm fire as they do for a pane.
+When the steer client reports no deck-chat primary (exit 3), the digest is typed into the recorded stream endpoint through the stream adapter, with the same composer guard and submit proof as `fm-send.sh`.
+`bin/fm-afk-launch.sh start` runs the daemon for a stream primary as a detached process in its own session (record `process<TAB><pid><TAB><log>` in `state/.afk-daemon-terminal`, output in `state/.afk-daemon.out`); `stop` and `bin/fm-afk-return.sh` end it by that pid.
 
 ## Away-mode wedge alarm channels (config/wedge-alarm)
 
@@ -1211,8 +1219,9 @@ FM_PENDING_REPLY_GRACE_SECS=120   # seconds after marked-request delivery before
 FM_ASK_TRIAGE_KEY_VAR=            # overrides config/ask-triage-key-var: the ~/.secrets variable holding the gateway key for the possible-ask pass
 FM_ASK_TRIAGE_THRESHOLD=0.60      # possible-ask probability at or above which a working: line is flagged; bin/fm-ask-triage.sh owns the other bounds
 # sub-supervisor (bin/fm-supervise-daemon.sh); presence-gated via /afk
-FM_SUPERVISOR_BACKEND=             # optional supervisor pane backend override; tmux/herdr only, otherwise detects $TMUX_PANE then HERDR_ENV/HERDR_PANE_ID before tmux fallback
-FM_SUPERVISOR_TARGET=              # optional supervisor pane target override; tmux target or herdr <session>:<pane-id>, otherwise auto-detected
+FM_SUPERVISOR_BACKEND=             # optional supervisor backend override; tmux|herdr|stream, otherwise detects FM_STREAM_ENDPOINT_ID, a live state/primary-chat.json, $TMUX_PANE, then HERDR_ENV/HERDR_PANE_ID before tmux fallback
+FM_SUPERVISOR_TARGET=              # optional supervisor target override; tmux target, herdr <session>:<pane-id>, or stream <hub-tag>:<endpoint-id>, otherwise auto-detected
+FM_PRIMARY_STEER_BIN=              # steer client the away daemon uses for a deck-chat primary on stream; default bin/fm-primary-steer.sh
 FM_INJECT_SKIP=heartbeat           # |-prefixes force-self-handled bypassing classification; empty disables
 FM_ESCALATE_BATCH_SECS=90          # buffer window for batched escalation digests; 0 = flush immediately
 FM_MAX_DEFER_SECS=300              # max buffered escalation age before retry plus wedge alarm; 0 disables

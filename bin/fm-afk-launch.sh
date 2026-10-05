@@ -66,8 +66,16 @@
 #   fm-afk-launch.sh reconcile Close a recorded-but-dead daemon terminal by exact
 #                              id and drop the record (recovery after a crash).
 #
-# Supported backends: herdr, tmux. Others (stream) have no verified
-# non-visible-launch primitive here yet and refuse loudly.
+# Supported backends: herdr, tmux, stream. Others have no verified
+# non-visible-launch primitive here and refuse loudly.
+#
+# Stream: a primary on a stream endpoint has no local pane to put a hidden
+# terminal next to, so the daemon runs as a detached process in its own session
+# (setsid, the same detach the stream adapter uses for its agents), with output
+# in state/.afk-daemon.out. The record is `process<TAB><pid><TAB><log>`; the pid
+# leads its own process group, which is what liveness and the exact-id close
+# check, so a reused pid is never signalled. The session detach is what keeps
+# the harness from reaping it when the launching shell call returns.
 #
 # Test seam: FM_AFK_LAUNCH_ENTRY overrides the command run in the created
 # terminal (default bin/fm-afk-start.sh), so a topology test can run a harmless
@@ -275,6 +283,8 @@ fm_afk_launch_record_read() {
   case "$FM_AFK_REC_BACKEND" in
     herdr) [ -n "$extra" ] ;;
     tmux) : ;;
+    process)
+      case "$FM_AFK_REC_TARGET" in ''|*[!0-9]*) false ;; *) [ -n "$extra" ] ;; esac ;;
     none) [ "$FM_AFK_REC_TARGET" = - ] && [ "$extra" = native ] ;;
     *) return 2 ;;
   esac || { fm_afk_launch_log "daemon terminal record is malformed; refusing to act on it"; return 2; }
@@ -302,6 +312,17 @@ fm_afk_launch_close_terminal() {  # <backend> <target>
     tmux)
       # target is the dedicated daemon session name - kill exactly it.
       tmux kill-session -t "$target" 2>/dev/null
+      ;;
+    process)
+      # target is the detached daemon's pid; signal it only while it still
+      # leads its own process group (a reused pid does not).
+      fm_afk_launch_process_alive "$target" || return 0
+      kill -TERM "$target" 2>/dev/null || return 1
+      local waited=0
+      while [ "$waited" -lt 40 ] && fm_afk_launch_process_alive "$target"; do
+        sleep 0.1
+        waited=$((waited + 1))
+      done
       ;;
     none)
       return 0
@@ -332,11 +353,25 @@ fm_afk_launch_terminal_absent() {  # <backend> <target>
       [ "$result" -eq 1 ] || return 1
       printf '%s' "$out" | grep -Eq "can't find session"
       ;;
+    process)
+      ! fm_afk_launch_process_alive "$target"
+      ;;
     none)
       return 0
       ;;
     *) return 1 ;;
   esac
+}
+
+# A detached stream-primary daemon is alive while its pid exists and still
+# leads its own process group (setsid made it the group leader). A pid that
+# was reused by an unrelated process normally does not, so it reads gone.
+fm_afk_launch_process_alive() {  # <pid>
+  local pid=$1 pgid
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ') || return 1
+  [ "$pgid" = "$pid" ]
 }
 
 fm_afk_launch_close_recorded() {
@@ -362,6 +397,9 @@ fm_afk_launch_terminal_alive() {  # <backend> <target>
       ;;
     tmux)
       tmux has-session -t "$target" 2>/dev/null
+      ;;
+    process)
+      fm_afk_launch_process_alive "$target"
       ;;
     *) return 1 ;;
   esac
@@ -450,11 +488,12 @@ fm_afk_launch_restore_backup() {  # <backup> <had-afk>
   rm -f "$FM_AFK_LAUNCH_STATE/.afk" \
     "$FM_AFK_LAUNCH_STATE/.subsuper-escalations" \
     "$FM_AFK_LAUNCH_STATE/.subsuper-escalations.since" \
-    "$FM_AFK_LAUNCH_STATE/.subsuper-inject-wedged" || result=1
+    "$FM_AFK_LAUNCH_STATE/.subsuper-inject-wedged" \
+    "$FM_AFK_LAUNCH_STATE/.subsuper-steer-pending" || result=1
   if [ "$had_afk" -eq 1 ]; then
     cp "$backup/.afk" "$FM_AFK_LAUNCH_STATE/.afk" || result=1
   fi
-  for artifact in .subsuper-escalations .subsuper-escalations.since .subsuper-inject-wedged; do
+  for artifact in .subsuper-escalations .subsuper-escalations.since .subsuper-inject-wedged .subsuper-steer-pending; do
     if [ -e "$backup/$artifact" ]; then
       cp -p "$backup/$artifact" "$FM_AFK_LAUNCH_STATE/$artifact" || result=1
     fi
@@ -548,13 +587,57 @@ fm_afk_launch_create_tmux() {  # <captain-target> <captain-backend>
   fm_afk_launch_log "daemon launched in detached tmux session '$session', supervising $captain_target"
 }
 
+# Replace the calling (background) process with <cmd> as a new session leader:
+# the detach bin/backends/stream.sh's fm_backend_stream_detached uses, but with
+# exec, so the background job's pid ($!) IS the daemon's pid.
+fm_afk_launch_exec_detached() {  # <cmd...>
+  if command -v setsid >/dev/null 2>&1; then
+    exec setsid "$@"
+  fi
+  exec perl -MPOSIX -e 'my $r = POSIX::setsid(); (defined $r && $r != -1) or die "setsid: $!\n"; exec @ARGV or die "exec: $!\n"' "$@"
+}
+
+# Launch the daemon for a stream-hosted primary as a detached process in its
+# own session. There is no local pane to sit beside, and the daemon reaches the
+# primary through the steer dir or the hub, so no terminal is created at all.
+fm_afk_launch_create_stream() {  # <captain-target> <captain-backend>
+  local captain_target=$1 captain_backend=$2 entry out pid
+  entry=$(fm_afk_launch_entry_cmd)
+  out="$FM_AFK_LAUNCH_STATE/.afk-daemon.out"
+  fm_afk_launch_exec_detached env FM_HOME="$FM_HOME" FM_SUPERVISOR_TARGET="$captain_target" \
+    FM_SUPERVISOR_BACKEND="$captain_backend" "$entry" >>"$out" 2>&1 </dev/null &
+  pid=$!
+  # setsid runs inside the child, so it leads its own group only a moment later.
+  local waited=0
+  while [ "$waited" -lt 50 ] && ! fm_afk_launch_process_alive "$pid"; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  if ! fm_afk_launch_process_alive "$pid"; then
+    fm_afk_launch_log "detached daemon process $pid did not start in its own session; see $out"
+    kill -TERM "$pid" 2>/dev/null || true
+    return 1
+  fi
+  if ! fm_afk_launch_record_write process "$pid" "$out"; then
+    fm_afk_launch_log "failed to persist daemon process record; stopping pid $pid"
+    fm_afk_launch_close_terminal process "$pid"
+    return 1
+  fi
+  fm_afk_launch_commit_terminal process "$pid" "$out" 1 || return 1
+  fm_afk_launch_log "daemon launched as detached process $pid (log $out), supervising stream primary $captain_target"
+}
+
 fm_afk_launch_start() {
   local captain_target captain_backend backup artifact had_afk=0 result
   fm_afk_launch_catchup_pending && return 1
   fm_afk_launch_daemon_allowed || return 1
   fm_afk_launch_record_require || return 1
   # Capture the captain pane FIRST, before creating anything.
-  captain_target=$(discover_supervisor_target) || {
+  # A stream primary may have no endpoint ("-"): the steer path needs none, and
+  # the daemon's startup check refuses when neither a deck-chat primary nor an
+  # endpoint answers, which rolls this launch back.
+  captain_target=$(discover_supervisor_target) || [ "$(discover_supervisor_backend)" = stream ] || {
     fm_afk_launch_log "could not resolve the captain supervisor pane (set FM_SUPERVISOR_TARGET)"
     return 1; }
   captain_backend=$(discover_supervisor_backend) || {
@@ -578,7 +661,7 @@ fm_afk_launch_start() {
     had_afk=1
     cp "$FM_AFK_LAUNCH_STATE/.afk" "$backup/.afk" || { rm -rf "$backup"; return 1; }
   fi
-  for artifact in .subsuper-escalations .subsuper-escalations.since .subsuper-inject-wedged; do
+  for artifact in .subsuper-escalations .subsuper-escalations.since .subsuper-inject-wedged .subsuper-steer-pending; do
     if [ -e "$FM_AFK_LAUNCH_STATE/$artifact" ]; then
       cp -p "$FM_AFK_LAUNCH_STATE/$artifact" "$backup/$artifact" || { rm -rf "$backup"; return 1; }
     fi
@@ -604,8 +687,9 @@ fm_afk_launch_start() {
     case "$captain_backend" in
       herdr) fm_afk_launch_create_herdr "$captain_target" "$captain_backend"; result=$? ;;
       tmux)  fm_afk_launch_create_tmux "$captain_target" "$captain_backend"; result=$? ;;
+      stream) fm_afk_launch_create_stream "$captain_target" "$captain_backend"; result=$? ;;
       *)
-        fm_afk_launch_log "no non-visible daemon-launch primitive for backend '$captain_backend' yet (supported: herdr, tmux)"
+        fm_afk_launch_log "no non-visible daemon-launch primitive for backend '$captain_backend' yet (supported: herdr, tmux, stream)"
         result=1
         ;;
     esac
@@ -635,7 +719,7 @@ fm_afk_launch_start_native() {
     had_afk=1
     cp "$FM_AFK_LAUNCH_STATE/.afk" "$backup/.afk" || { rm -rf "$backup"; return 1; }
   fi
-  for artifact in .subsuper-escalations .subsuper-escalations.since .subsuper-inject-wedged; do
+  for artifact in .subsuper-escalations .subsuper-escalations.since .subsuper-inject-wedged .subsuper-steer-pending; do
     if [ -e "$FM_AFK_LAUNCH_STATE/$artifact" ]; then
       cp -p "$FM_AFK_LAUNCH_STATE/$artifact" "$backup/$artifact" || { rm -rf "$backup"; return 1; }
     fi

@@ -112,6 +112,13 @@ A missing dependency, an unreachable hub, a refused token, or a protocol mismatc
 
 Run `bin/fm-stream.sh --help` for the operator commands; that help and each script's header own their exact flags.
 
+## Away mode on a stream primary
+
+The away daemon (`bin/fm-supervise-daemon.sh`) supervises a primary hosted on a stream endpoint with backend `stream`.
+A deck-chat primary gets digests through its steer dir (`bin/fm-primary-steer.sh`); with none registered, the digest is typed into the primary's endpoint through this adapter.
+`bin/fm-afk-launch.sh start` runs the daemon as a detached process recorded by pid, since there is no local pane to sit beside.
+Detection, the delivery proof, and the launch record are in [`docs/configuration.md`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target).
+
 ## Watching and steering
 
 `bin/fm-stream.sh web` prints the browser URL for the one central subscriber view, carrying the token as a URL fragment, which a browser never sends - so the navigation to the page carries no credential.

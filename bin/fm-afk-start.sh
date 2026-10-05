@@ -24,7 +24,8 @@
 #     env and auto-discovers it.
 #   - Harnesses with NO native background mechanism (e.g. pi) run this THROUGH
 #     bin/fm-afk-launch.sh, which creates a non-visible tracked terminal per
-#     backend (herdr tab/workspace, tmux detached session) and passes the
+#     backend (herdr tab/workspace, tmux detached session, or for a stream
+#     primary a detached process in its own session) and passes the
 #     captain pane in as FM_SUPERVISOR_TARGET so injection targets it, not the
 #     daemon's own new pane.
 # Do not wrap this in `nohup ... &`: Codex/herdr can reap fire-and-forget shell
@@ -63,7 +64,8 @@ fm_afk_clear_stale_artifacts() {  # <state-dir>
   local state=$1
   rm -f "$state/.subsuper-escalations" \
         "$state/.subsuper-escalations.since" \
-        "$state/.subsuper-inject-wedged" 2>/dev/null
+        "$state/.subsuper-inject-wedged" \
+        "$state/.subsuper-steer-pending" 2>/dev/null
 }
 
 daemon_lock_owner() {

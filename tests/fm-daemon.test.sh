@@ -2844,6 +2844,212 @@ test_inject_msg_defers_on_unrecognized_composer_state() {
   pass "inject_msg: unrecognized composer states defer by default"
 }
 
+# --- stream primary (deck chat on a stream endpoint) -------------------------
+# Delivery goes through the deck-chat steer client (bin/fm-primary-steer.sh,
+# replaced here by tests/assets/fake-primary-steer.sh via FM_PRIMARY_STEER_BIN),
+# with the stream adapter's typed input as the fallback when no deck-chat
+# primary is registered.
+FAKE_STEER="$ROOT/tests/assets/fake-primary-steer.sh"
+
+make_stream_case() {  # <name> -> echoes dir; state/ with afk on, steer/ for the fake
+  local dir
+  dir=$(make_supercase "$1")
+  mkdir -p "$dir/steer"
+  afk_enter "$dir/state"
+  printf '%s' "$dir"
+}
+
+stream_inject() {  # <dir> <message> - inject_msg against the stream supervisor
+  FAKE_STEER_DIR="$1/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_HOME="$1" \
+    FM_SUPERVISOR_BACKEND=stream FM_SUPERVISOR_TARGET="hub-7717:0123abcd" \
+    FM_INJECT_CONFIRM_RETRIES=1 FM_INJECT_CONFIRM_SLEEP=0.01 \
+    inject_msg "$2" "$1/state"
+}
+
+test_discover_supervisor_stream_signals() {
+  local dir state out rc
+  dir=$(make_supercase discover-stream)
+  state="$dir/state"
+
+  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND='' FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' \
+    FM_STREAM_ENDPOINT_ID=0123abcd FM_STREAM_HUB=http://127.0.0.1:7717 discover_supervisor_backend)
+  [ "$out" = stream ] || fail "a stream endpoint's env should select stream over an inherited TMUX_PANE: $out"
+  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' \
+    FM_STREAM_ENDPOINT_ID=0123abcd FM_STREAM_HUB=http://127.0.0.1:7717 discover_supervisor_target)
+  [ "$out" = "127.0.0.1-7717:0123abcd" ] || fail "stream env target should be <hub-tag>:<endpoint-id>: $out"
+
+  printf '{"version":1,"home":"%s","session":"s1","steer_dir":"%s/steer","events_file":"%s/ev","endpoint":"hub-7717:feedbeef","host_pid":%s,"started_at":1}\n' \
+    "$dir" "$dir" "$dir" "$$" > "$state/primary-chat.json"
+  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_backend)
+  [ "$out" = stream ] || fail "a live primary-chat record should select stream over TMUX_PANE: $out"
+  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_target)
+  [ "$out" = "hub-7717:feedbeef" ] || fail "a live primary-chat record should supply its endpoint: $out"
+
+  printf '{"version":1,"endpoint":null,"host_pid":%s}\n' "$$" > "$state/primary-chat.json"
+  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_TARGET='' TMUX_PANE='' FM_STREAM_ENDPOINT_ID='' discover_supervisor_target)
+  [ "$out" = "-" ] || fail "a live record with no endpoint should resolve to '-': $out"
+
+  printf '{"version":1,"endpoint":"hub-7717:feedbeef","host_pid":%s,"stopped_at":5}\n' "$$" > "$state/primary-chat.json"
+  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_backend)
+  [ "$out" = tmux ] || fail "a record marked stopped must not select stream: $out"
+
+  printf '{"version":1,"endpoint":"hub-7717:feedbeef","host_pid":999999}\n' > "$state/primary-chat.json"
+  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_backend)
+  [ "$out" = tmux ] || fail "a record whose host_pid is dead must not select stream: $out"
+
+  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND=stream FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_target)
+  rc=$?
+  [ "$rc" -ne 0 ] && [ "$out" = "-" ] || fail "explicit stream with no endpoint should print '-' and warn (rc=$rc): $out"
+  pass "supervisor discovery: stream endpoint env > live primary-chat record > TMUX_PANE; dead or stopped records ignored"
+}
+
+test_inject_msg_stream_publishes_and_confirms() {
+  local dir body
+  dir=$(make_stream_case inject-stream-publish)
+  (
+    fm_backend_send_text_submit() { fail "typed input must not run while a deck-chat primary is registered"; }
+    stream_inject "$dir" "done: PR https://x/y/pull/9" \
+      || fail "inject_msg should succeed when the steer is published and acknowledged"
+  ) || fail "stream publish subshell failed"
+  [ "$(cat "$dir/steer/seq" 2>/dev/null)" = 1 ] || fail "expected exactly one published steer"
+  [ "$(cat "$dir/steer/published/1.kind")" = away ] || fail "steer was not published with --kind away"
+  body=$(cat "$dir/steer/published/1.msg")
+  case "$body" in *"done: PR https://x/y/pull/9"*) : ;; *) fail "published steer lost the digest: $body" ;; esac
+  message_is_injection "$body" || fail "published steer does not carry the operational prefix"
+  if should_exit_afk "$dir/state" "$body"; then
+    fail "the primary would read the published steer as the captain returning"
+  fi
+  assert_absent "$dir/state/.subsuper-steer-pending" "an acknowledged steer left its pending record"
+  pass "inject_msg (stream): publishes a typed away steer and confirms it by delivered <seq>"
+}
+
+test_inject_msg_stream_busy_defers() {
+  local dir
+  dir=$(make_stream_case inject-stream-busy)
+  printf 'busy\n' > "$dir/steer/state"
+  if stream_inject "$dir" "needs-decision: pick A"; then
+    fail "inject_msg should defer while the deck-chat primary is busy"
+  fi
+  [ ! -e "$dir/steer/seq" ] || fail "a busy primary was published to"
+  pass "inject_msg (stream): a busy steer status defers without publishing"
+}
+
+test_inject_msg_stream_unacked_never_republishes() {
+  local dir
+  dir=$(make_stream_case inject-stream-unacked)
+  printf 'never\n' > "$dir/steer/ack"
+  if stream_inject "$dir" "needs-decision: pick A"; then
+    fail "an unacknowledged steer must not count as delivered"
+  fi
+  [ "$(cut -f1 "$dir/state/.subsuper-steer-pending")" = 1 ] || fail "pending seq was not recorded"
+  if stream_inject "$dir" "needs-decision: pick A"; then
+    fail "a still-pending steer must not count as delivered on retry"
+  fi
+  if stream_inject "$dir" "needs-decision: pick A | done: B"; then
+    fail "a grown digest must wait for the earlier steer"
+  fi
+  [ "$(cat "$dir/steer/seq")" = 1 ] || fail "a pending steer was published again (seq=$(cat "$dir/steer/seq"))"
+  rm -f "$dir/steer/ack"
+  stream_inject "$dir" "needs-decision: pick A" || fail "a late acknowledgement should confirm the pending steer"
+  [ "$(cat "$dir/steer/seq")" = 1 ] || fail "confirming the late acknowledgement republished"
+  assert_absent "$dir/state/.subsuper-steer-pending" "confirmed pending record was kept"
+  pass "inject_msg (stream): an unacknowledged steer stays pending and is confirmed later without a duplicate"
+}
+
+test_inject_msg_stream_rejected_republishes() {
+  local dir
+  dir=$(make_stream_case inject-stream-rejected)
+  printf 'reject\n' > "$dir/steer/ack"
+  if stream_inject "$dir" "needs-decision: pick A"; then
+    fail "a rejected steer must not count as delivered"
+  fi
+  assert_absent "$dir/state/.subsuper-steer-pending" "a rejected steer stayed pending"
+  rm -f "$dir/steer/ack"
+  stream_inject "$dir" "needs-decision: pick A" || fail "the digest should be published again after a rejection"
+  [ "$(cat "$dir/steer/seq")" = 2 ] || fail "expected a second publish after the rejection"
+  pass "inject_msg (stream): a rejected steer is published again on the next flush"
+}
+
+test_inject_msg_stream_no_primary_falls_back_to_endpoint() {
+  local dir
+  dir=$(make_stream_case inject-stream-fallback)
+  : > "$dir/steer/absent"
+  (
+    fm_backend_target_exists() { [ "$1" = stream ] && [ "$2" = "hub-7717:0123abcd" ] || fail "unexpected target_exists args: $*"; }
+    pane_is_busy() { [ "$2" = stream ] || fail "busy guard not on stream: $*"; return 1; }
+    fm_backend_composer_state() { [ "$1" = stream ] || fail "composer guard not on stream: $*"; printf 'empty'; }
+    fm_backend_send_text_submit() {
+      [ "$1" = stream ] && [ "$2" = "hub-7717:0123abcd" ] || fail "unexpected send_text_submit args: $1 $2"
+      message_is_injection "$3" || fail "fallback text lost the operational prefix"
+      printf 'empty'
+    }
+    stream_inject "$dir" "done: B" || fail "fallback delivery through the endpoint should succeed"
+  ) || fail "stream fallback subshell failed"
+  [ ! -e "$dir/steer/seq" ] || fail "fallback should not publish a steer"
+  (
+    fm_backend_target_exists() { return 0; }
+    pane_is_busy() { return 1; }
+    fm_backend_composer_state() { printf 'pending'; }
+    fm_backend_send_text_submit() { fail "fallback typed into a pending composer"; }
+    if stream_inject "$dir" "done: B"; then fail "fallback must defer on a pending composer"; fi
+  ) || fail "stream fallback composer-guard subshell failed"
+  pass "inject_msg (stream): no deck-chat primary falls back to the endpoint's typed input with its own guards"
+}
+
+test_stream_supervisor_reachable() {
+  local dir
+  dir=$(make_stream_case stream-reachable)
+  (
+    fm_backend_target_exists() { return 1; }
+    FAKE_STEER_DIR="$dir/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" supervisor_reachable stream - \
+      || fail "a registered deck-chat primary should make the supervisor reachable with no endpoint"
+    : > "$dir/steer/absent"
+    if FAKE_STEER_DIR="$dir/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" supervisor_reachable stream hub-7717:gone; then
+      fail "no primary and no endpoint should be unreachable"
+    fi
+    if FM_PRIMARY_STEER_BIN="$dir/missing-bin" supervisor_reachable stream hub-7717:gone; then
+      fail "a missing steer client should read as no primary"
+    fi
+  ) || fail "stream reachability subshell failed"
+  pass "supervisor_reachable (stream): a registered primary or a live endpoint"
+}
+
+test_stream_flush_and_max_defer_wedge() {
+  local dir state log body
+  dir=$(make_stream_case stream-flush-wedge)
+  state="$dir/state"; log="$dir/alert.log"
+  escalate_add "$state" "done: PR https://x/y/pull/1"
+  escalate_add "$state" "needs-decision: pick A"
+  FAKE_STEER_DIR="$dir/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_HOME="$dir" \
+    FM_SUPERVISOR_BACKEND=stream FM_SUPERVISOR_TARGET=- FM_INJECT_CONFIRM_SLEEP=0.01 \
+    escalate_flush "$state" || fail "flush through the steer path failed"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "buffer kept after an acknowledged flush"
+  body=$(cat "$dir/steer/published/1.msg")
+  case "$body" in *"Supervisor escalate ("*"2 event(s))"*"pull/1"*"pick A"*) : ;; *) fail "flushed digest wrong: $body" ;; esac
+
+  printf 'never\n' > "$dir/steer/ack"
+  escalate_add "$state" "needs-decision: pick B"
+  echo $(( $(date +%s) - 600 )) > "$state/.subsuper-escalations.since"
+  WEDGE_ALARM_LAST_EPOCH=0
+  FAKE_STEER_DIR="$dir/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_HOME="$dir" \
+    FM_SUPERVISOR_BACKEND=stream FM_SUPERVISOR_TARGET=- FM_INJECT_CONFIRM_SLEEP=0.01 \
+    FM_ESCALATE_BATCH_SECS=99999 FM_MAX_DEFER_SECS=60 FM_WEDGE_ALARM_LOG="$log" FM_WEDGE_ALARM_CHANNEL=osascript \
+    housekeeping "$state"
+  [ -s "$state/.subsuper-inject-wedged" ] || fail "a never-acknowledged steer did not raise the wedge marker"
+  grep -F 'pick B' "$state/.subsuper-escalations" >/dev/null || fail "buffer lost while the steer was unacknowledged"
+  grep -F 'WEDGED' "$log" >/dev/null || fail "wedge alarm did not fire its active alert: $(cat "$log" 2>/dev/null)"
+  [ "$(cat "$dir/steer/seq")" = 2 ] || fail "expected exactly one publish for the wedged digest"
+
+  rm -f "$dir/steer/ack"
+  FAKE_STEER_DIR="$dir/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_HOME="$dir" \
+    FM_SUPERVISOR_BACKEND=stream FM_SUPERVISOR_TARGET=- FM_INJECT_CONFIRM_SLEEP=0.01 \
+    escalate_flush "$state" || fail "late acknowledgement did not complete the flush"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "buffer kept after the late acknowledgement"
+  assert_absent "$state/.subsuper-inject-wedged" "wedge marker kept after delivery recovered"
+  [ "$(cat "$dir/steer/seq")" = 2 ] || fail "recovery republished the wedged digest"
+  pass "stream flush: digest delivered by steer; never-acked raises the wedge alarm and keeps the buffer; a late ack clears both"
+}
+
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
 test_afk_start_reclaims_stale_daemon_lock_reused_pid
@@ -2971,3 +3177,11 @@ test_inject_msg_herdr_pane_gone_defers
 test_inject_msg_herdr_submits_through_backend_dispatch
 test_inject_msg_defers_on_dead_shell_unknown
 test_inject_msg_defers_on_unrecognized_composer_state
+test_discover_supervisor_stream_signals
+test_inject_msg_stream_publishes_and_confirms
+test_inject_msg_stream_busy_defers
+test_inject_msg_stream_unacked_never_republishes
+test_inject_msg_stream_rejected_republishes
+test_inject_msg_stream_no_primary_falls_back_to_endpoint
+test_stream_supervisor_reachable
+test_stream_flush_and_max_defer_wedge
