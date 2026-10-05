@@ -1038,18 +1038,29 @@ mod tests {
             json_response(request(address, "POST", "/v1/orders", payload, "").await).await
         });
         let path = format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=1");
-        let (status, commands) = json_response(request(address, "GET", &path, json!({}), cap).await).await;
+        let (status, commands) =
+            json_response(request(address, "GET", &path, json!({}), cap).await).await;
         assert_eq!(status, 200);
         assert_eq!(commands["commands"].as_array().unwrap().len(), 1);
         let (status, record) = placement.await.unwrap();
         assert_eq!(status, 504, "{record}");
         assert_eq!(record["outcome"], "unconfirmed");
-        commands["commands"][0]["command_id"].as_str().unwrap().to_owned()
+        commands["commands"][0]["command_id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
     }
 
     #[tokio::test]
     async fn journal_retained_results_over_real_http() {
-        let h = Hub::new(vec![("test".into(), vec!["publish".into(), "subscribe".into(), "control".into()])], 30., 0.1);
+        let h = Hub::new(
+            vec![(
+                "test".into(),
+                vec!["publish".into(), "subscribe".into(), "control".into()],
+            )],
+            30.,
+            0.1,
+        );
         let (address, server) = server(h.clone()).await;
         let eid = "a".repeat(32);
         let (status, registration) = json_response(request(address, "POST", "/v1/agent/endpoints",
@@ -1057,68 +1068,150 @@ mod tests {
                 "capabilities":["idempotent_command_results","native_steering_receiver"]}), "").await).await;
         assert_eq!(status, 201);
         let cap = registration["command_capability"].as_str().unwrap();
-        let (_, health) = json_response(request(address, "GET", "/v1/health", json!({}), "").await).await;
+        let (_, health) =
+            json_response(request(address, "GET", "/v1/health", json!({}), "").await).await;
         let generation = health["generation"].as_str().unwrap();
         for age in [899., 901., 1060.5663512, 1061.] {
             let oid = format!("boundary-{age}");
             let cid = taken_http_order(address, &eid, cap, generation, &oid).await;
             h.state.lock().unwrap().commands[&cid].lock().unwrap().taken = model::now() - age;
-            assert_eq!(request(address, "GET", "/v1/tasks", json!({}), "").await.status(), 200);
+            assert_eq!(
+                request(address, "GET", "/v1/tasks", json!({}), "")
+                    .await
+                    .status(),
+                200
+            );
             let path = format!("/v1/orders/{oid}");
             let before = json_response(request(address, "GET", &path, json!({}), "").await).await;
             assert_eq!(before.1["outcome"], "unconfirmed");
             assert_eq!(before.1["delivered"], Value::Null);
             let result = json!({"machine":"box","command_id":cid,"ok":true,"error":""});
-            let unauthorized = json_response(request(address, "POST", "/v1/agent/results", result.clone(), "wrong").await).await;
+            let unauthorized = json_response(
+                request(
+                    address,
+                    "POST",
+                    "/v1/agent/results",
+                    result.clone(),
+                    "wrong",
+                )
+                .await,
+            )
+            .await;
             assert_eq!(unauthorized.0, 403);
             assert_eq!(unauthorized.1["error"], "endpoint_unauthorized");
-            let completed = json_response(request(address, "POST", "/v1/agent/results", result.clone(), cap).await).await;
+            let completed = json_response(
+                request(address, "POST", "/v1/agent/results", result.clone(), cap).await,
+            )
+            .await;
             assert_eq!(completed.0, 200);
             let after = json_response(request(address, "GET", &path, json!({}), "").await).await;
             assert_eq!(after.1["outcome"], "accepted");
             assert_eq!(after.1["delivered"], true);
-            assert_eq!(request(address, "POST", "/v1/agent/results", result, cap).await.status(), 200);
-            let conflict = json_response(request(address, "POST", "/v1/agent/results",
-                json!({"machine":"box","command_id":cid,"ok":false,"error":"different"}), cap).await).await;
+            assert_eq!(
+                request(address, "POST", "/v1/agent/results", result, cap)
+                    .await
+                    .status(),
+                200
+            );
+            let conflict = json_response(
+                request(
+                    address,
+                    "POST",
+                    "/v1/agent/results",
+                    json!({"machine":"box","command_id":cid,"ok":false,"error":"different"}),
+                    cap,
+                )
+                .await,
+            )
+            .await;
             assert_eq!(conflict.0, 409);
             assert_eq!(conflict.1["error"], "result_conflict");
-            println!("Rust HTTP boundary {age}: {}", json!({"before":before,"unauthorized":unauthorized,"result":completed,"after":after,"conflict":conflict}));
+            println!(
+                "Rust HTTP boundary {age}: {}",
+                json!({"before":before,"unauthorized":unauthorized,"result":completed,"after":after,"conflict":conflict})
+            );
         }
         let cid = taken_http_order(address, &eid, cap, generation, "expiry").await;
         h.state.lock().unwrap().commands[&cid].lock().unwrap().taken = model::now() - 901.;
         request(address, "GET", "/v1/tasks", json!({}), "").await;
         let retired_at = {
             let mut s = h.state.lock().unwrap();
-            let retired = s.machines.get_mut("box").unwrap().retired.iter_mut().find(|(id, _)| id == &cid).unwrap();
+            let retired = s
+                .machines
+                .get_mut("box")
+                .unwrap()
+                .retired
+                .iter_mut()
+                .find(|(id, _)| id == &cid)
+                .unwrap();
             retired.1 = model::now() - 802.;
             retired.1
         };
         let result = json!({"machine":"box","command_id":cid,"ok":true,"error":""});
-        assert_eq!(request(address, "POST", "/v1/agent/results", result.clone(), "wrong").await.status(), 403);
+        assert_eq!(
+            request(
+                address,
+                "POST",
+                "/v1/agent/results",
+                result.clone(),
+                "wrong"
+            )
+            .await
+            .status(),
+            403
+        );
         {
             let mut s = h.state.lock().unwrap();
-            let retired = s.machines.get_mut("box").unwrap().retired.iter_mut().find(|(id, _)| id == &cid).unwrap();
+            let retired = s
+                .machines
+                .get_mut("box")
+                .unwrap()
+                .retired
+                .iter_mut()
+                .find(|(id, _)| id == &cid)
+                .unwrap();
             assert_eq!(retired.1, retired_at);
             retired.1 = retired_at - 99.;
         }
         request(address, "GET", "/v1/tasks", json!({}), "").await;
-        let expired = json_response(request(address, "POST", "/v1/agent/results", result, cap).await).await;
+        let expired =
+            json_response(request(address, "POST", "/v1/agent/results", result, cap).await).await;
         assert_eq!(expired.0, 404);
         assert_eq!(expired.1["error"], "no_such_command");
-        let order = json_response(request(address, "GET", "/v1/orders/expiry", json!({}), "").await).await;
+        let order =
+            json_response(request(address, "GET", "/v1/orders/expiry", json!({}), "").await).await;
         assert_eq!(order.1["outcome"], "unconfirmed");
-        println!("Rust HTTP nonrenewal and expiry: {}", json!({"result":expired,"order":order}));
+        println!(
+            "Rust HTTP nonrenewal and expiry: {}",
+            json!({"result":expired,"order":order})
+        );
 
         let mut ids = vec![];
         for number in 0..517 {
-            ids.push(taken_http_order(address, &eid, cap, generation, &format!("cap-{number}")).await);
+            ids.push(
+                taken_http_order(address, &eid, cap, generation, &format!("cap-{number}")).await,
+            );
         }
         let path = format!("/v1/tasks/{eid}/input");
-        let unrelated = tokio::spawn(async move { json_response(request(address, "POST", &path,
-            json!({"text":"not an order","submit":true}), "").await).await });
+        let unrelated = tokio::spawn(async move {
+            json_response(
+                request(
+                    address,
+                    "POST",
+                    &path,
+                    json!({"text":"not an order","submit":true}),
+                    "",
+                )
+                .await,
+            )
+            .await
+        });
         let path = format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=1");
         let (_, taken) = json_response(request(address, "GET", &path, json!({}), cap).await).await;
-        let unrelated_id = taken["commands"][0]["command_id"].as_str().unwrap().to_owned();
+        let unrelated_id = taken["commands"][0]["command_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         assert_eq!(unrelated.await.unwrap().0, 504);
         {
             let s = h.state.lock().unwrap();
@@ -1129,29 +1222,95 @@ mod tests {
         request(address, "GET", "/v1/tasks", json!({}), "").await;
         let mut eligible = vec![];
         for (number, cid) in ids.iter().enumerate() {
-            let probe = json_response(request(address, "POST", "/v1/agent/results",
-                json!({"machine":"box","command_id":cid,"ok":true,"error":""}), "wrong").await).await;
-            assert_eq!(probe.0, if number < 5 { 404 } else { 403 }, "{cid}: {probe:?}");
-            if probe.0 == 403 { eligible.push(cid.clone()); }
+            let probe = json_response(
+                request(
+                    address,
+                    "POST",
+                    "/v1/agent/results",
+                    json!({"machine":"box","command_id":cid,"ok":true,"error":""}),
+                    "wrong",
+                )
+                .await,
+            )
+            .await;
+            assert_eq!(
+                probe.0,
+                if number < 5 { 404 } else { 403 },
+                "{cid}: {probe:?}"
+            );
+            if probe.0 == 403 {
+                eligible.push(cid.clone());
+            }
         }
         assert_eq!(eligible, ids[5..]);
-        assert_eq!(request(address, "POST", "/v1/agent/results",
-            json!({"machine":"box","command_id":unrelated_id,"ok":true}), cap).await.status(), 404);
-        assert_eq!(request(address, "POST", "/v1/agent/results",
-            json!({"machine":"box","command_id":ids[5],"ok":true}), cap).await.status(), 200);
-        let survivor = json_response(request(address, "GET", "/v1/orders/cap-5", json!({}), "").await).await;
+        assert_eq!(
+            request(
+                address,
+                "POST",
+                "/v1/agent/results",
+                json!({"machine":"box","command_id":unrelated_id,"ok":true}),
+                cap
+            )
+            .await
+            .status(),
+            404
+        );
+        assert_eq!(
+            request(
+                address,
+                "POST",
+                "/v1/agent/results",
+                json!({"machine":"box","command_id":ids[5],"ok":true}),
+                cap
+            )
+            .await
+            .status(),
+            200
+        );
+        let survivor =
+            json_response(request(address, "GET", "/v1/orders/cap-5", json!({}), "").await).await;
         assert_eq!(survivor.1["outcome"], "accepted");
         for number in 0..5 {
-            taken_http_order(address, &eid, cap, generation, &format!("replacement-{number}")).await;
+            taken_http_order(
+                address,
+                &eid,
+                cap,
+                generation,
+                &format!("replacement-{number}"),
+            )
+            .await;
         }
         request(address, "GET", "/v1/tasks", json!({}), "").await;
         for cid in &ids[6..10] {
-            assert_eq!(request(address, "POST", "/v1/agent/results",
-                json!({"machine":"box","command_id":cid,"ok":true}), cap).await.status(), 404);
+            assert_eq!(
+                request(
+                    address,
+                    "POST",
+                    "/v1/agent/results",
+                    json!({"machine":"box","command_id":cid,"ok":true}),
+                    cap
+                )
+                .await
+                .status(),
+                404
+            );
         }
-        assert_eq!(request(address, "POST", "/v1/agent/results",
-            json!({"machine":"box","command_id":ids[10],"ok":true}), cap).await.status(), 200);
-        println!("Rust HTTP journal-only retirement: {}", json!({"eligible_command_ids":eligible,"evicted_command_ids":&ids[..5],"unrelated_command_id":unrelated_id,"survivor":survivor}));
+        assert_eq!(
+            request(
+                address,
+                "POST",
+                "/v1/agent/results",
+                json!({"machine":"box","command_id":ids[10],"ok":true}),
+                cap
+            )
+            .await
+            .status(),
+            200
+        );
+        println!(
+            "Rust HTTP journal-only retirement: {}",
+            json!({"eligible_command_ids":eligible,"evicted_command_ids":&ids[..5],"unrelated_command_id":unrelated_id,"survivor":survivor})
+        );
         server.abort();
     }
 
