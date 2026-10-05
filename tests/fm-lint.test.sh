@@ -671,7 +671,8 @@ test_changed_mode_hides_cross_file_codes_that_ci_still_sees() {
   fi
   local tmp repo lint_copy fakebin diff_file fixture out rc
   tmp=$(fm_test_tmproot fm-lint-local-exclude-behavior)
-  # Lint a scratch copy so the fixture never joins this checkout's tests/*.sh
+  # Changed-file lint requires canonical paths relative to its own ROOT, so use
+  # a scratch copy rather than adding a fixture to this checkout's tests/*.test.sh
   # inventory, which concurrent suites such as fm-test-run.test.sh enumerate.
   repo="$tmp/repo"
   mkdir -p "$repo/bin/backends" "$repo/tests"

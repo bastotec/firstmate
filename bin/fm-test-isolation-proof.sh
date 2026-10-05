@@ -38,8 +38,10 @@
 #   - TMPDIR/TMP point only at that root so mktemp/fm_test_tmproot stay private
 #   - ambient FM_HOME / FM_*_OVERRIDE cleared so no shared home is reused
 #   - no global git config mutation (snapshot before/after)
-#   - no tests/*.test.sh inventory change, even transient (sampled while
-#     workers run), since bin/fm-test-run.sh enumerates that inventory
+#   - no tests/*.test.sh inventory change, since bin/fm-test-run.sh enumerates
+#     that inventory; sample at the start of every scheduler poll and after all
+#     workers finish, retaining observed drift even if a candidate cleans up
+#     (changes entirely between samples are not detected)
 #   - no production sharding and no retry-until-green
 #
 # Markers (stdout):
