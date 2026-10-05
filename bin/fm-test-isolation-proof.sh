@@ -38,6 +38,10 @@
 #   - TMPDIR/TMP point only at that root so mktemp/fm_test_tmproot stay private
 #   - ambient FM_HOME / FM_*_OVERRIDE cleared so no shared home is reused
 #   - no global git config mutation (snapshot before/after)
+#   - no tests/*.test.sh inventory change, since bin/fm-test-run.sh enumerates
+#     that inventory; sample at the start of every scheduler poll and after all
+#     workers finish, retaining observed drift even if a candidate cleans up
+#     (changes entirely between samples are not detected)
 #   - no production sharding and no retry-until-green
 #
 # Markers (stdout):
@@ -400,6 +404,22 @@ RECORDS="$PROOF_ROOT/records.tsv"
 trap 'rm -rf "$PROOF_ROOT"' EXIT
 
 GIT_BEFORE=$(global_git_snapshot)
+# Candidates run from $ROOT, where tests/*.test.sh is the inventory
+# bin/fm-test-run.sh enumerates. A candidate that adds or removes a script there,
+# even briefly, trips a concurrent runner's coverage guard, so the inventory is
+# sampled on every scheduler poll. printf -v keeps the sample fork-free.
+INVENTORY=(tests/*.test.sh)
+printf -v INVENTORY_BEFORE '%s\n' "${INVENTORY[@]}"
+INVENTORY_DRIFT=
+check_test_inventory() {
+  local now
+  [ -z "$INVENTORY_DRIFT" ] || return 0
+  INVENTORY=(tests/*.test.sh)
+  printf -v now '%s\n' "${INVENTORY[@]}"
+  [ "$now" != "$INVENTORY_BEFORE" ] || return 0
+  INVENTORY_DRIFT=$(diff <(printf '%s' "$INVENTORY_BEFORE") <(printf '%s' "$now") \
+    | sed -n 's/^> /added /p; s/^< /removed /p')
+}
 RUN_STARTED_ISO=$(now_iso)
 RUN_STARTED_MS=$(now_ms)
 RUN_ID="fm-isolation-${RUN_STARTED_MS}-$$"
@@ -476,6 +496,7 @@ worker_pid_is_running() {
 wait_one_completed_slot() {
   local slot work
   while :; do
+    check_test_inventory
     for slot in "${!WORKER_PIDS[@]}"; do
       work="$PROOF_ROOT/w${WORKER_IDX[$slot]}"
       if [ -f "$work/out/exit" ] || ! worker_pid_is_running "${WORKER_PIDS[$slot]}"; then
@@ -542,6 +563,14 @@ done
 while [ "$ACTIVE_WORKERS" -gt 0 ]; do
   wait_one_completed_slot
 done
+
+check_test_inventory
+if [ -n "$INVENTORY_DRIFT" ]; then
+  log "isolation failure: tests/*.test.sh inventory changed during the concurrent proof"
+  printf '%s\n' "$INVENTORY_DRIFT" >&2
+  AGG_RC=1
+  FAILED=$((FAILED + 1))
+fi
 
 GIT_AFTER=$(global_git_snapshot)
 if [ "$GIT_BEFORE" != "$GIT_AFTER" ]; then

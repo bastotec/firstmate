@@ -229,6 +229,9 @@ The three families retain the same coverage guarantees; what changed is one cras
 
 Each worker used a separate mode-`0700` temporary root and private `TMPDIR` and `TMP`.
 The harness cleared ambient `FM_HOME` and `FM_*_OVERRIDE` values for every worker and verified that global Git configuration was unchanged.
+The current harness also checks for `tests/*.test.sh` inventory drift; its [isolation contract](../bin/fm-test-isolation-proof.sh) owns the sampling mechanics and detection limits.
+[`tests/fm-test-isolation-proof.test.sh`](../tests/fm-test-isolation-proof.test.sh), in `test_transient_test_inventory_write_fails_the_proof`, covers detection despite fixture cleanup while completed workers are replaced.
+The archived 2026-08-20 proof predates the inventory check and remains unchanged.
 A candidate failure fails the aggregate run and requires investigation rather than a retry.
 
 ## Re-run

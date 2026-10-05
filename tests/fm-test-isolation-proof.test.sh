@@ -168,6 +168,81 @@ assert artifact["scripts"][0]["exit"] == 1
   pass "family pool JSON scopes jobs admission to proven concurrency"
 }
 
+# A candidate that adds a tests/*.test.sh script, even briefly, changes the
+# inventory fm-test-run.sh enumerates, so a concurrent coverage guard can see it
+# mid-run. The proof must refuse that candidate even when it cleans up after.
+test_transient_test_inventory_write_fails_the_proof() {
+  local tmp repo proof rc n
+  tmp=$(fm_test_tmproot fm-test-isolation-proof-inventory)
+  repo="$tmp/repo"
+  proof="$repo/bin/fm-test-isolation-proof.sh"
+  mkdir -p "$repo/bin" "$repo/tests"
+  cp "$PROOF" "$proof"
+  cat >"$repo/bin/fm-test-run.sh" <<'SH'
+#!/usr/bin/env bash
+if { [ "$1" = --list ] || [ "$1" = --list-scheduled ]; } && [ "$2" = --family ] \
+  && [ "$3" = inventory-family ]; then
+  printf '%s\n' tests/fm-proof-writer.test.sh tests/fm-proof-clean-{1,2,3,4}.test.sh
+  exit 0
+fi
+exit 2
+SH
+  cat >"$repo/tests/fm-proof-writer.test.sh" <<'SH'
+#!/usr/bin/env bash
+printf '#!/usr/bin/env bash\n' > tests/fm-proof-transient.test.sh
+trap 'rm -f tests/fm-proof-transient.test.sh' EXIT
+waited=0
+while [ ! -e "$PROOF_SCHED_EVIDENCE/fm-proof-clean-4.test.sh" ] && [ "$waited" -lt 200 ]; do
+  sleep 0.05
+  waited=$((waited + 1))
+done
+[ -e "$PROOF_SCHED_EVIDENCE/fm-proof-clean-4.test.sh" ] || exit 1
+rm -f tests/fm-proof-transient.test.sh
+echo "ok - writer proof fixture"
+SH
+  for n in 1 2 3 4; do
+    cat >"$repo/tests/fm-proof-clean-$n.test.sh" <<'SH'
+#!/usr/bin/env bash
+waited=0
+while [ ! -e tests/fm-proof-transient.test.sh ] && [ "$waited" -lt 200 ]; do
+  sleep 0.05
+  waited=$((waited + 1))
+done
+[ -e tests/fm-proof-transient.test.sh ] || exit 1
+sleep 0.05
+[ -e tests/fm-proof-transient.test.sh ] || exit 1
+touch "$PROOF_SCHED_EVIDENCE/${0##*/}"
+echo "ok - clean proof fixture"
+SH
+  done
+  chmod +x "$proof" "$repo/bin/fm-test-run.sh" "$repo/tests/fm-proof-"*.test.sh
+  set +e
+  PROOF_SCHED_EVIDENCE="$tmp" "$proof" --pool inventory-family --jobs 2 \
+    --json "$tmp/proof.json" >"$tmp/out" 2>"$tmp/err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 1 ] || fail "a transient tests/*.test.sh write must fail the proof, got $rc: $(cat "$tmp/err")"
+  grep -Fq 'tests/*.test.sh inventory changed' "$tmp/err" \
+    || fail "proof did not report the inventory change: $(cat "$tmp/err")"
+  grep -Fq 'tests/fm-proof-transient.test.sh' "$tmp/err" \
+    || fail "proof did not name the transient script: $(cat "$tmp/err")"
+  [ ! -e "$repo/tests/fm-proof-transient.test.sh" ] \
+    || fail "writer fixture did not clean up its transient script"
+  for n in 1 2 3 4; do
+    [ -e "$tmp/fm-proof-clean-$n.test.sh" ] \
+      || fail "worker $n did not complete during the transient write"
+  done
+  python3 -c '
+import json, sys
+artifact = json.load(open(sys.argv[1], encoding="utf-8"))
+assert artifact["concurrency"] == 2
+assert artifact["summary"]["total"] == 5
+assert artifact["summary"]["failed"] == 1
+assert all(script["exit"] == 0 for script in artifact["scripts"])
+' "$tmp/proof.json" || fail "proof must fail only for inventory drift, not candidate failures"
+  pass "a transient tests/*.test.sh write fails the proof during worker replacement"
+}
+
 test_list_candidates_nonempty_and_stable() {
   local listed count sorted
   listed=$("$PROOF" --list)
@@ -288,6 +363,7 @@ test_fixture_repo_branch_is_pinned() {
 
 test_unknown_pool_is_refused
 test_family_pool_json_identifies_admission
+test_transient_test_inventory_write_fails_the_proof
 test_list_candidates_nonempty_and_stable
 test_candidates_exclude_serial_classes
 test_extra_hermetic_candidates_present
