@@ -122,6 +122,11 @@ except hub_module.HubError as exc:
 else:
     raise AssertionError("a wrong capability completed a retired command")
 
+assert command.command_id not in machine.pending
+assert command.command_id in machine.retired
+hub.complete_command("box", command.command_id, True, "", "cap-1")
+assert order.describe()["outcome"] == "accepted"
+
 # --- bounded retention ----------------------------------------------------
 
 # Retired entries age out of the retired set after the retention again: the
@@ -130,8 +135,18 @@ hub, machine, endpoint = build()
 order, command = place_taken_order(hub, machine, "aged-out")
 command.taken_at = hub_module._now() - 901
 hub.reap()
-assert machine.retired.get(command.command_id) is not None
-advance(901)
+retired_at = machine.retired[command.command_id]
+advance(99)
+try:
+    hub.complete_command("box", command.command_id, True, "", "wrong")
+except hub_module.HubError as exc:
+    assert exc.code == "endpoint_unauthorized", exc.code
+else:
+    raise AssertionError("a wrong capability completed a retired command")
+assert command.command_id not in machine.pending
+assert machine.retired[command.command_id] == retired_at
+assert not command.done.is_set()
+advance(802)
 hub.reap()
 assert machine.retired.get(command.command_id) is None
 try:
@@ -144,15 +159,52 @@ else:
 # The retired set is capped: it cannot outgrow the journal it serves, and the
 # OLDEST entries are the ones evicted.
 hub, machine, endpoint = build()
-for number in range(hub_module.RETIRED_COMMAND_MAX + 5):
-    place_taken_order(hub, machine, "cap-%d" % number)
+commands = [place_taken_order(hub, machine, "cap-%d" % number)[1]
+            for number in range(hub_module.ORDER_JOURNAL_MAX + 5)]
+for kind in ("input", "status"):
+    command = hub_module.Command(endpoint.endpoint_id, "box", kind, {})
+    command.taken_at = hub_module._now() - 901
+    machine.pending[command.command_id] = command
+    commands.append(command)
 for command in list(machine.pending.values()):
     command.taken_at = hub_module._now() - 901
 hub.reap()
+expected = {command.command_id for command in commands[5:-2]}
+assert set(machine.retired) == expected
 assert len(machine.retired) == hub_module.RETIRED_COMMAND_MAX
-first_id = next(iter(machine.retired))
-assert first_id not in {"cap-%d" % number
-                        for number in range(5)}, "the oldest entries must be evicted first"
+assert not machine.pending
+for command in commands[:5] + commands[-2:]:
+    try:
+        hub.complete_command("box", command.command_id, True, "", "cap-1")
+    except hub_module.HubError as exc:
+        assert exc.code == "no_such_command", exc.code
+    else:
+        raise AssertionError("a command outside the retained journal completed")
+survivor = commands[5]
+hub.complete_command("box", survivor.command_id, True, "", "cap-1")
+assert hub.orders["cap-5"].describe()["outcome"] == "accepted"
+assert set(machine.retired) == expected - {survivor.command_id}
+
+new_commands = [place_taken_order(hub, machine, "replacement-%d" % number)[1]
+                for number in range(5)]
+for command in new_commands:
+    command.taken_at = hub_module._now() - 901
+hub.reap()
+expected = {command.command_id for command in commands[10:-2] + new_commands}
+assert set(machine.retired) == expected
+for command in commands[6:10]:
+    try:
+        hub.complete_command("box", command.command_id, True, "", "cap-1")
+    except hub_module.HubError as exc:
+        assert exc.code == "no_such_command", exc.code
+    else:
+        raise AssertionError("a retired command with an evicted journal completed")
+for command, order_id in ((commands[10], "cap-10"),
+                          (new_commands[-1], "replacement-4")):
+    hub.complete_command("box", command.command_id, True, "", "cap-1")
+    assert hub.orders[order_id].describe()["outcome"] == "accepted"
+    expected.remove(command.command_id)
+assert set(machine.retired) == expected
 
 # A command whose order has left the journal is not answerable through the
 # retired path: the journal entry is what keeps the binding alive.
@@ -161,6 +213,8 @@ order, command = place_taken_order(hub, machine, "evicted")
 command.taken_at = hub_module._now() - 901
 hub.reap()
 hub.orders.pop("evicted")
+hub.reap()
+assert command.command_id not in machine.retired
 try:
     hub.complete_command("box", command.command_id, True, "", "cap-1")
 except hub_module.HubError as exc:

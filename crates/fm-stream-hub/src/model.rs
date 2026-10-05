@@ -336,6 +336,15 @@ impl Hub {
         }
         s.endpoints
             .retain(|_, e| !(e.closed > 0. && e.closed < now() - 3600. || e.silent() > 3600.));
+        let journal: std::collections::BTreeSet<String> = s
+            .orders
+            .iter()
+            .filter_map(|o| {
+                let o = o.lock().unwrap();
+                let c = o.command.as_ref()?.lock().unwrap();
+                (!c.done).then(|| c.id.clone())
+            })
+            .collect();
         for m in s.machines.values_mut() {
             // A command past the retention retires instead of being dropped:
             // the order journal may still hold its Command, and while it does
@@ -347,23 +356,24 @@ impl Hub {
                 .iter()
                 .filter(|(cid, _)| {
                     s.commands.get(*cid).is_some_and(|c| {
-                        !c.lock().unwrap().done && {
-                            let c = c.lock().unwrap();
-                            c.taken > 0. && now() - c.taken >= 900.
-                        }
+                        let c = c.lock().unwrap();
+                        !c.done && c.taken > 0. && now() - c.taken >= 900.
                     })
                 })
                 .map(|(cid, _)| cid.clone())
                 .collect();
             for cid in stale {
                 m.pending.remove(&cid);
-                m.retired.push_back((cid, now()));
+                if journal.contains(&cid) {
+                    m.retired.push_back((cid, now()));
+                }
             }
+            let before = now() - 900.;
+            m.retired
+                .retain(|(cid, at)| *at >= before && journal.contains(cid));
             while m.retired.len() > 512 {
                 m.retired.pop_front();
             }
-            let before = now() - 900.;
-            m.retired.retain(|(_, at)| *at >= before);
             m.completed.retain(|_, c| c.2 >= before);
         }
         let retained: std::collections::BTreeSet<String> = s
@@ -739,39 +749,24 @@ impl Hub {
             .completed
             .retain(|_, c| c.2 >= before);
         let m = &s.machines[machine];
-        if !m.pending.contains_key(cid) && m.retire_position(cid).is_some() {
-            // A retired command is still completable while the order journal
-            // holds its Command: the object carries the endpoint binding the
-            // capability below is checked against, so this is the same
-            // authenticated completion as a prompt one - never a replay and
-            // never a synthesized result. Without it, a real result arriving
-            // past the pending retention would be discarded and the taken
-            // order would read unconfirmed for its whole journal life.
-            let journal = s
-                .orders
-                .iter()
-                .find(|o| {
-                    o.lock().unwrap().command.as_ref().is_some_and(|c| {
-                        let c = c.lock().unwrap();
-                        c.id == cid && !c.done
-                    })
-                })
-                .cloned();
-            if let Some(order) = journal {
-                let command = order.lock().unwrap().command.clone().unwrap();
-                let eid = command.lock().unwrap().endpoint.clone();
-                let machine_map = s.machines.get_mut(machine).unwrap();
-                let position = machine_map.retire_position(cid).unwrap();
-                machine_map.drop_retired(position);
-                machine_map.pending.insert(cid.into(), eid);
-                s.commands.insert(cid.into(), command);
-            }
-        }
-        let m = &s.machines[machine];
-        if let Some(eid) = m.pending.get(cid).cloned() {
+        let command = if m.pending.contains_key(cid) {
+            s.commands.get(cid).cloned()
+        } else if m.retire_position(cid).is_some() {
+            s.orders.iter().find_map(|o| {
+                let o = o.lock().unwrap();
+                let command = o.command.as_ref()?;
+                let c = command.lock().unwrap();
+                (c.id == cid && !c.done).then(|| command.clone())
+            })
+        } else {
+            None
+        };
+        if let Some(command) = command {
+            let mut c = command.lock().unwrap();
+            let eid = c.endpoint.clone();
             let endpoint = Self::get(&s, &eid)?;
             Self::authorize(endpoint, machine, cap)?;
-            if s.commands[cid].lock().unwrap().endpoint_created != endpoint.created {
+            if c.endpoint_created != endpoint.created {
                 return Err(Error::new(
                     403,
                     "endpoint_unauthorized",
@@ -783,8 +778,7 @@ impl Hub {
             if let Some(position) = machine_map.retire_position(cid) {
                 machine_map.drop_retired(position);
             }
-            let command = s.commands.remove(cid).unwrap();
-            let mut c = command.lock().unwrap();
+            s.commands.remove(cid);
             c.done = true;
             c.ok = ok;
             c.error = error.into();
@@ -797,7 +791,7 @@ impl Hub {
             self.wake.notify_all();
             return Ok(());
         }
-        if let Some((old_ok, old_error, _, eid)) = m.completed.get(cid) {
+        if let Some((old_ok, old_error, _, eid)) = s.machines[machine].completed.get(cid) {
             Self::authorize(Self::get(&s, eid)?, machine, cap)?;
             if *old_ok != ok || old_error != error {
                 return Err(Error::new(
@@ -1087,6 +1081,23 @@ mod tests {
         let capability = result["command_capability"].as_str().unwrap().to_owned();
         (hub, eid, capability)
     }
+    fn taken_order(hub: &Arc<Hub>, eid: &str, cap: &str, oid: String) -> String {
+        let order_hub = hub.clone();
+        let execution = eid.to_owned();
+        let request =
+            std::thread::spawn(move || order_hub.place("box/worker", &execution, "hello", &oid));
+        let commands = hub.take("box", eid, 5., cap).unwrap();
+        assert_eq!(commands.len(), 1);
+        let cid = serde_json::from_str::<Value>(&commands[0]).unwrap()["command_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            request.join().unwrap().unwrap_err().details["delivered"],
+            Value::Null
+        );
+        cid
+    }
     #[test]
     fn listing_selects_current_execution_once_per_retained_leaf() {
         let hub = Hub::new(vec![], 30., 0.01);
@@ -1369,11 +1380,12 @@ mod tests {
             .unwrap()
             .to_owned();
         request.join().unwrap().unwrap_err();
-        {
+        let retired_at = {
             let mut s = hub.state.lock().unwrap();
             s.commands[&cid].lock().unwrap().taken = now() - 901.;
             Hub::reap(&mut s);
-        }
+            s.machines["box"].retired[0].1
+        };
         // The capability binding survives retirement: a wrong capability is
         // still refused, exactly as for a prompt completion.
         assert_eq!(
@@ -1382,6 +1394,12 @@ mod tests {
                 .code,
             "endpoint_unauthorized"
         );
+        {
+            let s = hub.state.lock().unwrap();
+            assert!(!s.machines["box"].pending.contains_key(&cid));
+            assert_eq!(s.machines["box"].retired[0], (cid.clone(), retired_at));
+            assert!(!s.commands[&cid].lock().unwrap().done);
+        }
         hub.complete("box", &cid, true, "", &cap).unwrap();
         // A duplicate of the completed result is idempotent; a different body
         // for the same id is still a conflict.
@@ -1396,7 +1414,7 @@ mod tests {
         assert_eq!(settled["outcome"], "accepted");
     }
     #[test]
-    fn retired_entries_age_out_and_stay_bounded() {
+    fn retired_entries_age_out_after_rejected_results() {
         let (hub, eid, cap) = fixture();
         let order_hub = hub.clone();
         let execution = eid.clone();
@@ -1428,34 +1446,141 @@ mod tests {
                 .retired
                 .get_mut(0)
                 .unwrap()
-                .1 = now() - 901.;
+                .1 = now() - 802.;
+        }
+        assert_eq!(
+            hub.complete("box", &cid, true, "", "wrong")
+                .unwrap_err()
+                .code,
+            "endpoint_unauthorized"
+        );
+        {
+            let mut s = hub.state.lock().unwrap();
+            assert!(!s.machines["box"].pending.contains_key(&cid));
+            assert!(s.machines["box"].retire_position(&cid).is_some());
+            s.machines.get_mut("box").unwrap().retired[0].1 = now() - 901.;
             Hub::reap(&mut s);
             assert!(s.machines["box"].retired.is_empty());
+            assert!(!s.commands.contains_key(&cid));
         }
         assert_eq!(
             hub.complete("box", &cid, true, "", &cap).unwrap_err().code,
             "no_such_command"
         );
-        // The retired set is capped at 512 with the oldest evicted first.
-        let (volume, _, _) = fixture();
-        let mut s = volume.state.lock().unwrap();
-        for number in 0..517 {
-            s.machines
-                .get_mut("box")
-                .unwrap()
-                .retired
-                .push_back((format!("retired-{number}"), now()));
-        }
-        while s.machines.get_mut("box").unwrap().retired.len() > 512 {
-            s.machines.get_mut("box").unwrap().retired.pop_front();
-        }
-        let ids: Vec<String> = s.machines["box"]
-            .retired
-            .iter()
-            .map(|(id, _)| id.clone())
+    }
+    #[test]
+    fn retired_entries_follow_journal_eviction_and_stay_bounded() {
+        let (volume, eid, cap) = fixture();
+        let ids: Vec<String> = (0..517)
+            .map(|number| taken_order(&volume, &eid, &cap, format!("cap-{number}")))
             .collect();
-        assert_eq!(ids.len(), 512);
-        assert_eq!(ids.first().map(String::as_str), Some("retired-5"));
+        let mut unrelated = vec![];
+        for kind in ["input", "status"] {
+            let submit_hub = volume.clone();
+            let execution = eid.clone();
+            let request =
+                std::thread::spawn(move || submit_hub.submit(&execution, kind, json!({}), None));
+            let commands = volume.take("box", &eid, 5., &cap).unwrap();
+            assert_eq!(commands.len(), 1);
+            unrelated.push(
+                serde_json::from_str::<Value>(&commands[0]).unwrap()["command_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+            assert_eq!(request.join().unwrap().unwrap_err().code, "no_agent_ack");
+        }
+        let mut expected: std::collections::BTreeSet<String> = ids[5..].iter().cloned().collect();
+        {
+            let mut s = volume.state.lock().unwrap();
+            assert_eq!(s.orders.len(), 512);
+            for cid in ids.iter().chain(&unrelated) {
+                s.commands[cid].lock().unwrap().taken = now() - 901.;
+            }
+            Hub::reap(&mut s);
+            let retained: std::collections::BTreeSet<String> = s.machines["box"]
+                .retired
+                .iter()
+                .map(|(cid, _)| cid.clone())
+                .collect();
+            assert_eq!(retained, expected);
+            assert_eq!(s.machines["box"].retired.len(), 512);
+            assert!(s.machines["box"].pending.is_empty());
+            for cid in ids[..5].iter().chain(&unrelated) {
+                assert!(!s.commands.contains_key(cid));
+            }
+        }
+        for cid in ids[..5].iter().chain(&unrelated) {
+            assert_eq!(
+                volume
+                    .complete("box", cid, true, "", &cap)
+                    .unwrap_err()
+                    .code,
+                "no_such_command"
+            );
+        }
+        volume.complete("box", &ids[5], true, "", &cap).unwrap();
+        assert_eq!(
+            volume.place("box/worker", &eid, "hello", "cap-5").unwrap()["outcome"],
+            "accepted"
+        );
+        expected.remove(&ids[5]);
+        {
+            let s = volume.state.lock().unwrap();
+            assert_eq!(
+                s.machines["box"]
+                    .retired
+                    .iter()
+                    .map(|(cid, _)| cid.clone())
+                    .collect::<std::collections::BTreeSet<_>>(),
+                expected
+            );
+        }
+        let replacements: Vec<String> = (0..5)
+            .map(|number| taken_order(&volume, &eid, &cap, format!("replacement-{number}")))
+            .collect();
+        expected = ids[10..].iter().chain(&replacements).cloned().collect();
+        {
+            let mut s = volume.state.lock().unwrap();
+            for cid in &replacements {
+                s.commands[cid].lock().unwrap().taken = now() - 901.;
+            }
+            Hub::reap(&mut s);
+            assert_eq!(
+                s.machines["box"]
+                    .retired
+                    .iter()
+                    .map(|(cid, _)| cid.clone())
+                    .collect::<std::collections::BTreeSet<_>>(),
+                expected
+            );
+        }
+        for cid in &ids[6..10] {
+            assert_eq!(
+                volume
+                    .complete("box", cid, true, "", &cap)
+                    .unwrap_err()
+                    .code,
+                "no_such_command"
+            );
+        }
+        for (cid, oid) in [(&ids[10], "cap-10"), (&replacements[4], "replacement-4")] {
+            volume.complete("box", cid, true, "", &cap).unwrap();
+            assert_eq!(
+                volume.place("box/worker", &eid, "hello", oid).unwrap()["outcome"],
+                "accepted"
+            );
+            expected.remove(cid);
+        }
+        let s = volume.state.lock().unwrap();
+        assert_eq!(
+            s.machines["box"]
+                .retired
+                .iter()
+                .map(|(cid, _)| cid.clone())
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected
+        );
     }
     #[test]
     fn order_holds_authoritative_close_after_endpoint_retention_expires() {

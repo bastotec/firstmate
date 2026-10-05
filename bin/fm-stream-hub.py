@@ -1394,20 +1394,22 @@ class Hub:
             # needed it has had a full second window to ask - and the retired
             # set stays bounded by the journal it serves.
             stale = _now() - UNACKNOWLEDGED_COMMAND_RETENTION
+            journal = self._journal_commands()
             for machine in self.machines.values():
                 for command_id, command in list(machine.pending.items()):
                     if not command.done.is_set() and command.taken_at < stale:
                         machine.pending.pop(command_id, None)
-                        machine.retired[command_id] = _now()
+                        if command_id in journal:
+                            machine.retired[command_id] = _now()
+                self._prune_retired(machine, stale, journal)
                 while len(machine.retired) > RETIRED_COMMAND_MAX:
                     machine.retired.popitem(last=False)
-                self._prune_retired(machine, stale)
                 self._prune_completed(machine, stale)
 
     @staticmethod
-    def _prune_retired(machine: "Machine", before: float) -> None:
+    def _prune_retired(machine: "Machine", before: float, journal: dict) -> None:
         for command_id, retired_at in list(machine.retired.items()):
-            if retired_at < before:
+            if retired_at < before or command_id not in journal:
                 machine.retired.pop(command_id, None)
 
     @staticmethod
@@ -1524,9 +1526,10 @@ class Hub:
                          ok: bool, error: str, capability: str = "") -> None:
         with self.command_wake:
             machine = self.machines.get(machine_name)
+            journal = self._journal_commands()
             if machine is not None:
                 stale = _now() - UNACKNOWLEDGED_COMMAND_RETENTION
-                self._prune_retired(machine, stale)
+                self._prune_retired(machine, stale, journal)
                 self._prune_completed(machine, stale)
             command = machine.pending.get(command_id) if machine else None
             if command is None:
@@ -1541,11 +1544,7 @@ class Hub:
                 # replay and not a synthesized result.
                 retired_at = machine.retired.get(command_id) if machine else None
                 if retired_at is not None:
-                    order_command = self._journal_command(command_id)
-                    if order_command is not None:
-                        command = order_command
-                        machine.pending[command_id] = command
-                        machine.retired.pop(command_id, None)
+                    command = journal.get(command_id)
                 if command is None:
                     completed = machine.completed.get(command_id) if machine else None
                     if completed is None:
@@ -1563,30 +1562,18 @@ class Hub:
             endpoint = self.get(command.endpoint_id)
             with endpoint.lock:
                 self.authorize_endpoint(endpoint, machine_name, capability)
-                machine.pending.pop(command_id)
+                machine.pending.pop(command_id, None)
                 machine.retired.pop(command_id, None)
                 command.ok = ok
                 command.error = error
                 command.done.set()
                 machine.completed[command_id] = (ok, error, _now(), command.endpoint_id)
 
-    def _journal_command(self, command_id: str) -> "Command":
-        """The Command a journal-retained order still holds, or None.
-
-        A retired command id is only answerable while the order journal still
-        references its Command, because that object is both the binding a
-        result is authenticated against and the record a late result settles.
-        Once the journal has evicted the order there is nothing left to
-        complete and the honest answer is the one the route already gives.
-        """
+    def _journal_commands(self) -> dict:
         with self.lock:
-            for order in list(self.orders.values()):
-                command = order.command
-                if (command is not None
-                        and command.command_id == command_id
-                        and not command.done.is_set()):
-                    return command
-        return None
+            return {order.command.command_id: order.command
+                    for order in self.orders.values()
+                    if order.command is not None and not order.command.done.is_set()}
 
     # --- orders -----------------------------------------------------------
 
