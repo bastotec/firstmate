@@ -624,12 +624,32 @@ is_proven_isolated_script() {
   return 1
 }
 
+# Run "$@" with stdout in a temp file, then emit the file with cat.
+# macOS /bin/bash 3.2 installs its SIGCHLD handler without SA_RESTART, so a
+# builtin printf blocked on a full pipe fails with EINTR ("write error:
+# Interrupted system call") when any child of the writing shell exits, and
+# set -e then kills the writer mid-list, silently truncating whatever reads it.
+# Under system-wide pipe memory pressure macOS gives new pipes 512-byte buffers,
+# so a few KB of list fed to a per-line consumer blocks routinely. Writes to a
+# regular file are never interrupted, and cat has no children to signal it.
+emit_via_file() {
+  local tmp
+  tmp=$(mktemp "${TMPDIR:-/tmp}/fm-test-emit.XXXXXX")
+  "$@" >"$tmp"
+  cat "$tmp"
+  rm -f "$tmp"
+}
+
 # The portable serial remainder: every tests/*.test.sh that is neither
 # proven-isolated nor real-herdr-gated. Watcher, lock, AFK, real tmux, daemon,
 # secondmate lifecycle, bootstrap, the live-harness-optin family, GUI-backend,
 # and other unproven work stays here. Derived rather than enumerated so a newly added test
 # lands here by default instead of falling out of every lane.
 list_portable_serial() {
+  emit_via_file list_portable_serial_unbuffered
+}
+
+list_portable_serial_unbuffered() {
   local s base fam
   while IFS= read -r s; do
     [ -n "$s" ] || continue
@@ -892,6 +912,10 @@ portable_serial_weight_for() {
 # Deterministic: candidates are ordered by hint descending then path, and ties
 # between equally loaded bins always take the lowest bin index.
 portable_serial_assignments() {
+  emit_via_file portable_serial_assignments_unbuffered
+}
+
+portable_serial_assignments_unbuffered() {
   local ms script i best best_load
   local -a loads=()
   i=1
