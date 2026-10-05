@@ -145,12 +145,19 @@ DEFAULT_ENDPOINT_RETENTION = 3600.0
 # rather than guessing or sending the order twice, which is a short-lived need;
 # it is not a history of the fleet and nothing is persisted.
 ORDER_JOURNAL_MAX = 512
-# How long a command an agent took but never acknowledged remains eligible for
-# a late acknowledgement. It is kept far past the initial acknowledgement
-# window because that is exactly the command whose fate a caller most needs to
-# settle, and becomes eligible for reaping eventually because an agent that has
-# not answered it by then is not going to.
+# How long a command an agent took but never acknowledged remains referenced by
+# the command router. Past it the entry RETIRES from the pending map: it stops
+# counting as work in flight, but it is never dropped while the order journal
+# still holds the command, because that journal entry is exactly the record a
+# late acknowledgement must still be able to settle. Retiring is bookkeeping,
+# not a verdict: the order keeps reading unconfirmed until an authenticated
+# result lands, the journal evicts the order, or the retired entry ages out.
 UNACKNOWLEDGED_COMMAND_RETENTION = 900.0
+# How many retired-but-still-answerable commands one machine may hold. A taken
+# command retires only after the retention above, and an order holding it lives
+# at most ORDER_JOURNAL_MAX placements, so the same bound keeps the retired set
+# proportional to the journal it serves rather than growing with fleet age.
+RETIRED_COMMAND_MAX = ORDER_JOURNAL_MAX
 # How much longer than a placement's own worst case a resend of that order id
 # waits for the call still placing it to answer. Placing is bounded by the
 # fixed membership window plus the acknowledgement window, so this covers only
@@ -1095,6 +1102,11 @@ class Machine:
         self.last_seen = _now()
         self.queue: list = []
         self.pending: dict = {}
+        # Commands past UNACKNOWLEDGED_COMMAND_RETENTION whose Command object
+        # is still alive because an order in the journal holds it. Keyed by
+        # command id, valued by the instant it retired, insertion-ordered so
+        # the bounded eviction below always drops the oldest.
+        self.retired: "collections.OrderedDict" = collections.OrderedDict()
         self.completed: dict = {}
 
     def describe(self, silent_after: float) -> dict:
@@ -1372,18 +1384,31 @@ class Hub:
                     if (e.closed_at and e.closed_at < cutoff)
                     or e.agent_silent_for() > DEFAULT_ENDPOINT_RETENTION]:
                 self.endpoints.pop(endpoint_id, None)
-            # Commands an agent took and never answered remain eligible for a
-            # late acknowledgement well past the initial window, because that
-            # is the command whose fate a caller most needs to settle. They
-            # eventually become eligible for reaping: an agent that has not
-            # answered this command by then is not going to, and the journaled
-            # order reads unconfirmed either way.
+            # Commands an agent took and never answered remain answerable well
+            # past the initial window, because that is the command whose fate a
+            # caller most needs to settle. Past the retention they RETIRE from
+            # the pending map instead of being dropped: the order journal may
+            # still hold the command, and as long as it does, an authenticated
+            # late result must still be able to complete it. A retired entry
+            # whose own retention has also lapsed is dropped - the caller that
+            # needed it has had a full second window to ask - and the retired
+            # set stays bounded by the journal it serves.
             stale = _now() - UNACKNOWLEDGED_COMMAND_RETENTION
             for machine in self.machines.values():
                 for command_id, command in list(machine.pending.items()):
                     if not command.done.is_set() and command.taken_at < stale:
                         machine.pending.pop(command_id, None)
+                        machine.retired[command_id] = _now()
+                while len(machine.retired) > RETIRED_COMMAND_MAX:
+                    machine.retired.popitem(last=False)
+                self._prune_retired(machine, stale)
                 self._prune_completed(machine, stale)
+
+    @staticmethod
+    def _prune_retired(machine: "Machine", before: float) -> None:
+        for command_id, retired_at in list(machine.retired.items()):
+            if retired_at < before:
+                machine.retired.pop(command_id, None)
 
     @staticmethod
     def _prune_completed(machine: "Machine", before: float) -> None:
@@ -1500,31 +1525,68 @@ class Hub:
         with self.command_wake:
             machine = self.machines.get(machine_name)
             if machine is not None:
-                self._prune_completed(
-                    machine, _now() - UNACKNOWLEDGED_COMMAND_RETENTION)
+                stale = _now() - UNACKNOWLEDGED_COMMAND_RETENTION
+                self._prune_retired(machine, stale)
+                self._prune_completed(machine, stale)
             command = machine.pending.get(command_id) if machine else None
             if command is None:
-                completed = machine.completed.get(command_id) if machine else None
-                if completed is None:
-                    raise HubError(HTTPStatus.NOT_FOUND, "no_such_command",
-                                   "machine %s holds no command %s"
-                                   % (machine_name, command_id))
-                endpoint = self.get(completed[3])
-                with endpoint.lock:
-                    self.authorize_endpoint(endpoint, machine_name, capability)
-                if completed[:2] != (ok, error):
-                    raise HubError(HTTPStatus.CONFLICT, "result_conflict",
-                                   "command %s already has a different result"
-                                   % command_id)
-                return
+                # A command that retired past the retention window is still
+                # completable while it stays referenced here: its order is in
+                # the journal, and discarding a real authenticated result for
+                # no reason other than its arrival time is what strands a
+                # taken order as unconfirmed forever. The Command object
+                # itself is the authority - it carries the endpoint binding
+                # the capability below is checked against - so this is the
+                # same authenticated completion as any prompt one, not a
+                # replay and not a synthesized result.
+                retired_at = machine.retired.get(command_id) if machine else None
+                if retired_at is not None:
+                    order_command = self._journal_command(command_id)
+                    if order_command is not None:
+                        command = order_command
+                        machine.pending[command_id] = command
+                        machine.retired.pop(command_id, None)
+                if command is None:
+                    completed = machine.completed.get(command_id) if machine else None
+                    if completed is None:
+                        raise HubError(HTTPStatus.NOT_FOUND, "no_such_command",
+                                       "machine %s holds no command %s"
+                                       % (machine_name, command_id))
+                    endpoint = self.get(completed[3])
+                    with endpoint.lock:
+                        self.authorize_endpoint(endpoint, machine_name, capability)
+                    if completed[:2] != (ok, error):
+                        raise HubError(HTTPStatus.CONFLICT, "result_conflict",
+                                       "command %s already has a different result"
+                                       % command_id)
+                    return
             endpoint = self.get(command.endpoint_id)
             with endpoint.lock:
                 self.authorize_endpoint(endpoint, machine_name, capability)
                 machine.pending.pop(command_id)
+                machine.retired.pop(command_id, None)
                 command.ok = ok
                 command.error = error
                 command.done.set()
                 machine.completed[command_id] = (ok, error, _now(), command.endpoint_id)
+
+    def _journal_command(self, command_id: str) -> "Command":
+        """The Command a journal-retained order still holds, or None.
+
+        A retired command id is only answerable while the order journal still
+        references its Command, because that object is both the binding a
+        result is authenticated against and the record a late result settles.
+        Once the journal has evicted the order there is nothing left to
+        complete and the honest answer is the one the route already gives.
+        """
+        with self.lock:
+            for order in list(self.orders.values()):
+                command = order.command
+                if (command is not None
+                        and command.command_id == command_id
+                        and not command.done.is_set()):
+                    return command
+        return None
 
     # --- orders -----------------------------------------------------------
 

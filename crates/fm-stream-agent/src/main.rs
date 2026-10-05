@@ -26,6 +26,12 @@ enum Error {
     Superseded,
     Forgotten,
     Rejected,
+    /// The hub could not match this result to a command it still holds. Not a
+    /// verdict on the result body: a hub restart, a retention boundary or a
+    /// stale view all say `no_such_command` while the worker's real outcome
+    /// remains the only truth, so such a result stays retryable the way any
+    /// undelivered one does and settles only by acceptance or honest expiry.
+    Unmatched,
     Other(String),
 }
 impl std::fmt::Display for Error {
@@ -34,6 +40,7 @@ impl std::fmt::Display for Error {
             Self::Superseded => write!(f, "endpoint superseded"),
             Self::Forgotten => write!(f, "hub forgot endpoint"),
             Self::Rejected => write!(f, "command result rejected"),
+            Self::Unmatched => write!(f, "hub holds no such command"),
             Self::Other(s) => f.write_str(s),
         }
     }
@@ -95,10 +102,13 @@ impl Hub {
             return Err(match answer["error"].as_str().unwrap_or("") {
                 "endpoint_superseded" | "duplicate_label" => Error::Superseded,
                 "no_such_endpoint" => Error::Forgotten,
-                "no_such_command"
-                | "result_conflict"
-                | "bad_command_id"
-                | "endpoint_unauthorized" => Error::Rejected,
+                // An unmatched command id is not a verdict on the result body
+                // (see Error::Unmatched), so it takes its own class rather
+                // than the definitive rejection one.
+                "no_such_command" => Error::Unmatched,
+                "result_conflict" | "bad_command_id" | "endpoint_unauthorized" => {
+                    Error::Rejected
+                }
                 _ => Error::Other(format!(
                     "hub refused {method} {path}: HTTP {}",
                     status.as_u16()

@@ -172,6 +172,11 @@ pub struct Machine {
     pub seen: f64,
     pub queue: VecDeque<String>,
     pub pending: BTreeMap<String, String>,
+    /// Command ids past the unacknowledged retention whose Command the order
+    /// journal still holds: no longer work in flight, still answerable, keyed
+    /// by id and valued by the instant they retired so age-based pruning and
+    /// the bounded cap below both have an ordering to work from.
+    pub retired: VecDeque<(String, f64)>,
     pub completed: BTreeMap<String, (bool, String, f64, String)>,
 }
 impl Machine {
@@ -181,7 +186,19 @@ impl Machine {
             seen: now(),
             queue: VecDeque::new(),
             pending: BTreeMap::new(),
+            retired: VecDeque::new(),
             completed: BTreeMap::new(),
+        }
+    }
+    pub fn retire_position(&self, cid: &str) -> Option<usize> {
+        self.retired.iter().position(|(id, _)| id == cid)
+    }
+    pub fn drop_retired(&mut self, position: usize) {
+        self.retired.drain(position..=position);
+    }
+    pub fn retained_retire(&mut self, before: f64) {
+        while self.retired.front().is_some_and(|(_, at)| *at < before) {
+            self.retired.pop_front();
         }
     }
     pub fn describe(&self, name: &str, max_age: f64) -> Value {
@@ -320,13 +337,34 @@ impl Hub {
         s.endpoints
             .retain(|_, e| !(e.closed > 0. && e.closed < now() - 3600. || e.silent() > 3600.));
         for m in s.machines.values_mut() {
-            m.pending.retain(|cid, _| {
-                s.commands.get(cid).is_some_and(|c| {
-                    let c = c.lock().unwrap();
-                    c.done || c.taken >= now() - 900.
+            // A command past the retention retires instead of being dropped:
+            // the order journal may still hold its Command, and while it does
+            // an authenticated late result must still be able to complete it.
+            // Retiring only happens for a command that is still referenced,
+            // so `retained` below keeps the Command alive with it.
+            let stale: Vec<String> = m
+                .pending
+                .iter()
+                .filter(|(cid, _)| {
+                    s.commands
+                        .get(*cid)
+                        .is_some_and(|c| !c.lock().unwrap().done && {
+                            let c = c.lock().unwrap();
+                            c.taken > 0. && now() - c.taken >= 900.
+                        })
                 })
-            });
-            m.completed.retain(|_, c| c.2 >= now() - 900.);
+                .map(|(cid, _)| cid.clone())
+                .collect();
+            for cid in stale {
+                m.pending.remove(&cid);
+                m.retired.push_back((cid, now()));
+            }
+            while m.retired.len() > 512 {
+                m.retired.pop_front();
+            }
+            let before = now() - 900.;
+            m.retired.retain(|(_, at)| *at >= before);
+            m.completed.retain(|_, c| c.2 >= before);
         }
         let retained: std::collections::BTreeSet<String> = s
             .machines
@@ -335,6 +373,7 @@ impl Hub {
                 m.queue
                     .iter()
                     .chain(m.pending.keys())
+                    .chain(m.retired.iter().map(|(id, _)| id))
                     .chain(m.completed.keys())
             })
             .cloned()
@@ -692,11 +731,45 @@ impl Hub {
     ) -> Result<()> {
         let mut s = self.state.lock().unwrap();
         Self::touch(&mut s, machine);
+        let before = now() - 900.;
+        s.machines
+            .get_mut(machine)
+            .unwrap()
+            .retained_retire(before);
         s.machines
             .get_mut(machine)
             .unwrap()
             .completed
-            .retain(|_, c| c.2 >= now() - 900.);
+            .retain(|_, c| c.2 >= before);
+        let m = &s.machines[machine];
+        if m.pending.get(cid).is_none() && m.retire_position(cid).is_some() {
+            // A retired command is still completable while the order journal
+            // holds its Command: the object carries the endpoint binding the
+            // capability below is checked against, so this is the same
+            // authenticated completion as a prompt one - never a replay and
+            // never a synthesized result. Without it, a real result arriving
+            // past the pending retention would be discarded and the taken
+            // order would read unconfirmed for its whole journal life.
+            let journal = s
+                .orders
+                .iter()
+                .find(|o| {
+                    o.lock().unwrap().command.as_ref().is_some_and(|c| {
+                        let c = c.lock().unwrap();
+                        c.id == cid && !c.done
+                    })
+                })
+                .cloned();
+            if let Some(order) = journal {
+                let command = order.lock().unwrap().command.clone().unwrap();
+                let eid = command.lock().unwrap().endpoint.clone();
+                let machine_map = s.machines.get_mut(machine).unwrap();
+                let position = machine_map.retire_position(cid).unwrap();
+                machine_map.drop_retired(position);
+                machine_map.pending.insert(cid.into(), eid);
+                s.commands.insert(cid.into(), command);
+            }
+        }
         let m = &s.machines[machine];
         if let Some(eid) = m.pending.get(cid).cloned() {
             let endpoint = Self::get(&s, &eid)?;
@@ -708,7 +781,11 @@ impl Hub {
                     "a valid endpoint command capability is required",
                 ));
             }
-            s.machines.get_mut(machine).unwrap().pending.remove(cid);
+            let machine_map = s.machines.get_mut(machine).unwrap();
+            machine_map.pending.remove(cid);
+            if let Some(position) = machine_map.retire_position(cid) {
+                machine_map.drop_retired(position);
+            }
             let command = s.commands.remove(cid).unwrap();
             let mut c = command.lock().unwrap();
             c.done = true;
@@ -1216,15 +1293,175 @@ mod tests {
             let mut s = hub.state.lock().unwrap();
             s.commands[cid].lock().unwrap().taken = now() - 901.;
             Hub::reap(&mut s);
-            assert!(!s.commands.contains_key(cid));
+            // A retired command stays referenced while the journal holds its
+            // order, which is exactly what keeps a late authenticated result
+            // able to complete it.
+            assert!(s.commands.contains_key(cid));
+            assert!(s.machines["box"].retire_position(cid).is_some());
+            assert!(!s.machines["box"].pending.contains_key(cid));
         }
         let resent = hub.place("box/worker", &eid, "hello", "order").unwrap_err();
         assert_eq!(resent.details["outcome"], "unconfirmed");
         assert_eq!(resent.details["delivered"], Value::Null);
+        // The real-result case this whole path exists for: an authenticated
+        // completion arriving past the pending retention still settles the
+        // journaled order instead of being discarded as no_such_command.
+        hub.complete("box", cid, true, "", &cap).unwrap();
+        let settled = hub.place("box/worker", &eid, "hello", "order").unwrap();
+        assert_eq!(settled["outcome"], "accepted");
+        assert_eq!(settled["delivered"], true);
+    }
+    #[test]
+    fn late_results_settle_across_the_retention_boundary() {
+        // The boundary itself at 899/901 and the observed real-order timing
+        // (~1060.57s): the exact regression the residual diagnosis
+        // reproduced, asserted here the same way - age the taken command,
+        // reap, then complete with the valid capability.
+        for age in [899., 901., 1060.5663512] {
+            let (hub, eid, cap) = fixture();
+            let order_hub = hub.clone();
+            let execution = eid.clone();
+            let id = format!("order-{age}");
+            let request = std::thread::spawn(move || {
+                order_hub.place("box/worker", &execution, "hello", &id)
+            });            let mut commands = vec![];
+            for _ in 0..100 {
+                commands = hub.take("box", &eid, 0., &cap).unwrap();
+                if !commands.is_empty() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let cid = serde_json::from_str::<Value>(&commands[0]).unwrap()
+                ["command_id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let placement = request.join().unwrap().unwrap_err();
+            assert_eq!(placement.details["delivered"], Value::Null);
+            {
+                let mut s = hub.state.lock().unwrap();
+                s.commands[&cid].lock().unwrap().taken = now() - age;
+                Hub::reap(&mut s);
+            }
+            hub.complete("box", &cid, true, "", &cap)
+                .unwrap_or_else(|e| panic!("age {age} rejected: {e:?}"));
+            let settled = hub
+                .place("box/worker", &eid, "hello", &format!("order-{age}"))
+                .unwrap();
+            assert_eq!(settled["outcome"], "accepted");
+            assert_eq!(settled["delivered"], true);
+        }
+    }
+    #[test]
+    fn retired_completion_keeps_ownership_and_conflict_detection() {
+        let (hub, eid, cap) = fixture();
+        let order_hub = hub.clone();
+        let execution = eid.clone();
+        let request =
+            std::thread::spawn(move || order_hub.place("box/worker", &execution, "hello", "own"));
+        let mut commands = vec![];
+        for _ in 0..100 {
+            commands = hub.take("box", &eid, 0., &cap).unwrap();
+            if !commands.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let cid = serde_json::from_str::<Value>(&commands[0]).unwrap()
+            ["command_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        request.join().unwrap().unwrap_err();
+        {
+            let mut s = hub.state.lock().unwrap();
+            s.commands[&cid].lock().unwrap().taken = now() - 901.;
+            Hub::reap(&mut s);
+        }
+        // The capability binding survives retirement: a wrong capability is
+        // still refused, exactly as for a prompt completion.
         assert_eq!(
-            hub.complete("box", cid, true, "", &cap).unwrap_err().code,
+            hub.complete("box", &cid, true, "", "wrong").unwrap_err().code,
+            "endpoint_unauthorized"
+        );
+        hub.complete("box", &cid, true, "", &cap).unwrap();
+        // A duplicate of the completed result is idempotent; a different body
+        // for the same id is still a conflict.
+        hub.complete("box", &cid, true, "", &cap).unwrap();
+        assert_eq!(
+            hub.complete("box", &cid, false, "changed story", &cap)
+                .unwrap_err()
+                .code,
+            "result_conflict"
+        );
+        let settled = hub.place("box/worker", &eid, "hello", "own").unwrap();
+        assert_eq!(settled["outcome"], "accepted");
+    }
+    #[test]
+    fn retired_entries_age_out_and_stay_bounded() {
+        let (hub, eid, cap) = fixture();
+        let order_hub = hub.clone();
+        let execution = eid.clone();
+        let request =
+            std::thread::spawn(move || order_hub.place("box/worker", &execution, "hello", "aged"));
+        let mut commands = vec![];
+        for _ in 0..100 {
+            commands = hub.take("box", &eid, 0., &cap).unwrap();
+            if !commands.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let cid = serde_json::from_str::<Value>(&commands[0]).unwrap()
+            ["command_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        request.join().unwrap().unwrap_err();
+        {
+            let mut s = hub.state.lock().unwrap();
+            s.commands[&cid].lock().unwrap().taken = now() - 901.;
+            Hub::reap(&mut s);
+            assert!(s.machines["box"].retire_position(&cid).is_some());
+            // The retired entry itself expires after another retention
+            // window: answerable is doubled, not infinite.
+            s.machines
+                .get_mut("box")
+                .unwrap()
+                .retired
+                .get_mut(0)
+                .unwrap()
+                .1 = now() - 901.;
+            Hub::reap(&mut s);
+            assert!(s.machines["box"].retired.is_empty());
+        }
+        assert_eq!(
+            hub.complete("box", &cid, true, "", &cap)
+                .unwrap_err()
+                .code,
             "no_such_command"
         );
+        // The retired set is capped at 512 with the oldest evicted first.
+        let (volume, _, _) = fixture();
+        let mut s = volume.state.lock().unwrap();
+        for number in 0..517 {
+            s.machines
+                .get_mut("box")
+                .unwrap()
+                .retired
+                .push_back((format!("retired-{number}"), now()));
+        }
+        while s.machines.get_mut("box").unwrap().retired.len() > 512 {
+            s.machines.get_mut("box").unwrap().retired.pop_front();
+        }
+        let ids: Vec<String> = s.machines["box"]
+            .retired
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(ids.len(), 512);
+        assert_eq!(ids.first().map(String::as_str), Some("retired-5"));
     }
     #[test]
     fn order_holds_authoritative_close_after_endpoint_retention_expires() {

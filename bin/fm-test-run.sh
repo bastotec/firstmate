@@ -799,6 +799,9 @@ tests/fm-stream-claude-tail.test.sh 9000
 # Completed measurements from run 36642742794's green serial shards 1 and 2.
 tests/fm-stream-deck-live-e2e.test.sh 79
 tests/fm-stream-deck.test.sh 4208
+# Locally measured worst of three runs for the new retention suite; refresh
+# from green CI artifacts per docs/fm-test-portable-shards.md.
+tests/fm-stream-hub-retention.test.sh 600
 tests/fm-stream-opencode-tail.test.sh 17476
 tests/fm-subagent-pretool-check.test.sh 1030
 tests/fm-supervision-events.test.sh 719

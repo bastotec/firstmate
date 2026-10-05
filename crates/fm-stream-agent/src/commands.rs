@@ -391,6 +391,10 @@ impl Agent {
                                         Some(&result),
                                         Duration::from_secs(RESULT_POST_SECS)
                                     ),
+                                    // A definitive rejection settles; an
+                                    // UNMATCHED command id does not, because
+                                    // it is not a verdict on this result and
+                                    // the hub may still be able to accept it.
                                     Ok(_) | Err(Error::Rejected)
                                 )
                             }),

@@ -434,6 +434,17 @@ class ResultRejected(RuntimeError):
     """The hub definitively rejected a command result."""
 
 
+class ResultUnknown(ResultRejected):
+    """The hub could not match this result to a command it still holds.
+
+    Distinct from a definitive rejection because the result body itself was
+    never judged: a hub that restarted, reaped its pending window or is reading
+    a stale view says the same code while the worker's real outcome remains
+    the only truth. Such a result stays retryable - reporting it settled is
+    what stranded a real applied steer as unconfirmed forever.
+    """
+
+
 # The refusals that mean another live endpoint answers to this one's identity.
 # duplicate_label reaches an agent only on a registration, and it says exactly
 # what endpoint_superseded says on a publish: the name is taken.
@@ -559,7 +570,11 @@ class HubClient:
                 raise Superseded(message)
             if code == "no_such_endpoint":
                 raise Forgotten(message)
-            if code in ("no_such_command", "result_conflict", "bad_command_id",
+            if code == "no_such_command":
+                # See ResultUnknown: an unmatched command id is not a verdict
+                # on the result, so it must not settle the outcome.
+                raise ResultUnknown(message)
+            if code in ("result_conflict", "bad_command_id",
                         "endpoint_unauthorized"):
                 raise ResultRejected(message)
             raise RuntimeError(message)
@@ -988,14 +1003,24 @@ class Agent:
 
     def acknowledge_command(self, command: dict, ok: bool, error: str) -> bool:
         result = {"machine": self.machine, "command_id": command['command_id'],
-                  "ok": ok, "error": error}
+                  'ok': ok, 'error': error}
         try:
             self.hub.call("POST", "/v1/agent/results", result,
                           timeout=RESULT_POST_TIMEOUT_SECS)
             return True
         except ResultRejected as exc:
+            # A definitive rejection of the RESULT BODY settles: the hub has
+            # seen this command's outcome and will not accept this answer, so
+            # retrying can never change anything. no_such_command is not that
+            # verdict - it says the hub's command router no longer holds the
+            # command, which a hub restart, a retention boundary or a
+            # transiently stale view each produce while the original result is
+            # still the only truth about what the worker did. Reporting it as
+            # settled is what froze a real applied steer as unconfirmed
+            # forever, so it stays retryable like any undelivered result and
+            # settles only by later acceptance or by honest expiry.
             sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
-            return True
+            return not isinstance(exc, ResultUnknown)
         except RuntimeError as exc:
             sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
             return False
