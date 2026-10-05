@@ -713,6 +713,7 @@ A fail-closed poll that already queued a wake, and a timeout, always print so th
 It is a standing watcher check: `bin/fm-autoland.sh arm` writes `state/autoland.check.sh` and binds it with `bin/fm-check-register.sh`, and `disarm` removes it.
 The watcher runs that one check when `FM_AUTOLAND_INTERVAL` seconds (default 90) have elapsed, or during a full `FM_CHECK_INTERVAL` sweep, and turns the line it prints into a `check:` wake without speeding up other checks.
 The cadence is checked on watcher polls, so polling and other sweep work can delay a tick.
+Auto-land is main-owned: a tick invoked as the Pi supervision branch does nothing, including no deployment scan (actor handling is owned by the script header).
 Each tick makes one batched GraphQL discovery call; merge attempts add live PR reads and merge calls, including a queue query when a task-owned PR remains open.
 The discovery snapshot is unpaginated: at most 100 open PRs across the configured owners, 100 check contexts per head, and 20 labels per PR.
 `bin/fm-autoland.sh status` prints each repository's authority, the deployed commit and last run of each hook, and the recent reports.
