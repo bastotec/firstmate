@@ -1,0 +1,11 @@
+base durable native result: {"binding": {"order_id": "native-one", "execution": "af70ab026737fcd11aeb5967270553c7", "turn": "original"}, "text_sha256": "8cddfde512cf3a0bf7b4b0b736459f5eb869c579ddfb82d2a392462d9862102e", "command_ids": ["a7bc4da4da1f4ec8a9e5602f1ef9a18a"], "results": {"a7bc4da4da1f4ec8a9e5602f1ef9a18a": {"order_id": "native-one", "result": {"machine": "pilot", "command_id": "a7bc4da4da1f4ec8a9e5602f1ef9a18a", "ok": true, "error": ""}, "expires_at": 1791179281.01178, "retry_at": 1791178383.0349262, "backoff": 4.0, "settled": true}}}
+Traceback (most recent call last):
+  File "<stdin>", line 9, in <module>
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M456JXTETDM1VD48ZX0X8ZA1/tests/assets/stream-agent-rust-parity.py", line 758, in unmatched_native_result
+    return native_orders(executable, name, unmatched=True)
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M456JXTETDM1VD48ZX0X8ZA1/tests/assets/stream-agent-rust-parity.py", line 691, in native_orders
+    wait(unknown_record, "unmatched result remains durably unsettled")
+    ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M456JXTETDM1VD48ZX0X8ZA1/tests/assets/stream-agent-rust-parity.py", line 36, in wait
+    raise AssertionError(description)
+AssertionError: unmatched result remains durably unsettled

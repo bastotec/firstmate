@@ -1,0 +1,11 @@
+{"response": [200, {"delivered": null, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "boundary-899", "outcome": "unconfirmed", "reason": "no_agent_ack", "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known", "requested_at": 1791178228.543296, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}], "scenario": "boundary-899 before native result"}
+{"response": [200, {"ok": true}], "scenario": "boundary-899 native result response"}
+{"response": [200, {"delivered": true, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "boundary-899", "outcome": "accepted", "requested_at": 1791178228.543296, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}], "scenario": "boundary-899 after native result"}
+{"response": [409, {"error": "result_conflict", "message": "command de93d30a22b34ea0a2a532f1ca5a7be4 already has a different result", "ok": false}], "scenario": "boundary-899 conflicting duplicate"}
+{"response": [200, {"delivered": null, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "boundary-901", "outcome": "unconfirmed", "reason": "no_agent_ack", "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known", "requested_at": 1791179127.9550679, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}], "scenario": "boundary-901 before native result"}
+{"response": [404, {"error": "no_such_command", "message": "machine box holds no command d26a3870d09c4656998d329fcb4a2b80", "ok": false}], "scenario": "boundary-901 native result response"}
+Traceback (most recent call last):
+  File "/Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M456JXTETDM1VD48ZX0X8ZA1/tests/assets/stream-retention-http.py", line 62, in <module>
+    assert completion[0] == 200, completion
+           ^^^^^^^^^^^^^^^^^^^^
+AssertionError: (404, {'error': 'no_such_command', 'message': 'machine box holds no command d26a3870d09c4656998d329fcb4a2b80', 'ok': False})

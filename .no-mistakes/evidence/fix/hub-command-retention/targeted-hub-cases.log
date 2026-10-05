@@ -1,0 +1,6 @@
+ok - hub: a terminal result rejection does not wedge command polling
+ok - hub: result capability revocation does not delay the closing frame
+ok - hub: an unconfirmed order reconciles through a resend after its acknowledgement lands
+ok - hub: an order id deduplicates identical payloads and refuses conflicts
+superseded execution response: {"delivered": false, "error": "execution_superseded", "execution_id": "64ab2f85e8a931e6a2d81d68c24af57b", "leaf_worker_id": "box-a/relaunched-76002", "message": "leaf box-a/relaunched-76002 is now execution 64ab2f85e8a931e6a2d81d68c24af57b; the order was aimed at 217e07d78a425a391cdfda9e50c8960e and was not delivered", "ok": false, "order_id": "order-0b74d5538db242459c14fd8c776df730", "outcome": "refused", "reason": "execution_superseded", "reason_message": "leaf box-a/relaunched-76002 is now execution 64ab2f85e8a931e6a2d81d68c24af57b; the order was aimed at 217e07d78a425a391cdfda9e50c8960e and was not delivered", "requested_at": 1791178361.542759, "requested_execution_id": "217e07d78a425a391cdfda9e50c8960e", "worker_gone": false}
+ok - hub: an order aimed at a replaced execution is refused and never lands in its replacement

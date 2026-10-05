@@ -1,0 +1,38 @@
+FM_TEST_BEGIN 2026-10-05T05:17:15Z tests/fm-stream-hub-rust.test.sh family=unclassified expected_gate_skip=none
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+python passive journal: [200, {"delivered": true, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "late", "outcome": "accepted", "requested_at": 1791177436.8655832, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+python passive bridge: {"record":"command_ack","command_id":"late","leaf_worker_id":"box/worker","state":"accepted","received_at_utc":"2026-10-05T05:17:17Z"}
+python passive journal: [200, {"delivered": false, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "nack", "outcome": "refused", "reason": "agent_refused", "reason_message": "agent says no", "requested_at": 1791177437.386555, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+python passive bridge: {"record":"command_ack","command_id":"nack","leaf_worker_id":"box/worker","state":"refused","received_at_utc":"2026-10-05T05:17:17Z","reason":"agent_refused: agent says no"}
+rust passive journal: [200, {"delivered": true, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "late", "outcome": "accepted", "requested_at": 1791177445.132031, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+rust passive bridge: {"record":"command_ack","command_id":"late","leaf_worker_id":"box/worker","state":"accepted","received_at_utc":"2026-10-05T05:17:25Z"}
+rust passive journal: [200, {"delivered": false, "execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "leaf_worker_id": "box/worker", "ok": true, "order_id": "nack", "outcome": "refused", "reason": "agent_refused", "reason_message": "agent says no", "requested_at": 1791177445.662517, "requested_execution_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "worker_gone": false}]
+rust passive bridge: {"record":"command_ack","command_id":"nack","leaf_worker_id":"box/worker","state":"refused","received_at_utc":"2026-10-05T05:17:25Z","reason":"agent_refused: agent says no"}
+differential: 187 HTTP/stream observations and Python agent/bridge lifecycle match
+measurements: {"python": {"frame_mib_per_second": 1.24, "rss_kib": 33360, "startup_ms": 181.37}, "rust": {"frame_mib_per_second": 0.55, "rss_kib": 5936, "startup_ms": 91.68}}
+ok - Rust hub: HTTP, stream, order and Python peer compatibility
+FM_TEST_END 2026-10-05T05:17:40Z tests/fm-stream-hub-rust.test.sh exit=0 duration_ms=25035 gate_skip=false
+FM_TEST_BEGIN 2026-10-05T05:17:40Z tests/fm-stream-agent-rust.test.sh family=unclassified expected_gate_skip=none
+{"agent": "unmatched_native_result-python", "first_response": {"delivered": null, "error": "no_agent_ack", "execution_id": "85b744b7bb99fd983a59fa632ac539ae", "leaf_worker_id": "pilot/worker", "message": "the agent on machine pilot took the steer but did not acknowledge it within 4s (last heard from 0.1s ago); whether it reached the worker is NOT known", "ok": false, "order_id": "native-one", "outcome": "unconfirmed", "reason": "no_agent_ack", "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known", "requested_at": 1791177481.573898, "requested_execution_id": "85b744b7bb99fd983a59fa632ac539ae", "worker_gone": false}, "original_result_posts": [{"command_id": "f245bddafd0f43a0ad84ede305ba06df", "error": "", "machine": "pilot", "ok": true}, {"command_id": "f245bddafd0f43a0ad84ede305ba06df", "error": "", "machine": "pilot", "ok": true}, {"command_id": "f245bddafd0f43a0ad84ede305ba06df", "error": "", "machine": "pilot", "ok": true}], "reconciled": {"delivered": true, "execution_id": "85b744b7bb99fd983a59fa632ac539ae", "leaf_worker_id": "pilot/worker", "ok": true, "order_id": "native-one", "outcome": "accepted", "requested_at": 1791177481.573898, "requested_execution_id": "85b744b7bb99fd983a59fa632ac539ae", "worker_gone": false}}
+{"agent": "unmatched_native_result-rust", "first_response": {"delivered": null, "error": "no_agent_ack", "execution_id": "3632751d58648ab634e4a38fa7423ac1", "leaf_worker_id": "pilot/worker", "message": "the agent on machine pilot took the steer but did not acknowledge it within 4s (last heard from 0.2s ago); whether it reached the worker is NOT known", "ok": false, "order_id": "native-one", "outcome": "unconfirmed", "reason": "no_agent_ack", "reason_message": "the owning agent took the order and has not acknowledged it, so whether the worker received it is not known", "requested_at": 1791177501.202358, "requested_execution_id": "3632751d58648ab634e4a38fa7423ac1", "worker_gone": false}, "original_result_posts": [{"command_id": "93ab74a15f3a43628a6576aa4e241147", "error": "", "machine": "pilot", "ok": true}, {"command_id": "93ab74a15f3a43628a6576aa4e241147", "error": "", "machine": "pilot", "ok": true}, {"command_id": "93ab74a15f3a43628a6576aa4e241147", "error": "", "machine": "pilot", "ok": true}], "reconciled": {"delivered": true, "execution_id": "3632751d58648ab634e4a38fa7423ac1", "leaf_worker_id": "pilot/worker", "ok": true, "order_id": "native-one", "outcome": "accepted", "requested_at": 1791177501.202358, "requested_execution_id": "3632751d58648ab634e4a38fa7423ac1", "worker_gone": false}}
+ok: unmatched_native_result Python/Rust observable parity
+ok: native_orders Python/Rust observable parity
+ok: command_values Python/Rust observable parity
+ok: command_limits Python/Rust observable parity
+ok: intervals Python/Rust observable parity
+ok: concurrent_status Python/Rust observable parity
+ok: generation_refusal Python/Rust observable parity
+ok: lifecycle Python/Rust observable parity
+ok: lost_result Python/Rust observable parity
+ok: lost_kill_result Python/Rust observable parity
+ok: redirected_background_exit Python/Rust observable parity
+ok: final_rejoin Python/Rust observable parity
+ok: contest Python/Rust observable parity
+ok: refusals Python/Rust observable parity
+ok: unsafe intervals refused before endpoint creation
+ok - Rust/Python agents: native receiver application, durable original-turn proofs, PTY I/O, results, restart, capability isolation, contests, exits and shutdown parity
+FM_TEST_END 2026-10-05T05:22:47Z tests/fm-stream-agent-rust.test.sh exit=0 duration_ms=306676 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=331832
+FM_TEST_SUMMARY_FAMILY family=unclassified count=2 duration_ms=331711 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-stream-agent-rust.test.sh duration_ms=306676
+FM_TEST_SLOWEST rank=2 script=tests/fm-stream-hub-rust.test.sh duration_ms=25035
