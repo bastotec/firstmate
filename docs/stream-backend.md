@@ -60,7 +60,7 @@ The credential arrives through seeding instead, and until that restart the seede
 ## Prerequisites
 
 `python3`, `curl`, and `jq` must be present, and the hub's protocol must match the adapter's.
-Launching a local endpoint also requires either `setsid` on `PATH` or, when it is absent (as on stock macOS), `perl` with `POSIX::setsid` support.
+Launching a local endpoint or a background hub also requires either `setsid` on `PATH` or, when it is absent (as on stock macOS), `perl` with `POSIX::setsid` support.
 A missing dependency, an unreachable hub, a refused token, or a protocol mismatch is terminal for the selected backend: it refuses and names what is wrong rather than falling back to another backend.
 
 Run `bin/fm-stream.sh --help` for the operator commands; that help and each script's header own their exact flags.
