@@ -29,16 +29,19 @@
 #     status when Deck exits without one;
 #   - Ctrl+C cancels the running turn and returns to the prompt; `/quit` at the
 #     prompt ends the worker;
-#   - a ship worker whose turn ends while its no-mistakes run is still working
+#   - an ordinary ship worker (not a --secondmate or --primary home host) whose
+#     turn ends while its no-mistakes run is still working
 #     (bin/fm-crew-state.sh reads `state: working · source: run-step`) is not
 #     left idle until a steer: the driver polls that same reader at the idle
-#     prompt and, when the run reaches any other run-step state (parked at a
-#     gate, done, failed), starts ONE next turn of the same session naming the
-#     run id and that state line. Only a working -> other transition observed
-#     after a turn wakes, so a run that stays parked or done never re-wakes;
-#     typed input (a steer, the doorbell, /quit, the composer clear) is checked
-#     before and after probes and handled before any automatic wake; inconclusive
-#     reads keep polling, and the wait gives up silently at its bound.
+#     prompt and, when the reader reports a run-step state other than working
+#     or unknown (such as parked at a gate, done, failed), starts ONE next turn
+#     of the same session with that state line and a run id when safely available.
+#     Only a working -> other transition observed after a turn wakes, so a run
+#     that stays parked or done never re-wakes; typed input (a steer, the doorbell,
+#     /quit, the composer clear) preempts the poll delay, and input queued during
+#     synchronous probes is handled before any automatic wake. Inconclusive reads
+#     keep polling; the wait gives up silently at its bound and never wakes after
+#     the deadline, even if a probe finishes late.
 #
 # USAGE (bin/fm-spawn.sh builds this; the brief arrives already encoded)
 #   fm-deck-worker.sh --id <task-id> --state <state-dir> --gen <busy-gen>
@@ -583,9 +586,11 @@ pipeline_state() {
   FM_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/fm-crew-state.sh" "$ID" 2>/dev/null | tail -1
 }
 
-# The run id comes from the worktree's own `axi status`, and only when that run
-# names the task branch; the attribution itself is fm-crew-state.sh's.
-pipeline_run_id() {
+# State attribution stays with fm-crew-state.sh. This separate id query may see
+# an older terminal run while the reader selected a live successor, so withhold
+# the id unless shared branch/head-or-custody binding holds and a working or
+# parked state is accompanied by an active run.
+pipeline_run_id() {  # <state-line>
   local wt branch out head
   wt=$(pipeline_meta worktree)
   [ -n "$wt" ] && [ -d "$wt" ] || return 0

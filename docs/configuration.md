@@ -322,7 +322,7 @@ The concise single-line route contract is owned by the [`secondmate-provisioning
 A remote route adds `host:` and `root:` before the existing fields and places the whole secondmate home on that SSH host; it does not make ordinary workers remotely placeable.
 [`remote-secondmates.md`](remote-secondmates.md) owns current remote setup, operation, and safety behavior.
 Use `fm-home-seed.sh validate` to check the complete operational registry contract documented by the command itself.
-The main first mate routes by reading those scopes with judgment; the project list is provisioning data, not exclusive ownership.
+[AGENTS.md section 7](../AGENTS.md#intake-and-authority) owns task intake routing; the project list is provisioning data, not exclusive ownership.
 Use `fm-home-seed.sh <id> - {<project>...|--no-projects}` to lease a fresh local firstmate worktree for the secondmate home.
 Seeding refuses when `FM_ROOT`'s `origin` is a local path or `file://` URL rather than the firstmate fork, because a home cloned from it would push a validated firstmate change into that directory and never open a pull request; a standalone home is repointed at that fork, and bootstrap's `HOME_ROUTE:` line reports a home seeded before this check.
 For remote provisioning, including supplied project origins, follow [Remote second mates](remote-secondmates.md#provision-a-route).
@@ -334,7 +334,7 @@ The lease is held under the secondmate id until explicit retirement or seed roll
 Teardown of a leased home fails closed if `treehouse return` cannot release the lease; plain-clone homes with no treehouse pool slot are removed directly.
 Secondmate routes cover `no-mistakes` and `direct-PR` projects; `local-only` projects remain main-firstmate work.
 For `no-mistakes` projects, seeding initializes only projects newly cloned into a secondmate home and refuses to mutate a preexisting clone that is not already initialized.
-After creating a secondmate, move existing main-backlog queued items that you have judged in-scope with `fm-backlog-handoff.sh <secondmate-id> <item-key>...`; it refuses In flight, Done, or non-secondmate homes, and its [script header](../bin/fm-backlog-handoff.sh) owns route-specific wake outcomes and retries.
+After creating a secondmate, move existing main-backlog queued items selected for delegation under those intake rules with `fm-backlog-handoff.sh <secondmate-id> <item-key>...`; it refuses In flight, Done, or non-secondmate homes, and its [script header](../bin/fm-backlog-handoff.sh) owns route-specific wake outcomes and retries.
 Set `FM_SECONDMATE_CHARTER` to seed from inline charter text when no filled charter brief exists; set `FM_SECONDMATE_SCOPE` when the routing scope should differ from the charter text.
 The seeded home's `data/charter.md` owns the standard secondmate lifecycle and escalation contract; the route file points to it through the existing `home:` field instead of adding another pointer.
 Each seed writes an `.fm-secondmate-home` identity marker at the home root, alongside a durable `.fm-secondmate-parent` record of the home's route to its parent (see "Provision a route" in [`docs/remote-secondmates.md`](remote-secondmates.md)).
