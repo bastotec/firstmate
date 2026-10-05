@@ -1228,15 +1228,13 @@ shard_weight_sort_under() {
     }'
 }
 
-# macOS /bin/bash 3.2 installs its SIGCHLD handler without SA_RESTART, so a
-# builtin printf blocked on a full pipe fails with EINTR when a child of the
-# writing shell exits, and set -e then kills the writer mid-list. A loaded host
-# reached that by shrinking pipe buffers to 512 bytes. Here it is staged
-# exactly: the runner's main shell (the assignment consumer) and the producer
-# subshell feeding the assignment writer are both stopped, the producer's sort
-# drains into the pipe while the writer fills the pipe to main and blocks, and
-# only then does the producer resume and exit. Long names push the assignments
-# past one 64 KiB pipe buffer while the weight list still fits in two.
+# emit_via_file in bin/fm-test-run.sh owns the Bash 3.2 pipe-write safety rationale.
+# Stop the runner's main shell (the assignment consumer) and the producer
+# subshell owning the weight sort, then let the sort finish before resuming
+# the producer. Without buffering, the assignment writer blocks on the pipe
+# to main when its producer exits; with buffering, builtin writes stay off
+# that pipe. Long names push the assignments past one 64 KiB pipe buffer
+# while the weight list still fits in two.
 test_portable_serial_shard_survives_a_stalled_consumer() {
   local tmp repo pad i pid found sort_pid producer waited listed shell count lane fixture_size expected
   tmp=$(fm_test_tmproot fm-test-run-shard-eintr)
