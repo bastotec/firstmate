@@ -1,0 +1,12 @@
+FM_TEST_BEGIN 2026-10-05T00:27:54Z tests/.validation-stream-return.test.sh family=unclassified expected_gate_skip=none
+injected POSIX::setsid=-1, endpoint refusal exit=1: error: the stream agent refused to start an endpoint for 'fm-forced-negative-37694': setsid: Operation not permitted
+real hub registry after injected -1: 0 endpoints
+ok - supplemental -1 return refuses before starting the agent
+injected POSIX::setsid=undef, endpoint refusal exit=1: error: the stream agent refused to start an endpoint for 'fm-forced-undefined-37694': setsid: Operation not permitted
+real hub registry after injected undef: 0 endpoints
+ok - supplemental undef return refuses before starting the agent
+nonexistent executable refusal exit=2: exec: No such file or directory
+FM_TEST_END 2026-10-05T00:29:06Z tests/.validation-stream-return.test.sh exit=0 duration_ms=72259 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=72335
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=72259 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/.validation-stream-return.test.sh duration_ms=72259

@@ -1,0 +1,40 @@
+FM_TEST_BEGIN 2026-10-05T00:16:34Z tests/.validation-stream-launch.test.sh family=unclassified expected_gate_skip=none
+exec contract (exit 37): {"pid": 21035, "pgid": 21035, "sid": 21035, "argv": ["two words", "", "*", "-leading"]}
+hub listening on http://127.0.0.1:59536
+hub-classes: pid=21289 pgid=21289 sid=21289
+local hub process: 21289
+hub at http://127.0.0.1:59536: protocol 3 version 2.0.0 endpoints 0
+endpoint-classes: pid=21380 pgid=21380 sid=21380
+capture from 127.0.0.1-59536:6b55cd0336cea0caeb46b3a72f840a2f:
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ printf '%s%s\n' DETACHED- EXECUTED; stty size
+DETACHED-EXECUTED
+40 200
+bash-3.2$
+box-test	fm-launch-classes-20993	6b55cd0336cea0caeb46b3a72f840a2f	live
+hub stopped
+ok - operator classes credentials: detached hub and endpoint start, steer, capture, close, stop
+hub listening on http://127.0.0.1:59620
+hub-single: pid=22420 pgid=22420 sid=22420
+local hub process: 22420
+hub at http://127.0.0.1:59620: protocol 3 version 2.0.0 endpoints 0
+endpoint-single: pid=22854 pgid=22854 sid=22854
+capture from 127.0.0.1-59620:eb23e64f33c6591c8f45d228bae735ec:
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ printf '%s%s\n' DETACHED- EXECUTED; stty size
+DETACHED-EXECUTED
+40 200
+bash-3.2$
+box-test	fm-launch-single-20993	eb23e64f33c6591c8f45d228bae735ec	live
+hub stopped
+ok - operator single credentials: detached hub and endpoint start, steer, capture, close, stop
+FM_TEST_END 2026-10-05T00:16:47Z tests/.validation-stream-launch.test.sh exit=0 duration_ms=13166 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=13270
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=13166 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/.validation-stream-launch.test.sh duration_ms=13166

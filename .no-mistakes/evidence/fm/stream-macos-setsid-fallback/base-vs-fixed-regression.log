@@ -1,0 +1,22 @@
+FM_TEST_BEGIN 2026-10-05T00:18:02Z tests/.validation-stream-regression.test.sh family=unclassified expected_gate_skip=none
+base endpoint create exit=1: error: the stream agent refused to start an endpoint for 'fm-base-58959': /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44P4Z3XFM4N3KPSYC1PWXH5/.t/stream-validation-run/fm-stream-base-launch.63QhOw/bin/backends/stream.sh: line 332: setsid: command not found
+current endpoint create succeeded: 127.0.0.1-60404:bf7d99337446d3e8a43b3d811d6f9338
+current capture:
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ printf '%s%s\n' REGRESSION- FIXED
+REGRESSION-FIXED
+bash-3.2$
+base hub start exit=1: fm-stream.sh: the hub did not report ready; see /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44P4Z3XFM4N3KPSYC1PWXH5/.t/stream-validation-run/fm-backend-stream-tests.EiQxeW/original-macos-failure/home/state/.stream-hub.log
+base hub diagnostic: /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M44P4Z3XFM4N3KPSYC1PWXH5/.t/stream-validation-run/fm-stream-base-launch.63QhOw/bin/fm-stream.sh: line 149: setsid: command not found
+hub listening on http://127.0.0.1:61546
+local hub process: 95521
+hub at http://127.0.0.1:61546: protocol 3 version 2.0.0 endpoints 0
+hub stopped
+ok - original endpoint and hub launch fail without setsid; current endpoint and hub work
+FM_TEST_END 2026-10-05T00:19:10Z tests/.validation-stream-regression.test.sh exit=0 duration_ms=67983 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=68090
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=67983 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/.validation-stream-regression.test.sh duration_ms=67983

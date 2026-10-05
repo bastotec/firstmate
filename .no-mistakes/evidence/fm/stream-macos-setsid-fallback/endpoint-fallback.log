@@ -1,0 +1,6 @@
+ok - stream: create yields a hub-bound target the dispatcher can resolve
+ok - stream: a dispatcher send reaches the endpoint and capture reads it back
+ok - stream: kill closes the exact endpoint and leaves its sibling running
+ok - stream: a hub restart is waited out rather than reported as a missing worker
+ok - stream: a create that times out leaves no agent and no endpoint, and the retry succeeds
+ok - stream: a failed create never closes another home's endpoint under the same label

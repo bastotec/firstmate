@@ -1,0 +1,45 @@
+FM_TEST_BEGIN 2026-10-05T00:15:15Z tests/.validation-stream-launch.test.sh family=unclassified expected_gate_skip=none
+exec contract (exit 37): {"pid": 81902, "pgid": 81902, "sid": 81902, "argv": ["two words", "", "*", "-leading"]}
+hub listening on http://127.0.0.1:58840
+hub-classes: pid=82559 pgid=82559 sid=82559
+local hub process: 82559
+hub at http://127.0.0.1:58840: protocol 3 version 2.0.0 endpoints 0
+endpoint-classes: pid=83347 pgid=83347 sid=83347
+capture from 127.0.0.1-58840:376b2c0cfe8bcde55beffeb895ef765e:
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ printf '%s%s\n' DETACHED- EXECUTED; stty size
+DETACHED-EXECUTED
+40 200
+bash-3.2$
+box-test	fm-launch-classes-81424	376b2c0cfe8bcde55beffeb895ef765e	live
+hub stopped
+ok - operator classes credentials: detached hub and endpoint start, steer, capture, close, stop
+hub listening on http://127.0.0.1:58944
+hub-single: pid=90382 pgid=90382 sid=90382
+local hub process: 90382
+hub at http://127.0.0.1:58944: protocol 3 version 2.0.0 endpoints 0
+endpoint-single: pid=90694 pgid=90694 sid=90694
+capture from 127.0.0.1-58944:64147d4884d1acfb1f1f422a6ced0adf:
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ printf '%s%s\n' DETACHED- EXECUTED; stty size
+DETACHED-EXECUTED
+40 200
+bash-3.2$
+box-test	fm-launch-single-81424	64147d4884d1acfb1f1f422a6ced0adf	live
+hub stopped
+ok - operator single credentials: detached hub and endpoint start, steer, capture, close, stop
+endpoint refusal exit=1: error: the stream agent refused to start an endpoint for 'fm-refused-81424': setsid: Operation not permitted
+hub registry after refused detachment: 0 endpoints
+hub refusal exit=1: fm-stream.sh: the hub did not report ready; see /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-backend-stream-tests.27KT1M/fail-closed/home/state/.stream-hub.log
+hub detachment diagnostic: setsid: Operation not permitted
+ok - actual kernel detachment refusal launches neither endpoint nor hub
+FM_TEST_END 2026-10-05T00:16:34Z tests/.validation-stream-launch.test.sh exit=0 duration_ms=78210 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=78383
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=78210 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/.validation-stream-launch.test.sh duration_ms=78210
