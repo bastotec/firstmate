@@ -1054,9 +1054,16 @@ const makeFilter = (timeout = 30) => {
   try {
     tui.start();
     const colors = typeof tui.queryTerminalColors === "function"
-      ? tui.queryTerminalColors({ timeoutMs: 100 })
+      ? tui.queryTerminalColors({ timeoutMs: 400 })
       : undefined;
     await sleep(10);
+    input(`${ESC}]10;`);
+    await sleep(70);
+    input(`rgb:1111/2222/3333${BEL}`);
+    input(`${ESC}]`);
+    await sleep(70);
+    input("11;");
+    input(`rgb:4444/5555/6666${ESC}\\`);
     input(`${ESC}]4;0;`);
     await sleep(70);
     input(`rgb:0000/afaf/d7d7${BEL}`);
@@ -1066,6 +1073,8 @@ const makeFilter = (timeout = 30) => {
     if (colors) {
       const result = await colors;
       assert.deepEqual(result.palette[0], { r: 0, g: 175, b: 215 });
+      assert.deepEqual(result.foreground, { r: 17, g: 34, b: 51 });
+      assert.deepEqual(result.background, { r: 68, g: 85, b: 102 });
     }
     assert.equal(editor.getText(), "");
     assert.deepEqual(submissions, []);
@@ -1088,9 +1097,15 @@ const makeFilter = (timeout = 30) => {
     });
     input(`4;38;rgb:0000/afaf/d7d7${ESC}\\`);
     assert.equal(editor.getText(), "");
-    input("4;38;rgb:0000/afaf/d7d7 is a real draft");
-    assert.equal(editor.getText(), "4;38;rgb:0000/afaf/d7d7 is a real draft");
-    editor.setText("");
+    for (const literal of [
+      "4;38;rgb:0000/afaf/d7d7 is a real draft",
+      "10;rgb:0000/afaf/d7d7 is a real draft",
+      "11;rgb:0000/afaf/d7d7 is a real draft",
+    ]) {
+      input(literal);
+      assert.equal(editor.getText(), literal);
+      editor.setText("");
+    }
 
     input(`${ESC}]4;38;`);
     input("/quit\r");
@@ -1114,11 +1129,56 @@ const makeFilter = (timeout = 30) => {
     editor.setText("");
     submissions.length = 0;
 
-    input(`${ESC}]4;38;`);
+    for (const reason of ["new", "reload", "resume", "fork"]) {
+      input(`${ESC}]4;38;`);
+      await sleep(70);
+      handlers.get("session_shutdown")({ reason });
+      if (reason === "reload") {
+        const reloaded = await import(`${process.env.FILTER}?reload`);
+        reloaded.default({ on(event, handler) { handlers.set(event, handler); } });
+      }
+      handlers.get("session_start")({}, {
+        mode: "tui",
+        ui: {
+          onTerminalInput: (handler) => tui.addInputListener(handler),
+          pasteToEditor: (data) => editor.handleInput(`${ESC}[200~${data}${ESC}[201~`),
+        },
+      });
+      input(`rgb:0000/afaf/d7d7${BEL}`);
+      assert.equal(editor.getText(), "", `${reason}: preserve a pending reply across rebind`);
+
+      handlers.get("session_shutdown")({ reason });
+      input(`${ESC}]11;`);
+      await sleep(70);
+      input(`rgb:0000/afaf/d7d7${ESC}\\`);
+      assert.equal(editor.getText(), "", `${reason}: protect the input gap before rebind`);
+      handlers.get("session_start")({}, {
+        mode: "tui",
+        ui: {
+          onTerminalInput: (handler) => tui.addInputListener(handler),
+          pasteToEditor: (data) => editor.handleInput(`${ESC}[200~${data}${ESC}[201~`),
+        },
+      });
+      input(`${ESC}]10;`);
+      input("/quit\r");
+      await sleep(70);
+      assert.deepEqual(submissions, ["/quit"], `${reason}: commands still submit once`);
+      assert.equal(editor.getText(), "");
+      submissions.length = 0;
+    }
+
+    input(`${ESC}]10;`);
     await sleep(70);
-    handlers.get("session_shutdown")();
-    input("q");
-    assert.equal(editor.getText(), "q");
+    handlers.get("session_shutdown")({ reason: "exit" });
+    tui.stop();
+    tui.start();
+    input("a");
+    assert.equal(editor.getText(), "a", "terminal stop retires the pending candidate");
+    editor.setText("");
+    input(`${ESC}]11;`);
+    await sleep(70);
+    input(`rgb:0000/afaf/d7d7${BEL}`);
+    assert.equal(editor.getText(), "", "a restarted terminal is guarded again");
   } finally {
     handlers.get("session_shutdown")();
     tui.stop();

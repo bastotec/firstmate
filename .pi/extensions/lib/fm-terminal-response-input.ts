@@ -7,10 +7,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { ProcessTerminal, StdinBuffer } from "@earendil-works/pi-tui";
 
 const ESC = "\x1b";
-const OSC_PALETTE_PREFIX = `${ESC}]4;`;
+const OSC_COLOR_PREFIXES = [`${ESC}]4;`, `${ESC}]10;`, `${ESC}]11;`];
+const STARTUP_GUARD = Symbol.for("firstmate.pi-terminal-response-input-guard");
 const OSC_PALETTE_FRAGMENT_TIMEOUT_MS = 500;
 const OSC_PALETTE_RESPONSE = new RegExp(
-  String.raw`^\x1b\]4;\d+;rgb:[0-9a-f]{1,4}\/[0-9a-f]{1,4}\/[0-9a-f]{1,4}(?:\x07|\x1b\\)$`,
+  String.raw`^\x1b\](?:4;\d+|1[01]);rgb:[0-9a-f]{1,4}\/[0-9a-f]{1,4}\/[0-9a-f]{1,4}(?:\x07|\x1b\\)$`,
   "i",
 );
 
@@ -54,7 +55,7 @@ export class PiTerminalResponseInputFilter {
       this.scheduleFlush();
       return;
     }
-    if (data.startsWith(`${ESC}]4`)) {
+    if (OSC_COLOR_PREFIXES.some((prefix) => data.startsWith(prefix.slice(0, -1)))) {
       this.consumePaletteCandidate(`${ESC}]`, data.slice(2));
       if (this.pending) this.scheduleFlush();
       return;
@@ -91,17 +92,20 @@ export class PiTerminalResponseInputFilter {
   }
 
   private isPaletteResponsePrefix(data: string): boolean {
-    if (data.length < OSC_PALETTE_PREFIX.length) {
-      return data.length >= 2 && OSC_PALETTE_PREFIX.startsWith(data);
+    if (data.length >= 2 && OSC_COLOR_PREFIXES.some((prefix) => prefix.startsWith(data))) {
+      return true;
     }
-    if (!data.startsWith(OSC_PALETTE_PREFIX)) return false;
+    const prefix = OSC_COLOR_PREFIXES.find((value) => data.startsWith(value));
+    if (!prefix) return false;
 
-    let offset = OSC_PALETTE_PREFIX.length;
-    const indexStart = offset;
-    while (isDecimalDigit(data[offset])) offset += 1;
-    if (offset === data.length) return true;
-    if (offset === indexStart || data[offset] !== ";") return false;
-    offset += 1;
+    let offset = prefix.length;
+    if (prefix === OSC_COLOR_PREFIXES[0]) {
+      const indexStart = offset;
+      while (isDecimalDigit(data[offset])) offset += 1;
+      if (offset === data.length) return true;
+      if (offset === indexStart || data[offset] !== ";") return false;
+      offset += 1;
+    }
 
     for (const expected of "rgb:") {
       if (offset === data.length) return true;
@@ -180,10 +184,12 @@ export function installPiTerminalResponseInputGuard(ctx: ExtensionContext): () =
   };
 }
 
-function installPiStartupTerminalResponseInputGuard(): () => void {
-  const start = ProcessTerminal.prototype.start;
+function installPiStartupTerminalResponseInputGuard(): void {
+  const prototype = ProcessTerminal.prototype as ProcessTerminal & { [STARTUP_GUARD]?: boolean };
+  if (prototype[STARTUP_GUARD]) return;
+  const start = prototype.start;
+  const stop = prototype.stop;
   const filters = new Map<ProcessTerminal, PiTerminalResponseInputFilter>();
-  let active = true;
   const guardedStart: typeof start = function (this: ProcessTerminal, onInput, onResize) {
     filters.get(this)?.dispose();
     const filter = new PiTerminalResponseInputFilter((data, recovered = false) => {
@@ -202,24 +208,22 @@ function installPiStartupTerminalResponseInputGuard(): () => void {
       }
     }, OSC_PALETTE_FRAGMENT_TIMEOUT_MS, onInput);
     filters.set(this, filter);
-    start.call(this, (data) => {
-      if (active) filter.handleInput(data);
-      else onInput(data);
-    }, onResize);
+    start.call(this, (data) => filter.handleInput(data), onResize);
   };
-  ProcessTerminal.prototype.start = guardedStart;
-  return () => {
-    active = false;
-    if (ProcessTerminal.prototype.start === guardedStart) {
-      ProcessTerminal.prototype.start = start;
+  prototype.start = guardedStart;
+  prototype.stop = function (this: ProcessTerminal) {
+    try {
+      stop.call(this);
+    } finally {
+      filters.get(this)?.dispose();
+      filters.delete(this);
     }
-    for (const filter of filters.values()) filter.dispose();
-    filters.clear();
   };
+  prototype[STARTUP_GUARD] = true;
 }
 
 export default function registerPiTerminalResponseInputGuard(pi: ExtensionAPI): void {
-  const disposeStartup = installPiStartupTerminalResponseInputGuard();
+  installPiStartupTerminalResponseInputGuard();
   let dispose = () => {};
   pi.on("session_start", (_event, ctx) => {
     dispose();
@@ -227,6 +231,5 @@ export default function registerPiTerminalResponseInputGuard(pi: ExtensionAPI): 
   });
   pi.on("session_shutdown", () => {
     dispose();
-    disposeStartup();
   });
 }
