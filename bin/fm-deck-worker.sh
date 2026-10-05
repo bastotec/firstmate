@@ -586,12 +586,18 @@ pipeline_state() {
 # The run id comes from the worktree's own `axi status`, and only when that run
 # names the task branch; the attribution itself is fm-crew-state.sh's.
 pipeline_run_id() {
-  local wt branch out
+  local wt branch out head
   wt=$(pipeline_meta worktree)
   [ -n "$wt" ] && [ -d "$wt" ] || return 0
   branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 0
   out=$(fm_nm_run "$wt" 10 axi status)
   [ "$(fm_nm_strip_quotes "$(fm_nm_field "$out" branch)")" = "$branch" ] || return 0
+  head=$(fm_nm_strip_quotes "$(fm_nm_field "$out" head)")
+  { fm_nm_head_matches_worktree "$wt" "$head" || fm_nm_run_is_pipeline_owned_active "$out"; } || return 0
+  case "$1" in
+    'state: working · source: run-step'*|'state: parked · source: run-step'*)
+      fm_nm_run_is_active "$out" || return 0 ;;
+  esac
   fm_nm_strip_quotes "$(fm_nm_field "$out" id)"
 }
 
@@ -602,7 +608,7 @@ pipeline_arm() {
   [ "$(pipeline_meta kind)" = ship ] && command -v no-mistakes >/dev/null 2>&1 || return 0
   line=$(pipeline_state)
   case "$line" in 'state: working · source: run-step'*) ;; *) return 0 ;; esac
-  run=$(pipeline_run_id)
+  run=$(pipeline_run_id "$line")
   PIPELINE_WATCH=1
   PIPELINE_UNTIL=$(( $(date +%s) + PIPELINE_WAIT ))
   printf '\n⛵ no-mistakes run %s still working; the next turn starts when it changes state.\n' "${run:-(id unavailable)}"
@@ -639,7 +645,7 @@ pipeline_wait() {
     case "$line" in
       'state: working · source: run-step'*|'state: unknown · source: run-step'*) continue ;;
       'state: '*' · source: run-step'*)
-        run=$(pipeline_run_id)
+        run=$(pipeline_run_id "$line")
         stdin_ready_within 0 && return 1
         [ "$(date +%s)" -lt "$PIPELINE_UNTIL" ] || break
         PIPELINE_WATCH=0

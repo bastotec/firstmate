@@ -1669,6 +1669,7 @@ make_pipeline_case() {  # <dir>
 #!/usr/bin/env bash
 case "$1 ${2:-}" in
   'axi status') cat "$FM_TEST_NM_RUN" ;;
+  'runs '*) [ ! -f "$(dirname "$FM_TEST_NM_RUN")/nm-runs" ] || cat "$(dirname "$FM_TEST_NM_RUN")/nm-runs" ;;
 esac
 exit 0
 SH
@@ -1762,6 +1763,30 @@ test_pipeline_state_change_wakes_an_idle_worker_once() {
   pass "fm-deck-worker: a run leaving working wakes the idle worker once per change, naming run id and state"
 }
 
+test_pipeline_omits_terminal_id_when_a_live_successor_is_working() {
+  local dir="$TMP_ROOT/pipeline-successor" head successor wake
+  make_pipeline_case "$dir"
+  head=$(cat "$dir/head")
+  git -C "$dir/wt" commit -q --allow-empty -m successor
+  successor=$(git -C "$dir/wt" rev-parse HEAD)
+  git -C "$dir/wt" reset -q --hard "$head"
+  printf 'run:\n  id: "01STALE"\n  branch: fm/t1\n  head: "%s"\n  status: failed\noutcome: failed\n' \
+    "$head" > "$dir/nm-run"
+  printf 'failed fm/t1 %s 2026-08-05 11:20\nrunning fm/t1 %s 2026-08-05 10:05\n' \
+    "$head" "$successor" > "$dir/nm-runs"
+  start_pipeline_worker "$dir" 1 600
+  wait_pane_count "$dir" 'no-mistakes run (id unavailable) still working' 1 \
+    || fail "the live successor was not watched without the terminal run's id: $(cat "$dir/pane.out")"
+  assert_not_contains "$(cat "$dir/pane.out")" 'run 01STALE still working' "the terminal run was named as working"
+  pipeline_run "$dir" parked
+  wait_deck_runs "$dir" 2 || fail "the successor parking did not wake the worker"
+  wake=$(sed -n 2p "$dir/argv.log")
+  assert_contains "$wake" 'Your no-mistakes run 01PIPE changed state' "the matching active run id was omitted"
+  assert_contains "$wake" 'state: parked · source: run-step' "the wake lost the authoritative parked state"
+  stop_pipeline_worker
+  pass "fm-deck-worker: a terminal run id is omitted when a live successor is working"
+}
+
 test_pipeline_wait_takes_input_immediately_and_is_bounded() {
   local dir="$TMP_ROOT/pipeline-steer" bounded="$TMP_ROOT/pipeline-bound"
   make_pipeline_case "$dir"
@@ -1817,5 +1842,6 @@ test_deck_supervision_model_is_scoped_to_secondmate_launches
 test_spawn_launches_the_driver_with_binary_gen_and_model
 test_spawn_refuses_deck_effort
 test_pipeline_state_change_wakes_an_idle_worker_once
+test_pipeline_omits_terminal_id_when_a_live_successor_is_working
 test_pipeline_wait_takes_input_immediately_and_is_bounded
 echo "fm-deck-harness: all cases passed"
