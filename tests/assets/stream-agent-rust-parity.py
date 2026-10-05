@@ -612,7 +612,7 @@ def refusals(executable, name):
     return outputs
 
 
-def native_orders(executable, name):
+def native_orders(executable, name, unmatched=False):
     """Real publishers + hub + landed driver CLI; only native handled proves ack.
 
     This pins the receiver's public filesystem interface, not Deck vendor
@@ -621,10 +621,12 @@ def native_orders(executable, name):
     rig = Rig(name)
     try:
         ready, dropped = rig.dir / "native-proxy-ready", rig.dir / "native-result-dropped"
+        release = rig.dir / "release-results"
         rig.spawn([sys.executable, str(ROOT / "tests/assets/stream-drop-response-proxy.py"),
                    "--target", rig.url, "--drop-path", "/v1/agent/results",
                    "--drop-number", "1", "--dropped-file", str(dropped),
-                   "--ready-file", str(ready)])
+                   "--ready-file", str(ready)] +
+                  (["--unmatched-until", str(release)] if unmatched else []))
         wait(lambda: ready.exists() and ready.read_text().strip(), "native result proxy readiness")
         host, port = ready.read_text().split()
         proc, endpoint, status = rig.agent(executable, url=f"http://{host}:{port}")
@@ -677,7 +679,30 @@ def native_orders(executable, name):
         assert thread.is_alive(), "ordinary inbox movement falsely acknowledged native application"
         ack(first, message)
         code, answer = settle(thread, replies)
-        assert code == 200 and answer["outcome"] == "accepted" and answer["delivered"] is True, (code, answer)
+        if unmatched:
+            assert code == 504 and answer["outcome"] == "unconfirmed" and answer["delivered"] is None, (code, answer)
+            def unknown_record():
+                for path in root.glob("order-*.json"):
+                    record = json.loads(path.read_text())
+                    if any(result.get("result", {}).get("ok") is True and
+                           result.get("settled") is False
+                           for result in record.get("results", {}).values()):
+                        return record
+            unsettled = wait(unknown_record, "unmatched result remains durably unsettled")
+            wait(lambda: dropped.exists() and len(dropped.read_text().splitlines()) >= 2,
+                 "unmatched native result retried without reapplication")
+            assert not list(first.glob("*.msg")), "unmatched result replayed native input"
+            release.touch()
+            wait(lambda: order("native-one", text)[1]["outcome"] == "accepted",
+                 "same original result accepted after unknown response")
+            posts = [json.loads(line) for line in dropped.read_text().splitlines()]
+            assert len(posts) >= 2 and all(post == posts[0] for post in posts), posts
+            print(json.dumps({"agent": name, "first_response": answer,
+                              "unsettled_native_record": unsettled,
+                              "original_result_posts": posts,
+                              "reconciled": order("native-one", text)[1]}, sort_keys=True), flush=True)
+        else:
+            assert code == 200 and answer["outcome"] == "accepted" and answer["delivered"] is True, (code, answer)
         assert text.encode() in original_bytes
         wait(dropped.exists, "native applied-result response loss")
         assert status.read_bytes() == before, "steering changed the status channel"
@@ -730,8 +755,12 @@ def native_orders(executable, name):
         rig.close()
 
 
+def unmatched_native_result(executable, name):
+    return native_orders(executable, name, unmatched=True)
+
+
 if __name__ == "__main__":
-    for function in (native_orders, command_values, command_limits, intervals, concurrent_status, generation_refusal, lifecycle, lost_result, lost_kill_result, redirected_background_exit, final_rejoin, contest, refusals):
+    for function in (unmatched_native_result, native_orders, command_values, command_limits, intervals, concurrent_status, generation_refusal, lifecycle, lost_result, lost_kill_result, redirected_background_exit, final_rejoin, contest, refusals):
         python = function(AGENTS[0], function.__name__ + "-python")
         rust = function(AGENTS[1], function.__name__ + "-rust")
         assert python == rust, (function.__name__, python, rust)

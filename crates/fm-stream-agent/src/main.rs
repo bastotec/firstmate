@@ -26,6 +26,9 @@ enum Error {
     Superseded,
     Forgotten,
     Rejected,
+    /// The hub did not judge the result body, so this stays retryable rather
+    /// than settling it; see docs/stream-backend.md "Command path".
+    Unmatched,
     Other(String),
 }
 impl std::fmt::Display for Error {
@@ -34,6 +37,7 @@ impl std::fmt::Display for Error {
             Self::Superseded => write!(f, "endpoint superseded"),
             Self::Forgotten => write!(f, "hub forgot endpoint"),
             Self::Rejected => write!(f, "command result rejected"),
+            Self::Unmatched => write!(f, "hub holds no such command"),
             Self::Other(s) => f.write_str(s),
         }
     }
@@ -95,10 +99,11 @@ impl Hub {
             return Err(match answer["error"].as_str().unwrap_or("") {
                 "endpoint_superseded" | "duplicate_label" => Error::Superseded,
                 "no_such_endpoint" => Error::Forgotten,
-                "no_such_command"
-                | "result_conflict"
-                | "bad_command_id"
-                | "endpoint_unauthorized" => Error::Rejected,
+                // An unmatched command id is not a verdict on the result body
+                // (see Error::Unmatched), so it takes its own class rather
+                // than the definitive rejection one.
+                "no_such_command" => Error::Unmatched,
+                "result_conflict" | "bad_command_id" | "endpoint_unauthorized" => Error::Rejected,
                 _ => Error::Other(format!(
                     "hub refused {method} {path}: HTTP {}",
                     status.as_u16()

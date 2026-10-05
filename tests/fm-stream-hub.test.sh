@@ -1559,6 +1559,7 @@ test_terminal_result_rejection_does_not_block_later_commands() {
   log="$TMP_ROOT/rejected-result.log"
   start_stub rejected-result --frames-ok-first 1000 --command-id "$first" \
     --second-command-id "$second" --reject-result-command "$first" \
+    --reject-result-error result_conflict \
     --result-file "$result"
   python3 "$AGENT" serve --hub "$URL" --token-file "$CASE_DIR/publish-token" \
     --machine box-a --label "rejected-result-$RUN" --cwd "$CASE_DIR/cwd" \
@@ -1579,7 +1580,7 @@ test_terminal_result_rejection_does_not_block_later_commands() {
     "both commands should be applied exactly once"
   attempts=$(grep -c 'POST /v1/agent/results' "$STUB_JOURNAL" 2>/dev/null || true)
   assert_equals "$attempts" 2 \
-    "a definitive command-id rejection should not be retried"
+    "a definitive result conflict should not be retried"
   pass "hub: a terminal result rejection does not wedge command polling"
 }
 

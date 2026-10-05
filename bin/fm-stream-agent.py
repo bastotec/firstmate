@@ -434,6 +434,13 @@ class ResultRejected(RuntimeError):
     """The hub definitively rejected a command result."""
 
 
+class ResultUnknown(ResultRejected):
+    """An unmatched command id is not a verdict on the result body.
+
+    See docs/stream-backend.md "Command path" for the retry contract.
+    """
+
+
 # The refusals that mean another live endpoint answers to this one's identity.
 # duplicate_label reaches an agent only on a registration, and it says exactly
 # what endpoint_superseded says on a publish: the name is taken.
@@ -559,7 +566,11 @@ class HubClient:
                 raise Superseded(message)
             if code == "no_such_endpoint":
                 raise Forgotten(message)
-            if code in ("no_such_command", "result_conflict", "bad_command_id",
+            if code == "no_such_command":
+                # See ResultUnknown: an unmatched command id is not a verdict
+                # on the result, so it must not settle the outcome.
+                raise ResultUnknown(message)
+            if code in ("result_conflict", "bad_command_id",
                         "endpoint_unauthorized"):
                 raise ResultRejected(message)
             raise RuntimeError(message)
@@ -988,14 +999,16 @@ class Agent:
 
     def acknowledge_command(self, command: dict, ok: bool, error: str) -> bool:
         result = {"machine": self.machine, "command_id": command['command_id'],
-                  "ok": ok, "error": error}
+                  'ok': ok, 'error': error}
         try:
             self.hub.call("POST", "/v1/agent/results", result,
                           timeout=RESULT_POST_TIMEOUT_SECS)
             return True
         except ResultRejected as exc:
+            # An unmatched id is not a verdict on the result body; do not mark
+            # the durable outcome settled merely because routing is unknown.
             sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
-            return True
+            return not isinstance(exc, ResultUnknown)
         except RuntimeError as exc:
             sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
             return False
@@ -1011,8 +1024,9 @@ class Agent:
         turns and transient storage failures reconcile at a five-second cadence.
         Result posts are single bounded attempts; with a status path their retry
         state is durable in the receiver's existing per-order records, not a
-        second command store. Retry rejection or expiry ends posting, not the
-        worker's turn. tests/fm-stream-deck.test.sh pins these safety boundaries.
+        second command store. Definitive rejection or expiry ends posting, not
+        the worker's turn; an unmatched id is not definitive (see ResultUnknown).
+        tests/fm-stream-deck.test.sh pins these safety boundaries.
         """
         path = ("/v1/agent/commands?machine=%s&endpoint=%s&wait=%d"
                 % (urllib.parse.quote(self.machine), self.endpoint_id,
