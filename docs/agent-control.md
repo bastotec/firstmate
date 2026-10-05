@@ -30,8 +30,6 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 
 The runtime/control-plane owner implements bounded primary lifecycle and execution-bound native steering through [`bin/fm-primary.py`](../bin/fm-primary.py), separate from task metadata.
 [Managed primary setup](managed-primary.md) owns the opt-in launch path, supported profiles, discovery integration and refusal boundary.
-The owner serializes capability-authenticated actions against its own child and captured profile; it never reconstructs ownership from a PID, process name or label.
-Missing-owner recovery is intentionally unsupported: a retained registration without its live owner is not authority to adopt or stop a process.
 The [README launch commands](../README.md#install-and-launch) remain valid for ordinary unregistered sessions, including the signed-primary boundary, and `fm-spawn.sh` remains task-only.
 
 The [host executable's header and help](../bin/fm-ui-host-control.py) own the exact managed-primary binding and execution-bound payloads.
@@ -39,6 +37,8 @@ The [host executable's header and help](../bin/fm-ui-host-control.py) own the ex
 `tests/fm-ui-host-control.test.sh` continues to pin the honest refusal boundary for unregistered primary targets and exact captain-call decision bindings.
 
 ## Verbs
+
+The remaining sections describe task control through `fm-control.sh`; managed-primary semantics are owned by [managed primary setup](managed-primary.md).
 
 | Verb | Effect | Postcondition |
 | --- | --- | --- |

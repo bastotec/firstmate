@@ -4,7 +4,7 @@ This is the authoritative current contract for the "no turn ends blind" primary 
 The predicate lives in `bin/fm-turnend-guard.sh`.
 Primary scope lives in `bin/fm-primary-scope-lib.sh`, shared with the native session-start adapters in [`sessionstart-nudge.md`](sessionstart-nudge.md).
 Harness hook files adapt each enabled primary harness integration's turn-end mechanism to that shared predicate.
-Deck secondmates instead use the persistent host postcondition owned by `bin/fm-deck-worker.sh`; [their protocol](supervision-protocols/deck.md) and [live evidence](verification/deck.md#secondmate-host-verification) describe that separate adapter boundary.
+Deck home hosts instead use the persistent host postcondition owned by `bin/fm-deck-worker.sh`; [their protocol](supervision-protocols/deck.md) describes that separate adapter boundary, with [secondmate live evidence](verification/deck.md#secondmate-host-verification) and [managed-primary fixture evidence](verification/runtime-backends.md#managed-primary-ownership-and-execution-bound-steering) recorded separately.
 
 Related PreToolUse guards deny unsafe commands before execution rather than detecting a blind turn end afterward.
 Their separate owners are [`arm-pretool-check.md`](arm-pretool-check.md), [`cd-guard.md`](cd-guard.md), and [`subagent-guard.md`](subagent-guard.md).
@@ -38,7 +38,7 @@ The turn-end guard needs that strict check because it fires at the turn boundary
 `bin/fm-guard.sh`, the pull warning, instead uses the model-aware `fm_watcher_supervision_verdict` from the same library, because it fires mid-turn when the selected supervision model may permit a verified hand-off without a live watcher process.
 Under the auto-arm model a beacon fresh within grace is healthy even with no live watcher process.
 Claude and Cursor use that state between turns.
-Deck secondmates receive auto-arm only through a scoped launch override: their persistent driver normally keeps a watcher live and uses fresh-beacon tolerance only during bounded child hand-offs.
+Deck home hosts receive auto-arm only through a scoped launch override: their persistent driver normally keeps a watcher live and uses fresh-beacon tolerance only during bounded child hand-offs.
 A stale beacon is still healthy only while `fm_autoarm_midturn_healthy` in `bin/fm-wake-lib.sh` proves a Claude rewake explains the mid-turn gap: the rewake is bound to the current recovery generation and live session-lock owner, and no later watcher beacon or exhausted-failure marker supersedes it, because that session's turn-end will re-arm.
 Without that proof a stale or absent beacon is a genuine lapse and alarms.
 Under the extension model (Pi, pi-signed, and omp) a live identity-matched watcher is the ordinary healthy state, but a genuinely unheld lock with a beacon fresh within grace is also healthy while a live Pi or omp session provably owns continuity, because `.pi/extensions/fm-primary-pi-watch.ts` and `.omp/extensions/fm-primary-omp-watch.ts` tear the watcher down on every actionable wake and spawn the replacement themselves.

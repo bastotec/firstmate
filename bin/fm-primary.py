@@ -12,6 +12,10 @@ Lifecycle commands reserve durable receipts below primary-owner/commands before
 mutation; retain command-id plus original execution-id to reconcile a lost reply
 without repeating the action. A pending reservation never re-executes blindly.
 Without --command-id, control mints an id and includes it in its result.
+Uncertain registration publication retains the exact owner-authored candidate;
+reconciliation accepts only that candidate or the prior committed snapshot,
+never adopts or overwrites a foreign record. Pending receipts remain pending
+through storage recovery; a deliberate new recovery action needs a new id.
 The shared fm-gate-refuse-lib.sh authority guard protects launch and control;
 read-only discovery remains available.
 

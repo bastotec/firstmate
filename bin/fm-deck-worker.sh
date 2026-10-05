@@ -43,9 +43,9 @@
 # The driver postcondition does not park without an owned watcher or a pending
 # result. A failed watcher exits loudly rather than leaving an idle host blind.
 #
-# SECOND MATE INVARIANTS (--secondmate)
+# HOME HOST INVARIANTS (--secondmate or --primary)
 # The driver, not a turn-scoped Deck process, owns the home session lock.
-# Watcher results pass through the durable task steering inbox and its ordinary
+# Watcher results pass through the durable execution steering inbox and its ordinary
 # doorbell, retained until acknowledged after a serialized next turn;
 # the durable wake queue is acknowledged only by the model after handling.
 # Exactly one Deck turn runs at a time, including stdin and watcher turns.
@@ -409,7 +409,7 @@ fi
 
 SESSION=''
 # run_turn's code for a turn that failed in a way a persistent supervisor is
-# expected to outlive. Only the secondmate role returns it; a crewmate or scout
+# expected to outlive. Only home-host mode returns it; a crewmate or scout
 # driver keeps its existing all-or-nothing turn contract.
 TURN_RECOVERABLE=3
 # 1 while the launch turn is still owed to a session: the brief and the startup
@@ -558,7 +558,7 @@ run_turn() {  # <prompt>
 # An owed launch turn is re-delivered once underneath the wake that follows it,
 # so a mate whose first turn died before Deck opened a session still takes the
 # helm. A second failure that opens no session stops the driver instead, which
-# is what returns the home to the parent's guarded relaunch path.
+# is what returns the home to its lifecycle owner's guarded relaunch path.
 drive_turn() {  # <prompt>
   local rc=0 prompt=$1 relaunch=0
   if [ "$LAUNCH_UNDELIVERED" = 1 ]; then

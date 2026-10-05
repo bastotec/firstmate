@@ -149,8 +149,20 @@ def wait(predicate, note):
 def record():
  try: return json.loads(registration.read_text())
  except (FileNotFoundError,json.JSONDecodeError): return None
+# Optional evidence captures executable interfaces, never raw registration secrets.
+def evidence(surface, result):
+ destination=os.environ.get('FM_TEST_PRIMARY_TRANSCRIPT')
+ if not destination: return
+ entry=dict(surface=surface,exit_code=result.returncode,stdout=result.stdout,stderr=result.stderr)
+ current=record()
+ encoded=json.dumps(entry)
+ for private in ([current['capability']] if current else [])+['fixture-secret',str(home),str(lab)]:
+  encoded=encoded.replace(private,'<fixture-private>')
+ with open(destination,'a',encoding='utf-8') as output:
+  output.write(encoded+'\n')
 def command(*args, success=True):
  result=subprocess.run(cli+list(args),env=env,capture_output=True,text=True,timeout=130)
+ evidence('primary '+args[0]+(' '+args[5] if args[0]=='control' else ''),result)
  assert (result.returncode==0)==success,(args,result.returncode,result.stdout,result.stderr)
  return json.loads(result.stdout)
 def control(execution,action,*args,success=True):
@@ -166,6 +178,7 @@ def ui_result(action,execution,*,command_id=None,**extra):
               payload=payload)
  result=subprocess.run(router+['command'],input=json.dumps(request)+'\n',env=env,
                        capture_output=True,text=True,timeout=130)
+ evidence('host command '+action,result)
  assert result.returncode==0,(result.stdout,result.stderr)
  return result
 
@@ -176,6 +189,7 @@ def publish_ui_binding(binding):
  registry.write_text(json.dumps([binding])); registry.chmod(0o600)
  result=subprocess.run(router+['targets'],env=env,capture_output=True,text=True,timeout=10)
  assert result.returncode==0,(result.stdout,result.stderr)
+ evidence('host targets',result)
  safe=json.loads(result.stdout)
  assert len(safe)==1 and safe[0]['target_class']=='primary' and not safe[0]['call_available']
  assert safe[0]['execution_id']==record()['execution_id']

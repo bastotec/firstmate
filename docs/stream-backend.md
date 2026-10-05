@@ -225,7 +225,8 @@ Native text must be nonblank and fit below Deck's 64 KiB projection ceiling, wit
 The adapter header owns acceptance and hub capability negotiation, and `bin/fm_stream_deck.py` owns Deck's durable source, original-turn binding, idempotency, reconciliation, and refusal mechanics.
 The owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership or application produces no record and remains pending.
 Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
-The PTY agent advertises both reliable result acknowledgement and `native_steering_receiver` on every endpoint registration, and the hub requires both per-endpoint capabilities before placing Bridge orders.
+Ordinary PTY agents advertise both reliable result acknowledgement and `native_steering_receiver`, and the hub requires both per-endpoint capabilities before placing Bridge orders.
+Managed-primary registration is adapter-bound by [the launcher](../bin/fm-primary.py); Pi and Pi-signed registrations omit the native receiver capability.
 Retained protocol-3 agents without the receiver capability can re-register and retain input, status, and kill support, but Bridge orders are refused before routing rather than sent through legacy PTY input; upgrade those agents only at a safe worker boundary.
 Protocol-2 agents cannot register, while protocol-3 tail publishers remain visible but non-orderable.
 Each internal HTTP order carries the hub generation returned by compatibility negotiation; a replacement hub rejects a stale generation before placement, the adapter renegotiates before retrying, and the Bridge `command`, `command_ack`, and `command_nack` records do not change.

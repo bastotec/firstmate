@@ -2,7 +2,7 @@
 
 The opt-in managed launcher, [`bin/fm-primary.py`](../bin/fm-primary.py), owns a primary child launched through the existing stream agent.
 It does not adopt a primary launched directly from the README, infer a profile from a process name, or create task metadata for a primary.
-Existing unregistered sessions receive `unregistered_primary` until the operator ends that session normally and starts a new managed session.
+Direct owner discovery/control for an unregistered home refuses with `unregistered_primary`; the [host router header](../bin/fm-ui-host-control.py) owns its separate unregistered-primary refusal categories.
 This is a separate launch choice, not a retroactive ownership claim.
 
 ## Supported launch profiles
@@ -42,8 +42,7 @@ Pi profiles use their ordinary primary integration and do not substitute Deck's 
 The normal home session lock still protects supervision ownership.
 
 The owner creates `state/primary-owner/registration.json` with mode `0600` inside a private directory.
-It records the exact home, machine, label, endpoint generation, execution id, status path and captured launch profile, plus its private socket capability.
-Each execution's status and receiver state live below `state/primary-owner/executions/<execution-id>/`, separate from fleet task ids and task `.meta` files.
+The owner's private registration and per-execution state are separate from fleet task ids and task `.meta` files; [the launcher header](../bin/fm-primary.py) owns their schema and paths.
 Treat the registration as host-private: it can contain credential environment values and must not be copied into browser state, committed, or printed as a public discovery payload.
 
 ## Host discovery and control
@@ -112,7 +111,9 @@ Repeat the same order id and exact text to reconcile the original Deck turn's ha
 An inactive receiver, unsupported adapter or stale execution is never replaced by PTY typing.
 An unconfirmed lifecycle reply requires inspecting the registration and actual owner state before retrying, because the original request may have acted.
 Retain its command id and original execution id: the live owner's receipt reconciles a confirmed result without repeating the action, even after a replacement execution was created.
-A reserved but unconfirmed action remains pending instead of being replayed blindly.
+A reserved but unconfirmed lifecycle action remains pending instead of being replayed blindly, even after the underlying fault is repaired.
+After reconciling the registration and owned child's actual state, use a new command id only for a deliberate new recovery action against the current execution.
+Storage failures do not authorize adopting or overwriting a foreign registration; [the launcher header](../bin/fm-primary.py) owns publication reconciliation.
 If direct CLI control omits `--command-id`, it mints an id and returns it in the result; retaining an explicit id is easier when a reply could be lost.
 
 ## Owner lifetime and refusals
@@ -128,10 +129,9 @@ The normal primary `exit` action deliberately does not stop the manager.
 
 [`tests/fm-primary.test.sh`](../tests/fm-primary.test.sh) exercises the runnable launcher against a real isolated stream hub, PTY and standby harness executables.
 It proves genuine endpoint registration, private discovery shape, exact profile replay, owned-child interrupt/exit/relaunch/recover-missing through the UI host route, lifecycle command-id reconciliation without duplicate relaunch, stale-execution refusal, duplicate and unregistered refusals, native Deck application and unsupported-adapter refusal.
-Only bootstrap/watcher infrastructure is stubbed inside a throwaway home; no live-fleet endpoint is controlled.
+The suite uses standby harnesses, stubbed home bootstrap/watcher infrastructure and deterministic storage, enqueue, credential-file and thread-start failure injection; no live-fleet endpoint is controlled.
 Run it with `bin/fm-test-run.sh tests/fm-primary.test.sh`.
 
-This is the primary-control successor to task `fm-ui-host-control-primary-coverage` and [PR65](https://github.com/bastotec/firstmate/pull/65), whose scope is bounded discovery only.
-The acceptance criterion is “Delegate and implement the minimal primary lifecycle and execution-bound native-steering support before treating this requirement as complete”.
-The managed setup and host UI routing implement that bounded acceptance surface; unrelated adapter-native receivers, adoption of existing primaries and recovery of a missing owner are not claimed.
-Passing these fixture tests is not a claim that validation or delivery has completed.
+This is a bounded managed-launch and host-routing surface, not completion of broader primary UI controls, which remain outstanding.
+Other adapter-native receivers, adoption of existing primaries and recovery of a missing owner are not supported.
+Passing fixture tests does not establish real-harness cancellation or model application, a completed UI integration, or validation and delivery.

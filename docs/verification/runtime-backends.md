@@ -1807,7 +1807,7 @@ The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
 ### Managed primary ownership and execution-bound steering
 
 Verified 2026-10-04 on macOS with Python 3.9.6, the Python stream hub 2.0.0 and agent 2.1.0 speaking protocol 3.
-The managed-primary suite runs the real launcher, private host router, stream publisher, PTY and Deck receiver against an isolated hub and standby harnesses; only home bootstrap/watcher infrastructure is stubbed.
+The baseline managed-primary check ran the real launcher, private host router, stream publisher, PTY and Deck receiver against an isolated hub and standby harnesses; home bootstrap/watcher infrastructure was stubbed.
 It creates genuine registered endpoint ids and does not control live-fleet endpoints.
 [Managed primary setup](../managed-primary.md) owns the supported operator path and its refusal boundaries.
 
@@ -1815,7 +1815,7 @@ It creates genuine registered endpoint ids and does not control live-fleet endpo
 FM_LIVE=0 bin/fm-test-run.sh tests/fm-primary.test.sh tests/fm-stream-deck.test.sh tests/fm-stream-agent-kill-safety.test.sh tests/fm-supervision-instructions.test.sh
 ```
 
-Observed managed-primary output:
+Observed baseline managed-primary output:
 
 ```text
 PASS managed setup/discovery, genuine endpoint registration, duplicate and unregistered refusals

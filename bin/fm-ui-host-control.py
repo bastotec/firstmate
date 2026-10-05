@@ -33,8 +33,11 @@ Required text and note fields must be nonblank strings. No request supplies
 a home path, file path, executable, or arbitrary argv. Only pre-authorized
 host callers may submit records. Accepted command_ack means the existing
 owner returned success, NOT that the worker acted on an inbox answer.
-Pre-dispatch refusals
-return command_ack refused. Nonzero owner exits may follow partial writes,
+Pre-dispatch refusals and explicit managed-owner refusals
+return command_ack refused. Managed-owner refusal reasons are browser-safe:
+established safe named categories are retained, other raw errors become
+"primary owner refused"; full owner diagnostics stay on host-only stderr.
+Nonzero owner exits may follow partial writes,
 so they remain pending (no record), with a host-only diagnostic; reconcile
 before retrying. Correlated host_owner_result records on host-only stderr
 retain the owner's stdout, stderr and exit code, including successful warnings.

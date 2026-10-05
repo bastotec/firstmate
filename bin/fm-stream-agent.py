@@ -1246,6 +1246,9 @@ class Agent:
             if reader in started:
                 self.reader_done.wait(5.0)
                 reader.join(timeout=5.0)
+            # Embedded completion is retirement proof before the owner reuses
+            # descriptors. Drain only successfully started threads, including
+            # partial startup; standalone state probes must not delay shutdown.
             if not install_signals:
                 for thread in started:
                     thread.join()
