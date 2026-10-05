@@ -683,6 +683,7 @@ test_detached_hook_survives_check_process_group_termination() {
   write_config "$home" '{"repos":[{"repo":"o/r","authority":"r","hook":"svc"}]}'
   write_waiting_hook "$home"
   write_gql "$home" "$MAIN_1"
+  # shellcheck disable=SC2016 # expands in the child shell
   env FM_HOME="$home" FM_TEST_GH_LOG="$home/gh.log" FM_TEST_GQL="$home/gql.json" \
     FM_TEST_LIVE="$home/live.json" PATH="$FAKEBIN:$PATH" \
     perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die $!' \
