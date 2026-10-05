@@ -508,14 +508,19 @@ test_shards_partition_the_full_selection() {
 
 test_shard_refuses_bad_specs_and_explicit_paths() {
   local spec rc out
-  for spec in 0/3 4/3 3 x/2 2/0 1/100; do
+  for spec in '' 0/3 4/3 3 x/2 2/0 1/100; do
     rc=0
     out=$("$LINT" --full --shard "$spec" --list-files 2>&1) || rc=$?
     [ "$rc" -eq 2 ] || fail "--shard $spec must refuse with exit 2, got $rc"$'\n'"$out"
   done
+  for spec in '' 1/2; do
+    rc=0
+    out=$("$LINT" --shard "$spec" bin/fm-lint.sh 2>&1) || rc=$?
+    [ "$rc" -eq 2 ] || fail "--shard with explicit paths must refuse with exit 2, got $rc"$'\n'"$out"
+  done
   rc=0
-  out=$("$LINT" --shard 1/2 bin/fm-lint.sh 2>&1) || rc=$?
-  [ "$rc" -eq 2 ] || fail "--shard with explicit paths must refuse with exit 2, got $rc"$'\n'"$out"
+  out=$("$LINT" --list-files --shard=1/2 2>&1) || rc=$?
+  [ "$rc" -eq 2 ] || fail "--shard=1/2 must refuse with exit 2, got $rc"$'\n'"$out"
   pass "fm-lint.sh --shard refuses malformed specs and explicit paths"
 }
 

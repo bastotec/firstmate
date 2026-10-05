@@ -421,6 +421,7 @@ FAST=0
 ANALYSIS_MODE=full
 LIST_FILES=0
 LINT_SHARD_SPEC=
+LINT_SHARD_GIVEN=0
 LINT_SHARD_INDEX=1
 LINT_SHARD_TOTAL=1
 while [ "$#" -gt 0 ]; do
@@ -464,12 +465,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --shard)
       [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --shard requires <index>/<count>.\n' >&2; exit 2; }
+      LINT_SHARD_GIVEN=1
       LINT_SHARD_SPEC=$2
       shift 2
-      ;;
-    --shard=*)
-      LINT_SHARD_SPEC=${1#*=}
-      shift
       ;;
     --help|-h)
       fm_lint_usage
@@ -500,7 +498,7 @@ ADMISSION_BUDGET_MIB=$((10#$ADMISSION_BUDGET_MIB))
 [ "$JOBS" -gt 0 ] && [ "$ADMISSION_BUDGET_MIB" -gt 0 ] || exit 2
 [ "$JOBS" -le "$CPU_COUNT" ] || JOBS=$CPU_COUNT
 
-if [ -n "$LINT_SHARD_SPEC" ]; then
+if [ "$LINT_SHARD_GIVEN" -eq 1 ]; then
   case "$LINT_SHARD_SPEC" in
     [1-9]/[1-9]|[1-9]/[1-9][0-9]|[1-9][0-9]/[1-9][0-9]) ;;
     *)
@@ -562,7 +560,7 @@ FOLLOW_SOURCES=1
 EXCLUDE_CODES=
 if [ "$#" -gt 0 ]; then
   [ "$SELECTION" = auto ] || { printf 'fm-lint.sh: selection modes do not accept explicit paths.\n' >&2; exit 2; }
-  [ -z "$LINT_SHARD_SPEC" ] || { printf 'fm-lint.sh: --shard does not accept explicit paths.\n' >&2; exit 2; }
+  [ "$LINT_SHARD_GIVEN" -eq 0 ] || { printf 'fm-lint.sh: --shard does not accept explicit paths.\n' >&2; exit 2; }
   EXPLICIT_PATHS=1
   ROOTS=("$@")
 else

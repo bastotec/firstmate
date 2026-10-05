@@ -15,9 +15,10 @@
 #     test.skip_reason R;
 #   - the first pipeline attestation comment in the body has exactly one
 #     "test" entry, and its status is "skipped";
-#   - the body carries no-mistakes' own Test status line for that skip,
-#     "**Test** - skipped: test.skip: R" (R HTML-escaped as no-mistakes
-#     renders it), ending the line or followed by markup.
+#   - after the end of that first attestation comment, the first Test summary
+#     line is exactly "<summary>⏭️ **Test** - skipped: test.skip: R</summary>"
+#     (R HTML-escaped as no-mistakes renders it), allowing surrounding
+#     whitespace only.
 # Then that one entry's status becomes "completed" for the shared verifier
 # that runs next. Any other Test state - failed, missing, completed, a per-run
 # or agent skip, or a reason that differs from the trusted config - passes
@@ -86,14 +87,11 @@ end
 
 # no-mistakes renders the skip reason through Go html.EscapeString.
 escaped = reason.gsub(/[&<>"\x27]/, "&" => "&amp;", "<" => "&lt;", ">" => "&gt;", "\"" => "&#34;", "\x27" => "&#39;")
-needle = "**Test** - skipped: test.skip: #{escaped}"
-recorded = body.each_line.any? do |line|
-  at = line.index(needle)
-  next false if at.nil?
-  rest = line[(at + needle.length)..]
-  rest.strip.empty? || rest.start_with?("<")
+expected = "<summary>\u23ed\ufe0f **Test** - skipped: test.skip: #{escaped}</summary>"
+summary = body[(stop + " -->".length)..].each_line.find do |line|
+  line.strip.match?(/\A<summary>.*\*\*Test\*\* - .*<\/summary>\z/)
 end
-unless recorded
+unless summary && summary.strip == expected
   finish.call("refused: Test was skipped, but not by the trusted test.skip reason; body unchanged")
 end
 

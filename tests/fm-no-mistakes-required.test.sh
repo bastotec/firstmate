@@ -79,8 +79,8 @@ attested_body() {  # <test-status-json-or-empty> <test-line>
   local steps='{"step":"review","status":"completed"}'
   [ -z "$1" ] || steps="$steps,{\"step\":\"test\",\"status\":\"$1\"}"
   steps="$steps,{\"step\":\"document\",\"status\":\"completed\"}"
-  printf '%s\n## Pipeline\n%s\n<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"%s","steps":[%s]} -->\n' \
-    "$SIGNATURE" "$2" "$NEW_SHA" "$steps"
+  printf '%s\n<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"%s","steps":[%s]} -->\n## Pipeline\n<details>\n<summary>%s</summary>\n\n</details>\n' \
+    "$SIGNATURE" "$NEW_SHA" "$steps" "$2"
 }
 
 # Runs the helper the way the workflow does, then the pinned verifier on its
@@ -133,6 +133,50 @@ test_skip_with_other_reason_still_fails() {
   pass "a Test skip whose reason is not the trusted test.skip reason still fails"
 }
 
+test_trusted_examples_do_not_override_the_first_test_summary() {
+  local config="$TMP_ROOT/skip.yaml" output body example
+  write_trusted_config "$config" true "$SKIP_REASON"
+  for example in "\`\`\`html"$'\n'"<summary>⏭️ **Test** - skipped: test.skip: $SKIP_REASON</summary>"$'\n'"\`\`\`" \
+    "> <summary>⏭️ **Test** - skipped: test.skip: $SKIP_REASON</summary>"; do
+    body="$example"$'\n'"$(attested_body skipped '⏭️ **Test** - skipped: skipped by --skip')"
+    output=$(run_checked "$config" "$body")
+    assert_contains "$output" "refused" "a trusted example before the attestation was accepted"
+    assert_not_contains "$output" "verifier_rc=0" "an earlier trusted example promoted a per-run skip"
+    [ "$(cat "$TMP_ROOT/body-out.md")" = "$body" ] || fail "an earlier example changed the body"
+  done
+  body="$(attested_body skipped '⏭️ **Test** - skipped: test.skip: another reason')"$'\n'"<details>
+<summary>⏭️ **Test** - skipped: test.skip: $SKIP_REASON</summary>
+</details>"
+  output=$(run_checked "$config" "$body")
+  assert_contains "$output" "refused" "a later trusted Test summary was accepted"
+  assert_not_contains "$output" "verifier_rc=0" "a later trusted summary promoted the first Test skip"
+  [ "$(cat "$TMP_ROOT/body-out.md")" = "$body" ] || fail "a later summary changed the body"
+  pass "only the first Test summary after the attestation can authorize a trusted skip"
+}
+
+test_test_summary_requires_exact_rendering() {
+  local config="$TMP_ROOT/skip.yaml" output body line
+  write_trusted_config "$config" true "$SKIP_REASON"
+  for line in "⏭️ **Test** - skipped: test.skip: $SKIP_REASON<strong>extra</strong>" \
+    "✅ **Test** - skipped: test.skip: $SKIP_REASON"; do
+    body=$(attested_body skipped "$line")
+    output=$(run_checked "$config" "$body")
+    assert_contains "$output" "refused" "an inexact Test summary was accepted"
+    assert_not_contains "$output" "verifier_rc=0" "an inexact Test summary passed the check"
+    [ "$(cat "$TMP_ROOT/body-out.md")" = "$body" ] || fail "an inexact summary changed the body"
+  done
+  body=$(attested_body skipped "⏭️ **Test** - skipped: test.skip: $SKIP_REASON")
+  body=${body/<summary>/$'  <summary>'}
+  body=${body/<\/summary>/$'</summary>  '}
+  output=$(run_checked "$config" "$body")
+  assert_contains "$output" "verifier_rc=0" "surrounding whitespace prevented a trusted skip"
+  printf '%s\n' 'test:' '  skip: true' '  skip_reason: "CI & <tests> \"quoted\""' > "$config"
+  output=$(run_checked "$config" "$(attested_body skipped '⏭️ **Test** - skipped: test.skip: CI &amp; &lt;tests&gt; &#34;quoted&#34;')")
+  assert_contains "$output" "trusted-test-skip: accepted" "HTML-escaped trusted reason was rejected"
+  assert_contains "$output" "verifier_rc=0" "HTML-escaped trusted reason did not satisfy the check"
+  pass "trusted skips require exact rendered summaries with HTML-escaped reasons"
+}
+
 test_failed_or_missing_test_still_fails_with_trusted_skip() {
   local config="$TMP_ROOT/skip.yaml" output
   write_trusted_config "$config" true "$SKIP_REASON"
@@ -156,4 +200,6 @@ test_missing_head_fails
 test_trusted_test_skip_satisfies_the_check
 test_skip_without_trusted_config_still_fails
 test_skip_with_other_reason_still_fails
+test_trusted_examples_do_not_override_the_first_test_summary
+test_test_summary_requires_exact_rendering
 test_failed_or_missing_test_still_fails_with_trusted_skip
