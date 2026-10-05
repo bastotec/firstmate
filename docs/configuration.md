@@ -712,7 +712,7 @@ A fail-closed poll that already queued a wake, and a timeout, always print so th
 [`bin/fm-autoland.sh`](../bin/fm-autoland.sh) lands green PRs as soon as they are ready and deploys what landed, without a model turn.
 It is a standing watcher check: `bin/fm-autoland.sh arm` writes `state/autoland.check.sh` and binds it with `bin/fm-check-register.sh`, and `disarm` removes it.
 The watcher runs that one check every `FM_AUTOLAND_INTERVAL` seconds (default 90) between its full `FM_CHECK_INTERVAL` sweeps, and turns the line it prints into a `check:` wake.
-Each tick makes one GraphQL call, so the default cadence costs about 80 of GitHub's 5,000 hourly GraphQL points.
+Each tick makes one batched GraphQL call, so the default cadence costs about 80 of GitHub's 5,000 hourly GraphQL points.
 `bin/fm-autoland.sh status` prints each repository's authority, the deployed commit and last run of each hook, and the recent reports.
 
 This section is the single owner of the `config/autoland.json` schema and the post-merge hook contract; the script's header owns the landing and deploy mechanics.
@@ -749,6 +749,7 @@ Only open PRs authored by the authenticated `gh` account into a configured repos
 A PR merges when it is not a draft, GitHub calls it mergeable and not blocked, behind, or conflicting, every check on its head is green, no hold label (`do-not-merge`, `hold`, `wip`, `blocked`, `security`, `destructive`, `breaking`) is set, and its attestation and risk pass.
 Pending or red checks are left to the PR's owner, silently.
 A PR owned by a task in this home merges through `bin/fm-pr-merge.sh`, so captain holds, away posture, and merge records still apply.
+A successful task helper call is confirmed live as merged before auto-land reports a landed merge; a confirmed merge-queue entry is reported as queued instead, and deployment waits for the default-branch head to advance.
 Destructive, irreversible, and security-sensitive work keeps escalating through the risk cap and the hold labels: a PR no-mistakes rates above `max_risk`, or one carrying a hold label, wakes the supervisor instead of merging.
 When attestation is not required, a missing risk section is treated as unrated, but a present risk rating still must pass the cap; use this posture only for a repository where every otherwise eligible green PR is safe to merge.
 Every other green PR that cannot land wakes the supervisor with `green PR not landing: <url> because <reason>`, once per head and reason, and again after `FM_AUTOLAND_RENOTIFY` seconds (default 21600).
@@ -1217,7 +1218,7 @@ FM_TASK_INBOX_GRACE_SECS=90   # seconds an unhandled steering-inbox message may 
 FM_TASK_INBOX_RING_MAX=3      # watcher delivery attempts without an acknowledgement before the task surfaces as a stale wake for recovery
 FM_CHECK_TIMEOUT=30     # seconds allowed per slow check script
 FM_AUTOLAND_INTERVAL=90   # seconds between auto-land ticks when state/autoland.check.sh is armed; runs between full check sweeps
-FM_AUTOLAND_MERGE_BUDGET=12   # seconds of one tick after which no further merge starts; the rest land next tick
+FM_AUTOLAND_MERGE_BUDGET=12   # seconds of merge work after the query/deploy scan before no further merge starts
 FM_AUTOLAND_RENOTIFY=21600   # seconds before the same green-but-not-landing PR is reported again
 FM_AUTOLAND_DEFER_RETRY=300   # seconds between retries of a post-merge hook that deferred (exit 75)
 FM_AUTOLAND_HOOK_TIMEOUT=1800   # seconds allowed for one post-merge hook run

@@ -28,7 +28,13 @@ cat > "$FAKEBIN/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case "$1 $2" in
-  "api graphql") cat "$FM_TEST_GQL"; exit 0 ;;
+  "api graphql")
+    case "$*" in
+      *isInMergeQueue*) printf '%s\n' "${FM_TEST_AFTER_QUEUED:-false}" ;;
+      *) sleep "${FM_TEST_QUERY_DELAY:-0}"; cat "$FM_TEST_GQL" ;;
+    esac
+    exit 0
+    ;;
   "pr merge") sleep "${FM_TEST_MERGE_DELAY:-0}"; exit "${FM_TEST_MERGE_RC:-0}" ;;
   "pr view")
     case "$*" in
@@ -397,6 +403,59 @@ test_task_owned_pr_uses_fm_pr_merge() {
   assert_contains "$out" "because task task-x is still held for the captain" "task helper refusal reported"
   [ "$(merges "$home")" = 0 ] || fail "gh merged around fm-pr-merge.sh"
   pass "fm-autoland: task-owned PRs use the head-pinned helper and report its refusals"
+}
+
+test_successful_slow_query_does_not_consume_merge_budget() {
+  local home node out
+  home=$(make_home slow-query)
+  write_config "$home" "$CONFIG_AUTH"
+  node=$(pr_node "$HEAD_A")
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  out=$(tick "$home" "$AUTOLAND" FM_TEST_QUERY_DELAY=13 FM_AUTOLAND_QUERY_TIMEOUT=30 \
+    FM_AUTOLAND_MERGE_BUDGET=12 FM_CHECK_TIMEOUT=90)
+  assert_contains "$out" "merged https://github.com/o/r/pull/7" "a successful query slower than the merge budget still permits landing"
+  [ "$(merges "$home")" = 1 ] || fail "query time consumed the merge-work budget"
+  [ "$(grep -c '^api graphql' "$home/gh.log")" = 1 ] || fail "slow query triggered extra batched reads"
+  home=$(make_home slow-query-deadline)
+  write_config "$home" "$CONFIG_AUTH"
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  out=$(tick "$home" "$AUTOLAND" FM_TEST_QUERY_DELAY=2 FM_AUTOLAND_QUERY_TIMEOUT=30 \
+    FM_AUTOLAND_MERGE_BUDGET=100 FM_CHECK_TIMEOUT=3)
+  [ -z "$out" ] || fail "an exhausted absolute deadline reported a merge: $out"
+  [ ! -e "$home/state/autoland/query-failing-since" ] || fail "absolute-deadline fixture did not complete its query"
+  [ "$(merges "$home")" = 0 ] || fail "merge-work budget bypassed the absolute deadline"
+  ! grep -q '^pr view ' "$home/gh.log" || fail "a live merge attempt started without time before the absolute deadline"
+  pass "fm-autoland: slow queries preserve merge-work budget without bypassing the absolute deadline"
+}
+
+test_task_helper_success_requires_a_landed_or_queued_outcome() {
+  local home script node out
+  home=$(make_home task-queue)
+  script="$(owned_bin "$home")/fm-autoland.sh"
+  write_config "$home" '{"repos":[{"repo":"o/r","authority":"r","attestation":true,"hook":"svc"}]}'
+  mkdir -p "$home/state/autoland"
+  printf '%s\n' "$MAIN_1" > "$home/state/autoland/svc.deployed"
+  node=$(pr_node "$HEAD_A")
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  out=$(tick "$home" "$script" FM_TEST_AFTER_STATE=OPEN FM_TEST_AFTER_QUEUED=true)
+  assert_contains "$out" "queued https://github.com/o/r/pull/7 in GitHub's merge queue" "a confirmed queue entry is reported distinctly"
+  assert_not_contains "$out" "merged https://github.com/o/r/pull/7" "queued is not landed"
+  assert_not_contains "$out" "deploy follows" "queued does not promise a deploy"
+  out=$(tick "$home" "$script" FM_TEST_AFTER_STATE=OPEN FM_TEST_AFTER_QUEUED=true)
+  [ -z "$out" ] || fail "unchanged queue entry was reported again: $out"
+  out=$(tick "$home" "$script" FM_TEST_AFTER_STATE=OPEN FM_TEST_AFTER_QUEUED=false)
+  assert_contains "$out" "green PR not landing:" "an open unqueued PR is not reported as landed"
+  assert_contains "$out" "the PR reads as OPEN" "the unlanded state is named"
+  out=$(tick "$home" "$script" FM_TEST_AFTER_STATE=CLOSED FM_TEST_AFTER_QUEUED=true)
+  assert_contains "$out" "the PR reads as CLOSED" "a closed PR is not accepted as queued"
+  out=$(tick "$home" "$script" FM_TEST_AFTER_STATE=MERGED FM_TEST_AFTER_QUEUED=false)
+  assert_contains "$out" "merged https://github.com/o/r/pull/7 (deploy follows)" "only a confirmed landed PR promises deployment"
+  [ "$(merges "$home")" = 0 ] || fail "queue handling bypassed the task helper"
+  [ "$(cat "$home/state/autoland/svc.deployed")" = "$MAIN_1" ] || fail "a queue entry advanced the deployed commit"
+  pass "fm-autoland: helper success is confirmed as landed, queued, or still unlanded"
 }
 
 test_case_insensitive_task_ownership_preserves_recorded_url() {
@@ -909,6 +968,8 @@ test_refused_merge_is_reported
 test_authority_follows_the_registry
 test_other_base_and_other_repo_are_ignored
 test_task_owned_pr_uses_fm_pr_merge
+test_successful_slow_query_does_not_consume_merge_budget
+test_task_helper_success_requires_a_landed_or_queued_outcome
 test_case_insensitive_task_ownership_preserves_recorded_url
 test_risk_section_is_required_for_attestation
 test_attestation_follows_registered_mode

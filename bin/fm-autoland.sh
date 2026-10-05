@@ -44,9 +44,9 @@
 # hold label, conflicts, a required review, a refused merge - produces one
 # "green PR not landing: <url> because <reason>" line, repeated only when its
 # head or reason changes or after FM_AUTOLAND_RENOTIFY seconds (default 21600).
-# Merges stop starting once FM_AUTOLAND_MERGE_BUDGET seconds (default 12) of the
-# tick are spent, so the tick stays inside the watcher's FM_CHECK_TIMEOUT; the
-# rest land on the next tick. Each complete merge operation is also bounded to
+# Merges stop starting once FM_AUTOLAND_MERGE_BUDGET seconds (default 12) of
+# merge work after the query/deploy scan are spent; the rest land next tick.
+# Each complete merge operation is also bounded to
 # the time remaining before FM_CHECK_TIMEOUT minus three seconds.
 # A Pi supervision branch's watcher
 # (FM_SUPERVISION_ACTOR=branch) skips the tick, because merging is main-owned.
@@ -376,13 +376,18 @@ task_for_pr() {  # <url>; sets TASK_PR_ID and TASK_PR_URL for the owning task in
 }
 
 MERGE_ERROR=
+MERGE_RESULT=
 merge_pr() {  # <url> <head> <method> <attestation> <max_risk> <base>
   local remaining out rc=0
   MERGE_ERROR=
+  MERGE_RESULT=
   remaining=$((MERGE_DEADLINE - SECONDS))
   [ "$remaining" -ge 2 ] || return 2
   out=$(fm_run_timed "$remaining" env FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-autoland.sh" merge-run "$@" 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || return 0
+  case "$rc" in
+    0) MERGE_RESULT=merged; return 0 ;;
+    3) MERGE_RESULT=queued; return 0 ;;
+  esac
   if [ "$rc" -eq 124 ]; then
     MERGE_ERROR="the merge operation timed out before the check deadline"
   else
@@ -392,7 +397,7 @@ merge_pr() {  # <url> <head> <method> <attestation> <max_risk> <base>
 }
 
 merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
-  local url=$1 head=$2 method=$3 need_attest=$4 max_risk=$5 base=$6 out live rec state
+  local url=$1 head=$2 method=$3 need_attest=$4 max_risk=$5 base=$6 out live rec state queue owned=false
   MERGE_ERROR=
   if ! live=$(gh pr view "$url" \
       --json url,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,body,labels,statusCheckRollup 2>/dev/null); then
@@ -416,20 +421,27 @@ merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
     return 1
   fi
   if task_for_pr "$url"; then
-    if out=$(FM_HOME="$FM_HOME" FM_PR_MERGE_EXPECT_HEAD="$head" FM_PR_MERGE_EXPECT_BASE="$base" "$SCRIPT_DIR/fm-pr-merge.sh" "$TASK_PR_ID" "$TASK_PR_URL" -- "--$method" 2>&1); then
-      return 0
+    if ! out=$(FM_HOME="$FM_HOME" FM_PR_MERGE_EXPECT_HEAD="$head" FM_PR_MERGE_EXPECT_BASE="$base" "$SCRIPT_DIR/fm-pr-merge.sh" "$TASK_PR_ID" "$TASK_PR_URL" -- "--$method" 2>&1); then
+      MERGE_ERROR=$(printf '%s\n' "$out" | grep -m1 -E '^error:|refus' | sed 's/^error: //')
+      [ -n "$MERGE_ERROR" ] || MERGE_ERROR="bin/fm-pr-merge.sh refused it"
+      return 1
     fi
-    MERGE_ERROR=$(printf '%s\n' "$out" | grep -m1 -E '^error:|refus' | sed 's/^error: //')
-    [ -n "$MERGE_ERROR" ] || MERGE_ERROR="bin/fm-pr-merge.sh refused it"
-    return 1
-  fi
-  if ! out=$(gh pr merge "$url" "--$method" --match-head-commit "$head" 2>&1); then
+    owned=true
+  elif ! out=$(gh pr merge "$url" "--$method" --match-head-commit "$head" 2>&1); then
     MERGE_ERROR="gh refused the merge: $(printf '%s\n' "$out" | head -n 1)"
     return 1
   fi
   state=$(gh pr view "$url" --json state -q .state 2>/dev/null || true)
-  [ "$state" = MERGED ] || { MERGE_ERROR="gh accepted the merge but the PR reads as ${state:-unreadable}"; return 1; }
-  return 0
+  [ "$state" != MERGED ] || return 0
+  if [ "$owned" = true ] && [ "$state" = OPEN ]; then
+    queue=$(gh api graphql \
+      -f "query=query(\$owner:String!,\$repo:String!,\$number:Int!){repository(owner:\$owner,name:\$repo){pullRequest(number:\$number){isInMergeQueue}}}" \
+      -F "owner=$FM_PR_OWNER" -F "repo=$FM_PR_REPO" -F "number=$FM_PR_NUMBER" \
+      --jq '.data.repository.pullRequest.isInMergeQueue' 2>/dev/null || true)
+    [ "$queue" != true ] || return 3
+  fi
+  MERGE_ERROR="gh accepted the merge but the PR reads as ${state:-unreadable}"
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -673,7 +685,7 @@ tick() {  # <entries-file> <response-file>
 
   tick_deploys "$entries" "$resp"
 
-  started=0   # the budget counts from the start of the tick
+  started=$SECONDS
   tick_epoch=$(( $(date +%s) / $(num_or "${FM_AUTOLAND_INTERVAL:-}" 90) ))
   nodes=$(jq -c --argjson tick "$tick_epoch" "[.data.search.nodes[] | select(.url) | $PR_JQ]"'
     | length as $n
@@ -703,7 +715,11 @@ EOF
           continue
         fi
         if merge_pr "$url" "$head" "$method" "$attest" "$max_risk" "$base"; then
-          notify "merged|$url" 0 "merged $url${hook:+ (deploy follows)}"
+          if [ "$MERGE_RESULT" = queued ]; then
+            notify "queued|$url|$head" 0 "queued $url in GitHub's merge queue"
+          else
+            notify "merged|$url" 0 "merged $url${hook:+ (deploy follows)}"
+          fi
         else
           notify "hold|$url|$head|$MERGE_ERROR" "$RENOTIFY" "green PR not landing: $url because $MERGE_ERROR"
         fi
@@ -847,10 +863,13 @@ case "${1:-check}" in
   merge-run)
     [ "$#" -eq 7 ] && fm_pr_head_valid "$3" || exit 2
     shift
-    if ! merge_attempt "$@"; then
-      printf '%s\n' "$MERGE_ERROR"
-      exit 1
-    fi
+    merge_rc=0
+    merge_attempt "$@" || merge_rc=$?
+    case "$merge_rc" in
+      0|3) ;;
+      *) printf '%s\n' "$MERGE_ERROR" ;;
+    esac
+    exit "$merge_rc"
     ;;
   deploy-run)
     if [ "$#" -ne 3 ] || ! fm_pr_head_valid "$3"; then
