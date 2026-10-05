@@ -1258,6 +1258,7 @@ test_portable_serial_shard_survives_a_stalled_consumer() {
   "$shell" "$repo/bin/fm-test-run.sh" --list --lane "$lane" \
     >"$tmp/out" 2>"$tmp/err" &
   pid=$!
+  fm_test_track_helper_pid "$pid"
   found=""
   waited=0
   while [ -z "$found" ] && [ "$waited" -lt 1200 ]; do
@@ -1268,6 +1269,7 @@ test_portable_serial_shard_survives_a_stalled_consumer() {
   [ -n "$found" ] || { kill "$pid" 2>/dev/null; fail "never saw the shard assignment weight sort"; }
   sort_pid=${found% *}
   producer=${found#* }
+  fm_test_track_helper_pid "$producer"
   kill -STOP "$pid" "$producer"
   # The stopped producer cannot reap its sort, so a finished sort is a zombie.
   waited=0
