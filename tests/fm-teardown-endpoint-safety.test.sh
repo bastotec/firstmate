@@ -273,29 +273,17 @@ test_supported_backend_endpoint_records_validate() {
   fm_write_meta "$dir/home/state/$id.meta" \
     "window=lab:7" "endpoint_task_id=$id" "worktree=$dir/worktree" "project=$dir/project" \
     "backend=zellij" "zellij_session=lab" "zellij_tab_id=3" "zellij_pane_id=7"
-  fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id" || fail "valid Zellij endpoint refused"
+  fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id" 2>/dev/null \
+    && fail "a record on the removed zellij backend must refuse cleanup validation"
 
-  id=orca-task
-  fm_write_meta "$dir/home/state/$id.meta" \
-    "window=fm-$id" "endpoint_task_id=$id" "terminal=term-7" \
-    "worktree=$dir/worktree" "project=$dir/project" "backend=orca" "orca_worktree_id=worktree-9"
-  fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id" || fail "valid Orca endpoint refused"
-  [ "$FM_BACKEND_VALIDATED_TARGET" = term-7 ] || fail "Orca validation did not select its terminal"
-
-  id=cmux-task
-  fm_write_meta "$dir/home/state/$id.meta" \
-    "window=workspace-1:surface-2" "endpoint_task_id=$id" "worktree=$dir/worktree" "project=$dir/project" \
-    "backend=cmux" "cmux_workspace_id=workspace-1" "cmux_surface_id=surface-2"
-  fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id" || fail "valid cmux endpoint refused"
-
-  for backend in tmux herdr zellij orca cmux; do
+  for backend in tmux herdr stream; do
     set +e
     fm_backend_kill "$backend" "" >/dev/null 2>&1
     target=$?
     set -e
     [ "$target" -ne 0 ] || fail "$backend generic kill accepted an empty target"
   done
-  pass "cleanup identity: valid tmux, Herdr, Zellij, Orca, and cmux records validate while every empty backend target refuses"
+  pass "cleanup identity: valid tmux and Herdr records validate, a removed backend refuses, and every empty backend target refuses"
 }
 
 test_tmux_empty_target_refuses_without_invocation() {
@@ -342,9 +330,8 @@ isolated_tmux_window_exists() {  # <dir> <socket> <session> <window>
 }
 
 # A close a backend accepts and does not perform is a real, documented shape,
-# not a hypothetical: cmux's `close-workspace` answers OK and leaves the last
-# workspace in its window standing (docs/cmux-backend.md "Closing the last
-# workspace in a window"). This fixture reproduces exactly that class against a
+# not a hypothetical: the former cmux adapter's `close-workspace` answered OK
+# and left the last workspace in its window standing. This fixture reproduces exactly that class against a
 # REAL tmux server - every read, including the inventory the verdict comes
 # from, is the real one, and only the close is suppressed - so the assertions
 # below are about what cleanup does with a worker that is provably still

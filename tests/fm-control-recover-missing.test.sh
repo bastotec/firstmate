@@ -677,29 +677,6 @@ test_recover_missing_refuses_a_backend_it_cannot_recreate_on() {
   pass "fm-control recover-missing: a backend that cannot recreate the recorded endpoint refuses before anything changes"
 }
 
-test_recover_missing_refusal_names_the_postcondition_it_cannot_prove() {
-  local dir out rc meta_before brief_before
-  dir=$(new_case no-classifier rm14)
-  add_ship_task "$dir" rm14
-  {
-    echo "backend=zellij"
-    echo "zellij_session=zses"
-    echo "zellij_tab_id=1"
-    echo "zellij_pane_id=7"
-  } >> "$dir/home/state/rm14.meta"
-  sed -i.bak 's|^window=.*|window=zses:7|' "$dir/home/state/rm14.meta"
-  rm -f "$dir/home/state/rm14.meta.bak"
-  meta_before=$(cat "$dir/home/state/rm14.meta")
-  brief_before=$(cat "$dir/home/data/rm14/brief.md")
-
-  out=$(run_control "$dir" rm14 recover-missing --note "recover"); rc=$?
-  expect_code 1 "$rc" "a backend with no recovery-grade classifier must refuse"$'\n'"$out"
-  assert_contains "$out" "no recovery-grade agent-state classifier" "the refusal should name the missing capability"
-  assert_contains "$out" "cannot prove the endpoint is actually missing" \
-    "recovery never stops an agent, so the refusal must name the postcondition it really cannot prove"
-  assert_nothing_changed "$dir" rm14 "$meta_before" "$brief_before"
-  pass "fm-control recover-missing: an unclassifiable backend refuses on the postcondition recovery actually needs"
-}
 
 test_recover_missing_refuses_a_basename_harness_without_naming_a_rejected_flag() {
   local dir out rc meta_before brief_before
@@ -1276,7 +1253,6 @@ test_failed_recreation_keeps_a_concurrent_record_write
 test_unreadable_endpoint_after_a_failed_recreation_claims_nothing
 test_launch_failure_never_claims_an_agent_was_stopped
 test_recover_missing_refuses_a_backend_it_cannot_recreate_on
-test_recover_missing_refusal_names_the_postcondition_it_cannot_prove
 test_recover_missing_refuses_a_basename_harness_without_naming_a_rejected_flag
 test_profile_switch_flags_are_rejected_on_other_verbs
 test_recover_missing_requires_a_note_for_a_ship_task

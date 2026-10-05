@@ -809,7 +809,7 @@ if ! pane_readable "$BACKEND_TARGET"; then
   #             and whether a verified harness is in that group (alive). A
   #             silent agent is `unreadable`, never `dead`, so a partition
   #             cannot be read as a stopped worker.
-  # Backends with no classifier (orca, zellij, and cmux all report unverified)
+  # Backends with no classifier (reporting unverified)
   # keep their historical capture-failure-means-gone reading.
   case "$TASK_BACKEND" in
     tmux|herdr|stream) AGENT_STATE=$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET") ;;

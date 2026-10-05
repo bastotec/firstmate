@@ -130,12 +130,11 @@
 # Fail-closed boundaries:
 #   - An unverified harness, or a harness whose control mechanics are unknown,
 #     is refused rather than guessed at.
-#   - A backend that cannot deliver the harness's interrupt key is refused
-#     (Orca's terminal API has no Escape).
+#   - A backend that cannot deliver the harness's interrupt key is refused.
 #   - `exit`, `relaunch`, and `recover-missing` require a backend with a
 #     recovery-grade agent-state classifier (tmux, herdr, stream), because
 #     without one the "the agent stopped" or "the endpoint is missing"
-#     postcondition cannot be proven. zellij, orca, and cmux are refused rather
+#     postcondition cannot be proven. Any other backend is refused rather
 #     than reported as successful blind. On stream a silent agent reads
 #     `unreadable` rather than `dead`, so a partition refuses here instead of
 #     proving a stop that never happened.
