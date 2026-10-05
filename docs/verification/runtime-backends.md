@@ -1834,7 +1834,8 @@ The differential driver's terminal cases compare Unicode width, ANSI rendering, 
 Its native-steering cases compare execution/order-bound `steer` command payloads, refusal without a receiver, and refusal when re-registration changes receiver capabilities.
 The existing bridge suite also passes with `FM_TEST_STREAM_HUB_BINARY="$PWD/target/debug/fm-stream-hub" bin/fm-test-run.sh tests/fm-stream-bridge.test.sh`.
 A complete hub-suite invocation on this host stops at the existing shell-died-at-birth refusal case documented below, after the earlier HTTP/body, stream, capture, registry, and state-read cases pass against Rust.
-This is not a claim that every stream suite passes on macOS: the backend suite requires `setsid`, and the existing Rust-bridge HTTPS fixture cannot validate its generated certificate with this host's Python trust store.
+The backend suite no longer requires a `setsid` executable; see [the stream prerequisites](../stream-backend.md#prerequisites) for the fallback dependency.
+This is not a claim that every stream suite passes on macOS: the existing Rust-bridge HTTPS fixture cannot validate its generated certificate with this host's Python trust store.
 The pilot and replacement prerequisites remain owned by [the stream guide](../stream-backend.md#rust-hub-pilot).
 
 ### Deck home-host lifecycle

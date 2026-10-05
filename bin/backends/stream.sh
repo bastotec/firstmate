@@ -90,6 +90,19 @@ FM_BACKEND_STREAM_MISSING_GRACE_SECS=6
 # hub - can report it without tripping `set -u` in a caller.
 : "${FM_BACKEND_STREAM_HTTP_CODE:=000}"
 
+# Start the endpoint agent in its own session. setsid(1) is the util-linux tool
+# that does this; macOS has no setsid binary, so fall back to Perl's POSIX
+# setsid with the same exec semantics. The session detachment is the only reason
+# this call exists: the agent must survive the spawn subshell and never inherit
+# the caller's process group.
+fm_backend_stream_detached() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@"
+  else
+    perl -MPOSIX -e 'my $r = POSIX::setsid(); (defined $r && $r != -1) or die "setsid: $!\n"; exec @ARGV or die "exec: $!\n"' "$@"
+  fi
+}
+
 fm_backend_stream_config_dir() {
   printf '%s' "${FM_CONFIG_OVERRIDE:-${FM_HOME:-$FM_ROOT}/config}"
 }
@@ -329,7 +342,7 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path] [state-interval
     heartbeat=(--state-interval "$state_interval")
   fi
   (
-    setsid python3 "$FM_BACKEND_STREAM_AGENT_BIN" serve \
+    fm_backend_stream_detached python3 "$FM_BACKEND_STREAM_AGENT_BIN" serve \
       --hub "$(fm_backend_stream_hub_url)" \
       --token-file "$token_file" \
       --machine "$machine" \
