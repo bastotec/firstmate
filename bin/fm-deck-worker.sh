@@ -37,8 +37,8 @@
 #     run id and that state line. Only a working -> other transition observed
 #     after a turn wakes, so a run that stays parked or done never re-wakes;
 #     typed input (a steer, the doorbell, /quit, the composer clear) is checked
-#     between polls and taken immediately, and the wait gives up silently at
-#     its bound or once the run is no longer attributed to the task.
+#     before and after probes and handled before any automatic wake; inconclusive
+#     reads keep polling, and the wait gives up silently at its bound.
 #
 # USAGE (bin/fm-spawn.sh builds this; the brief arrives already encoded)
 #   fm-deck-worker.sh --id <task-id> --state <state-dir> --gen <busy-gen>
@@ -621,23 +621,31 @@ sys.exit(0 if ready else 1)
 # 0 with PIPELINE_WAKE_PROMPT set when the watched run left working; 1 when
 # input is waiting, no run is watched, or the wait ended without a wake.
 pipeline_wait() {
-  local rc line run
+  local rc line run remaining wait_secs
   [ "$PIPELINE_WATCH" = 1 ] || return 1
-  while [ "$(date +%s)" -lt "$PIPELINE_UNTIL" ]; do
+  while :; do
+    remaining=$(( PIPELINE_UNTIL - $(date +%s) ))
+    [ "$remaining" -gt 0 ] || break
+    wait_secs=$PIPELINE_POLL
+    [ "$wait_secs" -le "$remaining" ] || wait_secs=$remaining
     rc=0
-    stdin_ready_within "$PIPELINE_POLL" || rc=$?
+    stdin_ready_within "$wait_secs" || rc=$?
     [ "$rc" -ne 0 ] || return 1
     [ "$rc" -eq 1 ] || continue
+    [ "$(date +%s)" -lt "$PIPELINE_UNTIL" ] || break
     line=$(pipeline_state)
+    stdin_ready_within 0 && return 1
+    [ "$(date +%s)" -lt "$PIPELINE_UNTIL" ] || break
     case "$line" in
       'state: working · source: run-step'*|'state: unknown · source: run-step'*) continue ;;
       'state: '*' · source: run-step'*)
-        PIPELINE_WATCH=0
         run=$(pipeline_run_id)
+        stdin_ready_within 0 && return 1
+        [ "$(date +%s)" -lt "$PIPELINE_UNTIL" ] || break
+        PIPELINE_WATCH=0
         PIPELINE_WAKE_PROMPT="Your no-mistakes run ${run:-for this task} changed state while this session was idle: ${line}. Check it with no-mistakes axi status and continue per your brief, then append the matching status line."
         return 0
         ;;
-      *) break ;;
     esac
   done
   PIPELINE_WATCH=0

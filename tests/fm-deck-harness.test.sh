@@ -1774,7 +1774,7 @@ test_pipeline_wait_takes_input_immediately_and_is_bounded() {
   kill -0 "$PIPELINE_WORKER_PID" 2>/dev/null && fail "/quit did not end a worker waiting on its pipeline"
 
   make_pipeline_case "$bounded"
-  start_pipeline_worker "$bounded" 1 1
+  start_pipeline_worker "$bounded" 4 1
   wait_pane_count "$bounded" 'no-mistakes run 01PIPE still working' 1 || fail "the bounded wait was not armed"
   sleep 3
   pipeline_run "$bounded" parked
