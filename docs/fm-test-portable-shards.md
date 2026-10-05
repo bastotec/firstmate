@@ -30,6 +30,8 @@ The complete historical run supplies tail-script hints, not a completion time fo
 ## Parallel lanes
 
 The two parallel lanes use longest-processing-time assignment over those hints.
+The hints for `tests/fm-lint.test.sh` and `tests/fm-test-run.test.sh` were refreshed to 212915 ms and 151312 ms from the completed script markers in [run 37361945831, parallel job 1](https://github.com/bastotec/firstmate/actions/runs/37361945831/job/111938422392), which reached its old 10-minute cap after 583 seconds of script time.
+Repacking with those hints estimates about 469 seconds per lane and retains `tests/fm-pi-primary-types.test.sh` in lane 1, where CI installs Pi.
 [`bin/fm-test-run.sh`](../bin/fm-test-run.sh) holds the duration values in `portable_parallel_weight_hints` and the ordered memberships and lane-specific prerequisite constraints beside `list_portable_parallel_1` and `list_portable_parallel_2`.
 Read the derived packing estimates with that runner's `--check-coverage`; its header and `--help` own the output fields and the selection-specific `--list-scheduled` weight rules.
 The largest individual hint sets a lower bound on the estimated duration of any split, regardless of how evenly the remaining work is assigned.

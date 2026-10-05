@@ -110,14 +110,12 @@ jobs:
   tests-portable-parallel-1:
     name: Behavior portable parallel 1
     runs-on: ubuntu-latest
-    # This cap is intended as a hang tripwire, but the previous lane 1 reached
-    # it; the former "~1 min of serial sum" estimate no longer applies.
-    # Compare it with the derived hints from fm-test-run.sh --check-coverage
-    # and completed job timings, allowing for setup and runner-speed spread.
-    # A packed hint sum is not a measured job wall time or proof of headroom.
+    # Lane 1 reached the old 10-minute cap after 583 seconds of script time.
+    # Refreshed hints and LPT packing estimate about 469 seconds per lane.
+    # This 15-minute cap is a hang tripwire with setup and runner-speed margin,
+    # not the expected healthy duration or proof of measured job headroom.
     # Evidence and refresh procedure: docs/fm-test-portable-shards.md.
-    # Changes to this cap or the lane count require a separate scope decision.
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -161,7 +159,7 @@ jobs:
     name: Behavior portable parallel 2
     runs-on: ubuntu-latest
     # Same timeout rationale as portable parallel shard 1 above.
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:

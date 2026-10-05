@@ -504,7 +504,7 @@ tests/fm-crew-state.test.sh 11557
 tests/fm-ensure-agents-md.test.sh 901
 tests/fm-grok-harness.test.sh 6563
 tests/fm-herdr-lab.test.sh 9800
-tests/fm-lint.test.sh 164262
+tests/fm-lint.test.sh 212915
 tests/fm-pi-primary-types.test.sh 8624
 tests/fm-pr-merge.test.sh 111145
 tests/fm-review-diff.test.sh 2747
@@ -513,7 +513,7 @@ tests/fm-send-settle.test.sh 2051
 tests/fm-send-strict.test.sh 3861
 tests/fm-spawn-batch.test.sh 2265
 tests/fm-supervision-instructions.test.sh 297
-tests/fm-test-run.test.sh 92944
+tests/fm-test-run.test.sh 151312
 tests/fm-tmux-submit-busy.test.sh 2477
 tests/fm-transition-lib.test.sh 99
 tests/fm-x-mode.test.sh 31870
@@ -540,16 +540,17 @@ portable_parallel_lane_weight() {
 list_portable_parallel_1() {
   cat <<'EOF'
 tests/fm-lint.test.sh
-tests/fm-pr-merge.test.sh
 tests/fm-test-run.test.sh
+tests/fm-x-mode.test.sh
+tests/fm-arm-pretool-check.test.sh
 tests/fm-cd-pretool-check.test.sh
 tests/fm-pi-primary-types.test.sh
-tests/fm-grok-harness.test.sh
+tests/fm-send-popup-settle.test.sh
 tests/fm-composer-lib.test.sh
-tests/fm-review-diff.test.sh
 tests/fm-tmux-submit-busy.test.sh
 tests/fm-composer-ghost.test.sh
 tests/fm-brief.test.sh
+tests/fm-ensure-agents-md.test.sh
 EOF
 }
 
@@ -557,16 +558,15 @@ EOF
 list_portable_parallel_2() {
   cat <<'EOF'
 tests/fm-captain-hold-lifecycle.test.sh
-tests/fm-x-mode.test.sh
-tests/fm-arm-pretool-check.test.sh
+tests/fm-pr-merge.test.sh
 tests/fm-backend-herdr.test.sh
 tests/fm-crew-state.test.sh
 tests/fm-herdr-lab.test.sh
-tests/fm-send-popup-settle.test.sh
+tests/fm-grok-harness.test.sh
 tests/fm-send-strict.test.sh
+tests/fm-review-diff.test.sh
 tests/fm-spawn-batch.test.sh
 tests/fm-send-settle.test.sh
-tests/fm-ensure-agents-md.test.sh
 tests/fm-supervision-instructions.test.sh
 tests/fm-transition-lib.test.sh
 EOF
