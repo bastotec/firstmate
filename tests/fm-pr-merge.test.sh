@@ -450,6 +450,27 @@ test_expected_head_is_required_when_supplied() {
   pass "fm-pr-merge refuses a moved expected head and accepts the matching live head"
 }
 
+test_expected_base_is_required_when_supplied() {
+  local case_dir rc=0
+  case_dir=$(make_case github-expected-base)
+  rm "$case_dir/home/data/backlog.md"
+  add_gh_mocks "$case_dir" "$MR_HEAD"
+  jq '.baseRefName = "feature"' "$case_dir/github-view.json" > "$case_dir/retargeted.json"
+  mv "$case_dir/retargeted.json" "$case_dir/github-view.json"
+  FM_PR_MERGE_EXPECT_HEAD="$MR_HEAD" FM_PR_MERGE_EXPECT_BASE=main \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/9 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "an unchanged head with a retargeted base must refuse"
+  assert_grep 'live base feature does not match expected base main' "$case_dir/stderr" "base refusal names the mismatch"
+  assert_no_grep '^pr merge ' "$case_dir/gh.log" "base mismatch never reaches the forge merge"
+  write_github_live_json "$case_dir" "$MR_HEAD"
+  FM_PR_MERGE_EXPECT_HEAD="$MR_HEAD" FM_PR_MERGE_EXPECT_BASE=main \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/9 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "matching expected base refused"
+  assert_logged_gh_merge "$case_dir" 9 example/repo --squash
+  pass "fm-pr-merge refuses a retargeted base at the same head and accepts the matching base"
+}
+
 test_verified_merge_records_pr_and_head() {
   local case_dir rc
   case_dir=$(make_case records-before-merge)
@@ -2177,6 +2198,7 @@ test_github_closed_unqueued_outcome_omits_retry_flags
 test_github_agreeing_queue_rules_keep_retry_guidance
 test_github_conflicting_queue_rules_report_ambiguity
 test_expected_head_is_required_when_supplied
+test_expected_base_is_required_when_supplied
 test_verified_merge_records_pr_and_head
 test_pr_metadata_is_recorded_before_the_forge_call
 test_merge_failure_propagates_after_recording

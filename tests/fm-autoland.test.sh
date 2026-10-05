@@ -360,6 +360,7 @@ owned_bin() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_HOME/pr-merge.log"
 printf '%s\n' "${FM_PR_MERGE_EXPECT_HEAD:-unset}" >> "$FM_HOME/expected-head.log"
+printf '%s\n' "${FM_PR_MERGE_EXPECT_BASE:-unset}" >> "$FM_HOME/expected-base.log"
 if [ -n "${FM_TEST_OWNED_DELAY:-}" ]; then
   if [ -f "$FM_HOME/state/autoland/notified" ]; then
     cp "$FM_HOME/state/autoland/notified" "$FM_HOME/notified-at-merge"
@@ -391,10 +392,34 @@ test_task_owned_pr_uses_fm_pr_merge() {
   grep -qxF "task-x https://github.com/o/r/pull/7 -- --squash" "$home/pr-merge.log" \
     || fail "fm-pr-merge.sh was not used: $(cat "$home/pr-merge.log" 2>/dev/null)"
   grep -qxF "$HEAD_A" "$home/expected-head.log" || fail "task merge was not pinned to the tick head"
+  grep -qxF main "$home/expected-base.log" || fail "task merge was not pinned to the tick base"
   out=$(tick "$home" "$tmpbin/fm-autoland.sh" FM_TEST_OWNED_RC=1)
   assert_contains "$out" "because task task-x is still held for the captain" "task helper refusal reported"
   [ "$(merges "$home")" = 0 ] || fail "gh merged around fm-pr-merge.sh"
   pass "fm-autoland: task-owned PRs use the head-pinned helper and report its refusals"
+}
+
+test_case_insensitive_task_ownership_preserves_recorded_url() {
+  local home tmpbin node out recorded i=0
+  for recorded in https://github.com/O/R/pull/7 https://github.com/o/R/pull/7 https://github.com/O/r/pull/7; do
+    home=$(make_home "owned-case-$i")
+    i=$((i + 1))
+    tmpbin=$(owned_bin "$home")
+    printf 'pr=%s\n' "$recorded" > "$home/state/task-x.meta"
+    printf 'pr=https://github.com/other/R/pull/7\n' > "$home/state/a-other.meta"
+    printf 'pr=https://github.com/O/R/pull/8\n' > "$home/state/b-other.meta"
+    printf 'pr=not-a-url\n' > "$home/state/c-invalid.meta"
+    write_config "$home" "$CONFIG_AUTH"
+    node=$(pr_node "$HEAD_A")
+    write_gql "$home" "$MAIN_1" "$node"
+    write_live "$home" "$node"
+    out=$(tick "$home" "$tmpbin/fm-autoland.sh" FM_TEST_OWNED_RC=1 FM_CHECK_TIMEOUT=120)
+    assert_contains "$out" "because task task-x is still held for the captain" "case-insensitive owner keeps task guards"
+    grep -qxF "task-x $recorded -- --squash" "$home/pr-merge.log" || fail "task helper lost the recorded URL or matched another PR"
+    grep -qxF main "$home/expected-base.log" || fail "task helper did not receive the expected base"
+    [ "$(merges "$home")" = 0 ] || fail "case variation bypassed the task helper"
+  done
+  pass "fm-autoland: parsed PR identity preserves task guards and recorded URL casing"
 }
 
 test_risk_section_is_required_for_attestation() {
@@ -740,6 +765,63 @@ test_hook_lock_release_preserves_another_owner() {
   pass "fm-autoland: a runner releases only its own hook lock"
 }
 
+test_finished_runner_result_survives_reconciliation() {
+  local home out
+  home=$(make_home completion-race)
+  write_config "$home" '{"repos":[{"repo":"o/r","authority":"r","hook":"svc"}]}'
+  write_gql "$home" "$MAIN_1"
+  mkdir -p "$home/state/autoland/svc.lock" "$home/racebin"
+  printf '99999999\n' > "$home/state/autoland/svc.lock/pid"
+  printf 'running\t%s\t%s\tstarted\n' "$MAIN_1" "$(date +%s)" > "$home/state/autoland/svc.result"
+  cat > "$home/racebin/cat" <<'SH'
+#!/usr/bin/env bash
+if [ "$*" = "$FM_HOME/state/autoland/svc.lock/pid" ] && [ ! -e "$FM_HOME/completion-race-fired" ]; then
+  touch "$FM_HOME/completion-race-fired"
+  printf 'deferred\t%s\t%s\twork in flight\n' "$FM_TEST_RACE_OID" "$(($(date +%s) - 3))" > "$FM_HOME/state/autoland/svc.result"
+  rm -rf "$FM_HOME/state/autoland/svc.lock"
+  exit 0
+fi
+exec "$FM_TEST_REAL_CAT" "$@"
+SH
+  chmod +x "$home/racebin/cat"
+  out=$(tick "$home" "$AUTOLAND" FM_AUTOLAND_DEFER_RETRY=99999 FM_TEST_RACE_OID="$MAIN_1" \
+    FM_TEST_REAL_CAT="$(command -v cat)" "PATH=$home/racebin:$FAKEBIN:$PATH")
+  [ -e "$home/completion-race-fired" ] || fail "completion race fixture never fired"
+  assert_contains "$out" "deploy of svc aaaaaaa deferred: work in flight" "terminal result survives the running snapshot"
+  [ "$(cut -f1 "$home/state/autoland/svc.result")" = deferred ] || fail "reconciliation replaced a deferral with failure"
+  write_hook "$home" svc 0
+  tick "$home" "$AUTOLAND" FM_AUTOLAND_DEFER_RETRY=1 >/dev/null
+  wait_result "$home" svc deployed || fail "the preserved deferral did not retry"
+  pass "fm-autoland: reconciliation re-reads terminal results under the hook lock and preserves retry"
+}
+
+test_firstmate_hook_uses_separate_code_root() {
+  local home code codebin oid rc=0
+  home=$(make_home example-operational-home)
+  code=$(make_home example-code-root)
+  codebin=$(owned_bin "$code")
+  git init -q "$code"
+  git -C "$code" -c user.name=fmtest -c user.email=fmtest@example.invalid commit -q --allow-empty -m fixture
+  oid=$(git -C "$code" rev-parse HEAD)
+  cat > "$codebin/fm-update.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$FM_HOME" "$FM_ROOT_OVERRIDE" "$FM_AUTOLAND_CODE_ROOT" > "$FM_HOME/update-context"
+printf 'reread-firstmate: yes\nrestart-secondmates: none\nnudge-secondmates: none\n'
+SH
+  chmod +x "$codebin/fm-update.sh"
+  cp "$ROOT/docs/examples/post-merge/firstmate.sh" "$home/config/post-merge/firstmate.sh"
+  chmod 0755 "$home/config/post-merge/firstmate.sh"
+  write_config "$home" '{"repos":[{"repo":"o/r","authority":"r","hook":"firstmate"}]}'
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$home" "$codebin/fm-autoland.sh" deploy-run firstmate "$oid" > "$home/deploy.out" 2>&1 \
+    || fail "example hook failed with a separate operational home: $(cat "$home/deploy.out")"
+  [ "$(cat "$home/update-context")" = "$(printf '%s\n' "$home" "$code" "$code")" ] || fail "updater did not receive separate home and tracked code identities"
+  [ "$(cat "$home/state/autoland/firstmate.deployed")" = "$oid" ] || fail "example hook did not verify the tracked checkout head"
+  FM_HOME="$home" "$codebin/fm-autoland.sh" deploy-run firstmate "$MAIN_1" > "$home/mismatch.out" 2>&1 || rc=$?
+  expect_code 1 "$rc" "example refuses a mismatched code head"
+  [ "$(cat "$home/state/autoland/firstmate.deployed")" = "$oid" ] || fail "example recorded a mismatched head as deployed"
+  pass "fm-autoland: the example hook updates and verifies code independently of the operational home"
+}
+
 test_failed_and_deferred_hooks() {
   local home out
   home=$(make_home deployfail)
@@ -827,6 +909,7 @@ test_refused_merge_is_reported
 test_authority_follows_the_registry
 test_other_base_and_other_repo_are_ignored
 test_task_owned_pr_uses_fm_pr_merge
+test_case_insensitive_task_ownership_preserves_recorded_url
 test_risk_section_is_required_for_attestation
 test_attestation_follows_registered_mode
 test_live_policy_applies_to_both_merge_paths
@@ -838,6 +921,8 @@ test_deploy_runs_after_merge_and_reports
 test_fleet_sync_timeout_is_a_continuing_warning
 test_hook_lock_publication_and_stale_reclaim_are_serialized
 test_hook_lock_release_preserves_another_owner
+test_finished_runner_result_survives_reconciliation
+test_firstmate_hook_uses_separate_code_root
 test_failed_and_deferred_hooks
 test_unsafe_hook_and_foreground_deploy
 test_watcher_runs_autoland_between_full_sweeps

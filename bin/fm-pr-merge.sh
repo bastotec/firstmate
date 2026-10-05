@@ -19,6 +19,8 @@
 # fails the merge instead of landing commits nothing verified.
 # Optional FM_PR_MERGE_EXPECT_HEAD refuses the merge unless the live head
 # verified by this script equals that caller-supplied commit.
+# Optional FM_PR_MERGE_EXPECT_BASE likewise requires the live GitHub base
+# branch to match the caller-supplied branch after the task lock is acquired.
 # Reading that state needs gh and jq, and either one absent stops the merge before any
 # state is recorded. An attended --allow-red <check-name> may be passed once,
 # with the name as a separate argument; it waives only checks with that exact
@@ -546,6 +548,10 @@ FIELDS
     return 1
   fi
   require_expected_head "$live_head" || return 1
+  if [ -n "${FM_PR_MERGE_EXPECT_BASE:-}" ] && [ "$base" != "$FM_PR_MERGE_EXPECT_BASE" ]; then
+    echo "error: live base $base does not match expected base $FM_PR_MERGE_EXPECT_BASE; refusing to merge" >&2
+    return 1
+  fi
   if ! red=$(fm_pr_github_checks_not_green "$json"); then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1

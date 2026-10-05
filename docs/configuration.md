@@ -764,6 +764,7 @@ It runs with its working directory in `state/autoland/` and these variables set:
 
 ```sh
 FM_HOME                 # this home
+FM_AUTOLAND_CODE_ROOT   # tracked checkout containing the runner's bin/ scripts
 FM_AUTOLAND_REPO        # <owner>/<name>
 FM_AUTOLAND_TARGET      # the commit to deploy, also $1
 FM_AUTOLAND_DEPLOYED    # the commit this hook last deployed, empty when none is recorded

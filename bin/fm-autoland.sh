@@ -353,12 +353,22 @@ EOF
   esac
 }
 
-task_for_pr() {  # <url>; prints the owning task id in this home, if any
-  local m
+TASK_PR_ID=
+TASK_PR_URL=
+task_for_pr() {  # <url>; sets TASK_PR_ID and TASK_PR_URL for the owning task in this home
+  local m repo number recorded
+  TASK_PR_ID=
+  TASK_PR_URL=
+  fm_pr_url_parse "$1" && [ "$FM_PR_PROVIDER" = github ] || return 1
+  repo=$(printf '%s/%s' "$FM_PR_OWNER" "$FM_PR_REPO" | tr '[:upper:]' '[:lower:]')
+  number=$FM_PR_NUMBER
   for m in "$STATE"/*.meta; do
     [ -f "$m" ] || continue
-    if grep -qxF "pr=$1" "$m" 2>/dev/null; then
-      basename "$m" .meta
+    recorded=$(grep '^pr=' "$m" | tail -n 1 | cut -d= -f2-)
+    fm_pr_url_parse "$recorded" && [ "$FM_PR_PROVIDER" = github ] || continue
+    if [ "$FM_PR_NUMBER" = "$number" ] && [ "$(printf '%s/%s' "$FM_PR_OWNER" "$FM_PR_REPO" | tr '[:upper:]' '[:lower:]')" = "$repo" ]; then
+      TASK_PR_ID=$(basename "$m" .meta)
+      TASK_PR_URL=$recorded
       return 0
     fi
   done
@@ -382,7 +392,7 @@ merge_pr() {  # <url> <head> <method> <attestation> <max_risk> <base>
 }
 
 merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
-  local url=$1 head=$2 method=$3 need_attest=$4 max_risk=$5 base=$6 id out live rec state
+  local url=$1 head=$2 method=$3 need_attest=$4 max_risk=$5 base=$6 out live rec state
   MERGE_ERROR=
   if ! live=$(gh pr view "$url" \
       --json url,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,body,labels,statusCheckRollup 2>/dev/null); then
@@ -405,8 +415,8 @@ merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
     MERGE_ERROR=${REASON:-"its live checks are no longer all green"}
     return 1
   fi
-  if id=$(task_for_pr "$url"); then
-    if out=$(FM_HOME="$FM_HOME" FM_PR_MERGE_EXPECT_HEAD="$head" "$SCRIPT_DIR/fm-pr-merge.sh" "$id" "$url" -- "--$method" 2>&1); then
+  if task_for_pr "$url"; then
+    if out=$(FM_HOME="$FM_HOME" FM_PR_MERGE_EXPECT_HEAD="$head" FM_PR_MERGE_EXPECT_BASE="$base" "$SCRIPT_DIR/fm-pr-merge.sh" "$TASK_PR_ID" "$TASK_PR_URL" -- "--$method" 2>&1); then
       return 0
     fi
     MERGE_ERROR=$(printf '%s\n' "$out" | grep -m1 -E '^error:|refus' | sed 's/^error: //')
@@ -551,6 +561,7 @@ run_hook() {  # <hook> <oid> <approved 0|1>
   fi
   rc=0
   ( cd "$AL" && fm_run_timed "$HOOK_TIMEOUT" env FM_HOME="$FM_HOME" FM_AUTOLAND_REPO="$E_REPO" \
+      FM_AUTOLAND_CODE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)" \
       FM_AUTOLAND_TARGET="$oid" FM_AUTOLAND_DEPLOYED="$deployed" FM_AUTOLAND_APPROVED="$approved" \
       "$file" "$oid" ) >> "$log" 2>&1 < /dev/null || rc=$?
   summary=$(grep -v '^[[:space:]]*$' "$log" | tail -n 1)
@@ -591,8 +602,11 @@ tick_deploys() {  # <entries-file> <response-file>
     oid=$(jq -r --arg k "r$i" '.data[$k].defaultBranchRef.target.oid // ""' "$2")
     i=$((i + 1))
     if result_read "$hook"; then
-      if [ "$R_STATUS" = running ] && ! lock_alive "$hook"; then
-        result_write "$hook" failed "$R_OID" "the deploy runner stopped before finishing"
+      if [ "$R_STATUS" = running ] && lock_take "$hook"; then
+        if result_read "$hook" && [ "$R_STATUS" = running ]; then
+          result_write "$hook" failed "$R_OID" "the deploy runner stopped before finishing"
+        fi
+        lock_drop "$hook"
         result_read "$hook"
       fi
       case "$R_STATUS" in

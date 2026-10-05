@@ -11,16 +11,16 @@
 set -u
 
 target=$1
-out=$("$FM_HOME/bin/fm-update.sh" 2>&1)
+out=$(FM_ROOT_OVERRIDE="$FM_AUTOLAND_CODE_ROOT" "$FM_AUTOLAND_CODE_ROOT/bin/fm-update.sh" 2>&1)
 rc=$?
 printf '%s\n' "$out"
 if [ "$rc" -ne 0 ]; then
   echo "bin/fm-update.sh exited $rc"
   exit 1
 fi
-head=$(git -C "$FM_HOME" rev-parse HEAD 2>/dev/null || true)
+head=$(git -C "$FM_AUTOLAND_CODE_ROOT" rev-parse HEAD 2>/dev/null || true)
 if [ "$head" != "$target" ]; then
-  echo "this home is at ${head:-an unreadable commit}, not ${target:0:7}: $(printf '%s\n' "$out" | grep -m1 'skipped' || echo 'see the log')"
+  echo "tracked code is at ${head:-an unreadable commit}, not ${target:0:7}: $(printf '%s\n' "$out" | grep -m1 'skipped' || echo 'see the log')"
   exit 1
 fi
 reread=$(printf '%s\n' "$out" | sed -n 's/^reread-firstmate: //p')
