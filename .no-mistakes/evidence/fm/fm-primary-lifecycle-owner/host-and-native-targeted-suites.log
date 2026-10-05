@@ -1,0 +1,90 @@
+FM_TEST_BEGIN 2026-10-05T00:37:38Z tests/fm-ui-host-control.test.sh family=unclassified expected_gate_skip=none
+NDJSON routing, exclusive CLI, lifecycle refusals and harness-specific dollar answers passed
+nonnull text, authoritative machine identities and independent-host lease preservation passed
+exact retirement, legacy selector compatibility and locked harness-switch races passed
+open command stream stdin isolation and correlated host-only success/failure diagnostics passed
+skip: tasks-axi not found (primary captain-call owner integration)
+browser-safe discovery, fail-closed classification and repeated primary capability refusals passed
+FM_TEST_END 2026-10-05T00:38:13Z tests/fm-ui-host-control.test.sh exit=0 duration_ms=34642 gate_skip=false
+FM_TEST_BEGIN 2026-10-05T00:38:13Z tests/fm-stream-deck.test.sh family=unclassified expected_gate_skip=none
+fm-stream-agent: command application unconfirmed: [Errno 28] source storage temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 28] source storage temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 28] source storage temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 5] source reads temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 5] source reads temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 5] source reads temporarily unavailable
+fm-stream-agent: command application unconfirmed: [Errno 28] temporary projection failure
+fm-stream-agent: could not acknowledge: result connection temporarily unavailable
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result outage until retry expiry
+fm-stream-agent: could not acknowledge: result capability revoked
+fm-stream-agent: could not acknowledge: late taken result needs a final shutdown attempt
+fm-stream-agent: could not acknowledge: late taken result needs a final shutdown attempt
+{"order_id": "bytes-0", "source_text": "first\r\nsecond", "handled_projection": "5.msg", "duplicate_result": [true, ""]}
+{"order_id": "bytes-1", "source_text": "first\rsecond\r", "handled_projection": "6.msg", "duplicate_result": [true, ""]}
+{"order_id": "bytes-2", "source_text": "α\r\nβ\n\n", "handled_projection": "7.msg", "duplicate_result": [true, ""]}
+PASS active-turn delivery, duplicate/lost-ack reconciliation, stale execution, finish race, ordered recovery, byte-exact sources, and untouched evidence
+PASS durable take barriers, full-timeout delayed destructive HTTP, independent application/take/result responsibilities, bounded retry expiry, shutdown drain, and durable recovery
+PASS executable entry points, per-endpoint negotiation, retained-agent compatibility, and native-only text limits
+FM_TEST_END 2026-10-05T00:38:21Z tests/fm-stream-deck.test.sh exit=0 duration_ms=8169 gate_skip=false
+FM_TEST_BEGIN 2026-10-05T00:38:21Z tests/fm-deck-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - Herdr Deck recovery proves driver identity; dead and non-Deck paths remain conservative
+ok - Herdr Deck recovery attributes a live driver across a spaced code root and state root
+ok - the steering doorbell rings a live remote Deck driver and skips an absent one
+ok - Deck idle Ctrl+C stays a signal, not fake input, while partial input remains visible
+ok - Deck host preserves handling-successor supervision without parent turn-end wakes
+ok - fm-deck-worker: a secondmate records a failed turn and waits at its prompt for the next wake
+ok - fm-deck-worker: a secondmate replaces its watcher when the successor refuses its handoff
+ok - fm-deck-worker: a secondmate with no session repeats its launch brief on the next wake
+ok - fm-deck-worker: a secondmate that cannot open a session stops for the guarded relaunch
+ok - fm-deck-worker: a secondmate that cannot publish a failed turn stops instead of looping
+ok - fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model
+ok - fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end
+ok - fm-deck-worker: busy-state failures stop turns and publish status evidence
+ok - fm-deck-worker: turn-end publication refuses unsafe targets
+ok - fm-deck-worker: the evidence gate refuses a silent turn and passes one that reported
+ok - fm-deck-worker: Deck stderr cannot break completion-blocked rendering
+ok - fm-deck-worker: Firstmate bookkeeping cannot satisfy worker evidence
+ok - fm-deck-worker: the finished-turn line carries the UTC completion time and degrades safely without it
+ok - fm-deck-worker: the idle prompt notes the UTC idle instant beside the bare ❯ prompt
+ok - fm-deck-worker: status evidence never follows symlinked or non-regular paths
+ok - fm-deck-worker: silent and failed turns gain status evidence before turn-end
+ok - fm-deck-worker: Ctrl+C records evidence and returns the worker to its prompt
+ok - fm-deck-worker: each completed turn leaves the next steer an idle baseline
+ok - Deck stop: physical aliases and spaced paths stop the active Deck process
+ok - Deck stop: stale secondmate drivers stop before replacement arming
+ok - Deck stop: exact task scope and bounded escalation remove survivors
+ok - liveness: the deck driver and binary are agents, unrelated names are not
+ok - tmux liveness: Deck's Linux comm and argv0 classify alive
+ok - control and busy-source tables carry Deck mechanics without rendered delivery evidence
+ok - Deck supervision autoarm remains scoped to secondmate launches
+ok - fm-spawn: ordinary Deck dispatch records only default effort
+ok - fm-spawn: Deck refuses unsupported effort before launch metadata
+fm-deck-harness: all cases passed
+FM_TEST_END 2026-10-05T00:39:51Z tests/fm-deck-harness.test.sh exit=0 duration_ms=89726 gate_skip=false
+FM_TEST_BEGIN 2026-10-05T00:39:51Z tests/fm-supervision-instructions.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - Deck instructions delegate continuity to the persistent driver
+ok - renderer prints exactly the selected harness block
+ok - renderer falls back to unknown.md for unverified harness names
+ok - renderer includes read-only, afk, and effective x-mode current-state stanzas
+ok - renderer's away/quiet stanzas are mode-aware, default to away, and fall back safely on garbage input
+ok - renderer repair-line mode is harness-aware and honors conditional state
+ok - renderer preserves every harness ordinary-continuation and missing-cycle repair path
+ok - pi-signed keeps its identity while sharing Pi's supervision protocol
+ok - grok supervision is Claude-shaped background notify with passive Stop-hook backstop
+ok - grok rendered command sources the effective x-mode config
+ok - pi supervision snippet renders the effective extension path
+FM_TEST_END 2026-10-05T00:39:52Z tests/fm-supervision-instructions.test.sh exit=0 duration_ms=882 gate_skip=false
+FM_TEST_SUMMARY total=4 failed=0 skipped_gate=0 duration_ms=133610
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=2 duration_ms=90608 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=2 duration_ms=42811 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-deck-harness.test.sh duration_ms=89726
+FM_TEST_SLOWEST rank=2 script=tests/fm-ui-host-control.test.sh duration_ms=34642
+FM_TEST_SLOWEST rank=3 script=tests/fm-stream-deck.test.sh duration_ms=8169
+FM_TEST_SLOWEST rank=4 script=tests/fm-supervision-instructions.test.sh duration_ms=882

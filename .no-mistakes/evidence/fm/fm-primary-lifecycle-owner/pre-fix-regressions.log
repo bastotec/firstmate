@@ -1,0 +1,40 @@
+FM_TEST_BEGIN 2026-10-05T00:40:19Z tests/fm-primary-prefixed-regression.test.sh family=unclassified expected_gate_skip=none
+Traceback (most recent call last):
+  File "<stdin>", line 462, in <module>
+  File "<stdin>", line 139, in wait
+AssertionError: embedded publisher completes only after retirement
+managed-primary: registration publication pending: [Errno 28] fixture registration storage failure: '<test-worktree>/.test-phase-tmp/fm-primary.8ecwMn/home/state/primary-owner/registration.json'
+managed-primary: registration publication pending: primary registration changed; capability refused
+managed-primary: registration publication pending: [Errno 5] fixture registration readback failure: '<test-worktree>/.test-phase-tmp/fm-primary.8ecwMn/home/state/primary-owner/registration.json'
+managed-primary: registration publication pending: [Errno 5] fixture registration readback failure: '<test-worktree>/.test-phase-tmp/fm-primary.8ecwMn/home/state/primary-owner/registration.json'
+managed-primary: registration publication pending: primary registration changed; capability refused
+managed-primary: registration publication pending: primary registration changed; capability refused
+managed-primary: registration publication pending: [Errno 5] fixture registration readback failure: '<test-worktree>/.test-phase-tmp/fm-primary.8ecwMn/home/state/primary-owner/registration.json'
+managed-primary: registration publication pending: [Errno 5] fixture registration readback failure: '<test-worktree>/.test-phase-tmp/fm-primary.8ecwMn/home/state/primary-owner/registration.json'
+managed-primary: registration publication pending: primary registration changed; capability refused
+managed-primary: registration publication pending: primary registration changed; capability refused
+Exception in thread Thread-15 (run):
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.14/3.14.8/Frameworks/Python.framework/Versions/3.14/lib/python3.14/threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.8/Frameworks/Python.framework/Versions/3.14/lib/python3.14/threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<test-worktree>/.test-phase-tmp/fm-primary.8ecwMn/bundle/bin/fm-stream-agent.py", line 1217, in run
+    reader.start()
+    ~~~~~~~~~~~~^^
+  File "<test-worktree>/.test-phase-tmp/fm-primary.8ecwMn/bundle/bin/fixture-primary-launch.py", line 62, in inject_thread_start
+    raise RuntimeError('fixture publisher thread start failure')
+RuntimeError: fixture publisher thread start failure
+fm-stream-hub 2.0.0 protocol 3 listening on 127.0.0.1:56400
+
+FM_TEST_END 2026-10-05T00:42:54Z tests/fm-primary-prefixed-regression.test.sh exit=1 duration_ms=154518 gate_skip=false
+FM_TEST_BEGIN 2026-10-05T00:42:54Z tests/fm-stream-agent-prefixed-regression.test.sh family=unclassified expected_gate_skip=none
+ok - stream agent kill safety: partial-write-completes
+not ok - stream agent kill safety: partial-startup-pty-reader error='fixture internal thread start failure' threads=[] descriptor_open=True closed=False
+FM_TEST_END 2026-10-05T00:43:16Z tests/fm-stream-agent-prefixed-regression.test.sh exit=1 duration_ms=22689 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=2 skipped_gate=0 duration_ms=177352
+FM_TEST_SUMMARY_FAMILY family=unclassified count=2 duration_ms=177207 failed=2
+FM_TEST_SLOWEST rank=1 script=tests/fm-primary-prefixed-regression.test.sh duration_ms=154518
+FM_TEST_SLOWEST rank=2 script=tests/fm-stream-agent-prefixed-regression.test.sh duration_ms=22689

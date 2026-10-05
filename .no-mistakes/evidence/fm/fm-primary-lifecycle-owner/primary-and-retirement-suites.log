@@ -1,0 +1,48 @@
+FM_TEST_BEGIN 2026-10-05T00:35:19Z tests/fm-primary.test.sh family=unclassified expected_gate_skip=none
+PASS managed setup/discovery, genuine endpoint registration, duplicate and unregistered refusals
+PASS owned-child interrupt/exit/relaunch/recover-missing, exact profile replay, stale execution refusal
+PASS browser-safe storage refusal, correlated host-only owner diagnostics and safe named categories
+PASS enqueue subprocess failure stays pending, preserves owner/child and reconciles the original order
+PASS token failure retains manager/socket and pending receipt; restored fixture token permits authorized recovery
+PASS transactional publication, monitoring storage recovery, foreign-registration refusal and CLI reconciliation identities
+PASS atomic replacement survives directory-fsync/readback EIO, refuses foreign records and restores authorized lifecycle
+PASS publisher Thread.start failure cleans up only its owned child and permits exit/relaunch/recover-missing
+PASS partial reader/state/command startup closes the endpoint before immediate authorized recovery
+PASS execution-bound Deck native acceptance and unsupported-adapter no-fallback refusal
+FM_TEST_END 2026-10-05T00:36:51Z tests/fm-primary.test.sh exit=0 duration_ms=91423 gate_skip=false
+FM_TEST_BEGIN 2026-10-05T00:36:51Z tests/fm-stream-agent-kill-safety.test.sh family=unclassified expected_gate_skip=none
+ok - stream agent kill safety: partial-write-completes
+ok - stream agent kill safety: partial-startup-pty-reader
+ok - stream agent kill safety: partial-startup-state
+ok - stream agent kill safety: partial-startup-commands
+ok - stream agent kill safety: standalone-probe-blocked
+ok - stream agent kill safety: standalone-pty-closed
+ok - stream agent kill safety: standalone-shutdown-retirement
+ok - stream agent kill safety: standalone-shutdown-completes
+ok - stream agent kill safety: embedded-probe-blocked
+ok - stream agent kill safety: embedded-pty-closed
+ok - stream agent kill safety: embedded-shutdown-retirement
+ok - stream agent kill safety: embedded-shutdown-completes
+ok - stream agent kill safety: child-ready-with-parent-sigint-0
+ok - stream agent kill safety: child-ready-with-parent-sigint-1
+ok - stream agent kill safety: child-handles-sigint-with-parent-0
+ok - stream agent kill safety: child-handles-sigint-with-parent-1
+ok - stream agent kill safety: parent-sigint-disposition-unchanged-0
+ok - stream agent kill safety: parent-sigint-disposition-unchanged-1
+ok - stream agent kill safety: endpoint-is-session-leader
+ok - stream agent kill safety: recorded-pgid-matches-kernel
+ok - stream agent kill safety: live-endpoint-is-killed
+ok - stream agent kill safety: reaped-endpoint-is-not-signalled
+ok - stream agent kill safety: concurrent-reap-never-escapes
+ok - stream agent kill safety: refuses-own-process-group
+ok - stream agent kill safety: refuses-own-session
+ok - stream agent kill safety: the refusal names the group it would not signal
+ok - stream agent kill safety: the suite's kill guard refuses itself
+ok - stream agent kill safety: the suite's kill guard refuses an ancestor
+ok - stream agent kill safety: the suite's kill guard refuses pid 1
+ok - stream agent kill safety: the suite's kill guard still signals a helper it started
+FM_TEST_END 2026-10-05T00:37:13Z tests/fm-stream-agent-kill-safety.test.sh exit=0 duration_ms=22294 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=113843
+FM_TEST_SUMMARY_FAMILY family=unclassified count=2 duration_ms=113717 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-primary.test.sh duration_ms=91423
+FM_TEST_SLOWEST rank=2 script=tests/fm-stream-agent-kill-safety.test.sh duration_ms=22294
