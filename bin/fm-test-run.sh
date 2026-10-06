@@ -711,6 +711,7 @@ tests/fm-daemon.test.sh 29571
 tests/fm-deck-harness.test.sh 64987
 tests/fm-deck-host-live-e2e.test.sh 105
 tests/fm-documentation-audiences.test.sh 996
+tests/fm-endpoint-rebind-lib.test.sh 1200
 tests/fm-extension-binding.test.sh 10179
 tests/fm-external-wait.test.sh 7628
 tests/fm-fleet-snapshot-view.test.sh 9146
@@ -737,6 +738,7 @@ tests/fm-lint-workflows.test.sh 947
 tests/fm-live-gate.test.sh 1938
 tests/fm-mail-check.test.sh 8405
 tests/fm-mail.test.sh 10744
+tests/fm-meta-backfill.test.sh 2500
 tests/fm-model-chain.test.sh 28024
 tests/fm-muse-harness.test.sh 43480
 tests/fm-muse-signals-live-e2e.test.sh 52

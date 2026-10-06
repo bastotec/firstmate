@@ -719,8 +719,8 @@ test_spawn_backend_precedence_over_inherited_config() {
   meta="$w/home/state/sm.meta"
   [ "$(cat "$sm/config/backend")" = herdr ] \
     || fail "backend precedence fixture did not inherit config/backend=herdr"
-  assert_no_grep '^backend=' "$meta" \
-    "FM_BACKEND=tmux did not beat inherited config/backend=herdr"
+  grep -qx 'backend=tmux' "$meta" \
+    || fail "FM_BACKEND=tmux did not beat inherited config/backend=herdr"
   pass "B5b spawn: FM_BACKEND wins over inherited config/backend"
 }
 
@@ -741,8 +741,8 @@ test_spawn_explicit_backend_precedence_over_env_and_inherited_config() {
   meta="$w/home/state/sm.meta"
   [ "$(cat "$sm/config/backend")" = herdr ] \
     || fail "explicit backend precedence fixture did not inherit config/backend=herdr"
-  assert_no_grep '^backend=' "$meta" \
-    "explicit --backend tmux did not beat FM_BACKEND=stream and inherited config/backend=herdr"
+  grep -qx 'backend=tmux' "$meta" \
+    || fail "explicit --backend tmux did not beat FM_BACKEND=stream and inherited config/backend=herdr"
   pass "B5c spawn: explicit --backend wins over FM_BACKEND and inherited config/backend"
 }
 

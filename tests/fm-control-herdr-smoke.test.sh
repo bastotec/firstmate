@@ -241,13 +241,6 @@ herdr pane report-agent "$PANE_ID" --source fm-control-smoke --agent fm-control-
 STATE=$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")
 [ "$STATE" = alive ] || fail "herdr should classify a registered agent with a live process as alive, got '$STATE'"
 
-OUT=$(run_control hsmoke interrupt) || fail "interrupt against a registered agent should succeed: $OUT"
-case "$OUT" in
-  *"interrupt-delivered hsmoke harness=claude backend=herdr verified=agent-alive cancel=unconfirmed"*) : ;;
-  *) fail "interrupt should report the agent-alive proof on herdr, got: $OUT" ;;
-esac
-pass "real herdr: interrupt delivers the harness's key and proves the agent survived it"
-
 herdr pane get "$PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
   || fail "the control plane must never remove the endpoint it was operating on"
 [ -d "$WT" ] || fail "the control plane must never remove the task's local copy"
@@ -256,6 +249,9 @@ pass "real herdr: no control verb removed the endpoint or the task's local copy"
 # --- the stale registration (issue #4115): the agent process is gone, the ---
 # --- record is not, and recovery must proceed anyway ------------------------
 #
+# Keep this process free of synthetic interrupt input: sleep does not consume
+# Escape, so it would remain queued for the shell and corrupt relaunch input.
+# The interrupt case runs on the final process below, after both relaunches.
 # Stopping the agent-named process leaves the pane a plain shell while Herdr
 # keeps the registration, which is exactly the shape a Pi crew leaves behind
 # when it exits under a nested shell. Before the fix this read `alive` forever:
@@ -317,6 +313,13 @@ start_agent_process
 herdr pane report-agent "$PANE_ID" --source fm-control-smoke --agent fm-control-smoke-agent \
   --state idle --session "$SESSION" >/dev/null 2>&1 \
   || fail "could not re-register the live agent on the task pane"
+OUT=$(run_control hsmoke interrupt) || fail "interrupt against a registered agent should succeed: $OUT"
+case "$OUT" in
+  *"interrupt-delivered hsmoke harness=claude backend=herdr verified=agent-alive cancel=unconfirmed"*) : ;;
+  *) fail "interrupt should report the agent-alive proof on herdr, got: $OUT" ;;
+esac
+pass "real herdr: interrupt delivers the harness's key and proves the agent survived it"
+
 if OUT=$(run_control hsmoke exit 2>&1); then
   fail "exit should fail closed when a live agent ignores the typed exit command: $OUT"
 fi

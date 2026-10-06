@@ -42,8 +42,8 @@
 #       failed.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-classify-lib.sh"
 
@@ -2569,5 +2569,67 @@ test_unresolved_terminal_row_is_history_not_current
 test_runs_list_continuation_found_when_axi_answers_other_branch
 test_no_run_herdr_stale_registration_over_shell_reads_agent_gone
 test_no_run_herdr_stale_working_record_is_never_busy
+
+# --- stream crews (fm_test_fake_stream) ---------------------------------------
+
+# stream_crew <case-dir> <id>: a Deck crew recorded on a fake stream endpoint
+# whose foreground is the Deck worker. Echoes the endpoint target.
+stream_crew() {
+  local d=$1 id=$2 pair target
+  pair=$(FM_HOME="$d" bash -c '. "$1/bin/fm-backend.sh"; fm_backend_source stream && fm_backend_stream_create_task "fm-$2" "$3"' \
+    _ "$ROOT" "$id" "$d/wt") || return 1
+  target="${pair%% *}:${pair##* }"
+  fm_test_fake_stream_set "$target" '{"foreground": [{"pid": "", "name": "fm-deck-worker", "argv0": "fm-deck-worker", "args": "fm-deck-worker"}]}'
+  fm_write_meta "$d/state/$id.meta" "window=$target" "endpoint_task_id=$id" "worktree=$d/wt" \
+    "kind=ship" "harness=deck" "backend=stream" "stream_hub=$FM_TEST_STREAM_URL" "stream_endpoint_id=${pair##* }"
+  printf '%s' "$target"
+}
+
+test_stream_crew_reads_busy_idle_missing_and_unreachable() {
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "stream crew-state skipped without jq/curl"
+    return
+  fi
+  reset_fakes
+  local d target gen out
+  d=$(new_case stream-crew)
+  make_repo_on_branch "$d/wt" fm/feat-stream
+  make_fakebin "$d" >/dev/null
+  fm_test_fake_stream "$d/stream" || fail "fake stream hub did not start"
+  target=$(stream_crew "$d" feat-stream) || fail "could not create the stream crew's endpoint"
+  FM_FAKE_TMUX_UNREADABLE=1
+
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" feat-stream)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-stream busy --gen "$gen" \
+    --source deck-wrapper --event run_started
+  out=$(run_crew_state "$d" feat-stream)
+  assert_contains "$out" "state: working" "a busy stream crew should read working"
+  assert_contains "$out" "source: pane" "a busy stream crew reads from its own record"
+
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-stream idle --gen "$gen" \
+    --source deck-wrapper --event run_finished
+  printf 'needs-decision: which database?\n' > "$d/state/feat-stream.status"
+  out=$(run_crew_state "$d" feat-stream)
+  assert_contains "$out" "state: parked" "an idle stream crew falls to its status log"
+  assert_contains "$out" "source: status-log" "an idle stream crew reads the status log"
+
+  # A crew whose endpoint cannot be read falls back to the recovery-grade
+  # classifier, exactly as on tmux: only the hub's settled 404 is death
+  # evidence, and a hub that does not answer is unreachable.
+  make_repo_on_branch "$d/wt2" fm/feat-stream2
+  target=$(stream_crew "$d" feat-stream2) || fail "could not create the second stream crew's endpoint"
+  sed -i.bak "s|^worktree=.*|worktree=$d/wt2|" "$d/state/feat-stream2.meta"
+  rm -f "$d/state/feat-stream2.meta.bak"
+  fm_test_fake_stream_set "$target" '{"forget": true}'
+  out=$(run_crew_state "$d" feat-stream2)
+  assert_contains "$out" "backend target gone: $target" "an endpoint the hub settled as missing is gone"
+  fm_test_reap_helper_pids
+  out=$(run_crew_state "$d" feat-stream)
+  assert_contains "$out" "backend unreachable (stream endpoint state: unreadable)" "a hub that does not answer is unreachable"
+  assert_not_contains "$out" "backend target gone" "an unreachable hub is never death evidence"
+  pass "stream crew: busy, idle, missing and unreachable read through the fake stream hub exactly as on tmux"
+}
+
+test_stream_crew_reads_busy_idle_missing_and_unreachable
 
 echo "all fm-crew-state tests passed"

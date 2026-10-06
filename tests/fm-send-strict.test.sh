@@ -8,8 +8,8 @@
 # They also verify that a key send reports whether delivery actually succeeded.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 SEND="$ROOT/bin/fm-send.sh"
 TMP_ROOT=$(fm_test_tmproot fm-send-strict)
@@ -168,6 +168,37 @@ test_unmatched_single_colon_target_must_exist() {
   pass "fm-send strict: unmatched single-colon explicit targets must verify live before sending"
 }
 
+# A stream endpoint no record in this home names (a child home's crewmate, or
+# one reached by hand) is "<hub-tag>:<endpoint-id>", which is single-colon and
+# used to be guessed as tmux. On this home's configured hub it routes to
+# stream; the same shape tagged for another hub keeps the tmux guess.
+test_unrecorded_stream_target_routes_to_stream() {
+  local dir fb home err log rc pair target foreign
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "fm-send strict: stream routing skipped (jq/curl unavailable)"
+    return 0
+  fi
+  dir="$TMP_ROOT/stream-explicit"; mkdir -p "$dir/cwd"
+  fb=$(make_stubs "$dir"); home=$(setup_home streamexplicit); err="$dir/send.err"; log="$dir/tmux.log"; : > "$log"
+  fm_test_fake_stream "$dir" || fail "fake stream hub did not start"
+  pair=$(FM_HOME="$home" bash -c '. "$1/bin/fm-backend.sh"; fm_backend_source stream && fm_backend_stream_create_task fm-elsewhere "$2"' _ "$ROOT" "$dir/cwd") \
+    || fail "could not create the unrecorded stream endpoint"
+  target="${pair%% *}:${pair##* }"
+
+  PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" "$target" "hello stream" >/dev/null 2>"$err"; rc=$?
+  expect_code 0 "$rc" "an unrecorded stream target on this home's hub should send"$'\n'"$(cat "$err")"
+  assert_equals "hello stream" "$(fm_test_fake_stream_submitted "$target")" "the text should reach the stream endpoint"
+  [ ! -s "$log" ] || fail "a stream target was sent through tmux"$'\n'"$(cat "$log")"
+
+  foreign="other-hub-7717:${target#*:}"
+  PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_FAKE_TMUX_DEAD_TARGET="$foreign" FM_SEND_SETTLE=0 \
+    "$SEND" "$foreign" "hello" >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "a stream-shaped target for another hub should not send"
+  assert_contains "$(cat "$err")" "backend=tmux" "a target tagged for another hub should keep the tmux guess"
+  pass "fm-send strict: an unrecorded stream target on this home's hub routes to stream, another hub's does not"
+}
+
 test_fm_prefixed_herdr_session_is_an_explicit_target() {
   local dir fb home err log herdr_log rc
   dir="$TMP_ROOT/fm-remote-explicit"; mkdir -p "$dir"
@@ -237,5 +268,6 @@ test_unset_fm_home_fails
 test_unresolvable_target_does_not_tmux_fallback
 test_prefixless_herdr_pane_id_fails
 test_unmatched_single_colon_target_must_exist
+test_unrecorded_stream_target_routes_to_stream
 test_fm_prefixed_herdr_session_is_an_explicit_target
 test_healthy_fm_id_send_still_works

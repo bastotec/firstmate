@@ -332,6 +332,49 @@ test_spawn_home_layout() {
   pass "spawn-home layout writes harness pin, beat, and brief"
 }
 
+test_fake_stream_round_trip() {
+  local dir="$TMP_ROOT/fake-stream" pair target out
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "fake stream: skipped (jq/curl unavailable)"
+    return 0
+  fi
+  fm_test_fake_stream "$dir" || fail "the fake stream hub did not start"
+  mkdir -p "$dir/home/state" "$dir/cwd"
+  stream() (
+    export FM_HOME="$dir/home" FM_ROOT="$ROOT"
+    # shellcheck source=bin/fm-backend.sh
+    . "$ROOT/bin/fm-backend.sh"
+    fm_backend_source stream || exit 90
+    "$@"
+  )
+  pair=$(stream fm_backend_stream_create_task fm-t1 "$dir/cwd" "$dir/home/state/t1.status") \
+    || fail "the real adapter could not create a fake endpoint"
+  target="${pair%% *}:${pair##* }"
+  assert_equals "$FM_TEST_STREAM_TAG" "${target%%:*}" "the target should carry the fake hub's tag"
+  assert_equals dead "$(stream fm_backend_agent_state stream "$target")" "a fresh fake endpoint is a bare shell"
+  assert_equals "$dir/cwd" "$(stream fm_backend_stream_current_path "$target" fm-t1)" "cwd should be the registered one"
+  stream fm_backend_stream_send_text_line "$target" "deck run --model x" fm-t1 || fail "send line failed"
+  assert_equals alive "$(stream fm_backend_agent_state stream "$target")" "a submitted harness launch should read alive"
+  assert_equals "deck run --model x" "$(fm_test_fake_stream_submitted "$target")" "the submitted line was not recorded"
+  out=$(stream fm_backend_capture stream "$target" 20 fm-t1)
+  assert_contains "$out" '$ deck run --model x' "capture should echo the submitted line"
+  assert_equals empty "$(stream fm_backend_composer_state stream "$target" fm-t1)" "an idle composer should read empty"
+  stream fm_backend_stream_send_literal "$target" "half typed" fm-t1 || fail "send literal failed"
+  assert_equals pending "$(stream fm_backend_composer_state stream "$target" fm-t1)" "typed text should read pending"
+  stream fm_backend_send_key stream "$target" C-u fm-t1 || fail "C-u failed"
+  assert_equals empty "$(stream fm_backend_composer_state stream "$target" fm-t1)" "C-u should clear the composer"
+  stream fm_backend_stream_send_text_line "$target" "/quit" fm-t1 || fail "quit failed"
+  assert_equals dead "$(stream fm_backend_agent_state stream "$target")" "/quit should return to the shell"
+  stream fm_backend_stream_report_status "$target" working "fake note" || fail "status report failed"
+  assert_grep 'working: fake note' "$dir/home/state/t1.status" "status should land in the registered status path"
+  fm_test_fake_stream_set "$target" '{"stale": true}'
+  assert_equals unreadable "$(stream fm_backend_agent_state stream "$target")" "a stale reading must be unreadable"
+  fm_test_fake_stream_set "$target" '{"stale": false}'
+  stream fm_backend_kill stream "$target" "" fm-t1 || fail "kill should be confirmed by the fake agent"
+  assert_equals dead "$(stream fm_backend_agent_state stream "$target")" "a killed endpoint reads dead"
+  pass "fake stream: the real adapter creates, sends, captures, classifies, reports and kills fake endpoints"
+}
+
 test_git_maintenance_is_owned_through_local_clone || fail 'Git fixture maintenance ownership'
 test_git_config_isolation || fail "Git fixture config isolation"
 test_touch_epoch_preserves_repeated_dst_hour
@@ -341,3 +384,4 @@ test_fake_gh_and_gh_axi
 test_spawn_tmux_and_fakebin
 test_send_stubs_and_ssh
 test_spawn_home_layout
+test_fake_stream_round_trip

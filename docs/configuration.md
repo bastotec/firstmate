@@ -164,7 +164,9 @@ The compatibility helper `fm_backend_agent_alive` continues to collapse those de
 A herdr spawn additionally version-gates against the installed `herdr` binary's protocol and requires `jq`, refusing loudly on an incompatible or missing installation.
 For stream spawn prerequisites and refusal behavior, see [`docs/stream-backend.md`](stream-backend.md#prerequisites).
 A backend spawn refusal from a missing dependency or version gate is terminal for that selected backend; firstmate surfaces it as a blocker instead of silently retrying another backend.
-Task meta records `backend=` only for a non-default backend; an absent `backend=` means `tmux`, preserving existing default-path meta files.
+Every spawn records `backend=<name>` in task meta, `tmux` included.
+An absent `backend=` still reads as `tmux` for older records.
+[`bin/fm-meta-backfill.sh`](../bin/fm-meta-backfill.sh) makes those legacy records explicit; its header and help own usage, classification refusals, and remote-record exclusions.
 Every new task records `endpoint_task_id=` as the cleanup binding between the metadata filename and its opaque runtime endpoint.
 A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
 A stream task additionally records `stream_hub=` and `stream_endpoint_id=`.
@@ -174,6 +176,7 @@ Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm
 A metadata-routed selector returns the recorded backend target (`window=`), and matching explicit targets can still recover the recorded backend when metadata contains the same endpoint.
 Only metadata-routed task selectors carry secondmate-marker and Codex-harness context; explicit endpoint escape hatches do not.
 This paragraph is the single owner of the ordinary task-selector vocabulary; backend guides and other documents point here instead of restating the resolution order.
+For explicit targets no metadata names, [`fm-send.sh`'s header](../bin/fm-send.sh) owns backend inference and live-endpoint verification, including stream-shaped targets on this home's configured hub.
 Host decision answers instead use the constrained mode owned by [`bin/fm-send.sh`'s header](../bin/fm-send.sh).
 `fm-teardown.sh <id>` takes a task id directly and validates the complete metadata-only endpoint identity before any runtime dispatch or cleanup mutation.
 Missing, empty, duplicate, malformed, backend-inconsistent, or task-mismatched endpoint records are preserved and refused.

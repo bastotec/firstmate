@@ -68,9 +68,10 @@
 #   herdr and stream, all session providers only, so every ship/scout spawn
 #   runs treehouse get. An auto-detected herdr spawn prints a loud stderr
 #   notice; auto-detected tmux stays silent; stream is never auto-detected.
-#   Default tmux spawns do not write backend= to meta; absent backend= means
-#   tmux. Stream supports --secondmate through the same home-host driver as
-#   tmux/herdr.
+#   Every spawn writes backend=<name> to meta, tmux included; an absent
+#   backend= (older records) still means tmux, and bin/fm-meta-backfill.sh
+#   makes those explicit. Stream supports --secondmate through the same
+#   home-host driver as tmux/herdr.
 #   A backend spawn refusal (missing dependency, version gate, unauthenticated
 #   socket, or unsupported secondmate mode) is terminal for that selected backend;
 #   callers must surface it instead of silently retrying another backend.
@@ -1294,10 +1295,10 @@ fi
 # Backend selection (data/fm-backend-design-d7): explicit --backend, else
 # FM_BACKEND env, else config/backend, else runtime auto-detection, else
 # default tmux (fm_backend_name). fm_backend_validate_spawn refuses unknown or
-# non-spawn-capable backends. The resolved value is
-# recorded in meta only when it is NOT tmux (fm-teardown.sh and fm-watch.sh's
-# window_backend/fm_backend_of_meta already treat an absent backend= as tmux),
-# so the default path's meta stays byte-identical.
+# non-spawn-capable backends. The resolved value is always recorded in meta as
+# backend=<name>; readers (fm_backend_of_meta) still treat an absent line as
+# tmux for records written before that, and bin/fm-meta-backfill.sh makes those
+# explicit.
 if [ "$RELAUNCH" -eq 0 ]; then
   if [ "$BACKEND_SET" -eq 1 ]; then
     BACKEND=$BACKEND_ARG
@@ -4014,10 +4015,10 @@ preserve_relaunch_meta() {
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
-  # backend= is written only for a non-default (non-tmux) backend, so the
-  # default path's meta stays byte-identical (absent backend= means tmux;
-  # data/fm-backend-design-d7's P1 compatibility contract).
-  [ "$BACKEND" = tmux ] || echo "backend=$BACKEND"
+  # backend= is always written, tmux included, so every record names the
+  # backend it lives on. Readers still treat an absent line as tmux for records
+  # written before this (bin/fm-meta-backfill.sh makes those explicit).
+  echo "backend=$BACKEND"
   if [ "$BACKEND" = herdr ]; then
     echo "herdr_session=$HERDR_SES"
     echo "herdr_workspace_id=$HERDR_WORKSPACE_ID"

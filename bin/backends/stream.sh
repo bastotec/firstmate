@@ -41,7 +41,11 @@
 # refused loudly rather than driven on guessed routes.
 FM_BACKEND_STREAM_PROTOCOL=3
 FM_BACKEND_STREAM_DEFAULT_URL="http://127.0.0.1:7717"
-FM_BACKEND_STREAM_AGENT_BIN="$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agent.py"
+# FM_STREAM_AGENT_BIN replaces the agent program (it is still run as
+# `python3 <bin> serve ...`). Only tests set it, to start
+# tests/assets/stream-agent-stub.py against a fake hub (tests/fixtures.sh's
+# fm_test_fake_stream).
+FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agent.py}"
 
 # How long a 404 has to keep being the answer before it counts as `missing`.
 # A hub that restarted has forgotten every endpoint until each agent registers
@@ -577,8 +581,9 @@ fm_backend_stream_send_text_submit() {  # <target> <text> <retries> <enter-sleep
 # fm_backend_stream_agent_state: the recovery-grade classifier. See
 # bin/fm-backend.sh's fm_backend_agent_state for the shared vocabulary.
 #
-#   missing    the hub answered and has no such endpoint (404), and went on
-#              saying so for long enough that no agent is still coming back.
+#   missing    the hub keeps answering no such endpoint (404) through the
+#              bounded rejoin grace period; this is registry absence, not
+#              proof that a local agent or its worker has stopped.
 #   dead       the owning agent POSITIVELY reported the process gone, or a
 #              foreground group that is nothing but shells.
 #   alive      a verified harness is in that reported foreground group.
@@ -680,6 +685,50 @@ fm_backend_stream_agent_state() {  # <target>
   printf 'ambiguous'
 }
 
+# fm_backend_stream_agent_pids: the pid of each harness process in the
+# endpoint's reported foreground group, reduced to the top of each harness chain
+# (bin/fm-backend.sh's fm_backend_agent_pids owns the contract).
+#
+# The pids come from the owning agent's own state frame, so they name processes
+# on THE AGENT'S machine. They are printed only when that machine is this home's
+# own (fm_backend_stream_machine) - the case for every endpoint this home spawned,
+# since create_task starts the agent locally - because a caller holds them by
+# local process identity, and a pid from another machine would describe a
+# stranger here. Any other machine, a stale or unreadable reading, or an
+# endpoint the hub does not know returns 1, the "cannot be read" answer callers
+# already handle. An endpoint whose worker the agent reported gone, or whose
+# group holds no harness, prints nothing.
+fm_backend_stream_agent_pids() {  # <target>
+  local target=$1 out machine local_machine count index pid name argv0 args
+  fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || return 1
+  out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT/processes" 2>/dev/null) || return 1
+  [ "$(printf '%s' "$out" | jq -r '.closed_by // empty' 2>/dev/null)" != agent ] || return 0
+  [ "$(printf '%s' "$out" | jq -r '.stale' 2>/dev/null)" = false ] || return 1
+  machine=$(printf '%s' "$out" | jq -r '.machine // empty' 2>/dev/null)
+  local_machine=$(fm_backend_stream_machine) || return 1
+  [ -n "$machine" ] && [ "$machine" = "$local_machine" ] || return 1
+  case "$(printf '%s' "$out" | jq -r '.alive' 2>/dev/null)" in
+    true) ;;
+    false) return 0 ;;
+    *) return 1 ;;
+  esac
+  count=$(printf '%s' "$out" | jq -r '.foreground | length' 2>/dev/null)
+  case "$count" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  index=0
+  while [ "$index" -lt "$count" ]; do
+    pid=$(printf '%s' "$out" | jq -r --argjson i "$index" '.foreground[$i].pid // ""' 2>/dev/null)
+    name=$(printf '%s' "$out" | jq -r --argjson i "$index" '.foreground[$i].name // ""' 2>/dev/null)
+    argv0=$(printf '%s' "$out" | jq -r --argjson i "$index" '.foreground[$i].argv0 // ""' 2>/dev/null)
+    args=$(printf '%s' "$out" | jq -r --argjson i "$index" '.foreground[$i].args // ""' 2>/dev/null)
+    index=$((index + 1))
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    [ "$(fm_agent_process_classify "$name" "$argv0" "$args" "$pid")" = agent ] || continue
+    printf '%s\n' "$pid"
+  done | fm_agent_process_topmost
+}
+
 # Return contract: bin/fm-backend.sh's fm_backend_kill header owns it. This is
 # the adapter the contract was written from: the hub already distinguishes a
 # kill the endpoint's own agent acknowledged from one it only presumed, and
@@ -770,6 +819,35 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
       return 2
       ;;
   esac
+}
+
+# fm_backend_stream_local_agent_pid: the pid of a stream agent process on THIS
+# machine whose command line matches both `--label <label>` and
+# `--status-path <status-path>`, printed with return 0 when found; 1 when none
+# is found. Both tokens bind the process to this home's task rather than an
+# unrelated home using the same label. An agent that still runs owns its
+# pseudoterminal and worker, whatever the hub's registry says - the fact a
+# `missing` verdict cannot carry on its own, because a restarted hub forgets
+# endpoints until their agents re-register.
+fm_backend_stream_local_agent_pid() {  # <label> <status-path>
+  local label=$1 status_path=$2 bin
+  bin=${FM_BACKEND_STREAM_AGENT_BIN##*/}
+  LC_ALL=C ps -eo pid=,args= 2>/dev/null | awk -v label="$label" -v status_path="$status_path" -v bin="$bin" '
+    {
+      if (index($0, "fm-stream-agent") == 0 && index($0, bin) == 0) next
+      label_match = 0
+      for (i = 2; i < NF; i++) {
+        if ($i == "--label" && $(i + 1) == label) label_match = 1
+      }
+      # ps flattens argv with spaces, so a home path holding a space spans
+      # several fields; match it against the whole line instead, ending where
+      # the next option (or the line) does, so a path that is only a
+      # space-bounded prefix of the recorded one cannot match.
+      line = $0 " --"
+      status_match = index(line, " --status-path " status_path " --") > 0
+      if (label_match && status_match) { print $1; found = 1; exit }
+    }
+    END { exit found ? 0 : 1 }'
 }
 
 # fm_backend_stream_report_status: the status return channel (lifecycle point

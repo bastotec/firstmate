@@ -309,3 +309,77 @@ make_stubs() {
   fm_test_fake_sleep_noop "$fakebin"
   printf '%s\n' "$fakebin"
 }
+
+# --- fake stream hub ----------------------------------------------------------
+
+# fm_test_fake_stream <dir>
+# Starts tests/assets/stream-hub-stub.py --fleet on an ephemeral loopback port
+# and exports what bin/backends/stream.sh reads, so the real adapter, spawn,
+# peek, send, control, and teardown run against fake endpoints instead of a
+# real hub, agent, and pty:
+#   FM_STREAM_HUB, FM_STREAM_TOKEN, FM_STREAM_MACHINE (fake-box), and
+#   FM_STREAM_AGENT_BIN (tests/assets/stream-agent-stub.py).
+# Also sets FM_TEST_STREAM_URL and FM_TEST_STREAM_TAG (the hub tag every
+# target starts with). Pass --backend stream (or FM_BACKEND=stream) to the
+# script under test. The stub is a tracked helper, so fm_test_cleanup and
+# fm_test_reap_helper_pids stop it. The stub's docstring owns the fake-shell
+# rules (what makes a harness the foreground, and how /quit returns).
+fm_test_fake_stream() {
+  local dir=$1 ready pid waited=0 host port
+  mkdir -p "$dir"
+  ready="$dir/stream-hub.ready"
+  rm -f "$ready"
+  python3 "$ROOT/tests/assets/stream-hub-stub.py" --fleet --port 0 \
+    --ready-file "$ready" --journal "$dir/stream-hub.journal" \
+    > "$dir/stream-hub.log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ "$waited" -lt 100 ]; do
+    [ -s "$ready" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$ready" ] || { echo "fm_test_fake_stream: the stub hub never became ready: $(cat "$dir/stream-hub.log" 2>/dev/null)" >&2; return 1; }
+  read -r host port < "$ready"
+  FM_TEST_STREAM_URL="http://$host:$port"
+  FM_TEST_STREAM_TAG="$host-$port"
+  export FM_STREAM_HUB="$FM_TEST_STREAM_URL" FM_STREAM_TOKEN=fake-stream-token \
+    FM_STREAM_MACHINE=fake-box FM_STREAM_AGENT_BIN="$ROOT/tests/assets/stream-agent-stub.py" \
+    FM_TEST_STREAM_URL FM_TEST_STREAM_TAG
+}
+
+# fm_test_fake_stream_endpoints
+# The stub's JSON view of every fake endpoint: endpoint_id, label, machine,
+# cwd, foreground, alive, stale, closed_by, composer, and submitted (each line
+# the endpoint received with Enter, oldest first).
+fm_test_fake_stream_endpoints() {
+  curl -sS -m 10 "$FM_TEST_STREAM_URL/v1/test/endpoints"
+}
+
+# fm_test_fake_stream_submitted <target-or-endpoint-id>
+# The lines submitted to one fake endpoint, one per line.
+fm_test_fake_stream_submitted() {
+  local id=${1##*:}
+  fm_test_fake_stream_endpoints \
+    | jq -r --arg id "$id" '.endpoints[] | select(.endpoint_id == $id) | .submitted[]'
+}
+
+# fm_test_fake_stream_set <target-or-endpoint-id> <json-patch>
+# Patch one fake endpoint: {"foreground": [...]}, {"alive": false},
+# {"stale": true}, {"closed_by": "agent"}, {"composer": "text"}, or
+# {"forget": true} (the hub then answers 404 for it).
+fm_test_fake_stream_set() {
+  local id=${1##*:}
+  curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+    --data-binary "$2" "$FM_TEST_STREAM_URL/v1/test/endpoints/$id" >/dev/null
+}
+
+# fm_test_fake_stream_treehouse <dir>
+# Where a `treehouse get` typed into any fake endpoint moves its cwd - the
+# worktree a stream spawn then discovers through the endpoint's cwd.
+fm_test_fake_stream_treehouse() {
+  curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+    --data-binary "$(jq -nc --arg d "$1" '{treehouse_cwd: $d}')" \
+    "$FM_TEST_STREAM_URL/v1/test/config" >/dev/null
+}

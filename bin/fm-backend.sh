@@ -15,12 +15,9 @@
 # Zellij, cmux and Orca adapters (P3-P5) were removed; tmux, herdr and stream
 # remain.
 #
-# Compatibility contract: a task's meta may omit `backend=`; every reader here
-# treats that as `tmux` (fm_backend_of_meta), and fm-spawn.sh does not write
-# `backend=tmux` for a default-backend task, so existing and newly spawned
-# default-path metas stay byte-identical. Only a task spawned on a non-tmux
-# spawn-capable backend, currently experimental herdr or
-# stream, carries an explicit `backend=` line.
+# Compatibility: fm_backend_of_meta below owns the legacy missing-field
+# default; docs/configuration.md owns the operator-facing metadata contract,
+# and fm-spawn.sh's header owns publication of explicit backend fields.
 #
 # Event-source framing (herdr-addendum "Events as the core abstraction"): a
 # backend's supervision surface is conceptually an EVENT SOURCE - it produces
@@ -699,14 +696,15 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # pane-presence read and prints exactly one of:
 #   alive      - a verified harness agent is running.
 #   dead       - the endpoint exists but confidently has no agent.
-#   missing    - the recorded endpoint is authoritatively absent.
+#   missing    - the recorded endpoint is absent from the backend inventory.
 #   ambiguous  - the endpoint exists but its process cannot be attributed.
 #   unreadable - a target or inventory read failed or contradicted itself.
 #   unverified - this backend has no recovery classifier.
-# Only `dead` and `missing` license recovery; the secondmate liveness sweep
-# alone narrows a stream `missing` to a no-respawn skip, because the hub's
-# registry not knowing an endpoint never proves its agent gone
-# (bin/fm-bootstrap.sh owns that narrowing). Every `alive` is proven at
+# Only `dead` and `missing` can license recovery, subject to the caller's
+# ownership guards. Stream `missing` proves only absence from the hub registry,
+# never that its agent is gone: bin/fm-bootstrap.sh skips automatic respawn,
+# and bin/fm-control.sh adds a local owning-agent guard for manual recovery.
+# Every `alive` is proven at
 # process level through the shared classifier in bin/fm-agent-process-lib.sh,
 # never from a registration or a rendered title alone. The tmux adapter
 # requires a successful session inventory and returns `missing` only when it
@@ -737,21 +735,26 @@ fm_backend_agent_state() {  # <backend> <target>
 # recorded endpoint hosts, one per line, reduced to the top of each harness
 # chain, so a caller can hold an agent by process identity (bin/fm-wake-lib.sh's
 # fm_pid_identity) or read the arguments it was launched with. Empty output is
-# an agent-free endpoint. Only tmux and herdr have that process-level view;
-# every other backend, and a herdr pane whose processes cannot be read, returns 1.
+# an agent-free endpoint. tmux, herdr, and stream have that process-level view;
+# stream only for an endpoint whose owning agent runs on this machine, since its
+# pids come from that agent's report (bin/backends/stream.sh's
+# fm_backend_stream_agent_pids). Every other backend, and an endpoint whose
+# processes cannot be read, returns 1.
 fm_backend_agent_pids() {  # <backend> <target>
   local backend=$1 target=$2
   fm_backend_source "$backend" || return 1
   case "$backend" in
     tmux) fm_backend_tmux_agent_pids "$target" ;;
     herdr) fm_backend_herdr_agent_pids "$target" ;;
+    stream) fm_backend_stream_agent_pids "$target" ;;
     *) return 1 ;;
   esac
 }
 
-# Backward-compatible three-state view for existing callers. An
-# authoritatively missing endpoint is confidently not a live agent, while every
-# ambiguous, unreadable, or unverified result stays unknown.
+# Backward-compatible three-state view for existing callers: `dead` and
+# `missing` both map to `dead`; ambiguous, unreadable, and unverified map to
+# `unknown`. This lossy view does not prove a worker stopped: recovery must use
+# fm_backend_agent_state's verdict and caller ownership guards above.
 fm_backend_agent_alive() {  # <backend> <target>
   case "$(fm_backend_agent_state "$1" "$2")" in
     alive) printf 'alive' ;;
