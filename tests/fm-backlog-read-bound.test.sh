@@ -218,7 +218,7 @@ fm_write_meta "$CAPTAIN/state/wedged-origin.meta" \
   'window=firstmate:fm-wedged-origin' \
   'worktree=/nonexistent/wedged-origin' \
   'project=alpha' \
-  'harness=claude' \
+  'harness=deck' \
   'decisions_reviewed=1' \
   'decision_keys=wedged-entry'
 
@@ -337,7 +337,7 @@ fm_write_meta "$MIG/state/wedged-origin.meta" \
   'window=firstmate:fm-wedged-origin' \
   'worktree=/nonexistent/wedged-origin' \
   'project=alpha' \
-  'harness=claude' \
+  'harness=deck' \
   'decisions_reviewed=1' \
   'decision_keys=mig-entry'
 
@@ -402,7 +402,7 @@ fm_write_meta "$E2E_HOME/state/wedged-task.meta" \
   'window=firstmate:fm-wedged-task' \
   'worktree=/nonexistent/wedged-task' \
   'project=alpha' \
-  'harness=claude' \
+  'harness=deck' \
   'mode=no-mistakes' \
   'yolo=off'
 

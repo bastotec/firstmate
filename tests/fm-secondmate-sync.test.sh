@@ -80,7 +80,7 @@ add_sm_worktree() {
   {
     printf 'window=firstmate:fm-%s\n' "$id"
     printf 'kind=secondmate\n'
-    printf 'harness=codex\n'
+    printf 'harness=pi\n'
     printf 'home=%s/%s\n' "$w" "$id"
   } > "$w/home/state/$id.meta"
 }
@@ -342,7 +342,7 @@ case "$*" in
     sed -n 's/^window=[^:]*://p' "${FM_HOME:?}"/state/*.meta
     exit 0
     ;;
-  *display-message*'#{pane_current_command}'*) printf '%s\n' codex; exit 0 ;;
+  *display-message*'#{pane_current_command}'*) printf '%s\n' pi; exit 0 ;;
   *display-message*'#{pane_id}'*) printf '%s\n' '%1'; exit 0 ;;
   *display-message*'#{cursor_y}'*) printf '%s\n' 0; exit 0 ;;
   *capture-pane*) printf '❯\n'; exit 0 ;;
@@ -690,7 +690,7 @@ test_nudge_retry_uses_fresh_herdr_endpoint_after_respawn() {
     printf 'window=%s\n' "$stale"
     printf 'backend=herdr\n'
     printf 'kind=secondmate\n'
-    printf 'harness=claude\n'
+    printf 'harness=pi\n'
     printf 'home=%s/sm-instr\n' "$w"
   } > "$meta"
 
@@ -797,13 +797,14 @@ test_spawn_fast_forwards_before_launch() {
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  fm_fake_exit0 "$fakebin" pi
 
   PATH="$fakebin:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" \
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
     FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" codex --secondmate >/dev/null 2>&1 || true
+    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" pi --secondmate >/dev/null 2>&1 || true
 
   [ "$(head_of "$w/sm")" = "$c2" ] \
     || fail "spawn did not fast-forward the secondmate worktree to the primary's HEAD"
@@ -831,13 +832,14 @@ test_spawn_warns_when_sync_skipped_before_launch() {
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  fm_fake_exit0 "$fakebin" pi
 
   PATH="$fakebin:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" \
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
     FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" codex --secondmate >/dev/null 2>"$err" || true
+    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" pi --secondmate >/dev/null 2>"$err" || true
 
   assert_contains "$(cat "$err")" \
     "warning: secondmate sm sync skipped before launch: dirty working tree" \
@@ -1257,7 +1259,7 @@ test_bootstrap_syncs_remote_home_to_primary_commit() {
   mkdir -p "$w/sm/state/parent-route"
   fm_write_meta "$w/sm/state/parent-route/sm.meta" \
     'window=fm-remote:p1' 'endpoint_task_id=sm' 'worktree=-' 'project=-' \
-    'backend=herdr' 'harness=codex' 'herdr_session=fm-remote' \
+    'backend=herdr' 'harness=pi' 'herdr_session=fm-remote' \
     'herdr_workspace_id=w1' 'herdr_tab_id=t1' 'herdr_pane_id=p1'
 
   fakebin=$(make_remote_leg_ssh_stub "$w")
@@ -1340,12 +1342,12 @@ test_remote_launch_does_not_retarget_host_copy() {
   install_remote_herdr_fixture "$herdrbin" "$w/herdr.state" "$w/herdr.log" \
     "$w/herdr.sendfail" "$w/herdr.sock"
   cp "$herdrbin/bin/herdr" "$fakebin/herdr"
-  fm_fake_exit0 "$fakebin" gh treehouse tmux node
+  fm_fake_exit0 "$fakebin" gh treehouse tmux node pi
 
   # The real launch leg, exactly as the parent invokes it after its own sync.
   launch_out=$(PATH="$fakebin:$BASE_PATH" \
     FM_HOME="$w/launched" FM_ROOT_OVERRIDE="$w/coderoot" FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-remote-secondmate-control.sh" launch launched codex - - herdr 2>&1) || true
+    "$ROOT/bin/fm-remote-secondmate-control.sh" launch launched pi - - herdr 2>&1) || true
   [ "$(head_of "$w/launched")" = "$c1" ] \
     || fail "a remote launch moved the home onto the host's own Firstmate copy (out: $launch_out)"
 
@@ -1355,7 +1357,7 @@ test_remote_launch_does_not_retarget_host_copy() {
     FM_HOME="$w/coderoot" FM_ROOT_OVERRIDE="$w/coderoot" \
     FM_STATE_OVERRIDE="$w/control/state" FM_DATA_OVERRIDE="$w/control/data" \
     FM_CONFIG_OVERRIDE="$w/control/config" FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" control "$w/control" --secondmate --harness codex --backend herdr 2>&1) || true
+    "$ROOT/bin/fm-spawn.sh" control "$w/control" --secondmate --harness pi --backend herdr 2>&1) || true
   [ "$(head_of "$w/control")" = "$c2" ] \
     || fail "the ordinary secondmate spawn did not follow its own checkout, so the launch case is vacuous (out: $control_out)"
 

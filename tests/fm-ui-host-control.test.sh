@@ -167,7 +167,7 @@ refused('supervisor', 'ambiguous registry', note)
 write([task])
 for words in ('/quit', '--key Enter'):
     refused('fm-sample', 'harness invocation or send option', dict(kind='resolve-key', key='fixture-key', text=words))
-(home / 'state/sample.meta').write_text('remote_host=fixture-remote\nharness=codex\n')
+(home / 'state/sample.meta').write_text('remote_host=fixture-remote\nharness=pi\n')
 result, records = stream_command('fm-sample', dict(kind='resolve-key', key='fixture-key', text='$5/month is approved'))
 assert not records and 'unconfirmed' in result.stderr, result
 fakebin = temp / 'fakebin'
@@ -185,7 +185,9 @@ exit 0
 tmux.chmod(0o755)
 env['PATH'] = str(fakebin) + os.pathsep + env['PATH']
 words = '$5/month is approved\nKeep the answer unchanged.'
-for harness, answer in (('claude', words), ('pi', words), ('opencode', words), ('', words), ('codex', ' ' + words)):
+# A leading `$` is plain text on every harness, so the answer rides the inbox
+# byte-exact whatever the recorded harness is.
+for harness, answer in (('pi', words), ('pi-signed', words), ('deck', words), ('', words)):
     (home / 'state/sample.meta').write_text('window=fixture:fm-sample\nkind=ship\nharness=' + harness + '\n')
     (home / 'state/sample.status').write_text('needs-decision [key=fixture-key]: approve the price\n')
     before = set((home / 'state/sample.inbox').glob('*.msg'))
@@ -196,15 +198,7 @@ for harness, answer in (('claude', words), ('pi', words), ('opencode', words), (
     body = added.pop().read_text().split('\n--\n', 1)[1]
     assert body == answer, (body, answer)
     assert 'resolved [key=fixture-key]: answered:' in (home / 'state/sample.status').read_text()
-for metadata in ('harness=codex\n', 'harness=claude\nharness=codex\n'):
-    (home / 'state/sample.meta').write_text('window=fixture:fm-sample\nkind=ship\n' + metadata)
-    (home / 'state/sample.status').write_text('needs-decision [key=fixture-key]: approve the price\n')
-    before = set((home / 'state/sample.inbox').glob('*.msg'))
-    result, records = stream_command('fm-sample', dict(kind='resolve-key', key='fixture-key', text=words))
-    assert not records and 'harness invocation' in owner_results(result)[0]['stderr'], result
-    assert set((home / 'state/sample.inbox').glob('*.msg')) == before
-    assert 'resolved' not in (home / 'state/sample.status').read_text()
-print('NDJSON routing, exclusive CLI, lifecycle refusals and harness-specific dollar answers passed')
+print('NDJSON routing, exclusive CLI, lifecycle refusals and dollar answers passed')
 for action, field in (('note', 'text'), ('answer', 'text'), ('release', 'text'),
                       ('resolve-key', 'text'), ('relaunch', 'note'), ('recover-missing', 'note')):
     for value in (None, 4, [], {}, '', ' \n\t'):
@@ -235,7 +229,7 @@ for contents, override in (('# fixture comment\n\nfixture host/@\nignored-host\n
 env.pop('FM_STREAM_MACHINE', None)
 machine_file.write_text('fixture-host\n')
 write([task])
-(home / 'state/sample.meta').write_text('window=fixture:fm-sample\nkind=ship\nharness=claude\n')
+(home / 'state/sample.meta').write_text('window=fixture:fm-sample\nkind=ship\nharness=pi\n')
 (home / 'state/sample.status').write_text('needs-decision [key=fixture-key]: approve the price\n')
 lock = home / 'state/.lock'
 lock.write_text(str(os.getpid()) + '\n')
@@ -296,7 +290,7 @@ def race_request(task_id, command_id, text):
                 payload=dict(kind='resolve-key', key='race-key', text=text))
 
 
-def seed_race(task_id, harness='claude'):
+def seed_race(task_id, harness='pi'):
     meta = home / ('state/' + task_id + '.meta')
     meta.write_text('window=fixture:fm-' + task_id + '\nkind=ship\nharness=' + harness + '\nspawn_gen=old\n')
     status = home / ('state/' + task_id + '.status')
@@ -305,8 +299,8 @@ def seed_race(task_id, harness='claude'):
     return meta, status
 
 
-for scenario in ('retired-exact', 'switched-harness'):
-    exact = 'fm-sample' if scenario == 'retired-exact' else 'switch-sample'
+for scenario in ('retired-exact',):
+    exact = 'fm-sample'
     meta, status = seed_race(exact)
     sibling_meta, sibling_status = seed_race('sample')
     status_bytes, sibling_bytes = status.read_bytes(), sibling_status.read_bytes()
@@ -323,12 +317,7 @@ for scenario in ('retired-exact', 'switched-harness'):
         process.stdin.close()
         process.stdin = None
         await_file(ready, process)
-        if scenario == 'retired-exact':
-            meta.unlink()
-        else:
-            staged = meta.with_suffix('.replacement')
-            staged.write_text(meta.read_text().replace('harness=claude', 'harness=codex').replace('spawn_gen=old', 'spawn_gen=new'))
-            staged.replace(meta)
+        meta.unlink()
         go.touch()
         stdout, stderr = process.communicate(timeout=15)
         assert process.returncode == 0 and not stdout, (stdout, stderr)
@@ -336,8 +325,7 @@ for scenario in ('retired-exact', 'switched-harness'):
         assert diagnostic['state'] == 'unconfirmed' and diagnostic['command_id'] == scenario, diagnostic
         assert diagnostic['leaf_worker_id'] == request['identity']['leaf_worker_id'], diagnostic
         assert diagnostic['exit_code'] != 0, diagnostic
-        expected = 'exact task' if scenario == 'retired-exact' else 'harness invocation'
-        assert expected in diagnostic['stderr'], diagnostic
+        assert 'exact task' in diagnostic['stderr'], diagnostic
         assert status.read_bytes() == status_bytes and sibling_status.read_bytes() == sibling_bytes
         assert not (home / ('state/' + exact + '.inbox')).exists()
         assert set((home / 'state/sample.inbox').glob('*.msg')) == sibling_inbox
@@ -387,7 +375,7 @@ fi
 exec /bin/sleep "$@"
 ''')
 sleep_spy.chmod(0o755)
-for old_harness, new_harness in (('claude', 'codex'), ('codex', 'claude')):
+for old_harness, new_harness in (('pi', 'deck'), ('deck', 'pi')):
     exact = 'lock-switch-' + new_harness
     meta, status = seed_race(exact, old_harness)
     before = status.read_bytes()
@@ -415,17 +403,11 @@ for old_harness, new_harness in (('claude', 'codex'), ('codex', 'claude')):
         holder.communicate(input='publish\n', timeout=5)
         assert holder.returncode == 0
         stdout, stderr = sender.communicate(timeout=15)
-        if new_harness == 'codex':
-            assert sender.returncode != 0 and 'harness invocation' in stderr, (stdout, stderr)
-            assert status.read_bytes() == before
-            assert not (home / ('state/' + exact + '.inbox')).exists()
-            assert not typed_log.read_bytes(), typed_log.read_text()
-        else:
-            assert sender.returncode == 0, (stdout, stderr)
-            messages = list((home / ('state/' + exact + '.inbox')).glob('*.msg'))
-            assert len(messages) == 1 and messages[0].read_text().split('\n--\n', 1)[1] == answer, messages
-            assert 'resolved [key=race-key]:' in status.read_text()
-            assert answer not in typed_log.read_text(), typed_log.read_text()
+        assert sender.returncode == 0, (stdout, stderr)
+        messages = list((home / ('state/' + exact + '.inbox')).glob('*.msg'))
+        assert len(messages) == 1 and messages[0].read_text().split('\n--\n', 1)[1] == answer, messages
+        assert status.read_bytes() != before and 'resolved [key=race-key]:' in status.read_text()
+        assert answer not in typed_log.read_text(), typed_log.read_text()
         assert not meta_lock.exists() and not meta_lock.is_symlink()
     finally:
         if holder.poll() is None:
@@ -434,7 +416,7 @@ for old_harness, new_harness in (('claude', 'codex'), ('codex', 'claude')):
         if sender is not None and sender.poll() is None:
             sender.kill()
             sender.communicate()
-print('exact retirement, legacy selector compatibility and locked harness-switch races passed')
+print('exact retirement, legacy selector compatibility and locked metadata-publication races passed')
 write([task])
 spybin = temp / 'spybin'
 spybin.mkdir()

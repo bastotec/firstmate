@@ -189,32 +189,10 @@ Observed identities, and the resulting verdict:
 | pi | 0.82.0 | `pi-launcher` | `pi-signed`, `pi` | alive |
 | pi-signed | 0.82.0 | `pi-launcher` | `pi-signed`, `pi` | alive |
 | grok | 0.2.118 | `grok-0.2.118-ma` | `grok` | alive |
-| kimi | 0.31.1 | `kimi` | `kimi` | alive |
 
-In that 2026-08-03 seven-adapter run, Claude Code was the only harness whose title did not attribute it; every other adapter was attributed by both sources.
-Codex reported `codex-aarch64-a` at 0.145.0 and `codex` at 0.146.0, and Kimi Code reported `kimi-code` as its foreground `comm` at 0.29.1 and `kimi` at 0.31.1, so these identities move between ordinary patch releases in both directions.
+In that 2026-08-03 run, Claude Code was the only harness whose title did not attribute it; every other adapter was attributed by both sources.
+Codex reported `codex-aarch64-a` at 0.145.0 and `codex` at 0.146.0, so these identities move between ordinary patch releases.
 That is the evidence for treating any single process name as a surface under vendor control rather than a stable contract.
-
-The crewmate-only Muse Code 0.1.0-R708.1 adapter was verified separately on 2026-08-05 against tmux on macOS arm64.
-Its installed `muse-bin-0.1.0-R708.1` foreground identity classified `alive`, while `musescore`, `amuse`, `muse-binary`, and `muse-bind` remained ambiguous in the portable regression.
-[`muse.md`](muse.md#process-identity) owns the artifact identity and launcher evidence for that verification.
-
-The crewmate/scout-only Rovo CLI 202609.1.2 adapter added `*rovo*` to the same glob family as `*grok*`/`*kimi*` in the shared process-name classifier (now `fm_agent_process_classify_name` in `bin/fm-agent-process-lib.sh`), and was relaunched live under tmux 3.6a in an isolated private socket.
-`#{pane_current_command}` reported the truncated on-disk binary name `atlassian_cli_r` - macOS's 15-char `comm` truncation cuts `atlassian_cli_rovodev` off just before the `rovo` substring begins, the same truncation-volatility class codex/kimi's own patch-release name drift shows above - while the foreground ps-based `comm` correctly reported `rovo`, so `fm_backend_tmux_agent_state` returned `alive` through that primary source; the two-independent-name-sources design is exactly why the truncated title does not break the verdict.
-[`rovo.md`](rovo.md#backend-liveness-tmux-verified-live-herdr-placement-verified-live-with-a-herdr-side-agent-detection-gap) owns the fuller record, including the busy/interrupt/exit facts captured in that same live tmux session and the herdr agent-detection gap found when herdr placement was verified live in an isolated lab session.
-
-Bounded observed output:
-
-```text
-foreground comms:
-  zsh
-  .../instbin/muse-bin-0.1.0-R708.1
-classify each:
-  zsh                            -> shell
-  muse-bin-0.1.0-R708.1          -> agent
-fm_backend_agent_state tmux museliv:zsh
-alive
-```
 
 `#{pane_current_command}` and foreground `ps -o comm=` read different name fields, but which one preserves executable identity is platform-dependent.
 On macOS the pane command reflected the rewritable title while the full install path could survive in `ps -o comm=`; in the Linux portable regression those roles reversed for the version-named native executable, with the identifying path retained in argv[0].
@@ -247,7 +225,8 @@ Running the guard with no variable set on macOS 26.5.2 arm64 checked 8 installed
 The first default-on run failed on Cursor with `LIVENESS DRIFT: cursor unknown is running but classifies 'missing'`, observed title `zsh`.
 The classifier was not at fault: the guard resolved the harness through a generic `command -v cursor`, which on a machine that also has the Cursor editor finds `~/.local/bin/cursor` - the editor launcher, not the agent.
 That binary exits immediately, leaving a bare shell in the pane.
-The guard now asks `fm_cursor_resolve_binary` first for `cursor`, which is the same verified owner `bin/fm-spawn.sh` uses, so the probe launches `cursor-agent` and the editor CLI can no longer masquerade as the harness.
+The guard then used `fm_cursor_resolve_binary` first for `cursor`, so the probe launched `cursor-agent` rather than the editor CLI.
+Cursor now remains in this guard for primary-session identity only; `bin/fm-spawn.sh` no longer launches Cursor workers.
 
 Bounded output from the 2026-08-03 run that produced the first table above:
 
@@ -275,35 +254,8 @@ pi-signed
 
 ### Harness-adapter instruction routing
 
-Two checks keep the evidence boundaries separate.
+The retained reference check provides structural evidence, not native-loader proof.
 `tests/fm-harness-adapter-references.test.sh` parses the router's declared JSON contract as normalized data and proves every selected reference is readable, which is structural evidence only.
-`tests/fm-harness-adapter-instructions-live-e2e.test.sh` is an opt-in development check that sends the directly loaded router and every operation scenario across all nine harness identities to a local Ollama model, requires the generated plan as normalized JSON, and makes no external-provider call.
-
-```sh
-FM_HARNESS_ADAPTER_INSTRUCTION_EVAL=1 FM_HARNESS_ADAPTER_LOCAL_MODEL=ambient-router-gemma4:e4b bin/fm-test-run.sh tests/fm-harness-adapter-instructions-live-e2e.test.sh
-```
-
-That local evaluation demonstrates instruction-driven scenario selection, but it does not claim that a native harness loaded the selected files.
-The guard prints the exact installed version or unavailable status for every native harness so absent tools and unexercised provider transports remain explicit rather than becoming passes.
-Native loader behavior still requires the applicable live agent-tool check; no uniform deterministic zero-provider transport currently spans Claude, Codex, OpenCode, and Pi, and the other five tools remain unavailable where their binaries are absent.
-
-Bounded output from the 2026-08-29 local run:
-
-```text
-ok - local model ambient-router-gemma4:e4b selected every operation scenario and all nine harness identities
-# native loader not claimed: claude 2.1.220 (Claude Code) is installed, but this harness-neutral evaluation does not exercise its provider transport
-# native loader not claimed: codex 0.147.0-alpha.6+local.4 is installed, but this harness-neutral evaluation does not exercise its provider transport
-# native loader not claimed: opencode 1.14.48 is installed, but this harness-neutral evaluation does not exercise its provider transport
-# native loader not claimed: pi 0.84.0 is installed, but this harness-neutral evaluation does not exercise its provider transport
-# unverified native loader: pi-signed is not installed on this machine
-# unverified native loader: grok is not installed on this machine
-# unverified native loader: kimi is not installed on this machine
-# unverified native loader: cursor is not installed on this machine
-# unverified native loader: muse is not installed on this machine
-# installed native tools recorded without overstating loader coverage: 4
-# unavailable native tools: pi-signed grok kimi cursor muse
-```
-
 The isolated process and endpoint checks used:
 
 ```sh
@@ -334,8 +286,8 @@ Tmux needs the exact `pi-launcher`, `pi-signed`, `pi`, and `Pi` process identiti
 Herdr uses native registered-agent state and needs no process-name branch.
 Stream classifies through the same shared process owner.
 
-The current classifier matrix and its refresh guard are recorded in [Composer classification matrix](#composer-classification-matrix), with portable shape coverage in `tests/fm-composer-lib.test.sh` and `tests/fm-composer-ghost.test.sh`.
-Kimi pointer delivery and OpenCode 1.18.4 busy-queue behavior remain pinned by `tests/fm-kimi-harness.test.sh`, `tests/fm-tmux-submit-busy.test.sh`, and `tests/fm-composer-lib.test.sh`.
+The [Composer classification matrix](#composer-classification-matrix) retains the dated live evidence; `tests/fm-composer-lib.test.sh` and `tests/fm-composer-ghost.test.sh` provide current portable shape coverage.
+OpenCode 1.18.4 busy-queue behavior remains pinned by `tests/fm-tmux-submit-busy.test.sh` and `tests/fm-composer-lib.test.sh`.
 Herdr's Claude idle-native submit confirmation is pinned by `tests/fm-backend-herdr.test.sh` and refreshed by `FM_HERDR_SUBMIT_CONFIRM_LIVE=1 tests/fm-herdr-submit-confirm-live-e2e.test.sh`.
 
 ### Cleanup endpoint identity
@@ -362,7 +314,7 @@ The dedicated tmux cell removed ambient tmux variables, required a socket-bound 
 Valid cleanup removed only the exact task-bound target and left the control window live.
 The current metadata-only validation covers tmux, Herdr, and stream before backend dispatch, and refuses records on the removed Zellij, Orca, and cmux backends.
 `tests/fm-teardown-endpoint-safety.test.sh` now validates tmux and Herdr records and pins refusal of a removed-backend record; `tests/fm-backend-stream.test.sh` covers stream endpoint identity.
-Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that backend cleanup boundary; their harness-specific hook files, tokens, transcript bindings, and session-log sidecars are cleaned only after it, so no harness needs a separate endpoint parser.
+Pi, pi-signed, and Deck share that backend cleanup boundary; their harness-specific wiring is cleaned only after it, so no harness needs a separate endpoint parser.
 
 ### Endpoint kill confirmation
 
@@ -442,121 +394,6 @@ ok - session start still finishes an ordinary interrupted cleanup
 Two of those cases are what keep the refusal from becoming a permanent hold: a cleanup interrupted after a proven kill still replays, and so does the identical record without the stamp, so an ordinary interrupted cleanup is finished rather than stranded.
 The herdr repositioning case and these pending-close cases were observed on 2026-09-18; the tmux run remains the 2026-09-17 one dated above.
 
-## Claude workspace trust
-
-Verified 2026-09-03 on Claude Code 2.1.259.
-Claude gates a folder it has never seen behind an interactive workspace-trust dialog, and the CLI documents the only bypass as non-interactive mode, which a crewmate pane is not.
-
-```sh
-claude --version
-claude --help | grep -A 5 'workspace trust dialog'
-```
-
-```
-2.1.259 (Claude Code)
-                                        pipes). Note: The workspace trust dialog
-                                        is skipped when Claude is run in
-                                        non-interactive mode (via -p, or when
-                                        stdout is not a TTY, e.g. piped or
-                                        redirected output). Only use this in
-                                        directories you trust. Settings files
-```
-
-`--dangerously-skip-permissions` is a permission control and is absent from that bypass, so an interactive worker in a fresh worktree still reaches the dialog.
-Firstmate cannot answer it either, because its key plane carries only Enter, Escape, and C-c with no arrow navigation.
-Suppression itself was then observed directly on the same date and version, with a control arm and a treatment arm.
-
-The control arm launched a fresh linked worktree with no pre-registration, the way `bin/fm-spawn.sh` launches one.
-
-```sh
-tmux new-session -d -s tp-a -c /tmp/trustproof/wt-a \
-  "CLAUDE_CONFIG_DIR=<cfg> CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions '<brief>'"
-```
-
-```
-Accessing workspace: /tmp/trustproof/wt-a
-Quick safety check: Is this a project you created or one you trust? ...
-Claude Code'll be able to read, edit, and execute files here.
-> No, exit
-  Yes, I trust this folder
-Enter to confirm . Esc to cancel
-```
-
-That pane confirms two load-bearing claims at once: the dialog fires despite `--dangerously-skip-permissions`, and the selection cursor sits on `No, exit`, so a sent Enter would have exited the worker.
-
-The treatment arm pre-registered an equivalent fresh worktree and launched it identically against the operator's real config.
-
-```sh
-bin/fm-claude-trust.sh /tmp/trustproof/wt-c /tmp/trustproof/proj
-tmux new-session -d -s tp-c -c /tmp/trustproof/wt-c \
-  "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions 'reply with exactly: BRIEF-REACHED'"
-```
-
-```
-trusted: /tmp/trustproof/wt-c
-```
-
-```
-Claude Code v2.1.259 ... /tmp/trustproof/wt-c
-> reply with exactly: BRIEF-REACHED
-. BRIEF-REACHED
-```
-
-No dialog appeared and the worker executed its brief with zero keypresses.
-The scratch repo was deleted and the test entries were removed from the store and verified absent.
-That verification is point-in-time rather than a durable guarantee, because a concurrent Claude session can re-add a path it visited: one entry reappeared after an earlier zero-residual check, most plausibly flushed by a session as it exited, and was removed again.
-
-One limitation belongs beside that result.
-An intermediate arm run against an isolated `CLAUDE_CONFIG_DIR` holding only a copied `.claude.json` cleared the trust dialog but then surfaced the separate machine-scoped Bypass Permissions warning.
-That warning rendered in the same shape as the trust dialog, with the selection cursor on `No, exit` and the footer `Enter to confirm . Esc to cancel`, so a sent Enter would end that worker too.
-That gate is not a production blocker, because a normal environment has already accepted it and the treatment arm above ran against the real config and saw neither dialog.
-This change does not address that warning and does not claim to.
-
-### Secondmate homes
-
-Verified 2026-09-11 on Claude Code 2.1.269.
-A secondmate launches in its own firstmate home rather than a task worktree, and that home meets the same gate.
-The control arm launched a standalone-clone secondmate home that the store had no entry for, the way `bin/fm-spawn.sh --secondmate` launches one.
-
-```sh
-tmux -L <sock> new-session -d -s ctrl -x 180 -y 44 -c <home> \
-  "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions"
-```
-
-```
- Accessing workspace:
- /private/tmp/fm-sm-trust-live-69759/fm-homes/livemate-n1
- Quick safety check: Is this a project you created or one you trust? ...
- ❯ No, exit
-   Yes, I trust this folder
-```
-
-The treatment arm pre-registered that same home through the secondmate-home mode and launched it identically against the operator's real config.
-
-```sh
-bin/fm-claude-trust.sh --secondmate-home <home> livemate-n1
-```
-
-```
-trusted: /private/tmp/fm-sm-trust-live-69759/fm-homes/livemate-n1
-```
-
-```
- ▐▛███▛█   Claude Code v2.1.269
-▝▜██████▀  Opus 4.8 with high effort · Claude Max
-  ▝▝ ▝▝    /private/tmp/fm-sm-trust-live-69759/fm-homes/livemate-n1
-...
-❯
-  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
-```
-
-No dialog appeared, the composer was reached, and neither did the machine-scoped bypass warning, because this ran against the real config.
-The lab home was deleted and the test entry was removed from the store and verified absent, with the same point-in-time caveat as the worktree arms above.
-
-`bin/fm-spawn.sh` therefore pre-registers the directory every claude launch starts in through `bin/fm-claude-trust.sh` before launch, and `tests/fm-claude-trust.test.sh` pins both halves of the scope contract for both shapes: a fresh worktree and a seeded secondmate home are trusted, and an out-of-scope path is refused.
-That automated spawn case runs against a fake claude, so it asserts the store entry and the launch command and nothing more; the live arms above are what establish that the entry actually suppresses the dialog.
-The composer-classification record below observes the same gate from the other side, where an untrusted worktree left Claude, Grok, and Muse unverified because the guard reads a first-launch trust dialog as an unreadable composer.
-
 ## Composer classification matrix
 
 The shared composer classifier (`bin/fm-composer-lib.sh`, `fm_composer_classify_screen`) owns every composer shape fleet-wide; each backend contributes only a capture and a capability descriptor.
@@ -584,14 +421,14 @@ ok - live composer-matrix guard verified 8 live surface(s)
 
 All six installed harnesses' real idle composers reached a proven `empty` (Claude auto-updated to 2.1.227 between the audit and this rerun, so the shipped classifier is proven against the newer release as well), including Pi through the tmux foreground-process identity probe, Grok through the titled-bottom-border tolerance, and OpenCode through the left-bar shape; Codex and OpenCode first parked on vendor update-available modals that the strict classifier correctly refused until the guard's single non-submitting Escape dismissed them.
 The strict blank-row posture held live (a blank shell row deferred injection), and a zellij pane changing for reasons unrelated to submission never confirmed a delivery, replacing the retired content-diff heuristic's false positive.
-Kimi was not installed on the verification machine; its bordered shape is pinned by the portable byte-capture regressions in `tests/fm-composer-lib.test.sh`, which retain styled and plain capability profiles for every harness under both a UTF-8 locale and `LC_ALL=C`.
-Rerun this guard after upgrades for the retained tmux matrix rather than trusting dated results across releases; the Zellij result above is historical, and its adapter and live guard cell have been removed.
+Kimi was not installed on the verification machine; its bordered shape was covered by the then-current portable byte-capture regressions, which were removed with the Kimi worker adapter.
+The live matrix guard was also removed, so this table and its command are dated evidence, not refresh instructions; `tests/fm-composer-lib.test.sh` still pins the retained shapes portably.
 The 2026-08-23 steering-inbox doorbell run observed grok 1.0.5's idle composer classifying `unknown` (and sometimes pending-family), never `empty`.
 Issue #3436's recorded idle capture reproduced the cause on 2026-09-14: Grok 1.0.5 renders the titled bottom border three columns wider than its aligned top and content rows, so the cursorless Herdr profile rejected the otherwise complete box as ambiguous.
 The classifier now accepts only that exact three-column overhang (`FM_COMPOSER_GROK_TITLE_OVERHANG` in `bin/fm-composer-lib.sh`) carrying a typed `Grok <model> (<effort>)` title; the portable regressions feed the real capture through both the shared Herdr capability profile and `fm_backend_herdr_composer_state`, and prove idle is `empty`, typed content is `pending`, and an unrecognized oversized title remains `unknown`.
-Grok was not installed on the verification machine for this 2026-09-14 change, so the live guard still owes a refresh against the current release rather than treating the portable capture as current live evidence; the three-column width is not live-verified and may need adjustment if Grok's title rendering changes or scales with title length.
+The 2026-09-14 change was not live-verified against Grok; the retired matrix command cannot refresh it, so the retained capture establishes only the measured rendering, not later releases.
 This closes only #3436's idle-composer-misclassification symptom (Grok/Herdr composer read `unknown` instead of `empty`, blocking away-mode injection). The issue's second symptom - a leftover watcher never yielding and never being taken over or refused at AFK start - is unrelated to composer classification and is tracked separately in #2270, where #3436's reproduction serves as corroborating evidence.
-Cursor is deliberately outside this cursor-anchored empty-composer matrix because its terminal cursor is parked outside the composer; tmux's Cursor-specific, process-identity-gated cursorless fallback is covered by the [Cursor Agent CLI](#cursor-agent-cli) section's separate live evidence and drift guard.
+Cursor is deliberately outside this cursor-anchored empty-composer matrix because its terminal cursor is parked outside the composer; tmux's Cursor-specific, process-identity-gated cursorless fallback is covered by the [Cursor Agent CLI](#cursor-agent-cli) section's separate live evidence.
 
 `zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which was the capability the former zellij composer classifier read.
 
@@ -623,14 +460,7 @@ After the fix, braille-only rows bound the wrap region (the status footer sits b
 A second read-only capture of the same pane, taken during the fix with a bright starfield cell drawn between the `›` and the placeholder, read `pending` before and `empty` after as well.
 `test_matrix_codex_idle_starfield_furniture` in `tests/fm-composer-lib.test.sh` carries both samples byte-for-byte, the divergence (the same screen with letters in place of the starfield reads `pending`), and the over-stripping negatives (wrapped typed input, braille mixed with text, a typed row with a middle dot, and the footer or a starfield row alone).
 
-The live guard that refreshes this entry launches the installed codex idle in an isolated tmux server and asserts `empty` through both the cursor-anchored tmux read and the cursorless styled read Herdr uses, naming codex and `codex --version` on failure; it is default-on wherever codex and tmux are installed and spends no tokens:
-
-```sh
-tests/fm-composer-codex-idle-live-e2e.test.sh
-```
-
-The verification machine runs its fleet on Herdr and has no tmux installed, so on 2026-09-15 that guard reported `skip: live: tmux absent` there, and the Herdr capture above is this entry's live evidence.
-The guard also notes whether the starfield and the placeholder were actually drawn during its read, because codex need not animate them under every model or mode; a refresh on a tmux host should record that note beside the verdict rather than assume the starfield was exercised.
+The live guard that refreshed this entry, `tests/fm-composer-codex-idle-live-e2e.test.sh`, was removed with the Codex worker adapter; the Herdr capture above is this entry's live evidence.
 
 ## Steering-inbox doorbell
 
@@ -654,214 +484,10 @@ ok - muse (Muse Code 0.2.1 (0.2.1-R1215.1)): the doorbell reached a real worker,
 ```
 
 All six installed harnesses honored the doorbell contract with real model turns: each listed the inbox named by the doorbell, read its record, executed the instruction inside it, and acknowledged with the atomic `mv`.
-Two findings from the run shaped the shipped behavior: an OpenCode vendor update modal swallowed the first doorbell and the single re-ring recovered it, which is exactly the watcher ladder's job; and grok 1.0.5's idle composer never classifies `empty` (a classifier drift owned by the [Composer classification matrix](#composer-classification-matrix) guard, whose refresh for grok 1.0.5 is still owed), which is why the ring's advisory pre-check skips only on an exact proven `pending` verdict - a doorbell into an ambiguous composer is a recoverable constant line, while skipping on ambiguity would starve steering for any harness the classifier cannot positively identify.
-Kimi was not installed on the verification machine; its receive path is the same one-line-plus-shell contract, and the portable ladder and enqueue regressions in `tests/fm-task-inbox.test.sh` and `tests/fm-send-inbox.test.sh` cover every harness-independent half.
-This guard is the refresh command after any harness upgrade; it spends a small number of real tokens per installed harness, reports an absent harness explicitly, and refuses a run that verified nothing.
-
-## Gemini
-
-The Gemini crewmate adapter was verified on 2026-09-04 with gemini-cli 0.58.0 on Linux, Node v24.20.0, tmux 3.4.
-Every check below ran in throwaway scratch worktrees against the real CLI; no task worktree was used and no agent was left running.
-The credential was supplied only through the `GEMINI_API_KEY` environment variable and its value appears nowhere in this record.
-
-### Trust options are not equivalent
-
-The refusal an untrusted launch produces, and its headless exit status:
-
-```sh
-gemini -p 'say OK'; echo "rc=$?"
-```
-
-```text
-Gemini CLI is not running in a trusted directory. To proceed, either use `--skip-trust`, set the `GEMINI_CLI_TRUST_WORKSPACE=true` environment variable, or trust this directory in interactive mode.
-rc=55
-```
-
-Both documented options clear that refusal, but only one loads project configuration.
-The A/B below ran twice in ONE worktree carrying a project `AfterAgent` hook, with the same config home and the same prompt, changing only the trust mechanism:
-
-```text
---skip-trust                 project-hook-fired=NO   untrusted-warnings=0   turn=✦ ECHO
-TRUST_WORKSPACE=true         project-hook-fired=YES  untrusted-warnings=0   turn=✦ FOXTROT
-```
-
-`gemini skills list` names the cause directly in the untrusted case:
-
-```text
-Skipping project agents due to untrusted folder. To enable, ensure that the project root is trusted.
-Project hooks disabled because the folder is not trusted.
-```
-
-This is why `bin/fm-spawn.sh` launches with `GEMINI_CLI_TRUST_WORKSPACE=true` and why `--skip-trust` must not be substituted for it.
-
-### Busy signal
-
-A full turn was captured every two seconds. The status row above the separator carries the one ASCII token, and the phase text beside it is model-generated:
-
-```text
-busy_1 | 1 |  ⠸ Thinking... (esc to cancel, 1s)
-busy_5 | 1 |  ⠸ Begin Counting Methodically (esc to cancel, 9s)
-busy_6 | 1 |  ⠇ Continue Enumerating Concepts (esc to cancel, 11s)
-busy_7 | 0 |
-busy_12 | 0 |
-```
-
-The idle capture taken before the prompt also contained no `(esc to cancel,`.
-Because the phase text varies per turn and the spinner is braille, neither is usable; `(esc to cancel,` is the only stable rendered token, and the adapter uses the semantic hooks below as its actual state source.
-
-### Hook lifecycle
-
-`BeforeAgent`, `AfterAgent`, `SessionStart`, and `SessionEnd` were registered on one probe that appends its event name, then driven through a normal turn, an Escape interrupt, and `/quit`:
-
-```text
---- after startup ---   SessionStart
---- mid-turn ---        SessionStart, BeforeAgent
---- after INTERRUPT --- SessionStart, BeforeAgent, AfterAgent
---- after /quit ---     SessionStart, BeforeAgent, AfterAgent, SessionEnd, SessionEnd
-```
-
-Two facts the adapter depends on come from that run: `AfterAgent` closes a turn that was CANCELLED, not only one that completed, and `SessionEnd` fired TWICE for a single `/quit`, so the repeated idle event must be harmless.
-The `AfterAgent` payload carried the worktree as `cwd`, which is what binds a hook to its task:
-
-```text
-keys: ['cwd', 'hook_event_name', 'prompt', 'prompt_response', 'session_id', 'stop_hook_active', 'timestamp', 'transcript_path']
-hook_event_name = AfterAgent
-stop_hook_active = False
-prompt = 'Say the single word CEDAR and stop.'
-```
-
-On the cancelled turn the same payload carried `prompt_response = '[no response text]'`.
-
-### Autonomous end-to-end worker
-
-One throwaway worker was launched exactly as the spawn launches one - positional brief, `-y`, workspace trust - and observed from start to idle:
-
-```text
-t=5s   (esc to cancel, 2s)
-t=30s  busy marker present
-idle at ~34s, busy marker count 0
-worker-output.txt: DELIVERED
-turn-end hook fires: 1
-```
-
-Its pane showed `✓ WriteFile worker-output.txt → Accepted (+1, -0)` with no approval gate, confirming `-y` runs unattended, and `Executing Hook: fm-turn-end` in the status row after the turn.
-
-The adapter was then driven through the REAL `bin/fm-spawn.sh` and `bin/fm-control.sh` against a real Gemini pane in an isolated home:
-
-```text
-spawned gm-e2e harness=gemini kind=ship mode=no-mistakes yolo=off window=... worktree=...
-hooks installed by spawn (state/<id>.gemini-settings.json): ['BeforeAgent', 'AfterAgent', 'SessionEnd']
-t=4s   state: working · source: pane · harness busy (gemini-hook)
-t=8s   state: working · source: pane · harness busy (gemini-hook)
-after turn: v1 gen=... state=idle source=gemini-hook event=after-agent
-e2e-output.txt: SEAWORTHY
-interrupt-delivered gm-e2e harness=gemini backend=tmux verified=agent-alive cancel=unconfirmed
-after interrupt: v1 gen=... state=idle source=gemini-hook event=after-agent
-stopped gm-e2e harness=gemini backend=tmux endpoint=... worktree=...
-```
-
-The interrupt line is the one worth keeping: `AfterAgent` closed the record on a CANCELLED turn, which is why a gemini interrupt needs no `fm-interrupt` fallback event.
-A single Escape on a long turn printed `ℹ Request cancelled.`, dropped the busy token, and left the agent running; `/quit` then exited with status 0 and printed `To resume this session: gemini --resume <session-id>`, and resuming by that id restored the full transcript.
-
-### Identity markers
-
-Env var NAMES were read from a real Gemini tool process launched under a Claude primary; no value of `GEMINI_API_KEY` was read.
-
-```text
-GEMINI_CLI=[1]
-AI_AGENT=[claude-code_2-1-260_agent]
-TRUSTWS=[true]
-CLAUDECODE=[1]
-```
-
-`GEMINI_CLI` is unset in the launching environment, so it is Gemini's own; `CLAUDECODE` is inherited, which is why `bin/fm-harness.sh` tests `GEMINI_CLI` first.
-`AI_AGENT` carried the CLAUDE primary's value and is therefore an inherited launcher marker, never a Gemini identity.
-
-Ancestry cannot substitute for the marker on this platform:
-
-```sh
-node -e 'const{execSync}=require("child_process");console.log(execSync("ps -o comm= -p "+process.pid).toString().trim())'
-```
-
-```text
-MainThread
-```
-
-The shipped CLI is a node bundle, so its live process never presents as `node` and neither ancestry arm matches it.
-
-The same shape breaks pane liveness, which the end-to-end run surfaced as a hard refusal rather than a silent wrong answer:
-
-```text
-error: task gm-e2e's endpoint reads 'ambiguous' rather than a positively classified state; refusing to send a lifecycle key into an unattributed endpoint
-```
-
-A live gemini pane's foreground group read `comm=MainThread` and `argv0=/home/<user>/.local/node/bin/node`, so `bin/fm-gemini-lib.sh` now identifies it from argv[1] instead.
-After that change the same endpoint classified `alive` while the worker ran and `dead` once it exited, so the rule is not simply always positive.
-`tests/fm-gemini-harness.test.sh` pins that boundary so it is not later documented away, and `tests/fm-busy-adapter-wiring.test.sh` drives the generated hooks through the real writer and classifier.
-
-```sh
-bin/fm-test-run.sh tests/fm-gemini-harness.test.sh tests/fm-busy-adapter-wiring.test.sh
-```
-
-### Credential wedge and its blast radius
-
-With no resolvable credential the pane wedges on `Enter Gemini API Key` rather than failing.
-That dialog is a credential FIELD, so lifecycle text sent to a wedged pane is submitted into it and stored.
-Observed after an ordinary exit was delivered to such a pane: a `~/.gemini/gemini-credentials.json` (mode 0600) appeared that had not existed before, and a later credential-less run stopped refusing cleanly and instead reached the API:
-
-```text
-before: rc=41  When using Gemini API, you must specify the GEMINI_API_KEY environment variable.
-after : rc=1   API key not valid. Please pass a valid API key.  (API_KEY_INVALID)
-```
-
-Clearing that stored credential restored both behaviours:
-
-```text
-GEMINI_API_KEY=<from the operator's own store> gemini --skip-trust -p 'Reply with exactly the word NOVEMBER.'  ->  NOVEMBER  rc=0
-env -u GEMINI_API_KEY gemini --skip-trust -p hi                                                              ->  rc=41
-```
-
-The adapter reference records the operational rule this produces: never drive lifecycle text into a gemini pane showing that dialog; treat it as a credential blocker and retire the endpoint instead.
-The credential must also be present before the session-provider daemon starts, since a long-lived tmux or Herdr server hands panes the environment it was started with.
-
-### Settings placement
-
-Firstmate's hooks are NOT written into the worktree's `.gemini/settings.json`, because unlike Claude's `settings.local.json` that path is the project's own committed settings file.
-They go to a firstmate-owned `state/<id>.gemini-settings.json` reached through `GEMINI_CLI_SYSTEM_SETTINGS_PATH`.
-Two measurements support that choice.
-Hooks from the system layer fired under `--skip-trust` in an untrusted folder, so the busy contract does not depend on the trust decision:
-
-```text
-=== events (UNTRUSTED workspace, --skip-trust) ===
-BeforeAgent
-AfterAgent
-```
-
-And hook arrays MERGE across layers rather than overriding, so a project's own hooks keep running alongside firstmate's:
-
-```text
-=== which AfterAgent hooks ran (trusted workspace, both layers define AfterAgent) ===
-PROJECT
-SYSTEM
-```
-
-A second end-to-end spawn against a project that already committed its own `.gemini/settings.json` confirmed the file was untouched, that `git status` reported only the worker's own new output file, and that teardown removed firstmate's settings file:
-
-```text
-t=4s   state: working · source: pane · harness busy (gemini-hook)
-t=8s   state: working · source: pane · harness busy (gemini-hook)
-after turn: state=idle source=gemini-hook event=after-agent
-e2e2-output.txt: ANCHOR
-project .gemini/settings.json: {"context":{"fileName":"GEMINI.md"}}   (unchanged)
-interrupt-delivered gm2 harness=gemini backend=tmux verified=agent-alive cancel=unconfirmed
-stopped gm2 harness=gemini backend=tmux
-teardown gm2 complete; state/gm2.gemini-settings.json removed
-```
-
-### Not verified
-
-Gemini as a PRIMARY or SECONDMATE runtime is unverified and is refused by `bin/fm-spawn.sh`: no wake protocol exists under `docs/supervision-protocols/` and no turn-end guard adapter was built or exercised.
-No reasoning-effort axis was found; `gemini --help` on 0.58.0 exposes no effort, reasoning, or thinking flag, so the record-and-omit contract applies.
+Two findings from the run shaped the shipped behavior: an OpenCode vendor update modal swallowed the first doorbell and the single re-ring recovered it, which is exactly the watcher ladder's job; and grok 1.0.5's idle composer never classifies `empty` (a classifier drift recorded in [Composer classification matrix](#composer-classification-matrix), not verified against later Grok releases), which is why the ring's advisory pre-check skips only on an exact proven `pending` verdict - a doorbell into an ambiguous composer is a recoverable constant line, while skipping on ambiguity would starve steering for any harness the classifier cannot positively identify.
+Kimi was not installed on the verification machine, and its worker receive path has since been removed; the portable ladder and enqueue regressions in `tests/fm-task-inbox.test.sh` and `tests/fm-send-inbox.test.sh` still cover the harness-independent contract.
+The live doorbell guard now covers Pi and pi-signed only; it is their refresh command after an upgrade, reports an absent harness explicitly, and refuses a run that verified nothing.
+[Deck verification](deck.md) owns the Deck worker evidence.
 
 ## Herdr
 
@@ -1375,7 +1001,7 @@ Real captures verified these active distinctions:
 - Dim or faint suggestion text is ghost content, while normally styled text is pending input.
 - Grok dark truecolor placeholders are ghost content, while bright truecolor typed input remains pending.
 - A bare shell prompt has no safe agent-composer container and is unknown.
-- Codex 0.154's idle braille starfield rows are composer furniture, with the dated Herdr evidence and refresh command in [Composer classification matrix](#composer-classification-matrix).
+- Codex 0.154's idle braille starfield rows are composer furniture, with the dated Herdr capture in [Composer classification matrix](#composer-classification-matrix).
 
 `tests/fm-composer-ghost.test.sh`, `tests/fm-composer-lib.test.sh`, and the Herdr composer cases pin the exact captured ANSI bytes.
 The U+2063 operational and routed-request separators were exercised through a real Pi-on-Herdr path; the byte-exact active regression is:
@@ -1588,42 +1214,7 @@ INFO herdr::pane: agent changed pane=2 previous_agent=None agent=Some(Claude) pr
 
 Each resumed Claude agent ran as `claude --resume <session-id>`, a child of `/bin/sh` under the Herdr server, with no permission flag or other Firstmate launch argument.
 The only per-server override the 0.9.0 client documents is the environment: `herdr --help` prints `Env:    HERDR_CONFIG_PATH overrides config file path`, and neither `herdr server --help` nor `herdr config --help` offers a flag for the setting.
-`tests/fm-remote-secondmate-replacement.test.sh` and `tests/fm-secondmate-liveness.test.sh` pin how Firstmate reports such an agent, over real stand-in processes with no Herdr server.
-
-### Claude permission posture in process arguments
-
-The posture check reads the permission flag back from the running Claude agent's own arguments, so it holds only while Claude Code leaves its argv intact.
-Observed 2026-09-18, read-only, against agents Firstmate had already launched.
-
-On Linux x86_64 with Claude Code 2.1.276 in a Herdr 0.9.0 pane, `/proc/<pid>/cmdline` keeps every argument separate, for a Firstmate launch and for a Herdr resume alike:
-
-```sh
-for p in $(pgrep -x claude); do tr '\0' '\n' < /proc/$p/cmdline | sed -n 1,3p | tr '\n' ' '; echo; done
-```
-
-```text
-claude --dangerously-skip-permissions --settings
-claude --resume <session-id>
-```
-
-On macOS 26 arm64 with Claude Code 2.1.277 in a tmux pane, the check itself, run over the pane of a Claude worker launched with the bypass flag, found that agent and read the flag:
-
-```sh
-bash -c '. bin/fm-backend.sh; . bin/fm-claude-permission-lib.sh
-  fm_claude_permission_endpoint_verdict tmux "$TMUX_PANE" --dangerously-skip-permissions
-  fm_claude_permission_endpoint_verdict tmux "$TMUX_PANE" "--permission-mode auto"'
-```
-
-```text
-ok <pid>
-mismatch <pid>
-```
-
-The Claude leg of the liveness drift guard launches Claude with its permission flag and fails naming the version if that read stops finding it; run it after a Claude Code upgrade:
-
-```sh
-FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
-```
+The Claude permission-posture check was removed with its worker adapter; `tests/fm-remote-secondmate-replacement.test.sh` and `tests/fm-secondmate-liveness.test.sh` now pin the retained worker replacement and liveness boundaries.
 
 ### Away-mode transport
 
@@ -1775,13 +1366,10 @@ A `dead` there would authorize tearing down a healthy worker that was merely unr
 `codex`, `opencode`, `pi-signed`, `grok`, `kimi`, `cursor`, and `muse` were not installed on this machine and are unverified by this run.
 Re-run the guard after any harness upgrade before trusting this evidence.
 
-The opencode tail adapter (`bin/fm-stream-opencode-tail.py`) measures a harness-dependent surface of its own: opencode's on-disk SQLite session storage.
-As of 2026-09-19 this host has no live opencode storage to run it against - no opencode binary on `PATH`, no `~/.local/share/opencode/`, and no `opencode.db` anywhere under the home - so the schema proof remains the portable regression's fixture, derived from this host's opencode-history documentation of that storage rather than a recorded live run.
-Dated live end-to-end evidence is deferred until an opencode worker actually runs here: point the adapter at that worker's real `opencode.db` and record the result beside this note.
 
 ## Cursor Agent CLI
 
-Cursor runs crewmate, scout, secondmate, and primary work; [`supervision.md`](supervision.md#cursor-primary-park-2026-08-13) owns the primary evidence.
+Cursor runs only as a primary since the Cursor worker adapter was removed; [`supervision.md`](supervision.md#cursor-primary-park-2026-08-13) owns the primary evidence.
 The evidence below was produced on 2026-08-11 against the installed signed CLI on macOS 26.5.2 arm64 with tmux 3.6a, running as `kunchenguid`, and extended on 2026-08-13 with the tmux composer verdict below.
 
 - Binary: `~/.local/bin/cursor-agent`, canonicalizing into `~/.local/share/cursor-agent/versions/2026.08.11-e8db854/cursor-agent`.
@@ -1853,53 +1441,9 @@ A live injection through `bin/fm-supervise-daemon.sh`'s own `inject_msg` into a 
 
 `tests/fm-tmux-agent-liveness.test.sh` pins this with real processes and no Cursor installed: it asserts the cursor-anchored source is blind, that the composite still reads `empty` idle and `pending` with typed text, that an identical screen stays `unknown` when the pane is not Cursor, and that a stale Cursor screen over a dead shell never reads `empty`.
 
-### Busy state
-
-Cursor writes a per-conversation transcript at `<projects-root>/<workspace-slug>/agent-transcripts/<conversation-id>/<conversation-id>.jsonl`.
-Each turn is bracketed by a `role:user` open and a typed `{"type":"turn_ended","status":...}` close.
-Observed closes: `success` for a completed turn, and `aborted` with `"error":"User aborted/interrupted manually."` after a single Escape.
-
-The trailing close landed 0 seconds after the pane's busy footer cleared on a normal turn.
-The transcript does NOT accumulate one close per turn, so a count of closes is not a progress signal; only the trailing record is.
-After an interrupt the aborted close was observed within seconds in some runs and not within twenty seconds in others, so `bin/fm-control-lib.sh` deliberately claims no cancellation acknowledgement for cursor.
-
-Binding never reconstructs cursor's workspace-slug directory name, which collapses path separators.
-Cursor records the exact absolute workspace path in each project directory's `.workspace-trusted`, and the binding matches on that value.
-
-### Rendered busy token, delivery only
-
-Mid-turn the pane showed a braille spinner plus a verb, and `ctrl+c to stop` on the composer row; both the verb line and that token were absent the instant the turn ended.
-The same version rendered `Working` in one turn and `Running` in the next, so the TOKEN is matched and the verb is not.
-This row is a delivery guard for submit acknowledgement only; recorded worker state comes from the transcript fold.
-
-### Launch, lifecycle, and skills
-
-| Fact | Observed |
-| --- | --- |
-| Workspace trust | `--trust` suppressed the prompt; `--yolo` alone did NOT, and the prompt blocks a fresh worktree |
-| Autonomy | `--yolo` (alias of `--force`); the footer renders `Run Everything` |
-| Worktree | `-w/--worktree` allocates a SECOND worktree under `~/.cursor/worktrees` and is never passed |
-| Effort | no effort flag exists; requested effort stays in task metadata |
-| Interrupt | single Escape; the pane showed `Cancelled` and the composer returned to its placeholder, so no clear key is needed |
-| Exit | `/exit` |
-| Skill invocation | `/<skill>`; cursor discovers firstmate's user-level skills, and `/no-mistakes` autocompleted with firstmate's own description and invoked the skill |
-| Slash popup | real: the first Enter closes the popup and a SECOND Enter submits, the same hazard as grok, covered by the submit core's retried Enter |
-
-### End-to-end
-
-A throwaway scout was spawned through `bin/fm-spawn.sh --scout --backend tmux` on a real cursor worker and driven to completion:
-
-1. the launch delivered its brief positionally and the agent executed it;
-2. `state/<id>.cursor-session` was written with the task worktree;
-3. the transcript fold read `busy` mid-turn and `idle` after it;
-4. `bin/fm-send.sh` delivered a steer through the then-current typed path and exited 0;
-5. `bin/fm-control.sh <id> interrupt` cancelled a running turn;
-6. `bin/fm-control.sh <id> exit` stopped the agent;
-7. `bin/fm-teardown.sh` refused until the scout's report and decision gate were satisfied, then removed the session record.
-
 ### Herdr backend
 
-The tmux run above is the reference; this section is the separate Herdr proof, produced on 2026-08-12 against Herdr 0.8.0 (client and server, protocol 19) and the same signed `cursor-agent` 2026.08.11-e8db854 on macOS 26.5.2 arm64.
+This section is the Herdr composer proof, produced on 2026-08-12 against Herdr 0.8.0 (client and server, protocol 19) and the same signed `cursor-agent` 2026.08.11-e8db854 on macOS 26.5.2 arm64.
 Every step ran inside an isolated `fm-lab-` session provisioned by `bin/fm-herdr-lab.sh`, launched from a neutral parent outside any Herdr pane, with the live default session's pane count checked before, during, and after; it stayed at 7 throughout.
 
 **Herdr's native agent state is unusable for Cursor.**
@@ -1916,26 +1460,14 @@ Herdr draws the composer's rules with the half-block glyphs U+2584 and U+2580 ra
 Before those were taught to the shared edge detector, a bare composer's wrap region ran through its own closing rule and swallowed the model and path footer, so an idle pane read `pending`.
 Measured as an A/B on the same live pane, the pre-fix classifier returned `pending` and the current one returned `empty`.
 
-The idle fix alone did not confirm typed delivery, because the composer branch reads the mid-turn row instead.
-With the rendered-footer transition in place, a typed-plane `bin/fm-send.sh` invocation exited 0 and the steer executed in the pane; the same send previously exited 1 with `delivery unconfirmed; verdict=pending` on a message that had actually landed.
-
-The rest of the lifecycle was driven end to end on that worker:
-
-1. `bin/fm-spawn.sh --scout --backend herdr` placed the worker and it executed its brief;
-2. the transcript fold read `busy` mid-turn and `idle` after, unchanged from tmux, so the recorded worker state is backend-agnostic;
-3. `bin/fm-control.sh <id> interrupt` reported `cancel=unconfirmed` by design and the pane showed `Cancelled`, with the footer and the fold both returning to idle;
-4. `bin/fm-control.sh <id> exit` stopped the agent through the slash popup and the pane returned to its shell;
-5. `bin/fm-teardown.sh` refused until the scout's report and decision gate were satisfied, then removed the session record and returned the worktree.
-
 Other harnesses on Herdr are unaffected by the edge-detector change.
 All seven live panes of the running default session - one Pi, four Claude, two plain shells - classified identically under the pre-fix and current classifiers.
 
 **Typed-submit confirmation is verified on tmux and Herdr only.**
-Stream uses a submit core that never consults the busy footer, so a typed-plane Cursor send there lands but `fm-send` reports delivery unconfirmed and exits non-zero; ordinary text steers ride the durable inbox and exit 0 at enqueue.
-Teaching that shared core the same transition is deliberately separate work, because it changes stream's submit path for every harness and needs its own live validation.
-
-The portable regression is `tests/fm-cursor-harness.test.sh`, the composer captures are pinned in `tests/fm-composer-lib.test.sh`, and the Herdr submit and footer behavior is pinned in `tests/fm-backend-herdr.test.sh`.
-Refresh this harness-dependent proof before accepting a cursor upgrade:
+Stream's submit core does not consult Cursor's busy footer, so typed-plane input to a Cursor primary there can land while `fm-send` reports delivery unconfirmed and exits non-zero.
+This limit is distinct from ordinary task steering, whose durable-inbox success is an enqueue acknowledgement, not a typed-submit proof.
+The composer captures are pinned in `tests/fm-composer-lib.test.sh`, and the Herdr footer behavior is pinned in `tests/fm-backend-herdr.test.sh`.
+The liveness drift guard refreshes Cursor's process identity only, not these composer or delivery observations:
 
 ```sh
 FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
@@ -2157,14 +1689,15 @@ Its native App Server peer and watcher-close process are deterministic fixtures;
 
 ## Oh My Pi (omp)
 
-omp runs crewmate, scout, secondmate, and primary work; [`supervision.md`](supervision.md#omp-oh-my-pi-native-delivery-2026-09-05) owns the primary evidence.
+omp runs only as a primary since the omp worker adapter was removed; [`supervision.md`](supervision.md#omp-oh-my-pi-native-delivery-2026-09-05) owns the primary evidence.
 The evidence below was produced on 2026-09-05 against omp 18.1.11 (`~/.local/bin/omp`, a Bun-compiled single binary) on macOS 26 arm64 through the Herdr backend with the `openai-codex/gpt-6-astra` model, building on the 2026-09-02 adapter investigation against 18.1.2.
 
 ### Process identity and markers
 
 `ps -o comm=` reports the bare name `omp` for the agent process, from both its `!` bash path and the model's bash tool, so identity is the anchored name; `ompd` and `comp` never match.
 omp publishes no harness marker: `PI_CODING_AGENT` is absent from the binary, and the default profile sets neither `PI_CODING_AGENT_DIR` nor `OMP_PROFILE` in the process environment.
-`FM_OMP_HARNESS=omp` is Firstmate's own launch marker and wins over an inherited `CLAUDECODE` only under a real omp ancestor; `tests/fm-omp-harness.test.sh` pins both directions with real processes.
+`FM_OMP_HARNESS=omp` is Firstmate's own primary launch marker and wins over an inherited `CLAUDECODE` only under a real omp ancestor.
+The former regression `tests/fm-omp-harness.test.sh` was removed with the omp worker adapter; primary live evidence is refreshed by the command below.
 
 ### Composer
 
@@ -2179,26 +1712,4 @@ Before the status-row rule the shared classifier folded that row into the bare c
 After the rule, the same live Herdr capture read `empty`, a steer's doorbell landed, and the worker opened a turn on it.
 `tests/fm-composer-lib.test.sh` pins the unicode idle row, the nerd-preset idle row, the busy spinner row, and typed text over the same fixture in both locales.
 
-### Busy state and lifecycle
-
-| Fact | Observed |
-| --- | --- |
-| Semantic source | `omp-ext`: `busy source=omp-ext event=agent-start` on the brief, `idle source=omp-ext event=agent-end` at its natural end, `busy` again on a steer, `idle` after a control-plane interrupt |
-| Rendered busy row | `⎋ Working…` (U+2026) above the composer and a braille spinner plus elapsed cell (`⠧ 36s`) in the status row; the omp busy regex accepts only those two TUI signals, not the `Working...` that headless `-p` writes to stderr, since no supervised omp pane runs headless |
-| Interrupt | `bin/fm-control.sh <id> interrupt` delivered a single Escape (`verified=agent-alive cancel=unconfirmed`), the composer read `empty`, and omp raised `agent_end` |
-| Exit | `bin/fm-control.sh <id> exit` typed `/quit`; Herdr then reported the pane `dead` |
-| Extension loading | a file named both by `-e` and by `<cwd>/.omp/extensions` loads twice; discovery is top-level and cwd-only |
-| Extension tools | the openai-codex model invokes a registered tool by writing `xd://<tool>` through omp's virtual-file bridge |
-
-### End-to-end
-
-A throwaway scout was spawned through `bin/fm-spawn.sh --scout --harness omp --model openai-codex/gpt-6-astra --effort low` on Herdr and driven to completion:
-
-1. the launch delivered its brief positionally under the tracked posture overlay and the agent executed it with no approval prompt;
-2. the busy record moved seed, busy, idle exactly as the extension contract states;
-3. the report landed and the `done:` status line was appended;
-4. `bin/fm-send.sh` rang the doorbell once the composer read `empty`, and the worker opened a turn on the inbox record;
-5. `bin/fm-control.sh <id> interrupt` cancelled the running turn;
-6. `bin/fm-control.sh <id> exit` stopped the agent and `bin/fm-teardown.sh` returned the worktree and closed the item.
-
-`FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes the primary evidence; the worker path above is refreshed by repeating the scout dispatch after any omp upgrade.
+`FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes the primary evidence.

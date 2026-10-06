@@ -59,7 +59,7 @@ SH
 #!/usr/bin/env bash
 [ -z "${FM_FAKE_TMUX_LOG:-}" ] || printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
 case "$*" in
-  *display-message*'#{pane_current_command}'*) printf '%s\n' codex ;;
+  *display-message*'#{pane_current_command}'*) printf '%s\n' pi ;;
   *display-message*'#{pane_id}'*) printf '%s\n' '%1' ;;
   *display-message*'#{cursor_y}'*) printf '%s\n' 0 ;;
   *list-windows*) printf '%s\n' fm-sm ;;
@@ -223,7 +223,7 @@ new_propagation_world() {
   {
     printf 'window=firstmate:fm-sm\n'
     printf 'kind=secondmate\n'
-    printf 'harness=codex\n'
+    printf 'harness=pi\n'
     printf 'home=%s\n' "$sm"
   } > "$home/state/sm.meta"
   printf '%s|%s|%s\n' "$root" "$home" "$sm"

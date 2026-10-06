@@ -99,7 +99,8 @@ bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh --fix
 
 Over the plain SSH doctor bootstrap, it writes and reloads the Firstmate-owned `dev.firstmate.remote-job` and `dev.firstmate.herdr.fm-remote` launch agents on macOS, both scoped with `LimitLoadToSessionType=Aqua` and bootstrapped in `gui/<uid>`.
 The Herdr agent runs [`bin/fm-remote-herdr-guard.sh`](../bin/fm-remote-herdr-guard.sh) through a shell in login mode with separate `-l` and `-c` arguments, resolving the remote account's executable labeled Directory Services `UserShell`, then an executable `$SHELL`, and finally `/bin/sh`, so the server inherits the account's own environment.
-The `gui/<uid>` domain, not the login shell, is what gives that server and every pane it spawns the Aqua audit session and login-keychain access; a server born in any other session cannot read the login keychain, and every claude pane under it falls back to a stale plaintext credentials file and reports "Login expired".
+The `gui/<uid>` domain, not the login shell, is what gives that server and every pane it spawns the Aqua audit session and login-keychain access; a server born in any other session cannot read the login keychain.
+[Runtime backend verification](verification/runtime-backends.md#fm-remote-server-birth-and-login-keychain-access) owns the measured authentication consequences.
 Herdr's own SSH remote attach starts such a server when it finds none, and at boot it wins the `fm-remote` socket because sshd accepts connections before the login session exists, so the guard is what makes the launch agent converge: it execs the server in the foreground under launchd when nothing owns the socket, exits 0 when an Aqua-born server already does, and otherwise stops the foreign server and takes the session over, closing its panes so the parent firstmate relaunches its mates into the Aqua-born server.
 `KeepAlive={SuccessfulExit=false}` lets that exit 0 rest instead of respawning against a held socket; the guard's header owns the decision table and [`bin/fm-remote-herdr-owner-lib.sh`](../bin/fm-remote-herdr-owner-lib.sh) owns the birth markers it reads.
 It starts the same workers directly on Linux, recreates the `~/.local/bin/fm-remote-entrypoint.sh` symlink when it is absent, and creates only Firstmate-owned required-tool wrappers that it can prove resolve to a version-manager target, stopping after one harness satisfies the at-least-one requirement.
@@ -112,7 +113,7 @@ These steps are never automated and are always reported rather than silently att
 - The first console login on that Mac, and automatic login in System Settings > Users & Groups when the machine runs headless and must come back on its own after a reboot.
 - FileVault, which holds a reboot at pre-boot authentication before any login session exists.
 - Installing any missing required tool that no safe wrapper can resolve.
-- The required remote tool set is `git`, `jq`, `herdr`, compatible `tasks-axi`, `treehouse`, and at least one of `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, or `deck`; Deck additionally requires `python3` when it is the selected runtime, and macOS additionally requires `lsof` so the doctor and guard can prove which process owns the session socket.
+- The required remote tool set is `git`, `jq`, `herdr`, compatible `tasks-axi`, `treehouse`, and at least one of `pi`, `pi-signed`, or `deck`; Deck additionally requires `python3` when it is the selected runtime, and macOS additionally requires `lsof` so the doctor and guard can prove which process owns the session socket.
 - Each worker runtime's own `/login`, and any keychain password prompt that login needs.
 
 Firstmate never writes an auto-login password, never changes FileVault, and never stores an account password.
@@ -223,10 +224,9 @@ The reconcile touches only a real directory this host provably owns; a symlink, 
 
 Startup liveness recovery relaunches a dead or missing remote second mate through this same command, so recovery passes the same readiness gate rather than a weaker one.
 A dead remote endpoint is removed before that relaunch, and a removal the backend cannot confirm refuses the launch instead of risking a duplicate mate beside a worker that may still be running.
-A launch that starts an agent reports success only after the host proves, by process identity, that it replaced the previous one: the new endpoint hosts an agent process that did not exist before, a Claude agent carries the flag `config/claude-permission-mode` selects, and every previous agent process is gone.
+A launch that starts an agent reports success only after the host proves, by process identity, that it replaced the previous one: the new endpoint hosts an agent process that did not exist before, and every previous agent process is gone.
 A previous agent still running after its endpoint was removed refuses the launch rather than gaining a twin, and a proof that cannot be made within the bound is reported as a failed launch; [`bin/fm-remote-secondmate-control.sh`](../bin/fm-remote-secondmate-control.sh) owns that contract.
-An endpoint that is already alive is reused rather than relaunched, but a Claude agent there without the configured flag is reported as a posture mismatch, both by the launch and by the startup liveness sweep, and is neither stopped nor replaced.
-That is the shape a restarted Herdr server leaves behind, because it resumes each previously registered agent itself without Firstmate's launch flags ([Herdr backend](herdr-backend.md#restart-and-liveness-behavior)).
+An endpoint that is already alive is reused rather than relaunched.
 
 A persistent remote route's parent metadata intentionally has no local spawn-generation marker and identifies the route by its recorded host instead.
 The Bearings inventory-reconcile hook therefore accepts these markerless routes, revalidates the sampled host at delivery, and refuses a route that changed hosts; [`fm-secondmate-reconcile.sh`](../bin/fm-secondmate-reconcile.sh) owns the exact cooldown, identity, and reporting contract.
@@ -292,7 +292,7 @@ The primary records that remote nudge before delivery and retries it during lock
 Local secondmates retain their generation-specific local pointer contract; remote transfers do not copy those primary-local instruction paths.
 
 A live remote second mate is restarted with `relaunch`, which runs the ordinary [control plane](agent-control.md) on that host: the endpoint record there was written by a host-local launch and carries no remote placement, so the transaction, its checkpoint, and its postconditions are the local ones.
-The host then applies the same replacement proof as a launch before it reports the restart: the old agent process, identified before anything touched it, must be gone and the new one must carry the configured Claude permission flag.
+The host then applies the same replacement proof as a launch before it reports the restart: the old agent process, identified before anything touched it, must be gone and the endpoint must host an agent process that did not exist before.
 The primary passes `<harness> <model|default|-> <effort|default|->` explicitly, using `default` when an axis has no parent pin, because `config/secondmate-harness` is not inherited into a second mate's home and the file on that host belongs to a different home; letting the far side re-resolve it would silently move the mate onto another runtime.
 SSH exit 255 leaves completion unknown and the route preserved, exactly as every other verb here.
 

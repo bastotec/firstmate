@@ -410,7 +410,7 @@ test_the_fleet_listing_reports_a_worker_that_came_back() {
     "window=$target" \
     "worktree=$home/projects/$id" \
     "project=alpha" \
-    "harness=claude" \
+    "harness=pi" \
     "kind=ship" \
     "mode=ship"
 

@@ -99,7 +99,7 @@ It streams the hook to completion and retains at most 512 KiB for message delive
 The OpenCode nudge runs only on `session.created`.
 The watcher-arm and turn-end plugins run later on `session.idle`, and the guard lets the watcher coordinator act first, so the plugins do not race for one lifecycle event.
 
-Grok's guaranteed-loading alternative is a global token-guarded hook like the pattern used by `bin/fm-spawn.sh`.
+Grok's guaranteed-loading alternative would require a separately designed global hook; Firstmate no longer installs a global Grok worker hook through `bin/fm-spawn.sh`.
 That alternative expands trust and writes outside this repository, so Firstmate never installs it or grants folder trust automatically.
 
 ## Regression coverage

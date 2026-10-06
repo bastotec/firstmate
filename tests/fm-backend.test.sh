@@ -37,13 +37,16 @@ fm_git_identity fmtest fmtest@example.invalid
 . "$ROOT/bin/fm-backend.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-backend-tests)
-# A claude spawn writes workspace trust into the launching user's own store,
-# and the script resolves it as ${CLAUDE_CONFIG_DIR:-${HOME:-}}, so the value
-# is pinned EMPTY beside the throwaway HOME: an inherited one would beat that
-# HOME and reach the developer's real store, while empty falls through to it
-# and adds no launch prefix, since fm-spawn only prefixes a non-empty value.
+# Spawns run against a throwaway HOME so nothing a launch writes under the
+# user's home can reach the developer's real one.
 SPAWN_HOME="$TMP_ROOT/user-home"
 mkdir -p "$SPAWN_HOME"
+# Spawns rooted at this checkout also run under a throwaway firstmate home: a
+# ship spawn takes the shared Treehouse project lock in the root home's state
+# directory, which must be this suite's own rather than the checkout's (absent
+# in a fresh checkout unless an earlier suite happened to leave one behind).
+SPAWN_FM_HOME="$TMP_ROOT/fm-home"
+mkdir -p "$SPAWN_FM_HOME/state"
 
 write_spawn_brief() {  # <file> <id>
   cat > "$1" <<EOF
@@ -320,7 +323,7 @@ test_backend_validate_spawn_accepts_known() {
 
 test_meta_get_and_backend_of_meta() {
   local meta=$TMP_ROOT/meta-get.meta edge=$TMP_ROOT/meta-get-edge.meta
-  fm_write_meta "$meta" "window=firstmate:fm-x1" "harness=claude"
+  fm_write_meta "$meta" "window=firstmate:fm-x1" "harness=pi"
   [ "$(fm_meta_get "$meta" window)" = "firstmate:fm-x1" ] || fail "fm_meta_get did not read window="
   [ "$(fm_meta_get "$meta" missing)" = "" ] || fail "fm_meta_get should print nothing for an absent key"
   [ "$(fm_backend_of_meta "$meta")" = tmux ] || fail "fm_backend_of_meta should default absent backend= to tmux"
@@ -581,7 +584,7 @@ esac
 exit 0
 SH
   chmod +x "$fb/tmux"
-  fm_fake_exit0 "$fb" treehouse
+  fm_fake_exit0 "$fb" treehouse pi
   printf '%s\n' "$fb"
 }
 
@@ -589,7 +592,7 @@ run_spawn_case() {  # <bin-root> <fakebin> <log> <state> <data> <config> <proj> 
   local bin=$1 fb=$2 log=$3 state=$4 data=$5 config=$6 proj=$7; shift 7
   [ "${1:-}" = -- ] && shift
   : > "$log"
-  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$bin" HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' \
+  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$bin" FM_HOME="$SPAWN_FM_HOME" HOME="$SPAWN_HOME" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_TMUX_LOG="$log" \
@@ -651,7 +654,7 @@ esac
 exit 0
 SH
   chmod +x "$fb/tmux"
-  fm_fake_exit0 "$fb" treehouse
+  fm_fake_exit0 "$fb" treehouse pi
   printf '%s\n' "$fb"
 }
 
@@ -683,7 +686,7 @@ run_spawn_symlink_case() {  # <label> <physical|logical>
   mkdir -p "$state" "$config"
   log="$TMP_ROOT/symlink-spawn-$label.log"
 
-  out=$(run_spawn_case "$ROOT" "$fb" "$log" "$state" "$data" "$config" "$proj" -- "$id" "$proj" claude --mode no-mistakes --yolo off 2>&1)
+  out=$(run_spawn_case "$ROOT" "$fb" "$log" "$state" "$data" "$config" "$proj" -- "$id" "$proj" pi --mode no-mistakes --yolo off 2>&1)
   rc=$?
   expect_code 0 "$rc" "fm-spawn.sh should succeed for a project reached through a symlinked prefix when the backend reports $first_reply cwd"$'\n'"$out"
   assert_contains "$out" "worktree=$wt" \
@@ -763,10 +766,10 @@ test_teardown_conformance_old_vs_new() {
   mkdir -p "$state_old" "$state_new" "$config_old" "$config_new"
 
   fm_write_meta "$state_old/$id.meta" \
-    "window=firstmate:fm-$id" "worktree=$wt" "project=$proj" "harness=claude" "kind=scout" "mode=no-mistakes" "yolo=off" \
+    "window=firstmate:fm-$id" "worktree=$wt" "project=$proj" "harness=pi" "kind=scout" "mode=no-mistakes" "yolo=off" \
     "decisions_reviewed=1" "decision_keys="
   fm_write_meta "$state_new/$id.meta" \
-    "window=firstmate:fm-$id" "worktree=$wt" "project=$proj" "harness=claude" "kind=scout" "mode=no-mistakes" "yolo=off" \
+    "window=firstmate:fm-$id" "worktree=$wt" "project=$proj" "harness=pi" "kind=scout" "mode=no-mistakes" "yolo=off" \
     "decisions_reviewed=1" "decision_keys="
   touch "$state_old/.last-watcher-beat" "$state_new/.last-watcher-beat"
 
@@ -802,7 +805,7 @@ test_spawn_refuses_unknown_backend_flag() {
   # bogus names a backend with no adapter at all.
   out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" nope-backend-z1 projects/none claude --mode no-mistakes --yolo off --backend bogus 2>&1)
+    "$ROOT/bin/fm-spawn.sh" nope-backend-z1 projects/none pi --mode no-mistakes --yolo off --backend bogus 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "fm-spawn --backend bogus should refuse"
   assert_contains "$out" "unknown backend 'bogus'" "fm-spawn did not name the rejected backend"
@@ -813,7 +816,7 @@ test_spawn_refuses_codex_app_backend_flag() {
   local out status
   out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" nope-codex-app-z1 projects/none claude --mode no-mistakes --yolo off --backend codex-app 2>&1)
+    "$ROOT/bin/fm-spawn.sh" nope-codex-app-z1 projects/none pi --mode no-mistakes --yolo off --backend codex-app 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "fm-spawn --backend codex-app should refuse"
   assert_contains "$out" "unknown backend 'codex-app'" "fm-spawn did not preserve the blocked codex-app contract"
@@ -824,7 +827,7 @@ test_spawn_refuses_unknown_fm_backend_env() {
   local out status
   out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 FM_BACKEND=bogus \
-    "$ROOT/bin/fm-spawn.sh" nope-backend-z2 projects/none claude --mode no-mistakes --yolo off 2>&1)
+    "$ROOT/bin/fm-spawn.sh" nope-backend-z2 projects/none pi --mode no-mistakes --yolo off 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "FM_BACKEND=bogus should refuse"
   assert_contains "$out" "unknown backend 'bogus'" "fm-spawn did not name the rejected FM_BACKEND"
@@ -842,11 +845,11 @@ test_spawn_default_backend_records_tmux() {
   state="$TMP_ROOT/nobackend-state"; config="$TMP_ROOT/nobackend-config"
   mkdir -p "$state" "$config"
 
-  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' \
+  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$SPAWN_FM_HOME" HOME="$SPAWN_HOME" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
     FM_TMUX_LOG="$TMP_ROOT/nobackend.log" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --backend tmux 2>&1)
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" pi --mode no-mistakes --yolo off --backend tmux 2>&1)
   expect_code 0 $? "explicit --backend tmux should spawn successfully"$'\n'"$out"
   grep -qx 'backend=tmux' "$state/$id.meta" \
     || fail "an explicit --backend tmux must record backend=tmux in meta"
@@ -875,7 +878,7 @@ test_spawn_on_fake_stream_records_the_endpoint() (
   fm_test_fake_stream "$TMP_ROOT/stream-hub" || fail "fake stream hub did not start"
   fm_test_fake_stream_treehouse "$wt"
 
-  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' \
+  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$SPAWN_FM_HOME" HOME="$SPAWN_HOME" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
     FM_TMUX_LOG="$TMP_ROOT/stream-dispatch.log" \
@@ -907,11 +910,11 @@ test_spawn_explicit_backend_flag_beats_autodetect_herdr_env() {
 
   # HERDR_ENV=1 is present (as if firstmate itself were running under herdr),
   # but an explicit --backend tmux flag must still win outright.
-  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' \
+  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$SPAWN_FM_HOME" HOME="$SPAWN_HOME" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" HERDR_ENV=1 \
     FM_TMUX_LOG="$TMP_ROOT/explicit-backend.log" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --backend tmux 2>&1)
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" pi --mode no-mistakes --yolo off --backend tmux 2>&1)
   expect_code 0 $? "explicit --backend tmux should spawn successfully even with HERDR_ENV=1 set"$'\n'"$out"
   grep -qx 'backend=tmux' "$state/$id.meta" \
     || fail "an explicit --backend tmux must win over an ambient HERDR_ENV=1 auto-detect marker"
@@ -934,11 +937,11 @@ test_spawn_autodetect_nesting_resolves_tmux_silently() {
   # (tmux nested inside a herdr pane) - the full fm-spawn.sh pipeline, not just
   # fm_backend_name, must resolve this to tmux and stay completely silent about
   # it (today's default path, byte-identical).
-  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' \
+  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$SPAWN_FM_HOME" HOME="$SPAWN_HOME" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" HERDR_ENV=1 \
     FM_TMUX_LOG="$TMP_ROOT/nest.log" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off 2>&1)
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" pi --mode no-mistakes --yolo off 2>&1)
   expect_code 0 $? "fm-spawn.sh should auto-detect tmux and spawn successfully for nested tmux-in-herdr"$'\n'"$out"
   grep -qx 'backend=tmux' "$state/$id.meta" \
     || fail "auto-detected nested tmux-in-herdr must resolve to and record backend=tmux"

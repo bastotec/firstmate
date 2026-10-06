@@ -20,13 +20,12 @@ Never select `max` through this fallback; only an explicit per-task or standing 
 The explicit native `ultra` value follows the model-scoped refusal contract in `../../../bin/fm-harness.sh validate-native-effort`; it is never silently omitted or mapped to a Pi level.
 For other values, if requested effort is outside the adapter's accepted set, the spawn records `effort=` in task metadata but emits no effort flag.
 This preserves launch success instead of passing a known-bad value.
-A harness with no verified interactive effort flag follows the same record-and-omit contract.
+Deck's no-effort refusal is the exception, owned by `../../../bin/fm-spawn.sh` and `references/harness/deck.md`; do not apply this record-and-omit rule to Deck.
 
 ## Harness and provider identity
 
 Harness identity is independent of model provider.
 `harness=pi` with `model=xai/grok-*` is Pi using xAI, not standalone Grok Build, and does not require Grok CLI login.
-`harness=cursor` with `model=cursor-grok-4.5-*` is Cursor routing a Grok model, not `harness=grok`.
 
 No script resolves credential provenance for you.
 Establish it from the tool's discovery surface and `quota-axi auth --json` per-provider sources, and show the reasoning rather than inferring it from a name.
@@ -39,5 +38,3 @@ Use the selected tool reference's authoritative surface in the current authentic
 For an unfamiliar namespace, establish support and provider identity from that harness's CLI help, model listing, or current documentation.
 An account-reaching listing that omits a model is concrete unsupported evidence; block the candidate and quote it.
 An unreachable surface establishes nothing; report uncertainty instead of a verdict.
-
-For a matched profile array, return to `quota-array-dispatch` only after establishing every candidate's harness support, provider relationship, and uncertainty.

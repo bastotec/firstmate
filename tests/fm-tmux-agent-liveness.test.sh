@@ -59,17 +59,13 @@ ln -s "$SLEEP_BIN" "$LAB/bin/notaharness"
 ln -s "$SLEEP_BIN" "$LAB/bin/omp"
 ln -s "$SLEEP_BIN" "$LAB/bin/ompd"
 ln -s "$SLEEP_BIN" "$LAB/bin/comp"
-# muse's installed binary is muse-bin-<version>: the launcher execs it, so the
-# version is the LIVE process name and it changes on every auto-update. Unlike
-# Claude Code's version-named binary there is no `muse` path component to fall
-# back on (~/.local/bin/muse-bin-<version>), so the executable name is the ONLY
-# signal, and `muse` alone is a common English fragment that must not widen into
-# a substring match. The last two names are the decoys that would be misread.
-ln -s "$SLEEP_BIN" "$LAB/bin/muse-bin-0.1.0-R708.1"
-ln -s "$SLEEP_BIN" "$LAB/bin/musescore"
-ln -s "$SLEEP_BIN" "$LAB/bin/amuse"
-ln -s "$SLEEP_BIN" "$LAB/bin/muse-binary"
-ln -s "$SLEEP_BIN" "$LAB/bin/muse-bind"
+# A Deck worker pane's foreground is bin/fm-deck-worker.sh launched with
+# argv[0] `fm-deck-worker`, and `deck` is the headless binary it runs per turn.
+# Both names are anchored; the decoys are what a substring match would misread.
+ln -s "$SLEEP_BIN" "$LAB/bin/deck"
+ln -s "$SLEEP_BIN" "$LAB/bin/fm-deck-worker"
+ln -s "$SLEEP_BIN" "$LAB/bin/decks"
+ln -s "$SLEEP_BIN" "$LAB/bin/deckhand"
 
 # A launcher whose own process identity is a bare shell, running the harness as
 # a child in the same foreground process group - the shape the real Pi Launcher
@@ -160,22 +156,24 @@ wait_for_state "$SESSION:agent" alive \
   || fail "a running harness-named foreground process must classify alive"
 pass "tmux liveness: a harness-named foreground process classifies alive"
 
-# --- muse's version-suffixed binary name ------------------------------------
-# A muse crewmate pane misclassified here reads as a dead endpoint, so a healthy
+# --- Deck's anchored names -------------------------------------------------
+# A Deck crewmate pane misclassified here reads as a dead endpoint, so a healthy
 # worker would be torn down or relaunched. The decoys below are what keep the
-# fix from being a substring match that claims unrelated programs.
+# names from widening into a substring match that claims unrelated programs.
 
-new_window muse "$LAB/bin/muse-bin-0.1.0-R708.1" 900
-wait_for_state "$SESSION:muse" alive \
-  || fail "muse's version-suffixed binary name must classify alive"
-pass "tmux liveness: muse's version-suffixed muse-bin-<version> classifies alive"
+for name in deck fm-deck-worker; do
+  new_window "$name" "$LAB/bin/$name" 900
+  wait_for_state "$SESSION:$name" alive \
+    || fail "Deck's anchored name '$name' must classify alive"
+done
+pass "tmux liveness: Deck's anchored deck and fm-deck-worker names classify alive"
 
-for decoy in musescore amuse muse-binary muse-bind; do
+for decoy in decks deckhand; do
   new_window "decoy-$decoy" "$LAB/bin/$decoy" 900
   wait_for_state "$SESSION:decoy-$decoy" ambiguous \
-    || fail "'$decoy' merely contains 'muse' and must not classify as a live agent pane"
+    || fail "'$decoy' merely contains 'deck' and must not classify as a live agent pane"
 done
-pass "tmux liveness: unrelated muse-containing command names stay ambiguous"
+pass "tmux liveness: unrelated deck-containing command names stay ambiguous"
 
 # --- omp's bare binary name -------------------------------------------------
 # omp (Oh My Pi) runs as a single binary whose live process name is exactly

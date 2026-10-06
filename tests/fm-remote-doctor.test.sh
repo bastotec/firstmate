@@ -284,11 +284,11 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-  cat > "$CASE_BIN/claude" <<'SH'
+  cat > "$CASE_BIN/pi" <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
-  chmod +x "$CASE_BIN/uname" "$CASE_BIN/launchctl" "$CASE_BIN/dscl" "$CASE_BIN/tasks-axi" "$CASE_BIN/treehouse" "$CASE_BIN/claude"
+  chmod +x "$CASE_BIN/uname" "$CASE_BIN/launchctl" "$CASE_BIN/dscl" "$CASE_BIN/tasks-axi" "$CASE_BIN/treehouse" "$CASE_BIN/pi"
   cat > "$CASE_BIN/sleep" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -412,7 +412,7 @@ SH
 chmod +x "$CASE_BIN/tasks-axi"
 rm -f "$CASE_BIN/sleep" "$CASE_BIN/uname"
 mkdir -p "$CASE_HOME/.local/bin"
-for tool in herdr tasks-axi treehouse claude; do
+for tool in herdr tasks-axi treehouse pi; do
   ln -s "$CASE_BIN/$tool" "$CASE_HOME/.local/bin/$tool"
 done
 HOME="$CASE_HOME" FM_ROOT_OVERRIDE="$ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
@@ -464,14 +464,14 @@ make_no_python_path "$NO_PYTHON_BIN"
 CASE_BASE_PATH=$NO_PYTHON_BIN
 doctor --fix
 expect_code 0 "$DOCTOR_RC" "an alternate ready runtime inherited Deck's Python requirement"
-assert_contains "$DOCTOR_OUT" "required harness=claude:$CASE_BIN/claude" \
+assert_contains "$DOCTOR_OUT" "required harness=pi:$CASE_BIN/pi" \
   "the readiness inventory did not preserve its established runtime priority"
 assert_not_contains "$DOCTOR_OUT" 'required python3=' \
-  "the readiness inventory imposed Deck's dependency on the selected Claude runtime"
+  "the readiness inventory imposed Deck's dependency on the selected Pi runtime"
 pass "Deck's Python dependency does not constrain another selected runtime"
 
 new_case Linux with-herdr no-gui
-rm -f "$CASE_BIN/claude"
+rm -f "$CASE_BIN/pi"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_BIN/deck"
 chmod +x "$CASE_BIN/deck"
 NO_PYTHON_BIN="$CASE_DIR/no-python-bin"
@@ -494,7 +494,7 @@ pass "Deck readiness requires Python only when Deck is selected"
 new_case Linux with-herdr no-gui
 CASE_REMOTE_JOB_ACTIVE=
 CASE_PLATFORM_OVERRIDE=Linux
-rm -f "$CASE_BIN/claude" "$CASE_BIN/sleep" "$CASE_BIN/uname"
+rm -f "$CASE_BIN/pi" "$CASE_BIN/sleep" "$CASE_BIN/uname"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_BIN/deck"
 chmod +x "$CASE_BIN/deck"
 mkdir -p "$CASE_HOME/.local/bin"
@@ -926,9 +926,9 @@ pass "a non-darwin host skips launch agents and starts its herdr server directly
 new_case Linux with-herdr no-gui
 MANAGER_BIN="$CASE_HOME/.nvm/versions/node/v24/bin"
 mkdir -p "$MANAGER_BIN"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$MANAGER_BIN/codex"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$MANAGER_BIN/grok"
-chmod +x "$MANAGER_BIN/codex" "$MANAGER_BIN/grok"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MANAGER_BIN/pi-signed"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MANAGER_BIN/deck"
+chmod +x "$MANAGER_BIN/pi-signed" "$MANAGER_BIN/deck"
 mv "$CASE_BIN/tasks-axi" "$MANAGER_BIN/tasks-axi"
 doctor
 expect_code 1 "$DOCTOR_RC" "a version-manager-only required tool was reported ready"
@@ -944,14 +944,14 @@ assert_grep '# Firstmate remote tool wrapper v1' "$CASE_HOME/.local/bin/tasks-ax
   "the generated wrapper is not marked Firstmate-owned"
 assert_grep "$MANAGER_BIN/tasks-axi" "$CASE_HOME/.local/bin/tasks-axi" \
   "the generated wrapper does not execute the discovered absolute target"
-assert_absent "$CASE_HOME/.local/bin/codex" "--fix wrapped an alternate harness when claude already satisfied readiness"
-assert_absent "$CASE_HOME/.local/bin/grok" "--fix wrapped an alternate harness when claude already satisfied readiness"
+assert_absent "$CASE_HOME/.local/bin/pi-signed" "--fix wrapped an alternate harness when pi already satisfied readiness"
+assert_absent "$CASE_HOME/.local/bin/deck" "--fix wrapped an alternate harness when pi already satisfied readiness"
 
-rm -f "$CASE_BIN/claude"
+rm -f "$CASE_BIN/pi"
 doctor --fix
 expect_code 0 "$DOCTOR_RC" "--fix did not wrap one discoverable harness when none resolved"
-assert_present "$CASE_HOME/.local/bin/codex" "--fix did not create the first needed harness wrapper"
-assert_absent "$CASE_HOME/.local/bin/grok" "--fix created more harness wrappers than readiness requires"
+assert_present "$CASE_HOME/.local/bin/pi-signed" "--fix did not create the first needed harness wrapper"
+assert_absent "$CASE_HOME/.local/bin/deck" "--fix created more harness wrappers than readiness requires"
 
 mv "$CASE_BIN/treehouse" "$MANAGER_BIN/treehouse"
 mkdir -p "$CASE_HOME/.local/bin"
@@ -969,7 +969,7 @@ CASE_REMOTE_JOB_ACTIVE=
 CASE_PLATFORM_OVERRIDE=Linux
 rm -f "$CASE_BIN/sleep" "$CASE_BIN/uname"
 mkdir -p "$CASE_HOME/.local/bin"
-for tool in herdr tasks-axi treehouse claude; do
+for tool in herdr tasks-axi treehouse pi; do
   ln -s "$CASE_BIN/$tool" "$CASE_HOME/.local/bin/$tool"
 done
 HOME="$CASE_HOME" FM_ROOT_OVERRIDE="$ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \

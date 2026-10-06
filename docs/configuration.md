@@ -175,7 +175,7 @@ Ordinary task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` u
 A selector containing `:` is passed through as an explicit backend endpoint escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that themselves start with `fm-` route to their own metadata instead of being stripped.
 A metadata-routed selector returns the recorded backend target (`window=`), and matching explicit targets can still recover the recorded backend when metadata contains the same endpoint.
-Only metadata-routed task selectors carry secondmate-marker and Codex-harness context; explicit endpoint escape hatches do not.
+Only metadata-routed task selectors carry secondmate-marker and recorded-harness context; explicit endpoint escape hatches do not.
 This paragraph is the single owner of the ordinary task-selector vocabulary; backend guides and other documents point here instead of restating the resolution order.
 For explicit targets no metadata names, [`fm-send.sh`'s header](../bin/fm-send.sh) owns backend inference and live-endpoint verification, including stream-shaped targets on this home's configured hub.
 Host decision answers instead use the constrained mode owned by [`bin/fm-send.sh`'s header](../bin/fm-send.sh).
@@ -353,15 +353,12 @@ For the herdr backend, `FM_HOME` also determines the workspace label used by the
 
 ## Harness support
 
-claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, omp, and deck support crewmate and secondmate launches; gemini is verified for crewmate and scout launches only, and [README requirements](../README.md#requirements) own the set supported for the primary session.
-A cursor secondmate or primary runs the tracked project-scope `.cursor/hooks.json` in its own home and must be launched with `--trust`, or no project hook loads; [`docs/supervision-protocols/cursor.md`](supervision-protocols/cursor.md) owns its supervision protocol.
+pi, pi-signed, and deck are the only worker harnesses: they support crewmate, scout, and secondmate launches, and [README requirements](../README.md#requirements) own the set supported for the primary session.
+Any other adapter name, including a primary-only harness such as claude or codex, has no launch template, so `fm-spawn.sh` refuses it unless a raw launch command is passed.
+The raw-command escape hatch supplies no verified adapter contract; [task control's fail-closed boundaries](agent-control.md#fail-closed-boundaries) apply to its recorded harness.
+A cursor primary runs the tracked project-scope `.cursor/hooks.json` in its own home and must be launched with `--trust`, or no project hook loads; [`docs/supervision-protocols/cursor.md`](supervision-protocols/cursor.md) owns its supervision protocol.
 Cursor typed-submit confirmation is verified on tmux and Herdr only.
 For stream's typed-plane Cursor confirmation limit and its distinction from durable inbox steering, see [runtime backend verification](verification/runtime-backends.md#cursor-agent-cli).
-muse is verified for crewmate and scout launches ONLY, and `fm-spawn.sh` refuses it for a secondmate, because muse ships no usable hook surface for a primary session's turn-end supervision; [`docs/verification/muse.md`](verification/muse.md) owns that evidence.
-muse also needs a worker-reachable credential before spawning, and the portable fleet path is the `<config>/muse/auth.json` credential stored by `muse login`, because a caller-only `META_API_KEY` does not cross a long-lived backend daemon.
-gemini is likewise refused for secondmates because it has no primary supervision protocol; [its adapter reference](../.agents/skills/harness-adapters/references/harness/gemini.md) owns the credential precondition, canonical-launch wiring, and raw-launch limitations.
-rovo is likewise verified for crewmate and scout launches ONLY, refused for a secondmate for the same reason - no turn-end hook and no primary supervision protocol; [`docs/verification/rovo.md`](verification/rovo.md) owns that evidence, including the OAuth token's silent background refresh from a stored refresh token and both tmux and herdr pane liveness (herdr placement is verified live, with a Herdr-side agent-detection gap left open for recovery classification).
-agy is likewise verified for crewmate and scout launches ONLY, refused for a secondmate for the same reason - no hook surface and no primary supervision protocol; [`docs/verification/agy.md`](verification/agy.md) owns that evidence, including the spawn-time worktree trust pre-registration through `bin/fm-agy-trust.sh` and Herdr's native agy pane recognition.
 [Managed primary setup](managed-primary.md) owns Deck's opt-in primary launch choices; [the Deck supervision protocol](supervision-protocols/deck.md) owns handling duties for Deck home hosts.
 Select Deck workers and secondmates through the ordinary static harness or dispatch-profile configuration; Deck has no effort control, so dispatch profiles with effort and relaunches with non-default effort are refused before a worker is created or stopped.
 A Deck spawn requires `deck`, `jq`, and Python 3 on the worker's `PATH`, plus a worker-readable credential for Deck's proxai endpoint.
@@ -376,13 +373,12 @@ The executable interrupt and exit mechanics live in [`bin/fm-control-lib.sh`](..
 Launch mechanics, including the verified command templates, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
 Pi-family launches adapt the regular-TUI safeguard to the installed CLI's capabilities; [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns the exact version-safe launch mechanics.
 Enabled primary-session turn-end guard integrations are tracked as repo-level hook files and documented in [`docs/turnend-guard.md`](turnend-guard.md).
-Kimi remains outside the primary turn-end guard integrations; [`docs/turnend-guard.md`](turnend-guard.md#compatibility-limits) owns its separate captain-approved crew wake hook.
 Primary-session watcher wake protocols are rendered at session start by [`bin/fm-supervision-instructions.sh`](../bin/fm-supervision-instructions.sh) from [`docs/supervision-protocols/`](supervision-protocols/).
 Claude's Stop `asyncRewake` hook owns tokenless re-arm cycles, Cursor's stop hook parks on the watcher, Grok uses background-notify cycles, Codex uses bounded foreground checkpoints, Pi and pi-signed use the same two tracked primary extensions, omp uses its own two tracked `.omp/extensions/` files with a blocking `session_stop` turn-end hook, and OpenCode uses its TUI plugin.
 `config/crew-harness` is a local, gitignored file containing one adapter name for crewmate and scout launches.
 When pi-signed is selected, Firstmate preserves `FM_PI_HARNESS=pi-signed` and refuses the launch if the selected executable is unavailable rather than falling back to pi; [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns executable resolution and launch mechanics.
 Plain Pi launches set `FM_PI_HARNESS=pi`, so a signed primary's environment cannot relabel a plain Pi worker.
-When it is absent or contains `default`, crewmates mirror the firstmate's own harness.
+When it is absent or contains `default`, crewmates mirror the firstmate's own harness, so a primary on a harness that is not a worker harness needs this file or a dispatch profile naming pi, pi-signed, or deck.
 `config/secondmate-harness` is a separate local, gitignored file containing the adapter the primary uses to launch secondmate agents, optionally followed by model and effort tokens on the same line.
 The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.
 A bare `<harness>` preserves the previous behavior: harness only, with no model or effort launch flag.
@@ -397,25 +393,7 @@ When `config/crew-dispatch.json` exists, crewmate and scout spawns require an ex
 The inherited-local-material contract is owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md); its harness-relevant consequence is that a secondmate's own crewmates use the primary's dispatch profiles and static harness value.
 Those inherited values are defaults and rules only; `fm-spawn` still permits a consciously chosen explicit runtime outside the config.
 `config/secondmate-harness` is not inherited because secondmates do not launch secondmates.
-For grok, `fm-spawn.sh` installs one firstmate-owned global turn-end hook under `$GROK_HOME/hooks/`, or `~/.grok/hooks/` when `GROK_HOME` is unset, and drops a per-task `.fm-grok-turnend` pointer in the worktree, with teardown removing the task token and pointer.
-For Kimi crews, `fm-spawn.sh` runs `fm-kimi-turnend-hook.sh install`, drops a per-task `.fm-kimi-turnend` pointer in the worktree, and records the matching private registry token for teardown.
-Kimi continues to use the captain's normal Kimi home, including the existing config, skills, and memory; Firstmate does not create an isolated Kimi home.
-The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config.toml`, `python3` with `tomllib`, and `jq`; it validates but never serializes the captain's TOML and refuses before writing when the config is missing, malformed, or surprising or when either tool requirement is unavailable.
-Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
-For omp secondmate launches, `fm-spawn.sh` passes no `-e` at all: omp auto-discovers the home's tracked `.omp/extensions/` with no trust gate, and naming a discovered file with `-e` as well loads it twice; every omp launch instead carries the tracked `.omp/fm-worker-overlay.yml` posture overlay through `--config`, which [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns.
-
-## Claude permission mode (config/claude-permission-mode)
-
-The optional local, gitignored `config/claude-permission-mode` holds one token selecting the permission flag every Claude worker launch carries: crewmates, scouts, Claude secondmates, and control-plane relaunches alike.
-The token is the file's whitespace-trimmed content.
-`bypass` keeps today's launch, `claude --dangerously-skip-permissions`, and is also the default when the file is absent, so an unconfigured home launches byte-for-byte as before.
-`auto` replaces that flag with `--permission-mode auto`, Claude Code's classifier-reviewed permission mode, for a captain who refuses to run workers in bypass mode; every other part of the Claude launch, including its environment prefix, inline settings, model, and effort flags, is unchanged.
-Any other value, or an unreadable file, refuses every spawn from that home, whichever harness it would launch, before any endpoint, worktree, or task record exists, and names the accepted values; Firstmate never falls back to a permission posture the captain did not choose.
-`bin/fm-spawn.sh` reads the file on every spawn and relaunch, so a change takes effect at the next launch without a restart.
-A live Claude secondmate whose own process arguments lack the selected flag is reported as a posture mismatch rather than healthy, and a remote secondmate relaunch is reported only once its new agent carries the flag ([remote second mates](remote-secondmates.md#normal-operation)).
-The file is a captain-wide safety preference, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract; a secondmate's own Claude crewmates then launch on the same posture.
-The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md) records the verified shape of both launches and which once-per-machine dialog each one can meet.
 
 ## Worker launch environment (config/launch-env-allowlist)
 
@@ -451,8 +429,7 @@ Choose the minimum additions for the authentication method actually in use:
 | --- | --- |
 | Provider login stored under the normal home directory | None for the environment contract; the same user still has access to that provider's stored login. |
 | Provider configured through environment variables | The exact credential and endpoint names required by that provider, for example `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; a multi-provider tool needs each provider it will actually use. |
-| Custom provider store | Its configured location variables, such as `CODEX_HOME`, `GROK_HOME`, or `XDG_CONFIG_HOME`; Firstmate's existing explicit Claude and Muse store assignments still apply. |
-| Muse environment authentication | `META_API_KEY`, already present in the target tmux session environment; Firstmate's preflight requires the stored-login path on other backends. |
+| Custom provider store | Its configured location variables, such as `XDG_CONFIG_HOME`. |
 | Git over SSH with an agent | `SSH_AUTH_SOCK`; add `GIT_SSH_COMMAND` only if the chosen transport requires that override. |
 | Git over SSH with a key file | No credential variable when normal SSH configuration selects the key; file permissions and any passphrase handling still apply. |
 | Git over HTTPS with a credential helper | Whatever the configured helper requires; a GitHub CLI helper using an environment token needs its selected `GH_TOKEN` or `GITHUB_TOKEN`. |
@@ -463,17 +440,15 @@ The filter runs at the worker command boundary, after the terminal daemon and pa
 This is not a sandbox: it cannot revoke same-user access to credential files, prevent tools or later shells from loading credentials again, or isolate processes from the same user's other processes.
 Regression coverage executes emitted launch commands with synthetic nonsecret values in [`tests/fm-spawn-dispatch-profile.test.sh`](../tests/fm-spawn-dispatch-profile.test.sh).
 
-Every claude launch's inline `--settings` JSON also carries `"attribution":{"commit":"","pr":"","sessionUrl":false}`, so a spawned worker never writes a Co-Authored-By trailer, Claude-Session link, or generated-with line into a commit or PR body regardless of which settings scopes end up loaded.
-
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
-The shell scripts do not match those rules; firstmate chooses the best matching rule with judgment, resolves its profile object or array under the operating contract in `AGENTS.md` section 4 and `quota-array-dispatch`, and passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
+The shell scripts do not match those rules; firstmate chooses the best matching rule with judgment, resolves its profile object or array under the operating contract in `AGENTS.md` section 4, and passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
 When the file exists, `fm-spawn.sh` enforces that contract by refusing crewmate and scout spawns that lack an explicit harness (`--harness`, a positional adapter, or a raw launch command).
 Batch spawns satisfy the same requirement with a shared `--harness`.
 Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
 This section is the single owner of the canonical schema and its per-field semantics.
-`AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the completion-aware profile-array selection procedure.
+`AGENTS.md` section 4 owns the always-loaded dispatch intake boundary and how firstmate picks from a profile array.
 
 ```json
 {
@@ -481,13 +456,13 @@ This section is the single owner of the canonical schema and its per-field seman
     {
       "when": "<natural-language condition describing a kind of task>",
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "accountSlots": ["<optional logical slot ID>"] }
+        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>" }
       ],
       "why": "<optional rationale that helps firstmate choose>"
     }
   ],
   "default": [
-    { "harness": "<adapter>", "model": "<optional model>", "effort": "<optional effort>", "accountSlots": ["<optional logical slot ID>"] }
+    { "harness": "<adapter>", "model": "<optional model>", "effort": "<optional effort>" }
   ]
 }
 ```
@@ -496,67 +471,20 @@ Per rule, `when` and `use` are required.
 Both `use` and the optional top-level `default` accept either one profile object or a non-empty array of profile objects.
 The single-object form stays fully backward-compatible, and every profile needs `harness`.
 Profile `model` and `effort` fields and rule `why` are optional.
-Profile `accountSlots` is optional, supported only for Claude and Codex, and must be a non-empty array of unique logical slot IDs from the current home's `config/account-slots.json`.
 `ultra` is native-only: the model-aware validation contract and launch mapping are owned by `bin/fm-harness.sh validate-native-effort` and `bin/fm-spawn.sh` respectively.
-Codex `max` is valid when the profile selects `gpt-5.6-luna`, whose installed catalog entry supports that reasoning level.
 An omitted model or effort means the selected harness uses its own default for that axis.
-Every profile array is an implicit quota-aware choice resolved through `quota-array-dispatch`.
+Every profile array is a quota-aware choice firstmate makes at intake under `AGENTS.md` section 4; no script makes it.
 If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.
-Except for `ultra`, which refuses unsupported profiles under the native-effort contract above, an effort value the chosen harness does not accept is recorded as `effort=` in task meta for traceability but omitted from the launch flags.
+Except for `ultra` under the native-effort contract above and Deck's refusal under [Harness support](#harness-support), an effort value the chosen harness does not accept is recorded as `effort=` in task meta for traceability but omitted from the launch flags.
 Bootstrap reports unsupported harness/model/effort combinations as a `CREW_DISPATCH` diagnostic when they are visible in the file.
 A profile's `model` may also be a fallback chain: either one `<provider>/<model-id>` label, which is an exact pin exactly as before, or a comma-separated list of labels such as `codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash`, resolved in preference order at spawn time; "Model fallback chains" above owns the chain syntax, cooldowns, and refusal contract.
 The dispatch profile consultation resolves a concrete profile and passes it to `fm-spawn.sh` unchanged, so a chain rides in the `--model` value and no dispatch-side judgment substitutes a model outside the captain-approved order.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
-That example uses no `accountSlots`; add them to a profile only after creating the matching slots in `config/account-slots.json`, because dispatch refuses a slotted profile when that registry is missing.
 When the file exists, bootstrap validates it with `jq`.
 Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-Malformed JSON, an empty or malformed rule/default array, an unverified harness, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow, which also covers the account-slot registry below, so an absent prerequisite is never reported as invalid configuration.
+Malformed JSON, an empty or malformed rule/default array, a harness other than pi, pi-signed, or deck, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow, so an absent prerequisite is never reported as invalid configuration.
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
-
-## Account slots (config/account-slots.json)
-
-`config/account-slots.json` is an optional home-local, gitignored registry for selecting one Claude or Codex vendor profile without exposing its identity or credential path to dispatch reasoning.
-It is not inherited into secondmate homes, and `--account-slot` is refused for persistent secondmate launches; a secondmate whose inherited dispatch rules reference slots needs its own registry with the same logical IDs.
-Until it has one, those inherited references are simply unresolvable there rather than invalid dispatch: validation stays silent and the spawn that names an unknown slot is what refuses.
-See [`docs/examples/account-slots.json`](examples/account-slots.json) for placeholder-only structure.
-
-The strict version 1 schema is an object containing only `version` and a non-empty `slots` object.
-Each slot key is a unique lowercase slug of at most 63 characters other than reserved clear sentinel `default`, and each slot value contains only `harness`, `storePath`, and `expectedAccountId`.
-`harness` is `claude` or `codex`, and it alone decides the credential file and the OAuth provenance a probe demands: `<storePath>/.credentials.json` for Claude and `<storePath>/auth.json` for Codex.
-Only credential sources that a vendor scopes to that one store count, and a slot is available when its store's own credential is present.
-Codex is pinned to `<storePath>/auth.json` at launch, so its file is the only source.
-Claude also signs in to the login keychain under an item named for the store (`Claude Code-credentials-<sha256(storePath)[0:8]>`), so that item counts too; the ambient unsuffixed item never does, and presence is read from keychain attributes without ever reading the secret.
-See [`docs/verification/dispatch-auth.md`](verification/dispatch-auth.md) for the measurements behind both.
-`expectedAccountId` is a non-empty trimmed string of at most 512 characters, and it must equal the `providers[0].account.accountId` the quota document reports for that store - not the account's email, plan name, or logical slot ID.
-Read it from the store itself, with the store path that slot configures:
-
-```sh
-CLAUDE_CONFIG_DIR=<storePath> quota-axi --provider claude --full --json --no-credential-refresh | jq -r '.providers[0].account.accountId'
-CODEX_HOME=<storePath> quota-axi --provider codex --full --json --no-credential-refresh | jq -r '.providers[0].account.accountId'
-```
-
-A slot whose `expectedAccountId` does not match what its store reports is refused by its own reason naming that identity mismatch, distinct from the stale or malformed evidence reason, so a mistyped id is never mistaken for producer drift; a document whose account carries no string `accountId` is that malformed evidence, not a mismatch.
-Canonical store paths must be unique absolute existing directories owned by the current user, directly named rather than symlinked, and have no group or world permissions.
-The registry and every vendor credential file that is present must be readable, current-user-owned, non-symlink regular files with one hard link and no group or world permissions; a credential file that is present but insecure is a reported configuration error, not a quietly unavailable slot.
-A slot with no credential in its store - after `claude` or `codex logout`, say - is that one slot being unavailable; it never invalidates the registry or blocks routing to the home's other slots.
-`bin/fm-account-slot.sh validate` is the public validation entry point, and its help plus [`fm-spawn.sh --help`](../bin/fm-spawn.sh) own exact command mechanics.
-
-At dispatch, each profile with `accountSlots` expands to one `(harness, model, effort, accountSlot)` candidate per slot and follows the same quota-array selection procedure.
-The selected logical ID is passed as `fm-spawn.sh --account-slot <id>`, which is single-task only: a batch spawn of more than one `id=repo` pair refuses it, because one slot is one subscription and every worker needs its own resolved slot.
-Spawn each of those workers with its own single-task invocation; the captain may run those invocations in parallel.
-On relaunch, `--account-slot default` clears the recorded slot and returns the replacement worker to the harness's normal profile, while an omitted flag preserves it under the same harness-change reset rule as model and effort ([agent-control.md](agent-control.md#transactional-relaunch)).
-Every worker uses exactly one selected profile: Claude receives one `CLAUDE_CONFIG_DIR`, and Codex receives one `CODEX_HOME`.
-A slotted launch unsets both store variables and that vendor's ambient API-key and token variables first, so the selected store is the worker's only credential source; the isolated quota probe unsets the same names.
-Provisioning a slot is `claude` or `codex login` under that store, plus - for Codex only - answering the harness's one-time directory trust dialog once per repository, because Codex records that decision inside the active `CODEX_HOME`.
-Spawn pre-registers Claude workspace trust into the selected Claude store, while a Codex slot uses the existing post-spawn trust step in `AGENTS.md`; Firstmate keeps no trust store of its own for Codex.
-Automatic quota-ranked slot selection runs against the measured `quota-axi` release, whose `--help` advertises every flag the probe sends - `--provider`, `--full`, `--json`, and `--no-credential-refresh` ([dispatch-auth.md](verification/dispatch-auth.md#account-slot-producer-capability)) - and an installation whose help drops one of them is refused rather than probed, so the request can never outrun the producer contract.
-`probe` and `probe-all` refuse by naming the first missing flag rather than falling back to an ambient or combined provider read, and there is no automatic selection without that evidence.
-An explicit `--account-slot` launch or relaunch needs no quota evidence: it resolves the home-local binding and routes to it.
-`probe-all` takes the slot IDs a pending decision actually references, and refuses malformed registry data, references, and missing requested IDs before probing.
-Once configuration is valid, one unavailable isolated slot produces its logical ID, `availability.status=unavailable`, and `availability.reason` carrying that probe's own refusal, so healthy later slots remain candidates and a reduced or empty candidate set is never unexplained.
-That reason names only logical slot IDs, config files, and missing prerequisites; account identity, credential sources, and store paths stay out of it.
-An explicit single-slot `probe` keeps refusal semantics.
 
 ## Toolchain
 
@@ -593,7 +521,7 @@ Local routes use direct guarded filesystem operations, while remote routes deleg
 It emits `SECONDMATE_SYNC:` only when a home was skipped for an actionable sync reason, inheritance failed, or a divergent shared captain-preference copy was quarantined.
 When a running home advances and its loaded instruction surface (`AGENTS.md`, `bin/`, or `.agents/skills/`) changed, bootstrap sends the re-read nudge itself through the stable `fm-<id>` selector and reports the exact completed send as `BOOTSTRAP_INFO:`.
 If that send fails, bootstrap keeps an idempotent retry marker and emits `NUDGE_SECONDMATES:` with the failure reason.
-The same bootstrap run emits `SECONDMATE_LIVENESS:` only when a registered secondmate is skipped or its relaunch fails, plus the report-only posture-mismatch line for an already-live Claude secondmate whose process arguments lack the selected Claude permission flag; every other already-live or successfully relaunched secondmate is handled silently.
+The same bootstrap run emits `SECONDMATE_LIVENESS:` only when a registered secondmate is skipped or its relaunch fails; every other already-live or successfully relaunched secondmate is handled silently.
 For a mid-session inherited local-material edit where tracked-file sync is not needed, run `bin/fm-config-push.sh`.
 It uses the same live secondmate discovery and propagation helper as bootstrap; its [help](../bin/fm-config-push.sh) owns reporting and exit semantics, and [`fm_config_inherit_items`](../bin/fm-config-inherit-lib.sh) declares the inherited items.
 When an allowlisted config item changes for an already-running local home, it sends the literal-content reread pointer described in [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md); unchanged allowlisted config sends no pointer unless a previous delivery is pending.
@@ -1278,13 +1206,13 @@ FM_STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=   # legacy alias for FM_TREEHOUSE_RETURN
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES=3        # fetch retries after fm-fleet-sync.sh hits the orphaned .git/packed-refs.lock signature
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=1 # seconds fm-fleet-sync.sh waits before each of those retries
 FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=30       # min mtime age before fm-fleet-sync.sh treats a leftover packed-refs.lock as provably stale
-FM_BUSY_REGEX=          # optional override for rendered delivery guards and Grok's isolated task-state fallback; converted worker state ignores it
+FM_BUSY_REGEX=          # optional override for rendered delivery guards; converted worker state ignores it
 FM_COMPOSER_IDLE_RE=    # optional fleet-wide idle-placeholder regex override (bin/fm-composer-lib.sh); a match alone does not prove emptiness because shape-specific position and ANSI de-emphasis safety gates still apply
 FM_COMPOSER_CAPTURE_LINES=20   # fleet-wide bound for tail-capture composer reads; tmux instead supplies its bounded visible pane, while the other adapters use this small window so stale scrollback banners stay out of the candidate set
 FM_COMPOSER_PI_MAX_LINES=8     # fleet-wide: maximum rows admitted between Pi's identity-corroborated separator pair; taller or ambiguous candidates stay unknown
 FM_COMPOSER_GHOST_LUMA_MAX=128   # fleet-wide: max perceived luminance (0.299R+0.587G+0.114B, 0-255) for a TRUECOLOR foreground to count as de-emphasised ghost/placeholder text and be stripped; dim/faint (SGR 2) is stripped regardless. Assumes a dark terminal theme (bin/fm-composer-lib.sh's fm_composer_strip_ghost)
-GROK_HOME=              # optional Grok config home for firstmate's global grok turn-end hook; defaults to ~/.grok
-FM_SEND_RETRIES=3       # fm-send typed-plane Enter-retry attempts after typing the line once; agy typed targets use a longer per-harness default owned by bin/fm-send.sh
+GROK_HOME=              # optional Grok config home for the Grok primary turn-end guard; defaults to ~/.grok
+FM_SEND_RETRIES=3       # fm-send typed-plane Enter-retry attempts after typing the line once
 FM_SEND_SLEEP=0.4       # seconds between fm-send typed-plane submit checks
 FM_SEND_SETTLE=1        # seconds fm-send waits after a successful typed-plane submit; 0 disables
 FM_PENDING_REPLY_GRACE_SECS=120   # seconds after marked-request delivery before a completed turn without a correlated parent report is eligible for its one recovery repost

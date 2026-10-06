@@ -193,8 +193,8 @@ make_chain_case() {
   proj="$case_dir/project"
   wt="$case_dir/wt"
   launchlog="$case_dir/launch.log"
-  fakebin=$(make_spawn_fakebin "$case_dir/fake")
-  fm_test_spawn_home "$home" codex
+  fakebin=$(make_spawn_fakebin "$case_dir/fake" pi)
+  fm_test_spawn_home "$home" pi
   fm_git_worktree "$proj" "$wt" "wt-$name"
   [ -n "$id" ] && fm_test_spawn_brief "$home" "$id"
   printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin|$launchlog"
@@ -206,7 +206,7 @@ run_chain_spawn() {
   : > "$launchlog"
   # The dispatch-profile suite wraps the same fixture with 2>&1 on the inner
   # call; the chain disclosure rides stderr, so it is folded in here too.
-  FM_FAKE_LAUNCH_LOG="$launchlog" GROK_HOME="$home/grok-home" \
+  FM_FAKE_LAUNCH_LOG="$launchlog" \
     fm_test_run_spawn "$home" "$wt" "$fakebin" "$id" "$proj" \
     --mode direct-PR --yolo off "$@" 2>&1
 }
@@ -236,7 +236,7 @@ test_exact_pin_is_byte_identical() {
 test_relaunch_resolves_a_chained_model_and_records_its_lane() {
   local dir out rc model lane
   dir=$(new_case chain-model rl61)
-  add_ship_task "$dir" rl61 claude
+  add_ship_task "$dir" rl61 pi
   # A prior record naming a chain relaunches through the same chain, on the
   # task lane; fm-control resolves before stopping the old agent, so the
   # refusal recorder reads the same published record the prior launch left.
@@ -399,7 +399,7 @@ run_remote_secondmate_spawn() {  # <home> <fakebin> <id> [fm-spawn args...]
   local home=$1 fakebin=$2 id=$3
   shift 3
   FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$home/user-home" \
-    CLAUDE_CONFIG_DIR='' FM_SPAWN_NO_GUARD=1 \
+    FM_SPAWN_NO_GUARD=1 \
     FM_SSH_BIN="$fakebin/ssh" FM_PROCEVENT_CLAIM_ROOT="$TMP_ROOT/claims" \
     PATH="$fakebin:$PATH" \
     "$ROOT/bin/fm-spawn.sh" "$id" --secondmate "$@" 2>&1

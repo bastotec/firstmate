@@ -24,7 +24,6 @@
 #                 "NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>",
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
-#                 "SECONDMATE_LIVENESS: secondmate <id>: posture mismatch: live agent pid <pid> lacks the configured Claude permission flag '<flag>' (<where>); reported only, not relaunched",
 #                 "SECONDMATE_HANDOFF: secondmate <id>: pending delivery: <n> item(s)",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
 #          When a RUNNING secondmate home is fast-forwarded, its target is
@@ -52,12 +51,7 @@
 #          fm_backend_agent_state: skipped distinguishes an existing ambiguous
 #          process, an unreadable target, and an unverified backend; respawn
 #          failed names whether the endpoint was missing or agent-less.
-#          The posture-mismatch line above is the one report-only exception: it
-#          names an already-live Claude agent running without the flag
-#          config/claude-permission-mode selects, and never stops or relaunches
-#          that agent, because replacing a running secondmate is the captain's
-#          call (bin/fm-claude-permission-lib.sh owns the posture).
-#          Every other already-live or successfully relaunched secondmate is
+#          Every already-live or successfully relaunched secondmate is
 #          silent unless FM_BOOTSTRAP_VERBOSE_FACTS=1 requests BOOTSTRAP_INFO
 #          facts.
 #          A HOME_ROUTE line means this home's firstmate-repo delivery route - its
@@ -89,8 +83,7 @@
 #          tasks-axi and quota-axi are essential bootstrap tools.
 #          A compatible tasks-axi default backend is silent.
 #          quota-axi is required for the agent-owned dispatch-profile array
-#          procedure in AGENTS.md section 4 and
-#          .agents/skills/quota-array-dispatch/SKILL.md.
+#          procedure owned by AGENTS.md section 4.
 #          On a primary home, the locked mutable path materializes the visible
 #          default config/startup-memory-budget=7500 when absent. It never
 #          guesses at malformed or unsafe existing files, and secondmate homes
@@ -193,16 +186,12 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 # shellcheck source=bin/fm-quota-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
-# shellcheck source=bin/fm-account-slot-lib.sh disable=SC1091
-. "$SCRIPT_DIR/fm-account-slot-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tangle-lib.sh"
 # shellcheck source=bin/fm-home-route-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-home-route-lib.sh"
 # shellcheck source=bin/fm-ff-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-ff-lib.sh"
-# shellcheck source=bin/fm-cursor-lib.sh disable=SC1091
-. "$SCRIPT_DIR/fm-cursor-lib.sh"
 # shellcheck source=bin/fm-config-inherit-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
 # shellcheck source=bin/fm-secondmate-nudge-lib.sh disable=SC1091
@@ -213,8 +202,6 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-backend.sh disable=SC1091
 . "$SCRIPT_DIR/fm-backend.sh"
-# shellcheck source=bin/fm-claude-permission-lib.sh disable=SC1091
-. "$SCRIPT_DIR/fm-claude-permission-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 # fm-timing-lib.sh is inert unless FM_TIMING_LOG names a file, which only the
@@ -705,20 +692,6 @@ report_relaunch() {  # <id> <cause> <where>
   echo "BOOTSTRAP_INFO: secondmate $1 relaunched after $2 ($3)"
 }
 
-# A live secondmate agent counts as healthy only when it runs on the configured
-# Claude permission posture. A session resumed by some other launcher - Herdr
-# resumes every registered agent after its server restarts - comes back without
-# it, so the sweep names that agent instead of calling it live. Report only:
-# the agent is neither stopped nor relaunched here, because whether and when to
-# replace a running secondmate is the captain's call.
-report_posture_mismatch() {  # <id> <verdict-line> <flag> <where>
-  case "$2" in
-    mismatch\ *)
-      echo "SECONDMATE_LIVENESS: secondmate $1: posture mismatch: live agent pid ${2#mismatch } lacks the configured Claude permission flag '$3' ($4); reported only, not relaunched"
-      ;;
-  esac
-}
-
 secondmate_liveness_sweep() {
   # Idempotent secondmate liveness guarantee - SESSION START ONLY. The detailed
   # state machine and its only recovery-authorizing states are owned by
@@ -823,9 +796,6 @@ secondmate_liveness_one() {  # <meta> <id>
           echo "SECONDMATE_LIVENESS: secondmate $id: skipped: alive remote endpoint is recorded on backend '${remote_backend:-missing}'; migrate or retire it explicitly"
           return 0
         fi
-        report_posture_mismatch "$id" \
-          "$(printf '%s\n' "$route_out" | sed -n 's/^posture=//p' | tail -1)" \
-          "$(printf '%s\n' "$route_out" | sed -n 's/^posture_flag=//p' | tail -1)" "host=$remote_host"
         [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: remote secondmate $id already live (host=$remote_host)"
         ;;
       dead|missing)
@@ -849,7 +819,7 @@ secondmate_liveness_one() {  # <meta> <id>
   [ -n "$target" ] || target="$window"
   agent_state=$(fm_backend_agent_state "$backend" "$target" 2>/dev/null) || agent_state=unreadable
   case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi|omp|deck) ;;
+    pi|pi-signed|deck) ;;
     *)
       case "$agent_state" in dead|missing) agent_state=unverified-harness ;; esac
       ;;
@@ -864,10 +834,6 @@ secondmate_liveness_one() {  # <meta> <id>
   fi
   case "$agent_state" in
     alive)
-      if [ "$harness" = claude ] && flag=$(fm_claude_permission_flag "$CONFIG" 2>/dev/null); then
-        report_posture_mismatch "$id" "$(fm_claude_permission_endpoint_verdict "$backend" "$target" "$flag")" \
-          "$flag" "backend=$backend"
-      fi
       if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
         echo "BOOTSTRAP_INFO: secondmate $id already live (backend=$backend)"
       fi
@@ -948,7 +914,6 @@ install_cmd() {
 manual_install_url() {
   case "$1" in
     herdr) echo "https://herdr.dev" ;;
-    cursor-agent) echo "https://cursor.com/cli" ;;
     *) return 1 ;;
   esac
 }
@@ -1181,41 +1146,25 @@ EOF
 }
 
 crew_dispatch_validate() {
-  local file err registry
+  local file err
   file="$CONFIG/crew-dispatch.json"
-  registry="$CONFIG/account-slots.json"
-  if [ -e "$registry" ] || [ -L "$registry" ] || [ -f "$file" ]; then
-    if ! command -v jq >/dev/null 2>&1; then
-      echo "MISSING: jq (install: $(install_cmd jq))"
-      return 0
-    fi
-  fi
-  if [ -e "$registry" ] || [ -L "$registry" ]; then
-    if ! fm_account_slot_validate_registry "$CONFIG"; then
-      echo "CREW_DISPATCH: invalid config/account-slots.json - $FM_ACCOUNT_SLOT_ERROR"
-      return 0
-    fi
-  fi
   [ -f "$file" ] || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "MISSING: jq (install: $(install_cmd jq))"
+    return 0
+  fi
   if ! jq -e . "$file" >/dev/null 2>&1; then
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON"
     return 0
   fi
   err=$(jq -r '
-    def verified($h): ["claude","codex","opencode","pi","pi-signed","grok","kimi","cursor","agy","muse","rovo","omp","deck"] | index($h);
+    def verified($h): ["pi","pi-signed","deck"] | index($h);
     def effort_ok($h; $m; $e):
       if $e == null then true
       elif ($e | type) != "string" then false
       elif $e == "ultra" then (($h == "pi" or $h == "pi-signed") and (($m | type) == "string") and ($m | startswith("codex-native/")) and ($m | length) > 13)
-      elif $h == "claude" then (["low","medium","high","xhigh","max"] | index($e))
-      elif $h == "codex" then ((["low","medium","high","xhigh"] | index($e)) != null or ($e == "max" and $m == "gpt-5.6-luna"))
-      elif $h == "grok" then (["low","medium","high"] | index($e))
-      elif $h == "agy" then (["low","medium","high"] | index($e))
-      elif $h == "pi" or $h == "pi-signed" or $h == "omp" then (["low","medium","high","xhigh","max"] | index($e))
-      elif $h == "muse" then (["low","medium","high","xhigh","max"] | index($e))
-      elif $h == "rovo" then (["low","medium","high","max"] | index($e))
+      elif $h == "pi" or $h == "pi-signed" then (["low","medium","high","xhigh","max"] | index($e))
       elif $h == "deck" then false
-      elif $h == "opencode" or $h == "kimi" or $h == "cursor" then false
       else true
       end;
     def profiles($value):
@@ -1268,10 +1217,6 @@ crew_dispatch_validate() {
   ' "$file" 2>/dev/null || true)
   if [ -n "$err" ]; then
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $err"
-    return 0
-  fi
-  if ! fm_account_slot_validate_dispatch "$CONFIG" "$file"; then
-    echo "CREW_DISPATCH: invalid account slot routing - $FM_ACCOUNT_SLOT_ERROR"
     return 0
   fi
   if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
@@ -1592,14 +1537,6 @@ detect_local_config() {
   [ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
   if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && [ -n "$crew" ] && [ "$crew" != "default" ]; then
     echo "BOOTSTRAP_INFO: crew harness override active: $crew"
-  fi
-  # A configured cursor crew harness needs a cursor executable present, and
-  # cursor ships under EITHER installed name. Resolution runs through the
-  # verified owner rather than a bare `command -v`, so a home that merely has
-  # some unrelated executable named `agent` on PATH is still reported missing
-  # instead of failing at the first spawn.
-  if [ "$crew" = cursor ] && ! fm_cursor_resolve_binary >/dev/null 2>&1; then
-    echo "MISSING_MANUAL: cursor-agent (instructions: $(manual_install_url cursor-agent))"
   fi
   crew_dispatch_validate
   if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] \

@@ -298,18 +298,18 @@ family_for_basename() {
   case "$1" in
     fm-arm-pretool-check.test.sh|fm-ask-user-authority.test.sh|\
     fm-bearings-board.test.sh|\
-    fm-brief.test.sh|fm-vendor-auth-probe.test.sh|\
+    fm-brief.test.sh|\
     fm-calm-pi-extension.test.sh|fm-cd-pretool-check.test.sh|\
     fm-classify-decision-key.test.sh|\
     fm-composer-ghost.test.sh|fm-composer-lib.test.sh|\
     fm-crew-state.test.sh|fm-captain-hold-lifecycle.test.sh|\
-    fm-documentation-audiences.test.sh|fm-ensure-agents-md.test.sh|fm-grok-harness.test.sh|\
+    fm-documentation-audiences.test.sh|fm-ensure-agents-md.test.sh|\
     fm-harness-precedence.test.sh|\
-    fm-kimi-harness.test.sh|fm-muse-harness.test.sh|fm-rovo-harness.test.sh|fm-agy-harness.test.sh|fm-deck-harness.test.sh|fm-omp-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|\
+    fm-deck-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|\
     fm-lint-workflows.test.sh|\
     fm-operational-input.test.sh|fm-pi-primary-types.test.sh|\
     fm-harness-adapter-references.test.sh|\
-    fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
+    fm-send-settle.test.sh|\
     fm-subagent-pretool-check.test.sh|\
     fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|\
     fm-tmux-submit-busy.test.sh|fm-trace-context-lib.test.sh|\
@@ -361,35 +361,30 @@ family_for_basename() {
     fm-tangle-guard.test.sh|fm-update.test.sh)
       printf '%s\n' session-bootstrap
       ;;
-    fm-account-slot-live-e2e.test.sh|fm-afk-pi-herdr-return-e2e.test.sh|\
+    fm-afk-pi-herdr-return-e2e.test.sh|\
     fm-bearings-board-lavish-live-e2e.test.sh|\
     fm-claude-stop-autoarm-live-e2e.test.sh|\
-    fm-composer-matrix-live-e2e.test.sh|\
-    fm-composer-codex-idle-live-e2e.test.sh|\
-    fm-codex-continuity-live-e2e.test.sh|fm-grok-continuity-live-e2e.test.sh|\
     fm-cursor-primary-live-e2e.test.sh|\
     fm-deck-host-live-e2e.test.sh|fm-stream-deck-live-e2e.test.sh|\
-    fm-grok-stop-live-e2e.test.sh|fm-harness-adapter-instructions-live-e2e.test.sh|\
     fm-harness-liveness-drift-live-e2e.test.sh|\
-    fm-muse-signals-live-e2e.test.sh|fm-rovo-signals-live-e2e.test.sh|fm-agy-signals-live-e2e.test.sh|\
     fm-herdr-version-floor-live-e2e.test.sh|\
     fm-herdr-pi-stale-registration-live-e2e.test.sh|\
     fm-opencode-primary-live-e2e.test.sh|fm-pi-branch-live-e2e.test.sh|\
     fm-pi-branch-responsiveness-live-e2e.test.sh|\
     fm-pi-primary-live-e2e.test.sh|fm-pi-codex-native.test.sh|fm-omp-primary-live-e2e.test.sh|\
     fm-sessionstart-hook-live-e2e.test.sh|fm-sessionstart-instruction-refresh-live-e2e.test.sh|\
-    fm-quota-array-dispatch-live-e2e.test.sh|fm-send-secondmate-marker-herdr-e2e.test.sh|\
+    fm-send-secondmate-marker-herdr-e2e.test.sh|\
     fm-send-inbox-doorbell-live-e2e.test.sh|\
     fm-herdr-submit-confirm-live-e2e.test.sh)
       printf '%s\n' live-harness-optin
       ;;
     fm-backend-herdr.test.sh|fm-backend-tmux-smoke.test.sh|fm-backend.test.sh|\
     fm-tmux-agent-liveness.test.sh|\
-    fm-account-slot.test.sh|fm-control.test.sh|fm-control-relaunch.test.sh|\
+    fm-control.test.sh|fm-control-relaunch.test.sh|\
     fm-control-recover-missing.test.sh|\
     fm-herdr-session-cleanup.test.sh|fm-send-resolve-key.test.sh|fm-send-strict.test.sh|\
     fm-send-inbox.test.sh|fm-spawn-batch.test.sh|\
-    fm-spawn-dispatch-profile.test.sh|fm-claude-trust.test.sh|\
+    fm-spawn-dispatch-profile.test.sh|\
     fm-trace-context-spawn.test.sh|fm-spawn-worktree-settle.test.sh|\
     fm-teardown-endpoint-safety.test.sh)
       printf '%s\n' backend-dispatch
@@ -407,13 +402,13 @@ family_for_basename() {
       ;;
     fm-branch-supervision.test.sh|fm-busy-adapter-wiring.test.sh|\
     fm-busy-state.test.sh|fm-classify-corr-token.test.sh|\
-    fm-claude-stop-autoarm.test.sh|fm-cursor-harness.test.sh|\
+    fm-claude-stop-autoarm.test.sh|\
     fm-extension-binding.test.sh|fm-gitignore-config.test.sh|\
     fm-no-mistakes-required.test.sh|fm-peek-remote.test.sh|\
     fm-pending-reply.test.sh|fm-pi-branch-extension.test.sh|\
     fm-procevent-quota.test.sh|fm-procevent-when.test.sh|fm-procevent.test.sh|\
     fm-live-gate.test.sh|\
-    fm-project-origin.test.sh|fm-public-followup.test.sh|fm-quota-choose.test.sh|\
+    fm-project-origin.test.sh|fm-public-followup.test.sh|\
     fm-remote-entrypoint.test.sh|fm-remote-secondmate-parent-binding.test.sh|\
     fm-send-remote-delivery.test.sh|fm-spawn-pool-base-freshen.test.sh|\
     fm-test-fixture-cleanup.test.sh|fm-test-fixtures.test.sh|\
@@ -480,13 +475,11 @@ tests/fm-composer-ghost.test.sh
 tests/fm-composer-lib.test.sh
 tests/fm-crew-state.test.sh
 tests/fm-ensure-agents-md.test.sh
-tests/fm-grok-harness.test.sh
 tests/fm-herdr-lab.test.sh
 tests/fm-lint.test.sh
 tests/fm-pi-primary-types.test.sh
 tests/fm-pr-merge.test.sh
 tests/fm-review-diff.test.sh
-tests/fm-send-popup-settle.test.sh
 tests/fm-send-settle.test.sh
 tests/fm-send-strict.test.sh
 tests/fm-spawn-batch.test.sh
@@ -512,13 +505,11 @@ tests/fm-composer-ghost.test.sh 2120
 tests/fm-composer-lib.test.sh 4798
 tests/fm-crew-state.test.sh 11557
 tests/fm-ensure-agents-md.test.sh 901
-tests/fm-grok-harness.test.sh 6563
 tests/fm-herdr-lab.test.sh 9800
 tests/fm-lint.test.sh 212915
 tests/fm-pi-primary-types.test.sh 8624
 tests/fm-pr-merge.test.sh 111145
 tests/fm-review-diff.test.sh 2747
-tests/fm-send-popup-settle.test.sh 4939
 tests/fm-send-settle.test.sh 2051
 tests/fm-send-strict.test.sh 3861
 tests/fm-spawn-batch.test.sh 2265
@@ -555,7 +546,6 @@ tests/fm-x-mode.test.sh
 tests/fm-arm-pretool-check.test.sh
 tests/fm-cd-pretool-check.test.sh
 tests/fm-pi-primary-types.test.sh
-tests/fm-send-popup-settle.test.sh
 tests/fm-composer-lib.test.sh
 tests/fm-tmux-submit-busy.test.sh
 tests/fm-composer-ghost.test.sh
@@ -572,7 +562,6 @@ tests/fm-pr-merge.test.sh
 tests/fm-backend-herdr.test.sh
 tests/fm-crew-state.test.sh
 tests/fm-herdr-lab.test.sh
-tests/fm-grok-harness.test.sh
 tests/fm-send-strict.test.sh
 tests/fm-review-diff.test.sh
 tests/fm-spawn-batch.test.sh
@@ -700,14 +689,10 @@ portable_serial_weight_hints() {
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
-tests/fm-account-slot-live-e2e.test.sh 102
-tests/fm-account-slot.test.sh 13347
 tests/fm-afk-contract.test.sh 15666
 tests/fm-afk-inject-e2e.test.sh 34977
 tests/fm-afk-pi-herdr-return-e2e.test.sh 80
 tests/fm-afk-return.test.sh 38827
-tests/fm-agy-harness.test.sh 51759
-tests/fm-agy-signals-live-e2e.test.sh 105
 tests/fm-ask-triage.test.sh 14351
 tests/fm-ask-user-authority.test.sh 386
 tests/fm-autoland.test.sh 123495
@@ -733,14 +718,9 @@ tests/fm-classify-corr-token.test.sh 65224
 tests/fm-classify-decision-key.test.sh 1562
 tests/fm-claude-stop-autoarm-live-e2e.test.sh 115
 tests/fm-claude-stop-autoarm.test.sh 60892
-tests/fm-claude-trust.test.sh 23751
-tests/fm-codex-continuity-live-e2e.test.sh 98
-tests/fm-composer-codex-idle-live-e2e.test.sh 79
-tests/fm-composer-matrix-live-e2e.test.sh 109
 tests/fm-control-recover-missing.test.sh 37080
 tests/fm-control-relaunch.test.sh 103083
 tests/fm-control.test.sh 45346
-tests/fm-cursor-harness.test.sh 30103
 tests/fm-cursor-primary-live-e2e.test.sh 71
 tests/fm-cursor-primary.test.sh 58472
 tests/fm-daemon.test.sh 34194
@@ -754,13 +734,9 @@ tests/fm-external-wait.test.sh 7628
 tests/fm-fleet-snapshot-view.test.sh 16642
 tests/fm-fleet-sync.test.sh 59502
 tests/fm-gate-refuse.test.sh 11178
-tests/fm-gemini-harness.test.sh 2018
 tests/fm-gitignore-config.test.sh 80
 tests/fm-gotmp.test.sh 3374
-tests/fm-grok-continuity-live-e2e.test.sh 73
-tests/fm-grok-stop-live-e2e.test.sh 82
 tests/fm-guard-stale-banner.test.sh 40921
-tests/fm-harness-adapter-instructions-live-e2e.test.sh 70
 tests/fm-harness-adapter-references.test.sh 67
 tests/fm-harness-liveness-drift-live-e2e.test.sh 967
 tests/fm-harness-precedence.test.sh 5239
@@ -770,18 +746,14 @@ tests/fm-herdr-submit-confirm-live-e2e.test.sh 72
 tests/fm-herdr-version-floor-live-e2e.test.sh 99
 tests/fm-home-summary-refresh.test.sh 37203
 tests/fm-inactive-reconcile.test.sh 49894
-tests/fm-kimi-harness.test.sh 19574
 tests/fm-lint-workflows.test.sh 1114
 tests/fm-live-gate.test.sh 2469
 tests/fm-mail-check.test.sh 8405
 tests/fm-mail.test.sh 10744
 tests/fm-meta-backfill.test.sh 2500
 tests/fm-model-chain.test.sh 28150
-tests/fm-muse-harness.test.sh 47978
-tests/fm-muse-signals-live-e2e.test.sh 52
 tests/fm-nm-test-contract.test.sh 1135
 tests/fm-no-mistakes-required.test.sh 5084
-tests/fm-omp-harness.test.sh 49035
 tests/fm-omp-primary-live-e2e.test.sh 79
 tests/fm-on.test.sh 12825
 tests/fm-opencode-primary-live-e2e.test.sh 132
@@ -802,8 +774,6 @@ tests/fm-procevent-when.test.sh 52742
 tests/fm-procevent.test.sh 243335
 tests/fm-project-origin.test.sh 141
 tests/fm-public-followup.test.sh 191204
-tests/fm-quota-array-dispatch-live-e2e.test.sh 100
-tests/fm-quota-choose.test.sh 2204
 tests/fm-remote-backlog-handoff.test.sh 215277
 tests/fm-remote-doctor.test.sh 23851
 tests/fm-remote-entrypoint.test.sh 149
@@ -817,8 +787,6 @@ tests/fm-remote-secondmate-parent-binding.test.sh 50427
 tests/fm-remote-secondmate-replacement.test.sh 96637
 tests/fm-remote-secondmate-trace-context.test.sh 100809
 tests/fm-remote-transport-lanes.test.sh 65980
-tests/fm-rovo-harness.test.sh 15156
-tests/fm-rovo-signals-live-e2e.test.sh 76
 tests/fm-secondmate-harness.test.sh 177921
 tests/fm-secondmate-lifecycle-e2e.test.sh 19562
 tests/fm-secondmate-liveness.test.sh 27524
@@ -826,7 +794,6 @@ tests/fm-secondmate-reconcile.test.sh 101281
 tests/fm-secondmate-restart.test.sh 48934
 tests/fm-secondmate-safety.test.sh 121046
 tests/fm-secondmate-sync.test.sh 65467
-tests/fm-send-agy-confirm.test.sh 7657
 tests/fm-send-inbox-doorbell-live-e2e.test.sh 99
 tests/fm-send-inbox.test.sh 60067
 tests/fm-send-remote-delivery.test.sh 73181
@@ -851,13 +818,11 @@ tests/fm-stream-agent-live-e2e.test.sh 25441
 tests/fm-stream-agent-rust.test.sh 262450
 tests/fm-stream-bridge-rust.test.sh 56439
 tests/fm-stream-bridge.test.sh 49679
-tests/fm-stream-claude-tail.test.sh 14878
 tests/fm-stream-deck-live-e2e.test.sh 97
 tests/fm-stream-deck.test.sh 5093
 tests/fm-stream-hub-retention.test.sh 138388
 tests/fm-stream-hub-rust.test.sh 44707
 tests/fm-stream-hub.test.sh 323940
-tests/fm-stream-opencode-tail.test.sh 17963
 tests/fm-subagent-pretool-check.test.sh 1362
 tests/fm-supervision-events.test.sh 1898
 tests/fm-tangle-guard.test.sh 17025
@@ -877,7 +842,6 @@ tests/fm-trace-context-spawn.test.sh 87800
 tests/fm-turnend-guard.test.sh 38283
 tests/fm-ui-host-control.test.sh 34964
 tests/fm-update.test.sh 31587
-tests/fm-vendor-auth-probe.test.sh 45871
 tests/fm-voice-records.test.sh 1113
 tests/fm-wake-daemon-lifecycle-e2e.test.sh 8205
 tests/fm-wake-drain-open-decisions-cursor.test.sh 39104
@@ -1577,19 +1541,10 @@ families_for_changed_path() {
       ;;
     bin/fm-quota-axi-lib.sh)
       printf '%s\n' session-bootstrap
-      printf '%s\n' "__script__:fm-account-slot.test.sh"
       printf '%s\n' "__script__:fm-procevent-quota.test.sh"
-      printf '%s\n' "__script__:fm-quota-choose.test.sh"
-      ;;
-    bin/fm-account-slot.sh|bin/fm-account-slot-lib.sh)
-      printf '%s\n' backend-dispatch
-      printf '%s\n' live-harness-optin
       ;;
     bin/fm-procevent-quota.sh)
       printf '%s\n' "__script__:fm-procevent-quota.test.sh"
-      ;;
-    bin/fm-quota-choose.sh)
-      printf '%s\n' "__script__:fm-quota-choose.test.sh"
       ;;
     .pi/extensions/fm-branch-supervision.ts|.pi/extensions/lib/fm-async-exec.ts|\
     .pi/extensions/lib/fm-branch-dispatch.ts|.pi/extensions/lib/fm-native-contract.ts)
@@ -1640,7 +1595,7 @@ families_for_changed_path() {
       ;;
     bin/fm-timeout-lib.sh)
       # The shared hard bound: session start's runtime bound, the fleet/bearings
-      # snapshots, the vendor auth probe, the stow cascade's per-home step, and
+      # snapshots, the stow cascade's per-home step, and
       # the wedge detector's worktree write probe all depend on it.
       printf '%s\n' session-bootstrap
       printf '%s\n' snapshot-bearings
@@ -1663,12 +1618,10 @@ families_for_changed_path() {
     bin/fm-control-lib.sh)
       printf '%s\n' backend-dispatch
       printf '%s\n' session-bootstrap
-      printf '%s\n' "__script__:fm-quota-choose.test.sh"
       ;;
     bin/fm-composer-lib.sh)
       # The shared shape catalogue is vendor-rendered signal; a change to it
-      # re-selects the live guard (fm-composer-matrix-live-e2e) alongside the
-      # portable families.
+      # re-selects the live guards alongside the portable families.
       printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
@@ -1701,14 +1654,9 @@ families_for_changed_path() {
     bin/fm-brief.sh|bin/fm-ensure-agents-md.sh|bin/fm-crew-state.sh|\
     bin/fm-captain-hold.sh|bin/fm-decision-hold.sh|bin/fm-supervision*|bin/fm-transition-lib.sh|\
     bin/fm-tmux-lib.sh|bin/fm-marker-lib.sh|bin/fm-operational-input.sh|bin/fm-tasks-axi-lib.sh|\
-    bin/fm-vendor-auth-probe.sh|\
     bin/fm-primary-scope-lib.sh|bin/fm-project-mode.sh|bin/fm-promote.sh|\
     bin/fm-ff-lib.sh|bin/fm-gotmp*|bin/*pretool*)
       printf '%s\n' pure-contract-unit
-      ;;
-    .agents/skills/quota-array-dispatch/SKILL.md)
-      printf '%s\n' pure-contract-unit
-      printf '%s\n' live-harness-optin
       ;;
     .agents/skills/harness-adapters/SKILL.md|.agents/skills/harness-adapters/references/*)
       printf '%s\n' pure-contract-unit

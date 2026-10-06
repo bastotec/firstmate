@@ -80,7 +80,7 @@ case "\${1:-}" in
   display-message)
     case "\$*" in
       *'#{pane_current_path}'*) cut -d'|' -f2- "\$state" ;;
-      *'#{pane_current_command}'*) printf 'codex\n' ;;
+      *'#{pane_current_command}'*) printf 'fm-deck-worker\n' ;;
       *'#{cursor_y}'*) printf '0\n' ;;
       *'#S'*) printf 'firstmate\n' ;;
       *) printf '%%1\n' ;;
@@ -90,11 +90,15 @@ case "\${1:-}" in
   capture-pane) printf '❯\n'; exit 0 ;;
   send-keys) [ ! -f "\$fail_send" ] || exit 1; exit 0 ;;
   kill-window) rm -f -- "\$state"; exit 0 ;;
-  list-panes) printf 'codex\n'; exit 0 ;;
+  list-panes) printf 'fm-deck-worker\n'; exit 0 ;;
 esac
 exit 0
 SH
 chmod +x "$REMOTE_ROOT/bin/tmux"
+# The remote secondmate runs on deck, whose launch resolves the executable on the
+# host's PATH; the pane runs bin/fm-deck-worker.sh, so an exit-0 stub suffices.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$REMOTE_ROOT/bin/deck"
+chmod +x "$REMOTE_ROOT/bin/deck"
 install_remote_herdr_fixture "$REMOTE_ROOT" "$HERDR_STATE" "$HERDR_LOG" \
   "$TMP_ROOT/herdr-send-fail" "$TMP_ROOT/herdr.sock"
 # Use the worker's OS Bash for the simulated host's env-based shebangs too.
@@ -145,7 +149,7 @@ git --git-dir="$TMP_ROOT/alpha.git" symbolic-ref HEAD refs/heads/main
 cat > "$PARENT/data/projects.md" <<EOF
 - alpha [direct-PR] - alpha project (added 2026-08-02)
 EOF
-printf 'codex\n' > "$PARENT/config/secondmate-harness"
+printf 'deck\n' > "$PARENT/config/secondmate-harness"
 printf 'tmux\n' > "$PARENT/config/backend"
 printf 'primary harness defaults\n' > "$PARENT/config/crew-harness"
 
@@ -245,7 +249,7 @@ case "${FM_FAKE_SSH_MODE:-normal}:$command_name:$command_rel" in
     printf 'schema=fm-remote-secondmate-control.v1\n'
     printf 'backend=tmux\n'
     printf 'target=firstmate:fm-ios\n'
-    printf 'harness=codex\n'
+    printf 'harness=deck\n'
     exit 0
     ;;
   launch-default-session-route:fm-remote-secondmate-control.sh:*)
@@ -254,7 +258,7 @@ case "${FM_FAKE_SSH_MODE:-normal}:$command_name:$command_rel" in
     printf 'backend=herdr\n'
     printf 'target=default:w1:p2\n'
     printf 'herdr_session=default\n'
-    printf 'harness=codex\n'
+    printf 'harness=deck\n'
     exit 0
     ;;
   provision-block-fail:fm-remote-home-provision.sh:*)
@@ -370,13 +374,13 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
     printf 'report with trailing blank lines\n\n\n' > "$source/data/report/report.md"
     printf 'pending note\n' > "$source/state/inbox/note.md"
     printf 'needs-decision [key=old]: preserved historical event\n' > "$source/state/old.status"
-    printf 'codex\n' > "$source/config/crew-harness"
+    printf 'pi\n' > "$source/config/crew-harness"
     printf 'secret-value-never-transfer\n' > "$source/config/cmux-socket-password"
     printf 'secret-value-never-transfer\n' > "$source/.env"
     mkdir "$source/data/credentials"
     printf 'secret-value-never-transfer\n' > "$source/data/credentials/token"
     printf -- '- %s - Persistent responsibility (home: %s; scope: exact selected work; projects: ; added 2026-08-02)\n' "$id" "$source" >> "$PARENT/data/secondmates.md"
-    printf 'window=fm-remote:missing\nbackend=herdr\nherdr_session=fm-remote\nherdr_pane_id=missing\nherdr_workspace_id=missing-workspace\nherdr_tab_id=missing-tab\nendpoint_task_id=%s\nharness=codex\nkind=secondmate\nhome=%s\nworktree=%s\nproject=%s\n' "$id" "$source" "$source" "$REMOTE_ROOT" > "$PARENT/state/$id.meta"
+    printf 'window=fm-remote:missing\nbackend=herdr\nherdr_session=fm-remote\nherdr_pane_id=missing\nherdr_workspace_id=missing-workspace\nherdr_tab_id=missing-tab\nendpoint_task_id=%s\nharness=deck\nkind=secondmate\nhome=%s\nworktree=%s\nproject=%s\n' "$id" "$source" "$source" "$REMOTE_ROOT" > "$PARENT/state/$id.meta"
   }
   migrate() {
     local id=$1
@@ -1093,7 +1097,7 @@ pass "mixed local and remote routes validate without migration"
 # Launch on the remote home's own configured backend. Parent metadata records
 # host placement separately from that backend and arms the reply source.
 printf 'pi\n' > "$PARENT/config/crew-harness"
-printf 'codex codex/gpt-6-luna\n' > "$PARENT/config/secondmate-harness"
+printf 'deck codex/gpt-6-luna\n' > "$PARENT/config/secondmate-harness"
 launches_before_inherit=0
 [ ! -f "$HERDR_LOG" ] || launches_before_inherit=$(grep -c '^tab create' "$HERDR_LOG" || true)
 if FM_FAKE_SSH_MODE=inherit-partial remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate \
@@ -1120,9 +1124,14 @@ publish_healthy_watcher_identity "$PARENT/state" "$PARENT" "$ROOT/bin/fm-watch.s
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
   || fail "remote endpoint was not projected alive from its own host"
 # Herdr reports a native agent state, so the delivery observation resolves
-# without the rendered-output fallback a tmux endpoint needs.
-[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh observe ios)" = idle ] \
-  || fail "remote endpoint delivery observation did not execute on its own host"
+# without the rendered-output fallback a tmux endpoint needs. A Deck endpoint's
+# liveness above is proved from its driver process, not an agent read, so this
+# is the first native read since the launch submitted its turn: busy or idle are
+# both native answers, while fallback-idle or unknown would mean it never ran.
+case "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh observe ios)" in
+  busy|idle) ;;
+  *) fail "remote endpoint delivery observation did not execute on its own host" ;;
+esac
 pass "remote spawn launches on the remote-local backend and records a host-qualified route"
 grep -Fx 'model=codex/gpt-6-luna' "$PARENT/state/ios.meta" >/dev/null \
   || fail "configured exact model did not reach parent metadata"
@@ -1147,7 +1156,7 @@ stop_model_endpoint() {
     || fail "the remote endpoint was not stopped before recovery"
 }
 stop_model_endpoint
-printf 'codex codex/gpt-6-luna,codex/gpt-6-luna-fallback\n' > "$PARENT/config/secondmate-harness"
+printf 'deck codex/gpt-6-luna,codex/gpt-6-luna-fallback\n' > "$PARENT/config/secondmate-harness"
 model_boot=$(remote_env "$ROOT/bin/fm-bootstrap.sh" 2>&1)
 assert_not_contains "$model_boot" 'command not found' "configured chain recovery crashed before launch"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
@@ -1200,7 +1209,7 @@ cmp -s "$PARENT/state/ios.meta" "$TMP_ROOT/model-before-exhaustion.meta" \
 pass "an exhausted remote chain refuses without launching or changing the existing route"
 printf 'Exhausted-chain refusal output:\n%s\n' "$model_exhaust"
 # Subsequent lifecycle cases retain their original default-model posture.
-printf 'codex\n' > "$PARENT/config/secondmate-harness"
+printf 'deck\n' > "$PARENT/config/secondmate-harness"
 
 remote_route_meta="$REMOTE_HOME/state/parent-route/ios.meta"
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-default-session.meta"
@@ -1219,7 +1228,7 @@ if remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh route ios
   || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh capture ios >/dev/null 2>&1 \
   || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh observe ios >/dev/null 2>&1 \
   || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh retire ios --force >/dev/null 2>&1 \
-  || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios codex - - herdr >/dev/null 2>&1; then
+  || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios deck - - herdr >/dev/null 2>&1; then
   fail "legacy default-session metadata remained operational"
 fi
 cmp -s "$TMP_ROOT/herdr-before-default-session.log" "$HERDR_LOG" \
@@ -1270,14 +1279,14 @@ cat > "$remote_route_meta" <<EOF
 window=firstmate:fm-ios
 worktree=$REMOTE_HOME
 project=$REMOTE_ROOT
-harness=codex
+harness=deck
 kind=secondmate
 backend=tmux
 EOF
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-legacy-before-refusal.meta"
 printf 'fm-ios|%s\n' "$REMOTE_HOME" > "$TMUX_STATE"
 set +e
-remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios codex - - herdr \
+remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios deck - - herdr \
   > "$TMP_ROOT/legacy-alive-refusal.out" 2>&1
 legacy_alive_rc=$?
 set -e
@@ -1303,15 +1312,16 @@ unconfirmed_pane=$(sed -n 's/^herdr_pane_id=//p' "$remote_route_meta")
 [ -n "$unconfirmed_pane" ] || fail "remote route metadata carries no herdr pane to close"
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-unconfirmed-kill.meta"
 cp "$HERDR_STATE" "$TMP_ROOT/herdr-before-unconfirmed-kill.state"
-# The registration is gone but the pane is still standing: the agent-less state
-# the launch path treats as a reusable id.
-jq --arg p "$unconfirmed_pane" 'del(.typed[$p]) | del(.working[$p])' \
+# The Deck driver has left the pane but the pane is still standing: the
+# agent-less state the launch path treats as a reusable id. The driver stand-in
+# itself keeps running until the saved fixture state is restored below.
+jq --arg p "$unconfirmed_pane" 'del(.typed[$p]) | del(.working[$p]) | del(.agents[$p]) | del(.argv[$p])' \
   "$TMP_ROOT/herdr-before-unconfirmed-kill.state" > "$HERDR_STATE"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = dead ] \
   || fail "an agent-less remote pane was not projected dead, so the relaunch gate is not the case under test"
 : > "$TMP_ROOT/herdr-send-fail.close"   # every close leaves its pane standing
 set +e
-remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios codex - - herdr \
+remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios deck - - herdr \
   > "$TMP_ROOT/unconfirmed-kill-refusal.out" 2>&1
 unconfirmed_kill_rc=$?
 set -e
@@ -1419,7 +1429,7 @@ pass "marked send and routed reply complete through the existing parent correlat
 rm -f "$PARENT/state/.wake-queue"
 
 printf '{"revision":2}\n' > "$PARENT/config/crew-dispatch.json"
-printf 'grok\n' > "$PARENT/config/crew-harness"
+printf 'pi-signed\n' > "$PARENT/config/crew-harness"
 set +e
 FM_FAKE_SSH_MODE=inherit-partial remote_env "$ROOT/bin/fm-config-push.sh" \
   > "$TMP_ROOT/config-partial.out" 2>&1
@@ -1427,14 +1437,14 @@ config_partial_rc=$?
 set -e
 [ "$config_partial_rc" -ne 0 ] || fail "partial remote inheritance claimed complete convergence"
 assert_grep '"revision":2' "$REMOTE_HOME/config/crew-dispatch.json" "partial inheritance did not apply its first file"
-[ "$(cat "$REMOTE_HOME/config/crew-harness")" != grok ] \
+[ "$(cat "$REMOTE_HOME/config/crew-harness")" != pi-signed ] \
   || fail "partial inheritance unexpectedly applied the failed file"
 NUDGE_MARKER="$PARENT/state/.secondmate-nudge-pending/ios.pending"
 assert_grep 'remote=1' "$NUDGE_MARKER" "partial inheritance left no durable remote reread marker"
 publish_healthy_watcher_identity "$PARENT/state" "$PARENT" "$REMOTE_ROOT/bin/fm-watch.sh"
 remote_env "$ROOT/bin/fm-bootstrap.sh" > "$TMP_ROOT/config-partial-retry.out" \
   || fail "bootstrap did not converge partial remote inheritance"
-[ "$(cat "$REMOTE_HOME/config/crew-harness")" = grok ] \
+[ "$(cat "$REMOTE_HOME/config/crew-harness")" = pi-signed ] \
   || fail "bootstrap did not apply the remaining inherited file"
 assert_absent "$NUDGE_MARKER" "bootstrap cleared no remote reread marker after convergence"
 PARTIAL_CONFIG_CORR=$(newest_remote_inbox_corr)
@@ -1486,7 +1496,7 @@ wait "$config_second" || fail "bootstrap inheritance transaction failed after wa
   || fail "later bootstrap convergence was overwritten by stale inherited bytes"
 pass "config push and bootstrap serialize remote inheritance convergence"
 
-printf 'codex\n' > "$PARENT/config/crew-harness"
+printf 'pi\n' > "$PARENT/config/crew-harness"
 # A failed reread nudge now means the durable remote inbox RECORD could not be
 # written (a swallowed doorbell alone no longer fails a recorded steer), so
 # the failure is induced by making the remote steering inbox unwritable.
@@ -1590,7 +1600,7 @@ git -C "$TMP_ROOT/not-a-checkout" init -q --bare
 sed "s|^worktree=.*|worktree=$TMP_ROOT/not-a-checkout|" \
   "$TMP_ROOT/ios-before-relaunch.meta" > "$RELAUNCH_ROUTE_META"
 RELAUNCH_CHECKPOINT=$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh \
-  relaunch ios codex - - 2>&1) && fail "a restart with no accountable checkout should refuse"
+  relaunch ios deck - - 2>&1) && fail "a restart with no accountable checkout should refuse"
 assert_contains "$RELAUNCH_CHECKPOINT" 'refusing to relaunch without a checkout whose unlanded work can be accounted for' \
   "the host-local restart did not reach the control plane's own pre-stop checkpoint"
 cp "$TMP_ROOT/ios-before-relaunch.meta" "$RELAUNCH_ROUTE_META"
@@ -1641,7 +1651,7 @@ cat > "$remote_route_meta" <<EOF
 window=firstmate:fm-ios
 worktree=$REMOTE_HOME
 project=$REMOTE_ROOT
-harness=codex
+harness=deck
 kind=secondmate
 backend=tmux
 EOF

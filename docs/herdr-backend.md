@@ -228,7 +228,7 @@ Explicit named-session routing and unrelated launch environment remain intact.
 Literal text and Enter are separate operations on `fm-send.sh`'s typed plane; ordinary local text steers instead use the durable steering inbox and send only its best-effort constant doorbell through this adapter.
 Spawn-time fixed commands may use Herdr's atomic run primitive.
 Enter, Escape, and Ctrl-C are supported.
-Typed-plane slash input, and dollar-prefixed skill input for Codex, uses the shared harness-aware settle before the first Enter so a completion popup cannot consume it.
+Typed-plane slash input uses the shared settle before the first Enter so a completion popup cannot consume it.
 Typed-plane text is typed once; only Enter is retried.
 
 Deck bypasses Herdr native state, composer, and rendered-footer evidence: only the next exact `deck-wrapper` busy `turn-start` sequence after an idle wrapper baseline confirms delivery, and an absent or inexact transition remains `pending`.
@@ -258,7 +258,7 @@ A human-blocked permission dialog has no busy banner and still surfaces.
 ## Composer and injection safety
 
 Herdr has no direct cursor-row primitive.
-The adapter is a thin capture: it hands a bounded ANSI tail plus Herdr's capability facts to the fleet-wide classifier in `bin/fm-composer-lib.sh`, which owns every shape - bordered boxes, bare agent-glyph rows (including muse's `⟩`, which the adapter's retired local pattern silently omitted), opencode's left bar, and the Pi separator region this adapter pioneered, admitted only when native `agent get` identity is exactly Pi and state is idle or done.
+The adapter is a thin capture: it hands a bounded ANSI tail plus Herdr's capability facts to the fleet-wide classifier in `bin/fm-composer-lib.sh`, which owns every shape - bordered boxes, bare agent-glyph rows, opencode's left bar, and the Pi separator region this adapter pioneered, admitted only when native `agent get` identity is exactly Pi and state is idle or done.
 A blocked Pi is parked on an interactive prompt, so its blank composer region is a menu's and not a free composer's; that state defers instead of proving emptiness.
 A working Pi, pending middle row, missing identity, incomplete separator pair, or over-tall candidate remains unknown or pending.
 Identity stays a lazy second read, consulted only when a separator pair could change the verdict.
@@ -281,7 +281,7 @@ No Herdr-specific copy of that protocol exists.
 
 Stopping and restarting a named Herdr server preserves workspace, tab, pane, and label ids, and the harness processes that ran in those panes do not survive it.
 Herdr 0.9.0 then resumes each previously registered agent into its restored pane itself, because its `[session] resume_agents_on_restore` setting defaults to true: a Claude pane comes back running `claude --resume <session-id>` a few seconds after the server starts ([verification](verification/runtime-backends.md) "Agent resume on server restart").
-That resumed agent is registered and alive, so it reads `alive` like any other, but it carries none of Firstmate's launch flags, including the Claude permission flag; the startup liveness sweep and a remote second mate's launch report such a Claude secondmate as a posture mismatch instead of healthy, and never stop or replace it ([remote second mates](remote-secondmates.md#normal-operation)).
+That resumed agent is registered and alive, so it reads `alive` like any other, but it carries none of Firstmate's launch flags.
 Firstmate does not change that Herdr setting.
 A restored same-labeled tab with a missing pane or no registered agent is a husk, which is what a restored pane holds when Herdr does not resume its agent.
 Create replaces only a confidently dead or no-agent husk, creates the replacement before closing the old tab, and refuses live or unknown states.

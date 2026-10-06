@@ -629,9 +629,8 @@ fm_backend_busy_state() {  # <backend> <target>
 # empty|pending|pending-unproven|unknown for callers that need a pre-submit
 # input guard, a submit acknowledgement, or a launch-readiness check. It is
 # exposed so a caller other than the send path (the away-mode daemon's
-# supervisor-pane pending-input guard in bin/fm-supervise-daemon.sh, and
-# fm-spawn.sh's kimi readiness/delivery checks) can ask the same question
-# without duplicating per-backend composer reading. Every adapter's named
+# supervisor-pane pending-input guard in bin/fm-supervise-daemon.sh) can ask
+# the same question without duplicating per-backend composer reading. Every adapter's named
 # classifier is a THIN wrapper - capture plus a capability descriptor fed to
 # the one shared shape owner (bin/fm-composer-lib.sh,
 # fm_composer_classify_screen) - so no backend can hold a private shape

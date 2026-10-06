@@ -78,7 +78,10 @@ ROWS
 # A projects/ path is resolved through the firstmate home, never the caller cwd,
 # before the missing-brief check. One row per home-scoping override.
 test_projects_path_scoping() {
-  local label use_override id home projects out status expected
+  local label use_override id home projects out status expected fakebin
+  # The pi launch resolves its executable before the brief check, so give it one.
+  fakebin=$(fm_fakebin "$TMP_ROOT/scoping")
+  fm_fake_exit0 "$fakebin" pi
   while IFS='|' read -r label use_override id; do
     [ -n "$label" ] || continue
     home="$TMP_ROOT/$id home"
@@ -87,14 +90,14 @@ test_projects_path_scoping() {
     git -C "$projects/alpha" init -q || fail "$label: could not initialize project fixture"
     if [ "$use_override" = yes ]; then
       out=$(FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
-        FM_HOME="$home" FM_PROJECTS_OVERRIDE="$projects" FM_SPAWN_NO_GUARD=1 \
-        "$SPAWN" "$id" projects/alpha codex --mode no-mistakes --yolo off 2>&1)
+        FM_HOME="$home" FM_PROJECTS_OVERRIDE="$projects" FM_SPAWN_NO_GUARD=1 PATH="$fakebin:$PATH" \
+        "$SPAWN" "$id" projects/alpha pi --mode no-mistakes --yolo off 2>&1)
     else
       mkdir -p "$home/projects/alpha"
       git -C "$home/projects/alpha" init -q || fail "$label: could not initialize home project fixture"
       out=$(FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
-        FM_HOME="$home" FM_SPAWN_NO_GUARD=1 \
-        "$SPAWN" "$id" projects/alpha codex --mode no-mistakes --yolo off 2>&1)
+        FM_HOME="$home" FM_SPAWN_NO_GUARD=1 PATH="$fakebin:$PATH" \
+        "$SPAWN" "$id" projects/alpha pi --mode no-mistakes --yolo off 2>&1)
     fi
     status=$?
     [ "$status" -ne 0 ] || fail "$label: spawn with missing brief should fail"

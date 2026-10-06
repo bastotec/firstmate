@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 # tests/fm-remote-secondmate-replacement.test.sh - a remote second mate's
 # launch and relaunch report success only after proving, by process identity,
-# that the new agent replaced the old one on the configured Claude permission
-# posture, an already-running agent without that posture is reported as a
-# posture mismatch instead of being returned as healthy, a relaunch whose
-# endpoint is already gone is delegated rather than refused as an
-# unidentifiable running agent, a running agent whose posture cannot be
-# resolved is refused rather than returned as healthy, and a recorded agent
-# still running outside its endpoint blocks the relaunch before anything is
-# touched
+# that the new agent replaced the old one, an already-running healthy agent is
+# reused rather than doubled, a relaunch whose endpoint is already gone is
+# delegated rather than refused as an unidentifiable running agent, and a
+# recorded agent still running outside its endpoint blocks the relaunch before
+# anything is touched
 # (bin/fm-remote-secondmate-control.sh's header owns the contract).
 #
 # This drives the real host-local control script and the real bin/fm-spawn.sh
@@ -59,13 +56,16 @@ git -C "$CODE" add .
 git -C "$CODE" commit -qm 'host code root'
 cp -p "$CODE/bin/fm-control.sh" "$TMP_ROOT/fm-control.real"
 install_remote_herdr_fixture "$FIXTURE" "$HERDR_STATE" "$HERDR_LOG" "$KNOB" "$TMP_ROOT/herdr.sock"
+# The deck launch resolves its executable on the host's PATH; the worker the
+# pane runs is bin/fm-deck-worker.sh, so an exit-0 stub is all it needs.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/bin/deck"
+chmod +x "$FIXTURE/bin/deck"
 
-# A seeded second-mate home on this host, running Claude in auto posture.
+# A seeded second-mate home on this host, running the Deck worker.
 mkdir -p "$SM_HOME/bin" "$SM_HOME/data" "$SM_HOME/state" "$SM_HOME/config" "$SM_HOME/projects"
 printf '%s\n' "$SM_ID" > "$SM_HOME/.fm-secondmate-home"
 cp "$CODE/AGENTS.md" "$SM_HOME/AGENTS.md"
 printf '# Charter\nServe as a test second mate.\n' > "$SM_HOME/data/charter.md"
-printf 'auto\n' > "$SM_HOME/config/claude-permission-mode"
 git -C "$SM_HOME" init -q -b main
 git -C "$SM_HOME" add .
 git -C "$SM_HOME" commit -qm 'seeded home'
@@ -73,7 +73,7 @@ git -C "$SM_HOME" commit -qm 'seeded home'
 control() {  # <verb> [args...]
   env -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_PROJECTS_OVERRIDE \
     -u FM_BACKEND -u HERDR_SESSION -u CLAUDECODE -u TMUX \
-    HOME="$USER_HOME" CLAUDE_CONFIG_DIR='' PATH="$FIXTURE/bin:$PATH" \
+    HOME="$USER_HOME" PATH="$FIXTURE/bin:$PATH" \
     FM_HOME="$SM_HOME" FM_ROOT_OVERRIDE="$CODE" \
     FM_REMOTE_AGENT_IDENTITY_WAIT=3 FM_REMOTE_AGENT_IDENTITY_POLL=0.2 \
     FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 \
@@ -89,21 +89,17 @@ deregister() {
   jq --arg p "$1" 'del(.typed[$p]) | del(.working[$p])' "$HERDR_STATE" > "$HERDR_STATE.tmp"
   mv -f "$HERDR_STATE.tmp" "$HERDR_STATE"
 }
-# A claude process the fixture did not start, standing in for a session some
-# other launcher resumed without the permission flag.
-bare_stand_in() {  # <pane>
-  local pid
-  ( exec -a claude sh -c 'trap "exit 0" HUP TERM; while [ -e "$1" ]; do sleep 1 & wait $!; done' \
-      claude "$HERDR_STATE" --resume 00000000-test ) </dev/null >/dev/null 2>&1 &
-  pid=$!
-  EXTRA_PIDS+=("$pid")
-  jq --arg p "$1" --argjson pid "$pid" '.agents[$p] = $pid' "$HERDR_STATE" > "$HERDR_STATE.tmp"
+# Leave the recorded endpoint's agent running but no longer in its pane: the
+# pane reads back at its shell (a Deck endpoint's liveness is its driver in the
+# pane's foreground, not a registration), so the endpoint is dead while the
+# agent process itself survives, and a later pane close cannot hang it up.
+detach_agent() {
+  jq --arg p "$1" 'del(.typed[$p]) | del(.working[$p]) | del(.agents[$p]) | del(.argv[$p])' \
+    "$HERDR_STATE" > "$HERDR_STATE.tmp"
   mv -f "$HERDR_STATE.tmp" "$HERDR_STATE"
-  printf '%s\n' "$pid"
 }
-
 # --- 1. A first launch proves its agent and records its identity ------------
-out=$(umask 002; control launch "$SM_ID" claude - - herdr 2>&1) || fail "first launch failed: $out"
+out=$(umask 002; control launch "$SM_ID" deck - - herdr 2>&1) || fail "first launch failed: $out"
 # The parent-route root is also the Deck driver's status directory. Exercise
 # its exact safe-I/O boundary, not merely mkdir's successful exit status.
 route_state=$(dirname "$ROUTE_META")
@@ -117,63 +113,39 @@ assert_contains "$out" "backend=herdr" "first launch did not print its route"
 pane=$(route_pane)
 first=$(pane_agent "$pane")
 { [ -n "$first" ] && alive "$first"; } || fail "the launch left no live agent process in its pane"
-assert_contains "$out" "posture=ok $first" "route did not report the agent's verified posture"
 [ -f "$IDENTITY" ] || fail "the proved agent identity was not recorded"
 grep -q "^$first " "$IDENTITY" || fail "the recorded identity is not the launched agent's"
-pass "a first launch reports success only for a live agent carrying the configured permission flag"
+pass "a first launch reports success only for a live agent it proved by process identity"
 
-# --- 2. An already-running agent without the posture is a mismatch ----------
-out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "reusing a healthy agent failed: $out"
-alive "$first" || fail "reusing a healthy agent stopped it"
-kill -HUP "$first"
-bare=$(bare_stand_in "$pane")
-out=$(control route "$SM_ID" 2>&1) || fail "route failed: $out"
-assert_contains "$out" "posture=mismatch $bare" "route reported a flagless agent as healthy"
-cp "$ROUTE_META" "$TMP_ROOT/meta.before-mismatch"
+# --- 2. An already-running healthy agent is reused, not doubled -----------
 tabs_before=$(jq '.tabs | length' "$HERDR_STATE")
-if out=$(control launch "$SM_ID" claude - - herdr 2>&1); then
-  fail "launch returned a running agent without the permission flag as healthy: $out"
-fi
-assert_contains "$out" "posture mismatch" "the refusal did not name the posture mismatch"
-assert_contains "$out" "pid $bare" "the refusal did not name the mismatched agent"
-alive "$bare" || fail "reporting a posture mismatch stopped the running agent"
-cmp -s "$TMP_ROOT/meta.before-mismatch" "$ROUTE_META" || fail "reporting a posture mismatch rewrote the endpoint"
-[ "$(jq '.tabs | length' "$HERDR_STATE")" = "$tabs_before" ] || fail "reporting a posture mismatch launched an agent"
-pass "a running agent without the configured posture is reported as a mismatch, neither stopped nor replaced"
+out=$(control launch "$SM_ID" deck - - herdr 2>&1) || fail "reusing a healthy agent failed: $out"
+alive "$first" || fail "reusing a healthy agent stopped it"
+[ "$(pane_agent "$(route_pane)")" = "$first" ] || fail "reusing a healthy agent replaced it"
+[ "$(jq '.tabs | length' "$HERDR_STATE")" = "$tabs_before" ] || fail "reusing a healthy agent launched a second endpoint"
+pass "a launch over a healthy running agent reuses it instead of starting a twin"
 
-# --- 3. A replacement that lacks the posture is a failed relaunch -----------
-deregister "$pane"
-: > "$KNOB.bare"
-if out=$(control launch "$SM_ID" claude - - herdr 2>&1); then
-  fail "a relaunch whose new agent lacks the permission flag reported success: $out"
-fi
-rm -f "$KNOB.bare"
-assert_contains "$out" "lacks the configured Claude permission flag '--permission-mode auto'" \
-  "the failure did not name the missing permission flag"
-assert_contains "$out" "not reporting it as relaunched" "the failure did not refuse the success report"
-assert_not_contains "$out" "backend=herdr" "a failed proof still printed a route"
-# The endpoint's removal HUPs the old agent asynchronously, so wait for its
-# death within the same bound section 6 uses rather than racing it.
+# --- 3. Retire the first agent ----------------------------------------------
+# Hang it up the way its pane's close would, so the next launch below starts
+# from an agent-free endpoint with nothing left running.
+kill -HUP "$first"
 n=0
-while alive "$bare" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
-alive "$bare" && fail "the old agent survived its endpoint's removal in the fixture"
-pass "a relaunch whose new agent lacks the configured permission flag is reported as a failure"
+while alive "$first" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+alive "$first" && fail "the first agent survived its hang-up in the fixture"
 
 # --- 4. A previous agent that outlives its endpoint blocks the relaunch ----
 pane=$(route_pane)
 deregister "$pane"
-out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "a clean relaunch failed: $out"
+out=$(control launch "$SM_ID" deck - - herdr 2>&1) || fail "a clean relaunch failed: $out"
 pane=$(route_pane)
 survivor=$(pane_agent "$pane")
 alive "$survivor" || fail "the clean relaunch left no live agent"
 grep -q "^$survivor " "$IDENTITY" || fail "the clean relaunch did not record its agent"
-deregister "$pane"
-: > "$KNOB.survive"
+detach_agent "$pane"
 tabs_before=$(jq '.tabs | length' "$HERDR_STATE")
-if out=$(control launch "$SM_ID" claude - - herdr 2>&1); then
+if out=$(control launch "$SM_ID" deck - - herdr 2>&1); then
   fail "a relaunch started a second agent beside a previous one still running: $out"
 fi
-rm -f "$KNOB.survive"
 EXTRA_PIDS+=("$survivor")
 assert_contains "$out" "(pid $survivor) is still running without its endpoint" \
   "the refusal did not name the surviving previous agent"
@@ -183,43 +155,45 @@ kill -HUP "$survivor"
 pass "a previous agent still running outside its endpoint blocks the relaunch instead of gaining a twin"
 
 # --- 5. The relaunch verb proves the old agent is gone ----------------------
-out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "relaunch setup failed: $out"
+out=$(control launch "$SM_ID" deck - - herdr 2>&1) || fail "relaunch setup failed: $out"
 pane=$(route_pane)
 current=$(pane_agent "$pane")
 alive "$current" || fail "relaunch setup left no live agent"
 # A control plane that reports "relaunched" while the old agent keeps running.
 cat > "$CODE/bin/fm-control.sh" <<'SH'
 #!/usr/bin/env bash
-echo "relaunched $1 harness=claude from=claude model=default effort=default backend=herdr"
+echo "relaunched $1 harness=deck from=deck model=default effort=default backend=herdr"
 SH
 chmod +x "$CODE/bin/fm-control.sh"
-if out=$(control relaunch "$SM_ID" claude default default 2>&1); then
+if out=$(control relaunch "$SM_ID" deck default default 2>&1); then
   fail "a relaunch that left the old agent running reported success: $out"
 fi
 assert_contains "$out" "the previous agent process (pid $current) is still running" \
   "the failure did not name the old agent still running"
 assert_not_contains "$out" "relaunched $SM_ID" "a failed proof still reported the relaunch"
-# A control plane that genuinely replaces it, in the same pane, on the posture.
+# A control plane that genuinely replaces it, in the same pane, by resubmitting
+# the endpoint's own Deck driver line.
 cat > "$CODE/bin/fm-control.sh" <<SH
 #!/usr/bin/env bash
 pid=\$(jq -r --arg p '$pane' '.agents[\$p] // empty' '$HERDR_STATE')
+line=\$(jq -r --arg p '$pane' '.text[\$p] // empty' '$HERDR_STATE')
 kill -HUP "\$pid"
 while kill -0 "\$pid" 2>/dev/null; do sleep 0.1; done
-herdr pane send-text '$pane' 'claude --permission-mode auto --settings {}' --session fm-remote
+herdr pane send-text '$pane' "\$line" --session fm-remote
 herdr pane send-keys '$pane' enter --session fm-remote
-echo "relaunched \$1 harness=claude from=claude model=default effort=default backend=herdr"
+echo "relaunched \$1 harness=deck from=deck model=default effort=default backend=herdr"
 SH
-out=$(control relaunch "$SM_ID" claude default default 2>&1) || fail "a proved relaunch failed: $out"
+out=$(control relaunch "$SM_ID" deck default default 2>&1) || fail "a proved relaunch failed: $out"
 assert_contains "$out" "relaunched $SM_ID" "a proved relaunch did not report success"
 replacement=$(pane_agent "$pane")
 { [ "$replacement" != "$current" ] && alive "$replacement"; } || fail "the relaunch did not leave a new live agent"
 alive "$current" && fail "the old agent is still running after a proved relaunch"
 grep -q "^$replacement " "$IDENTITY" || fail "the relaunch did not record the replacement's identity"
 cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
-pass "the relaunch verb reports success only after the old agent is gone and a new one carries the posture"
+pass "the relaunch verb reports success only after the old agent is gone and a new one is running"
 
 # --- 6. A relaunch whose endpoint is gone is not refused as unidentifiable ---
-out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "gone-endpoint setup failed: $out"
+out=$(control launch "$SM_ID" deck - - herdr 2>&1) || fail "gone-endpoint setup failed: $out"
 pane=$(route_pane)
 current=$(pane_agent "$pane")
 alive "$current" || fail "gone-endpoint setup left no live agent"
@@ -232,10 +206,10 @@ while alive "$current" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
 alive "$current" && fail "closing the endpoint left its agent running"
 cat > "$CODE/bin/fm-control.sh" <<'SH'
 #!/usr/bin/env bash
-echo "relaunched $1 harness=claude from=claude model=default effort=default backend=herdr"
+echo "relaunched $1 harness=deck from=deck model=default effort=default backend=herdr"
 SH
 chmod +x "$CODE/bin/fm-control.sh"
-if out=$(control relaunch "$SM_ID" claude default default 2>&1); then
+if out=$(control relaunch "$SM_ID" deck default default 2>&1); then
   fail "a relaunch into a gone endpoint reported success without a provable agent: $out"
 fi
 assert_not_contains "$out" "cannot be identified by process" \
@@ -245,26 +219,12 @@ assert_contains "$out" "not reporting it as relaunched" "the failure did not ref
 cp -p "$TMP_ROOT/fm-control.real" "$CODE/bin/fm-control.sh"
 pass "a relaunch whose endpoint is gone is delegated, not refused as a running agent"
 
-# --- 7. A running agent whose posture cannot be resolved is not healthy ------
-out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "posture-resolution setup failed: $out"
+# --- 7. Setup: a fresh healthy agent for the survivor case below ----------
+out=$(control launch "$SM_ID" deck - - herdr 2>&1) || fail "survivor setup launch failed: $out"
 pane=$(route_pane)
-healthy=$(pane_agent "$pane")
-alive "$healthy" || fail "posture-resolution setup left no live agent"
-cp -p "$ROUTE_META" "$TMP_ROOT/meta.before-resolution"
-tabs_before=$(jq '.tabs | length' "$HERDR_STATE")
-printf 'nonsense\n' > "$SM_HOME/config/claude-permission-mode"
-if out=$(control launch "$SM_ID" claude - - herdr 2>&1); then
-  fail "launch returned a running agent as healthy while its posture could not be resolved: $out"
-fi
-assert_contains "$out" "cannot be resolved" "the refusal did not name the unresolvable posture"
-assert_contains "$out" "claude-permission-mode" "the refusal did not surface the config problem"
-alive "$healthy" || fail "refusing the unresolvable posture stopped the running agent"
-cmp -s "$TMP_ROOT/meta.before-resolution" "$ROUTE_META" || fail "refusing the unresolvable posture rewrote the endpoint"
-[ "$(jq '.tabs | length' "$HERDR_STATE")" = "$tabs_before" ] || fail "refusing the unresolvable posture launched an agent"
-pass "a running agent is not returned as healthy when its posture cannot be resolved"
+alive "$(pane_agent "$pane")" || fail "survivor setup launch left no live agent"
 
 # --- 8. A previous agent outside a agent-free endpoint blocks the relaunch ---
-printf 'auto\n' > "$SM_HOME/config/claude-permission-mode"
 pane=$(route_pane)
 survivor=$(pane_agent "$pane")
 alive "$survivor" || fail "survivor setup left no live agent"
@@ -272,16 +232,16 @@ cp -p "$ROUTE_META" "$TMP_ROOT/meta.before-survivor"
 tabs_before=$(jq '.tabs | length' "$HERDR_STATE")
 # The pane reads positively agent-free while the recorded agent keeps running
 # outside its process view - the survivor shape a launch refuses.
-deregister "$pane"
+detach_agent "$pane"
 cat > "$CODE/bin/fm-control.sh" <<SH
 #!/usr/bin/env bash
 : > '$TMP_ROOT/relaunch-delegated'
-herdr pane send-text '$pane' 'claude --permission-mode auto --settings {}' --session fm-remote
+herdr pane send-text '$pane' 'FM_SUPERVISION_MODEL=autoarm exec -a fm-deck-worker bash host' --session fm-remote
 herdr pane send-keys '$pane' enter --session fm-remote
-echo "relaunched \$1 harness=claude from=claude model=default effort=default backend=herdr"
+echo "relaunched \$1 harness=deck from=deck model=default effort=default backend=herdr"
 SH
 chmod +x "$CODE/bin/fm-control.sh"
-if out=$(control relaunch "$SM_ID" claude default default 2>&1); then
+if out=$(control relaunch "$SM_ID" deck default default 2>&1); then
   fail "a relaunch started a replacement beside a previous agent still running outside its endpoint: $out"
 fi
 EXTRA_PIDS+=("$survivor")
@@ -290,7 +250,7 @@ assert_contains "$out" "still running without its endpoint" \
 assert_contains "$out" "refusing to start a second agent beside it" \
   "the relaunch was not refused before its replacement could start"
 [ ! -e "$TMP_ROOT/relaunch-delegated" ] || fail "the relaunch delegated instead of refusing the surviving agent"
-[ "$(pane_agent "$pane")" = "$survivor" ] || fail "the relaunch swapped the surviving agent's registration"
+[ -z "$(pane_agent "$pane")" ] || fail "the relaunch started an agent in the endpoint beside the survivor"
 alive "$survivor" || fail "the refusal stopped the surviving agent itself"
 cmp -s "$TMP_ROOT/meta.before-survivor" "$ROUTE_META" || fail "the refused relaunch rewrote the endpoint"
 [ "$(jq '.tabs | length' "$HERDR_STATE")" = "$tabs_before" ] || fail "the refused relaunch created a new endpoint"
@@ -300,8 +260,6 @@ pass "a recorded agent still running outside its endpoint blocks the relaunch be
 kill -HUP "$survivor" 2>/dev/null || true
 reset_remote_herdr_fixture "$HERDR_STATE"
 rm -f "$ROUTE_META" "$IDENTITY"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/bin/deck"
-chmod +x "$FIXTURE/bin/deck"
 out=$(control launch "$SM_ID" deck example/route - herdr 2>&1) || fail "Deck remote launch failed: $out"
 pane=$(route_pane)
 current=$(pane_agent "$pane")
@@ -352,7 +310,7 @@ previous=$(pane_agent "$(route_pane)")
 if [ -n "$previous" ]; then kill -HUP "$previous" 2>/dev/null || true; fi
 reset_remote_herdr_fixture "$HERDR_STATE"
 rm -f "$ROUTE_META" "$IDENTITY"
-out=$(control launch "$SM_ID" claude - - herdr 2>&1) || fail "relaunch-reconcile setup failed: $out"
+out=$(control launch "$SM_ID" deck - - herdr 2>&1) || fail "relaunch-reconcile setup failed: $out"
 pane=$(route_pane)
 chmod 0775 "$route_state"
 cat > "$CODE/bin/fm-control.sh" <<SH
@@ -360,12 +318,12 @@ cat > "$CODE/bin/fm-control.sh" <<SH
 pid=\$(jq -r --arg p '$pane' '.agents[\$p] // empty' '$HERDR_STATE')
 kill -HUP "\$pid"
 while kill -0 "\$pid" 2>/dev/null; do sleep 0.1; done
-herdr pane send-text '$pane' 'claude --permission-mode auto --settings {}' --session fm-remote
+herdr pane send-text '$pane' 'FM_SUPERVISION_MODEL=autoarm exec -a fm-deck-worker bash host' --session fm-remote
 herdr pane send-keys '$pane' enter --session fm-remote
-echo "relaunched \$1 harness=claude from=claude model=default effort=default backend=herdr"
+echo "relaunched \$1 harness=deck from=deck model=default effort=default backend=herdr"
 SH
 chmod +x "$CODE/bin/fm-control.sh"
-out=$(control relaunch "$SM_ID" claude default default 2>&1) || fail "relaunch over a 0775 parent-route failed: $out"
+out=$(control relaunch "$SM_ID" deck default default 2>&1) || fail "relaunch over a 0775 parent-route failed: $out"
 assert_contains "$out" "relaunched $SM_ID" "the reconciling relaunch did not report success"
 [ "$(dir_mode "$route_state")" = 0o700 ] || fail "relaunch did not reconcile 0775 to private: $(dir_mode "$route_state")"
 printf 'working: relaunch reconciled\n' | python3 "$ROOT/bin/fm-state-io.py" root-append "$route_state" mode-check.status \
@@ -380,7 +338,7 @@ pass "a relaunch reconciles a pre-existing 0775 parent-route root to a mode Deck
 refusal_launch() {  # <fixture-home>
   env -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_PROJECTS_OVERRIDE \
     -u FM_BACKEND -u HERDR_SESSION -u CLAUDECODE -u TMUX \
-    HOME="$USER_HOME" CLAUDE_CONFIG_DIR='' PATH="$FIXTURE/bin:$PATH" \
+    HOME="$USER_HOME" PATH="$FIXTURE/bin:$PATH" \
     FM_HOME="$1" FM_ROOT_OVERRIDE="$CODE" \
     FM_REMOTE_AGENT_IDENTITY_WAIT=3 FM_REMOTE_AGENT_IDENTITY_POLL=0.2 \
     FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 \

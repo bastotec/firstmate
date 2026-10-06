@@ -6,12 +6,10 @@
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
-#                                         [--account-slot <id|default>]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> recover-missing
 #                                         [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
-#                                         [--account-slot <id|default>]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -29,8 +27,8 @@
 #   interrupt  Deliver the harness's verified interrupt sequence. The agent
 #              keeps running. Postcondition: delivery succeeded, the endpoint
 #              still exists, and the agent is still alive where the backend can
-#              classify that. Cancellation is confirmed only from an adapter-
-#              owned acknowledgement and otherwise reported unconfirmed. Busy
+#              classify that. No supported adapter supplies a cancellation
+#              acknowledgement, so cancellation is reported unconfirmed. Busy
 #              state is never rewritten as proof of the action.
 #   exit       Stop the agent, preserving its terminal endpoint, worktree, and
 #              every uncommitted change. Interrupts first when the task reads
@@ -50,8 +48,6 @@
 #              plus its optional model and effort tokens) exactly as any other
 #              respawn does, while a ship or scout keeps the exact adapter
 #              already recorded for it.
-#              A prefixed raw-command basename cannot reconstruct its launch
-#              command, so relaunch requires an explicit --harness for it.
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
@@ -100,15 +96,13 @@
 #              pin - and only --note/--note-file apply. Picking up a changed pin
 #              is what `relaunch` is for.
 #              The one deliberate exception is an explicit replacement profile:
-#              --harness/--model/--effort/--account-slot are accepted here too,
+#              --harness/--model/--effort are accepted here too,
 #              with the identical precedence, axis-reset, and refusal semantics
-#              they carry on `relaunch`. This is the supported single-transaction
-#              route off a runtime whose endpoint is gone - under the 2026-09-22
-#              Deck-only coding-worker ruling, a stranded non-Deck task with no
-#              surviving terminal has no other: `relaunch` refuses a missing
-#              endpoint, so without this flag that task is unrecoverable through
-#              this plane. A replacement profile is a rescue onto a chosen
-#              runtime, never a config re-resolve: every axis still comes from
+#              they carry on `relaunch`. This replacement route applies only
+#              when the recorded harness already has verified control mechanics;
+#              it cannot rescue a removed-adapter record. A replacement profile
+#              is a rescue onto a chosen runtime, never a config re-resolve:
+#              every axis still comes from
 #              the task's own durable record unless the caller names it.
 #              A recorded effort does not carry onto a replacement harness that
 #              has no effort control (deck), exactly as on `relaunch`: a harness
@@ -137,8 +131,10 @@
 # host, so no postcondition this plane verifies could be read for it here.
 #
 # Fail-closed boundaries:
-#   - An unverified harness, or a harness whose control mechanics are unknown,
-#     is refused rather than guessed at.
+#   - A recorded harness outside the exact supported set is refused before any
+#     lifecycle action, even with an explicit replacement --harness; no
+#     interrupt or exit mechanics are guessed for a removed adapter or a
+#     noncanonical raw-command basename.
 #   - A backend that cannot deliver the harness's interrupt key is refused.
 #   - `exit`, `relaunch`, and `recover-missing` require a backend with a
 #     recovery-grade agent-state classifier (tmux, herdr, stream), because
@@ -161,7 +157,6 @@
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
-#   FM_CONTROL_SETTLE_WAIT       adapter acknowledgement wait after interrupt (5)
 #   FM_CONTROL_EXIT_WAIT         wait for an endpoint to read agent-free: after
 #                                the exit command, and for a recreated
 #                                terminal's shell to finish starting (30)
@@ -224,8 +219,6 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
-# shellcheck source=bin/fm-account-slot-lib.sh
-. "$SCRIPT_DIR/fm-account-slot-lib.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-endpoint-rebind-lib.sh
@@ -234,7 +227,6 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
-SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
 EXIT_WAIT=${FM_CONTROL_EXIT_WAIT:-30}
 LAUNCH_WAIT=${FM_CONTROL_LAUNCH_WAIT:-90}
 EXIT_RETRIES=${FM_CONTROL_EXIT_RETRIES:-3}
@@ -278,7 +270,7 @@ shift 2
 if ! fm_control_verb_allowed "$VERB"; then
   {
     if [ "$VERB" = resume ]; then
-      echo "error: 'resume' is not a control verb: resuming an exited agent is not deterministic across the verified adapters (codex and grok need a session id printed at exit, opencode continues the most recent session for the cwd, and claude, pi, pi-signed, and kimi have no verified pane-resume contract). Use 'relaunch', which carries the brief plus a progress note into a fresh agent on any adapter."
+      echo "error: 'resume' is not a control verb: resuming an exited agent is not deterministic: pi, pi-signed, and deck have no verified pane-resume contract. Use 'relaunch', which carries the brief plus a progress note into a fresh agent on any adapter."
     else
       echo "error: '$VERB' is not a control verb"
     fi
@@ -291,11 +283,9 @@ fi
 NEW_HARNESS=
 NEW_MODEL=
 NEW_EFFORT=
-NEW_ACCOUNT_SLOT=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
-ACCOUNT_SLOT_SET=0
 NOTE=
 NOTE_SET=0
 control_want_value=
@@ -308,7 +298,6 @@ for control_arg in "$@"; do
       harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
-      account_slot) NEW_ACCOUNT_SLOT=$control_arg; ACCOUNT_SLOT_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
@@ -326,8 +315,6 @@ for control_arg in "$@"; do
     --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
-    --account-slot) control_want_value=account_slot ;;
-    --account-slot=*) NEW_ACCOUNT_SLOT=${control_arg#--account-slot=}; ACCOUNT_SLOT_SET=1 ;;
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
@@ -347,14 +334,13 @@ fi
 case "$VERB" in
   relaunch|recover-missing) ;;
   *)
-    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$ACCOUNT_SLOT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-      || die "--harness, --model, --effort, and --account-slot apply to 'relaunch' and 'recover-missing' only, and --note to 'relaunch' or 'recover-missing' only"
+    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
+      || die "--harness, --model, and --effort apply to 'relaunch' and 'recover-missing' only, and --note to 'relaunch' or 'recover-missing' only"
     ;;
 esac
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
-[ "$ACCOUNT_SLOT_SET" = 0 ] || [ -n "$NEW_ACCOUNT_SLOT" ] || die "--account-slot requires a non-empty value"
 case "$NEW_EFFORT" in
   ''|default|low|medium|high|xhigh|max|ultra) ;;
   *) die "--effort must be one of default, low, medium, high, xhigh, max, ultra" ;;
@@ -537,35 +523,10 @@ send_interrupt_keys() {
     || die "interrupt key $key reached task $ID, but $clear did not, so its composer still holds the cancelled prompt; clear it before the next lifecycle action"
 }
 
-prepare_interrupt_ack() {
-  INTERRUPT_ACK_SOURCE=$(fm_control_interrupt_ack_source "$HARNESS")
-  INTERRUPT_ACK_LOG=
-  INTERRUPT_ACK_RUN=
-  case "$INTERRUPT_ACK_SOURCE" in
-    muse-session-terminal)
-      INTERRUPT_ACK_LOG=$(fm_busy_muse_session_log "$STATE" "$ID" 2>/dev/null || true)
-      [ -n "$INTERRUPT_ACK_LOG" ] || return 0
-      INTERRUPT_ACK_RUN=$(fm_busy_muse_active_run_id "$INTERRUPT_ACK_LOG" 2>/dev/null || true)
-      ;;
-  esac
-}
-
+# No supported adapter publishes an observable cancellation acknowledgement,
+# so the claim is always unconfirmed: the caller still proves the endpoint
+# survived.
 interrupt_cancel_claim() {
-  local elapsed=0 terminal=
-  case "$INTERRUPT_ACK_SOURCE:$INTERRUPT_ACK_RUN" in
-    muse-session-terminal:?*) ;;
-    *) printf 'unconfirmed'; return 0 ;;
-  esac
-  while :; do
-    terminal=$(fm_busy_muse_run_terminal "$INTERRUPT_ACK_LOG" "$INTERRUPT_ACK_RUN" 2>/dev/null || true)
-    case "$terminal" in
-      cancelled) printf 'confirmed'; return 0 ;;
-      ?*) printf 'unconfirmed'; return 0 ;;
-    esac
-    awk -v e="$elapsed" -v t="$SETTLE_WAIT" 'BEGIN{exit !(e < t)}' || break
-    sleep "$POLL"
-    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
-  done
   printf 'unconfirmed'
 }
 
@@ -573,7 +534,6 @@ interrupt_cancel_claim() {
 # cancellation claim available after delivery.
 deliver_interrupt() {
   local cancel
-  prepare_interrupt_ack
   send_interrupt_keys
   cancel=$(interrupt_cancel_claim)
   printf '%s' "$cancel"
@@ -777,8 +737,6 @@ PRIOR_EFFORT=
 TARGET_HARNESS=$HARNESS
 TARGET_MODEL=
 TARGET_EFFORT=
-PRIOR_ACCOUNT_SLOT=
-TARGET_ACCOUNT_SLOT=
 
 journal_write() {  # <phase> [extra-line]...
   local phase=$1
@@ -795,11 +753,9 @@ journal_write() {  # <phase> [extra-line]...
     echo "from_harness=$PRIOR_RECORDED_HARNESS"
     echo "from_model=$PRIOR_MODEL"
     echo "from_effort=$PRIOR_EFFORT"
-    echo "from_account_slot=$PRIOR_ACCOUNT_SLOT"
     echo "to_harness=$TARGET_HARNESS"
     echo "to_model=$TARGET_MODEL"
     echo "to_effort=$TARGET_EFFORT"
-    echo "to_account_slot=$TARGET_ACCOUNT_SLOT"
     local line
     for line in "$@"; do
       echo "$line"
@@ -912,7 +868,6 @@ resolve_relaunch_profile() {
   PRIOR_RECORDED_HARNESS=$RECORDED_HARNESS
   PRIOR_MODEL=$(fm_meta_get "$META" model)
   PRIOR_EFFORT=$(fm_meta_get "$META" effort)
-  PRIOR_ACCOUNT_SLOT=$(fm_meta_get "$META" account_slot)
   [ -n "$PRIOR_MODEL" ] || PRIOR_MODEL=default
   [ -n "$PRIOR_EFFORT" ] || PRIOR_EFFORT=default
   if [ "$HARNESS_SET" = 0 ] \
@@ -1012,31 +967,6 @@ resolve_relaunch_profile() {
   esac
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
-  fi
-  if [ "$KIND" = secondmate ] && [ "$ACCOUNT_SLOT_SET" = 1 ]; then
-    die "--account-slot does not apply to persistent secondmate agents"
-  fi
-  if [ "$ACCOUNT_SLOT_SET" = 1 ]; then
-    if [ "$NEW_ACCOUNT_SLOT" = default ]; then
-      TARGET_ACCOUNT_SLOT=
-    else
-      TARGET_ACCOUNT_SLOT=$NEW_ACCOUNT_SLOT
-    fi
-  elif [ "$TARGET_HARNESS" = "$PRIOR_HARNESS" ]; then
-    TARGET_ACCOUNT_SLOT=$PRIOR_ACCOUNT_SLOT
-  else
-    TARGET_ACCOUNT_SLOT=
-  fi
-  if [ -n "$TARGET_ACCOUNT_SLOT" ]; then
-    case "$TARGET_HARNESS" in
-      claude|codex) ;;
-      *) die "account slots are supported only for claude and codex workers" ;;
-    esac
-    # A relaunch re-resolves the local binding before touching the old worker
-    # or publishing its progress note, so a slot that is gone or signed out
-    # refuses while the current agent is still running.
-    fm_account_slot_resolve "$CONFIG" "$TARGET_ACCOUNT_SLOT" "$TARGET_HARNESS" \
-      || die "$FM_ACCOUNT_SLOT_ERROR"
   fi
 }
 
@@ -1197,11 +1127,6 @@ do_relaunch() {
     *)  spawn_args+=(--model "$TARGET_MODEL_SURFACE") ;;
   esac
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
-  if [ -n "$TARGET_ACCOUNT_SLOT" ]; then
-    spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
-  elif [ "$ACCOUNT_SLOT_SET" = 1 ] || [ -n "$PRIOR_ACCOUNT_SLOT" ]; then
-    spawn_args+=(--account-slot default)
-  fi
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
@@ -1218,7 +1143,7 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
-  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_ACCOUNT_SLOT:+ account_slot=$TARGET_ACCOUNT_SLOT} backend=$BACKEND endpoint=$T worktree=$WT"
+  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
 }
 
 # recover_stream_endpoint: start a NEW stream endpoint for this task on the
@@ -1371,16 +1296,6 @@ do_recover_missing() {
     *)  spawn_args+=(--model "$TARGET_MODEL_SURFACE") ;;
   esac
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
-  # A recovery continues the recorded runtime, and the account slot is part of
-  # it: without this the replacement worker would come back on the ambient
-  # account instead of the subscription the record names. An explicit
-  # --account-slot default clears it, and a replacement harness drops it, with
-  # the same arguments `relaunch` passes the launch owner.
-  if [ -n "$TARGET_ACCOUNT_SLOT" ]; then
-    spawn_args+=(--account-slot "$TARGET_ACCOUNT_SLOT")
-  elif [ "$ACCOUNT_SLOT_SET" = 1 ] || [ -n "$PRIOR_ACCOUNT_SLOT" ]; then
-    spawn_args+=(--account-slot default)
-  fi
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
@@ -1397,7 +1312,7 @@ do_recover_missing() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=recreated"
   RELAUNCH_ACTIVE=0
-  echo "recovered $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_ACCOUNT_SLOT:+ account_slot=$TARGET_ACCOUNT_SLOT} backend=$BACKEND endpoint=$T worktree=$wt"
+  echo "recovered $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$wt"
 }
 
 # --- verbs ------------------------------------------------------------------

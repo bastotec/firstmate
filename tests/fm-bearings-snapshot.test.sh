@@ -84,16 +84,16 @@ make_home() {  # <name>
   printf '%s\n' "$home"
 }
 
-record_claude_state() {  # <state-dir> <id> <busy|idle>
+record_deck_state() {  # <state-dir> <id> <busy|idle>
   local state=$1 id=$2 semantic_state=$3 gen event
   case "$semantic_state" in
-    busy) event=user-prompt-submit ;;
-    idle) event=stop ;;
+    busy) event=turn-start ;;
+    idle) event=turn-end ;;
     *) fail "unsupported semantic fixture state: $semantic_state" ;;
   esac
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" "$id")
   "$ROOT/bin/fm-busy-event.sh" apply "$state" "$id" "$semantic_state" --gen "$gen" \
-    --source claude-hook --event "$event"
+    --source deck-wrapper --event "$event"
 }
 
 fixture_mate_home() {  # <parent-home>
@@ -129,26 +129,26 @@ EOF
     "window=firstmate:fm-ship-task" \
     "worktree=$home/projects/ship-wt" \
     "project=firstmate" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=ship" \
     "mode=no-mistakes" \
     "pr=https://github.com/kunchenguid/firstmate/pull/9"
-  record_claude_state "$home/state" ship-task busy
+  record_deck_state "$home/state" ship-task busy
   printf 'working: building the thing\n' > "$home/state/ship-task.status"
   fm_write_meta "$home/state/scout-x.meta" \
     "window=firstmate:fm-scout-x" \
     "worktree=$home/projects/ship-wt" \
     "project=firstmate" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=scout" \
     "mode=scout"
-  record_claude_state "$home/state" scout-x idle
+  record_deck_state "$home/state" scout-x idle
   printf 'done: report ready\n' > "$home/state/scout-x.status"
   fm_write_meta "$home/state/mate.meta" \
     "window=firstmate:fm-mate" \
     "worktree=$mate" \
     "project=$mate" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$mate" \
@@ -159,10 +159,10 @@ EOF
     "window=firstmate:fm-external-wait" \
     "worktree=$home/projects/ship-wt" \
     "project=firstmate" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=ship" \
     "mode=no-mistakes"
-  record_claude_state "$home/state" external-wait idle
+  record_deck_state "$home/state" external-wait idle
   printf 'paused: declared external-wait for upstream release\n' > "$home/state/external-wait.status"
   # The secondmate's OWN home backlog records a merge it managed. This lands in the
   # secondmate home, never the main backlog, so landed-work views only see it via the
@@ -180,8 +180,8 @@ EOF
   mkdir -p "$mate/projects/mate"
   fm_write_meta "$mate/state/mate.meta" \
     "window=firstmate:fm-mate" "worktree=$mate/projects/mate" "project=firstmate" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$mate/state" mate idle
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$mate/state" mate idle
   printf 'needs-decision [key=race]: pick subscribe order\n' > "$mate/state/mate.status"
 }
 
@@ -496,7 +496,7 @@ test_active_child_overrides_old_parent_event() {
 EOF
   fm_write_meta "$mate/state/phase8.meta" \
     "window=firstmate:fm-phase8" "worktree=$mate/projects/phase8" "project=sample" \
-    "harness=codex" "kind=ship" "mode=no-mistakes"
+    "harness=deck" "kind=ship" "mode=no-mistakes"
   printf 'working [key=phase8]: implementing Phase 8 parity\nneeds-decision [key=release]: choose release A or B\n' \
     > "$mate/state/phase8.status"
   fakebin=$(make_fakebin "$home")
@@ -536,8 +536,8 @@ test_structured_child_decision_reaches_captains_call() {
 EOF
   fm_write_meta "$mate/state/phase8.meta" \
     "window=firstmate:fm-phase8" "worktree=$mate/projects/phase8" "project=sample" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$mate/state" phase8 idle
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$mate/state" phase8 idle
   printf 'needs-decision [key=release]: choose release A or B\n' > "$mate/state/phase8.status"
   fakebin=$(make_fakebin "$home")
   json=$(run "$home" "$fakebin" --json)
@@ -621,7 +621,7 @@ test_bad_secondmate_homes_never_revive_parent_work() {
   printf '## In flight\n- [ ] slow - Slow child (repo: sample) (kind: ship) (since 2026-07-13)\n\n## Queued\n\n## Done\n' > "$unknown_child/data/backlog.md"
   fm_write_meta "$unknown_child/state/slow.meta" \
     "window=firstmate:fm-slow" "worktree=$wt" "project=sample" \
-    "harness=codex" "kind=ship" "mode=no-mistakes"
+    "harness=deck" "kind=ship" "mode=no-mistakes"
   append_secondmate_registry "$home" unknown-child "$unknown_child"
   write_parent_secondmate_event "$home" unknown-child "$unknown_child" "old unknown work"
 
@@ -702,8 +702,8 @@ test_secondmate_and_child_bounds_are_disclosed() {
     printf -- '- [ ] %s - Active %s (repo: sample) (kind: ship) (since 2026-07-13)\n' "$child" "$child" >> "$mate/data/backlog.md"
     fm_write_meta "$mate/state/$child.meta" \
       "window=firstmate:fm-$child" "worktree=$mate/projects/$child" "project=sample" \
-      "harness=claude" "kind=ship" "mode=no-mistakes"
-    record_claude_state "$mate/state" "$child" busy
+      "harness=deck" "kind=ship" "mode=no-mistakes"
+    record_deck_state "$mate/state" "$child" busy
     printf 'working [key=%s]: active child %s\n' "$child" "$i" > "$mate/state/$child.status"
     i=$((i + 1))
   done
@@ -816,8 +816,8 @@ EOF
 EOF
   fm_write_meta "$decision/state/$child.meta" \
     "window=firstmate:fm-$child" "worktree=$decision/projects/$child" "project=sample" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$decision/state" "$child" idle
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$decision/state" "$child" idle
   printf 'needs-decision [key=live-route]: choose the current route\n' > "$decision/state/$child.status"
   fakebin=$(make_fakebin "$home")
   refresh_local_secondmate_ledgers "$home"
@@ -870,8 +870,8 @@ test_nonprogressing_child_states_are_explicit() {
 EOF
   fm_write_meta "$mate/state/parked.meta" \
     "window=firstmate:fm-parked" "worktree=$mate/projects/parked" "project=sample" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$mate/state" parked idle
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$mate/state" parked idle
   printf 'needs-decision [key=parked]: choose a route\n' > "$mate/state/parked.status"
   fakebin=$(make_fakebin "$home")
   refresh_local_secondmate_ledgers "$home"
@@ -914,12 +914,12 @@ EOF
 EOF
   fm_write_meta "$mate/state/done.meta" \
     "window=firstmate:fm-done" "worktree=$mate/projects/done" "project=sample" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
+    "harness=deck" "kind=ship" "mode=no-mistakes"
   fm_write_meta "$mate/state/failed.meta" \
     "window=firstmate:fm-failed" "worktree=$mate/projects/failed" "project=sample" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$mate/state" "done" idle
-  record_claude_state "$mate/state" failed idle
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$mate/state" "done" idle
+  record_deck_state "$mate/state" failed idle
   printf 'done: complete\n' > "$mate/state/done.status"
   printf 'failed: stopped\n' > "$mate/state/failed.status"
   rm "$mate/state/parked.meta" "$mate/state/parked.status"
@@ -1478,7 +1478,7 @@ write_large_fixture() {  # <home> <count>
       "window=firstmate:fm-$id" \
       "worktree=$home/projects/$id" \
       "project=repo-$i" \
-      "harness=codex" \
+      "harness=deck" \
       "kind=scout" \
       "mode=scout" \
       "pr=https://github.com/acme/repo-$i/pull/$i"
@@ -1593,7 +1593,7 @@ test_completed_scout_report_not_pending() {
     "window=firstmate:fm-lavish-103" \
     "worktree=$home/projects/lav-wt" \
     "project=firstmate" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=scout" \
     "mode=scout"
   printf 'needs-decision: adopt approach A or B for Lavish issue 103\n' > "$home/state/lavish-103.status"
@@ -2067,7 +2067,7 @@ test_live_blocker_is_not_charted_queue_work() {
   local home fakebin json
   home=$(make_home live-blocker); write_fixture "$home"
   printf 'blocked [key=synthetic-dependency]: firstmate can refresh the synthetic token\n' > "$home/state/ship-task.status"
-  record_claude_state "$home/state" ship-task idle
+  record_deck_state "$home/state" ship-task idle
   fakebin=$(make_fakebin "$home")
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
@@ -2162,7 +2162,7 @@ EOF
     "window=firstmate:fm-structured-ship" \
     "worktree=$home/projects/structured-ship" \
     "project=firstmate" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=ship" \
     "mode=no-mistakes"
   printf 'working: structured sibling still projects\n' > "$home/state/structured-ship.status"
@@ -2206,7 +2206,7 @@ EOF
     "window=firstmate:fm-visible-ship" \
     "worktree=$home/projects/orphan-ship" \
     "project=firstmate" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=ship" \
     "mode=no-mistakes"
   printf 'working: visible sibling\n' > "$home/state/visible-ship.status"
@@ -2223,7 +2223,7 @@ EOF
     "window=firstmate:fm-orphan-ship" \
     "worktree=$home/projects/orphan-ship" \
     "project=firstmate" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=ship" \
     "mode=no-mistakes"
   printf 'working: orphan now has meta\n' > "$home/state/orphan-ship.status"
@@ -2245,8 +2245,8 @@ seed_working_child() {  # <mate-home> <id> <doing> [repo]
     "$id" "$doing" "$repo_field" >> "$mate/data/backlog.md"
   fm_write_meta "$mate/state/$id.meta" \
     "window=firstmate:fm-$id" "worktree=$mate/projects/$id" "project=sample" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$mate/state" "$id" busy
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$mate/state" "$id" busy
   printf 'working: %s\n' "$doing" > "$mate/state/$id.status"
 }
 
@@ -2280,8 +2280,8 @@ EOF
       mkdir -p "$home/projects/$id"
       fm_write_meta "$home/state/$id.meta" \
         "window=firstmate:fm-$id" "worktree=$home/projects/$id" "project=sample" \
-        "harness=claude" "kind=ship" "mode=no-mistakes"
-      record_claude_state "$home/state" "$id" busy
+        "harness=deck" "kind=ship" "mode=no-mistakes"
+      record_deck_state "$home/state" "$id" busy
       printf 'working: active held work\n' > "$home/state/$id.status"
     done
   done
@@ -2511,8 +2511,8 @@ test_underway_and_gate_rows_carry_the_durable_name_and_filed_date() {
 EOF
   fm_write_meta "$home/state/main-ship.meta" \
     "window=firstmate:fm-main-ship" "worktree=$home/projects/main-wt" "project=firstmate" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$home/state" main-ship busy
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$home/state" main-ship busy
   printf 'working: no-mistakes review round 2\n' > "$home/state/main-ship.status"
 
   printf '## In flight\n' > "$mate/data/backlog.md"
@@ -2522,8 +2522,8 @@ EOF
   mkdir -p "$mate/projects/mate-child"
   fm_write_meta "$mate/state/mate-child.meta" \
     "window=firstmate:fm-mate-child" "worktree=$mate/projects/mate-child" "project=sample" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$mate/state" mate-child busy
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$mate/state" mate-child busy
   printf 'working: waiting on the pipeline\n' > "$mate/state/mate-child.status"
 
   fakebin=$(make_fakebin "$home")
@@ -2573,8 +2573,8 @@ test_mixed_secondmate_roles_partial_state_and_captain_readiness() {
 EOF
   fm_write_meta "$hibit/state/hibit-worker.meta" \
     "window=firstmate:fm-hibit-worker" "worktree=$hibit/projects/worker" "project=hibit" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$hibit/state" hibit-worker busy
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$hibit/state" hibit-worker busy
   printf 'working: finalizing progress\n' > "$hibit/state/hibit-worker.status"
 
   cat > "$wheel/data/backlog.md" <<'EOF'
@@ -2588,8 +2588,8 @@ EOF
 EOF
   fm_write_meta "$wheel/state/wheel-worker.meta" \
     "window=firstmate:fm-wheel-worker" "worktree=$wheel/projects/worker" "project=wheelhouse" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$wheel/state" wheel-worker busy
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$wheel/state" wheel-worker busy
   printf 'working: active validation\n' > "$wheel/state/wheel-worker.status"
 
   cat > "$sshhip/data/backlog.md" <<'EOF'
@@ -2604,7 +2604,7 @@ EOF
 EOF
   fm_write_meta "$sshhip/state/unreadable-child.meta" \
     "window=firstmate:dead-sshhip-child" "worktree=$sshhip/projects/child" "project=sshhip" \
-    "harness=codex" "kind=ship" "mode=no-mistakes"
+    "harness=deck" "kind=ship" "mode=no-mistakes"
 
   cat > "$ha/data/backlog.md" <<'EOF'
 ## In flight
@@ -2618,8 +2618,8 @@ EOF
 EOF
   fm_write_meta "$ha/state/prep.meta" \
     "window=firstmate:fm-prep" "worktree=$ha/projects/prep" "project=home-assistant" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$ha/state" prep busy
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$ha/state" prep busy
   printf 'working: preparing canary\n' > "$ha/state/prep.status"
 
   fakebin=$(make_fakebin "$home")
@@ -2725,8 +2725,8 @@ EOF
 
   fm_write_meta "$wheel/state/production-observation.meta" \
     "window=firstmate:fm-production-observation" "worktree=$wheel/projects/worker" "project=wheelhouse" \
-    "harness=claude" "kind=scout" "mode=scout"
-  record_claude_state "$wheel/state" production-observation idle
+    "harness=deck" "kind=scout" "mode=scout"
+  record_deck_state "$wheel/state" production-observation idle
   printf 'paused: observation is deliberately held\n' > "$wheel/state/production-observation.status"
   refresh_local_secondmate_ledgers "$home"
   canonical=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-11T18:00:00Z \
@@ -2740,8 +2740,8 @@ EOF
 
   fm_write_meta "$sshhip/state/unreadable-child.meta" \
     "window=firstmate:fm-unreadable-child" "worktree=$sshhip/projects/child" "project=sshhip" \
-    "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$sshhip/state" unreadable-child busy
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$sshhip/state" unreadable-child busy
   printf 'working: app store submission restored\n' > "$sshhip/state/unreadable-child.status"
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
@@ -2826,11 +2826,11 @@ test_main_captain_readiness_matches_secondmate_projection() {
 EOF
   fm_write_meta "$home/state/prep.meta" \
     "window=firstmate:fm-prep" "worktree=$home/projects/prep" "project=firstmate" \
-    "harness=codex" "kind=ship" "mode=no-mistakes"
+    "harness=deck" "kind=ship" "mode=no-mistakes"
   printf 'working: preparing main canary\n' > "$home/state/prep.status"
   fm_write_meta "$home/state/observation.meta" \
     "window=firstmate:fm-observation" "worktree=$home/projects/observation" "project=firstmate" \
-    "harness=codex" "kind=scout" "mode=scout"
+    "harness=deck" "kind=scout" "mode=scout"
   printf 'paused: observation is deliberately held\n' > "$home/state/observation.status"
   fakebin=$(make_fakebin "$home")
   json=$(run "$home" "$fakebin" --json)
@@ -2892,9 +2892,9 @@ test_task_teardown_during_metadata_capture_does_not_abort_snapshot() {
 ## Done
 EOF
   fm_write_meta "$home/state/a-hold.meta" \
-    "window=fixture:a-hold" "project=firstmate" "harness=claude" "kind=ship" "mode=no-mistakes"
+    "window=fixture:a-hold" "project=firstmate" "harness=deck" "kind=ship" "mode=no-mistakes"
   fm_write_meta "$home/state/z-gone.meta" \
-    "window=fixture:z-gone" "project=firstmate" "harness=claude" "kind=ship" "mode=no-mistakes"
+    "window=fixture:z-gone" "project=firstmate" "harness=deck" "kind=ship" "mode=no-mistakes"
   printf 'working: stable fixture\n' > "$home/state/a-hold.status"
   cat > "$fakebin/cp" <<'SH'
 #!/usr/bin/env bash
@@ -2952,9 +2952,9 @@ test_current_state_uses_captured_status_observation() {
 EOF
   fm_write_meta "$home/state/captured-status.meta" \
     "window=fixture:captured-status" "worktree=$worktree" "project=firstmate" \
-    "harness=claude" "kind=ship" "mode=no-mistakes" "spawn_gen=stable-generation"
+    "harness=deck" "kind=ship" "mode=no-mistakes" "spawn_gen=stable-generation"
   printf 'working: captured state\n' > "$home/state/captured-status.status"
-  record_claude_state "$home/state" captured-status idle
+  record_deck_state "$home/state" captured-status idle
   cat > "$fakebin/cp" <<'SH'
 #!/usr/bin/env bash
 "$REAL_CP" "$@" || exit
@@ -3001,7 +3001,7 @@ test_relaunched_task_does_not_inherit_reused_endpoint_state() {
 EOF
   fm_write_meta "$home/state/generation-race.meta" \
     "window=fixture:fm-generation-race" "worktree=$worktree" "project=firstmate" \
-    "harness=claude" "kind=ship" "mode=no-mistakes" "spawn_gen=old-generation"
+    "harness=deck" "kind=ship" "mode=no-mistakes" "spawn_gen=old-generation"
   printf 'working: old generation\n' > "$home/state/generation-race.status"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
@@ -3012,7 +3012,7 @@ if [ "${1:-}" = display-message ]; then
 window=fixture:fm-generation-race
 worktree=$RACE_WORKTREE
 project=firstmate
-harness=claude
+harness=deck
 kind=ship
 mode=no-mistakes
 spawn_gen=new-generation
@@ -3090,7 +3090,7 @@ SH
   while [ "$i" -le 5 ]; do
     fm_write_meta "$home/state/local-$i.meta" \
       "window=fixture:local-$i" "worktree=$worktree" "project=firstmate" \
-      "harness=claude" "kind=ship" "mode=no-mistakes"
+      "harness=deck" "kind=ship" "mode=no-mistakes"
     printf 'working: synthetic fixture\n' > "$home/state/local-$i.status"
     i=$((i + 1))
   done
@@ -3381,11 +3381,11 @@ EOF
   for id in live-ship idle-ship gone-ship; do
     case "$id" in live-ship) win=fm-live-ship ;; idle-ship) win=fm-idle-ship ;; *) win=fm-gone-ship ;; esac
     fm_write_meta "$home/state/$id.meta" "window=fleet:$win" "worktree=$home/projects/wt" \
-      "project=firstmate" "harness=claude" "kind=ship" "mode=no-mistakes"
-    record_claude_state "$home/state" "$id" busy
+      "project=firstmate" "harness=deck" "kind=ship" "mode=no-mistakes"
+    record_deck_state "$home/state" "$id" busy
   done
   fm_write_meta "$home/state/helper.meta" "window=fleet:fm-live-helper" "worktree=$mate" \
-    "project=$mate" "harness=claude" "kind=secondmate" "mode=secondmate" "home=$mate" "projects=firstmate"
+    "project=$mate" "harness=deck" "kind=secondmate" "mode=secondmate" "home=$mate" "projects=firstmate"
   cat > "$mate/data/backlog.md" <<'EOF'
 ## In flight
 - [ ] child-live - Child live work (repo: firstmate) (kind: ship) (since 2026-07-11)
@@ -3396,11 +3396,11 @@ EOF
 ## Done
 EOF
   fm_write_meta "$mate/state/child-live.meta" "window=fleet:fm-live-child" "worktree=$mate/projects/wt" \
-    "project=firstmate" "harness=claude" "kind=ship" "mode=no-mistakes"
+    "project=firstmate" "harness=deck" "kind=ship" "mode=no-mistakes"
   fm_write_meta "$mate/state/child-idle.meta" "window=fleet:fm-idle-child" "worktree=$mate/projects/wt" \
-    "project=firstmate" "harness=claude" "kind=ship" "mode=no-mistakes"
-  record_claude_state "$mate/state" child-live busy
-  record_claude_state "$mate/state" child-idle busy
+    "project=firstmate" "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_state "$mate/state" child-live busy
+  record_deck_state "$mate/state" child-idle busy
   fakebin=$(make_fakebin "$home")
   make_liveness_tmux "$fakebin"
   where=$(local_where)

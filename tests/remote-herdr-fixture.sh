@@ -25,19 +25,22 @@
 #
 # A submitted launch line also starts a real stand-in agent process, because a
 # remote launch proves its replacement by process identity: argv[0] is the
-# harness word the line names, its arguments carry the Claude permission flag
-# the line carries, `pane process-info` reports it as the pane's foreground
-# process, a pane close hangs it up, and it exits on its own once <state-file>
-# is gone. The stand-in's pid is `.agents[<pane>]` in the state file.
+# harness word the line names (pi, pi-signed, or the Deck worker's
+# fm-deck-worker, shell-quoted or not), `pane process-info` reports it as the
+# pane's foreground process, a pane close hangs it up, and it exits on its own
+# once <state-file> is gone. The stand-in's pid is `.agents[<pane>]` in the
+# state file. A Deck worker stand-in also carries the driver arguments the line
+# names (the bin/fm-deck-worker.sh path and its --id, --state and --gen), in its
+# own argv and in the argv `pane process-info` reports, because Deck endpoint
+# liveness is proved from exactly those arguments
+# (fm_backend_herdr_deck_pid_is_driver). They are kept as `.argv[<pane>]`.
 #
 # Every invocation is appended verbatim to <log-file>, so a test reads back what
 # the remote pane received. Creating <send-fail-flag> makes every pane write
 # fail, which is how a test simulates an endpoint that cannot be reached, and
 # creating "<send-fail-flag>.close" makes every pane close fail with the pane
-# left standing, which is how a test simulates a close no read can confirm.
-# Creating "<send-fail-flag>.bare" starts later stand-ins without the permission
-# flag, the shape of a session some other launcher resumed, and creating
-# "<send-fail-flag>.survive" lets a stand-in outlive its pane's close.
+# left standing, which is how a test simulates a close no read can confirm, and
+# creating "<send-fail-flag>.survive" lets a stand-in outlive its pane's close.
 
 install_remote_herdr_fixture() { # <remote-root> <state> <log> <send-fail> <socket>
   local remote_root=$1 state=$2 log=$3 send_fail=$4 socket=$5 script="$1/bin/herdr"
@@ -49,7 +52,6 @@ STATE='$state'
 LOG='$log'
 SEND_FAIL='$send_fail'
 CLOSE_FAIL='$send_fail.close'
-BARE_AGENT='$send_fail.bare'
 SURVIVE_CLOSE='$send_fail.survive'
 SOCKET='$socket'
 SH
@@ -59,24 +61,49 @@ jq_state() { jq "$@" "$STATE"; }
 save() { tmp="$STATE.tmp.$$"; cat > "$tmp" && mv "$tmp" "$STATE"; }
 agent_pid() { jq -r --arg p "$1" '.agents[$p] // empty' "$STATE"; }
 agent_live() { local pid; pid=$(agent_pid "$1"); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }
+# pane_shell <pane>: the pid of the pane's own idle shell, started on first use
+# as a real process named zsh (a pane read checks its shell pid against the live
+# process table) and hung up with the pane, like the agent stand-in below.
+pane_shell() {
+  local p=$1 pid
+  pid=$(jq -r --arg p "$p" '(.shells // {})[$p] // empty' "$STATE")
+  if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+    perl -MPOSIX -e '$SIG{HUP} = $SIG{TERM} = "DEFAULT"; POSIX::setsid();
+      exec { "/bin/sh" } "zsh", "-c", shift, "zsh", @ARGV' \
+      'trap "exit 0" HUP TERM; while [ -e "$1" ]; do sleep 1 & wait $!; done' \
+      "$STATE" </dev/null >/dev/null 2>&1 &
+    pid=$!
+    jq_state --arg p "$p" --argjson pid "$pid" '.shells = ((.shells // {}) + {($p): $pid})' | save
+  fi
+  printf '%s' "$pid"
+}
 # start_agent <pane>: the stand-in for the harness the pane's submitted line names.
 start_agent() {
-  local p=$1 text harness='' word prev='' pid
-  local -a flags=() words=()
+  local p=$1 text harness='' word pid argv
+  local -a words=() driver=()
   agent_live "$p" && return 0
   text=$(jq -r --arg p "$p" '.text[$p] // empty' "$STATE")
   read -r -d '' -a words <<< "$text" || true
   for word in ${words[@]+"${words[@]}"}; do
+    word=${word#\'}
+    word=${word%\'}
     case "${word##*/}" in
-      claude|codex|opencode|pi|pi-signed|grok|kimi|cursor-agent|fm-deck-worker) [ -n "$harness" ] || harness=${word##*/} ;;
+      pi|pi-signed|fm-deck-worker) [ -n "$harness" ] || harness=${word##*/} ;;
     esac
-    if [ ! -f "$BARE_AGENT" ]; then
-      case "$word" in --dangerously-skip-permissions) flags+=("$word") ;; esac
-      [ "$prev" != --permission-mode ] || flags+=(--permission-mode "$word")
-    fi
-    prev=$word
   done
   [ -n "$harness" ] || return 0
+  if [ "$harness" = fm-deck-worker ]; then
+    # The driver path through the value after --gen, unquoted the way the
+    # pane's shell would: the arguments a real Deck worker is proved by.
+    while IFS= read -r -d '' word; do driver+=("$word"); done < <(python3 -c '
+import shlex, sys
+words = shlex.split(sys.argv[1])
+start = next((i for i, w in enumerate(words) if w.endswith("/fm-deck-worker.sh")), None)
+if start is not None and "--gen" in words[start:]:
+    end = words.index("--gen", start) + 2
+    sys.stdout.write("".join(w + "\0" for w in words[start:end]))
+' "$text")
+  fi
   # Its own session with default hang-up handling, as a real Herdr server's pane
   # child has: a remote job waits for its whole process group and runs with
   # SIGHUP ignored, so a stand-in left inside it would hold every launch open
@@ -84,9 +111,11 @@ start_agent() {
   perl -MPOSIX -e '$SIG{HUP} = $SIG{TERM} = "DEFAULT"; POSIX::setsid(); my $h = shift;
     exec { "/bin/sh" } $h, "-c", shift, $h, @ARGV' \
     "$harness" 'trap "exit 0" HUP TERM; while [ -e "$1" ]; do sleep 1 & wait $!; done' \
-    "$STATE" ${flags[@]+"${flags[@]}"} </dev/null >/dev/null 2>&1 &
+    "$STATE" ${driver[@]+"${driver[@]}"} </dev/null >/dev/null 2>&1 &
   pid=$!
-  jq_state --arg p "$p" --argjson pid "$pid" '.agents[$p] = $pid' | save
+  argv=$(printf '%s\0' "$harness" ${driver[@]+"${driver[@]}"} | jq -cRs 'split("\u0000")[:-1]')
+  jq_state --arg p "$p" --argjson pid "$pid" --argjson argv "$argv" \
+    '.agents[$p] = $pid | .argv = ((.argv // {}) + {($p): $argv})' | save
 }
 ws=""; label=""; cwd=""; pane=""
 args=("$@")
@@ -138,12 +167,16 @@ case "${1:-} ${2:-}" in
     if [ ! -f "$SURVIVE_CLOSE" ] && pid=$(agent_pid "${3:-}") && [ -n "$pid" ]; then
       kill -HUP "$pid" 2>/dev/null || true
     fi
+    pid=$(jq_state -r --arg p "${3:-}" '(.shells // {})[$p] // empty')
+    [ -z "$pid" ] || kill -HUP "$pid" 2>/dev/null || true
     jq_state --arg p "${3:-}" \
       '.tabs |= [.[]|select(.pane_id != $p)]
        | .typed |= with_entries(select(.key != $p))
        | .working |= with_entries(select(.key != $p))
        | .text |= with_entries(select(.key != $p))
-       | .agents |= with_entries(select(.key != $p))' | save ;;
+       | .agents |= with_entries(select(.key != $p))
+       | .argv = ((.argv // {}) | with_entries(select(.key != $p)))
+       | .shells = ((.shells // {}) | with_entries(select(.key != $p)))' | save ;;
   "pane send-text")
     [ ! -f "$SEND_FAIL" ] || exit 1
     jq_state --arg p "${3:-}" --arg t "${4:-}" '.typed[$p] = true | .text[$p] = $t' | save ;;
@@ -157,11 +190,21 @@ case "${1:-} ${2:-}" in
     if agent_live "$pane"; then
       pid=$(agent_pid "$pane")
       name=$(ps -p "$pid" -o args= 2>/dev/null | awk '{ print $1 }')
-      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"%s","argv0":"%s","argv":["%s"],"cmdline":"%s"}]}}}\n' \
-        "$pane" "$pid" "$pid" "$pid" "$name" "$name" "$name" "$name"
-    else
-      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"codex","argv0":"codex","argv":["codex"],"cmdline":"codex"}]}}}\n' \
+      jq_state -c --arg p "$pane" --argjson pid "$pid" --arg name "$name" '
+        ((.argv // {})[$p] // [$name]) as $argv
+        | {result:{type:"pane_process_info",process_info:{pane_id:$p,shell_pid:$pid,
+            foreground_process_group_id:$pid,foreground_processes:[{pid:$pid,name:$name,
+            argv0:$name,argv:$argv,cmdline:($argv | join(" "))}]}}}' 
+    elif [ "$(jq_state -r --arg p "$pane" '.typed[$p] // false')" = true ]; then
+      # A registered pane with no stand-in of its own: an agent process this
+      # fixture did not start, so nothing ties it to a Deck driver's arguments.
+      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"fm-deck-worker","argv0":"fm-deck-worker","argv":["fm-deck-worker"],"cmdline":"fm-deck-worker"}]}}}\n' \
         "$pane" "$$" "$$" "$$"
+    else
+      # Nothing registered and no stand-in: the pane is back at its own shell.
+      pid=$(pane_shell "$pane")
+      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"zsh","argv0":"zsh","argv":["zsh"],"cmdline":"zsh"}]}}}\n' \
+        "$pane" "$pid" "$pid" "$pid"
     fi ;;
   "agent get")
     pane=${3:-}
@@ -188,9 +231,9 @@ SH
 reset_remote_herdr_fixture() { # <state>
   local pid
   if [ -f "$1" ]; then
-    for pid in $(jq -r '.agents // {} | .[]' "$1" 2>/dev/null); do
+    for pid in $(jq -r '(.agents // {} | .[]), (.shells // {} | .[])' "$1" 2>/dev/null); do
       kill -HUP "$pid" 2>/dev/null || true
     done
   fi
-  printf '{"next":1,"workspaces":[],"tabs":[],"typed":{},"working":{},"text":{},"agents":{}}\n' > "$1"
+  printf '{"next":1,"workspaces":[],"tabs":[],"typed":{},"working":{},"text":{},"agents":{},"argv":{},"shells":{}}\n' > "$1"
 }

@@ -62,11 +62,11 @@ make_home() {  # <name>
   printf '%s\n' "$home"
 }
 
-record_claude_idle() {  # <state-dir> <id>
+record_deck_idle() {  # <state-dir> <id>
   local state=$1 id=$2 gen
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" "$id")
   "$ROOT/bin/fm-busy-event.sh" apply "$state" "$id" idle --gen "$gen" \
-    --source claude-hook --event stop
+    --source deck-wrapper --event turn-end
 }
 
 write_fixture() {  # <home>
@@ -91,7 +91,7 @@ EOF
     "window=firstmate:fm-ship-task" \
     "worktree=$home/projects/alpha-worktree" \
     "project=alpha" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=ship" \
     "mode=ship" \
     "yolo=off" \
@@ -102,12 +102,12 @@ EOF
   # consults; rendered pane text is no longer a state source.
   fixture_gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" ship-task)
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" ship-task busy --gen "$fixture_gen" \
-    --source claude-hook --event user-prompt-submit
+    --source deck-wrapper --event turn-start
   fm_write_meta "$home/state/scout-task.meta" \
     "window=firstmate:fm-scout-task" \
     "worktree=$home/projects/scout-worktree" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=scout" \
     "mode=scout" \
     "yolo=off"
@@ -116,7 +116,7 @@ EOF
     "window=firstmate:fm-secondmate-task" \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -127,7 +127,7 @@ EOF
     "window=tag:0123abcd" \
     "worktree=$home/projects/missing-stream" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=ship" \
     "mode=ship"
 }
@@ -276,7 +276,7 @@ EOF
     "window=firstmate:fm-visible-ship" \
     "worktree=$home/projects/visible" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=ship" \
     "mode=ship"
   printf 'working: visible\n' > "$home/state/visible-ship.status"
@@ -304,7 +304,7 @@ EOF
     "window=firstmate:fm-orphan-ship" \
     "worktree=$home/projects/visible" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=ship" \
     "mode=ship"
   printf 'working: orphan now live\n' > "$home/state/orphan-ship.status"
@@ -338,7 +338,7 @@ test_normalized_roles_and_plural_blocker_readiness() {
 EOF
   fm_write_meta "$home/state/worker.meta" \
     "window=firstmate:fm-worker" "worktree=$home/projects/worker" "project=alpha" \
-    "harness=codex" "kind=ship" "mode=ship"
+    "harness=deck" "kind=ship" "mode=ship"
   printf 'working: preparing canary\n' > "$home/state/worker.status"
   fakebin=$(make_fakebin "$home")
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
@@ -424,41 +424,41 @@ test_event_hints_follow_reconciled_current_state() {
     "window=firstmate:fm-active-decision" \
     "worktree=$home/projects/active-decision" \
     "project=alpha" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=ship" \
     "mode=ship"
-  record_claude_idle "$home/state" active-decision
+  record_deck_idle "$home/state" active-decision
   printf 'needs-decision: choose an API shape\n' > "$home/state/active-decision.status"
   fm_write_meta "$home/state/active-blocked.meta" \
     "window=firstmate:fm-active-blocked" \
     "worktree=$home/projects/active-blocked" \
     "project=alpha" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=ship" \
     "mode=ship"
-  record_claude_idle "$home/state" active-blocked
+  record_deck_idle "$home/state" active-blocked
   printf 'blocked: waiting on access\n' > "$home/state/active-blocked.status"
   fm_write_meta "$home/state/stale-decision.meta" \
     "window=firstmate:fm-stale-decision-ship-task" \
     "worktree=$home/projects/stale-decision" \
     "project=alpha" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=ship" \
     "mode=ship"
   hint_gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" stale-decision)
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" stale-decision busy --gen "$hint_gen" \
-    --source claude-hook --event user-prompt-submit
+    --source deck-wrapper --event turn-start
   printf 'needs-decision: already answered\n' > "$home/state/stale-decision.status"
   fm_write_meta "$home/state/stale-blocked.meta" \
     "window=firstmate:fm-stale-blocked-ship-task" \
     "worktree=$home/projects/stale-blocked" \
     "project=alpha" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=ship" \
     "mode=ship"
   hint_gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" stale-blocked)
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" stale-blocked busy --gen "$hint_gen" \
-    --source claude-hook --event user-prompt-submit
+    --source deck-wrapper --event turn-start
   printf 'blocked: old failure\n' > "$home/state/stale-blocked.status"
   fakebin=$(make_fakebin "$home")
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
@@ -528,10 +528,10 @@ EOF
     "window=firstmate:fm-bold-task" \
     "worktree=$projects/bold-worktree" \
     "project=alpha" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=scout" \
     "mode=scout"
-  record_claude_idle "$home/state" bold-task
+  record_deck_idle "$home/state" bold-task
   printf 'done: report ready\n' > "$home/state/bold-task.status"
   fakebin=$(make_fakebin "$home")
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_DATA_OVERRIDE="$data" FM_PROJECTS_OVERRIDE="$projects" \
@@ -758,7 +758,7 @@ test_view_renders_dead_secondmate_agent_status() {
   fm_write_meta "$home/state/dead-secondmate.meta" \
     "window=firstmate:fm-dead-secondmate" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -785,7 +785,7 @@ test_open_decision_survives_later_unrelated_event() {
     "window=firstmate:fm-masked-decision" \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -814,7 +814,7 @@ test_secondmate_open_decision_survives_live_endpoint() {
     "window=firstmate:fm-active-secondmate" \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -841,7 +841,7 @@ test_open_decision_transfers_to_captain_hold() {
     "window=firstmate:fm-transferred-decision" \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -866,7 +866,7 @@ test_open_decision_clears_on_keyed_resolution() {
     "window=firstmate:fm-resolved-decision" \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -900,10 +900,10 @@ test_completed_scout_report_is_pointer_not_pending() {
     "window=firstmate:fm-lavish-103" \
     "worktree=$home/projects/scout-wt" \
     "project=firstmate" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=scout" \
     "mode=scout"
-  record_claude_idle "$home/state" lavish-103
+  record_deck_idle "$home/state" lavish-103
   # Stale needs-decision, then the scout finished (done). No keyed resolution.
   printf 'needs-decision: adopt approach A or B for Lavish issue 103\n' > "$home/state/lavish-103.status"
   printf 'done: report ready at data/lavish-103/report.md\n' >> "$home/state/lavish-103.status"
@@ -932,10 +932,10 @@ test_parked_scout_decision_stays_pending() {
     "window=firstmate:fm-parked-scout" \
     "worktree=$home/projects/scout-wt2" \
     "project=firstmate" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=scout" \
     "mode=scout"
-  record_claude_idle "$home/state" parked-scout
+  record_deck_idle "$home/state" parked-scout
   printf 'needs-decision [key=q1]: adopt approach A or B\n' > "$home/state/parked-scout.status"
   fakebin=$(make_fakebin "$home")
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
@@ -966,7 +966,7 @@ EOF
     "window=firstmate:fm-mate" \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -1004,10 +1004,10 @@ EOF
     "window=firstmate:fm-unowned-ship" \
     "worktree=$home/projects/unowned" \
     "project=alpha" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=ship" \
     "mode=no-mistakes"
-  record_claude_idle "$home/state" unowned-ship
+  record_deck_idle "$home/state" unowned-ship
   printf 'needs-decision [key=unowned-ship]: choose a route\n' > "$home/state/unowned-ship.status"
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
   printf '%s' "$out" | jq -e '
@@ -1030,10 +1030,10 @@ EOF
     "window=firstmate:fm-terminal-ship" \
     "worktree=$home/projects/terminal" \
     "project=alpha" \
-    "harness=claude" \
+    "harness=deck" \
     "kind=ship" \
     "mode=no-mistakes"
-  record_claude_idle "$home/state" terminal-ship
+  record_deck_idle "$home/state" terminal-ship
   printf 'done: complete\n' > "$home/state/terminal-ship.status"
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
   printf '%s' "$out" | jq -e '

@@ -484,8 +484,17 @@ setup_watch_case() {  # <name> -> echoes case dir; state in <dir>/state
   dir="$TMP_ROOT/$name"
   mkdir -p "$dir/state"
   make_watch_stubs "$dir" >/dev/null
-  fm_write_meta "$dir/state/t1.meta" "window=sess:fm-t1" "kind=ship" "harness=grok"
+  fm_write_meta "$dir/state/t1.meta" "window=sess:fm-t1" "kind=ship" "harness=pi"
   printf '%s\n' "$dir"
+}
+
+# Record a running turn the way the Pi extension does: arm the task's busy gen,
+# then apply a pi-ext turn-start through the production busy-event writer.
+mark_turn_busy() {  # <state>
+  local gen
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$1" t1) || fail "busy arm failed"
+  "$ROOT/bin/fm-busy-event.sh" apply "$1" t1 busy --gen "$gen" --source pi-ext --event turn-start \
+    || fail "busy apply failed"
 }
 
 idle_capture() {  # <dir>
@@ -530,12 +539,12 @@ test_watcher_waits_on_busy_pane() {
   local dir state out log pid rec
   dir=$(setup_watch_case busywait)
   state="$dir/state"; out="$dir/watch.out"; log="$dir/send.log"; : > "$log"
-  printf 'some output\nBUSYTOKEN active\n' > "$dir/busy.capture"
+  mark_turn_busy "$state"
   rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
   age_path "$rec"
   watch_bg "$state" "$dir/fakebin" "$out" \
-    FM_SEND_LOG="$log" FM_FAKE_TMUX_CAPTURE="$dir/busy.capture" \
-    FM_BUSY_REGEX=BUSYTOKEN FM_TASK_INBOX_RING_MAX=99
+    FM_SEND_LOG="$log" FM_FAKE_TMUX_CAPTURE="$(idle_capture "$dir")" \
+    FM_TASK_INBOX_RING_MAX=99
   pid=$!
   sleep 4
   kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
@@ -674,12 +683,12 @@ test_watcher_dead_pane_ignores_stale_busy_state() {
   local dir state out log pid rec
   dir=$(setup_watch_case dead-pane-busy)
   state="$dir/state"; out="$dir/watch.out"; log="$dir/send.log"; : > "$log"
-  printf 'some output\nBUSYTOKEN active\n' > "$dir/busy.capture"
+  mark_turn_busy "$state"
   rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
   age_path "$rec"
   watch_bg "$state" "$dir/fakebin" "$out" \
-    FM_SEND_LOG="$log" FM_FAKE_TMUX_CAPTURE="$dir/busy.capture" \
-    FM_FAKE_TMUX_AGENT=zsh FM_BUSY_REGEX=BUSYTOKEN FM_TASK_INBOX_RING_MAX=99
+    FM_SEND_LOG="$log" FM_FAKE_TMUX_CAPTURE="$(idle_capture "$dir")" \
+    FM_FAKE_TMUX_AGENT=zsh FM_TASK_INBOX_RING_MAX=99
   pid=$!
   wait_watcher_gone "$pid" \
     || { kill "$pid" 2>/dev/null; fail "stale busy state hid a dead pane's unhandled instruction"; }

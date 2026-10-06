@@ -22,6 +22,8 @@ This record owns concurrent isolation evidence for the portable parallel candida
 
 ## Candidate set
 
+This is the measured 2026-08-20 set, not the current portable pool; `bin/fm-test-isolation-proof.sh` owns current membership after the removed worker-adapter tests were retired.
+
 - `tests/fm-arm-pretool-check.test.sh`
 - `tests/fm-backend-herdr.test.sh`
 - `tests/fm-brief.test.sh`

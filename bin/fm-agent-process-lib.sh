@@ -15,8 +15,6 @@
 
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-session-lock-lib.sh"
-# shellcheck source=bin/fm-gemini-lib.sh
-. "$(dirname -- "${BASH_SOURCE[0]}")/fm-gemini-lib.sh"
 
 # fm_agent_process_classify_name: the single owner of the process-name
 # vocabulary shared by every liveness signal - `agent` for a verified harness,
@@ -30,27 +28,14 @@ fm_agent_process_classify_name() {  # <path> [argv0] -> agent|shell|other
   base=${base##*/}
   base=${base#-}
   case "$base" in
-    # muse is anchored rather than globbed like its neighbours: its installed
-    # binary is muse-bin-<version> (the launcher execs it, so the version is the
-    # live process name and changes on every auto-update), and unlike `claude` or
-    # `codex` the substring `muse` is a common English fragment - a *muse* glob
-    # would classify musescore or amuse as a live agent pane. The install path
-    # cannot carry it either: ~/.local/bin/muse-bin-<version> has no `muse` path
-    # COMPONENT, so the fm_harness_path_name fallback below never fires for it.
-    muse|muse-bin-*) printf 'agent' ;;
-    # omp (Oh My Pi) is anchored for the same reason as muse: its live process
-    # name is the bare word `omp` (verified, omp 18.1.11) and a glob would claim
-    # unrelated commands such as ompd or comp.
-    *claude*|*codex*|*opencode*|*grok*|*kimi*|*rovo*|pi|pi-signed|pi-launcher|Pi|omp) printf 'agent' ;;
-    # agy (Antigravity CLI) is anchored for the same reason as muse and omp: its
-    # live process name is the bare word `agy` (verified, agy 1.2.0: a Go-compiled
-    # single binary, comm=agy with argv[0]=agy), and a glob would claim
-    # unrelated commands containing that fragment.
-    agy) printf 'agent' ;;
+    # omp (Oh My Pi) is anchored rather than globbed like its neighbours: its
+    # live process name is the bare word `omp` (verified, omp 18.1.11) and a
+    # glob would claim unrelated commands such as ompd or comp.
+    *claude*|*codex*|*opencode*|*grok*|pi|pi-signed|pi-launcher|Pi|omp) printf 'agent' ;;
     # A Deck worker's pane foreground is bin/fm-deck-worker.sh, a bash script
     # launched with argv[0] `fm-deck-worker` so it never reads as an idle
     # shell; `deck` itself is the headless binary it runs per turn. Both
-    # anchored, like agy and omp.
+    # anchored, like omp.
     fm-deck-worker|deck) printf 'agent' ;;
     zsh|bash|sh|dash|ash|ksh|mksh|tcsh|csh|fish) printf 'shell' ;;
     *)
@@ -85,12 +70,11 @@ fm_agent_process_classify_name() {  # <path> [argv0] -> agent|shell|other
 #            on Linux the exec name, on macOS argv[0] truncated to 16 bytes.
 #   <argv0>  argv[0] as the process reports it - a bare name or an install
 #            path, whichever the launcher used (empty when unknown).
-#   <args>   the flattened command line, read only for the node-bundle
-#            harnesses whose identity sits in argv[1] (bin/fm-gemini-lib.sh).
-#   [pid]    when given, lets the Gemini rule read argv boundaries from the
-#            live process instead of the flattened line.
+#   <args>   the flattened command line (accepted for caller compatibility;
+#            no remaining harness needs it).
+#   [pid]    accepted for caller compatibility, unused.
 fm_agent_process_classify() {  # <name> <argv0> <args> [pid] -> agent|shell|other
-  local name=${1:-} argv0=${2:-} args=${3:-} pid=${4:-} by_name by_argv0
+  local name=${1:-} argv0=${2:-} by_name by_argv0
   by_name=$(fm_agent_process_classify_name "$name" "$argv0")
   [ "$by_name" != agent ] || { printf 'agent'; return 0; }
   if [ -n "$argv0" ]; then
@@ -100,14 +84,6 @@ fm_agent_process_classify() {  # <name> <argv0> <args> [pid] -> agent|shell|othe
     [ "$by_argv0" != agent ] || { printf 'agent'; return 0; }
   else
     by_argv0=$by_name
-  fi
-  if [ -n "$pid" ] && fm_gemini_pid_is_gemini "$pid"; then
-    printf 'agent'
-    return 0
-  fi
-  if [ -n "$args" ] && fm_gemini_args_are_gemini "$args"; then
-    printf 'agent'
-    return 0
   fi
   if [ "$by_name" = shell ] && [ "$by_argv0" = shell ]; then
     printf 'shell'

@@ -61,7 +61,7 @@ make_home() {  # <name> [task-id...]
   fakebin=$(fm_fakebin "$case_dir")
   mkdir -p "$home/state" "$home/config" "$home/data" "$home/projects"
   touch "$home/state/.last-watcher-beat"
-  printf '%s\n' claude > "$home/config/crew-harness"
+  printf '%s\n' pi > "$home/config/crew-harness"
   printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' \
     > "$home/data/backlog.md"
   # Pin the adapter per case: without it fm_tasks_axi_backend would fall through
@@ -95,7 +95,7 @@ case "${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse gh gh-axi no-mistakes
+  fm_fake_exit0 "$fakebin" treehouse gh gh-axi no-mistakes pi
 
   fm_git_init_commit "$case_dir/project"
   fm_git_add_origin "$case_dir/project" "$case_dir/project.origin.git"
@@ -562,40 +562,10 @@ SH
     "endpoint_task_id=$id" \
     "worktree=$case_dir/absent-worktree" \
     "project=$case_dir/absent-project" \
-    "harness=claude" "kind=scout" "mode=" "yolo=off" \
+    "harness=pi" "kind=scout" "mode=" "yolo=off" \
     "spawn_gen=spawn-confirmed-kill" "decisions_reviewed=1" "decision_keys="
   mkdir -p "$home/data/$id"
   printf 'findings\n' > "$home/data/$id/report.md"
-}
-
-interrupt_kimi_readiness() {  # <case-dir>
-  local case_dir=$1 home
-  home=$(home_of "$case_dir")
-  mkdir -p "$home/.kimi-code"
-  printf '# test config\n' > "$home/.kimi-code/config.toml"
-  fm_fake_exit0 "$case_dir/fakebin" kimi
-  cat > "$case_dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\$*" in
-  *"#{pane_current_path}"*) printf '%s\\n' "\${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
-  *"#{cursor_y}"*) printf '1\\n'; exit 0 ;;
-esac
-case "\${1:-}" in
-  display-message) printf 'firstmate\\n'; exit 0 ;;
-  capture-pane)
-    if [ ! -f "$case_dir/kimi-interrupted" ]; then
-      : > "$case_dir/kimi-interrupted"
-      spawn_pid=\$(ps -o ppid= -p "\$PPID" | tr -d ' ')
-      case "\$spawn_pid" in ''|*[!0-9]*) exit 1 ;; esac
-      kill -TERM "\$spawn_pid"
-    fi
-    printf 'shell starting\\n$ \\n'
-    exit 0
-    ;;
-esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tmux"
 }
 
 break_meta_removal() {  # <case-dir> <meta-path>
@@ -668,7 +638,7 @@ write_task_meta() {  # <case-dir> <id> <kind> <mode> [extra-line...]
     "endpoint_task_id=$id" \
     "worktree=$case_dir/absent-worktree" \
     "project=$case_dir/absent-project" \
-    "harness=claude" \
+    "harness=pi" \
     "kind=$kind" \
     "mode=$mode" \
     "yolo=off" \
@@ -678,13 +648,12 @@ write_task_meta() {  # <case-dir> <id> <kind> <mode> [extra-line...]
 run_spawn() {  # <case-dir> <args...>
   local case_dir=$1
   shift
-  # A claude spawn pre-registers workspace trust in the launching user's own
-  # store (bin/fm-claude-trust.sh), so it runs against a throwaway HOME;
-  # without it this suite would write the developer's real ~/.claude.json.
+  # Every spawn runs against a throwaway HOME so nothing a launch writes under
+  # the user's home can reach the developer's real one.
   mkdir -p "$case_dir/user-home"
   FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" HOME="$case_dir/user-home" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
-    CLAUDE_CONFIG_DIR='' \
+    \
     PATH="$case_dir/fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
@@ -741,7 +710,7 @@ SH
     "endpoint_task_id=$id" \
     "worktree=$case_dir/wt-$id" \
     "project=$case_dir/project-$id" \
-    "harness=claude" "kind=ship" "mode=" "yolo=off" \
+    "harness=pi" "kind=ship" "mode=" "yolo=off" \
     "spawn_gen=spawn-unanswerable" "decisions_reviewed=1" "decision_keys="
 }
 
@@ -771,7 +740,7 @@ SH
     "endpoint_task_id=$id" \
     "worktree=$case_dir/wt-$id" \
     "project=$case_dir/project-$id" \
-    "harness=claude" "kind=ship" "mode=" "yolo=off" \
+    "harness=pi" "kind=ship" "mode=" "yolo=off" \
     "spawn_gen=spawn-live" "decisions_reviewed=1" "decision_keys="
 }
 
@@ -795,7 +764,7 @@ SH
     "endpoint_task_id=$id" \
     "worktree=$case_dir/absent-worktree" \
     "project=$case_dir/absent-project" \
-    "harness=claude" "kind=scout" "mode=" "yolo=off" \
+    "harness=pi" "kind=scout" "mode=" "yolo=off" \
     "backend=herdr" "herdr_session=lab" "herdr_workspace_id=wG" \
     "herdr_tab_id=wG:tQ" "herdr_pane_id=wG:pQ" \
     "spawn_gen=spawn-unanswerable-herdr" "decisions_reviewed=1" "decision_keys="
@@ -1663,7 +1632,7 @@ test_deferred_signal_verification_outlives_an_unresponsive_tasks_axi() {
   mkdir -p "$case_dir/user-home"
   out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" \
     HOME="$case_dir/user-home" FM_SPAWN_NO_GUARD=1 \
-    FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" CLAUDE_CONFIG_DIR='' \
+    FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
     FM_TASKS_AXI_TIMEOUT=3 PATH="$case_dir/fakebin:$PATH" \
     timeout -k 5 30 "$SPAWN" "$id" "$case_dir/project" \
     --mode no-mistakes --yolo off 2>&1) || rc=$?
@@ -1680,25 +1649,6 @@ test_deferred_signal_verification_outlives_an_unresponsive_tasks_axi() {
   assert_present "$(home_of "$case_dir")/state/$id.meta" \
     "the timed-out repair removed the paired task record"
   pass "a signal-deferred spawn bounds its verification so an unresponsive tasks-axi cannot hold the meta lock forever"
-}
-
-test_dispatch_interruption_during_kimi_readiness_fails_before_commit() {
-  local case_dir home id out rc=0
-  id=atomic-dispatch-kimi-readiness-signal-b5
-  case_dir=$(make_home dispatch-kimi-readiness-signal "$id")
-  home=$(home_of "$case_dir")
-  add_item "$case_dir" "$id"
-  interrupt_kimi_readiness "$case_dir"
-
-  out=$(HOME="$home" FM_KIMI_READY_POLLS=2 FM_KIMI_POLL_INTERVAL=0 \
-    run_spawn "$case_dir" "$id" "$case_dir/project" --harness kimi \
-      --mode no-mistakes --yolo off) || rc=$?
-  [ "$rc" -ne 0 ] || fail "Kimi readiness interruption was reported as success"
-  assert_absent "$home/state/$id.meta" \
-    "Kimi readiness interruption retained an unconfirmed task record"
-  [ "$(row_state "$case_dir" "$id")" = queued ] \
-    || fail "Kimi readiness interruption committed unconfirmed work In flight: $out"
-  pass "Kimi readiness interruptions fail before backlog commit"
 }
 
 test_dispatch_does_not_resurrect_a_row_closed_after_preflight() {
@@ -2232,7 +2182,7 @@ SH
     "endpoint_task_id=$id" \
     "worktree=$case_dir/absent-worktree" \
     "project=$case_dir/absent-project" \
-    "harness=claude" "kind=scout" "mode=" "yolo=off" \
+    "harness=pi" "kind=scout" "mode=" "yolo=off" \
     "spawn_gen=spawn-close-unconfirmed" "decisions_reviewed=1" "decision_keys="
   mkdir -p "$home/data/$id"
   printf 'findings\n' > "$home/data/$id/report.md"
@@ -2399,7 +2349,7 @@ SH
     "endpoint_task_id=$id" \
     "worktree=$case_dir/absent-worktree" \
     "project=$case_dir/absent-project" \
-    "harness=claude" "kind=scout" "mode=" "yolo=off" \
+    "harness=pi" "kind=scout" "mode=" "yolo=off" \
     "backend=herdr" "herdr_session=lab" "herdr_workspace_id=wG" \
     "herdr_tab_id=wG:tQ" "herdr_pane_id=wG:pQ" \
     "spawn_gen=spawn-close-herdr-unconfirmed" "decisions_reviewed=1" "decision_keys="
@@ -3702,7 +3652,7 @@ test_no_backlog_teardown_refuses_a_symlinked_task_record_at_entry() {
   fm_write_meta "$target" \
     "window=firstmate:fm-$id" "endpoint_task_id=$id" \
     "worktree=$foreign_worktree" "project=$case_dir/foreign-project" \
-    "harness=claude" "kind=ship" "mode=local-only" "yolo=off"
+    "harness=pi" "kind=ship" "mode=local-only" "yolo=off"
   ln -s "$target" "$home/state/$id.meta"
   track_teardown_resource_actions "$case_dir"
 
@@ -3732,7 +3682,7 @@ test_teardown_rechecks_record_parent_after_lock_acquisition() {
   fm_write_meta "$foreign_state/$id.meta" \
     "window=firstmate:fm-$id" "endpoint_task_id=$id" \
     "worktree=$foreign_worktree" "project=$case_dir/foreign-project" \
-    "harness=claude" "kind=ship" "mode=local-only" "yolo=off"
+    "harness=pi" "kind=ship" "mode=local-only" "yolo=off"
   track_teardown_resource_actions "$case_dir"
   real_ln=$(command -v ln)
   cat > "$case_dir/fakebin/ln" <<SH
@@ -3773,7 +3723,7 @@ test_teardown_refuses_a_symlinked_state_directory_at_entry() {
   fm_write_meta "$external_state/$id.meta" \
     "window=firstmate:fm-$id" "endpoint_task_id=$id" \
     "worktree=$case_dir/foreign-worktree" "project=$case_dir/foreign-project" \
-    "harness=claude" "kind=ship" "mode=local-only" "yolo=off"
+    "harness=pi" "kind=ship" "mode=local-only" "yolo=off"
   ln -s "$external_state" "$home/state"
   track_teardown_resource_actions "$case_dir"
 
@@ -3825,7 +3775,7 @@ test_spawn_refuses_a_special_file_tasks_config() {
 
   out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
-    CLAUDE_CONFIG_DIR='' \
+    \
     PATH="$case_dir/fakebin:$PATH" \
     timeout 60 "$SPAWN" "$id" "$case_dir/project" --mode no-mistakes --yolo off 2>&1) || rc=$?
   [ "$rc" -ne 124 ] || fail "spawn hung reading a special-file tasks-axi config"
@@ -4078,7 +4028,6 @@ test_fm_tasks_axi_fallback_bounds_the_call_without_a_timeout_binary
 test_fm_tasks_axi_fallback_passes_the_child_status_and_output_through
 test_fm_tasks_axi_fails_closed_when_nothing_can_bound_the_call
 test_fm_tasks_axi_gnu_timeout_forces_termination_of_a_sigterm_ignoring_child
-test_dispatch_interruption_during_kimi_readiness_fails_before_commit
 test_dispatch_does_not_resurrect_a_row_closed_after_preflight
 test_dispatch_fails_when_its_row_vanishes_after_preflight
 test_completion_closes_a_local_only_ship_before_reporting_success

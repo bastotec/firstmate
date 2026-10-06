@@ -20,12 +20,9 @@
 # causes it.
 #
 # Each harness is launched bare, with no prompt, so this consumes no model
-# tokens. Claude alone carries its permission flag, because the posture check
-# (bin/fm-claude-permission-lib.sh) reads that flag back from the running
-# agent's own process arguments, and a release that rewrote them would report
-# every correctly launched Claude secondmate as a posture mismatch. The launch
-# uses whatever credentials the harness already has; an unauthenticated harness
-# still starts its process, which is all the liveness probe reads.
+# tokens. The launch uses whatever credentials the harness already has; an
+# unauthenticated harness still starts its process, which is all the liveness
+# probe reads.
 #
 # Portable serial CI installs the public Pi package but no credentials, so this
 # guard checks that available token-free surface there and runs against every installed
@@ -69,15 +66,13 @@ export PATH
 . "$ROOT/bin/fm-backend.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-cursor-lib.sh"
-# shellcheck source=/dev/null
-. "$ROOT/bin/fm-claude-permission-lib.sh"
 fm_backend_source tmux || fail "fm_backend_source tmux failed"
 
 "$REAL_TMUX" -L "$SOCKET" new-session -d -s "$SESSION" -n control -c "$LAB/wt" \
   || fail "could not start the private tmux server"
 
-# Kimi is not required to be on PATH; mirror bin/fm-spawn.sh's own resolution
-# order so this guard covers the same binary firstmate would actually launch.
+# Mirror firstmate's own resolution so this guard covers the same binary it
+# would actually identify.
 resolve_harness_binary() {  # <harness>
   local harness=$1 candidate
   # cursor is resolved FIRST, before the generic PATH lookup, and only through
@@ -97,10 +92,6 @@ resolve_harness_binary() {  # <harness>
     printf '%s\n' "$candidate"
     return 0
   fi
-  if [ "$harness" = kimi ] && [ -n "${HOME:-}" ] && [ -x "$HOME/.kimi-code/bin/kimi" ]; then
-    printf '%s\n' "$HOME/.kimi-code/bin/kimi"
-    return 0
-  fi
   return 1
 }
 
@@ -109,14 +100,10 @@ SKIPPED=
 
 # The verified adapters, in the order the harness-adapters skill router records
 # them. An adapter that gains a verified launch path belongs here too.
-# muse matters most of all here: its launcher execs a VERSION-SUFFIXED binary,
-# so the live process name changes on every auto-update and its install path
-# carries no `muse` component to fall back on. That is precisely the drift this
-# guard exists to catch, and only a real muse release can produce it.
-# cursor matters for the same reason muse does, from the other direction: it
-# runs as a bundled node script, so its pane title is a bare `node` that no name
-# pattern can own, and identity has to come from its install path or argv[0].
-for harness in claude codex opencode pi pi-signed grok kimi cursor muse; do
+# cursor matters most here: it runs as a bundled node script, so its pane title
+# is a bare `node` that no name pattern can own, and identity has to come from
+# its install path or argv[0].
+for harness in claude codex opencode pi pi-signed grok cursor; do
   if ! bin_path=$(resolve_harness_binary "$harness"); then
     SKIPPED="$SKIPPED $harness"
     note "skip: $harness is not installed on this machine, so its classification is unverified here"
@@ -132,7 +119,6 @@ for harness in claude codex opencode pi pi-signed grok kimi cursor muse; do
   # same flag fm-spawn passes for the same reason.
   launch_args=""
   [ "$harness" = cursor ] && launch_args="--trust"
-  [ "$harness" = claude ] && launch_args="--dangerously-skip-permissions"
   # shellcheck disable=SC2086  # deliberate: an empty value must add no argument
   "$REAL_TMUX" -L "$SOCKET" new-window -d -t "$SESSION:" -n "$harness" -c "$LAB/wt" -- "$bin_path" $launch_args \
     || fail "$harness ($version): could not launch a window for the liveness probe"
@@ -229,15 +215,6 @@ EOF
 
   note "$harness $version: ancestry verdicts=[$(printf '%s' "$verdicts" | tr '\n' ';')]"
   pass "harness detection: $harness $version is identified by the ancestry walk at comm strength"
-
-  if [ "$harness" = claude ]; then
-    posture=$(fm_claude_permission_endpoint_verdict tmux "$target" --dangerously-skip-permissions)
-    case "$posture" in
-      ok\ *) ;;
-      *) fail "POSTURE DRIFT: $harness $version was launched with --dangerously-skip-permissions, but reading its agent process arguments gives '$posture'. The posture check would report every correctly launched Claude secondmate as a mismatch. $drift_context" ;;
-    esac
-    pass "permission posture: $harness $version keeps its launch flag in its own process arguments"
-  fi
   CHECKED=$((CHECKED + 1))
 done
 

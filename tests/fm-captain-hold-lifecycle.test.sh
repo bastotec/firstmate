@@ -220,7 +220,7 @@ write_origin_meta() {  # <home> <id> [kind]
     "window=firstmate:fm-$id" \
     "worktree=$home/projects/missing-$id" \
     "project=$home/projects/sample" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=$kind" \
     "mode=$kind" \
     "spawn_gen=fixture-$id"
@@ -312,7 +312,7 @@ write_scout_with_attested_inventory() {  # <home> <scout-id> <keys>
     "window=firstmate:fm-$scout" \
     "worktree=$home/projects/missing-$scout" \
     "project=$home/projects/sample" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=scout" \
     "spawn_gen=fixture-$scout" \
     "decisions_reviewed=1" \
@@ -472,7 +472,7 @@ test_complete_accepts_a_migrated_inventory_on_beads() {
     "window=firstmate:fm-$scout" \
     "worktree=$home/projects/missing-$scout" \
     "project=$home/projects/sample" \
-    "harness=codex" \
+    "harness=deck" \
     "kind=scout" \
     "spawn_gen=fixture-$scout"
   printf 'done: report complete\n' > "$home/state/$scout.status"
@@ -2729,7 +2729,7 @@ test_retained_row_artifacts_survive_captain_answers() {
     --repo sample --start >/dev/null || fail "could not create the approved merge fixture"
   fm_write_meta "$home/state/$approved_id.meta" \
     "window=firstmate:fm-$approved_id" "endpoint_task_id=$approved_id" "worktree=$wt" \
-    "project=$repo" "harness=codex" "kind=ship" "mode=no-mistakes" \
+    "project=$repo" "harness=deck" "kind=ship" "mode=no-mistakes" \
     "pr=$approved_pr" "spawn_gen=fixture-$approved_id"
   printf 'done: PR %s merged\n' "$approved_pr" > "$home/state/$approved_id.status"
   run_captain "$home" hold "$approved_id" --reason "captain merge approval pending" \
@@ -2756,7 +2756,7 @@ test_retained_row_artifacts_survive_captain_answers() {
     --repo sample --start >/dev/null || fail "could not create the released local fixture"
   fm_write_meta "$home/state/$local_id.meta" \
     "window=firstmate:fm-$local_id" "endpoint_task_id=$local_id" "worktree=$local_wt" \
-    "project=$local_repo" "harness=codex" "kind=ship" "mode=local-only" \
+    "project=$local_repo" "harness=deck" "kind=ship" "mode=local-only" \
     "spawn_gen=fixture-$local_id"
   printf 'done: local merge ready\n' > "$home/state/$local_id.status"
   run_captain "$home" hold "$local_id" --reason "captain local merge approval pending" \
@@ -2891,7 +2891,7 @@ test_interrupted_cleanup_keeps_the_captain_call_recoverable() {
     --repo sample --start >/dev/null || fail "could not create the cleanup-failure fixture"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" "worktree=$wt" "project=$home/projects/sample" \
-    "harness=codex" "kind=scout" "mode=scout" "spawn_gen=fixture-$id"
+    "harness=deck" "kind=scout" "mode=scout" "spawn_gen=fixture-$id"
   printf 'done: report complete\n' > "$home/state/$id.status"
   printf '# Failed cleanup\n\nThe captain call remains open.\n' > "$home/data/$id/report.md"
   run_captain "$home" hold "$id" --reason "captain must choose after cleanup retry" >/dev/null \
@@ -2945,7 +2945,7 @@ test_answer_before_cleanup_replay_preserves_the_retained_report() {
     --repo sample --start >/dev/null || fail "could not create the answer-before-replay fixture"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" "worktree=$wt" "project=$home/projects/sample" \
-    "harness=codex" "kind=scout" "mode=scout" "spawn_gen=fixture-$id"
+    "harness=deck" "kind=scout" "mode=scout" "spawn_gen=fixture-$id"
   printf 'done: report complete\n' > "$home/state/$id.status"
   printf '# Interrupted cleanup\n\nThe captain call remains open.\n' > "$home/data/$id/report.md"
   run_captain "$home" hold "$id" --reason "captain must choose after interrupted cleanup" \
@@ -2995,7 +2995,7 @@ test_unusable_pending_close_record_names_its_reason() {
     --repo sample --start >/dev/null || fail "could not create the unusable pending-close fixture"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" "worktree=$wt" "project=$home/projects/sample" \
-    "harness=codex" "kind=scout" "mode=scout" "spawn_gen=fixture-$id"
+    "harness=deck" "kind=scout" "mode=scout" "spawn_gen=fixture-$id"
   printf 'done: report complete\n' > "$home/state/$id.status"
   printf '# Unusable pending close\n\nThe captain call remains open.\n' > "$home/data/$id/report.md"
   run_captain "$home" hold "$id" --reason "captain must choose after interrupted cleanup" \
@@ -3054,7 +3054,7 @@ EOF
     || fail "could not create the relocated answer-before-replay fixture"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" "worktree=$wt" "project=$home/projects/sample" \
-    "harness=codex" "kind=scout" "mode=scout" "spawn_gen=fixture-$id"
+    "harness=deck" "kind=scout" "mode=scout" "spawn_gen=fixture-$id"
   printf 'done: report complete\n' > "$home/state/$id.status"
   printf '# Relocated interrupted cleanup\n\nThe captain call remains open.\n' > "$data/$id/report.md"
   PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
@@ -3174,7 +3174,7 @@ test_merge_approval_releases_before_zero_done_retention() {
     --repo sample --start >/dev/null || fail "could not create the zero-retention fixture"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" "endpoint_task_id=$id" "worktree=$wt" \
-    "project=$repo" "harness=codex" "kind=ship" "mode=no-mistakes" \
+    "project=$repo" "harness=deck" "kind=ship" "mode=no-mistakes" \
     "pr=$pr" "spawn_gen=fixture-$id"
   printf 'done: merge ready\n' > "$home/state/$id.status"
   run_captain "$home" hold "$id" --reason "captain merge approval pending" >/dev/null \
@@ -3216,7 +3216,7 @@ test_pr_merge_entrypoint_refuses_a_captain_held_task() {
     --repo sample --start >/dev/null || fail "could not create the held PR fixture"
   fm_write_meta "$home/state/$pr_id.meta" \
     "window=firstmate:fm-$pr_id" "endpoint_task_id=$pr_id" "worktree=$wt" \
-    "project=$repo" "harness=codex" "kind=ship" "mode=no-mistakes" \
+    "project=$repo" "harness=deck" "kind=ship" "mode=no-mistakes" \
     "pr=$pr" "spawn_gen=fixture-$pr_id"
   run_captain "$home" hold "$pr_id" --reason "captain merge approval pending" >/dev/null \
     || fail "could not hold the PR entrypoint fixture"
@@ -3252,7 +3252,7 @@ test_local_merge_entrypoint_refuses_a_captain_held_task() {
     --repo sample --start >/dev/null || fail "could not create the held local fixture"
   fm_write_meta "$home/state/$local_id.meta" \
     "window=firstmate:fm-$local_id" "endpoint_task_id=$local_id" "worktree=$local_wt" \
-    "project=$local_repo" "harness=codex" "kind=ship" "mode=local-only" \
+    "project=$local_repo" "harness=deck" "kind=ship" "mode=local-only" \
     "spawn_gen=fixture-$local_id"
   run_captain "$home" hold "$local_id" --reason "captain local merge approval pending" \
     >/dev/null || fail "could not hold the local entrypoint fixture"
@@ -3322,7 +3322,7 @@ test_local_merge_entrypoint_separates_an_unreadable_record_from_an_absent_one() 
     commit -qm 'untracked local delivery'
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" "endpoint_task_id=$id" "worktree=$wt" \
-    "project=$repo" "harness=codex" "kind=ship" "mode=local-only" \
+    "project=$repo" "harness=deck" "kind=ship" "mode=local-only" \
     "spawn_gen=fixture-$id"
   before=$(git -C "$repo" rev-parse main)
 
@@ -3433,7 +3433,7 @@ test_merge_entrypoints_refuse_a_reused_task_incarnation() {
     --repo sample --start >/dev/null || fail "could not create the original PR task"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" "endpoint_task_id=$id" "worktree=$old_wt" \
-    "project=$old_repo" "harness=codex" "kind=ship" "mode=no-mistakes" \
+    "project=$old_repo" "harness=deck" "kind=ship" "mode=no-mistakes" \
     "spawn_gen=original-$id"
   printf 'done: merge ready\n' > "$home/state/$id.status"
 
@@ -3488,7 +3488,7 @@ test_merge_entrypoints_refuse_a_reused_task_incarnation() {
   tasks_in "$home" reopen "$id" >/dev/null || fail "could not reopen the reused PR task"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" "endpoint_task_id=$id" "worktree=$new_wt" \
-    "project=$new_repo" "harness=codex" "kind=ship" "mode=no-mistakes" \
+    "project=$new_repo" "harness=deck" "kind=ship" "mode=no-mistakes" \
     "spawn_gen=replacement-$id"
   tasks_in "$home" start "$id" >/dev/null || fail "could not start the reused PR task"
   : > "$merge_release"
@@ -3523,7 +3523,7 @@ test_merge_entrypoints_refuse_a_reused_task_incarnation() {
     --repo sample --start >/dev/null || fail "could not create the original local task"
   fm_write_meta "$local_home/state/$local_id.meta" \
     "window=firstmate:fm-$local_id" "endpoint_task_id=$local_id" \
-    "worktree=$local_old_wt" "project=$local_old_repo" "harness=codex" \
+    "worktree=$local_old_wt" "project=$local_old_repo" "harness=deck" \
     "kind=ship" "mode=local-only" "spawn_gen=original-$local_id"
   printf 'done: local merge ready\n' > "$local_home/state/$local_id.status"
 
@@ -3589,7 +3589,7 @@ test_merge_entrypoints_refuse_a_reused_task_incarnation() {
     || fail "could not reopen the reused local task"
   fm_write_meta "$local_home/state/$local_id.meta" \
     "window=firstmate:fm-$local_id" "endpoint_task_id=$local_id" \
-    "worktree=$local_new_wt" "project=$local_new_repo" "harness=codex" \
+    "worktree=$local_new_wt" "project=$local_new_repo" "harness=deck" \
     "kind=ship" "mode=local-only" "spawn_gen=replacement-$local_id"
   tasks_in "$local_home" start "$local_id" >/dev/null \
     || fail "could not start the reused local task"
@@ -3629,7 +3629,7 @@ test_merge_entrypoints_serialize_forced_teardown_before_task_reads() {
     --repo sample --start >/dev/null || fail "could not create the PR teardown-race fixture"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" "endpoint_task_id=$id" "worktree=$wt" \
-    "project=$repo" "harness=codex" "kind=ship" "mode=no-mistakes" \
+    "project=$repo" "harness=deck" "kind=ship" "mode=no-mistakes" \
     "spawn_gen=fixture-$id"
   printf 'done: merge ready\n' > "$home/state/$id.status"
   run_captain "$home" hold "$id" --reason "captain merge approval pending" >/dev/null \
@@ -3706,7 +3706,7 @@ SH
     --repo sample --start >/dev/null || fail "could not create the local teardown-race fixture"
   fm_write_meta "$local_home/state/$local_id.meta" \
     "window=firstmate:fm-$local_id" "endpoint_task_id=$local_id" "worktree=$local_wt" \
-    "project=$local_repo" "harness=codex" "kind=ship" "mode=local-only" \
+    "project=$local_repo" "harness=deck" "kind=ship" "mode=local-only" \
     "spawn_gen=fixture-$local_id"
   printf 'done: local merge ready\n' > "$local_home/state/$local_id.status"
   run_captain "$local_home" hold "$local_id" \
@@ -3796,7 +3796,7 @@ test_released_merge_passes_the_entrypoint_and_lands() {
     --repo sample --start >/dev/null || fail "could not create the released merge fixture"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" "endpoint_task_id=$id" "worktree=$wt" \
-    "project=$repo" "harness=codex" "kind=ship" "mode=no-mistakes" \
+    "project=$repo" "harness=deck" "kind=ship" "mode=no-mistakes" \
     "pr=$pr" "spawn_gen=fixture-$id"
   printf 'done: merge ready\n' > "$home/state/$id.status"
   run_captain "$home" hold "$id" --reason "captain merge approval pending" >/dev/null \
@@ -3833,7 +3833,7 @@ test_teardown_refuses_a_ship_when_the_captain_hold_cannot_be_read() {
     --repo sample --start >/dev/null || fail "could not create the unreadable-hold fixture"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" "worktree=$home/projects/missing-$id" \
-    "project=$home/projects/sample" "harness=codex" "kind=ship" "mode=direct-PR" \
+    "project=$home/projects/sample" "harness=deck" "kind=ship" "mode=direct-PR" \
     "spawn_gen=fixture-$id"
   printf 'done: PR https://github.com/sample/sample/pull/7\n' > "$home/state/$id.status"
   run_captain "$home" hold "$id" --reason "captain must approve the sample change" >/dev/null \
