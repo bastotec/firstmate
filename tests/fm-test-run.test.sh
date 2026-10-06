@@ -1064,18 +1064,58 @@ test_exclude_family() {
 # default alone would start scripts by path and could leave the longest one
 # waiting for a free worker.
 test_list_scheduled_proven_isolated_uses_parallel_hints() {
-  local tmp
+  local tmp repo script
   tmp=$(fm_test_tmproot fm-test-run-proven-schedule)
-  sed -n '/^portable_parallel_weight_hints() {$/,/^EOF$/p' "$RUNNER" \
-    | awk 'NF == 2 && $1 ~ /^tests\// { print $2 "\t" $1 }' >"$tmp/hints"
-  [ -s "$tmp/hints" ] || fail "could not read the runner's parallel hint table"
+  repo="$tmp/repo"
+  mkdir -p "$repo/bin" "$repo/tests"
+  cp "$RUNNER" "$repo/bin/fm-test-run.sh"
   "$RUNNER" --list --proven-isolated | LC_ALL=C sort >"$tmp/members"
-  awk -F '\t' 'NR == FNR { hint[$2] = $1; next } { print (($1 in hint) ? hint[$1] : 0) "\t" $1 }' \
-    "$tmp/hints" "$tmp/members" | LC_ALL=C sort -t"$(printf '\t')" -k1,1nr -k2,2 | cut -f2- >"$tmp/expected"
-  "$RUNNER" --list-scheduled --proven-isolated >"$tmp/actual" \
+  python3 - "$repo/bin/fm-test-run.sh" "$tmp/members" <<'PY' || fail "could not seed fixture scheduling weights"
+from pathlib import Path
+import re, sys
+runner = Path(sys.argv[1])
+hints = {
+    "parallel": """tests/fm-lint.test.sh 110000
+tests/fm-brief.test.sh 100000
+tests/fm-backend-herdr.test.sh 90000
+tests/fm-captain-hold-lifecycle.test.sh 90000""",
+    "serial": """tests/fm-brief.test.sh 200000
+tests/fm-review-diff.test.sh 70000
+tests/fm-lint.test.sh 40000
+tests/fm-backend-herdr.test.sh 30000
+tests/fm-captain-hold-lifecycle.test.sh 30000""",
+}
+serial_members = {line.split()[0] for line in hints["serial"].splitlines()}
+for member in Path(sys.argv[2]).read_text().splitlines():
+    if member not in serial_members:
+        hints["serial"] += f"\n{member} 10000"
+source = runner.read_text()
+for kind, weights in hints.items():
+    function = f"portable_{kind}_weight_hints()"
+    source = re.sub(r"(?ms)^" + re.escape(function) + r" \{.*?^\}",
+                    function + " {\n  cat <<'EOF'\n" + weights + "\nEOF\n}", source)
+runner.write_text(source)
+PY
+  while IFS= read -r script; do
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$repo/$script"
+    chmod +x "$repo/$script"
+  done <"$tmp/members"
+  printf '%s\n' \
+    tests/fm-lint.test.sh \
+    tests/fm-brief.test.sh \
+    tests/fm-backend-herdr.test.sh \
+    tests/fm-captain-hold-lifecycle.test.sh \
+    tests/fm-review-diff.test.sh >"$tmp/expected"
+  while IFS= read -r script; do
+    case "$script" in
+      tests/fm-lint.test.sh|tests/fm-brief.test.sh|tests/fm-backend-herdr.test.sh|tests/fm-captain-hold-lifecycle.test.sh|tests/fm-review-diff.test.sh) ;;
+      *) printf '%s\n' "$script" >>"$tmp/expected" ;;
+    esac
+  done <"$tmp/members"
+  "$repo/bin/fm-test-run.sh" --list-scheduled --proven-isolated >"$tmp/actual" \
     || fail "--list-scheduled --proven-isolated failed"
   cmp -s "$tmp/expected" "$tmp/actual" \
-    || fail "proven-isolated scheduling must follow the parallel hints, longest first: $(diff "$tmp/expected" "$tmp/actual")"
+    || fail "proven-isolated scheduling must use parallel weights, serial fallback, and path-ordered ties: $(diff "$tmp/expected" "$tmp/actual")"
   pass "proven-isolated scheduling starts the longest measured script first"
 }
 

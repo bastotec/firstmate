@@ -166,14 +166,39 @@ puts total
 }
 
 test_coverage_guard_and_proven_set_have_owner_jobs() {
+  local tmp job args expected
+  tmp=$(fm_test_tmproot fm-ci-test-owner-jobs)
+  mkdir -p "$tmp/bin"
+  cat >"$tmp/bin/fm-test-run.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'CALL\n' >>"$RUNNER_TEMP/invocation"
+printf '%s\n' "$@" >>"$RUNNER_TEMP/invocation"
+SH
+  chmod +x "$tmp/bin/fm-test-run.sh"
   ruby -ryaml -e '
 jobs = YAML.load_file(ARGV[0]).fetch("jobs")
-runs = ->(name) { jobs.fetch(name).fetch("steps").map { |s| s["run"].to_s }.join("\n") }
-abort "the coverage guard must run in the invariants job" \
-  unless runs.("invariants").include?("bin/fm-test-run.sh --check-coverage")
-abort "the proven-isolated set must run concurrently in one job" \
-  unless runs.("tests-portable-parallel") =~ /bin\/fm-test-run\.sh --proven-isolated --jobs [2-8]\b/
-' "$CI_WORKFLOW" || fail "coverage guard or proven-isolated job is missing from ci.yml"
+{
+  "invariants" => "Prove complete regression partition",
+  "tests-portable-parallel" => "Run the proven-isolated set",
+}.each do |job, name|
+  step = jobs.fetch(job).fetch("steps").find { |s| s["name"] == name }
+  abort "missing #{job} owner step" unless step
+  abort "#{job} owner step must be unconditional" if step.key?("if")
+  File.write(File.join(ARGV[1], "#{job}.sh"), step.fetch("run"))
+end
+' "$CI_WORKFLOW" "$tmp" || fail "could not extract coverage and proven-isolated owner steps"
+  for job in invariants tests-portable-parallel; do
+    rm -f "$tmp/invocation"
+    (cd "$tmp" && RUNNER_TEMP="$tmp" bash -e "$job.sh") \
+      || fail "$job workflow owner step failed"
+    args=$(cat "$tmp/invocation")
+    if [ "$job" = invariants ]; then
+      expected="CALL"$'\n'"--check-coverage"
+    else
+      expected="CALL"$'\n'"--proven-isolated"$'\n'"--jobs"$'\n'"4"$'\n'"--fail-on-gate-skip"$'\n'"Pi extension typecheck prerequisite not found"$'\n'"--json"$'\n'"$tmp/fm-test/fm-test-timing-portable-parallel.json"
+    fi
+    [ "$args" = "$expected" ] || fail "$job did not execute its required runner invocation: $args"
+  done
   pass "the coverage guard and the proven-isolated set each have an owner job"
 }
 

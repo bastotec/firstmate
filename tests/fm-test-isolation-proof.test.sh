@@ -309,7 +309,7 @@ test_list_exclusions_documents_reasons() {
 }
 
 test_family_map_labels_this_contract() {
-  local fam safe safe_max scheduled_first longest
+  local fam safe safe_max tmp repo script scheduled
   fam=$("$RUNNER" --list --family pure-contract-unit)
   printf '%s\n' "$fam" | grep -Fq 'tests/fm-test-isolation-proof.test.sh' \
     || fail "fm-test-isolation-proof.test.sh must map to pure-contract-unit"
@@ -322,19 +322,31 @@ test_family_map_labels_this_contract() {
   [ "$safe_max" -eq 4 ] || fail "runner exposed the wrong watcher family worker cap: $safe_max"
   safe_max=$("$RUNNER" --concurrent-safe-family-jobs-max pure-contract-unit)
   [ "$safe_max" -eq 4 ] || fail "runner exposed the wrong contract-unit family worker cap: $safe_max"
-  # The longest measured watcher script must start first (the proof doc records
-  # what an alphabetical start cost). Read the longest member from the runner's
-  # own hint table rather than naming it, so a refreshed hint cannot strand this.
-  longest=$(
-    awk 'NR == FNR { member[$1] = 1; next } NF == 2 && ($1 in member) { print $2 "\t" $1 }' \
-      <("$RUNNER" --list --family watcher-wake-lock) \
-      <(sed -n '/^portable_serial_weight_hints() {$/,/^EOF$/p' "$RUNNER") \
-      | LC_ALL=C sort -t"$(printf '\t')" -k1,1nr -k2,2 | head -n 1 | cut -f2
-  )
-  [ -n "$longest" ] || fail "could not read the watcher family's longest hint"
-  scheduled_first=$("$RUNNER" --list-scheduled --family watcher-wake-lock | head -n 1)
-  [ "$scheduled_first" = "$longest" ] \
-    || fail "runner scheduled the watcher family out of longest-hint order: $scheduled_first, longest is $longest"
+  tmp=$(fm_test_tmproot fm-test-isolation-proof-schedule)
+  repo="$tmp/repo"
+  mkdir -p "$repo/bin" "$repo/tests"
+  cp "$RUNNER" "$repo/bin/fm-test-run.sh"
+  python3 - "$repo/bin/fm-test-run.sh" <<'PY' || fail "could not seed fixture watcher weights"
+from pathlib import Path
+import re, sys
+runner = Path(sys.argv[1])
+weights = """tests/fm-daemon.test.sh 300
+tests/fm-watch-arm.test.sh 500
+tests/fm-wake-queue.test.sh 500
+tests/fm-watch-triage.test.sh 100"""
+source = re.sub(r"(?ms)^portable_serial_weight_hints\(\) \{.*?^\}",
+                "portable_serial_weight_hints() {\n  cat <<'EOF'\n" + weights + "\nEOF\n}",
+                runner.read_text())
+runner.write_text(source)
+PY
+  for script in fm-daemon fm-watch-arm fm-wake-queue fm-watch-triage; do
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$repo/tests/$script.test.sh"
+    chmod +x "$repo/tests/$script.test.sh"
+  done
+  scheduled=$("$repo/bin/fm-test-run.sh" --list-scheduled --family watcher-wake-lock) \
+    || fail "fixture watcher family scheduling failed"
+  [ "$scheduled" = "tests/fm-wake-queue.test.sh"$'\n'"tests/fm-watch-arm.test.sh"$'\n'"tests/fm-daemon.test.sh"$'\n'"tests/fm-watch-triage.test.sh" ] \
+    || fail "watcher scheduling must use descending weights and path-ordered ties: $scheduled"
   pass "isolation-proof contract test is family-mapped"
 }
 
