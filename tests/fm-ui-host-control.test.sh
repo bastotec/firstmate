@@ -150,7 +150,9 @@ refused('fm-sample', 'no regular owner metadata', dict(kind='interrupt'))
 (home / 'state/sample.meta').write_text('remote_host=fixture-remote\n')
 result, records = stream_command('fm-sample', dict(kind='interrupt'))
 assert not records and 'unconfirmed' in result.stderr, result
-assert 'remotely placed secondmate' in owner_results(result)[0]['stderr'], result
+# Remote interrupt now routes to its host owner; this incomplete fixture must
+# refuse at the remote registry boundary rather than operate on a local pane.
+assert 'no safe secondmate registry' in owner_results(result)[0]['stderr'], result
 write([dict(task, task_id='../sample')])
 refused('fm-sample', 'invalid exact task id', dict(kind='interrupt'))
 write([dict(task, label='sample')])

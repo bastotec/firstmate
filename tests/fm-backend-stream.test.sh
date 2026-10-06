@@ -1394,7 +1394,7 @@ PY
 # server (private socket) and back, keeping its home, record, and unhandled
 # steers; a mid-turn mate refuses before anything is touched.
 test_relaunch_backend_moves_an_idle_deck_secondmate_between_stream_and_tmux() {
-  local id="mig-$$" home code fakebin target out pid waited tmux_target real_tmux socket meta
+  local id="mig-$$" home code fakebin target out pid waited tmux_target real_tmux socket meta steer
   if ! real_tmux=$(command -v tmux); then
     echo "skip: tmux not found (backend migration needs a second real backend)"
     return 0
@@ -1522,7 +1522,13 @@ SH
   assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" alive "missing registry refusal stopped the mate"
 
   # Idle: stream -> tmux. Same home and record, fresh endpoint, old one closed.
-  printf 'unhandled steer\n' > "$CASE_DIR/home/state/$id.inbox/900.msg"
+  # Queue a valid task-inbox record without ringing it. The native receiver
+  # recovers this persisted protocol on restart; bare text is not a .msg record.
+  # shellcheck disable=SC2016 # positional parameters expand in the child shell
+  steer=$(with_stream_env bash -c '. "$1"; fm_task_inbox_write "$2" "$3" "$4"' \
+    _ "$code/bin/fm-task-inbox-lib.sh" "$CASE_DIR/home/state" "$id" 'unhandled steer') \
+    || { migrate_cleanup; fail "could not queue an unhandled steer"; }
+  cp "$steer" "$CASE_DIR/unhandled-steer.saved"
   out=$(host_command fm-control.sh "$id" relaunch --backend tmux 2>&1) \
     || { migrate_cleanup; fail "migration to tmux failed: $out"; }
   assert_contains "$out" "from_backend=stream from_endpoint=$target" "migration did not report where it came from: $out"
@@ -1540,7 +1546,9 @@ SH
     waited=$((waited + 1))
   done
   [ -z "$(agent_pid_for "fm-$id")" ] || { migrate_cleanup; fail "the old stream endpoint's agent is still running"; }
-  assert_present "$CASE_DIR/home/state/$id.inbox/900.msg" "migration discarded an unhandled steer"
+  assert_present "$steer" "migration discarded an unhandled steer"
+  cmp -s "$steer" "$CASE_DIR/unhandled-steer.saved" \
+    || { migrate_cleanup; fail "migration changed an unhandled steer"; }
   pass "stream: relaunch --backend tmux moves an idle mate and closes its stream endpoint"
 
   # Rollback: tmux -> stream through the same verb.
@@ -1551,6 +1559,8 @@ SH
   pid=$(agent_pid_for "fm-$id")
   fm_test_track_helper_pid "$pid"
   wait_for_agent_state "$target" alive
+  cmp -s "$steer" "$CASE_DIR/unhandled-steer.saved" \
+    || { migrate_cleanup; fail "rollback changed or discarded an unhandled steer"; }
   # shellcheck disable=SC2031 # deliberate: the private tmux shim is scoped to this call
   out=$(PATH="$fakebin:$PATH" tmux list-windows -a -F '#{session_name}:#{window_name}' 2>/dev/null || true)
   assert_not_contains "$out" "fm-$id" "the tmux window outlived the move back to stream"
