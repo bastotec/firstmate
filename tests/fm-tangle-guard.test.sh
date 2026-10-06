@@ -154,8 +154,9 @@ test_brief_assertion_precedes_branch() {
 run_spawn() {
   local home=$1 id=$2 proj=$3 pane=$4 fakebin=$5
   fm_test_spawn_brief "$home" "$id" brief
+  fm_test_fake_deck "$fakebin"
   fm_test_run_spawn "$home" "$pane" "$fakebin" \
-    "$id" "$proj" codex --mode no-mistakes --yolo off
+    "$id" "$proj" deck --mode no-mistakes --yolo off
 }
 
 test_spawn_isolation_abort() {
@@ -245,9 +246,10 @@ SH
 run_spawn_record() {
   local home=$1 id=$2 proj=$3 pane=$4 fakebin=$5 rec=$6
   fm_test_spawn_brief "$home" "$id" brief
+  fm_test_fake_deck "$fakebin"
   FM_TMUX_REC="$rec" \
     fm_test_run_spawn "$home" "$pane" "$fakebin" \
-    "$id" "$proj" codex --mode no-mistakes --yolo off
+    "$id" "$proj" deck --mode no-mistakes --yolo off
 }
 
 test_spawn_tmux_window_construction() {

@@ -3120,8 +3120,8 @@ fm_backend_herdr_normalize_key() {  # <key>
     Enter|enter) printf 'enter' ;;
     Escape|escape|Esc|esc) printf 'escape' ;;
     C-c|c-c|ctrl+c|Ctrl+C) printf 'ctrl+c' ;;
-    # C-u clears a composer line. fm-send.sh's muse interrupt path needs it to
-    # drop the prompt muse restores into the composer after Escape.
+    # C-u clears a composer line; deck's verified composer clear starts with it
+    # (bin/fm-control-lib.sh's fm_control_composer_clear_keys).
     C-u|c-u|ctrl+u|Ctrl+U) printf 'ctrl+u' ;;
     *) printf '%s' "$1" ;;
   esac
@@ -3178,8 +3178,7 @@ fm_backend_herdr_capture_ansi() {  # <target> <lines>
 # identity-gated separated pair (which this adapter pioneered) - now lives in
 # the shared owner (bin/fm-composer-lib.sh, fm_composer_classify_screen), so
 # a new harness shape is taught there once and every backend learns it in the
-# same commit. The muse `⟩` glyph this adapter's local bare-prompt pattern
-# silently omitted is exactly the drift class that consolidation removes.
+# same commit.
 
 fm_backend_herdr_agent_identity_raw() {  # <session> <pane> -> <agent>\t<status>
   local out

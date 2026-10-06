@@ -280,7 +280,7 @@ test_turns_drive_the_busy_record_and_turn_end() {
   assert_contains "$rec" "event=session-end" "/quit did not record session-end"
   [ "$(fm_busy_classify tmux fake deck t1 "$dir/state")" = "idle deck-wrapper" ] \
     || fail "busy-lib does not trust the deck driver's record: $(fm_busy_classify tmux fake deck t1 "$dir/state")"
-  [ "$(fm_busy_classify tmux fake agy t1 "$dir/state")" = "unknown source-mismatch" ] \
+  [ "$(fm_busy_classify tmux fake pi t1 "$dir/state")" = "unknown source-mismatch" ] \
     || fail "the deck driver's record must not classify another adapter"
   pass "fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end"
 }

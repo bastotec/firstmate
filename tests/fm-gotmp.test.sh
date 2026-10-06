@@ -7,8 +7,8 @@
 #
 # These tests exercise fm-teardown directly as a subprocess against a fake FM_HOME/FM_ROOT
 # built so the real script resolves into it, with stub helper scripts.
-# The isolated fm-spawn subprocess in fm-kimi-harness.test.sh covers temp-root creation,
-# metadata publication, and the pane environment export.
+# tests/fm-trace-context-spawn.test.sh's default-off spawn case covers temp-root
+# creation, metadata publication, and the pane environment export.
 set -u
 
 # This suite does not source tests/lib.sh, so exempt its teardown subprocess from
@@ -122,7 +122,7 @@ SH
 window=fakeses:fm-$id
 worktree=$TMP_ROOT/nonexistent-worktree-$id
 project=$TMP_ROOT/nonexistent-project-$id
-harness=claude
+harness=pi
 kind=ship
 mode=no-mistakes
 yolo=off
@@ -216,7 +216,7 @@ SH
 window=fakeses:fm-$id
 worktree=$TMP_ROOT/nonexistent-wt-$id
 project=$TMP_ROOT/nonexistent-proj-$id
-harness=claude
+harness=pi
 kind=ship
 mode=no-mistakes
 yolo=off

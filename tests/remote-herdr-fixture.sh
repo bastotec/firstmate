@@ -25,19 +25,18 @@
 #
 # A submitted launch line also starts a real stand-in agent process, because a
 # remote launch proves its replacement by process identity: argv[0] is the
-# harness word the line names, its arguments carry the Claude permission flag
-# the line carries, `pane process-info` reports it as the pane's foreground
-# process, a pane close hangs it up, and it exits on its own once <state-file>
-# is gone. The stand-in's pid is `.agents[<pane>]` in the state file.
+# harness word the line names (pi, pi-signed, or the Deck worker's
+# fm-deck-worker, shell-quoted or not), `pane process-info` reports it as the
+# pane's foreground process, a pane close hangs it up, and it exits on its own
+# once <state-file> is gone. The stand-in's pid is `.agents[<pane>]` in the
+# state file.
 #
 # Every invocation is appended verbatim to <log-file>, so a test reads back what
 # the remote pane received. Creating <send-fail-flag> makes every pane write
 # fail, which is how a test simulates an endpoint that cannot be reached, and
 # creating "<send-fail-flag>.close" makes every pane close fail with the pane
-# left standing, which is how a test simulates a close no read can confirm.
-# Creating "<send-fail-flag>.bare" starts later stand-ins without the permission
-# flag, the shape of a session some other launcher resumed, and creating
-# "<send-fail-flag>.survive" lets a stand-in outlive its pane's close.
+# left standing, which is how a test simulates a close no read can confirm, and
+# creating "<send-fail-flag>.survive" lets a stand-in outlive its pane's close.
 
 install_remote_herdr_fixture() { # <remote-root> <state> <log> <send-fail> <socket>
   local remote_root=$1 state=$2 log=$3 send_fail=$4 socket=$5 script="$1/bin/herdr"
@@ -49,7 +48,6 @@ STATE='$state'
 LOG='$log'
 SEND_FAIL='$send_fail'
 CLOSE_FAIL='$send_fail.close'
-BARE_AGENT='$send_fail.bare'
 SURVIVE_CLOSE='$send_fail.survive'
 SOCKET='$socket'
 SH
@@ -61,20 +59,17 @@ agent_pid() { jq -r --arg p "$1" '.agents[$p] // empty' "$STATE"; }
 agent_live() { local pid; pid=$(agent_pid "$1"); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }
 # start_agent <pane>: the stand-in for the harness the pane's submitted line names.
 start_agent() {
-  local p=$1 text harness='' word prev='' pid
-  local -a flags=() words=()
+  local p=$1 text harness='' word pid
+  local -a words=()
   agent_live "$p" && return 0
   text=$(jq -r --arg p "$p" '.text[$p] // empty' "$STATE")
   read -r -d '' -a words <<< "$text" || true
   for word in ${words[@]+"${words[@]}"}; do
+    word=${word#\'}
+    word=${word%\'}
     case "${word##*/}" in
-      claude|codex|opencode|pi|pi-signed|grok|kimi|cursor-agent|fm-deck-worker) [ -n "$harness" ] || harness=${word##*/} ;;
+      pi|pi-signed|fm-deck-worker) [ -n "$harness" ] || harness=${word##*/} ;;
     esac
-    if [ ! -f "$BARE_AGENT" ]; then
-      case "$word" in --dangerously-skip-permissions) flags+=("$word") ;; esac
-      [ "$prev" != --permission-mode ] || flags+=(--permission-mode "$word")
-    fi
-    prev=$word
   done
   [ -n "$harness" ] || return 0
   # Its own session with default hang-up handling, as a real Herdr server's pane
@@ -84,7 +79,7 @@ start_agent() {
   perl -MPOSIX -e '$SIG{HUP} = $SIG{TERM} = "DEFAULT"; POSIX::setsid(); my $h = shift;
     exec { "/bin/sh" } $h, "-c", shift, $h, @ARGV' \
     "$harness" 'trap "exit 0" HUP TERM; while [ -e "$1" ]; do sleep 1 & wait $!; done' \
-    "$STATE" ${flags[@]+"${flags[@]}"} </dev/null >/dev/null 2>&1 &
+    "$STATE" </dev/null >/dev/null 2>&1 &
   pid=$!
   jq_state --arg p "$p" --argjson pid "$pid" '.agents[$p] = $pid' | save
 }
@@ -160,7 +155,7 @@ case "${1:-} ${2:-}" in
       printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"%s","argv0":"%s","argv":["%s"],"cmdline":"%s"}]}}}\n' \
         "$pane" "$pid" "$pid" "$pid" "$name" "$name" "$name" "$name"
     else
-      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"codex","argv0":"codex","argv":["codex"],"cmdline":"codex"}]}}}\n' \
+      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"fm-deck-worker","argv0":"fm-deck-worker","argv":["fm-deck-worker"],"cmdline":"fm-deck-worker"}]}}}\n' \
         "$pane" "$$" "$$" "$$"
     fi ;;
   "agent get")

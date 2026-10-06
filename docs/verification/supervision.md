@@ -53,7 +53,7 @@ The installed pi-signed 0.82.0 wrapper repeated the shared Pi primary extension 
 The omp Run-tier adapter was verified on 2026-09-05 with omp 18.1.11 and the openai-codex `gpt-6-astra` model through `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh`, which drives a real omp in its JSON-RPC stdio mode inside an isolated lab clone.
 Both tracked `.omp/extensions/*.ts` files loaded by auto-discovery alone (no `-e`, no trust dialog), `before_agent_start` returned the digest as a persistent context message, the model quoted the lab's `SESSION START -` heading back on its first turn, `state/.session-start-complete` was recorded, and `state/.lock` named the omp process, so ancestry detection identified the markerless binary.
 omp's `session_start` payload carries no reason field, so the adapter derives the source: the first start of the process is `startup` (or `resume` from a `--continue`/`--resume` launch line) and a later in-process start is `clear`; `tests/fm-omp-harness.test.sh` pins that mapping over a fake omp API.
-A file named both by `-e` and by auto-discovery loads twice (two factory calls, doubled `session_stop` continuations), which is why the secondmate launch names no `-e` and the per-task worker extension lives in `state/`.
+A file named both by `-e` and by auto-discovery loads twice (two factory calls, doubled `session_stop` continuations).
 
 ### Run-tier source vocabulary and context-reset injection
 
@@ -211,24 +211,7 @@ Each pass polled `state/<id>.busy-state` while a real turn ran.
 | Harness | Version verified | Semantic source | Observed result |
 | --- | --- | --- | --- |
 | Pi | 0.82.0 | Extension `agent_start` / `agent_settled` with `ctx.isIdle()` | The spawn seed `busy source=fm-spawn`, then `busy source=pi-ext event=agent-start`, then `idle source=pi-ext event=agent-settled`; the turn-end marker was still touched. |
-| omp | 18.1.11 | Extension `agent_start` / `agent_end` without `willContinue` | Live Herdr scout on `openai-codex/gpt-6-astra` (2026-09-05): the spawn seed `busy source=fm-spawn`, then `busy source=omp-ext event=agent-start`, then `idle source=omp-ext event=agent-end` at the natural end of the brief; a steer through `fm-send` reopened `busy … agent-start`, and a control-plane interrupt closed it with `idle … agent-end` (omp fires `agent_end` on an interrupted turn). `ctx.isIdle()` is deliberately not consulted because it reads false at a natural TUI `agent_end`. |
-| OpenCode | 1.17.18 | Plugin `session.status` | In a real TUI pane: seed, then `busy source=opencode-plugin event=session-busy`, then `idle source=opencode-plugin event=session-status-idle`. |
-| Claude | 2.1.220 (Claude Code) | Hooks `UserPromptSubmit`, `Stop`, `StopFailure`, `SessionEnd` | `UserPromptSubmit` fired for the argv launch prompt and each steer, and `Stop` closed every completed turn. A mid-stream Escape interrupt fired no closing hook, which is why the firstmate-controlled clear exists. `StopFailure` and `SessionEnd` are wired from the four hook names present in the installed binary; only the abnormal paths they cover were not reproduced live. |
-| Codex | codex-cli 0.145.0 | None usable | See below; classifies `unknown codex-unverified`. |
-| Kimi (standalone) | not installed | None usable | No binary on `PATH`, so the gate stays closed and it classifies `unknown kimi-unverified`. |
-| Grok | 0.2.112 | Isolated rendered-tail fallback | Retained unconverted; the approved audit could not credit a live structured-lifecycle run. |
-
-Codex was probed two ways, both refused:
-
-```sh
-codex app-server daemon start
-codex exec --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust 'Reply with exactly PROBE2.'
-```
-
-The daemon refused with `managed standalone Codex install not found`, and an interactive TUI worker neither starts nor attaches to the app-server control socket, so no client can observe its turns.
-In this 2026-07-28 Codex 0.145.0 semantic-busy probe, Firstmate-written lifecycle project hooks under `<worktree>/.codex/hooks.json` fired for neither an interactive pane whose directory trust was granted nor `codex exec`, in both cases with `--dangerously-bypass-hook-trust`, while an untracked global probe fired in the same runs; Firstmate does not ship, install, recommend, or depend on that global path.
-Codex also exposes no `StopFailure` hook, so an API-error turn end would need separate coverage even after hook discovery works.
-The app-server protocol schema does define the required lifecycle (`turn/started`, plus a `turn/completed` status of `completed`, `interrupted`, `failed`, or `inProgress`), so the gate is a reachability problem rather than a protocol gap.
+Deck's `deck-wrapper` source is verified in [`deck.md`](deck.md).
 
 Deterministic entry points:
 

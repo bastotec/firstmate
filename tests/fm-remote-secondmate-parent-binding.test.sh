@@ -117,6 +117,10 @@ pass "remote provisioning publishes durable parent state before its completion m
   cd "$ROOT" || exit
   tar --exclude=.git --exclude=.no-mistakes --exclude=data --exclude=state --exclude=config -cf - .
 ) | (cd "$REMOTE_ROOT" && tar -xf -)
+# The remote secondmate runs on deck, whose launch resolves the executable on the
+# host's PATH; the pane runs bin/fm-deck-worker.sh, so an exit-0 stub suffices.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$REMOTE_ROOT/bin/deck"
+chmod +x "$REMOTE_ROOT/bin/deck"
 install_remote_herdr_fixture "$REMOTE_ROOT" "$HERDR_STATE" "$HERDR_LOG" \
   "$TMP_ROOT/herdr-send-fail" "$TMP_ROOT/herdr.sock"
 git -C "$REMOTE_ROOT" init -q -b main
@@ -144,7 +148,7 @@ git -C "$PARENT/projects/alpha" remote add origin "file://$TMP_ROOT/alpha.git"
 git -C "$PARENT/projects/alpha" push -q -u origin main
 git --git-dir="$TMP_ROOT/alpha.git" symbolic-ref HEAD refs/heads/main
 printf -- '- alpha [direct-PR] - alpha project (added 2026-08-04)\n' > "$PARENT/data/projects.md"
-printf 'codex\n' > "$PARENT/config/secondmate-harness"
+printf 'deck\n' > "$PARENT/config/secondmate-harness"
 printf 'tmux\n' > "$PARENT/config/backend"
 
 # The primary home is the X-mode / relay home: the captain's real activation.
@@ -241,7 +245,7 @@ printf '%s\n' manual > "$REMOTE_HOME/config/backlog-backend"
 write_child_meta() {
   fm_write_meta "$REMOTE_HOME/state/work-child.meta" \
     "window=firstmate:fm-work-child" "endpoint_task_id=work-child" \
-    "worktree=$CHILD_WT" "project=$CHILD_WT" "harness=codex" "kind=ship" \
+    "worktree=$CHILD_WT" "project=$CHILD_WT" "harness=pi" "kind=ship" \
     "mode=local-only" "yolo=off"
 }
 mkdir -p "$TMP_ROOT/childfake"

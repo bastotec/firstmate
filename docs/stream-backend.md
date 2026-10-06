@@ -219,35 +219,6 @@ Drain or resolve every queued, taken-but-unacknowledged, or otherwise unconfirme
 Plan and verify agent re-registration after replacement under those contracts.
 Rollback also requires a quiet window because it incurs the same restart losses.
 
-## Tail adapters
-
-The agent owns a pseudoterminal, so it can only publish a worker whose harness firstmate runs through the runtime backend.
-A worker a harness runs itself - an opencode session, a Claude Code transcript - owns its own session storage, and to the hub it is invisible: no endpoint, no Bridge feed entry.
-A tail adapter closes that gap from the outside: it tails the harness's on-disk session storage and publishes that session's cumulative token usage to the hub as a real endpoint, using the PTY agent's identity fields and tail-specific state.
-
-`bin/fm-stream-claude-tail.py` follows the newest transcript in one `~/.claude/projects/` directory.
-It deduplicates streamed and resumed history by assistant message id, survives truncation and session rotation, and re-registers the same endpoint after a hub restart.
-Its flags and credential resolution live in its header.
-It uses the shared tail publisher but emits its transcript-specific counters instead of opencode's `tail` block.
-A fresh `GET /v1/tasks/<endpoint-id>/processes` response exposes its `seq`, cumulative `messages`, and `tokens` fields named `input`, `output`, `cache_creation`, and `cache_read`; `seq` increases for the observer process's lifetime, and stale responses omit those fields rather than present an old reading as current.
-
-`bin/fm-stream-opencode-tail.py` follows one opencode session selected with `--session`, or the newest main session in a `--directory`.
-Its command handling, SQLite storage contract, and refusal posture for what it cannot measure live in its header.
-Registration, heartbeat, hub rejoin, state-envelope, and sequence contracts shared by both adapters are owned by `bin/fm_stream_tail_lib.py`.
-
-What a tail adapter publishes is bounded by what the harness itself recorded:
-
-- Counters come only from usage records the harness wrote, and nothing is estimated, extrapolated, or synthesized.
-  An opencode session with no usage records publishes zeros and `usage_records` 0, which is a fact about the session.
-- The opencode adapter's counters are cumulative over its selected session, so a restart rescans that session and converges on the same totals with no cursor of its own.
-- The Claude adapter keeps cumulative totals in memory across transcript rotation; restarting it rebuilds totals from the newest transcript only.
-- Neither adapter owns a worker terminal.
-  The opencode adapter polls the hub's command queue, refuses input rather than silently dropping it, and accepts kill and status commands.
-  The Claude adapter is observability only and does not poll for commands, so the hub cannot claim that it delivered one.
-
-Both adapters are publishers, not supervisors.
-Watch them with `bin/fm-stream.sh tasks`; the opencode adapter exits when its session is archived or it accepts a kill, while the Claude adapter follows its selected transcript until its own process is stopped.
-
 ## Command path
 
 The reading half of the Bridge chain is the feed above; the writing half is `bin/fm-stream-bridge.py command`.
@@ -339,7 +310,7 @@ The hub binds `127.0.0.1` by default and every data route requires a bearer toke
 
 Tokens are class-scoped, and there are three classes:
 
-- `publish` registers endpoints and publishes frames. Agents and tail adapters hold it; nobody else needs it.
+- `publish` registers endpoints and publishes frames. Agents hold it; nobody else needs it.
 - `subscribe` reads only: list, stream, capture, screen, state, and the order journal.
 - `control` steers: sending input to a worker, appending a status line, closing an endpoint, and placing a leaf-addressed order.
 
@@ -354,7 +325,7 @@ A viewing token cannot register an endpoint, publish, or steer a worker: input, 
 Command retrieval and result submission additionally require the endpoint's private `command_capability`, established by registration and carried in the `X-Endpoint-Capability` request header.
 A poll must name that endpoint; machine-wide command retrieval is refused.
 A recovering agent presents its current capability when registering an endpoint, and the hub adopts or retains that same value so retrying after a lost registration response is idempotent; closing the endpoint revokes it.
-Agents and tail adapters retain the capability only in memory, and listings, state reads, logs, and status lines never expose it.
+Agents retain the capability only in memory, and listings, state reads, logs, and status lines never expose it.
 [Command path](#command-path) owns Bridge order compatibility; the endpoint authentication here also protects those orders.
 The Rust bridge remains a read-only feed, not a command adapter.
 The bundled viewer page is served without a credential - it is static, and the token it reads out of the URL fragment is what its own requests carry - but every data route behind it is authenticated, and opening it with a viewing token gives a read-only view whose send box is refused.
@@ -520,7 +491,7 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
   [Rust PTY agent](#rust-pty-agent) owns the native agent's verification coverage.
   [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) refreshes the dated Python-reference harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md#live-harness-identity), not installed-harness liveness through the Rust publisher.
   Native Deck steering has its own live guard and portable receiver regressions, linked in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
-  The other portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, `tests/fm-stream-claude-tail.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
+  The other portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, and `tests/fm-stream-bridge.test.sh`.
   The secondmate credential-seeding regressions from the Security section above ride `tests/fm-secondmate-safety.test.sh`.
   `tests/fm-ui-host-control.test.sh` covers the private host route's registry, browser-safe discovery and classification, distinct primary captain-call bindings, repeated primary capability refusals, captain-call decisions, exact-task and harness-switch races, independent-host lease preservation, stdin isolation, and host-only diagnostics; `tests/fm-control.test.sh` covers integration with the existing worker owners.
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.

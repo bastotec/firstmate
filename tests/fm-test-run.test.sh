@@ -103,7 +103,6 @@ init_changed_fixture_repo() {
     fm-test-fixtures.test.sh \
     fm-cd-pretool-check.test.sh \
     fm-daemon.test.sh \
-    fm-harness-adapter-instructions-live-e2e.test.sh \
     fm-harness-adapter-references.test.sh \
     fm-backend-herdr-smoke.test.sh \
     fm-secondmate-safety.test.sh \
@@ -112,7 +111,6 @@ init_changed_fixture_repo() {
     fm-backend.test.sh \
     fm-pr-merge.test.sh \
     fm-procevent-quota.test.sh \
-    fm-quota-choose.test.sh \
     fm-pi-watch-extension.test.sh \
     fm-pi-windows-shell-invocation.test.sh \
     fm-afk-return.test.sh \
@@ -128,8 +126,7 @@ init_changed_fixture_repo() {
   : >"$repo/bin/fm-timeout-lib.sh"
   : >"$repo/bin/fm-procevent-quota.sh"
   : >"$repo/bin/fm-quota-axi-lib.sh"
-  : >"$repo/bin/fm-quota-choose.sh"
-  : >"$repo/bin/unmapped-source.sh"
+    : >"$repo/bin/unmapped-source.sh"
   # A shared top-level test fixture read by two suites in different families,
   # beside a tests/ file nothing reads at all.
   : >"$repo/tests/shared-probe-fixture.sh"
@@ -361,33 +358,28 @@ test_changed_dependency_selection_and_unmapped_failure() {
   printf '\n' >>"$repo/.agents/skills/harness-adapters/references/common/dispatch.md"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-harness-adapter-references.test.sh" "harness adapter reference selects portable structural coverage"
-  assert_contains "$listed" "tests/fm-harness-adapter-instructions-live-e2e.test.sh" "harness adapter reference selects opt-in instruction coverage"
+  assert_contains "$listed" "tests/fm-afk-pi-herdr-return-e2e.test.sh" "harness adapter reference selects opt-in live harness coverage"
   git -C "$repo" add .agents/skills/harness-adapters
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm harness-adapter-reference-change
 
   printf '\n' >>"$repo/.agents/skills/harness-adapters/SKILL.md"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-harness-adapter-references.test.sh" "harness adapter router selects portable structural coverage"
-  assert_contains "$listed" "tests/fm-harness-adapter-instructions-live-e2e.test.sh" "harness adapter router selects opt-in instruction coverage"
+  assert_contains "$listed" "tests/fm-afk-pi-herdr-return-e2e.test.sh" "harness adapter router selects opt-in live harness coverage"
   git -C "$repo" add .agents/skills/harness-adapters/SKILL.md
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm harness-adapter-router-change
 
   printf '\n' >>"$repo/bin/fm-procevent-quota.sh"
-  printf '\n' >>"$repo/bin/fm-quota-choose.sh"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-procevent-quota.test.sh" \
     "quota process-event source selects its focused test"
-  assert_contains "$listed" "tests/fm-quota-choose.test.sh" \
-    "quota chooser source selects its focused test"
-  git -C "$repo" add bin/fm-procevent-quota.sh bin/fm-quota-choose.sh
+  git -C "$repo" add bin/fm-procevent-quota.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm quota-source-change
 
   printf '\n' >>"$repo/bin/fm-quota-axi-lib.sh"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-procevent-quota.test.sh" \
     "shared quota validator selects process-event coverage"
-  assert_contains "$listed" "tests/fm-quota-choose.test.sh" \
-    "shared quota validator selects chooser coverage"
   git -C "$repo" add bin/fm-quota-axi-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm quota-validator-change
 
@@ -397,8 +389,6 @@ test_changed_dependency_selection_and_unmapped_failure() {
     "control library keeps backend coverage"
   assert_contains "$listed" "tests/fm-session-start.test.sh" \
     "control library keeps session coverage"
-  assert_contains "$listed" "tests/fm-quota-choose.test.sh" \
-    "control library selects chooser coverage"
   git -C "$repo" add bin/fm-control-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm control-lib-change
 
@@ -665,7 +655,7 @@ test_family_proofs_run_in_separate_concurrent_phases() {
   cp "$ROOT/bin/fm-timeout-lib.sh" "$repo/bin/fm-timeout-lib.sh"
   chmod +x "$repo/bin/fm-test-run.sh"
   for script in \
-    fm-calm-pi-extension.test.sh fm-vendor-auth-probe.test.sh \
+    fm-calm-pi-extension.test.sh fm-classify-decision-key.test.sh \
     fm-pr-check-security.test.sh fm-teardown.test.sh; do
     cat >"$repo/tests/$script" <<'SH'
 #!/usr/bin/env bash
@@ -677,7 +667,7 @@ SH
 
   (cd "$repo" && bin/fm-test-run.sh \
       tests/fm-pr-check-security.test.sh tests/fm-calm-pi-extension.test.sh \
-      tests/fm-teardown.test.sh tests/fm-vendor-auth-probe.test.sh --jobs 4) \
+      tests/fm-teardown.test.sh tests/fm-classify-decision-key.test.sh --jobs 4) \
     >"$tmp/out" 2>"$tmp/err" \
     || fail "cross-family phase fixture failed: $(cat "$tmp/err")"
 
@@ -1501,14 +1491,14 @@ test_unmapped_new_test_never_inherits_family_concurrency() {
   chmod +x "$repo/bin/fm-test-run.sh"
   # Two members of the proven residual family, plus a test basename the family
   # map has never seen - the shape of any test added tomorrow.
-  for script in fm-procevent.test.sh fm-quota-choose.test.sh fm-zz-unmapped-fixture.test.sh; do
+  for script in fm-procevent.test.sh fm-procevent-when.test.sh fm-zz-unmapped-fixture.test.sh; do
     printf '#!/usr/bin/env bash\necho "ok - %s fixture"\n' "$script" >"$repo/tests/$script"
     chmod +x "$repo/tests/$script"
   done
 
   set +e
   (cd "$repo" && bin/fm-test-run.sh --jobs 2 \
-    tests/fm-procevent.test.sh tests/fm-quota-choose.test.sh) \
+    tests/fm-procevent.test.sh tests/fm-procevent-when.test.sh) \
     >"$tmp/family.out" 2>"$tmp/family.err"
   rc=$?
   set -e

@@ -3,8 +3,7 @@
 # every shape a verified harness draws, every glyph, every container proof, and
 # the empty|pending|pending-unproven|unknown verdict, shared by every
 # session-provider adapter (tmux via bin/fm-tmux-lib.sh, and
-# bin/backends/{herdr,stream}.sh) and by fm-spawn.sh's kimi
-# launch-readiness check.
+# bin/backends/{herdr,stream}.sh).
 #
 # WHY THIS EXISTS (tasks fm-composer-shellglyph-safety and
 # fm-composer-thin-adapter-refactor-r1): the adapters each carried their own
@@ -50,13 +49,13 @@
 # captures in data/fm-composer-consolidation-audit-s1/report.md and
 # docs/verification/runtime-backends.md):
 #   bordered   - a complete boxed composer: a top border, side-bordered content
-#                rows of the same family, and a bottom border (grok, kimi,
+#                rows of the same family, and a bottom border (grok,
 #                older claude). The bottom border may carry a TITLE (grok
 #                writes its model name there); a titled bottom border that
 #                still starts and ends with the family's rule glyph is
 #                tolerated, including Grok 1.0.5's three-column title overhang.
 #   bare       - an agent prompt glyph row with no border at all (claude `❯`,
-#                codex `›`, muse `⟩`, cursor `→`). The agent glyph is itself the container
+#                codex `›`, cursor `→`). The agent glyph is itself the container
 #                proof; a bare SHELL glyph (`>` `$` `%` `#`) never is.
 #                A bare composer's WRAP region (typed input continuing on the
 #                rows beneath the glyph row) is bounded by blank rows, by
@@ -78,7 +77,7 @@
 # what a pane shows once its agent has exited to a plain login shell - is a
 # genuine empty agent composer ONLY inside a bordered container. On a bare row
 # it is a dead-shell prompt and classifies `unknown` (never a safe injection
-# target). The AGENT glyphs `❯` (claude), `›` (codex), `⟩` (U+27E9, muse),
+# target). The AGENT glyphs `❯` (claude), `›` (codex),
 # and `→` (U+2192, cursor) are a genuine empty agent composer either way.
 # Both glyph sets are declared
 # exactly once below; every decision reaches them through the declarations.
@@ -204,11 +203,10 @@ fm_composer_normalize_trim_var() {  # <varname>
 #     no fleet harness uses it for ghost text, so it is kept (real text wins:
 #     under-stripping merely defers, which the max-defer alarm surfaces, while
 #     over-stripping would inject over real input).
-# Raising FM_COMPOSER_GHOST_LUMA_MAX is not free: muse draws its `⟩` prompt glyph
-# in truecolor 38;2;90;160;255, luminance ~149.9 (verified, muse 0.1.0-R708.1),
-# the tightest margin over the 128 default in the fleet. Above ~150 that glyph is
-# stripped as ghost text, which is why the bare-glyph fallback below must also
-# recognise every agent glyph from the UNSTRIPPED plain row.
+# Raising FM_COMPOSER_GHOST_LUMA_MAX is not free: a brightly coloured agent
+# prompt glyph can then be stripped as ghost text, which is why the bare-glyph
+# fallback below must also recognise every agent glyph from the UNSTRIPPED
+# plain row.
 # The dim/faint and dark-foreground states are tracked together as "de-emphasis";
 # codes are processed left to right within a sequence, so "ESC[0;2m" reads as dim.
 # LC_ALL=C makes awk walk bytes, so multibyte glyphs (e.g. ❯) and de-emphasised
@@ -304,32 +302,18 @@ fm_composer_strip_ghost() {
 # Matching a footer to confirm a keystroke landed is a different question from
 # asking what a worker is doing, and the two must not be conflated.
 # Delivery-only rendered busy footers per harness. claude/codex: "esc to
-# interrupt"; opencode: "esc interrupt"; pi: "Working..."; omp: "Working…"; grok: "Ctrl+c:cancel"; agy: "esc to cancel".
+# interrupt"; opencode: "esc interrupt"; pi: "Working..."; omp: "Working…"; grok: "Ctrl+c:cancel".
 # Claude's current spinner has a rotating glyph and word, but every active-turn
 # line has an ellipsis followed by a parenthesized elapsed duration. Keep this
 # signature separate from the shared default because that shape is not generic
 # enough to classify arbitrary harness output safely.
-# Kimi's anchored moon-phase spinner is separate because bare moon glyphs in
-# ordinary output must not classify another harness as busy. Leading whitespace is
-# OPTIONAL; whitespace on both sides of the separator is REQUIRED because every
-# captured spinner row had it. A zero-whitespace form has NEVER been observed and
-# is deliberately not matched. The line end is intentionally unanchored because
-# rotating tip text follows and is not required to be present. The idle status
-# bar's lowercase `thinking` label and independently rotating tip text are not
-# busy signals on their own.
-# The full moon-phase set remains locale- and emoji-font-sensitive because Kimi
-# exposes no stable ASCII busy token.
 # The harness-less default is the UNION of the per-harness tokens below, used
 # only when a caller has no recorded harness for the pane. cursor's
 # `ctrl+c to stop` is
 # part of that union for the same reason the others are: without it a cursor
 # submit could never be acknowledged, because cursor parks its terminal cursor
 # outside its composer and the composer verdict is therefore always `unknown`.
-# agy's `esc to cancel` is part of the union for the same reason: an explicit
-# tmux agy endpoint reaches the submit core with no recorded harness, and its
-# bare `>` composer verdict is `unknown`, so the busy footer is the only
-# turn-started acknowledgement that path can read.
-FM_DELIVERY_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working(\.\.\.|…)|Ctrl\+c:cancel|ctrl\+c to stop|esc[[:space:]]+to[[:space:]]+cancel'
+FM_DELIVERY_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working(\.\.\.|…)|Ctrl\+c:cancel|ctrl\+c to stop'
 FM_DELIVERY_CLAUDE_BUSY_REGEX_DEFAULT='esc to interrupt|…[[:space:]]+\([0-9]+[smh]'
 FM_DELIVERY_CODEX_BUSY_REGEX_DEFAULT='esc to interrupt'
 FM_DELIVERY_OPENCODE_BUSY_REGEX_DEFAULT='esc interrupt'
@@ -360,15 +344,6 @@ FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
 # injection. Cursor's recorded worker state comes from its transcript fold in
 # bin/fm-busy-lib.sh, never from this row.
 FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT='ctrl\+c to stop'
-# agy (Antigravity CLI) renders a pinned status row while a turn runs: the
-# `esc to cancel` token on the left and the model cell on the right (verified
-# live, agy 1.2.0; the idle row shows `? for shortcuts` instead). The
-# `Generating...` spinner word beside it is a free-floating output line and is
-# deliberately not matched, so echoed worker output cannot fake an
-# acknowledgement. Delivery guard only; recorded worker state comes from the
-# agy-regex fold in bin/fm-busy-lib.sh.
-FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT='esc[[:space:]]+to[[:space:]]+cancel'
-FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
 
 fm_busy_lines_match() {  # [harness]
   local harness=${1:-} lines regex
@@ -383,8 +358,6 @@ fm_busy_lines_match() {  # [harness]
       pi|pi-signed) regex=$FM_DELIVERY_PI_BUSY_REGEX_DEFAULT ;;
       omp) regex=$FM_DELIVERY_OMP_BUSY_REGEX_DEFAULT ;;
       grok) regex=$FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT ;;
-      agy) regex=$FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT ;;
-      kimi) regex=$FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT ;;
       cursor) regex=$FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT ;;
       deck) regex= ;;
       '') regex=$FM_DELIVERY_BUSY_REGEX_DEFAULT ;;
@@ -404,7 +377,7 @@ fm_busy_lines_match() {  # [harness]
 # a dead-shell prompt and must never read `empty`. Newline-separated and
 # consumed by `read` rather than word splitting, so `$`, `%`, and `#` stay
 # literal and no entry is ever exposed to pathname expansion.
-FM_COMPOSER_AGENT_PROMPT_GLYPHS=$(printf '%s\n' '❯' '›' '⟩' '→')
+FM_COMPOSER_AGENT_PROMPT_GLYPHS=$(printf '%s\n' '❯' '›' '→')
 FM_COMPOSER_SHELL_PROMPT_GLYPHS=$(printf '%s\n' '>' '$' '%' '#')
 
 # The ONE fleet-wide idle-placeholder set: composer text a harness renders in
@@ -585,9 +558,9 @@ fm_composer_idle_matches() {
 #              cannot shift underneath it.
 #   [idle_case] `sensitive` (default) or `insensitive`.
 #   [plain_content] the UNSTRIPPED plain row, consulted when ghost stripping
-#              emptied an unbordered row: muse's `⟩` sits at luminance ~150,
-#              close enough to the ghost threshold that a raised threshold
-#              strips it, and the plain row is what keeps that pane readable.
+#              emptied an unbordered row: a raised ghost threshold can strip a
+#              bright agent glyph, and the plain row is what keeps that pane
+#              readable.
 # Content and plain_content are normalized and re-trimmed on entry, so the
 # verdict never depends on which whitespace alphabet the calling adapter
 # trimmed with.

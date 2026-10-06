@@ -3,8 +3,8 @@
 # set of LOCAL (gitignored) config items down into each secondmate home's
 # config/, so a secondmate's OWN crewmates inherit the primary's settings
 # (e.g. primary config/crew-dispatch.json makes a secondmate use the same dispatch
-# profile rules, primary config/crew-harness=codex makes a secondmate's crewmates
-# spawn on codex too, primary config/backlog-backend=manual makes that home
+# profile rules, primary config/crew-harness=deck makes a secondmate's crewmates
+# spawn on deck too, primary config/backlog-backend=manual makes that home
 # hand-edit backlog files too, primary config/backend pins that home's local
 # runtime-backend default for future spawns, primary config/startup-memory-budget
 # bounds that home's startup-memory curation, and primary
@@ -17,9 +17,6 @@
 # default-off W3C trace-context setup, while live convergence leaves it unchanged.
 # The primary passes its frozen home-session decision into a newly launched
 # Secondmate; see docs/trace-context.md.
-# Primary config/claude-permission-mode is a captain-wide safety preference
-# (bypass or auto for every claude launch), so it flows down too and a
-# secondmate's own claude crewmates launch on the same permission posture.
 # It also pushes
 # the one primary-authoritative shared captain-preference file,
 # data/captain-shared.md, into each secondmate home's data/ as a read-only copy.
@@ -66,7 +63,7 @@ FM_SHARED_CAPTAIN_MODE="444"
 # The declared inheritable set (space-separated, config-dir-relative item paths).
 # Extend here to inherit more of the primary's local config; override via the
 # environment only in tests. Items must not contain whitespace.
-FM_INHERITABLE_CONFIG="${FM_INHERITABLE_CONFIG:-crew-dispatch.json crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode}"
+FM_INHERITABLE_CONFIG="${FM_INHERITABLE_CONFIG:-crew-dispatch.json crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist}"
 
 # Items whose value is a home-SESSION enablement decision rather than durable
 # local configuration. They are inherited at the launch convergence point, where

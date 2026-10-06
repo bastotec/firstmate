@@ -21,8 +21,7 @@
 #      is refused.
 #   2. Per-harness control mechanics: which key interrupts a running turn, how
 #      many times it must be sent, whether the composer needs clearing after
-#      that key, which adapter-owned cancellation acknowledgement is observable,
-#      which command exits the agent, and which task kinds the adapter is
+#      that key, which command exits the agent, and which task kinds the adapter is
 #      verified to run. These are the empirically verified facts previously
 #      carried only in the harness-adapters skill's per-adapter tables; that
 #      skill now points here so one executable owner holds them, and
@@ -35,11 +34,8 @@
 #      be proven on the recorded backend is refused rather than performed
 #      blind.
 #
-# `resume` is deliberately NOT a verb. It is not deterministic across the
-# verified adapters: codex and grok resume only from a session id printed at
-# exit, opencode resumes the most recent session for the cwd with --continue,
-# and claude, pi, pi-signed, omp, and kimi have no verified pane-resume contract
-# at all. `relaunch` covers the same need deterministically for every adapter,
+# `resume` is deliberately NOT a verb. Neither pi, pi-signed, nor deck has a
+# verified pane-resume contract. `relaunch` covers the same need deterministically for every adapter,
 # because the brief on disk - not a harness-private session - is the durable
 # instruction.
 
@@ -63,101 +59,63 @@ fm_control_verb_allowed() {  # <verb>
 # The harnesses whose control mechanics are implemented.
 fm_control_harness_supported() {  # <harness>
   case "${1-}" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|deck) return 0 ;;
+    pi|pi-signed|deck) return 0 ;;
   esac
   return 1
 }
 
 # The recognized adapter a RECORDED harness value belongs to. Every table below
-# is keyed by the exact adapter name, but a task launched from a raw
-# command records the command's basename instead (bin/fm-spawn.sh derives
-# harness= that way), which is why the spawn adapters match `claude*`, `muse*`,
-# and friends. This is the one place that prefix rule is stated. `pi` and
-# `pi-signed` are exact because a `pi*` prefix would swallow the signed adapter,
-# `omp` is exact because an `omp*` prefix would claim unrelated commands, `agy`
-# is exact for the same reason on an even shorter name, and an
-# unrecognized value returns nonzero rather than being guessed into a family.
+# is keyed by the exact adapter name. `pi` and `pi-signed` are exact because a
+# `pi*` prefix would swallow the signed adapter, and an unrecognized value
+# returns nonzero rather than being guessed into a family.
 fm_control_harness_family() {  # <recorded-harness>
   case "${1-}" in
     pi) printf 'pi' ;;
     pi-signed) printf 'pi-signed' ;;
-    omp) printf 'omp' ;;
-    agy) printf 'agy' ;;
     deck) printf 'deck' ;;
-    claude*) printf 'claude' ;;
-    codex*) printf 'codex' ;;
-    opencode*) printf 'opencode' ;;
-    grok*) printf 'grok' ;;
-    kimi*) printf 'kimi' ;;
-    cursor*) printf 'cursor' ;;
-    gemini*) printf 'gemini' ;;
-    muse*) printf 'muse' ;;
-    rovo*) printf 'rovo' ;;
     *) return 1 ;;
   esac
 }
 
-# Which task kinds an adapter can run.
-# muse, gemini, rovo, and agy are crewmate/scout adapters only.
-# None has a primary supervision protocol, and bin/fm-spawn.sh refuses a --secondmate launch on any of them.
-# The control plane asks this BEFORE it stops anything, so an incompatible relaunch target is refused while the current agent is still running rather than after it has been stopped.
+# Which task kinds an adapter can run. Every supported adapter runs every
+# kind. The control plane asks this BEFORE it stops anything, so an
+# incompatible relaunch target is refused while the current agent is still
+# running rather than after it has been stopped.
 fm_control_harness_supports_kind() {  # <harness> <kind>
-  local harness=${1-} kind=${2-}
+  local harness=${1-}
   fm_control_harness_supported "$harness" || return 1
-  case "$harness" in
-    muse|gemini|rovo|agy) [ "$kind" != secondmate ] || return 1 ;;
-  esac
   return 0
 }
 
-# The key that cancels a running turn. Escape for every adapter except grok,
-# whose Esc only moves focus to the scrollback; grok cancels on Ctrl+C.
-# gemini names its own key in the running turn's status row
-# (`(esc to cancel, <n>s)`), and a single Escape was verified to cancel it.
-# rovo cancels on a single Escape too, printing "Agent cancelled" (verified,
-# 202609.1.2). agy cancels on a single Escape, printing the Interrupted row
-# with an idle composer and no repollution (verified live, agy 1.2.0 through
-# Herdr). omp (Oh My Pi) shares Pi's single Escape, empty composer
-# afterwards, and /quit exit (verified omp 18.1.2 in a PTY, re-verified 18.1.11
-# through Herdr).
+# The key that cancels a running turn. Pi cancels on a single Escape and
+# leaves an empty composer.
 fm_control_interrupt_key() {  # <harness>
   case "${1-}" in
-    claude|codex|opencode|pi|pi-signed|omp|kimi|cursor|gemini|muse|rovo|agy) printf 'Escape' ;;
+    pi|pi-signed) printf 'Escape' ;;
     # deck's pane runs bin/fm-deck-worker.sh, which cancels the running turn on
     # Ctrl+C (the whole foreground group gets SIGINT; the driver traps it and
     # returns to its prompt), and has no Escape binding.
-    grok|deck) printf 'C-c' ;;
+    deck) printf 'C-c' ;;
     *) return 1 ;;
   esac
 }
 
-# How many times the interrupt key must be delivered. OpenCode needs a double
-# Escape; every other verified adapter interrupts on a single press.
+# How many times the interrupt key must be delivered. Every verified adapter
+# interrupts on a single press.
 fm_control_interrupt_repeat() {  # <harness>
   case "${1-}" in
-    opencode) printf '2' ;;
-    claude|codex|pi|pi-signed|omp|grok|kimi|cursor|gemini|muse|rovo|agy|deck) printf '1' ;;
+    pi|pi-signed|deck) printf '1' ;;
     *) return 1 ;;
   esac
 }
 
 # The key that must follow the interrupt key to leave the composer empty, or
-# nothing when the adapter needs none. muse is the one verified adapter that
-# RESTORES the cancelled prompt into its composer as real bright text, so an
-# interrupt is not complete until Ctrl+U has cleared it; leaving it there would
-# make the next submitted line - a steer, or this plane's own exit command -
-# concatenate onto it. cursor was checked for exactly that behaviour and does
-# NOT repollute: after a single Escape its composer shows only the `Add a
-# follow-up` placeholder, so it needs no clear key. gemini was checked the
-# same way and also does not repollute: after a single Escape it prints
-# `Request cancelled.` and its composer shows only the `Type your message
-# or @path/to/file` placeholder. Prints the key or nothing;
-# a harness with no verified mechanics returns nonzero, matching the tables
-# above.
+# nothing when the adapter needs none. No supported adapter restores the
+# cancelled prompt into its composer. Prints the key or nothing; a harness
+# with no verified mechanics returns nonzero, matching the tables above.
 fm_control_interrupt_clear_key() {  # <harness>
   case "${1-}" in
-    muse) printf 'C-u' ;;
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy|deck) ;;
+    pi|pi-signed|deck) ;;
     *) return 1 ;;
   esac
 }
@@ -173,7 +131,6 @@ fm_control_interrupt_clear_key() {  # <harness>
 # means no verified clear exists for that harness and the gate falls back to
 # bounded re-reads only. A harness with unverified mechanics returns nonzero
 # rather than receiving a guessed key.
-#   muse  Ctrl+U, its verified composer clear.
 #   deck  Ctrl+U then Enter, which the pane driver (bin/fm-deck-worker.sh)
 #         consumes as ONE input line carrying its clear byte: the driver
 #         discards that line whole and repaints its prompt, so the pair can
@@ -182,24 +139,8 @@ fm_control_interrupt_clear_key() {  # <harness>
 #         provably empty prompt row.
 fm_control_composer_clear_keys() {  # <harness>
   case "${1-}" in
-    muse) printf 'C-u\n' ;;
     deck) printf 'C-u\nEnter\n' ;;
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy) ;;
-    *) return 1 ;;
-  esac
-}
-
-fm_control_interrupt_ack_source() {  # <harness>
-  case "${1-}" in
-    muse) printf 'muse-session-terminal' ;;
-    # cursor's transcript DOES type an aborted close, but its write latency
-    # after an interrupt was measured as variable - sometimes seconds, sometimes
-    # not within 20 - so a cancellation claim built on it would be unreliable.
-    # Normal turn completion is prompt, which is what the busy fold depends on.
-    # rovo's TUI prints "Agent cancelled" on Escape, but for parity with
-    # claude/cursor this stays 'none': the ack is a rendered string, not a
-    # recorded state source, and rovo has no busy wiring to confirm against.
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy|deck) printf 'none' ;;
+    pi|pi-signed) ;;
     *) return 1 ;;
   esac
 }
@@ -207,8 +148,7 @@ fm_control_interrupt_ack_source() {  # <harness>
 # The command that exits the agent from its own composer.
 fm_control_exit_command() {  # <harness>
   case "${1-}" in
-    claude|opencode|grok|kimi|cursor|muse|rovo) printf '/exit' ;;
-    codex|pi|pi-signed|omp|gemini|agy|deck) printf '/quit' ;;
+    pi|pi-signed|deck) printf '/quit' ;;
     *) return 1 ;;
   esac
 }
@@ -248,55 +188,6 @@ fm_control_harness_wiring_paths() {  # <harness> <worktree> <state-dir> <id>
   local harness=${1-} wt=${2-} state=${3-} id=${4-}
   [ -n "$wt" ] && [ -n "$state" ] && [ -n "$id" ] || return 1
   case "$harness" in
-    claude) printf '%s\n' "$wt/.claude/settings.local.json" ;;
-    opencode) printf '%s\n' "$wt/.opencode/plugins/fm-busy-state.js" ;;
     pi|pi-signed) printf '%s\n' "$state/$id.pi-ext.ts" ;;
-    omp) printf '%s\n' "$state/$id.omp-ext.ts" ;;
-    grok)
-      printf '%s\n' "$wt/.fm-grok-turnend"
-      printf '%s\n' "$state/$id.grok-turnend-token"
-      ;;
-    kimi)
-      printf '%s\n' "$wt/.fm-kimi-turnend"
-      printf '%s\n' "$state/$id.kimi-turnend-token"
-      ;;
-    muse)
-      # muse installs no hook: its busy source is its own session event log,
-      # bound to the pane by these two firstmate-owned sidecars. A relaunch
-      # ONTO muse rewrites them, but a relaunch AWAY from muse must retire them
-      # so no retired incarnation's session binding outlives the agent.
-      printf '%s\n' "$state/$id.muse-session"
-      printf '%s\n' "$state/$id.muse-session-current"
-      ;;
-    cursor) printf '%s\n' "$state/$id.cursor-session" ;;
-    # gemini's busy-state and turn-end hooks live in a firstmate-owned
-    # settings file the launch reaches through GEMINI_CLI_SYSTEM_SETTINGS_PATH,
-    # so retiring that one file retires the whole incarnation's wiring. Nothing
-    # is written into the worktree, whose own .gemini/settings.json belongs to
-    # the project, and nothing global is installed.
-    gemini) printf '%s\n' "$state/$id.gemini-settings.json" ;;
-  esac
-}
-
-# The firstmate-owned global turn-end registry entry a harness mints per task.
-# grok and kimi are the two adapters whose turn-end hook is global and gated by
-# a private token file; every other adapter's wiring is fully covered by
-# fm_control_harness_wiring_paths. Prints the registry path or nothing.
-fm_control_harness_turnend_token_path() {  # <harness> <state-dir> <id>
-  local harness=${1-} state=${2-} id=${3-}
-  [ -n "$state" ] && [ -n "$id" ] || return 1
-  case "$harness" in
-    grok) printf '%s\n' "$state/$id.grok-turnend-token" ;;
-    kimi) printf '%s\n' "$state/$id.kimi-turnend-token" ;;
-  esac
-}
-
-fm_control_harness_turnend_auth_path() {  # <harness> <token>
-  local harness=${1-} token=${2-}
-  case "$token" in ''|*[!A-Za-z0-9._-]*) return 0 ;; esac
-  case "$harness" in
-    grok) printf '%s\n' "${GROK_HOME:-$HOME/.grok}/hooks/fm-turn-end.d/$token" ;;
-    kimi) printf '%s\n' "$HOME/.kimi-code/fm-turn-end.d/$token" ;;
-    *) return 0 ;;
   esac
 }

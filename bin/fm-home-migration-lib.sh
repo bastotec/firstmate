@@ -57,7 +57,7 @@ sub secret {
 }
 my %config = map { $_ => 1 } qw(crew-harness crew-dispatch.json secondmate-harness
     backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context
-    launch-env-allowlist claude-permission-mode calm supervision-branch-model
+    launch-env-allowlist calm supervision-branch-model
     supervision-branch-effort stow-pass-horizon turnend-churn-absorb wedge-alarm watched-tools.json);
 sub allowed {
     my ($p, $who) = @_;

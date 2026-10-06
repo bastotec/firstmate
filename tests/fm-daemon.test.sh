@@ -1413,11 +1413,11 @@ test_housekeeping_herdr_idle_busy_record_clears_stale() {
   local dir state key gen
   dir=$(make_supercase stale-herdr-idle-busy-record)
   state="$dir/state"
-  fm_write_meta "$state/herdr-footer.meta" "window=default:w1:p4" "backend=herdr" "harness=claude"
+  fm_write_meta "$state/herdr-footer.meta" "window=default:w1:p4" "backend=herdr" "harness=deck"
   printf 'working\n' > "$state/herdr-footer.status"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" herdr-footer)
   "$ROOT/bin/fm-busy-event.sh" apply "$state" herdr-footer busy --gen "$gen" \
-    --source claude-hook --event user-prompt-submit
+    --source deck-wrapper --event turn-start
   key=$(printf '%s' "herdr-footer" | tr ':/.' '___')
   echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
   (

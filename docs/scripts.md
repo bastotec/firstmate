@@ -48,7 +48,6 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-claude-stop-autoarm.sh` | Claude Stop `asyncRewake` hook owning tokenless watcher continuity with single-flight exit-2 rewake (docs/watcher-continuity.md) |
 | `fm-turnend-guard.sh`    | Shared primary turn-end guard predicate so no turn ends blind (docs/turnend-guard.md) |
 | `fm-turnend-guard-grok.sh` | Grok Stop-hook adapter for the primary turn-end guard                              |
-| `fm-kimi-turnend-hook.sh` | Surgically install or remove Kimi's guarded global crew turn-end hook                |
 | `fm-arm-pretool-check.sh` | Stable PreToolUse transport for the watcher-arm command policy (docs/arm-pretool-check.md) |
 | `fm-arm-command-policy.mjs` | Semantic owner of the watcher-arm PreToolUse policy (docs/arm-pretool-check.md)   |
 | `fm-subagent-pretool-check.sh` | Primary-home delegation-shape PreToolUse guard (docs/subagent-guard.md) |
@@ -75,9 +74,6 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-primary.py`](../bin/fm-primary.py) | Opt-in primary lifecycle owner ([managed-primary.md](managed-primary.md)) |
 | [`fm-deck-chat.sh`](../bin/fm-deck-chat.sh) | Host a `deck chat` primary: session lock, startup digest, watcher wakes as steers, busy-state ([managed-primary.md](managed-primary.md#deck-chat-primary)) |
 | [`fm-primary-steer.sh`](../bin/fm-primary-steer.sh) | Publish to and read the steering inbox of a `deck chat` primary (`fm_primary_chat.py` owns the layout) |
-| `fm-stream-claude-tail.py` | Tail a Claude Code project's rotating transcripts onto the hub as an observability-only endpoint |
-| `fm-stream-opencode-tail.py` | Tail one opencode session's own storage onto the hub as a real endpoint               |
-| `fm_stream_tail_lib.py`  | The shared registration, state-publish, and hub-rejoin contract behind tail adapters |
 | `fm-config-push.sh`      | Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed |
 | `fm-project-mode.sh`     | Resolve a project's registered delivery posture from `data/projects.md` for fleet sync and home seeding |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval            |
@@ -120,8 +116,6 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-tool-version-lib.sh` | Shared tool-associated semantic-version parser and floor comparison                  |
 | `fm-backlog-transition-lib.sh` | Pair task-record changes with their backlog transitions and replay interrupted closes |
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
-| `fm-quota-choose.sh`     | Choose the first candidate with known positive quota from an ordered harness:model list |
-| `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `fm-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, recovery, and supervision checks |
 | `fm-wake-grant.sh`       | Serialize Pi supervision-branch wake-row claim activation, publication, release, and deactivation |
 | `fm-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |

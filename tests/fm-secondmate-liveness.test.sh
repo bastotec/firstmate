@@ -34,8 +34,6 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-# shellcheck source=tests/remote-herdr-fixture.sh
-. "$(dirname "${BASH_SOURCE[0]}")/remote-herdr-fixture.sh"
 
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 fm_git_identity fmtest fmtest@example.com
@@ -99,7 +97,7 @@ SH
 test_tmux_agent_state_classifies() {
   local fb out
 
-  for harness in claude codex opencode grok kimi pi pi-signed pi-launcher Pi; do
+  for harness in claude codex opencode grok pi pi-signed pi-launcher Pi fm-deck-worker deck; do
     fb=$(make_probe_tmux "$TMP_ROOT/tmux-$harness" "$harness")
     out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:win' "$ROOT")
     [ "$out" = alive ] || fail "a live $harness foreground process should classify as alive, got '$out'"
@@ -197,7 +195,7 @@ test_herdr_agent_state_preserves_husk_classifier() {
 test_agent_state_dispatcher_and_compatibility() {
   local fb out
 
-  fb=$(make_probe_tmux "$TMP_ROOT/dispatch-tmux" claude)
+  fb=$(make_probe_tmux "$TMP_ROOT/dispatch-tmux" pi)
   out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:win' "$ROOT")
   [ "$out" = alive ] || fail "detailed dispatcher should route tmux, got '$out'"
 
@@ -212,43 +210,6 @@ test_agent_state_dispatcher_and_compatibility() {
   pass "fm_backend_agent_state: routes tmux/Herdr and keeps a backend with no adapter unverified"
 }
 
-# --- posture: bin/fm-claude-permission-lib.sh ---------------------------------
-
-# start_stand_in <args...>: a real process named claude whose arguments are
-# <args>, standing in for a live Claude agent; it exits once $TMP_ROOT is gone.
-start_stand_in() {
-  ( exec -a claude sh -c 'trap "exit 0" HUP TERM; while [ -d "$1" ]; do sleep 1 & wait $!; done' \
-      claude "$TMP_ROOT" "$@" ) </dev/null >/dev/null 2>&1 &
-  printf '%s\n' "$!"
-}
-
-posture_verdict() {  # <pids> <flag>
-  FM_TEST_PIDS=$1 bash -c '. "$0/bin/fm-backend.sh"; . "$0/bin/fm-claude-permission-lib.sh"
-    fm_backend_agent_pids() { [ "$FM_TEST_PIDS" != unreadable ] || return 1; printf "%s\n" $FM_TEST_PIDS; }
-    fm_claude_permission_endpoint_verdict tmux sess:win "$1"' "$ROOT" "$2"
-}
-
-test_posture_verdict_reads_the_agent_arguments() {
-  local bypass auto bare out
-  bypass=$(start_stand_in --dangerously-skip-permissions --settings '{}')
-  auto=$(start_stand_in --permission-mode auto --settings '{}')
-  bare=$(start_stand_in --resume 00000000-test)
-  out=$(posture_verdict "$bypass" --dangerously-skip-permissions)
-  [ "$out" = "ok $bypass" ] || fail "an agent carrying the bypass flag did not verify: $out"
-  out=$(posture_verdict "$auto" '--permission-mode auto')
-  [ "$out" = "ok $auto" ] || fail "an agent carrying the two-word auto flag did not verify: $out"
-  out=$(posture_verdict "$auto" --dangerously-skip-permissions)
-  [ "$out" = "mismatch $auto" ] || fail "an agent on the other posture was not a mismatch: $out"
-  out=$(posture_verdict "$bare" --dangerously-skip-permissions)
-  [ "$out" = "mismatch $bare" ] || fail "a resumed agent without the flag was not a mismatch: $out"
-  out=$(posture_verdict "" --dangerously-skip-permissions)
-  case "$out" in unverified\ *) ;; *) fail "an endpoint with no agent process claimed a verdict: $out" ;; esac
-  out=$(posture_verdict unreadable --dangerously-skip-permissions)
-  case "$out" in unverified\ *) ;; *) fail "an unreadable endpoint claimed a verdict: $out" ;; esac
-  kill "$bypass" "$auto" "$bare" 2>/dev/null || true
-  pass "posture verdict: read from the agent's own arguments, with nothing claimed when no agent can be read"
-}
-
 # --- sweep level: bin/fm-bootstrap.sh's secondmate_liveness_sweep -----------
 
 # make_toolchain <dir>: the fixed set of stubs bin/fm-bootstrap.sh's read-only
@@ -257,7 +218,7 @@ test_posture_verdict_reads_the_agent_arguments() {
 make_toolchain() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
-  fm_fake_exit0 "$fakebin" node chrome-devtools-axi pi-signed
+  fm_fake_exit0 "$fakebin" node chrome-devtools-axi pi pi-signed
   fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.46
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
@@ -377,7 +338,7 @@ new_world() {
   w="$TMP_ROOT/$name"
   mkdir -p "$w/home/state" "$w/home/config"
   touch "$w/home/state/.last-watcher-beat"
-  printf 'codex\n' > "$w/home/config/crew-harness"
+  printf 'pi\n' > "$w/home/config/crew-harness"
   printf '%s\n' "$w"
 }
 
@@ -386,7 +347,7 @@ new_world() {
 # worktree; a non-git home just makes the unrelated fast-forward sweep log a
 # harmless "not a git repo" skip.
 add_sm_home() {
-  local w=$1 id=$2 window=$3 harness=${4:-claude}
+  local w=$1 id=$2 window=$3 harness=${4:-pi}
   local home="$w/$id"
   mkdir -p "$home/bin" "$home/data" "$home/state" "$home/config" "$home/projects"
   printf '%s\n' "$id" > "$home/.fm-secondmate-home"
@@ -456,58 +417,17 @@ test_sweep_leaves_alive_secondmate_untouched() {
   fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
   log="$w/calls.log"; : > "$log"
 
-  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log")
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" pi "$log")
 
   assert_not_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: already-live" \
     "an already-live secondmate should be handled silently"
   [ ! -s "$log" ] || fail "an already-live secondmate must never be killed or respawned: $(cat "$log")"
 
-  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log" FM_BOOTSTRAP_VERBOSE_FACTS=1)
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" pi "$log" FM_BOOTSTRAP_VERBOSE_FACTS=1)
   assert_contains "$out" "BOOTSTRAP_INFO: secondmate sm1 already live (backend=tmux)" \
     "verbose diagnostics should identify the already-live outcome"
   [ ! -s "$log" ] || fail "verbose reporting must not touch an already-live secondmate: $(cat "$log")"
   pass "sweep: an already-live secondmate is untouched and distinguishable in verbose diagnostics"
-}
-
-# A live Claude secondmate is healthy only on the configured permission posture.
-# A session resumed by another launcher without the flag is reported by name,
-# and never stopped or relaunched by the sweep.
-test_sweep_reports_live_secondmate_posture_mismatch() {
-  local w fb herdrfb log out state pane=w1:p2 bare good
-  w=$(new_world sweep-posture)
-  add_sm_home "$w" sm1 fm:$pane
-  {
-    printf 'backend=herdr\n'
-    printf 'herdr_session=fm\n'
-    printf 'herdr_workspace_id=w1\n'
-    printf 'herdr_tab_id=w1:t2\n'
-    printf 'herdr_pane_id=%s\n' "$pane"
-  } >> "$w/home/state/sm1.meta"
-  fb=$(make_toolchain "$w")
-  mkdir -p "$w/herdr"
-  install_remote_herdr_fixture "$w/herdr" "$w/herdr.state" "$w/herdr.log" "$w/herdr-fail" "$w/herdr.sock"
-  herdrfb="$w/herdr/bin"
-  state="$w/herdr.state"
-  log="$w/calls.log"; : > "$log"
-  bare=$(start_stand_in --resume 00000000-test)
-  jq --arg p "$pane" --argjson pid "$bare" \
-    '.workspaces = [{workspace_id:"w1", label:"fm", cwd:"/"}]
-     | .tabs = [{tab_id:"w1:t2", label:"fm-sm1", workspace_id:"w1", pane_id:$p}]
-     | .typed[$p] = true | .agents[$p] = $pid' "$state" > "$state.tmp" && mv -f "$state.tmp" "$state"
-
-  out=$(run_bootstrap "$herdrfb:$fb" "$w/home" zsh "$log")
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: posture mismatch: live agent pid $bare lacks the configured Claude permission flag '--dangerously-skip-permissions'" \
-    "a live agent without the configured posture was not reported: $out"
-  kill -0 "$bare" 2>/dev/null || fail "the sweep stopped the mismatched agent"
-  assert_not_contains "$(cat "$w/herdr.log")" "pane close" "the sweep closed the mismatched agent's endpoint"
-  assert_not_contains "$(cat "$w/herdr.log")" "tab create" "the sweep relaunched over the mismatched agent"
-
-  good=$(start_stand_in --dangerously-skip-permissions)
-  jq --arg p "$pane" --argjson pid "$good" '.agents[$p] = $pid' "$state" > "$state.tmp" && mv -f "$state.tmp" "$state"
-  out=$(run_bootstrap "$herdrfb:$fb" "$w/home" zsh "$log")
-  assert_not_contains "$out" "posture mismatch" "an agent on the configured posture was reported as a mismatch: $out"
-  kill "$bare" "$good" 2>/dev/null || true
-  pass "sweep: a live secondmate without the configured Claude posture is reported, neither stopped nor relaunched"
 }
 
 test_sweep_respawns_authoritatively_missing_pi_secondmate() {
@@ -603,22 +523,22 @@ test_sweep_never_acts_on_unverified_harness_dead_reading() {
   pass "sweep: an unverified harness blocks recovery with a concrete diagnostic"
 }
 
-# Being spawnable as a secondmate is not the same as being authorized for
-# session-start recovery: cursor hosts secondmates, but nothing verified its
-# dead-endpoint recovery, so the sweep must leave it untouched.
-test_sweep_never_acts_on_cursor_secondmate_dead_reading() {
+# A secondmate recorded on a worker adapter that no longer exists (claude) has no
+# verified recovery, so a dead reading must leave it untouched rather than
+# relaunching it on some other harness.
+test_sweep_never_acts_on_removed_adapter_secondmate_dead_reading() {
   local w fb tmuxfb log out
-  w=$(new_world sweep-cursor-harness)
-  add_sm_home "$w" sm1 firstmate:fm-sm1 cursor
+  w=$(new_world sweep-removed-adapter)
+  add_sm_home "$w" sm1 firstmate:fm-sm1 claude
   fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
   log="$w/calls.log"; : > "$log"
 
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
 
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: recorded harness 'cursor' is unverified for recovery" \
-    "a cursor secondmate's dead endpoint must not become actionable: $out"
-  [ ! -s "$log" ] || fail "a cursor secondmate must never be killed or respawned by the sweep: $(cat "$log")"
-  pass "sweep: a cursor secondmate with a dead endpoint stays unverified and untouched"
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: recorded harness 'claude' is unverified for recovery" \
+    "a removed-adapter secondmate's dead endpoint must not become actionable: $out"
+  [ ! -s "$log" ] || fail "a removed-adapter secondmate must never be killed or respawned by the sweep: $(cat "$log")"
+  pass "sweep: a secondmate recorded on a removed adapter stays unverified and untouched"
 }
 
 # Deck hosts secondmates on the stream backend, so a dead Deck endpoint is
@@ -661,7 +581,7 @@ test_sweep_converges_no_retouch_once_alive() {
   # Round 2: the (now-respawned) secondmate is genuinely alive - a second
   # sweep must converge to a pure no-op, not respawn again.
   : > "$log"
-  out2=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log")
+  out2=$(run_bootstrap "$tmuxfb:$fb" "$w/home" pi "$log")
   assert_not_contains "$out2" "SECONDMATE_LIVENESS: secondmate sm1: already-live" "round 2 should handle the already-live secondmate silently"
   [ ! -s "$log" ] || fail "round 2 must not re-kill or re-respawn an already-live secondmate: $(cat "$log")"
   pass "sweep: idempotent by construction - a live secondmate is never re-touched on a later run"
@@ -672,7 +592,7 @@ test_sweep_skipped_under_detect_only() {
   w=$(new_world sweep-detect-only)
   add_sm_home "$w" sm1 firstmate:fm-sm1
   mkdir -p "$w/home/config"
-  printf 'codex\n' > "$w/home/config/crew-harness"
+  printf 'deck\n' > "$w/home/config/crew-harness"
   fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
   log="$w/calls.log"; : > "$log"
 
@@ -705,20 +625,18 @@ test_sweep_noop_with_no_secondmate_meta() {
 
 test_tmux_agent_state_classifies
 test_tmux_agent_state_rejects_malformed_targets_before_probe
-test_posture_verdict_reads_the_agent_arguments
 test_herdr_agent_state_preserves_husk_classifier
 test_agent_state_dispatcher_and_compatibility
 test_sweep_respawns_confirmed_dead_secondmate
 test_sweep_skips_relaunch_when_the_endpoint_kill_is_unconfirmed
 test_sweep_leaves_alive_secondmate_untouched
-test_sweep_reports_live_secondmate_posture_mismatch
 test_sweep_respawns_authoritatively_missing_pi_secondmate
 test_sweep_respawns_authoritatively_missing_pi_signed_secondmate
 test_sweep_never_acts_on_ambiguous_existing_process
 test_sweep_never_acts_on_transient_unreadability
 test_sweep_reports_missing_endpoint_relaunch_failure
 test_sweep_never_acts_on_unverified_harness_dead_reading
-test_sweep_never_acts_on_cursor_secondmate_dead_reading
+test_sweep_never_acts_on_removed_adapter_secondmate_dead_reading
 test_sweep_recovers_confirmed_dead_deck_secondmate
 test_sweep_converges_no_retouch_once_alive
 test_sweep_skipped_under_detect_only

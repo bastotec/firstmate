@@ -134,15 +134,11 @@ exclusion_reason() {
     fm-afk-launch.test.sh)
       printf '%s\n' 'AFK lifecycle / inject path; exclusive daemon and pane control'
       ;;
-    fm-account-slot-live-e2e.test.sh|fm-afk-pi-herdr-return-e2e.test.sh|\
-    fm-codex-continuity-live-e2e.test.sh|fm-grok-continuity-live-e2e.test.sh|\
+    fm-afk-pi-herdr-return-e2e.test.sh|\
     fm-opencode-primary-live-e2e.test.sh|fm-pi-primary-live-e2e.test.sh|\
-    fm-quota-array-dispatch-live-e2e.test.sh|fm-send-secondmate-marker-herdr-e2e.test.sh|\
+    fm-send-secondmate-marker-herdr-e2e.test.sh|\
     fm-sessionstart-instruction-refresh-live-e2e.test.sh)
       printf '%s\n' 'live harness opt-in; never default parallel CI'
-      ;;
-    fm-account-slot.test.sh)
-      printf '%s\n' 'account-profile filesystem ownership and mode matrix; keep serial until dedicated concurrent proof'
       ;;
     fm-backend-herdr-eventwait-smoke.test.sh|\
     fm-backend-herdr-presentation-e2e.test.sh|fm-backend-herdr-prune-safety-e2e.test.sh|\
@@ -170,13 +166,11 @@ tests/fm-composer-ghost.test.sh
 tests/fm-composer-lib.test.sh
 tests/fm-crew-state.test.sh
 tests/fm-ensure-agents-md.test.sh
-tests/fm-grok-harness.test.sh
 tests/fm-herdr-lab.test.sh
 tests/fm-lint.test.sh
 tests/fm-pi-primary-types.test.sh
 tests/fm-pr-merge.test.sh
 tests/fm-review-diff.test.sh
-tests/fm-send-popup-settle.test.sh
 tests/fm-send-settle.test.sh
 tests/fm-send-strict.test.sh
 tests/fm-spawn-batch.test.sh
@@ -198,7 +192,6 @@ list_exclusions_for_report() {
     fi
   done <<'EOF'
 fm-test-isolation-proof.test.sh
-fm-account-slot.test.sh
 fm-backend-tmux-smoke.test.sh
 fm-backend.test.sh
 fm-spawn-dispatch-profile.test.sh
@@ -211,8 +204,6 @@ fm-wake-queue.test.sh
 fm-afk-inject-e2e.test.sh
 fm-backend-herdr-smoke.test.sh
 fm-pi-primary-live-e2e.test.sh
-fm-quota-array-dispatch-live-e2e.test.sh
-fm-account-slot-live-e2e.test.sh
 EOF
 }
 

@@ -3,10 +3,10 @@
 # bin/fm-spawn.sh installs under the contract owned by bin/fm-busy-lib.sh.
 #
 # These tests run the REAL fm-spawn against a fake tmux pane and an isolated
-# git worktree, then drive the generated adapter artifact (the Pi extension,
-# the OpenCode plugin) in a plain Node host, so the artifact, the real
-# bin/fm-busy-event.sh writer, and the real classifier are exercised together
-# with no live harness session.
+# git worktree, then drive the generated adapter artifact (the Pi extension in
+# a plain Node host; for Deck, the gen fm-spawn hands bin/fm-deck-worker.sh on
+# its launch line), so the wiring, the real bin/fm-busy-event.sh writer, and
+# the real classifier are exercised together with no live harness session.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -23,7 +23,8 @@ make_spawn_case() {  # <name> <harness> <id>
   home="$case_dir/home"
   proj="$case_dir/project"
   wt="$case_dir/wt"
-  fakebin=$(make_spawn_fakebin "$case_dir/fake" pi opencode claude codex gemini)
+  fakebin=$(make_spawn_fakebin "$case_dir/fake" pi gemini)
+  fm_test_fake_deck "$fakebin"
   fm_test_spawn_home "$home" "$harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   fm_test_spawn_brief "$home" "$id"
@@ -36,8 +37,7 @@ run_spawn() {  # <home> <wt> <fakebin> <spawn-args...>
   # fixed valid one.
   local home=$1 wt=$2 fakebin=$3
   shift 3
-  GROK_HOME="$home/grok-home" \
-    fm_test_run_spawn "$home" "$wt" "$fakebin" "$@" --mode no-mistakes --yolo off
+  fm_test_run_spawn "$home" "$wt" "$fakebin" "$@" --mode no-mistakes --yolo off
 }
 
 read_case_record() {
@@ -155,284 +155,128 @@ test_pi_extension_stale_incarnation_rejected() {
   pass "pi extension events from a superseded incarnation are rejected as stale"
 }
 
-# drive_oc_plugin <plugin-path> <events-json-lines...>: load the generated
-# OpenCode plugin in a plain Node host and feed it one event per argument, in
-# order, through the same hooks.event entry OpenCode calls.
-drive_oc_plugin() {
-  local plugin=$1
-  shift
-  PLUGIN_PATH="$plugin" node --input-type=module - "$@" 2>&1 <<'EOF'
-import { pathToFileURL } from "node:url";
-const mod = await import(pathToFileURL(process.env.PLUGIN_PATH).href);
-const hooks = await mod.FmBusyState({});
-for (const arg of process.argv.slice(2)) {
-  await hooks.event({ event: JSON.parse(arg) });
-}
-EOF
+# launched_gen <launch-log>: the --gen value fm-spawn typed onto the Deck
+# worker's launch line (shell-quoted by fm-spawn, so strip the quotes).
+launched_gen() {
+  sed -n "s/.* --gen '\([^']*\)' .*/\1/p" "$1" | head -n 1
 }
 
-oc_status() {  # <sessionID> <type>
-  printf '{"type":"session.status","properties":{"sessionID":"%s","status":{"type":"%s"}}}' "$1" "$2"
-}
-
-oc_idle() {  # <sessionID>
-  printf '{"type":"session.idle","properties":{"sessionID":"%s"}}' "$1"
-}
-
-test_opencode_plugin_semantic_lifecycle() {
-  local rec id=busy-oc-1 out state plugin
-  rec=$(make_spawn_case oc-lifecycle opencode "$id")
+test_deck_spawn_arms_gen_and_passes_it_to_the_wrapper() {
+  local rec id=busy-deck-1 out state log gen
+  rec=$(make_spawn_case deck-lifecycle deck "$id")
   read_case_record "$rec"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
-  expect_code 0 $? "opencode spawn should succeed: $out"
+  log="$CASE_DIR/launch.log"
+  : > "$log"
+  out=$(FM_FAKE_LAUNCH_LOG="$log" run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  expect_code 0 $? "deck spawn should succeed: $out"
+  assert_contains "$out" "spawned $id harness=deck" "deck spawn did not complete normally"
   state="$HOME_DIR/state"
-  plugin="$WT_DIR/.opencode/plugins/fm-busy-state.js"
-  assert_present "$plugin" "opencode spawn did not write the busy-state plugin"
+  assert_present "$state/$id.busy-gen" "deck spawn did not arm a busy generation"
+  assert_absent "$state/$id.pi-ext.ts" "deck spawn must not write the pi extension"
+  assert_absent "$WT_DIR/.claude/settings.local.json" "deck spawn must not write hook settings into the worktree"
 
-  out=$(classify opencode "$id" "$state")
-  [ "$out" = "busy fm-spawn" ] || fail "seed after spawn must be 'busy fm-spawn', got '$out'"
+  out=$(classify deck "$id" "$state")
+  [ "$out" = "busy fm-spawn" ] || fail "seed after deck spawn must be 'busy fm-spawn', got '$out'"
 
-  out=$(drive_oc_plugin "$plugin" "$(oc_status ses_main busy)") || fail "busy drive failed: $out"
-  out=$(classify opencode "$id" "$state")
-  [ "$out" = "busy opencode-plugin" ] || fail "session busy must classify 'busy opencode-plugin', got '$out'"
+  assert_contains "$(cat "$log")" 'fm-deck-worker' "deck launch did not run the deck worker wrapper"
+  gen=$(launched_gen "$log")
+  [ -n "$gen" ] || fail "deck launch line carries no --gen: $(cat "$log")"
+  [ "$gen" = "$(cat "$state/$id.busy-gen")" ] \
+    || fail "deck launch --gen '$gen' does not match the armed sidecar $(cat "$state/$id.busy-gen")"
 
-  out=$(drive_oc_plugin "$plugin" \
-    "$(oc_status ses_main busy)" \
-    "$(oc_status ses_child busy)" \
-    "$(oc_status ses_child idle)") || fail "child-session drive failed: $out"
-  out=$(classify opencode "$id" "$state")
-  [ "$out" = "busy opencode-plugin" ] || fail "a child session's idle must not clear the worker, got '$out'"
-
-  out=$(drive_oc_plugin "$plugin" \
-    "$(oc_status ses_main retry)" \
-    "$(oc_status ses_main idle)") || fail "retry/idle drive failed: $out"
-  out=$(classify opencode "$id" "$state")
-  [ "$out" = "idle opencode-plugin" ] || fail "the latched session's idle must classify idle, got '$out'"
-
-  rm -f "$state/$id.turn-ended"
-  out=$(drive_oc_plugin "$plugin" \
-    "$(oc_status ses_main busy)" \
-    "$(oc_idle ses_main)") || fail "session.idle drive failed: $out"
-  [ -f "$state/$id.turn-ended" ] || fail "session.idle no longer touches the notification marker"
-  out=$(classify opencode "$id" "$state")
-  [ "$out" = "idle opencode-plugin" ] || fail "session.idle for the latched session must classify idle, got '$out'"
-
-  rm -f "$state/$id.turn-ended"
-  out=$(drive_oc_plugin "$plugin" \
-    "$(oc_status ses2 busy)" \
-    "$(oc_idle ses_other)") || fail "other-session idle drive failed: $out"
-  [ -f "$state/$id.turn-ended" ] || fail "the marker touch must stay a notification for every session.idle"
-  out=$(classify opencode "$id" "$state")
-  [ "$out" = "busy opencode-plugin" ] || fail "another session's idle must not clear the latched busy, got '$out'"
-  pass "opencode plugin classifies from session.status, scoped to the latched worker session"
+  # The wrapper writes deck-wrapper events under the gen it was launched with.
+  "$ROOT/bin/fm-busy-event.sh" apply "$state" "$id" idle --gen "$gen" --source deck-wrapper --event turn-end \
+    || fail "an event under the launched gen was refused"
+  out=$(classify deck "$id" "$state")
+  [ "$out" = "idle deck-wrapper" ] || fail "turn-end under the launched gen must classify 'idle deck-wrapper', got '$out'"
+  "$ROOT/bin/fm-busy-event.sh" apply "$state" "$id" busy --gen "$gen" --source deck-wrapper --event turn-start \
+    || fail "turn-start under the launched gen was refused"
+  out=$(classify deck "$id" "$state")
+  [ "$out" = "busy deck-wrapper" ] || fail "turn-start must classify 'busy deck-wrapper', got '$out'"
+  pass "deck spawn arms the busy gen, hands the same gen to the wrapper, and trusts deck-wrapper events under it"
 }
 
-run_claude_hook() {  # <settings.json> <hook-event>
-  local cmd
-  cmd=$(jq -r ".hooks[\"$2\"][0].hooks[0].command" "$1")
-  [ -n "$cmd" ] && [ "$cmd" != null ] || fail "no $2 hook command in $1"
-  sh -c "$cmd"
-}
-
-test_claude_hooks_semantic_lifecycle() {
-  local rec id=busy-cl-1 out state settings
-  rec=$(make_spawn_case claude-lifecycle claude "$id")
+test_deck_wrapper_stale_incarnation_rejected() {
+  local rec id=busy-deck-2 out state log gen
+  rec=$(make_spawn_case deck-stale deck "$id")
   read_case_record "$rec"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
-  expect_code 0 $? "claude spawn should succeed: $out"
+  log="$CASE_DIR/launch.log"
+  : > "$log"
+  out=$(FM_FAKE_LAUNCH_LOG="$log" run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  expect_code 0 $? "deck spawn should succeed: $out"
   state="$HOME_DIR/state"
-  settings="$WT_DIR/.claude/settings.local.json"
-  assert_present "$settings" "claude spawn did not write hook settings"
-  jq -e . "$settings" >/dev/null || fail "claude hook settings are not valid JSON"
-  for ev in UserPromptSubmit Stop StopFailure SessionEnd; do
-    jq -e ".hooks[\"$ev\"]" "$settings" >/dev/null || fail "claude hook settings lack $ev"
-  done
-
-  out=$(classify claude "$id" "$state")
-  [ "$out" = "busy fm-spawn" ] || fail "seed after spawn must be 'busy fm-spawn', got '$out'"
-
-  rm -f "$state/$id.turn-ended"
-  run_claude_hook "$settings" Stop || fail "Stop hook command failed"
-  [ -f "$state/$id.turn-ended" ] || fail "Stop no longer touches the notification marker"
-  out=$(classify claude "$id" "$state")
-  [ "$out" = "idle claude-hook" ] || fail "Stop must classify 'idle claude-hook', got '$out'"
-
-  run_claude_hook "$settings" UserPromptSubmit || fail "UserPromptSubmit hook command failed"
-  out=$(classify claude "$id" "$state")
-  [ "$out" = "busy claude-hook" ] || fail "UserPromptSubmit must classify 'busy claude-hook', got '$out'"
-
-  run_claude_hook "$settings" StopFailure || fail "StopFailure hook command failed"
-  out=$(classify claude "$id" "$state")
-  [ "$out" = "idle claude-hook" ] || fail "StopFailure must classify idle so an API error cannot strand busy, got '$out'"
-
-  run_claude_hook "$settings" UserPromptSubmit
-  run_claude_hook "$settings" SessionEnd || fail "SessionEnd hook command failed"
-  out=$(classify claude "$id" "$state")
-  [ "$out" = "idle claude-hook" ] || fail "SessionEnd must classify idle, got '$out'"
-  pass "claude hooks open on UserPromptSubmit and close on Stop, StopFailure, and SessionEnd"
-}
-
-test_claude_hooks_stale_incarnation_harmless() {
-  local rec id=busy-cl-2 out state settings
-  rec=$(make_spawn_case claude-stale claude "$id")
-  read_case_record "$rec"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
-  expect_code 0 $? "claude spawn should succeed: $out"
-  state="$HOME_DIR/state"
-  settings="$WT_DIR/.claude/settings.local.json"
+  gen=$(launched_gen "$log")
+  [ -n "$gen" ] || fail "deck launch line carries no --gen"
+  # A re-arm supersedes the gen the old wrapper was launched with.
   "$ROOT/bin/fm-busy-event.sh" arm "$state" "$id" >/dev/null
-  run_claude_hook "$settings" UserPromptSubmit \
-    || fail "a stale-gen hook must still exit 0 so Claude's lifecycle is never broken"
-  out=$(classify claude "$id" "$state")
-  [ "$out" = "busy fm-spawn" ] || fail "a stale-gen hook event must not change state, got '$out'"
-  pass "claude hook events from a superseded incarnation are rejected without breaking the hook"
+  if "$ROOT/bin/fm-busy-event.sh" apply "$state" "$id" idle --gen "$gen" --source deck-wrapper --event turn-end 2>/dev/null; then
+    fail "an event from a superseded deck wrapper must be refused"
+  fi
+  out=$(classify deck "$id" "$state")
+  [ "$out" = "busy fm-spawn" ] || fail "a stale deck-wrapper event must not change state, got '$out'"
+  pass "deck-wrapper events from a superseded incarnation are rejected as stale"
 }
 
-test_codex_unverified_until_a_semantic_source_exists() {
-  local rec id=busy-cx-1 out state
-  rec=$(make_spawn_case codex-unverified codex "$id")
+test_deck_secondmate_arms_busy_gen() {
+  local rec id=busy-deck-sm out state log gen sm
+  rec=$(make_spawn_case deck-secondmate deck "$id")
   read_case_record "$rec"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
-  expect_code 0 $? "codex spawn should succeed: $out"
-  state="$HOME_DIR/state"
-  assert_absent "$state/$id.busy-gen" "codex must not arm a busy contract with no verified semantic source"
-  assert_absent "$WT_DIR/.codex/hooks.json" "codex must not install unverified busy hooks"
-  assert_contains "$out" 'spawned '"$id"' harness=codex' "codex spawn did not complete normally"
-  out=$(classify codex "$id" "$state")
-  [ "$out" = "unknown codex-unverified" ] || fail "codex must classify 'unknown codex-unverified', got '$out'"
-  out=$(fm_busy_classify tmux fake:w codex "$id" "$state" '• Working (6s • esc to interrupt)')
-  [ "$out" = "unknown codex-unverified" ] || fail "codex must not fall back to footer text, got '$out'"
-  pass "codex classifies unknown until a semantic source is verified, never idle or footer-matched"
-}
-
-# Gemini's hooks are PROJECT hooks in the worktree's own .gemini/settings.json,
-# and gemini's hook contract requires each command to print a JSON object on
-# stdout and nothing else, so these drive the real command and check both the
-# classification and that stdout stays parseable JSON.
-run_gemini_hook() {  # <settings.json> <hook-event>
-  local cmd
-  cmd=$(jq -r ".hooks[\"$2\"][0].hooks[0].command" "$1")
-  [ -n "$cmd" ] && [ "$cmd" != null ] || fail "no $2 hook command in $1"
-  sh -c "$cmd"
-}
-
-test_gemini_hooks_semantic_lifecycle() {
-  local rec id=busy-gm-1 out state settings
-  rec=$(make_spawn_case gemini-lifecycle gemini "$id")
-  read_case_record "$rec"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
-  expect_code 0 $? "gemini spawn should succeed: $out"
-  state="$HOME_DIR/state"
-  settings="$state/$id.gemini-settings.json"
-  assert_present "$settings" "gemini spawn did not write hook settings"
-  jq -e . "$settings" >/dev/null || fail "gemini hook settings are not valid JSON"
-  for ev in BeforeAgent AfterAgent SessionEnd; do
-    jq -e ".hooks[\"$ev\"]" "$settings" >/dev/null || fail "gemini hook settings lack $ev"
-  done
-  # The worktree's own .gemini/settings.json is the PROJECT's committed file;
-  # firstmate must never write it, or a project's configuration is clobbered.
-  assert_absent "$WT_DIR/.gemini/settings.json" \
-    "gemini spawn must not write the project's own .gemini/settings.json"
-
-  out=$(classify gemini "$id" "$state")
-  [ "$out" = "busy fm-spawn" ] || fail "seed after spawn must be 'busy fm-spawn', got '$out'"
-
-  rm -f "$state/$id.turn-ended"
-  out=$(run_gemini_hook "$settings" AfterAgent) || fail "AfterAgent hook command failed"
-  printf '%s' "$out" | jq -e . >/dev/null \
-    || fail "AfterAgent must print only a JSON object on stdout, got '$out'"
-  [ -f "$state/$id.turn-ended" ] || fail "AfterAgent no longer touches the notification marker"
-  out=$(classify gemini "$id" "$state")
-  [ "$out" = "idle gemini-hook" ] || fail "AfterAgent must classify 'idle gemini-hook', got '$out'"
-
-  out=$(run_gemini_hook "$settings" BeforeAgent) || fail "BeforeAgent hook command failed"
-  printf '%s' "$out" | jq -e . >/dev/null \
-    || fail "BeforeAgent must print only a JSON object on stdout, got '$out'"
-  out=$(classify gemini "$id" "$state")
-  [ "$out" = "busy gemini-hook" ] || fail "BeforeAgent must classify 'busy gemini-hook', got '$out'"
-
-  # SessionEnd fires TWICE for one /quit on gemini-cli 0.58.0, so the second
-  # delivery must be a harmless no-op rather than a state change or a failure.
-  run_gemini_hook "$settings" SessionEnd >/dev/null || fail "SessionEnd hook command failed"
-  out=$(classify gemini "$id" "$state")
-  [ "$out" = "idle gemini-hook" ] || fail "SessionEnd must classify idle, got '$out'"
-  run_gemini_hook "$settings" SessionEnd >/dev/null || fail "a repeated SessionEnd must still exit 0"
-  out=$(classify gemini "$id" "$state")
-  [ "$out" = "idle gemini-hook" ] || fail "a repeated SessionEnd must stay idle, got '$out'"
-  pass "gemini hooks open on BeforeAgent and close on AfterAgent and a repeated SessionEnd"
-}
-
-test_gemini_hooks_stale_incarnation_harmless() {
-  local rec id=busy-gm-2 out state settings
-  rec=$(make_spawn_case gemini-stale gemini "$id")
-  read_case_record "$rec"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
-  expect_code 0 $? "gemini spawn should succeed: $out"
-  state="$HOME_DIR/state"
-  settings="$state/$id.gemini-settings.json"
-  "$ROOT/bin/fm-busy-event.sh" arm "$state" "$id" >/dev/null
-  run_gemini_hook "$settings" BeforeAgent >/dev/null \
-    || fail "a stale-gen hook must still exit 0 so gemini's lifecycle is never broken"
-  out=$(classify gemini "$id" "$state")
-  [ "$out" = "busy fm-spawn" ] || fail "a stale-gen hook event must not change state, got '$out'"
-  pass "gemini hook events from a superseded incarnation are rejected without breaking the hook"
-}
-
-test_raw_gemini_launch_has_no_semantic_wiring() {
-  local rec id=busy-gm-raw out state
-  rec=$(make_spawn_case gemini-raw gemini "$id")
-  read_case_record "$rec"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" 'gemini --debug')
-  expect_code 0 $? "raw gemini spawn should succeed: $out"
-  state="$HOME_DIR/state"
-  assert_absent "$state/$id.busy-gen" "raw gemini launch must not arm a busy generation"
-  assert_absent "$state/$id.gemini-settings.json" "raw gemini launch must not write hook settings"
-  out=$(classify gemini "$id" "$state")
-  [ "$out" = "unknown missing" ] || fail "raw gemini launch must classify unknown, got '$out'"
-  pass "raw gemini launch remains unwired and classifies unknown"
-}
-
-test_gemini_is_refused_as_a_secondmate() {
-  local rec id=busy-gm-3 out
-  rec=$(make_spawn_case gemini-secondmate gemini "$id")
-  read_case_record "$rec"
+  sm="$CASE_DIR/secondmate-home"
+  mkdir -p "$sm/bin" "$sm/data"
+  printf '# Firstmate\n' > "$sm/AGENTS.md"
+  printf '%s\n' "$id" > "$sm/.fm-secondmate-home"
+  printf 'charter for %s\n' "$id" > "$sm/data/charter.md"
+  sm=$(cd "$sm" && pwd -P)
+  log="$CASE_DIR/launch.log"
+  : > "$log"
   # A secondmate spawn carries no delivery contract, so this one deliberately
   # bypasses run_spawn's ship-only --mode/--yolo arguments.
-  out=$(GROK_HOME="$HOME_DIR/grok-home" \
-    fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" --secondmate "$id" gemini) && {
-    fail "a gemini secondmate must be refused, it has no primary supervision protocol: $out"
-  }
-  assert_contains "$out" 'crewmate/scout adapter only' \
-    "refusing a gemini secondmate must name the crewmate/scout boundary: $out"
-  pass "gemini is refused as a secondmate because it has no primary supervision protocol"
+  out=$(FM_FAKE_LAUNCH_LOG="$log" fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$sm" --secondmate deck)
+  expect_code 0 $? "deck secondmate spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  assert_present "$state/$id.busy-gen" "deck secondmate spawn did not arm a busy generation"
+  out=$(classify deck "$id" "$state")
+  [ "$out" = "busy fm-spawn" ] || fail "seed after deck secondmate spawn must be 'busy fm-spawn', got '$out'"
+  assert_contains "$(cat "$log")" "--secondmate --id '$id'" "deck secondmate launch omitted host mode"
+  gen=$(launched_gen "$log")
+  [ "$gen" = "$(cat "$state/$id.busy-gen")" ] \
+    || fail "deck secondmate launch --gen '$gen' does not match the armed sidecar"
+  pass "a deck secondmate arms the busy gen and passes it to its host wrapper"
 }
 
-test_kimi_and_grok_install_no_unverified_wiring() {
-  local state out
-  state="$TMP_ROOT/gates/state"
-  mkdir -p "$state"
-  [ -z "$(fm_busy_sources_for_harness kimi)" ] \
-    || fail "standalone kimi must trust no semantic source until it is verified"
-  [ -z "$(fm_busy_sources_for_harness grok)" ] \
-    || fail "grok must trust no semantic source while its structured path is unverified"
-  out=$(fm_busy_classify tmux fake:w kimi gate-k "$state" '🌒 · thinking')
-  [ "$out" = "unknown kimi-unverified" ] || fail "kimi must classify unknown, not from its spinner, got '$out'"
-  out=$(fm_busy_classify tmux fake:w grok gate-g "$state" 'Ctrl+c:cancel')
-  [ "$out" = "busy grok-regex" ] || fail "grok must classify through its isolated fallback, got '$out'"
-  pass "kimi and grok install no unverified semantic wiring and classify through their own gates"
+test_raw_launch_has_no_semantic_wiring() {
+  local rec id=busy-raw out state
+  rec=$(make_spawn_case raw-launch deck "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" 'gemini --debug')
+  expect_code 0 $? "raw launch spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  assert_absent "$state/$id.busy-gen" "a raw launch must not arm a busy generation"
+  out=$(classify gemini "$id" "$state")
+  [ "$out" = "unknown missing" ] || fail "a raw launch must classify unknown, got '$out'"
+  pass "a raw launch command remains unwired and classifies unknown"
+}
+
+test_removed_adapter_is_refused() {
+  local rec id=busy-claude out state
+  rec=$(make_spawn_case claude-refused deck "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" claude) && {
+    fail "a bare claude worker harness must be refused: $out"
+  }
+  assert_contains "$out" "unknown harness 'claude'" "claude refusal did not name the unknown harness: $out"
+  state="$HOME_DIR/state"
+  assert_absent "$state/$id.busy-gen" "a refused spawn must not arm a busy generation"
+  pass "a worker harness with no busy adapter is refused before anything is armed"
 }
 
 test_pi_extension_semantic_lifecycle
 test_pi_extension_serializes_settle_before_next_start
 test_pi_extension_stale_incarnation_rejected
-test_kimi_and_grok_install_no_unverified_wiring
-test_opencode_plugin_semantic_lifecycle
-test_claude_hooks_semantic_lifecycle
-test_claude_hooks_stale_incarnation_harmless
-test_gemini_hooks_semantic_lifecycle
-test_gemini_hooks_stale_incarnation_harmless
-test_raw_gemini_launch_has_no_semantic_wiring
-test_gemini_is_refused_as_a_secondmate
-test_codex_unverified_until_a_semantic_source_exists
+test_deck_spawn_arms_gen_and_passes_it_to_the_wrapper
+test_deck_wrapper_stale_incarnation_rejected
+test_deck_secondmate_arms_busy_gen
+test_raw_launch_has_no_semantic_wiring
+test_removed_adapter_is_refused
 
 echo "all fm-busy-adapter-wiring tests passed"

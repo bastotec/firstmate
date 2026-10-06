@@ -114,7 +114,7 @@ phase_spawn() {
   : > "$LOG"
   PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_CONFIG_OVERRIDE="$HOME_DIR/parent-config" \
     FM_FAKE_TMUX_LOG="$LOG" FM_FAKE_TMUX_CAPTURE="$PANE" \
-    "$ROOT/bin/fm-spawn.sh" design "$SUB" codex --secondmate >/dev/null \
+    "$ROOT/bin/fm-spawn.sh" design "$SUB" pi --secondmate >/dev/null \
     || fail "secondmate spawn failed"
 
   local meta="$HOME_DIR/state/design.meta"
@@ -127,8 +127,8 @@ phase_spawn() {
   assert_grep 'FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE=' "$LOG" "launch did not clear operational overrides"
   assert_grep 'FM_CONFIG_OVERRIDE=' "$LOG" "launch did not clear the config override"
   assert_grep "$SUB_ABS/data/charter.md" "$LOG" "launch did not use the persistent charter"
-  assert_no_grep 'notify=' "$LOG" "secondmate codex launch included the parent turn-end notify hook"
-  assert_no_grep 'turn-ended' "$LOG" "secondmate codex launch referenced a parent turn-ended signal"
+  assert_no_grep 'notify=' "$LOG" "secondmate Pi launch included the parent turn-end notify hook"
+  assert_no_grep 'turn-ended' "$LOG" "secondmate Pi launch referenced a parent turn-ended signal"
   assert_no_grep 'treehouse get' "$LOG" "secondmate spawn ran a project treehouse get"
   pass "spawn: launches in the subhome with persistent charter, records routing meta"
 }

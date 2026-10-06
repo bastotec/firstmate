@@ -88,7 +88,7 @@ EOF
   echo "endpoint_task_id=hsmoke"
   echo "worktree=$WT"
   echo "project=$PROJ"
-  echo "harness=claude"
+  echo "harness=pi"
   echo "kind=ship"
   echo "mode=no-mistakes"
   echo "yolo=off"
@@ -156,11 +156,13 @@ pass "real herdr $HERDR_VERSION: a gone session reads recoverable while a live p
 
 FAKEBIN="$SCRATCH/fakebin"
 mkdir -p "$FAKEBIN"
-cat > "$FAKEBIN/codex" <<EOF
+# An inert replacement harness: fm-spawn resolves pi-signed on its own PATH and
+# types that absolute path into the pane, so running it is the launch proof.
+cat > "$FAKEBIN/pi-signed" <<EOF
 #!/usr/bin/env bash
-: > "$SCRATCH/codex-launched"
+: > "$SCRATCH/replacement-launched"
 EOF
-chmod +x "$FAKEBIN/codex"
+chmod +x "$FAKEBIN/pi-signed"
 printf -v FAKEBIN_Q '%q' "$FAKEBIN"
 printf -v PROJ_Q '%q' "$PROJ"
 fm_backend_herdr_send_text_line "$SESSION:$PANE_ID" "export PATH=$FAKEBIN_Q:\$PATH" \
@@ -174,21 +176,21 @@ done
 [ "$(fm_backend_herdr_current_path "$SESSION:$PANE_ID" 2>/dev/null || true)" = "$PROJ_REAL" ] \
   || fail "the real Herdr pane did not drift out of its recorded worktree"
 
-OUT=$(env FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_SPAWN_NO_GUARD=1 \
-  "$ROOT/bin/fm-spawn.sh" hsmoke --relaunch --harness codex) \
+OUT=$(env PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_SPAWN_NO_GUARD=1 \
+  "$ROOT/bin/fm-spawn.sh" hsmoke --relaunch --harness pi-signed) \
   || fail "a drifted, agent-free Herdr pane should be re-homed and relaunched: $OUT"
 for _ in $(seq 1 20); do
-  [ ! -e "$SCRATCH/codex-launched" ] || break
+  [ ! -e "$SCRATCH/replacement-launched" ] || break
   sleep 0.1
 done
-[ -e "$SCRATCH/codex-launched" ] || fail "the replacement harness was not launched"
+[ -e "$SCRATCH/replacement-launched" ] || fail "the replacement harness was not launched"
 [ "$(fm_backend_herdr_current_path "$SESSION:$PANE_ID" 2>/dev/null || true)" = "$WT_REAL" ] \
   || fail "the relaunched Herdr shell did not end up in its recorded worktree"
 [ "$(sed -n 's/^window=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)" = "$SESSION:$PANE_ID" ] \
   || fail "the Herdr relaunch replaced its endpoint instead of reusing it"
 herdr pane get "$PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
   || fail "the Herdr relaunch removed the endpoint it was required to reuse"
-awk -F= '$1 == "harness" {$0="harness=claude"} {print}' "$HOME_DIR/state/hsmoke.meta" \
+awk -F= '$1 == "harness" {$0="harness=pi"} {print}' "$HOME_DIR/state/hsmoke.meta" \
   > "$HOME_DIR/state/hsmoke.meta.tmp"
 mv "$HOME_DIR/state/hsmoke.meta.tmp" "$HOME_DIR/state/hsmoke.meta"
 pass "real herdr: a drifted agent-free shell returns to its worktree and reuses the same endpoint"
@@ -207,14 +209,14 @@ pass "real herdr: interrupt refuses when herdr's own agent registry reports no a
 # A registration alone no longer proves an agent (issue #4115): the adapter
 # verifies the pane's processes through the real `pane process-info` view. So
 # the registered agent is backed by a real agent-named foreground process - a
-# symlink to a long-running system binary named `claude`, the same construction
+# symlink to a long-running system binary named `pi`, the same construction
 # tests/fm-tmux-agent-liveness.test.sh uses (a copied platform binary fails code
 # signing on macOS arm64; the symlink name is what the kernel records as argv[0]).
 AGENT_BIN="$SCRATCH/agentbin"
 mkdir -p "$AGENT_BIN"
 SLEEP_BIN=$(command -v sleep) || fail "sleep not found"
-ln -s "$SLEEP_BIN" "$AGENT_BIN/claude"
-printf -v AGENT_Q '%q' "$AGENT_BIN/claude"
+ln -s "$SLEEP_BIN" "$AGENT_BIN/pi"
+printf -v AGENT_Q '%q' "$AGENT_BIN/pi"
 
 wait_process_state() {  # <expected> <tries>
   local expected=$1 tries=$2 i=0
@@ -284,21 +286,21 @@ case "$OUT" in
 esac
 pass "real herdr: exit on a pane with a stale registration is idempotent success"
 
-rm -f "$SCRATCH/codex-launched"
-OUT=$(env FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_SPAWN_NO_GUARD=1 \
-  "$ROOT/bin/fm-spawn.sh" hsmoke --relaunch --harness codex) \
+rm -f "$SCRATCH/replacement-launched"
+OUT=$(env PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_SPAWN_NO_GUARD=1 \
+  "$ROOT/bin/fm-spawn.sh" hsmoke --relaunch --harness pi-signed) \
   || fail "a stale-registration Herdr pane should be relaunched: $OUT"
 for _ in $(seq 1 20); do
-  [ ! -e "$SCRATCH/codex-launched" ] || break
+  [ ! -e "$SCRATCH/replacement-launched" ] || break
   sleep 0.1
 done
-[ -e "$SCRATCH/codex-launched" ] || fail "the replacement harness was not launched after the stale registration"
+[ -e "$SCRATCH/replacement-launched" ] || fail "the replacement harness was not launched after the stale registration"
 [ "$(sed -n 's/^window=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)" = "$SESSION:$PANE_ID" ] \
   || fail "the relaunch replaced its endpoint instead of reusing it"
 herdr pane get "$PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
   || fail "the relaunch removed the endpoint it was required to reuse"
 [ -d "$WT" ] || fail "the relaunch must never remove the task's local copy"
-awk -F= '$1 == "harness" {$0="harness=claude"} {print}' "$HOME_DIR/state/hsmoke.meta" \
+awk -F= '$1 == "harness" {$0="harness=pi"} {print}' "$HOME_DIR/state/hsmoke.meta" \
   > "$HOME_DIR/state/hsmoke.meta.tmp"
 mv "$HOME_DIR/state/hsmoke.meta.tmp" "$HOME_DIR/state/hsmoke.meta"
 pass "real herdr: a stale registration no longer blocks relaunch, and the endpoint and local copy survive"
@@ -306,7 +308,7 @@ pass "real herdr: a stale registration no longer blocks relaunch, and the endpoi
 # Last: the foreground process is a plain `sleep`, so the pane never draws any
 # recognized composer chrome and the composer state stays unproven. The exit
 # gate (bin/fm-control.sh) no longer refuses that reading structurally:
-# claude has no verified clear key, so the gate spends its bounded re-reads,
+# pi has no verified clear key, so the gate spends its bounded re-reads,
 # warns, and types the exit command anyway - and the authoritative agent-state
 # wait fails closed, because the live agent behind that pane ignores it.
 start_agent_process
@@ -315,7 +317,7 @@ herdr pane report-agent "$PANE_ID" --source fm-control-smoke --agent fm-control-
   || fail "could not re-register the live agent on the task pane"
 OUT=$(run_control hsmoke interrupt) || fail "interrupt against a registered agent should succeed: $OUT"
 case "$OUT" in
-  *"interrupt-delivered hsmoke harness=claude backend=herdr verified=agent-alive cancel=unconfirmed"*) : ;;
+  *"interrupt-delivered hsmoke harness=pi backend=herdr verified=agent-alive cancel=unconfirmed"*) : ;;
   *) fail "interrupt should report the agent-alive proof on herdr, got: $OUT" ;;
 esac
 pass "real herdr: interrupt delivers the harness's key and proves the agent survived it"

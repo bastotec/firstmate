@@ -21,10 +21,10 @@ make_case() {
   origin="$case_dir/origin.git"
   pool="$case_dir/pool"
   publisher="$case_dir/publisher"
-  fakebin=$(make_spawn_fakebin "$case_dir/fake")
+  fakebin=$(make_spawn_fakebin "$case_dir/fake" pi)
 
   mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
-  printf 'codex\n' > "$home/config/crew-harness"
+  printf 'pi\n' > "$home/config/crew-harness"
   fm_test_spawn_brief "$home" "$id"
   touch "$home/state/.last-watcher-beat"
 
@@ -221,10 +221,10 @@ make_originless_case() {  # <name> <id>
   home="$case_dir/home"
   project="$case_dir/project"
   pool="$case_dir/pool"
-  fakebin=$(make_spawn_fakebin "$case_dir/fake")
+  fakebin=$(make_spawn_fakebin "$case_dir/fake" pi)
 
   mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
-  printf 'codex\n' > "$home/config/crew-harness"
+  printf 'pi\n' > "$home/config/crew-harness"
   fm_test_spawn_brief "$home" "$id"
   touch "$home/state/.last-watcher-beat"
 
@@ -468,10 +468,10 @@ make_submodule_case() {  # <name> <id>
   pool="$case_dir/pool"
   publisher="$case_dir/publisher"
   sub="$case_dir/sub-origin"
-  fakebin=$(make_spawn_fakebin "$case_dir/fake")
+  fakebin=$(make_spawn_fakebin "$case_dir/fake" pi)
 
   mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
-  printf 'codex\n' > "$home/config/crew-harness"
+  printf 'pi\n' > "$home/config/crew-harness"
   fm_test_spawn_brief "$home" "$id"
   touch "$home/state/.last-watcher-beat"
 
