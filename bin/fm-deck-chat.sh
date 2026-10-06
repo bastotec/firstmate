@@ -39,8 +39,8 @@
 #       backend's own agent launcher, run the host inside it, print the
 #       endpoint target and return. Attach from any terminal with
 #       `bin/fm-stream.sh attach <target>` (read-only); send input through
-#       `bin/fm-send.sh primary <text>`. Typing into the TUI needs the separately
-#       built interactive attach (`bin/fm-stream.sh attach --interactive`).
+#       `bin/fm-send.sh primary <text>`. For typing into the TUI, see
+#       docs/stream-backend.md "Interactive attach".
 #   fm-deck-chat.sh stop [--home H]
 #       SIGTERM the registered host: deck quits and the host exits cleanly.
 # --home defaults to FM_HOME, else this checkout. --session defaults to the id

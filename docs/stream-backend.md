@@ -145,8 +145,10 @@ Ordinary supervision does not need any of that.
   Endpoint exit status is propagated; a negative signal status becomes `128 + signal`, and an unknown status becomes 1.
 - Every session exit restores terminal attributes and locally leaves the alternate screen, shows the cursor, disables bracketed paste and mouse reporting, and resets SGR before printing the final message.
 
-The token goes to the native `fm-stream-agent attach` client through the environment, never argv, and every request needs a `control` credential, the same class as `fm-send`.
-The client is the native binary whatever `config/stream-impl` says; against the Python rollback hub it starts from the screen without exact offset continuity and cannot resize or send non-UTF-8 bytes, and the Python agent refuses both.
+The wrapper passes the token to the native `fm-stream-agent attach` client through the environment, never argv.
+Interactive attach needs both `subscribe` and `control` grants; [Security](#security) owns token classes and configuration.
+The client requires [native binaries](#implementation-and-native-binaries) whatever `config/stream-impl` says, including in a Python home.
+Against the Python rollback hub it starts from the screen without exact offset continuity and cannot resize or send non-UTF-8 bytes; a Python-backed endpoint on the native hub supports exact-offset output but refuses resize and raw-byte input.
 `tests/fm-stream-attach-rust.test.sh` drives it from a real PTY against a disposable native hub and agent.
 
 ## Bridge feed
@@ -323,7 +325,7 @@ The [host executable's header and help](../bin/fm-ui-host-control.py) own its ro
 
 The Bridge command plane remains `steer` only.
 The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.
-The hub's endpoint-addressed non-order command path already carries `input`, `kill`, and `status` through `submit_command` and the agent's take/result acknowledgement path, independent of the Bridge journal.
+The hub's endpoint-addressed non-order command path carries `input`, `kill`, and `status`, plus the native hub's `resize`, through command submission and the agent's take/result acknowledgement path, independent of the Bridge journal.
 Those are different planes, not interchangeable Bridge orders: raw input bypasses native steering, kill closes an endpoint rather than executing guarded lifecycle control, and status appends worker events rather than carrying captain intent.
 That path's acknowledgement does not supply the Bridge journal's leaf binding, command-id replay, or late-result lookup, so a preflight lookup followed by a plain command cannot honestly inherit the journal contract.
 Consequently this host route does not expose those routes as composer kinds or fabricate equivalent acknowledgement and retry guarantees.
@@ -337,8 +339,8 @@ The hub binds `127.0.0.1` by default and every data route requires a bearer toke
 Tokens are class-scoped, and there are three classes:
 
 - `publish` registers endpoints and publishes frames. Agents hold it; nobody else needs it.
-- `subscribe` reads only: list, stream, capture, screen, state, and the order journal.
-- `control` steers: sending input to a worker, appending a status line, closing an endpoint, and placing a leaf-addressed order.
+- `subscribe` reads only: list, stream, capture, screen, the native hub's snapshot, state, and the order journal.
+- `control` steers: sending input to a worker, resizing its terminal on the native hub, appending a status line, closing an endpoint, and placing a leaf-addressed order.
 
 A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, so an operator credential is written `subscribe,control:<token>` and a home's own client credential, which both publishes and steers, is `publish,subscribe,control:<token>`.
 A bare token line grants `subscribe` alone, so the unqualified line is the read-only one.
@@ -347,7 +349,7 @@ Seeding a secondmate home mints that home its own token rather than copying the 
 A seeded token is INACTIVE until the hub restarts: the hub reads its token file once at serve start, so the credential the mate presents is refused until then.
 That restart is a planned quiet-boundary operation, not part of seeding - a restart clears terminal scrollback and empties Bridge-order reconciliation, the same cost [When the hub restarts](#when-the-hub-restarts) names, so it must not happen while an order is pending or may need a resend.
 The first real seeding gets one such planned restart; a supported token reload is separate queued work, because seeding recurs and every restart spends that fleet-wide cost again.
-A viewing token cannot register an endpoint, publish, or steer a worker: input, status, and close are all refused with 403.
+A viewing token cannot register an endpoint, publish, or steer a worker: input, native resize, status, and close are all refused with 403.
 Command retrieval and result submission additionally require the endpoint's private `command_capability`, established by registration and carried in the `X-Endpoint-Capability` request header.
 A poll must name that endpoint; machine-wide command retrieval is refused.
 A recovering agent presents its current capability when registering an endpoint, and the hub adopts or retains that same value so retrying after a lost registration response is idempotent; closing the endpoint revokes it.

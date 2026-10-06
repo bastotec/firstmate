@@ -148,8 +148,8 @@ bin/fm-deck-chat.sh --stream --home /absolute/path/to/firstmate-home --model <ro
 bin/fm-stream.sh attach <target printed above>
 ```
 
-The shipped attach command is read-only; send input through `FM_HOME=<home> bin/fm-send.sh primary <text>`.
-Typing into the TUI needs the interactive attach (`bin/fm-stream.sh attach --interactive`, built separately).
+The plain `attach` command above is read-only; send input through `FM_HOME=<home> bin/fm-send.sh primary <text>`.
+To type into the TUI, use [Interactive attach](stream-backend.md#interactive-attach), which owns the native-client prerequisites and compatibility limits.
 
 Stop it with `/quit` in the chat, or `bin/fm-deck-chat.sh stop --home <home>`.
 After a clean exit, another primary can start in the same home.
