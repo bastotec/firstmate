@@ -797,7 +797,7 @@ test_relaunch_onto_deck_with_effort_refuses_before_stop() {
 
 
 test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
-  local dir home out rc
+  local dir home out rc config before
   dir=$(new_case smpin sm3)
   home="$dir/home"
   mkdir -p "$home/config"
@@ -823,6 +823,22 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
   } > "$home/state/sm3.meta"
   printf '%s\n' "fm-sm3" > "$dir/fake/windows"
   printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  before=$(cat "$home/state/sm3.meta")
+  for config in secondmate-harness crew-harness; do
+    printf 'default\n' > "$home/config/secondmate-harness"
+    printf 'claude\n' > "$home/config/$config"
+    out=$(run_control "$dir" sm3 relaunch); rc=$?
+    expect_code 1 "$rc" "an unsupported configured harness should refuse before stopping"$'\n'"$out"
+    assert_contains "$out" "$home/config/$config names harness 'claude'" \
+      "the resolver's refusal must identify the invalid configuration"
+    [ "$(cat "$dir/fake/command")" = fm-deck-worker ] || fail "invalid configuration stopped the mate"
+    [ ! -s "$dir/fake/literal" ] || fail "invalid configuration delivered lifecycle input"
+    [ ! -s "$dir/fake/keys" ] || fail "invalid configuration delivered lifecycle keys"
+    assert_absent "$home/state/sm3.control-relaunch" "invalid configuration opened a relaunch transaction"
+    [ "$(cat "$home/state/sm3.meta")" = "$before" ] || fail "invalid configuration changed the mate's record"
+  done
+  rm "$home/config/crew-harness"
+  printf 'deck some-model\n' > "$home/config/secondmate-harness"
   out=$(run_control "$dir" sm3 relaunch); rc=$?
   expect_code 0 "$rc" "a configured secondmate harness should relaunch"$'\n'"$out"
   [ "$(journal_field "$dir" sm3 to_harness)" = deck ] \
@@ -839,7 +855,7 @@ test_secondmate_relaunch_onto_deck() {
   dir=$(new_case deckpin smdeck)
   home="$dir/home"
   mkdir -p "$home/config"
-  printf 'deck example/route\n' > "$home/config/secondmate-harness"
+  printf 'claude\n' > "$home/config/secondmate-harness"
   mkdir -p "$home/data/smdeck"
   printf '# secondmate brief\n' > "$home/data/smdeck/brief.md"
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch

@@ -411,6 +411,9 @@ test_refused_restart_falls_back_without_claiming_a_reload() {
   assert_contains "$out" "unreached: sm1:" "a failed restart must be reported as unknown"
   assert_contains "$out" "restart outcome is unknown" "the report must not attribute an ambiguous failure"
   assert_not_contains "$out" "nudged: sm1" "a failed restart must not claim the old agent was nudged"
+  assert_contains "$out" "$dir/home/config/secondmate-harness names harness 'claude'" \
+    "the restart report must retain the resolver's diagnostic"
+  assert_absent "$dir/home/state/sm1.control-relaunch" "invalid configuration opened a relaunch transaction"
   assert_not_contains "$out" "restarted: sm1" "a refused restart must not be reported as restarted"
   [ "$(cat "$dir/fake/command")" = "$before" ] \
     || fail "a refusal before the stop should leave the running agent exactly as it was"
@@ -489,6 +492,26 @@ SH
   export FM_FAKE_SSH_LOG="$dir/ssh.log"
   export FM_FAKE_SSH_MODE="$mode"
   export FM_TEST_SSH_BIN="$fb/fake-ssh"
+}
+
+test_remote_restart_refuses_invalid_parent_harness() {
+  local dir out rc config before
+  dir=$(new_case remote-invalid-pin)
+  setup_remote_case "$dir" sm2 ok
+  before=$(cat "$dir/home/state/sm2.meta")
+  for config in secondmate-harness crew-harness; do
+    printf 'default\n' > "$dir/home/config/secondmate-harness"
+    printf 'claude\n' > "$dir/home/config/$config"
+    out=$(run_restart "$dir" sm2); rc=$?
+    expect_code 1 "$rc" "an invalid parent harness must refuse the remote restart"$'\n'"$out"
+    assert_contains "$out" "$dir/home/config/$config names harness 'claude'" \
+      "the remote restart must print the resolver's diagnostic"
+    [ ! -s "$dir/ssh.log" ] || fail "an invalid parent harness reached the remote lifecycle transport"
+    [ "$(cat "$dir/home/state/sm2.meta")" = "$before" ] || fail "an invalid parent harness changed the mate's record"
+    assert_absent "$dir/home/state/pending-replies" "invalid configuration requested persistence"
+    assert_not_contains "$out" "restarted: sm2" "invalid configuration was reported as restarted"
+  done
+  pass "remote restart refuses an invalid parent harness before reaching the mate"
 }
 
 test_remote_mate_restarts_over_the_transport_hop() {
@@ -817,6 +840,7 @@ test_unknown_mate_is_accounted_for
 test_refused_restart_falls_back_without_claiming_a_reload
 test_local_restart_uses_the_home_pin_and_reports_what_ran
 test_remote_mate_restarts_over_the_transport_hop
+test_remote_restart_refuses_invalid_parent_harness
 test_unreachable_host_is_reported_unknown
 test_concurrent_reply_cannot_release_persist_gate
 test_persist_waits_are_polled_together

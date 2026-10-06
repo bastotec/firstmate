@@ -903,7 +903,8 @@ resolve_relaunch_profile() {
   CONFIG_HARNESS=
   CONFIG_MODEL=
   CONFIG_EFFORT=
-  if [ "$KIND" = secondmate ] && [ "$VERB" != recover-missing ]; then
+  if [ "$KIND" = secondmate ] && [ "$VERB" != recover-missing ] \
+     && [ "$HARNESS_SET" = 0 ]; then
     # A secondmate's harness, model, and effort are a durable configured pin
     # that every respawn re-resolves (the secondmate-provisioning contract), so
     # a relaunch with no explicit harness picks up a newly configured one
@@ -918,7 +919,7 @@ resolve_relaunch_profile() {
     # explicitly - which is what its header and docs/agent-control.md promise.
     # Re-resolving the pin here would silently move a secondmate onto a
     # different runtime, and reset its model and effort, during a rescue.
-    CONFIG_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" secondmate 2>/dev/null || true)
+    CONFIG_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" secondmate) || return 1
     CONFIG_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
     CONFIG_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
     case "$CONFIG_EFFORT" in
