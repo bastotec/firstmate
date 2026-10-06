@@ -482,6 +482,34 @@ pass "the entrypoint symlink is recreated when absent and never overwritten when
 # --- the stream checks: tools, token, hub, and logind survival ---------------
 
 new_case Linux no-gui
+rm -rf "$CASE_PROJECT_HOME"
+doctor
+expect_code 0 "$DOCTOR_RC" "pre-provision readiness required a home credential: $DOCTOR_OUT"
+assert_contains "$DOCTOR_OUT" 'check stream-tools=ok:' "pre-provision readiness skipped stream tools"
+assert_contains "$DOCTOR_OUT" 'check stream-token=skip: the destination home has not been provisioned' \
+  "an absent home was not distinguished from a missing credential"
+assert_contains "$DOCTOR_OUT" 'check stream-hub=skip: the destination home has not been provisioned' \
+  "pre-provision readiness probed a home-specific hub"
+assert_absent "$CASE_PROJECT_HOME" "readiness created the destination home"
+CASE_KILL_USER_PROCESSES=1
+doctor --fix
+expect_code 1 "$DOCTOR_RC" "pre-provision readiness ignored logout survival"
+assert_contains "$DOCTOR_OUT" 'check stream-survival=human:' "the absent home hid the logind gap"
+assert_absent "$CASE_PROJECT_HOME" "--fix provisioned a home or minted credentials"
+CASE_KILL_USER_PROCESSES=0
+mkdir -p "$CASE_PROJECT_HOME/config"
+doctor
+expect_code 1 "$DOCTOR_RC" "an existing home was accepted without credentials"
+assert_contains "$DOCTOR_OUT" 'check stream-token=human:' "an existing home skipped credential readiness"
+
+new_case Darwin no-gui
+rm -rf "$CASE_PROJECT_HOME"
+doctor
+expect_code 1 "$DOCTOR_RC" "pre-provision readiness ignored the missing GUI session"
+assert_contains "$DOCTOR_OUT" 'check gui-session=human:' "an absent home hid the GUI session gap"
+pass "pre-provision readiness checks the host and defers only home credentials and hub access"
+
+new_case Linux no-gui
 doctor --backend stream
 expect_code 0 "$DOCTOR_RC" "a ready stream host was refused: $DOCTOR_OUT"
 assert_contains "$DOCTOR_OUT" 'backend=stream' "the doctor did not report the stream backend"

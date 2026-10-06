@@ -465,8 +465,8 @@ stream_adapter_load() {
   . "$SCRIPT_DIR/backends/stream.sh" 2>/dev/null
 }
 
-check_stream() {
-  local out token_file reason
+check_stream_tools() {
+  local out
   if ! stream_adapter_load; then
     record stream-tools "human: this checkout's stream adapter bin/backends/stream.sh cannot be loaded" \
       "update this host's Firstmate checkout"
@@ -478,6 +478,16 @@ check_stream() {
     record stream-tools "human: ${out#error: }" \
       "install the missing tool on that account's runtime PATH"
   fi
+}
+
+check_stream_home() {
+  local out token_file reason
+  if [ ! -e "${FM_HOME:-$FM_ROOT}" ] && [ ! -L "${FM_HOME:-$FM_ROOT}" ]; then
+    record stream-token "skip: the destination home has not been provisioned"
+    record stream-hub "skip: the destination home has not been provisioned"
+    return 0
+  fi
+  stream_adapter_load || return 0
   token_file="$(fm_backend_stream_config_dir)/stream-token"
   if [ -n "${FM_STREAM_TOKEN:-}" ]; then
     record stream-token "ok: FM_STREAM_TOKEN is set"
@@ -496,6 +506,10 @@ check_stream() {
     record stream-hub "human: ${reason:-the hub at $(fm_backend_stream_hub_url) did not answer}" \
       "start or restart the fleet hub on its host, or fix this home's config/stream-hub and config/stream-token"
   fi
+}
+
+check_stream_survival() {
+  local out
   if [ "$PLATFORM" != linux ]; then
     record stream-survival "skip: logind applies only on linux"
     return 0
@@ -520,7 +534,9 @@ run_checks() {
   CHECK_NAMES=()
   CHECK_VALUES=()
   CHECK_ACTIONS=()
-  check_stream
+  check_stream_tools
+  check_stream_home
+  check_stream_survival
   check_gui_session
   check_remote_job_worker
   check_entrypoint_link

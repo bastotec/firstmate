@@ -124,7 +124,7 @@ reconcile_route_state_mode() { # <dir>
 }
 
 remote_endpoint_load() {
-  local id=$1
+  local id=$1 retirement_command
   REMOTE_ENDPOINT_ERROR=
   REMOTE_ENDPOINT_META=$(meta_path "$id")
   if ! fm_backend_validate_task_endpoint "$REMOTE_ENDPOINT_META" "$id" 2>/dev/null; then
@@ -134,7 +134,9 @@ remote_endpoint_load() {
   REMOTE_ENDPOINT_BACKEND=$FM_BACKEND_VALIDATED_BACKEND
   REMOTE_ENDPOINT_TARGET=$FM_BACKEND_VALIDATED_TARGET
   [ "$REMOTE_ENDPOINT_BACKEND" = stream ] || {
-    REMOTE_ENDPOINT_ERROR="remote secondmate $id endpoint is recorded on the retired '$REMOTE_ENDPOINT_BACKEND' backend; stop any agent left on it by hand, then retire the record with bin/fm-retire-endpoint.sh $id"
+    printf -v retirement_command 'FM_HOME=%q FM_ROOT_OVERRIDE=%q FM_STATE_OVERRIDE=%q FM_DATA_OVERRIDE=%q FM_CONFIG_OVERRIDE=%q %q %q' \
+      "$FM_ROOT" "$FM_ROOT" "$CONTROL_STATE" "$CONTROL_DATA" "$TARGET_HOME/config" "$SCRIPT_DIR/fm-retire-endpoint.sh" "$id"
+    REMOTE_ENDPOINT_ERROR="remote secondmate $id endpoint is recorded on the retired '$REMOTE_ENDPOINT_BACKEND' backend; stop any agent left on it by hand, then retire the record on this host with $retirement_command"
     return 1
   }
 }

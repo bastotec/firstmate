@@ -419,6 +419,9 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
     printf 'pending note\n' > "$source/state/inbox/note.md"
     printf 'needs-decision [key=old]: preserved historical event\n' > "$source/state/old.status"
     printf 'deck\n' > "$source/config/crew-harness"
+    printf 'source-only-token\n' > "$source/config/stream-token"
+    printf 'http://source-only.invalid:7717\n' > "$source/config/stream-hub"
+    printf 'rust\n' > "$source/config/stream-impl"
     printf 'secret-value-never-transfer\n' > "$source/config/cmux-socket-password"
     printf 'secret-value-never-transfer\n' > "$source/.env"
     mkdir "$source/data/credentials"
@@ -527,6 +530,19 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
     assert_absent "$TMP_ROOT/migrated-move-work/$path" 'credential transferred'
     assert_present "$TMP_ROOT/source-move-work/$path" 'excluded credential removed locally'
   done
+  for name in stream-token stream-hub stream-impl; do
+    assert_present "$TMP_ROOT/source-move-work/config/$name" 'host-local stream config removed locally'
+    jq -e --arg p "config/$name" \
+      '(.excluded | index($p)) != null and all(.records[]; .path != $p)' \
+      "$TMP_ROOT/migrated-move-work/.fm-migration/bundle.json" >/dev/null \
+      || fail "host-bound stream config was transferred: $name"
+  done
+  [ "$(cat "$TMP_ROOT/migrated-move-work/config/stream-hub")" = "$HUB_URL" ] \
+    || fail 'migration overwrote destination hub routing'
+  [ "$(cat "$TMP_ROOT/migrated-move-work/config/stream-impl")" = python ] \
+    || fail 'migration overwrote destination stream implementation'
+  [ "$(cat "$TMP_ROOT/migrated-move-work/config/stream-token")" = "$HUB_TOKEN" ] \
+    || fail 'migration replaced the destination credential with the source token'
   if FM_HOME="$TMP_ROOT/source-move-work" "$ROOT/bin/fm-lock.sh" > "$TMP_ROOT/frozen.out" 2>&1; then fail 'archive acquired session'; fi
   assert_grep 'frozen migration archive' "$TMP_ROOT/frozen.out" 'archive not protected'
   if FM_HOME="$TMP_ROOT/source-move-work" "$ROOT/bin/fm-spawn.sh" unsafe --secondmate > "$TMP_ROOT/frozen.out" 2>&1; then fail 'archive spawned work'; fi
@@ -1359,6 +1375,11 @@ set -e
 [ "$legacy_rc" -ne 0 ] || fail "remote control relaunched over a record left on a retired backend"
 assert_grep "recorded on the retired 'tmux' backend" "$TMP_ROOT/legacy-refusal.out" \
   "remote refusal did not name the endpoint's retired backend"
+printf -v retirement_command 'FM_HOME=%q FM_ROOT_OVERRIDE=%q FM_STATE_OVERRIDE=%q FM_DATA_OVERRIDE=%q FM_CONFIG_OVERRIDE=%q %q %q' \
+  "$REMOTE_ROOT" "$REMOTE_ROOT" "$REMOTE_HOME/state/parent-route" "$REMOTE_HOME/data/.parent-route" \
+  "$REMOTE_HOME/config" "$REMOTE_ROOT/bin/fm-retire-endpoint.sh" ios
+assert_contains "$(cat "$TMP_ROOT/legacy-refusal.out")" "retire the record on this host with $retirement_command" \
+  "remote refusal printed a retirement command that cannot reach the parent-route record"
 cmp -s "$TMP_ROOT/remote-ios-legacy-before-refusal.meta" "$remote_route_meta" \
   || fail "remote refusal changed the legacy endpoint metadata"
 cmp -s "$TMP_ROOT/registry-before-nonstream.md" "$PARENT/data/secondmates.md" \
@@ -1367,6 +1388,47 @@ mv -f "$TMP_ROOT/remote-ios-before-legacy.meta" "$remote_route_meta"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
   || fail "the refusals disturbed the live remote agent"
 pass "non-stream remote routes and records on a retired backend are refused without changing either route"
+
+cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-unconfirmed-kill.meta"
+cp "$REMOTE_HOME/config/stream-hub" "$TMP_ROOT/remote-hub-before-unconfirmed-kill"
+cp "$REMOTE_HOME/config/stream-token" "$TMP_ROOT/remote-token-before-unconfirmed-kill"
+{
+  fm_test_stream_task "$REMOTE_HOME/state/parent-route" ios
+  printf 'harness=deck\nkind=secondmate\nworktree=%s\nproject=%s\n' "$REMOTE_HOME" "$REMOTE_ROOT"
+} > "$remote_route_meta"
+unconfirmed_target=$(fm_test_stream_target_of "$REMOTE_HOME/state/parent-route" ios)
+fm_test_fake_stream_foreground "$unconfirmed_target" bash
+fm_test_fake_stream_set "$unconfirmed_target" '{"kill_undelivered": true}'
+printf '%s\n' "$FM_TEST_STREAM_URL" > "$REMOTE_HOME/config/stream-hub"
+printf 'fake-stream-token\n' > "$REMOTE_HOME/config/stream-token"
+[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = dead ] \
+  || fail 'the unconfirmed-kill fixture is not an agent-less endpoint'
+cp "$remote_route_meta" "$TMP_ROOT/remote-ios-unconfirmed-kill.meta"
+fm_test_fake_stream_endpoints | jq -S '.endpoints | sort_by(.endpoint_id)' > "$TMP_ROOT/endpoints-before-unconfirmed-kill.json"
+turns_before_unconfirmed_kill=$(wc -l < "$TURNS" | tr -d ' ')
+if remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios deck - - stream \
+  > "$TMP_ROOT/unconfirmed-kill.out" 2>&1; then
+  fail 'remote launch replaced an endpoint whose kill was not acknowledged'
+fi
+assert_grep 'was not confirmed gone, so this launch would risk a duplicate' "$TMP_ROOT/unconfirmed-kill.out" \
+  'remote launch did not explain the unconfirmed kill refusal'
+cmp -s "$TMP_ROOT/remote-ios-unconfirmed-kill.meta" "$remote_route_meta" \
+  || fail 'unconfirmed kill changed the host endpoint metadata'
+cmp -s "$TMP_ROOT/parent-ios-before-nonstream.meta" "$PARENT/state/ios.meta" \
+  || fail 'unconfirmed kill changed the parent endpoint metadata'
+fm_test_fake_stream_endpoints | jq -S '.endpoints | sort_by(.endpoint_id)' > "$TMP_ROOT/endpoints-after-unconfirmed-kill.json"
+cmp -s "$TMP_ROOT/endpoints-before-unconfirmed-kill.json" "$TMP_ROOT/endpoints-after-unconfirmed-kill.json" \
+  || fail 'unconfirmed kill stopped, replaced, or steered a fake endpoint'
+[ "$(remote_agent_count ios)" = 1 ] || fail 'unconfirmed kill started or stopped a real agent'
+[ "$(wc -l < "$TURNS" | tr -d ' ')" = "$turns_before_unconfirmed_kill" ] \
+  || fail 'unconfirmed kill launched a replacement turn'
+fm_test_fake_stream_set "$unconfirmed_target" '{"forget": true}'
+mv -f "$TMP_ROOT/remote-ios-before-unconfirmed-kill.meta" "$remote_route_meta"
+mv -f "$TMP_ROOT/remote-hub-before-unconfirmed-kill" "$REMOTE_HOME/config/stream-hub"
+mv -f "$TMP_ROOT/remote-token-before-unconfirmed-kill" "$REMOTE_HOME/config/stream-token"
+[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
+  || fail 'unconfirmed kill refusal disturbed the live remote agent'
+pass "an agent-less remote endpoint whose kill nothing confirmed is refused, not relaunched onto"
 
 rm -f "$TMP_ROOT/inherit.entered" "$TMP_ROOT/inherit.release" "$TMP_ROOT/inherit.payload"
 cat > "$PARENT/data/captain-shared.md" <<'EOF'
