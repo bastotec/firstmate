@@ -8,11 +8,9 @@
 # lock-owning session.
 # This file is sourced by scripts and has no side effects on source.
 
-# Cursor process identity is NOT expressible as a command-name pattern and is
-# deliberately not added to the tables below: Cursor's installed names are
-# cursor-agent and the far-too-generic legacy alias `agent`, and it runs as a
-# bundled node script. bin/fm-cursor-lib.sh is the fleet's single owner of that
-# decision, so this file delegates to it rather than widening the name match.
+# Cursor is no longer a primary harness, so it never owns a session lock. Its
+# process identity stays available here only for worker liveness
+# (bin/fm-agent-process-lib.sh sources this file); bin/fm-cursor-lib.sh owns it.
 # shellcheck source=bin/fm-cursor-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-cursor-lib.sh"
 
@@ -59,7 +57,6 @@ fm_harness_path_name() {  # <path>
 #      needed because the two platforms report different things: macOS reports
 #      argv[0] in `ps -o comm=`, while procps on Linux reports the kernel exec
 #      name and ignores argv[0] entirely.
-#   3. Cursor's own structural identity, owned by bin/fm-cursor-lib.sh.
 fm_harness_process_matches() {  # <comm> <args>
   local comm=$1 args=$2 base argv0 name
   base=$(basename -- "$comm")
@@ -68,11 +65,6 @@ fm_harness_process_matches() {  # <comm> <args>
   if name=$(fm_harness_path_name "$comm") || name=$(fm_harness_path_name "$argv0"); then
     printf '%s' "$name" | grep -qE "$FM_HARNESS_RE" && return 0
   fi
-  # Cursor: its own owner decides, from Cursor's name or versioned install tree
-  # in the command path or argv[0]. Without this a Cursor primary can never
-  # locate its own harness in the ancestry, so every session start refuses the
-  # fleet lock as read-only and the park can never arm.
-  fm_cursor_process_matches "$comm" "$args" "$argv0" && return 0
   return 1
 }
 

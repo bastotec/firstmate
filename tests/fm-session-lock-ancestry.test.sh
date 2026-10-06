@@ -303,7 +303,7 @@ esac
 SH
   chmod +x "$fakebin/ps"
   printf '500\n' > "$dir/state/.lock"
-  for name in claude codex opencode grok kimi omp /Users/u/.local/share/claude/versions/2.1.220; do
+  for name in claude codex opencode grok kimi omp cursor-agent /Users/u/.local/share/cursor-agent/versions/2026.01.01-abc/cursor-agent /Users/u/.local/share/claude/versions/2.1.220; do
     if FM_TEST_COMM="$name" lib_eval "$fakebin" 'fm_harness_ancestry_pid' >/dev/null; then
       fail "$name was resolved as a primary harness"
     fi
