@@ -164,7 +164,7 @@ When the endpoint's native agent runs on the same machine as the client, the ses
 Both paths depend on how the agent publishes: it reads the pseudoterminal as fast as the program writes, takes whatever more arrives within a millisecond (bounded at 8 ms and 64 KiB) as one burst, and hands the burst to local clients at once and to the hub in one request over a kept-alive connection.
 A full-screen redraw therefore leaves as one frame rather than one round trip per kernel read, which is what painted a `deck chat` redraw line by line.
 The command poll wakes as soon as a take or result post returns instead of on a 100 ms tick, and the native hub sends with `TCP_NODELAY`.
-`tests/assets/stream-attach-bench.py` measures keystroke echo and redraw paint time through a delay proxy that stands in for the tunnel to a remote hub; with 10 ms round trip and a 26 KB, 200-line frame, the hub path went from 52 ms echo and 413 ms paint spread to about 34 ms and 1 ms, and the same-machine path echoes in about 3 ms and paints a full redraw in about 11 ms.
+`tests/assets/stream-attach-bench.py` measures keystroke echo and redraw paint time through a delay proxy that stands in for the tunnel to a remote hub; with a 10 ms round trip and a 26 KB, 200-line frame on macOS, the hub path went from 52 ms median echo and a 442 ms paint spread (558 ms to the last byte) to 35 ms and 1 ms (46 ms), and the same-machine path echoes in 3 ms and delivers a full redraw in 9 ms.
 
 The wrapper passes the token to the native `fm-stream-agent attach` client through the environment, never argv.
 Interactive attach needs both `subscribe` and `control` grants; [Security](#security) owns token classes and configuration.
