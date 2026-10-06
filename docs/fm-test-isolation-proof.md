@@ -78,7 +78,8 @@ This record owns concurrent isolation evidence for the portable parallel candida
 
 ## Family concurrency proofs
 
-`bin/fm-test-isolation-proof.sh --pool <family>` runs the same concurrent proof over a whole `bin/fm-test-run.sh` family, for a stateful family that stays serial on CI but can earn bounded local concurrency.
+`bin/fm-test-isolation-proof.sh --pool <family>` runs the same concurrent proof over a whole `bin/fm-test-run.sh` family, for a stateful family that stays in the portable serial lane but can earn bounded concurrency with its own members.
+An admitted family gets that concurrency in local runs and in its own phase inside each CI serial shard, below its proven worker bound; [fm-test-portable-shards.md](fm-test-portable-shards.md#portable-serial-ci-shards) owns the CI side.
 A family is admitted to `list_concurrent_safe_families` in `bin/fm-test-run.sh` only by a passing proof recorded here.
 
 ### watcher-wake-lock: admitted
@@ -213,7 +214,7 @@ That historical package selection is evidence context, not a current extension c
 
 Each family measured with `bin/fm-test-run.sh --family <name> --jobs <n>` on the same host, back to back, every run reporting 0 failures.
 Together the pairs quantify the effect when a plain `--changed` or script-list selection contains all three families: the automatic scheduler gives each admitted family its own concurrent phase and leaves unproven work in the serial tail.
-Curated `--family`, `--lane`, and `--all` selections remain serial unless the caller explicitly requests an admissible `--jobs` value, as documented by `bin/fm-test-run.sh --help`.
+Curated `--family`, `--lane`, and `--all` selections remain serial unless the caller explicitly requests an admissible `--jobs` value, except the CI serial shards' own phase schedule, as documented by `bin/fm-test-run.sh --help`.
 
 | family | scripts | `--jobs 1` | `--jobs 4` | speedup | recovered |
 |---|---:|---:|---:|---:|---:|

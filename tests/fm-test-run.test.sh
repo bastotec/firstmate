@@ -707,6 +707,76 @@ PY
   pass "family proofs run concurrently only within separate family phases"
 }
 
+# A CI serial shard runs each admitted family as its own concurrent phase and
+# its unproven scripts strictly serially after every phase; --jobs 1 still
+# runs the shard fully serially. The fixture runner drops its duration hints so
+# every script weighs the default: the packing then fills shard 1's watcher
+# phase with two watcher-wake-lock scripts (a free worker costs nothing) and
+# adds one unclassified script once every other shard holds one.
+test_portable_serial_shard_runs_family_phases_then_serial_tail() {
+  local tmp repo count i lane
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-shard-phases.XXXXXX")
+  repo="$tmp/repo"
+  mkdir -p "$repo/bin" "$repo/tests"
+  grep -Ev '^tests/[^ ]+ [0-9]+$' "$RUNNER" >"$repo/bin/fm-test-run.sh"
+  cp "$ROOT/tests/git-config-helpers.sh" "$repo/tests/"
+  cp "$ROOT/bin/fm-timeout-lib.sh" "$repo/bin/fm-timeout-lib.sh"
+  chmod +x "$repo/bin/fm-test-run.sh"
+  count=$("$repo/bin/fm-test-run.sh" --list-lanes | grep -c '^portable-serial-[0-9]*of[0-9]*$')
+  [ "$count" -ge 2 ] || fail "expected at least two portable serial shard lanes, got $count"
+  lane="portable-serial-1of${count}"
+  for script in fm-daemon.test.sh fm-watch-arm.test.sh; do
+    printf '#!/usr/bin/env bash\nsleep 1\necho "ok - watcher phase fixture"\n' >"$repo/tests/$script"
+  done
+  i=1
+  while [ "$i" -le "$count" ]; do
+    printf '#!/usr/bin/env bash\necho "ok - serial tail fixture"\n' >"$repo/tests/fm-zz-serial-$i.test.sh"
+    i=$((i + 1))
+  done
+  chmod +x "$repo"/tests/*.test.sh
+  [ "$(cd "$repo" && bin/fm-test-run.sh --list --lane "$lane" | LC_ALL=C sort | tr '\n' ' ')" = \
+    "tests/fm-daemon.test.sh tests/fm-watch-arm.test.sh tests/fm-zz-serial-${count}.test.sh " ] \
+    || fail "fixture did not pack two watcher scripts and one serial script into $lane: $(cd "$repo" && bin/fm-test-run.sh --list --lane "$lane")"
+
+  (cd "$repo" && bin/fm-test-run.sh --lane "$lane" --json "$tmp/shard.json") \
+    >"$tmp/out" 2>"$tmp/err" || fail "shard phase fixture failed: $(cat "$tmp/err")"
+  python3 - "$tmp/out" <<'PY' \
+    || fail "shard did not run its family phase concurrently before its serial tail: $(cat "$tmp/out")"
+import re, sys
+active, overlapped, ended = {}, False, set()
+for line in open(sys.argv[1], encoding="utf-8"):
+    if line.startswith("FM_TEST_BEGIN "):
+        path, family = re.search(r" (tests/\S+) family=(\S+) ", line).groups()
+        if family != "watcher-wake-lock":
+            assert not active, ("serial tail started beside", active)
+            assert ended == {"tests/fm-daemon.test.sh", "tests/fm-watch-arm.test.sh"}, ended
+        active[path] = family
+        overlapped = overlapped or len(active) > 1
+    elif line.startswith("FM_TEST_END "):
+        path = re.search(r" (tests/\S+) exit=", line).group(1)
+        del active[path]
+        ended.add(path)
+assert overlapped, "the watcher phase never ran two scripts at once"
+PY
+  grep -Fq ';jobs=' "$tmp/shard.json" || fail "shard timing artifact must record its phase concurrency"
+
+  (cd "$repo" && bin/fm-test-run.sh --jobs 1 --lane "$lane") >"$tmp/serial-out" 2>"$tmp/serial-err" \
+    || fail "--jobs 1 shard fixture failed: $(cat "$tmp/serial-err")"
+  python3 - "$tmp/serial-out" <<'PY' \
+    || fail "--jobs 1 must run the shard fully serially: $(cat "$tmp/serial-out")"
+import sys
+active = 0
+for line in open(sys.argv[1], encoding="utf-8"):
+    if line.startswith("FM_TEST_BEGIN "):
+        assert active == 0, line
+        active += 1
+    elif line.startswith("FM_TEST_END "):
+        active -= 1
+PY
+  rm -rf "$tmp"
+  pass "a CI serial shard runs family phases concurrently, then its unproven scripts serially"
+}
+
 test_empty_selection_emits_summary() {
   local tmp repo out json rc fake_bin real_git
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-empty.XXXXXX")
@@ -989,15 +1059,64 @@ test_exclude_family() {
   pass "exclude-family drops the named primary family after selection"
 }
 
-test_list_scheduled_proven_isolated_uses_serial_weights() {
-  local tmp
+# CI runs the whole proven-isolated set as one concurrent job, so its schedule
+# has to start the longest measured script first: ordering by the serial
+# default alone would start scripts by path and could leave the longest one
+# waiting for a free worker.
+test_list_scheduled_proven_isolated_uses_parallel_hints() {
+  local tmp repo script
   tmp=$(fm_test_tmproot fm-test-run-proven-schedule)
-  "$RUNNER" --list --proven-isolated | LC_ALL=C sort >"$tmp/expected"
-  "$RUNNER" --list-scheduled --proven-isolated >"$tmp/actual" \
+  repo="$tmp/repo"
+  mkdir -p "$repo/bin" "$repo/tests"
+  cp "$RUNNER" "$repo/bin/fm-test-run.sh"
+  "$RUNNER" --list --proven-isolated | LC_ALL=C sort >"$tmp/members"
+  python3 - "$repo/bin/fm-test-run.sh" "$tmp/members" <<'PY' || fail "could not seed fixture scheduling weights"
+from pathlib import Path
+import re, sys
+runner = Path(sys.argv[1])
+hints = {
+    "parallel": """tests/fm-lint.test.sh 110000
+tests/fm-brief.test.sh 100000
+tests/fm-backend-herdr.test.sh 90000
+tests/fm-captain-hold-lifecycle.test.sh 90000""",
+    "serial": """tests/fm-brief.test.sh 200000
+tests/fm-review-diff.test.sh 70000
+tests/fm-lint.test.sh 40000
+tests/fm-backend-herdr.test.sh 30000
+tests/fm-captain-hold-lifecycle.test.sh 30000""",
+}
+serial_members = {line.split()[0] for line in hints["serial"].splitlines()}
+for member in Path(sys.argv[2]).read_text().splitlines():
+    if member not in serial_members:
+        hints["serial"] += f"\n{member} 10000"
+source = runner.read_text()
+for kind, weights in hints.items():
+    function = f"portable_{kind}_weight_hints()"
+    source = re.sub(r"(?ms)^" + re.escape(function) + r" \{.*?^\}",
+                    function + " {\n  cat <<'EOF'\n" + weights + "\nEOF\n}", source)
+runner.write_text(source)
+PY
+  while IFS= read -r script; do
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$repo/$script"
+    chmod +x "$repo/$script"
+  done <"$tmp/members"
+  printf '%s\n' \
+    tests/fm-lint.test.sh \
+    tests/fm-brief.test.sh \
+    tests/fm-backend-herdr.test.sh \
+    tests/fm-captain-hold-lifecycle.test.sh \
+    tests/fm-review-diff.test.sh >"$tmp/expected"
+  while IFS= read -r script; do
+    case "$script" in
+      tests/fm-lint.test.sh|tests/fm-brief.test.sh|tests/fm-backend-herdr.test.sh|tests/fm-captain-hold-lifecycle.test.sh|tests/fm-review-diff.test.sh) ;;
+      *) printf '%s\n' "$script" >>"$tmp/expected" ;;
+    esac
+  done <"$tmp/members"
+  "$repo/bin/fm-test-run.sh" --list-scheduled --proven-isolated >"$tmp/actual" \
     || fail "--list-scheduled --proven-isolated failed"
   cmp -s "$tmp/expected" "$tmp/actual" \
-    || fail "proven-isolated scheduling must break serial-default ties by path"
-  pass "proven-isolated scheduling ignores parallel hints"
+    || fail "proven-isolated scheduling must use parallel weights, serial fallback, and path-ordered ties: $(diff "$tmp/expected" "$tmp/actual")"
+  pass "proven-isolated scheduling starts the longest measured script first"
 }
 
 test_list_scheduled_non_lane_selections_use_serial_weights() {
@@ -1306,7 +1425,8 @@ test_jobs_requires_proven_isolated() {
   rc=$?
   set -e
   [ "$rc" -eq 2 ] || fail "--jobs on a family with no recorded proof must refuse, got $rc"
-  # Sharding across runners never relaxes the serial rule inside one shard.
+  # An explicit --jobs keeps its strict all-script admission rule on a shard:
+  # only the shard's own phase schedule may run admitted families concurrently.
   # Use a shard holding at least two scripts: a single-script shard has nothing
   # to run concurrently.
   shard_lane=
@@ -1834,6 +1954,7 @@ test_changed_uses_bounded_automatic_concurrency
 test_windows_posix_mode_emulation_does_not_fail_parallel_runs
 test_script_list_uses_bounded_automatic_concurrency
 test_family_proofs_run_in_separate_concurrent_phases
+test_portable_serial_shard_runs_family_phases_then_serial_tail
 test_empty_selection_emits_summary
 test_timing_markers_and_json
 test_aggregate_exit_behavior
@@ -1843,7 +1964,7 @@ test_a_run_that_ran_records_no_skip_reason
 test_live_guards_expect_a_capability_skip_class
 test_fail_on_gate_skip_token
 test_exclude_family
-test_list_scheduled_proven_isolated_uses_serial_weights
+test_list_scheduled_proven_isolated_uses_parallel_hints
 test_list_scheduled_non_lane_selections_use_serial_weights
 test_portable_shard_union_and_coverage_guard
 test_portable_parallel_lanes_stay_duration_balanced

@@ -435,6 +435,8 @@ Observed output:
 FM_TEST_SUMMARY total=8 failed=0 skipped_gate=0 duration_ms=617507
 ```
 
+That command and output predate the triage split; current coverage spans the five `tests/fm-watch-triage*.test.sh` suites described by `tests/watch-triage-helpers.sh`.
+
 The actionable-close ordering correction was reverified on 2026-08-02 against an identity-matched live successor.
 
 ```sh
