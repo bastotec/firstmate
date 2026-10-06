@@ -59,6 +59,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-project-origin-lib.sh`](../bin/fm-project-origin-lib.sh) | Accepted origin-form owner shared by both remote provisioning boundaries |
 | `fm-spawn.sh`            | Spawn crewmates, scouts, `id=repo` batches, and secondmates on the resolved harness and runtime backend |
 | `fm-backend.sh`          | Runtime-backend selection, meta helpers, selector resolution, and operation dispatch |
+| `fm-meta-backfill.sh`    | One-shot: write the explicit `backend=` line into task records that predate it |
+| `fm-endpoint-rebind-lib.sh` | Point one task record at a new runtime endpoint, keeping the task's worktree and identity |
 | `fm-composer-lib.sh`     | Single fleet-wide owner of composer shapes, capability-aware screen classification, and verdicts |
 | `fm-agent-process-lib.sh` | Backend-neutral harness-process identity: the name classifier the tmux and herdr adapters share, chain-top pid reduction, and per-process argument matching |
 | `backends/tmux.sh`       | Verified tmux session-provider adapter                                               |

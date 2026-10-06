@@ -12,7 +12,10 @@
 #   task label resolved through this home's state/<id>.meta, or an explicit
 #   well-formed backend target. fm-send refuses unresolved guesses rather than falling back to a
 #   tmux window search, because a "successful" send to the wrong endpoint is
-#   worse than a loud failure.
+#   worse than a loud failure. An explicit target no record names is guessed by
+#   shape: two colons is herdr, "<hub-tag>:<32-hex id>" on this home's
+#   configured stream hub is stream, any other "a:b" is tmux; the guessed
+#   endpoint must then verify live.
 # Special keys instead of text: fm-send.sh <target> --key Enter
 # Key support is backend-specific: tmux, herdr and stream support Escape,
 # Enter, C-c and C-u.
@@ -330,6 +333,21 @@ fm_send_count_colons() {  # <string>
   printf '%s' $(( ${#s} - ${#no_colons} ))
 }
 
+# fm_send_target_is_stream: an unrecorded "<hub-tag>:<endpoint-id>" target is
+# a stream endpoint when its tag is this home's configured hub tag and its id
+# is the 32-hex durable id a stream agent registers (bin/backends/stream.sh
+# owns that target shape). Anything else keeps the tmux guess.
+fm_send_target_is_stream() {  # <raw-target>
+  local raw=$1 tag endpoint configured
+  tag=${raw%%:*}
+  endpoint=${raw#*:}
+  [ ${#endpoint} -eq 32 ] || return 1
+  case "$endpoint" in *[!0-9a-f]*) return 1 ;; esac
+  fm_backend_source stream >/dev/null 2>&1 || return 1
+  configured=$(fm_backend_stream_hub_tag 2>/dev/null) || return 1
+  [ -n "$tag" ] && [ "$tag" = "$configured" ]
+}
+
 fm_send_resolve_target() {  # <raw-target>
   local raw=$1 meta pane_meta target backend assumed colons id session hint
 
@@ -424,6 +442,8 @@ fm_send_resolve_target() {  # <raw-target>
       colons=$(fm_send_count_colons "$raw")
       if [ "$colons" -ge 2 ]; then
         assumed=herdr
+      elif fm_send_target_is_stream "$raw"; then
+        assumed=stream
       else
         assumed=tmux
       fi

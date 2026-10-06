@@ -77,10 +77,19 @@
 #              launch owner's own git-excluded harness wiring, and the base
 #              refresh that would reset a worktree is skipped for a relaunch,
 #              which is how every recovery spawns. No new worktree or pool slot
-#              is created. Recreation is tmux-only today, because a tmux window
-#              comes back under the same recorded fm-<id> handle and so rewrites
-#              no durable record; every other backend refuses before anything is
-#              touched.
+#              is created. Recreation covers tmux and stream; every other
+#              backend refuses before anything is touched. A tmux window comes
+#              back under the same recorded fm-<id> handle and so rewrites no
+#              durable record. A stream endpoint id is assigned when its agent
+#              registers, so the old one cannot be recreated: recovery starts a
+#              NEW endpoint (same fm-<id> label, the recorded worktree as its
+#              cwd) and rebinds the record's window=/stream_hub=/
+#              stream_endpoint_id= to it (bin/fm-endpoint-rebind-lib.sh), keeping
+#              the task's worktree and everything else. Because a stream
+#              `missing` is the hub's registry not knowing the endpoint - which a
+#              restarted hub also says until each agent re-registers - stream
+#              recovery additionally refuses while a stream agent process for
+#              fm-<id> is still running on this machine.
 #              Both tmux losses are recovered: the task's window gone from a
 #              session that is still alive, and the whole session (or the whole
 #              server) gone, which is recreated under its exact recorded name
@@ -219,6 +228,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-account-slot-lib.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-endpoint-rebind-lib.sh
+. "$SCRIPT_DIR/fm-endpoint-rebind-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 
@@ -826,10 +837,13 @@ relaunch_rollback() {
       # this every failed attempt would leave another progress note appended.
       #
       # The durable record is deliberately NOT restored, for the same reason
-      # the sibling checkpoint|noted arm has no restore: nothing in this phase
-      # writes it, so a restore could only revert another process's locked
-      # write - see docs/agent-control.md's rollback account, and the
+      # the sibling checkpoint|noted arm has no restore: on tmux nothing in
+      # this phase writes it, so a restore could only revert another process's
+      # locked write - see docs/agent-control.md's rollback account, and the
       # concurrent-record-write case in tests/fm-control-recover-missing.test.sh.
+      # A stream recovery that got as far as rebinding the record leaves it
+      # naming the new endpoint, because that endpoint exists and holds the
+      # bare shell the next `relaunch` adopts; the old one is gone.
       if [ -n "$RELAUNCH_BRIEF" ] && [ -f "$BRIEF_PRIOR" ]; then
         cp -p "$BRIEF_PRIOR" "$RELAUNCH_BRIEF" 2>/dev/null || true
       fi
@@ -1207,13 +1221,39 @@ do_relaunch() {
   echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_ACCOUNT_SLOT:+ account_slot=$TARGET_ACCOUNT_SLOT} backend=$BACKEND endpoint=$T worktree=$WT"
 }
 
+# recover_stream_endpoint: start a NEW stream endpoint for this task on the
+# configured hub and rebind the durable record to it. The hub assigns endpoint
+# ids at registration, so the missing one cannot come back under its old id.
+# On success $T names the new endpoint, so every postcondition below reads it.
+# A record that cannot be rebound closes the endpoint it just made (best
+# effort) and refuses, so no unrecorded endpoint is left holding the task.
+# After a successful rebind the record names the new endpoint even if a later
+# step fails: that endpoint is the live bare shell the next `relaunch` adopts.
+recover_stream_endpoint() {  # <label> <cwd>
+  local label=$1 cwd=$2 pair new_target hub_url
+  hub_url=$(fm_backend_stream_hub_url) || die "this home's stream hub URL is not configured; refusing to recover"
+  fm_backend_stream_container_ensure >/dev/null \
+    || die "this home's stream hub at $hub_url is not usable; refusing to recover $ID"
+  pair=$(fm_backend_stream_create_task "$label" "$cwd" "$STATE/$ID.status") \
+    || die "could not start a new stream endpoint for $ID"
+  new_target="${pair%% *}:${pair##* }"
+  if ! fm_endpoint_rebind_meta "$META" "$ID" stream "$new_target" \
+      "stream_hub=$hub_url" "stream_endpoint_id=${pair##* }"; then
+    fm_backend_kill stream "$new_target" "" "$label" >/dev/null 2>&1 || true
+    die "task $ID's record could not be rebound to its new stream endpoint ($FM_ENDPOINT_REBIND_ERROR); the new endpoint was closed"
+  fi
+  T=$new_target
+}
+
 do_recover_missing() {
   local state note_line wt wname proj_abs
   local -a spawn_args
 
   require_state_verified_backend recover-missing "the endpoint is actually missing"
-  [ "$BACKEND" = tmux ] \
-    || die "backend $BACKEND has no supported way to recreate an endpoint with the recorded identity; refusing to recover"
+  case "$BACKEND" in
+    tmux|stream) ;;
+    *) die "backend $BACKEND has no supported way to recreate an endpoint with the recorded identity; refusing to recover" ;;
+  esac
   resolve_relaunch_profile
   RELAUNCH_PAST_TENSE=recovered
 
@@ -1240,6 +1280,13 @@ do_recover_missing() {
     dead|alive|ambiguous) die "task $ID's endpoint reads '$state'; recover-missing requires a positively missing endpoint and no agent owning the task" ;;
     *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to recover" ;;
   esac
+  if [ "$BACKEND" = stream ]; then
+    local agent_pid
+    fm_backend_source stream || die "could not load backend stream"
+    if agent_pid=$(fm_backend_stream_local_agent_pid "$LABEL"); then
+      die "task $ID's stream endpoint is missing from the hub, but its agent process (pid $agent_pid) is still running on this machine - a restarted hub forgets endpoints until their agents re-register; wait for it to come back, or stop that agent first, then retry"
+    fi
+  fi
 
   wt=$(fm_meta_get "$META" worktree)
   [ -n "$wt" ] && [ -d "$wt" ] || die "task $ID's recorded worktree '${wt:-none}' is absent; refusing to recover without the local copy its work lives in"
@@ -1274,12 +1321,14 @@ do_recover_missing() {
   wname="fm-$ID"
   proj_abs=$(cd "$wt" && pwd -P)
   fm_backend_source "$BACKEND" || die "could not load backend $BACKEND"
-  # Endpoint validation already proved $T is exactly <session>:fm-<id> with a
-  # non-empty session (bin/fm-backend.sh's fm_backend_validate_task_endpoint,
-  # called before any verb runs), which is what refuses a recorded endpoint
-  # string that will not parse. The window comes back under that same name, so
-  # $T keeps addressing the terminal and neither the postconditions below nor
-  # the durable record need rewriting.
+  # tmux: endpoint validation already proved $T is exactly <session>:fm-<id>
+  # with a non-empty session (bin/fm-backend.sh's
+  # fm_backend_validate_task_endpoint, called before any verb runs), which is
+  # what refuses a recorded endpoint string that will not parse. The window
+  # comes back under that same name, so $T keeps addressing the terminal and
+  # neither the postconditions below nor the durable record need rewriting.
+  # stream: recover_stream_endpoint makes a new endpoint and rebinds the record
+  # and $T to it.
   #
   # Two shapes read as a missing endpoint and both are recovered here: the
   # task's window is gone from a session that is still alive, or the whole
@@ -1287,10 +1336,17 @@ do_recover_missing() {
   # back before a window can be added to it; the first leaves it untouched.
   # A failure after the session is recreated but before the window exists still
   # reads missing, so the verb stays retryable rather than stranding the task.
-  fm_backend_tmux_recreate_session "${T%%:*}" "$proj_abs" \
-    || die "task $ID's recorded tmux session '${T%%:*}' is gone and could not be recreated"
-  fm_backend_tmux_create_task "${T%%:*}" "$wname" "$proj_abs" >/dev/null \
-    || die "could not recreate tmux window for $ID"
+  case "$BACKEND" in
+    tmux)
+      fm_backend_tmux_recreate_session "${T%%:*}" "$proj_abs" \
+        || die "task $ID's recorded tmux session '${T%%:*}' is gone and could not be recreated"
+      fm_backend_tmux_create_task "${T%%:*}" "$wname" "$proj_abs" >/dev/null \
+        || die "could not recreate tmux window for $ID"
+      ;;
+    stream)
+      recover_stream_endpoint "$wname" "$proj_abs"
+      ;;
+  esac
 
   # The launch owner requires a positively agent-free endpoint, so wait for the
   # new terminal's shell to finish starting before handing it over. Still

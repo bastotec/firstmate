@@ -50,7 +50,9 @@ Recovery classification remains `fm_backend_agent_state` in `bin/fm-backend.sh`,
 The consequence is a deliberate asymmetry with tmux and Herdr, whose `missing` is process-authoritative and does respawn: a stream mate whose own agent is gone reads `unreadable` while the hub still holds its record, then `missing` once the hub reaps that record after an hour of agent silence, so it is never respawned automatically and that skip line is the only signal.
 A stream mate whose worker exited while its agent lived still reads `dead` from the agent's own closing report, and the sweep respawns it exactly as it does on any other backend.
 `bin/fm-bootstrap.sh` owns secondmate recovery respawn, preserving the recorded backend rather than selecting a different backend from ambient configuration.
-`bin/fm-control.sh` owns interrupt, exit, and same-endpoint relaunch; its `recover-missing` verb remains tmux-only because stream cannot recreate a hub-assigned endpoint identity.
+`bin/fm-control.sh` owns interrupt, exit, same-endpoint relaunch, and `recover-missing`.
+A hub-assigned endpoint id cannot be recreated, so `recover-missing` on stream starts a new endpoint (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the record's `window=`, `stream_hub=`, and `stream_endpoint_id=` to it through `bin/fm-endpoint-rebind-lib.sh`, keeping the task's worktree and everything else.
+Because a stream `missing` alone does not prove the worker gone, it also refuses while a stream agent process for `fm-<id>` still runs on this machine.
 
 A stream-hosted second mate launches, is steered, and reports its own lifecycle, but it cannot itself spawn or supervise on stream until the hub has restarted since its seeding wrote the home a credential.
 `bin/fm-stream-agent.py` hands the hosted process the hub address and deliberately withholds the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`, so the launch path still carries no credential.
@@ -75,6 +77,10 @@ Ordinary supervision does not need any of that.
 `fm-peek.sh`, `fm-send.sh`, `fm-crew-state.sh`, and `fm-control.sh` all work against a stream-backed task through the shared dispatcher, exactly as they do for any other backend.
 
 A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoint_task_id=` binding.
+An explicit `<hub-tag>:<endpoint-id>` target that no record in the home names (for example a child home's crewmate) routes to stream in `fm-send.sh` when its tag is this home's configured hub.
+`fm_backend_agent_pids` reads harness pids from the owning agent's report only for an endpoint whose agent runs on this machine (`fm_backend_stream_machine`); for any other machine it answers "cannot be read".
+
+Tests run the real adapter against a fake hub with `fm_test_fake_stream` in `tests/fixtures.sh`, which serves fake endpoints from `tests/assets/stream-hub-stub.py --fleet` and starts `tests/assets/stream-agent-stub.py` in place of the agent (`FM_STREAM_AGENT_BIN`).
 
 ## Bridge feed
 

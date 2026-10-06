@@ -164,7 +164,7 @@ The compatibility helper `fm_backend_agent_alive` continues to collapse those de
 A herdr spawn additionally version-gates against the installed `herdr` binary's protocol and requires `jq`, refusing loudly on an incompatible or missing installation.
 For stream spawn prerequisites and refusal behavior, see [`docs/stream-backend.md`](stream-backend.md#prerequisites).
 A backend spawn refusal from a missing dependency or version gate is terminal for that selected backend; firstmate surfaces it as a blocker instead of silently retrying another backend.
-Task meta records `backend=` only for a non-default backend; an absent `backend=` means `tmux`, preserving existing default-path meta files.
+Every spawn records `backend=<name>` in task meta, `tmux` included. An absent `backend=` still reads as `tmux` for records written before that; `bin/fm-meta-backfill.sh [--home DIR] [--dry-run]` writes the explicit line into those older metas once (it refuses a meta it cannot classify, and leaves remote second mates, whose backend is `remote_backend=`, alone).
 Every new task records `endpoint_task_id=` as the cleanup binding between the metadata filename and its opaque runtime endpoint.
 A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
 A stream task additionally records `stream_hub=` and `stream_endpoint_id=`.

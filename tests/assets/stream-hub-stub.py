@@ -28,14 +28,38 @@ test can measure rather than infer.
   --result-file PATH       write the accepted result payload there
   --closed-file PATH       write the accepted closing frame there
   --omit-result-capability omit result retry support from health
+  --fleet                  also serve the firstmate-facing task routes against
+                           fake endpoints (see "Fleet mode" below)
+
+Fleet mode is what tests/fixtures.sh's fm_test_fake_stream runs. Endpoints are
+registered by tests/assets/stream-agent-stub.py, which bin/backends/stream.sh
+starts in place of the real agent, and each one is a fake shell held here: a
+submitted line is recorded and echoed, a line naming a harness (deck,
+fm-deck-worker, pi, claude, codex) makes that harness the foreground process,
+and /quit or /exit returns it to the shell. `cd [--] <dir>` moves the
+endpoint's cwd, and `treehouse get` moves it to the stub-wide treehouse_cwd
+(POST /v1/test/config {"treehouse_cwd": ...}), standing in for the worktree
+treehouse would hand a spawn. The screen ends in a bordered
+composer box holding the typed-but-unsubmitted text, with the cursor on it, so
+the shared composer classifier reads empty or pending. Tests steer the fake
+through /v1/test/endpoints (GET lists every endpoint with its submitted lines;
+POST /v1/test/endpoints/<id> patches foreground, alive, stale, closed_by, or
+forgets the endpoint so the hub answers 404 for it). Status posts append the
+ordinary "<state>: <note>" line to the status path the stub agent registered.
 """
 
 import argparse
 import http.server
 import json
+import re
 import socketserver
 import threading
 import time
+
+HARNESS_RE = re.compile(r"(?:^|[\s/])(fm-deck-worker|deck|pi|claude|codex)(?=\s|$)")
+SHELL = {"pid": "", "name": "bash", "argv0": "-bash", "args": "-bash"}
+STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
+                 "failed", "resolved")
 
 
 class Stub(http.server.BaseHTTPRequestHandler):
@@ -82,6 +106,8 @@ class Stub(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's spelling
         path = self._record()
+        if self.server.state["fleet"] and self._fleet("GET", path, {}):
+            return
         if path == "/v1/health":
             capabilities = [] if self.server.state["omit_result_capability"] else [
                 "idempotent_command_results"]
@@ -133,6 +159,8 @@ class Stub(http.server.BaseHTTPRequestHandler):
         path = self._record()
         payload = self._read_body()
         state = self.server.state
+        if state["fleet"] and self._fleet("POST", path, payload):
+            return
         if path == "/v1/agent/endpoints":
             with state["lock"]:
                 state["registrations"] += 1
@@ -180,6 +208,181 @@ class Stub(http.server.BaseHTTPRequestHandler):
         self._refuse(404, "no_such_route", "the stub serves agent routes only")
 
 
+    def do_DELETE(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's spelling
+        path = self._record()
+        if self.server.state["fleet"] and self._fleet("DELETE", path, {}):
+            return
+        self._refuse(404, "no_such_route", "the stub serves agent routes only")
+
+    # --- fleet mode -------------------------------------------------------
+
+    def _text(self, status: int, body: str) -> None:
+        raw = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    @staticmethod
+    def _screen(endpoint: dict) -> tuple:
+        composer = endpoint["composer"]
+        width = max(4, len(composer) + 2)
+        rows = endpoint["history"][-30:] + [
+            "\u256d" + "\u2500" * width + "\u256e",
+            "\u2502 " + composer.ljust(width - 2) + " \u2502",
+            "\u2570" + "\u2500" * width + "\u256f",
+        ]
+        return rows, len(rows) - 2
+
+    @staticmethod
+    def _describe(endpoint: dict) -> dict:
+        return {key: endpoint[key] for key in (
+            "endpoint_id", "machine", "label", "cwd", "closed_at", "closed_by")}
+
+    def _submit(self, endpoint: dict) -> None:
+        line = endpoint["composer"]
+        endpoint["composer"] = ""
+        endpoint["history"].append("$ " + line)
+        endpoint["submitted"].append(line)
+        harness = endpoint["foreground"][0]["name"] != SHELL["name"]
+        if harness and line.strip() in ("/quit", "/exit"):
+            endpoint["foreground"] = [dict(SHELL)]
+            return
+        words = line.split()
+        if not harness and words[:1] == ["cd"]:
+            target = [w for w in words[1:] if w != "--"]
+            if target:
+                endpoint["cwd"] = target[0].strip("'\"")
+            return
+        if not harness and words[:2] == ["treehouse", "get"]:
+            if self.server.state["treehouse_cwd"]:
+                endpoint["cwd"] = self.server.state["treehouse_cwd"]
+            return
+        match = HARNESS_RE.search(line)
+        if not harness and match:
+            name = match.group(1)
+            endpoint["foreground"] = [{"pid": "", "name": name, "argv0": name,
+                                       "args": line}]
+
+    def _input(self, endpoint: dict, payload: dict) -> None:
+        text = payload.get("text")
+        if text is not None:
+            endpoint["composer"] += str(text)
+            if payload.get("submit"):
+                self._submit(endpoint)
+        for key in payload.get("keys") or []:
+            if key == "Enter":
+                self._submit(endpoint)
+            elif key in ("C-u", "C-c"):
+                endpoint["composer"] = ""
+
+    def _fleet(self, method: str, path: str, payload: dict) -> bool:
+        """Serve one fleet-mode route; False leaves it to the agent routes."""
+        state = self.server.state
+        endpoints = state["endpoints"]
+        with state["lock"]:
+            if method == "POST" and path == "/v1/agent/endpoints":
+                machine = str(payload.get("machine") or "")
+                label = str(payload.get("label") or "")
+                for other in endpoints.values():
+                    if (not other["closed_at"] and other["machine"] == machine
+                            and other["label"] == label):
+                        self._refuse(409, "duplicate_label",
+                                     "machine %s already has a live endpoint labelled %s"
+                                     % (machine, label))
+                        return True
+                endpoint_id = str(payload.get("endpoint_id") or "")
+                endpoints[endpoint_id] = {
+                    "endpoint_id": endpoint_id, "machine": machine, "label": label,
+                    "cwd": str(payload.get("cwd") or ""),
+                    "status_path": str(payload.get("status_path") or ""),
+                    "closed_at": None, "closed_by": None, "alive": True,
+                    "stale": False, "history": [], "composer": "",
+                    "submitted": [], "foreground": [dict(SHELL)],
+                }
+                self._json(201, {"ok": True, "endpoint": {"endpoint_id": endpoint_id}})
+                return True
+            if method == "GET" and path == "/v1/tasks":
+                self._json(200, {"ok": True, "tasks": [
+                    self._describe(e) for e in endpoints.values()]})
+                return True
+            if path == "/v1/test/config" and method == "POST":
+                if "treehouse_cwd" in payload:
+                    state["treehouse_cwd"] = str(payload["treehouse_cwd"] or "")
+                self._json(200, {"ok": True})
+                return True
+            if path == "/v1/test/endpoints" and method == "GET":
+                self._json(200, {"ok": True, "endpoints": [
+                    {key: value for key, value in e.items() if key != "history"}
+                    for e in endpoints.values()]})
+                return True
+            match = re.match(r"\A/v1/(tasks|test/endpoints)/([0-9a-f]+)(?:/([a-z]+))?\Z", path)
+            if not match:
+                return False
+            kind, endpoint_id, tail = match.group(1), match.group(2), match.group(3) or ""
+            endpoint = endpoints.get(endpoint_id)
+            if kind == "test/endpoints":
+                if endpoint is None:
+                    self._refuse(404, "no_such_endpoint", "no endpoint %s" % endpoint_id)
+                    return True
+                if payload.get("forget"):
+                    del endpoints[endpoint_id]
+                for key in ("foreground", "alive", "stale", "closed_by", "composer"):
+                    if key in payload:
+                        endpoint[key] = payload[key]
+                if payload.get("closed_by"):
+                    endpoint["closed_at"] = endpoint["closed_at"] or time.time()
+                self._json(200, {"ok": True})
+                return True
+            if endpoint is None:
+                self._refuse(404, "no_such_endpoint", "no endpoint %s" % endpoint_id)
+                return True
+            if method == "GET" and tail == "":
+                self._json(200, {"ok": True, "task": self._describe(endpoint)})
+            elif method == "GET" and tail == "capture":
+                rows, _ = self._screen(endpoint)
+                self._text(200, "\n".join(rows) + "\n")
+            elif method == "GET" and tail == "screen":
+                rows, cursor = self._screen(endpoint)
+                self._json(200, {"ok": True, "cursor_row": cursor, "screen": "\n".join(rows)})
+            elif method == "GET" and tail in ("processes", "cwd"):
+                answer = {"ok": True, "endpoint_id": endpoint_id,
+                          "machine": endpoint["machine"], "stale": bool(endpoint["stale"]),
+                          "closed": bool(endpoint["closed_at"]),
+                          "closed_by": endpoint["closed_by"], "exit_code": None}
+                if not endpoint["stale"]:
+                    answer["alive"] = bool(endpoint["alive"])
+                    if tail == "processes":
+                        answer["foreground"] = endpoint["foreground"] if endpoint["alive"] else []
+                    else:
+                        answer["cwd"] = endpoint["cwd"]
+                self._json(200, answer)
+            elif method == "POST" and tail == "input":
+                if endpoint["closed_at"]:
+                    self._refuse(410, "endpoint_closed", "endpoint %s is closed" % endpoint_id)
+                    return True
+                self._input(endpoint, payload)
+                self._json(200, {"ok": True, "delivered": endpoint_id})
+            elif method == "POST" and tail == "status":
+                if payload.get("state") not in STATUS_STATES or not endpoint["status_path"]:
+                    self._refuse(400, "bad_state", "unknown status state or no status path")
+                    return True
+                with open(endpoint["status_path"], "a", encoding="utf-8") as fh:
+                    fh.write("%s: %s\n" % (payload["state"],
+                                           " ".join(str(payload.get("note") or "").split())))
+                self._json(200, {"ok": True, "appended": endpoint_id})
+            elif method == "DELETE" and tail == "":
+                endpoint["closed_at"] = endpoint["closed_at"] or time.time()
+                endpoint["closed_by"] = "agent"
+                endpoint["alive"] = False
+                self._json(200, {"ok": True, "closed": endpoint_id,
+                                 "machine": endpoint["machine"], "delivered": True})
+            else:
+                self._refuse(404, "no_such_route", "no such endpoint route: %s" % tail)
+            return True
+
+
 class StubServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -201,6 +404,7 @@ def main() -> int:
     parser.add_argument("--result-file", default="")
     parser.add_argument("--closed-file", default="")
     parser.add_argument("--omit-result-capability", action="store_true")
+    parser.add_argument("--fleet", action="store_true")
     options = parser.parse_args()
 
     server = StubServer(("127.0.0.1", options.port), Stub)
@@ -223,6 +427,9 @@ def main() -> int:
         "result_file": options.result_file,
         "closed_file": options.closed_file,
         "omit_result_capability": options.omit_result_capability,
+        "fleet": options.fleet,
+        "endpoints": {},
+        "treehouse_cwd": "",
     }
     open(options.journal, "a", encoding="utf-8").close()
     if options.ready_file:

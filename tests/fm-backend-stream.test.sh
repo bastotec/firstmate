@@ -265,6 +265,39 @@ test_agent_state_separates_missing_unreachable_and_partitioned() {
   pass "stream: agent state separates a missing endpoint, a partition, and an unreachable hub"
 }
 
+pids_as_machine() {  # <machine> <target>
+  # shellcheck disable=SC2031 # deliberate: only this subshell reads as another machine
+  FM_STREAM_MACHINE=$1
+  fm_backend_agent_pids stream "$2"
+}
+
+test_agent_pids_names_a_local_harness_and_refuses_another_machines() {
+  local target out rc pid comm gone
+  start_case_hub agent-pids
+  target=$(create_endpoint "fm-pids-$$")
+  out=$(with_stream_env fm_backend_agent_pids stream "$target"); rc=$?
+  expect_code 0 "$rc" "a bare shell endpoint's processes should be readable"
+  assert_equals "" "$out" "a bare shell endpoint hosts no harness pid"
+  # A real process whose argv[0] is a verified harness name, so the pid the
+  # agent reports is one this machine can hold by identity.
+  with_stream_env fm_backend_send_text_submit stream "$target" "bash -c 'exec -a deck sleep 60'" 3 0.2 0.2 >/dev/null \
+    || fail "could not start the harness stand-in"
+  wait_for_agent_state "$target" alive
+  out=$(with_stream_env fm_backend_agent_pids stream "$target") || fail "a local endpoint's harness pid should be readable"
+  pid=$(printf '%s\n' "$out" | head -n 1)
+  [ "$(printf '%s\n' "$out" | grep -c .)" = 1 ] || fail "expected exactly one harness pid, got: $out"
+  comm=$(ps -p "$pid" -o args= 2>/dev/null)
+  assert_contains "$comm" 'deck 60' "the reported pid should be the harness process on this machine"
+  out=$(with_stream_env pids_as_machine other-box "$target"); rc=$?
+  expect_code 1 "$rc" "pids published by another machine's agent must read as unknown here"
+  assert_equals "" "$out" "no pid may be printed for another machine's endpoint"
+  gone="${target%%:*}:00000000000000000000000000000000"
+  out=$(with_stream_env fm_backend_agent_pids stream "$gone"); rc=$?
+  expect_code 1 "$rc" "an endpoint the hub does not know must read as unknown"
+  with_stream_env fm_backend_kill stream "$target" >/dev/null 2>&1 || true
+  pass "stream: agent pids name the local harness process and refuse other machines and unknown endpoints"
+}
+
 # restart_case_hub - stop this case's hub and bring one back at the SAME
 # address, which is what a restart means to an agent that never moved. The
 # agents keep running: outliving the hub is the property under test.
@@ -1422,6 +1455,7 @@ test_capture_is_bounded_by_the_requested_line_count
 test_the_composer_capture_frames_a_blank_screen_apart_from_the_cursor
 test_agent_state_reads_the_foreground_process_not_the_screen
 test_agent_state_separates_missing_unreachable_and_partitioned
+test_agent_pids_names_a_local_harness_and_refuses_another_machines
 test_a_restarting_hub_never_reads_as_a_missing_worker
 test_the_fleet_listing_reports_a_worker_that_came_back
 test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale

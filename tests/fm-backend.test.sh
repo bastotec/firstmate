@@ -29,8 +29,8 @@
 # kill) lives in tests/fm-backend-tmux-smoke.test.sh.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 fm_git_identity fmtest fmtest@example.invalid
 
 # shellcheck source=/dev/null
@@ -609,7 +609,7 @@ run_spawn_case() {  # <bin-root> <fakebin> <log> <state> <data> <config> <proj> 
 # pins the name, and targets the window id"), and the real tmux create/kill path
 # by tests/fm-backend-tmux-smoke.test.sh. The send/peek/teardown conformance
 # tests below remain pure extractions and stay. (make_spawn_fakebin and
-# run_spawn_case are retained: test_spawn_default_backend_writes_no_meta_field
+# run_spawn_case are retained: test_spawn_default_backend_records_tmux
 # uses make_spawn_fakebin, and #294's run_spawn_symlink_case uses run_spawn_case.)
 
 # --- symlinked project prefix must not false-refuse the isolation guard -----
@@ -831,7 +831,7 @@ test_spawn_refuses_unknown_fm_backend_env() {
   pass "fm-spawn.sh honors FM_BACKEND and refuses an unimplemented value loudly"
 }
 
-test_spawn_default_backend_writes_no_meta_field() {
+test_spawn_default_backend_records_tmux() {
   local proj wt data id state config out
   proj="$TMP_ROOT/nobackend-project"; wt="$TMP_ROOT/nobackend-wt"; data="$TMP_ROOT/nobackend-data"
   id="nobackendz3"
@@ -848,11 +848,50 @@ test_spawn_default_backend_writes_no_meta_field() {
     FM_TMUX_LOG="$TMP_ROOT/nobackend.log" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --backend tmux 2>&1)
   expect_code 0 $? "explicit --backend tmux should spawn successfully"$'\n'"$out"
-  assert_no_grep 'backend=' "$state/$id.meta" \
-    "an explicit --backend tmux (the default) must not write backend= to meta (P1 compatibility contract)"
+  grep -qx 'backend=tmux' "$state/$id.meta" \
+    || fail "an explicit --backend tmux must record backend=tmux in meta"
   rm -rf "/tmp/fm-$id"
-  pass "fm-spawn.sh: an explicit --backend tmux resolves silently and writes no backend= (missing means tmux)"
+  pass "fm-spawn.sh: an explicit --backend tmux resolves silently and records backend=tmux"
 }
+
+# Dispatch onto stream end to end through the real fm-spawn.sh, against the
+# fake hub (tests/fixtures.sh fm_test_fake_stream): the record names the
+# hub-assigned endpoint and its hub, the endpoint is labelled for the task, and
+# the worktree treehouse hands the endpoint is the one recorded.
+test_spawn_on_fake_stream_records_the_endpoint() (
+  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
+    || { pass "fm-spawn.sh on stream: skipped (jq/curl unavailable)"; exit 0; }
+  local proj wt data id state config out fb window endpoint
+  proj="$TMP_ROOT/stream-project"; wt="$TMP_ROOT/stream-wt"; data="$TMP_ROOT/stream-data"
+  id="streamdispatchz6"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
+  fb=$(make_spawn_fakebin "$TMP_ROOT/stream-fake" "$wt")
+  fm_fake_exit0 "$fb" deck
+  mkdir -p "$data/$id"; write_spawn_brief "$data/$id/brief.md" "$id"
+  state="$TMP_ROOT/stream-state"; config="$TMP_ROOT/stream-config"
+  mkdir -p "$state" "$config"
+  fm_test_fake_stream "$TMP_ROOT/stream-hub" || fail "fake stream hub did not start"
+  fm_test_fake_stream_treehouse "$wt"
+
+  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' \
+    FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    FM_TMUX_LOG="$TMP_ROOT/stream-dispatch.log" \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" deck --mode no-mistakes --yolo off --backend stream 2>&1)
+  expect_code 0 $? "fm-spawn.sh --backend stream should spawn onto the fake hub"$'\n'"$out"
+  window=$(fm_meta_get "$state/$id.meta" window)
+  endpoint=$(fm_meta_get "$state/$id.meta" stream_endpoint_id)
+  assert_equals stream "$(fm_meta_get "$state/$id.meta" backend)" "the record should name the stream backend"
+  assert_equals "$FM_TEST_STREAM_TAG:$endpoint" "$window" "window= should be <hub-tag>:<endpoint-id>"
+  assert_equals "$FM_TEST_STREAM_URL" "$(fm_meta_get "$state/$id.meta" stream_hub)" "the record should name its hub"
+  assert_equals "$wt" "$(fm_meta_get "$state/$id.meta" worktree)" "the worktree treehouse handed the endpoint should be recorded"
+  assert_equals "fm-$id" "$(fm_test_fake_stream_endpoints | jq -r --arg e "$endpoint" '.endpoints[] | select(.endpoint_id == $e) | .label')" \
+    "the endpoint should carry the task's label"
+  fm_test_fake_stream_submitted "$window" | grep -q 'treehouse get' || fail "spawn never asked the endpoint for its worktree"
+  [ ! -s "$TMP_ROOT/stream-dispatch.log" ] || fail "a stream spawn touched tmux"$'\n'"$(cat "$TMP_ROOT/stream-dispatch.log")"
+  rm -rf "/tmp/fm-$id"
+  pass "fm-spawn.sh --backend stream records the hub-assigned endpoint, its hub, and the treehouse worktree"
+)
 
 test_spawn_explicit_backend_flag_beats_autodetect_herdr_env() {
   local proj wt data id state config out fb
@@ -872,8 +911,8 @@ test_spawn_explicit_backend_flag_beats_autodetect_herdr_env() {
     FM_TMUX_LOG="$TMP_ROOT/explicit-backend.log" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --backend tmux 2>&1)
   expect_code 0 $? "explicit --backend tmux should spawn successfully even with HERDR_ENV=1 set"$'\n'"$out"
-  assert_no_grep 'backend=' "$state/$id.meta" \
-    "an explicit --backend tmux must win over an ambient HERDR_ENV=1 auto-detect marker"
+  grep -qx 'backend=tmux' "$state/$id.meta" \
+    || fail "an explicit --backend tmux must win over an ambient HERDR_ENV=1 auto-detect marker"
   rm -rf "/tmp/fm-$id"
   pass "fm-spawn.sh: explicit --backend tmux wins over an ambient HERDR_ENV=1 auto-detect marker"
 }
@@ -899,8 +938,8 @@ test_spawn_autodetect_nesting_resolves_tmux_silently() {
     FM_TMUX_LOG="$TMP_ROOT/nest.log" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off 2>&1)
   expect_code 0 $? "fm-spawn.sh should auto-detect tmux and spawn successfully for nested tmux-in-herdr"$'\n'"$out"
-  assert_no_grep 'backend=' "$state/$id.meta" \
-    "auto-detected nested tmux-in-herdr must resolve to tmux (missing backend= means tmux)"
+  grep -qx 'backend=tmux' "$state/$id.meta" \
+    || fail "auto-detected nested tmux-in-herdr must resolve to and record backend=tmux"
   case "$out" in
     *NOTICE*) fail "auto-detecting tmux (even nested inside herdr) must stay silent, no NOTICE expected"$'\n'"$out" ;;
   esac
@@ -925,6 +964,7 @@ test_teardown_conformance_old_vs_new
 test_spawn_refuses_unknown_backend_flag
 test_spawn_refuses_codex_app_backend_flag
 test_spawn_refuses_unknown_fm_backend_env
-test_spawn_default_backend_writes_no_meta_field
+test_spawn_default_backend_records_tmux
+test_spawn_on_fake_stream_records_the_endpoint
 test_spawn_explicit_backend_flag_beats_autodetect_herdr_env
 test_spawn_autodetect_nesting_resolves_tmux_silently

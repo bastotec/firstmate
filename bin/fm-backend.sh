@@ -737,14 +737,18 @@ fm_backend_agent_state() {  # <backend> <target>
 # recorded endpoint hosts, one per line, reduced to the top of each harness
 # chain, so a caller can hold an agent by process identity (bin/fm-wake-lib.sh's
 # fm_pid_identity) or read the arguments it was launched with. Empty output is
-# an agent-free endpoint. Only tmux and herdr have that process-level view;
-# every other backend, and a herdr pane whose processes cannot be read, returns 1.
+# an agent-free endpoint. tmux, herdr, and stream have that process-level view;
+# stream only for an endpoint whose owning agent runs on this machine, since its
+# pids come from that agent's report (bin/backends/stream.sh's
+# fm_backend_stream_agent_pids). Every other backend, and an endpoint whose
+# processes cannot be read, returns 1.
 fm_backend_agent_pids() {  # <backend> <target>
   local backend=$1 target=$2
   fm_backend_source "$backend" || return 1
   case "$backend" in
     tmux) fm_backend_tmux_agent_pids "$target" ;;
     herdr) fm_backend_herdr_agent_pids "$target" ;;
+    stream) fm_backend_stream_agent_pids "$target" ;;
     *) return 1 ;;
   esac
 }

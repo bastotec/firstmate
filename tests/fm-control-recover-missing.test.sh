@@ -24,8 +24,8 @@
 #      launch handoff fails after the terminal is already back.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
 # shellcheck source=/dev/null
@@ -45,7 +45,7 @@ recover_cleanup() {
   done
   rm -rf "$TMP_ROOT"
 }
-trap recover_cleanup EXIT
+trap 'recover_cleanup; fm_test_cleanup' EXIT
 
 # The same lifecycle-modelling tmux stub the relaunch suite uses, plus a real
 # new-window: the window inventory in $D/windows is what decides missing vs
@@ -651,6 +651,80 @@ test_launch_failure_never_claims_an_agent_was_stopped() {
   pass "fm-control recover-missing: a failed launch handoff reports the bare shell it left, not a stop that never happened"
 }
 
+# --- stream: a new hub-assigned endpoint, rebound into the record -----------
+
+# add_stream_deck_task <case-dir> <id>: a Deck ship task recorded on a stream
+# endpoint of the fake hub (fm_test_fake_stream) that the hub no longer knows.
+add_stream_deck_task() {
+  local dir=$1 id=$2 old_id=0123456789abcdef0123456789abcdef
+  add_ship_task "$dir" "$id"
+  sed -i.bak -e "s|^window=.*|window=$FM_TEST_STREAM_TAG:$old_id|" -e 's/^harness=.*/harness=deck/' \
+    "$dir/home/state/$id.meta"
+  rm -f "$dir/home/state/$id.meta.bak"
+  {
+    echo "backend=stream"
+    echo "stream_hub=$FM_TEST_STREAM_URL"
+    echo "stream_endpoint_id=$old_id"
+    echo "spawn_gen=1"
+  } >> "$dir/home/state/$id.meta"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/deck"
+  chmod +x "$dir/fakebin/deck"
+}
+
+test_recover_missing_on_stream_rebinds_a_new_endpoint() {
+  local dir out rc window endpoint
+  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
+    || { pass "fm-control recover-missing: stream case skipped (jq/curl unavailable)"; return 0; }
+  dir=$(new_case stream-recovery rm31)
+  fm_test_fake_stream "$dir/stream" || fail "fake stream hub did not start"
+  add_stream_deck_task "$dir" rm31
+
+  out=$(run_control "$dir" rm31 recover-missing --note "the hub lost the endpoint"); rc=$?
+  expect_code 0 "$rc" "stream recovery of a missing endpoint should succeed"$'\n'"$out"
+  window=$(meta_field "$dir" rm31 window)
+  endpoint=$(meta_field "$dir" rm31 stream_endpoint_id)
+  assert_not_equals "$FM_TEST_STREAM_TAG:0123456789abcdef0123456789abcdef" "$window" "the record must name the NEW endpoint"
+  assert_equals "$FM_TEST_STREAM_TAG:$endpoint" "$window" "window= and stream_endpoint_id= must name the same endpoint"
+  assert_equals "$FM_TEST_STREAM_URL" "$(meta_field "$dir" rm31 stream_hub)" "the record must keep the hub it recovered on"
+  assert_equals stream "$(meta_field "$dir" rm31 backend)" "the task must stay on stream"
+  assert_equals "$dir/wt" "$(meta_field "$dir" rm31 worktree)" "the task must keep its worktree"
+  assert_equals rm31 "$(meta_field "$dir" rm31 endpoint_task_id)" "the task binding must survive"
+  [ "$(grep -c '^window=' "$dir/home/state/rm31.meta")" = 1 ] || fail "the record must name exactly one window"
+  assert_contains "$out" "recovered rm31 harness=deck" "the outcome should name the recovered task"
+  assert_contains "$out" "endpoint=$window" "the outcome should name the new endpoint"
+  assert_equals "$dir/wt" "$(fm_test_fake_stream_endpoints | jq -r --arg id "$endpoint" '.endpoints[] | select(.endpoint_id == $id) | .cwd')" \
+    "the new endpoint must start in the task's worktree"
+  [ -n "$(fm_test_fake_stream_submitted "$window")" ] || fail "the replacement was never launched into the new endpoint"
+  [ "$(journal_field "$dir" rm31 phase)" = complete ] || fail "the transaction journal should end complete"
+  assert_grep "the hub lost the endpoint" "$dir/home/data/rm31/brief.md" "the progress note must reach the instructions"
+  pass "fm-control recover-missing: a missing stream endpoint is replaced by a new one rebound into the record"
+}
+
+test_recover_missing_on_stream_refuses_while_its_agent_still_runs() {
+  local dir out rc meta_before brief_before agent_pid
+  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
+    || { pass "fm-control recover-missing: stream refusal skipped (jq/curl unavailable)"; return 0; }
+  dir=$(new_case stream-agent-alive rm32)
+  fm_test_fake_stream "$dir/stream" || fail "fake stream hub did not start"
+  add_stream_deck_task "$dir" rm32
+  meta_before=$(cat "$dir/home/state/rm32.meta")
+  brief_before=$(cat "$dir/home/data/rm32/brief.md")
+  # A stand-in for the endpoint's own agent, still running here while a
+  # restarted hub has forgotten it.
+  bash -c "exec -a fm-stream-agent.py perl -e 'sleep 60' serve --label fm-rm32" &
+  agent_pid=$!
+  fm_test_track_helper_pid "$agent_pid"
+
+  out=$(run_control "$dir" rm32 recover-missing --note "recover"); rc=$?
+  kill "$agent_pid" 2>/dev/null || true
+  expect_code 1 "$rc" "stream recovery must refuse while the endpoint's agent still runs"$'\n'"$out"
+  assert_contains "$out" "agent process (pid $agent_pid) is still running" "the refusal should name the live agent"
+  [ "$(cat "$dir/home/state/rm32.meta")" = "$meta_before" ] || fail "a refused stream recovery must leave the record byte-identical"
+  [ "$(cat "$dir/home/data/rm32/brief.md")" = "$brief_before" ] || fail "a refused stream recovery must leave the instructions alone"
+  assert_equals 0 "$(fm_test_fake_stream_endpoints | jq '.endpoints | length')" "a refused stream recovery must not create an endpoint"
+  pass "fm-control recover-missing: stream refuses while the missing endpoint's agent still runs on this machine"
+}
+
 test_recover_missing_refuses_a_backend_it_cannot_recreate_on() {
   local dir out rc meta_before brief_before
   dir=$(new_case herdr-backend rm13)
@@ -1228,6 +1302,8 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate
 test_recover_missing_preserves_uncommitted_work
 test_recover_missing_records_the_dirty_state_it_found
 test_recover_missing_recreates_the_terminal_and_launches_the_replacement
+test_recover_missing_on_stream_rebinds_a_new_endpoint
+test_recover_missing_on_stream_refuses_while_its_agent_still_runs
 test_recover_missing_accepts_an_explicit_replacement_harness
 test_recover_missing_replacement_resets_unnamed_profile_axes
 test_recover_missing_onto_deck_from_a_recorded_effort
