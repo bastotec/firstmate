@@ -17,7 +17,10 @@
 #
 # The cap counts characters, so a plain-ASCII line - what status lines are in
 # practice - is bounded to the same number of bytes, and a multibyte character
-# is never cut in half into an invalid sequence.
+# is never cut in half into an invalid sequence. Under a C/POSIX locale Bash
+# slices bytes instead (a remote fm-on job runs under env -i, so a stream
+# endpoint it starts has no LANG), so the cut also drops a trailing partial
+# UTF-8 sequence: Deck's argv parser rejects a prompt with invalid UTF-8.
 # Truncation stays recoverable because the session-start digest prints each
 # task's full status log path, while every OPEN DECISIONS entry begins with the
 # task id that identifies its durable state/<id>.status source.
@@ -40,7 +43,22 @@ fm_cap_line_var() {
   fi
   keep=$((max - ${#FM_LINE_CAP_SUFFIX}))
   [ "$keep" -ge 0 ] || keep=0
-  FM_LINE_CAP_LINE="${line:0:$keep}$FM_LINE_CAP_SUFFIX"
+  line=${line:0:$keep}
+  fm_cap_line_drop_partial_utf8
+  FM_LINE_CAP_LINE="$line$FM_LINE_CAP_SUFFIX"
+}
+
+# Drops an incomplete trailing UTF-8 sequence from the caller's $line. Byte
+# semantics (LC_ALL=C) make this a no-op on a cut that ended on a whole
+# character, whatever the caller's locale.
+fm_cap_line_drop_partial_utf8() {
+  local LC_ALL=C lead2=$'[\xc0-\xff]' lead3=$'[\xe0-\xff]' lead4=$'[\xf0-\xff]' cont=$'[\x80-\xbf]'
+  # shellcheck disable=SC2254 # the patterns are byte classes, not literals
+  case "$line" in
+    *$lead2) line=${line%?} ;;
+    *$lead3$cont) line=${line%??} ;;
+    *$lead4$cont$cont) line=${line%???} ;;
+  esac
 }
 
 # fm_cap_line <line> [<max>]: the same cut, printed on stdout, for a caller that
