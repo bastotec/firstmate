@@ -8,6 +8,9 @@ Exact task chronology, branch names, temporary homes, local paths, process ids, 
 
 ## Harness detection precedence
 
+The evidence below predates removal of the non-Pi/Deck primary integrations and still verifies the retained detection branches, not current primary support or supervision delivery.
+[README requirements](../../README.md#requirements) own current primary support; [`bin/fm-supervision-instructions.sh`](../../bin/fm-supervision-instructions.sh) owns fallback routing for detected identities without a supported protocol.
+
 Firstmate's own harness comes from two kinds of evidence, and `bin/fm-harness.sh` owns how they combine: an environment marker names its harness, and the nearest harness process in the parent chain proves who owns the process tree.
 A marker alone is not proof of ownership, because it is ordinary environment state that a child inherits and a terminal multiplexer can replay into an unrelated session.
 Verified on 2026-09-02 on Linux 7.1.12 with the portable regression, which builds every case from real renamed processes and no installed harness:
@@ -57,7 +60,7 @@ SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude
 Mode: Claude Stop-hook-owned supervision.
 ```
 
-With the current boundaries in place, from the same command and the same process chain:
+The measured detection boundaries produced the following output from the same command and process chain; its supervision protocol lines describe the former integration, not today's renderer:
 
 ```text
 verdict=codex
@@ -72,7 +75,7 @@ That assumption inverts inside a PID namespace, where the harness is pid 1: the 
 The walk now examines that top process before stopping, which costs one `ps` call and can introduce no false positive, because a host's real pid 1 (init, systemd, launchd) matches no harness name.
 The portable regression asserts both directions of that case: a host-shaped pid 1 still leaves the marker to answer, and a harness at pid 1 outranks it.
 
-Run on the host under Claude Code 2.1.252 with the same two markers set, the same probe reports `claude`, `comm claude`, and Claude's Stop-owned protocol, so the correction does not trade one misidentification for its inverse.
+The same measurement on the host under Claude Code 2.1.252 with both markers set reported `claude`, `comm claude`, and the former Claude Stop-owned protocol, proving that detection did not trade one misidentification for its inverse.
 
 ### Real harness process names behind the walk
 
@@ -226,7 +229,7 @@ The first default-on run failed on Cursor with `LIVENESS DRIFT: cursor unknown i
 The classifier was not at fault: the guard resolved the harness through a generic `command -v cursor`, which on a machine that also has the Cursor editor finds `~/.local/bin/cursor` - the editor launcher, not the agent.
 That binary exits immediately, leaving a bare shell in the pane.
 The guard then used `fm_cursor_resolve_binary` first for `cursor`, so the probe launched `cursor-agent` rather than the editor CLI.
-Cursor now remains in this guard for primary-session identity only; `bin/fm-spawn.sh` no longer launches Cursor workers.
+Cursor remains in this guard only for retained process-detection and endpoint-liveness checks; it no longer owns a home session lock or has a supported primary or worker launch path.
 
 Bounded output from the 2026-08-03 run that produced the first table above:
 
@@ -1697,7 +1700,7 @@ The evidence below was produced on 2026-09-05 against omp 18.1.11 (`~/.local/bin
 `ps -o comm=` reports the bare name `omp` for the agent process, from both its `!` bash path and the model's bash tool, so identity is the anchored name; `ompd` and `comp` never match.
 omp publishes no harness marker: `PI_CODING_AGENT` is absent from the binary, and the default profile sets neither `PI_CODING_AGENT_DIR` nor `OMP_PROFILE` in the process environment.
 `FM_OMP_HARNESS=omp` is Firstmate's own primary launch marker and wins over an inherited `CLAUDECODE` only under a real omp ancestor.
-The former regression `tests/fm-omp-harness.test.sh` was removed with the omp worker adapter; primary live evidence is refreshed by the command below.
+The former regressions `tests/fm-omp-harness.test.sh` and `tests/fm-omp-primary-live-e2e.test.sh` were removed with their respective adapters; this entry retains only evidence for the detection and composer code that remains.
 
 ### Composer
 
