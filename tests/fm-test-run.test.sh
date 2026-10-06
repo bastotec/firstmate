@@ -1123,6 +1123,27 @@ test_list_scheduled_non_lane_selections_use_serial_weights() {
   repo="$tmp/repo"
   mkdir -p "$repo/bin" "$repo/tests"
   cp "$RUNNER" "$repo/bin/fm-test-run.sh"
+  # Control the weights rather than inheriting measured CI durations. Leave
+  # three scripts unhinted to exercise default-weight path ties, and give
+  # parallel hints a conflicting order so using them cannot pass accidentally.
+  python3 - "$repo/bin/fm-test-run.sh" <<'PY' || fail "could not seed fixture scheduling weights"
+from pathlib import Path
+import re, sys
+runner = Path(sys.argv[1])
+hints = {
+    "serial": """tests/fm-deck-harness.test.sh 90000
+tests/fm-task-delivery.test.sh 10000
+tests/fm-operational-input.test.sh 1000""",
+    "parallel": """tests/fm-operational-input.test.sh 200000
+tests/fm-lint.test.sh 100000""",
+}
+source = runner.read_text()
+for kind, weights in hints.items():
+    function = f"portable_{kind}_weight_hints()"
+    source = re.sub(r"(?ms)^" + re.escape(function) + r" \{.*?^\}",
+                    function + " {\n  cat <<'EOF'\n" + weights + "\nEOF\n}", source)
+runner.write_text(source)
+PY
   for script in "${scripts[@]}"; do
     printf '#!/usr/bin/env bash\nexit 0\n' >"$repo/$script"
     chmod +x "$repo/$script"
