@@ -576,13 +576,26 @@ test_update_builds_native_stream_binaries() {
   cat > "$w/fakebin/cargo" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$w/cargo.calls"
-mkdir -p target/release
+output="\${CARGO_TARGET_DIR:-target}"
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    --target) output="\$output/\$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "\$output/release"
 for name in fm-stream-hub fm-stream-agent fm-stream-bridge; do
-  printf '#!/bin/sh\n' > "target/release/\$name"
-  chmod +x "target/release/\$name"
+  [ -f "\$output/release/\$name" ] && continue
+  printf '#!/bin/sh\n' > "\$output/release/\$name"
+  chmod +x "\$output/release/\$name"
 done
 SH
-  chmod +x "$w/fakebin/cargo"
+  cat > "$w/fakebin/rustc" <<'SH'
+#!/usr/bin/env bash
+[ "$*" = -vV ] || exit 1
+printf 'rustc 1.96.0\nhost: test-host\n'
+SH
+  chmod +x "$w/fakebin/cargo" "$w/fakebin/rustc"
 
   out=$(FM_STREAM_IMPL=rust FM_STREAM_NATIVE_CACHE="$w/cache" run_update "$w")
   assert_contains "$out" "firstmate: updated " "the primary advanced onto the crates"

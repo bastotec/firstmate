@@ -31,8 +31,9 @@
 #             nothing can be watched or steered until the hub is back.
 #   hub unit  Print a systemd user unit that runs `hub start --foreground` for
 #             this home. It installs nothing.
-#   native    build: cargo build --release --locked the Rust hub, agent and
-#             bridge and install them, stamped, for this checkout's sources.
+#   native    build: cargo build --release --locked --target <host-triple> the
+#             Rust hub, agent and bridge and install them, stamped, for this
+#             checkout's sources.
 #             ensure: the same, only when they are missing or stale.
 #             status: print the selected implementation and binary state.
 #             path: print the binary directory this home resolves.

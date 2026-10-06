@@ -204,19 +204,41 @@ new_checkout() {
   cat > "$CASE_DIR/fakebin/cargo" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CASE_DIR/cargo.calls"
+printf '%s\n' "\${CARGO_BUILD_TARGET:-}" > "$CASE_DIR/cargo.build-target"
 output="\${CARGO_TARGET_DIR:-target}"
-if [ -n "\${CARGO_BUILD_TARGET:-}" ]; then
+explicit_target=
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    --target) explicit_target=\$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "\$explicit_target" ]; then
+  output="\$output/\$explicit_target"
+elif [ -n "\${CARGO_BUILD_TARGET:-}" ]; then
   output="\$output/\$CARGO_BUILD_TARGET"
 elif [ -f .cargo/config.toml ]; then
   output="\$output/configured-target"
 fi
 mkdir -p "\$output/release"
 for name in fm-stream-hub fm-stream-agent fm-stream-bridge; do
+  if [ -f "\$output/release/\$name" ]; then
+    if [ "\$name" != fm-stream-agent ] || cmp -s crates/demo/src/main.rs "\$output/agent-source"; then
+      continue
+    fi
+  fi
   printf '#!/bin/sh\necho %s\n' "\$name" > "\$output/release/\$name"
   chmod +x "\$output/release/\$name"
+  printf '%s\n' "\$name" >> "$CASE_DIR/cargo.rebuilt"
 done
+cp crates/demo/src/main.rs "\$output/agent-source"
 SH
-  chmod +x "$CASE_DIR/fakebin/cargo"
+  cat > "$CASE_DIR/fakebin/rustc" <<'SH'
+#!/usr/bin/env bash
+[ "$*" = -vV ] || exit 1
+printf 'rustc 1.96.0\nhost: test-host\n'
+SH
+  chmod +x "$CASE_DIR/fakebin/cargo" "$CASE_DIR/fakebin/rustc"
 }
 
 native() {  # <path-prefix> <function> [args...]: call the checkout's lib
@@ -233,7 +255,7 @@ test_build_installs_once_per_source_key() {
   out=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale 2>/dev/null) || fail "ensure failed: $out"
   case "$out" in built\ *) ;; *) fail "the first ensure should build: $out" ;; esac
   dir=${out#built }
-  assert_equals "build --release --locked -p fm-stream-hub -p fm-stream-agent -p fm-stream-bridge" \
+  assert_equals "build --release --locked --target test-host -p fm-stream-hub -p fm-stream-agent -p fm-stream-bridge" \
     "$(cat "$CASE_DIR/cargo.calls")" "cargo should build exactly the three locked release binaries"
   [ -x "$dir/fm-stream-agent" ] && [ -x "$dir/fm-stream-hub" ] && [ -x "$dir/fm-stream-bridge" ] \
     || fail "the binaries were not installed in $dir"
@@ -269,17 +291,17 @@ test_build_installs_once_per_source_key() {
 test_relative_target_dir_installs_checkout_binaries() {
   new_case relative-target
   new_checkout
-  mkdir -p "$CASE_DIR/cwd/build-output/release"
+  mkdir -p "$CASE_DIR/cwd/build-output/test-host/release"
   local name out dir
   for name in fm-stream-hub fm-stream-agent fm-stream-bridge; do
-    printf '#!/bin/sh\necho stale\n' > "$CASE_DIR/cwd/build-output/release/$name"
-    chmod +x "$CASE_DIR/cwd/build-output/release/$name"
+    printf '#!/bin/sh\necho stale\n' > "$CASE_DIR/cwd/build-output/test-host/release/$name"
+    chmod +x "$CASE_DIR/cwd/build-output/test-host/release/$name"
   done
   out=$(cd "$CASE_DIR/cwd" && CARGO_TARGET_DIR=build-output native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build 2>/dev/null) \
     || fail "relative target build failed: $out"
   dir=${out#built }
   assert_equals fm-stream-agent "$("$dir/fm-stream-agent")" "install must use the checkout's build, not the caller's stale executable"
-  [ -x "$CASE_DIR/repo/build-output/release/fm-stream-agent" ] || fail "cargo did not build in the checkout-relative target directory"
+  [ -x "$CASE_DIR/repo/build-output/test-host/release/fm-stream-agent" ] || fail "cargo did not build in the checkout-relative target directory"
   pass "stream native: relative CARGO_TARGET_DIR resolves once against the checkout"
 }
 
@@ -291,11 +313,12 @@ test_build_unsets_environment_target() {
     || fail "environment target should not redirect the native build: $out"
   dir=${out#built }
   assert_equals fm-stream-agent "$("$dir/fm-stream-agent")" "the installed executable should come from the native build"
-  assert_absent "$CASE_DIR/repo/target/configured-target" "the build must unset CARGO_BUILD_TARGET"
+  assert_absent "$CASE_DIR/repo/target/configured-target" "the build must use the host target"
+  assert_equals "" "$(cat "$CASE_DIR/cargo.build-target")" "the build must unset CARGO_BUILD_TARGET"
   pass "stream native: builds ignore CARGO_BUILD_TARGET and install native artifacts"
 }
 
-test_configured_target_refuses_stale_release_artifacts() {
+test_configured_target_installs_host_artifacts() {
   new_case configured-target
   new_checkout
   local out name dir
@@ -303,25 +326,59 @@ test_configured_target_refuses_stale_release_artifacts() {
   for name in fm-stream-hub fm-stream-agent fm-stream-bridge; do
     printf '#!/bin/sh\necho stale\n' > "$CASE_DIR/repo/target/release/$name"
     chmod +x "$CASE_DIR/repo/target/release/$name"
-    touch -t 200001010000 "$CASE_DIR/repo/target/release/$name"
   done
   printf '[build]\ntarget = "configured-target"\n' > "$CASE_DIR/repo/.cargo/config.toml"
-  dir=$(native "$PATH" fm_stream_native_dir) || fail "could not resolve native directory"
-  if out=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale 2>&1); then
-    fail "a redirected build installed stale release artifacts: $out"
-  fi
-  assert_contains "$out" "build.target" "refusal should name the target configuration"
-  assert_contains "$out" "nothing was installed" "refusal should explain the installation outcome"
-  assert_absent "$dir" "a redirected build must not publish a source-key install or stamp"
-  assert_absent "$CASE_DIR/cache/.build-${dir##*/}.lock" "refusal must release the build lock"
-  [ -x "$CASE_DIR/repo/target/configured-target/release/fm-stream-agent" ] \
-    || fail "the fixture did not emit redirected artifacts"
-  rm "$CASE_DIR/repo/.cargo/config.toml"
   out=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale 2>&1) \
-    || fail "build should recover once build.target is removed: $out"
-  assert_equals "built $dir" "$out" "the refused install must not become current"
-  assert_equals fm-stream-agent "$("$dir/fm-stream-agent")" "recovery must install the fresh native executable"
-  pass "stream native: redirected builds refuse stale artifacts without stamping, then recover"
+    || fail "build.target must not redirect the native artifacts: $out"
+  dir=${out#built }
+  for name in fm-stream-hub fm-stream-agent fm-stream-bridge; do
+    assert_equals "$name" "$("$dir/$name")" "install must use the host-target binary, not a stale release binary"
+  done
+  assert_absent "$CASE_DIR/repo/target/configured-target" "an explicit host target must override build.target"
+  [ -x "$CASE_DIR/repo/target/test-host/release/fm-stream-agent" ] \
+    || fail "cargo did not emit host-target artifacts"
+  pass "stream native: an explicit host target overrides build.target and avoids stale release artifacts"
+}
+
+test_incremental_builds_install_reused_binaries() {
+  new_case incremental
+  new_checkout
+  local out dir
+  out=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build 2>&1) || fail "initial build failed: $out"
+  dir=${out#built }
+  assert_equals 3 "$(wc -l < "$CASE_DIR/cargo.rebuilt" | tr -d ' ')" "initial build must emit all three artifacts"
+  out=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build 2>&1) || fail "unchanged explicit build failed: $out"
+  assert_equals "built $dir" "$out" "an explicit build must reinstall unchanged artifacts"
+  assert_equals 3 "$(wc -l < "$CASE_DIR/cargo.rebuilt" | tr -d ' ')" "the fixture must reuse every unchanged artifact"
+  printf 'fn main() { println!("agent changed"); }\n' > "$CASE_DIR/repo/crates/demo/src/main.rs"
+  out=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale 2>&1) || fail "incremental ensure failed: $out"
+  assert_not_equals "built $dir" "$out" "changed sources must get a new install"
+  dir=${out#built }
+  assert_equals $'fm-stream-hub\nfm-stream-agent\nfm-stream-bridge\nfm-stream-agent' "$(cat "$CASE_DIR/cargo.rebuilt")" \
+    "the fixture must rebuild only the agent while reusing hub and bridge"
+  assert_equals fm-stream-hub "$("$dir/fm-stream-hub")" "the reused hub must be installed"
+  assert_equals fm-stream-bridge "$("$dir/fm-stream-bridge")" "the reused bridge must be installed"
+  assert_equals fm-stream-agent "$("$dir/fm-stream-agent")" "the rebuilt agent must be installed"
+  pass "stream native: explicit no-op builds and incremental ensures install reused binaries"
+}
+
+test_host_resolution_uses_path_fallback_and_refuses_missing_host() {
+  new_case rustc-host
+  new_checkout
+  local out
+  mkdir -p "$CASE_DIR/pathbin"
+  mv "$CASE_DIR/fakebin/rustc" "$CASE_DIR/pathbin/"
+  out=$(native "$CASE_DIR/fakebin:$CASE_DIR/pathbin:$PATH" fm_stream_native_build 2>&1) \
+    || fail "rustc on PATH should resolve the host when cargo has no sibling: $out"
+  case "$out" in built\ *) ;; *) fail "fallback did not build: $out" ;; esac
+  printf '#!/bin/sh\necho "rustc 1.96.0"\n' > "$CASE_DIR/pathbin/rustc"
+  rm "$CASE_DIR/cargo.calls"
+  if out=$(native "$CASE_DIR/fakebin:$CASE_DIR/pathbin:$PATH" fm_stream_native_build 2>&1); then
+    fail "a compiler without a host triple was accepted: $out"
+  fi
+  assert_contains "$out" "no host triple" "the resolution failure must name the missing host"
+  assert_absent "$CASE_DIR/cargo.calls" "host resolution failure must stop before cargo build"
+  pass "stream native: host resolution falls back to PATH and fails closed without a host triple"
 }
 
 test_hash_failure_refuses_cached_build() {
@@ -376,6 +433,8 @@ test_hub_unit_refuses_unsafe_paths_and_arguments
 test_build_installs_once_per_source_key
 test_relative_target_dir_installs_checkout_binaries
 test_build_unsets_environment_target
-test_configured_target_refuses_stale_release_artifacts
+test_configured_target_installs_host_artifacts
+test_incremental_builds_install_reused_binaries
+test_host_resolution_uses_path_fallback_and_refuses_missing_host
 test_hash_failure_refuses_cached_build
 test_no_cargo_refuses_with_rustup_and_prebuilt_options

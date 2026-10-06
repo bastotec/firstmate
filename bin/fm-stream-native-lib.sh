@@ -152,12 +152,13 @@ fm_stream_native_installed() {  # <dir>
   [ -f "$1/stamp" ]
 }
 
-# fm_stream_native_build [--if-stale]: cargo build --release --locked the three
-# binaries and install them, stamped, into the cache directory for the current
+# fm_stream_native_build [--if-stale]: cargo build --release --locked --target
+# <host-triple> builds the three binaries and installs them, stamped, into the
+# cache directory for the current
 # source key. With --if-stale an existing install for this key is left alone.
 # Prints one result line: built <dir> | current <dir> | prebuilt <dir>.
 fm_stream_native_build() {
-  local if_stale=0 root dir key cargo cache tmp lock name commit target
+  local if_stale=0 root dir key cargo cache tmp lock name commit target rustc version host
   [ "${1:-}" = "--if-stale" ] && if_stale=1
   if dir=$(fm_stream_native_prebuilt); then
     echo "prebuilt $dir"
@@ -180,6 +181,22 @@ fm_stream_native_build() {
     echo "error: cargo is not installed, so the Rust stream binaries cannot be built here. Install Rust into ~/.cargo with: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal - or build them on another host of the same OS and CPU and point config/stream-native-dir at that directory" >&2
     return 1
   }
+  rustc="$(dirname -- "$cargo")/rustc"
+  if [ ! -x "$rustc" ]; then
+    rustc=$(command -v rustc) || {
+      echo "error: rustc is not installed; cannot resolve the native stream host target" >&2
+      return 1
+    }
+  fi
+  version=$(cd "$root" && "$rustc" -vV) || {
+    echo "error: rustc -vV failed; cannot resolve the native stream host target" >&2
+    return 1
+  }
+  host=$(printf '%s\n' "$version" | awk '$1 == "host:" { print $2; exit }')
+  [ -n "$host" ] || {
+    echo "error: rustc -vV reported no host triple; nothing was installed" >&2
+    return 1
+  }
   mkdir -p "$cache" || return 1
   lock="$cache/.build-$key.lock"
   if ! mkdir "$lock" 2>/dev/null; then
@@ -192,22 +209,14 @@ fm_stream_native_build() {
   for name in $FM_STREAM_NATIVE_BINARIES; do
     packages+=(-p "$name")
   done
-  touch "$lock" || { rmdir "$lock"; return 1; }
-  if ! (cd "$root" && unset CARGO_BUILD_TARGET && CARGO_TARGET_DIR="$target" "$cargo" build --release --locked "${packages[@]}") >&2; then
+  if ! (cd "$root" && unset CARGO_BUILD_TARGET && CARGO_TARGET_DIR="$target" "$cargo" build --release --locked --target "$host" "${packages[@]}") >&2; then
     rmdir "$lock"
     echo "error: cargo build failed for the stream binaries; nothing was installed" >&2
     return 1
   fi
-  for name in $FM_STREAM_NATIVE_BINARIES; do
-    if [ ! -f "$target/release/$name" ] || [ -z "$(find "$target/release/$name" -newer "$lock" -print)" ]; then
-      rmdir "$lock"
-      echo "error: $target/release/$name was not refreshed by this build; check Cargo build.target configuration; nothing was installed" >&2
-      return 1
-    fi
-  done
   mkdir -p "$tmp"
   for name in $FM_STREAM_NATIVE_BINARIES; do
-    cp "$target/release/$name" "$tmp/$name" || { rm -rf "$tmp"; rmdir "$lock"; return 1; }
+    cp "$target/$host/release/$name" "$tmp/$name" || { rm -rf "$tmp"; rmdir "$lock"; return 1; }
     chmod 755 "$tmp/$name"
   done
   commit=$(cd "$root" && git rev-parse HEAD 2>/dev/null) || commit=unknown

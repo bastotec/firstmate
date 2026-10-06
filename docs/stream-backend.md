@@ -72,7 +72,7 @@ Nothing falls back from one to the other: a rust home without built binaries ref
 
 The binaries are built from `crates/`, not tracked in git:
 
-- `bin/fm-stream.sh native build` runs `cargo build --release --locked -p fm-stream-hub -p fm-stream-agent -p fm-stream-bridge` (Rust 1.96 or newer) and installs the three binaries, with a `stamp` naming the source key and commit, into `~/.local/share/firstmate/stream-native/<source-key>/` (`FM_STREAM_NATIVE_CACHE` or `XDG_DATA_HOME` move it).
+- `bin/fm-stream.sh native build` runs `cargo build --release --locked --target <host-triple> -p fm-stream-hub -p fm-stream-agent -p fm-stream-bridge` (Rust 1.96 or newer; the host triple comes from `rustc -vV`, using the compiler beside Cargo or on `PATH`) and installs the three binaries from `<target-dir>/<host-triple>/release/`, with a `stamp` naming the source key and commit, into `~/.local/share/firstmate/stream-native/<source-key>/` (`FM_STREAM_NATIVE_CACHE` or `XDG_DATA_HOME` move it).
   The source key hashes existing tracked and non-ignored untracked files under `crates/`, plus `Cargo.toml` and `Cargo.lock`, using their working-tree content; deleted paths are skipped and hashing failures refuse resolution rather than selecting a partial key.
   A primary and its local secondmate worktrees on the same sources share one build, and a checkout whose crate inputs changed resolves a new, unbuilt directory instead of running stale binaries.
   Relative `CARGO_TARGET_DIR` values resolve against the build checkout, not the caller's working directory, for both Cargo output and installation.
