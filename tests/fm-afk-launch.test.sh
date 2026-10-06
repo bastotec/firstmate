@@ -1240,13 +1240,44 @@ unit_stream_reused_pid_is_not_signalled() {
   rm -rf "$st"
 }
 
-# The real daemon on a stream primary: started detached, supervision owned, and
-# the stop path's shutdown flush delivered through the deck-chat steer client.
+unit_stream_identity_mismatch_is_not_signalled() {
+  local st other action
+  for action in stop reconcile; do
+    st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-stream-identity.XXXXXX")
+    mkdir -p "$st/state"
+    confirm_posture "$st" || fail "stream identity: could not confirm fixture posture"
+    FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_BACKEND=stream \
+      FM_SUPERVISOR_TARGET=hub-7717:0123abcd FM_AFK_LAUNCH_ENTRY="$SLEEPER" \
+      "$LAUNCH" start >/dev/null 2>&1
+    other=$(cut -f2 "$st/state/.afk-daemon-terminal")
+    FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
+      . "$1"
+      fm_afk_launch_record_read && fm_afk_launch_terminal_alive "$FM_AFK_REC_BACKEND" "$FM_AFK_REC_TARGET"
+    ' _ "$LAUNCH" || fail "stream identity: matching live session leader was not alive"
+    printf 'process\t%s\tstale process identity\n' "$other" > "$st/state/.afk-daemon-terminal"
+    FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
+      . "$1"
+      fm_afk_launch_record_read || exit 1
+      ! fm_afk_launch_terminal_alive "$FM_AFK_REC_BACKEND" "$FM_AFK_REC_TARGET" || exit 1
+      fm_afk_launch_terminal_absent "$FM_AFK_REC_BACKEND" "$FM_AFK_REC_TARGET"
+    ' _ "$LAUNCH" || fail "stream identity: mismatched live session leader did not read as gone"
+    FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" "$action" >/dev/null 2>&1
+    if kill -0 "$other" 2>/dev/null && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
+      pass "stream identity: $action never signals a live session leader with a mismatched identity"
+    else
+      fail "stream identity: $action signalled an unrelated session leader or kept its record"
+    fi
+    kill "$other" 2>/dev/null || true
+    rm -rf "$st"
+  done
+}
+
 e2e_stream_real_daemon() {
   local st steer pid out
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-stream-e2e.XXXXXX")
   steer="$st/steer"
   mkdir -p "$st/state" "$steer"
+  printf '{"session":"s1"}\n' > "$st/state/primary-chat.json"
   confirm_posture "$st" || fail "stream e2e: could not confirm fixture posture"
   out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_BACKEND=stream \
     FM_PRIMARY_STEER_BIN="$FAKE_STEER" FAKE_STEER_DIR="$steer" FM_ESCALATE_BATCH_SECS=99999 \
@@ -1330,6 +1361,7 @@ unit_incomplete_restore_retains_backup
 unit_flag_write_failure_aborts
 unit_stream_detached_process_lifecycle
 unit_stream_reused_pid_is_not_signalled
+unit_stream_identity_mismatch_is_not_signalled
 e2e_herdr
 e2e_tmux
 e2e_stream_real_daemon

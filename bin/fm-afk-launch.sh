@@ -72,10 +72,7 @@
 # Stream: a primary on a stream endpoint has no local pane to put a hidden
 # terminal next to, so the daemon runs as a detached process in its own session
 # (setsid, the same detach the stream adapter uses for its agents), with output
-# in state/.afk-daemon.out. The record is `process<TAB><pid><TAB><log>`; the pid
-# leads its own process group, which is what liveness and the exact-id close
-# check, so a reused pid is never signalled. The session detach is what keeps
-# the harness from reaping it when the launching shell call returns.
+# in state/.afk-daemon.out.
 #
 # Test seam: FM_AFK_LAUNCH_ENTRY overrides the command run in the created
 # terminal (default bin/fm-afk-start.sh), so a topology test can run a harmless
@@ -265,15 +262,12 @@ fm_afk_launch_flag_write() {
   fm_afk_flag_write "$FM_AFK_LAUNCH_STATE" "${FM_AFK_MODE:-}"
 }
 
-# Read the recorded terminal into FM_AFK_REC_BACKEND/FM_AFK_REC_TARGET. The third
-# field (a herdr workspace id, kept for the record's own documentation) is not
-# needed to close by id, so it is discarded. Returns 1 when no record exists.
 fm_afk_launch_record_read() {
-  local extra record
-  FM_AFK_REC_BACKEND=""; FM_AFK_REC_TARGET=""; extra=""
+  local record
+  FM_AFK_REC_BACKEND=""; FM_AFK_REC_TARGET=""; FM_AFK_REC_EXTRA=""
   [ -f "$FM_AFK_LAUNCH_RECORD" ] || return 1
   record=$(cat "$FM_AFK_LAUNCH_RECORD" 2>/dev/null) || record=""
-  IFS=$'\t' read -r FM_AFK_REC_BACKEND FM_AFK_REC_TARGET extra \
+  IFS=$'\t' read -r FM_AFK_REC_BACKEND FM_AFK_REC_TARGET FM_AFK_REC_EXTRA \
     < "$FM_AFK_LAUNCH_RECORD" || true
   if ! printf '%s\n' "$record" | awk -F '\t' 'NF != 3 { bad=1 } END { exit !(NR == 1 && !bad) }' \
     || [ -z "$FM_AFK_REC_BACKEND" ] || [ -z "$FM_AFK_REC_TARGET" ]; then
@@ -281,11 +275,11 @@ fm_afk_launch_record_read() {
     return 2
   fi
   case "$FM_AFK_REC_BACKEND" in
-    herdr) [ -n "$extra" ] ;;
+    herdr) [ -n "$FM_AFK_REC_EXTRA" ] ;;
     tmux) : ;;
     process)
-      case "$FM_AFK_REC_TARGET" in ''|*[!0-9]*) false ;; *) [ -n "$extra" ] ;; esac ;;
-    none) [ "$FM_AFK_REC_TARGET" = - ] && [ "$extra" = native ] ;;
+      case "$FM_AFK_REC_TARGET" in ''|*[!0-9]*) false ;; *) [ -n "$FM_AFK_REC_EXTRA" ] ;; esac ;;
+    none) [ "$FM_AFK_REC_TARGET" = - ] && [ "$FM_AFK_REC_EXTRA" = native ] ;;
     *) return 2 ;;
   esac || { fm_afk_launch_log "daemon terminal record is malformed; refusing to act on it"; return 2; }
 }
@@ -301,7 +295,7 @@ fm_afk_launch_record_validate_if_present() {
 # recorded workspace id (herdr) needs no separate close: closing the pane takes
 # its single-tab dedicated workspace with it.
 fm_afk_launch_close_terminal() {  # <backend> <target>
-  local backend=$1 target=$2
+  local backend=$1 target=$2 identity=${3:-${FM_AFK_REC_EXTRA:-}}
   case "$backend" in
     herdr)
       fm_backend_source herdr || return 1
@@ -314,12 +308,10 @@ fm_afk_launch_close_terminal() {  # <backend> <target>
       tmux kill-session -t "$target" 2>/dev/null
       ;;
     process)
-      # target is the detached daemon's pid; signal it only while it still
-      # leads its own process group (a reused pid does not).
-      fm_afk_launch_process_alive "$target" || return 0
+      fm_afk_launch_process_alive "$target" "$identity" || return 0
       kill -TERM "$target" 2>/dev/null || return 1
       local waited=0
-      while [ "$waited" -lt 40 ] && fm_afk_launch_process_alive "$target"; do
+      while [ "$waited" -lt 40 ] && fm_afk_launch_process_alive "$target" "$identity"; do
         sleep 0.1
         waited=$((waited + 1))
       done
@@ -335,7 +327,7 @@ fm_afk_launch_close_terminal() {  # <backend> <target>
 }
 
 fm_afk_launch_terminal_absent() {  # <backend> <target>
-  local backend=$1 target=$2 session pane out result code
+  local backend=$1 target=$2 session pane out result code identity=${3:-${FM_AFK_REC_EXTRA:-}}
   case "$backend" in
     herdr)
       session=${target%%:*}
@@ -354,7 +346,7 @@ fm_afk_launch_terminal_absent() {  # <backend> <target>
       printf '%s' "$out" | grep -Eq "can't find session"
       ;;
     process)
-      ! fm_afk_launch_process_alive "$target"
+      ! fm_afk_launch_process_alive "$target" "$identity"
       ;;
     none)
       return 0
@@ -363,10 +355,15 @@ fm_afk_launch_terminal_absent() {  # <backend> <target>
   esac
 }
 
-# A detached stream-primary daemon is alive while its pid exists and still
-# leads its own process group (setsid made it the group leader). A pid that
-# was reused by an unrelated process normally does not, so it reads gone.
-fm_afk_launch_process_alive() {  # <pid>
+fm_afk_launch_process_alive() {
+  local pid=$1 identity=${2:-} current
+  [ -n "$identity" ] || return 1
+  current=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
+  [ "$current" = "$identity" ] || return 1
+  fm_afk_launch_process_started "$pid"
+}
+
+fm_afk_launch_process_started() {
   local pid=$1 pgid
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   kill -0 "$pid" 2>/dev/null || return 1
@@ -387,7 +384,7 @@ fm_afk_launch_close_recorded() {
 }
 
 fm_afk_launch_terminal_alive() {  # <backend> <target>
-  local backend=$1 target=$2 session pane
+  local backend=$1 target=$2 session pane identity=${3:-${FM_AFK_REC_EXTRA:-}}
   case "$backend" in
     herdr)
       session=${target%%:*}
@@ -399,7 +396,7 @@ fm_afk_launch_terminal_alive() {  # <backend> <target>
       tmux has-session -t "$target" 2>/dev/null
       ;;
     process)
-      fm_afk_launch_process_alive "$target"
+      fm_afk_launch_process_alive "$target" "$identity"
       ;;
     *) return 1 ;;
   esac
@@ -408,13 +405,21 @@ fm_afk_launch_terminal_alive() {  # <backend> <target>
 fm_afk_launch_wait_ready() {  # <backend> <target>
   local backend=$1 target=$2 attempt=0
   if [ -n "${FM_AFK_LAUNCH_ENTRY:-}" ]; then
-    fm_afk_launch_terminal_alive "$backend" "$target"
+    if [ "$backend" = process ]; then
+      fm_afk_launch_process_started "$target"
+    else
+      fm_afk_launch_terminal_alive "$backend" "$target"
+    fi
     return
   fi
   while [ "$attempt" -lt 100 ]; do
     attempt=$((attempt + 1))
     daemon_lock_held_by_live_daemon && return 0
-    fm_afk_launch_terminal_alive "$backend" "$target" || return 1
+    if [ "$backend" = process ]; then
+      fm_afk_launch_process_started "$target" || return 1
+    else
+      fm_afk_launch_terminal_alive "$backend" "$target" || return 1
+    fi
     sleep 0.05
   done
   return 1
@@ -431,8 +436,20 @@ fm_afk_launch_commit_terminal() {  # <backend> <target> <extra> [already-recorde
     fm_afk_launch_log "daemon did not become ready; closing $backend:$target"
     FM_AFK_REC_BACKEND=$backend
     FM_AFK_REC_TARGET=$target
+    FM_AFK_REC_EXTRA=$extra
     fm_afk_launch_close_recorded
     return 1
+  fi
+  if [ "$backend" = process ]; then
+    extra=$(fm_pid_identity "$target" 2>/dev/null) || return 1
+    fm_afk_launch_process_alive "$target" "$extra" || return 1
+    if ! fm_afk_launch_record_write "$backend" "$target" "$extra"; then
+      FM_AFK_REC_BACKEND=$backend
+      FM_AFK_REC_TARGET=$target
+      FM_AFK_REC_EXTRA=$extra
+      fm_afk_launch_close_recorded
+      return 1
+    fi
   fi
 }
 
@@ -601,7 +618,7 @@ fm_afk_launch_exec_detached() {  # <cmd...>
 # own session. There is no local pane to sit beside, and the daemon reaches the
 # primary through the steer dir or the hub, so no terminal is created at all.
 fm_afk_launch_create_stream() {  # <captain-target> <captain-backend>
-  local captain_target=$1 captain_backend=$2 entry out pid
+  local captain_target=$1 captain_backend=$2 entry out pid identity
   entry=$(fm_afk_launch_entry_cmd)
   out="$FM_AFK_LAUNCH_STATE/.afk-daemon.out"
   fm_afk_launch_exec_detached env FM_HOME="$FM_HOME" FM_SUPERVISOR_TARGET="$captain_target" \
@@ -609,22 +626,23 @@ fm_afk_launch_create_stream() {  # <captain-target> <captain-backend>
   pid=$!
   # setsid runs inside the child, so it leads its own group only a moment later.
   local waited=0
-  while [ "$waited" -lt 50 ] && ! fm_afk_launch_process_alive "$pid"; do
+  while [ "$waited" -lt 50 ] && ! fm_afk_launch_process_started "$pid"; do
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.05
     waited=$((waited + 1))
   done
-  if ! fm_afk_launch_process_alive "$pid"; then
+  if ! fm_afk_launch_process_started "$pid"; then
     fm_afk_launch_log "detached daemon process $pid did not start in its own session; see $out"
     kill -TERM "$pid" 2>/dev/null || true
     return 1
   fi
-  if ! fm_afk_launch_record_write process "$pid" "$out"; then
+  identity=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
+  if ! fm_afk_launch_record_write process "$pid" "$identity"; then
     fm_afk_launch_log "failed to persist daemon process record; stopping pid $pid"
-    fm_afk_launch_close_terminal process "$pid"
+    fm_afk_launch_close_terminal process "$pid" "$identity"
     return 1
   fi
-  fm_afk_launch_commit_terminal process "$pid" "$out" 1 || return 1
+  fm_afk_launch_commit_terminal process "$pid" "$identity" 1 || return 1
   fm_afk_launch_log "daemon launched as detached process $pid (log $out), supervising stream primary $captain_target"
 }
 
@@ -759,7 +777,14 @@ fm_afk_launch_stop() {
   pid_identity=""
   if daemon_lock_held_by_live_daemon; then
     pid=$(daemon_lock_pid 2>/dev/null) || return 1
-    pid_identity=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
+    if [ "$read_result" -eq 0 ] && [ "$FM_AFK_REC_BACKEND" = process ]; then
+      if [ "$pid" != "$FM_AFK_REC_TARGET" ] || ! fm_afk_launch_process_alive "$pid" "$FM_AFK_REC_EXTRA"; then
+        pid=""
+      fi
+    fi
+    if [ -n "$pid" ]; then
+      pid_identity=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
+    fi
   fi
   if [ -n "$pid" ]; then
     if ! kill -TERM "$pid" 2>/dev/null; then

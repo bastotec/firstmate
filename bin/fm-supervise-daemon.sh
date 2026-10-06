@@ -1371,13 +1371,20 @@ fm_daemon_steer() {  # <subcommand> [args...]
 # fm_daemon_steer_wait_delivered: poll `delivered <seq>` within the inject
 # confirmation budget. Returns the last delivered exit code (0 acked, 1 still
 # pending, 2 rejected, 3 not present).
-fm_daemon_steer_wait_delivered() {  # <seq>
-  local seq=$1 retries sleep_s attempt=0 rc
+fm_daemon_steer_session() {
+  jq -er '.session | select(type == "string" and length > 0) | select(test("^[A-Za-z0-9_.-]+$"))' \
+    "$FM_HOME/state/primary-chat.json" 2>/dev/null
+}
+
+fm_daemon_steer_wait_delivered() {
+  local seq=$1 session=$2 retries sleep_s attempt=0 rc
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
   while :; do
+    [ "$(fm_daemon_steer_session)" = "$session" ] || return 3
     fm_daemon_steer delivered "$seq" >/dev/null
     rc=$?
+    [ "$(fm_daemon_steer_session)" = "$session" ] || return 3
     [ "$rc" -eq 1 ] || return "$rc"
     [ "$attempt" -lt "$retries" ] || return 1
     attempt=$((attempt + 1))
@@ -1397,18 +1404,23 @@ supervisor_reachable() {  # <backend> <target>
 }
 
 inject_msg_stream() {  # <encoded-message> <state> <target>
-  local msg=$1 state=$2 target=$3 pending hash pseq phash rc status_json status_rc primary_state out seq tmp
+  local msg=$1 state=$2 target=$3 pending hash pseq phash psession session rc status_json status_rc primary_state out seq tmp
   pending="$state/$FM_SUPERVISOR_STEER_PENDING"
   hash=$(_hash_text "$msg")
   if [ -s "$pending" ]; then
-    IFS=$'\t' read -r pseq phash < "$pending" || true
+    IFS=$'\t' read -r pseq phash psession < "$pending" || true
+    session=$(fm_daemon_steer_session) || session=""
+    if [ -z "$session" ] || [ "$psession" != "$session" ]; then
+      rm -f "$pending"
+      pseq=""
+    fi
     case "$pseq" in
       ''|*[!0-9]*) rm -f "$pending" ;;
       *)
         if [ "$phash" = "$hash" ]; then
-          fm_daemon_steer_wait_delivered "$pseq"
+          fm_daemon_steer_wait_delivered "$pseq" "$session"
         else
-          fm_daemon_steer delivered "$pseq" >/dev/null
+          FM_INJECT_CONFIRM_RETRIES=0 fm_daemon_steer_wait_delivered "$pseq" "$session"
         fi
         rc=$?
         case "$rc" in
@@ -1451,8 +1463,45 @@ inject_msg_stream() {  # <encoded-message> <state> <target>
     log "inject deferred: deck-chat primary state=$primary_state (not idle)"
     return 1
   fi
+  session=$(fm_daemon_steer_session) || return 1
   tmp=$(mktemp "$state/.subsuper-steer-digest.XXXXXX") || return 1
   printf '%s\n' "$msg" > "$tmp" || { rm -f "$tmp"; return 1; }
+  if ! python3 - "$tmp" "$state/.subsuper-escalations" <<'PY'
+import sys
+from pathlib import Path
+
+path, buffer = map(Path, sys.argv[1:])
+body = path.read_bytes()
+limit = 60000
+if len(body) > limit:
+    full = buffer.read_bytes()
+    items = full.split(b"\n")
+    if items[-1] == b"":
+        items.pop()
+    joined = b" | ".join(items)
+    offset = body.index(joined)
+    prefix = body[:offset]
+    suffix = body[offset + len(joined):].rstrip(b"\n")
+    notice = (" | %d item(s) omitted; full list kept in "
+              "state/.subsuper-escalations.overflow")
+    budget = limit - len(prefix) - len(suffix) - len(notice % len(items)) - 1
+    kept, size = [], 0
+    for item in items:
+        added = len(item) + (3 if kept else 0)
+        if size + added > budget:
+            break
+        kept.append(item)
+        size += added
+    with buffer.with_suffix(".overflow").open("ab") as archive:
+        archive.write(full)
+    body = (prefix + b" | ".join(kept) + (notice % (len(items) - len(kept))).encode()
+            + suffix + b"\n")
+    path.write_bytes(body)
+PY
+  then
+    rm -f "$tmp"
+    return 1
+  fi
   out=$(fm_daemon_steer publish --kind away --file "$tmp")
   rc=$?
   rm -f "$tmp"
@@ -1473,8 +1522,8 @@ inject_msg_stream() {  # <encoded-message> <state> <target>
     log "inject failed: steer publish printed no seq"
     return 1
   fi
-  printf '%s\t%s\n' "$seq" "$hash" > "$pending" || log "warn: could not record pending steer seq $seq"
-  fm_daemon_steer_wait_delivered "$seq"
+  printf '%s\t%s\t%s\n' "$seq" "$hash" "$session" > "$pending" || log "warn: could not record pending steer seq $seq"
+  fm_daemon_steer_wait_delivered "$seq" "$session"
   rc=$?
   case "$rc" in
     0)

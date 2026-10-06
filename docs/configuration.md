@@ -208,9 +208,11 @@ Selecting any other supervisor backend refuses at daemon startup instead of tryi
 On `stream`, a digest goes to the deck-chat primary through `bin/fm-primary-steer.sh publish --kind away` (override the client with `FM_PRIMARY_STEER_BIN`), keeping the typed operational-input prefix so the primary reads it as internal.
 `fm-primary-steer.sh status` is the busy guard: anything but `idle` defers.
 Submit proof is `fm-primary-steer.sh delivered <seq>` within the usual `FM_INJECT_CONFIRM_RETRIES` x `FM_INJECT_CONFIRM_SLEEP` budget.
-An unacknowledged seq is kept in `state/.subsuper-steer-pending` and re-checked on the next flush instead of being published again, so max-defer and the wedge alarm fire as they do for a pane.
+An unacknowledged seq is kept in `state/.subsuper-steer-pending` as `seq<TAB>digest-hash<TAB>deck-session` and re-checked only against that session; a changed or unreadable session drops the binding and retains the buffer for republication.
+The steer body is capped at 60,000 UTF-8 bytes, retaining complete events and reporting the omitted count; before a truncated digest is published, the full buffer is appended to `state/.subsuper-escalations.overflow`.
+Max-defer and the wedge alarm fire as they do for a pane.
 When the steer client reports no deck-chat primary (exit 3), the digest is typed into the recorded stream endpoint through the stream adapter, with the same composer guard and submit proof as `fm-send.sh`.
-`bin/fm-afk-launch.sh start` runs the daemon for a stream primary as a detached process in its own session (record `process<TAB><pid><TAB><log>` in `state/.afk-daemon-terminal`, output in `state/.afk-daemon.out`); `stop` and `bin/fm-afk-return.sh` end it by that pid.
+`bin/fm-afk-launch.sh start` runs the daemon for a stream primary as a detached process in its own session (record `process<TAB><pid><TAB><process-identity>` in `state/.afk-daemon-terminal`, output in `state/.afk-daemon.out`); identity is captured after readiness, and liveness, close, and absence require it to match `fm_pid_identity` before the recorded pid can be signalled.
 
 ## Away-mode wedge alarm channels (config/wedge-alarm)
 

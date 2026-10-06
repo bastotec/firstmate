@@ -2855,6 +2855,7 @@ make_stream_case() {  # <name> -> echoes dir; state/ with afk on, steer/ for the
   local dir
   dir=$(make_supercase "$1")
   mkdir -p "$dir/steer"
+  printf '{"session":"s1"}\n' > "$dir/state/primary-chat.json"
   afk_enter "$dir/state"
   printf '%s' "$dir"
 }
@@ -2959,6 +2960,86 @@ test_inject_msg_stream_unacked_never_republishes() {
   [ "$(cat "$dir/steer/seq")" = 1 ] || fail "confirming the late acknowledgement republished"
   assert_absent "$dir/state/.subsuper-steer-pending" "confirmed pending record was kept"
   pass "inject_msg (stream): an unacknowledged steer stays pending and is confirmed later without a duplicate"
+}
+
+test_inject_msg_stream_session_replacement_republishes() {
+  local dir state replacement
+  for replacement in changed unreadable; do
+    dir=$(make_stream_case "inject-stream-session-$replacement")
+    state="$dir/state"
+    printf 'never\n' > "$dir/steer/ack"
+    escalate_add "$state" 'needs-decision: pick A'
+    if FAKE_STEER_DIR="$dir/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_HOME="$dir" \
+      FM_SUPERVISOR_BACKEND=stream FM_INJECT_CONFIRM_RETRIES=0 escalate_flush "$state"; then
+      fail "an unacknowledged digest must stay buffered"
+    fi
+    [ "$(cut -f3 "$state/.subsuper-steer-pending")" = s1 ] || fail "pending steer lost its session binding"
+    if [ "$replacement" = changed ]; then
+      printf '{"session":"s2"}\n' > "$state/primary-chat.json"
+    else
+      printf 'not json\n' > "$state/primary-chat.json"
+    fi
+    rm -f "$dir/steer/ack"
+    printf 'busy\n' > "$dir/steer/state"
+    if FAKE_STEER_DIR="$dir/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_HOME="$dir" \
+      FM_SUPERVISOR_BACKEND=stream FM_INJECT_CONFIRM_RETRIES=0 escalate_flush "$state"; then
+      fail "an old session's sequence falsely confirmed a $replacement session"
+    fi
+    assert_absent "$state/.subsuper-steer-pending" "invalid session binding was kept"
+    [ -s "$state/.subsuper-escalations" ] || fail "session replacement lost buffered events"
+    printf '{"session":"s2"}\n' > "$state/primary-chat.json"
+    rm -f "$dir/steer/state"
+    FAKE_STEER_DIR="$dir/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_HOME="$dir" \
+      FM_SUPERVISOR_BACKEND=stream FM_INJECT_CONFIRM_RETRIES=0 escalate_flush "$state" \
+      || fail "replacement session did not receive the digest"
+    [ "$(cat "$dir/steer/seq")" = 2 ] || fail "replacement session was not published to"
+    [ ! -s "$state/.subsuper-escalations" ] || fail "replacement acknowledgement did not clear the buffer"
+    grep -F 'pick A' "$dir/steer/published/2.msg" >/dev/null || fail "replacement publish lost the original event"
+  done
+  pass "inject_msg (stream): a changed or unreadable session cannot acknowledge an earlier session's digest"
+}
+
+test_stream_oversized_digest_is_bounded_and_archived() {
+  local dir state size body
+  dir=$(make_stream_case stream-oversized)
+  state="$dir/state"
+  python3 - "$state/.subsuper-escalations" <<'PY'
+import sys
+from pathlib import Path
+Path(sys.argv[1]).write_text("".join("event-%d: %s\n" % (n, "é" * 20000) for n in range(3)))
+PY
+  cp "$state/.subsuper-escalations" "$dir/expected"
+  mkdir "$state/.subsuper-escalations.overflow"
+  if FAKE_STEER_DIR="$dir/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_HOME="$dir" \
+    FM_SUPERVISOR_BACKEND=stream FM_INJECT_CONFIRM_RETRIES=0 escalate_flush "$state"; then
+    fail "an archive failure must not discard events"
+  fi
+  [ ! -e "$dir/steer/seq" ] || fail "digest published before its full buffer was archived"
+  cmp -s "$dir/expected" "$state/.subsuper-escalations" || fail "archive failure changed the buffer"
+  rmdir "$state/.subsuper-escalations.overflow"
+  printf 'never\n' > "$dir/steer/ack"
+  if FAKE_STEER_DIR="$dir/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_HOME="$dir" \
+    FM_SUPERVISOR_BACKEND=stream FM_INJECT_CONFIRM_RETRIES=0 escalate_flush "$state"; then
+    fail "a bounded digest still requires acknowledgement"
+  fi
+  size=$(wc -c < "$dir/steer/published/1.msg")
+  [ "$size" -le 60000 ] || fail "steer digest exceeded the UTF-8 byte cap ($size)"
+  body=$(cat "$dir/steer/published/1.msg")
+  message_is_injection "$body" || fail "bounded digest lost the operational prefix"
+  assert_contains "$body" 'event-0:' "bounded digest lost its first complete event"
+  assert_not_contains "$body" 'event-1:' "bounded digest retained an event beyond the byte budget"
+  assert_contains "$body" '2 item(s) omitted' "bounded digest reported the wrong omitted count"
+  assert_contains "$body" 'state/.subsuper-escalations.overflow' "bounded digest omitted the evidence path"
+  cmp -s "$dir/expected" "$state/.subsuper-escalations.overflow" || fail "overflow did not retain the full buffer"
+  cmp -s "$dir/expected" "$state/.subsuper-escalations" || fail "unacknowledged bounded digest lost its buffer"
+  rm -f "$dir/steer/ack"
+  FAKE_STEER_DIR="$dir/steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_HOME="$dir" \
+    FM_SUPERVISOR_BACKEND=stream FM_INJECT_CONFIRM_RETRIES=0 escalate_flush "$state" \
+    || fail "bounded digest acknowledgement failed"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "bounded digest did not clear on acknowledgement"
+  [ "$(cat "$dir/steer/seq")" = 1 ] || fail "bounded digest was published again on acknowledgement"
+  cmp -s "$dir/expected" "$state/.subsuper-escalations.overflow" || fail "buffer clearing lost the full overflow evidence"
+  pass "stream flush: oversized UTF-8 digests stay bounded, archive all events, and clear only on acknowledgement"
 }
 
 test_inject_msg_stream_rejected_republishes() {
@@ -3226,6 +3307,8 @@ test_discover_supervisor_stream_signals
 test_inject_msg_stream_publishes_and_confirms
 test_inject_msg_stream_busy_defers
 test_inject_msg_stream_unacked_never_republishes
+test_inject_msg_stream_session_replacement_republishes
+test_stream_oversized_digest_is_bounded_and_archived
 test_inject_msg_stream_rejected_republishes
 test_inject_msg_stream_no_primary_falls_back_to_endpoint
 test_inject_msg_stream_with_real_steer_client
