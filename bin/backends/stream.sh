@@ -836,11 +836,15 @@ fm_backend_stream_local_agent_pid() {  # <label> <status-path>
     {
       if (index($0, "fm-stream-agent") == 0 && index($0, bin) == 0) next
       label_match = 0
-      status_match = 0
       for (i = 2; i < NF; i++) {
         if ($i == "--label" && $(i + 1) == label) label_match = 1
-        if ($i == "--status-path" && $(i + 1) == status_path) status_match = 1
       }
+      # ps flattens argv with spaces, so a home path holding a space spans
+      # several fields; match it against the whole line instead, ending where
+      # the next option (or the line) does, so a path that is only a
+      # space-bounded prefix of the recorded one cannot match.
+      line = $0 " --"
+      status_match = index(line, " --status-path " status_path " --") > 0
       if (label_match && status_match) { print $1; found = 1; exit }
     }
     END { exit found ? 0 : 1 }'

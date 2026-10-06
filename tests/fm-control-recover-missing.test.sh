@@ -729,6 +729,27 @@ test_recover_missing_on_stream_refuses_while_its_agent_still_runs() {
   pass "fm-control recover-missing: stream refuses while the missing endpoint's agent still runs on this machine"
 }
 
+# The ownership probe reads ps's flattened command line, where a home path
+# holding a space spans several fields; it must still find that agent.
+test_stream_agent_probe_finds_an_agent_under_a_spaced_home() {
+  local dir agent_pid found status_path
+  dir="$TMP_ROOT/spaced probe home"
+  status_path="$dir/state/rm35.status"
+  mkdir -p "$dir/state"
+  bash -c 'exec -a fm-stream-agent.py perl -e "sleep 60" serve --label fm-rm35 --status-path "$1" --ready-file x' _ "$status_path" &
+  agent_pid=$!
+  fm_test_track_helper_pid "$agent_pid"
+  probe() {
+    bash -c '. "$1/bin/fm-backend.sh"; fm_backend_source stream && fm_backend_stream_local_agent_pid "$2" "$3"' _ "$ROOT" "$1" "$2"
+  }
+  found=$(probe fm-rm35 "$status_path") || fail "the probe missed an agent whose status path holds a space"
+  assert_equals "$agent_pid" "$found" "the probe should name that agent"
+  ! probe fm-rm35 "$dir/state/rm3.status" >/dev/null || fail "a status path that is only a prefix must not match"
+  ! probe fm-rm35 "$TMP_ROOT/spaced" >/dev/null || fail "a truncated spaced path must not match"
+  kill "$agent_pid" 2>/dev/null || true
+  pass "fm-control recover-missing: the stream agent probe matches a spaced status path exactly"
+}
+
 test_recover_missing_on_stream_ignores_unowned_agents() {
   local dir out rc agent_pid other_pid
   if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
@@ -1385,6 +1406,7 @@ test_recover_missing_records_the_dirty_state_it_found
 test_recover_missing_recreates_the_terminal_and_launches_the_replacement
 test_recover_missing_on_stream_rebinds_a_new_endpoint
 test_recover_missing_on_stream_refuses_while_its_agent_still_runs
+test_stream_agent_probe_finds_an_agent_under_a_spaced_home
 test_recover_missing_on_stream_ignores_unowned_agents
 test_recover_missing_on_stream_reports_rebind_cleanup
 test_recover_missing_accepts_an_explicit_replacement_harness
