@@ -12,6 +12,7 @@ The mate home carries `.fm-secondmate-home` (`mate`) and a local `.fm-secondmate
 The mate's child task `child` is a real tmux pane (`fmlive:fm-child`) recorded in `$M/state/child.meta` with `mode=no-mistakes` and `yolo=off`; the mate itself is a second real pane (`fmlive:fm-mate`).
 Both homes run the real `bin/fm-watch.sh` (`FM_POLL=2`), re-armed after every wake through `bin/fm-wake-drain.sh` acknowledgement, exactly as fleet supervision re-arms a watcher after a handled turn.
 No agent harness and no model runs anywhere in the fixture.
+This run predates the removal of the tmux backend, so the transcript below shows tmux panes as recorded; nothing in the delivery path it proves reads a pane or a backend field, and a rerun with stream endpoints is owed.
 
 The child's only action is the ordinary crewmate status append, typed into its own pane with `tmux send-keys`.
 The mate's only actions are the scripts a firstmate runs when it registers a PR and when it holds a task for the captain and records the answer.

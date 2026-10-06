@@ -24,8 +24,9 @@ Deck secondmate startup, stable lock ownership, and driver-owned turn-end superv
 
 ## Wedge-alarm channels
 
-The Notification Center channel was bounded manually on 2026-07-10 on macOS 26.5.2.
-Automated suites never execute these real notification commands.
+The real `osascript` notification channel was bounded manually on 2026-07-10 on macOS 26.5.2.
+It is the only built-in channel; other platforms use a `command:` directive.
+Automated suites never execute the real notification command.
 
 Argv-safe Notification Center command:
 

@@ -22,67 +22,41 @@ This record owns concurrent isolation evidence for the portable parallel candida
 
 ## Candidate set
 
-This is the measured 2026-08-20 set, not the current portable pool; `bin/fm-test-isolation-proof.sh` owns current membership after the removed worker-adapter tests were retired.
-
-- `tests/fm-arm-pretool-check.test.sh`
-- `tests/fm-backend-herdr.test.sh`
-- `tests/fm-brief.test.sh`
-- `tests/fm-captain-hold-lifecycle.test.sh`
-- `tests/fm-cd-pretool-check.test.sh`
-- `tests/fm-composer-ghost.test.sh`
-- `tests/fm-composer-lib.test.sh`
-- `tests/fm-crew-state.test.sh`
-- `tests/fm-ensure-agents-md.test.sh`
-- `tests/fm-grok-harness.test.sh`
-- `tests/fm-herdr-lab.test.sh`
-- `tests/fm-lint.test.sh`
-- `tests/fm-pi-primary-types.test.sh`
-- `tests/fm-pr-merge.test.sh`
-- `tests/fm-review-diff.test.sh`
-- `tests/fm-send-popup-settle.test.sh`
-- `tests/fm-send-settle.test.sh`
-- `tests/fm-send-strict.test.sh`
-- `tests/fm-spawn-batch.test.sh`
-- `tests/fm-supervision-instructions.test.sh`
-- `tests/fm-test-run.test.sh`
-- `tests/fm-tmux-submit-busy.test.sh`
-- `tests/fm-transition-lib.test.sh`
-- `tests/fm-x-mode.test.sh`
+The 2026-08-20 run measured 24 candidates.
+The current portable pool, `bin/fm-test-isolation-proof.sh --list`, is the 15 of them listed below; the other nine were removed with the tmux and herdr backends, the Pi harness, the hook layer, and the retired worker adapters.
+The full 24-row result stays in [`fm-test-isolation-proof.json`](fm-test-isolation-proof.json).
+The removed scripts ran concurrently beside the current members, so their absence leaves the current set's isolation result standing.
 
 ## Durations
 
+Rows for the current members of the 2026-08-20 run:
+
 | duration_ms | exit | worker | script |
 |---:|---:|---:|---|
-| 45356 | 0 | 2 | `tests/fm-backend-herdr.test.sh` |
 | 35415 | 0 | 24 | `tests/fm-x-mode.test.sh` |
 | 35095 | 0 | 4 | `tests/fm-captain-hold-lifecycle.test.sh` |
-| 27529 | 0 | 1 | `tests/fm-arm-pretool-check.test.sh` |
 | 20922 | 0 | 21 | `tests/fm-test-run.test.sh` |
 | 17558 | 0 | 8 | `tests/fm-crew-state.test.sh` |
-| 16582 | 0 | 5 | `tests/fm-cd-pretool-check.test.sh` |
 | 9766 | 0 | 12 | `tests/fm-lint.test.sh` |
-| 9562 | 0 | 11 | `tests/fm-herdr-lab.test.sh` |
-| 6768 | 0 | 10 | `tests/fm-grok-harness.test.sh` |
 | 6290 | 0 | 14 | `tests/fm-pr-merge.test.sh` |
 | 5569 | 0 | 6 | `tests/fm-composer-ghost.test.sh` |
-| 4563 | 0 | 16 | `tests/fm-send-popup-settle.test.sh` |
-| 4021 | 0 | 22 | `tests/fm-tmux-submit-busy.test.sh` |
 | 3544 | 0 | 7 | `tests/fm-composer-lib.test.sh` |
 | 3025 | 0 | 18 | `tests/fm-send-strict.test.sh` |
 | 2753 | 0 | 17 | `tests/fm-send-settle.test.sh` |
 | 2166 | 0 | 15 | `tests/fm-review-diff.test.sh` |
 | 1315 | 0 | 3 | `tests/fm-brief.test.sh` |
 | 975 | 0 | 19 | `tests/fm-spawn-batch.test.sh` |
-| 598 | 0 | 13 | `tests/fm-pi-primary-types.test.sh` |
 | 513 | 0 | 9 | `tests/fm-ensure-agents-md.test.sh` |
 | 331 | 0 | 20 | `tests/fm-supervision-instructions.test.sh` |
-| 99 | 0 | 23 | `tests/fm-transition-lib.test.sh` |
+
+These are isolated-proof durations on the proof host, not CI packing weights; [fm-test-portable-shards.md](fm-test-portable-shards.md#parallel-lanes) owns those.
 
 ## Family concurrency proofs
 
 `bin/fm-test-isolation-proof.sh --pool <family>` runs the same concurrent proof over a whole `bin/fm-test-run.sh` family, for a stateful family that stays in the portable serial lane but can earn bounded concurrency with its own members.
 An admitted family gets that concurrency in local runs and in its own phase inside each CI serial shard, below its proven worker bound; [fm-test-portable-shards.md](fm-test-portable-shards.md#portable-serial-ci-shards) owns the CI side.
 A family is admitted to `list_concurrent_safe_families` in `bin/fm-test-run.sh` only by a passing proof recorded here.
+Candidate counts below are each family's membership on its proof date; `bin/fm-test-run.sh --list --family <name>` prints the current membership, which has since changed for several families.
 
 ### watcher-wake-lock: admitted
 
@@ -123,11 +97,11 @@ Both `bin/fm-test-run.sh` and the current proof harness therefore order concurre
 | 2 | `FM_ISOLATION_SUMMARY total=32 failed=0 concurrency=4 duration_ms=156462` |
 
 The current runner-change selection is owned by [`bin/fm-test-run.sh`](../bin/fm-test-run.sh)'s changed-file map.
-Before admission, 14 of the family's scripts fell to the serial tail and the 33-script selection measured 327.3s against a 300s budget: the concurrent group was 19 scripts totalling 273.4s while the tail alone was 215.7s, dominated by `fm-calm-pi-extension` (77.5s), `fm-vendor-auth-probe` (51.0s), and `fm-muse-harness` (39.7s).
+Before admission, 14 of the family's scripts fell to the serial tail and the 33-script selection measured 327.3s against a 300s budget: the concurrent group was 19 scripts totalling 273.4s while the tail alone was 215.7s.
 Admitting the family moves that tail into the bounded concurrent group.
 The then-current runner-file selection was verified on 2026-08-28 with the runner and its tests bound to each measured Bash version.
 Because the runner uses `#!/usr/bin/env bash` and invokes each test with `bash` from `PATH`, the stock macOS measurement used `PATH=/bin:$PATH bin/fm-test-run.sh --changed --max-wall-ms 300000` so both resolved to `/bin/bash` 3.2.57.
-Two runs selected all 33 scripts, passed the five-minute result check in 153.5s and 166.8s, and reported the same two failures as `main`: `tests/fm-muse-harness.test.sh` and `tests/fm-composer-lib.test.sh`.
+Two runs selected all 33 scripts, passed the five-minute result check in 153.5s and 166.8s, and reported the same two failures as `main` at the time.
 With Bash 5.3.9 on `PATH`, three runs of `bin/fm-test-run.sh --changed --max-wall-ms 300000` selected the same 33 scripts, completed with 0 failures, and reported 163.8s, 172.0s, and 166.9s.
 All five runs used plain `--changed` with no `--jobs` flag, exercised the production automatic scheduler, and completed under five minutes.
 
@@ -204,10 +178,7 @@ This family is the residual set that used to sit in `unclassified`, and it exist
 `standalone` enumerates its 28 members instead, and `unclassified` stays the always-serial home for anything nobody has classified yet.
 `tests/fm-test-run.test.sh` covers that split behaviorally: two `standalone` members run concurrently while an unmapped basename is refused under `--jobs` and still runs serially.
 
-One script left the residual set rather than joining it.
-The former `tests/fm-claude-stop-autoarm-live-e2e.test.sh` was moved to `live-harness-optin` because a gate-skipping candidate cannot prove concurrency; it has since been removed with the Claude primary integration.
-
-Both runs above selected Pi 0.84.4 with `FM_PI_PACKAGE_DIR` for the since-removed Pi extension tests rather than the proof host's global Pi 0.81.1; that is historical evidence context only.
+A gate-skipping candidate cannot prove concurrency, so live guards belong in `live-harness-optin` rather than in this family.
 
 ## Production runner effect of the 2026-09-03 admissions
 
@@ -223,7 +194,7 @@ Curated `--family`, `--lane`, and `--all` selections remain serial unless the ca
 | total | 60 | 2714.1s | 1000.9s | 2.71x | 1713.2s (28.6 min) |
 
 No test was removed, weakened, or skipped to get there.
-The three families retain the same coverage guarantees; what changed is one crash injection that no longer races, one equivalent condition-based assertion that no longer reads the host's speed, and a family map that no longer files a real-Herdr regression and an opt-in live script where they cannot run.
+The three families retain the same coverage guarantees; what changed is one crash injection that no longer races, one equivalent condition-based assertion that no longer reads the host's speed, and a family map that no longer files an opt-in live script where it cannot run.
 
 ## Scope
 
