@@ -55,6 +55,7 @@ from __future__ import annotations
 import argparse
 import base64
 import concurrent.futures
+import ctypes
 import errno
 import fcntl
 import json
@@ -81,6 +82,9 @@ NATIVE_STEERING_CAPABILITY = "native_steering_receiver"
 STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
                  "failed", "resolved")
 MACHINE_RE = re.compile(r"\A[A-Za-z0-9._-]{1,128}\Z")
+_TCGETSID = ctypes.CDLL(None).tcgetsid
+_TCGETSID.argtypes = [ctypes.c_int]
+_TCGETSID.restype = ctypes.c_int
 
 
 def _now() -> float:
@@ -386,30 +390,20 @@ class Pty:
                 fg = os.tcgetpgrp(self.master_fd)
                 if fg <= 0 or fg == self.pgid or fg in (os.getpgrp(), os.getsid(0)):
                     return None
-                return fg if os.getsid(fg) == self.pgid else None
+                return fg if _TCGETSID(self.master_fd) == self.pgid else None
             except OSError:
                 return None
 
-    def _signal_foreground(self, fg, sig) -> bool:
-        """Signal a foreground job named by _foreground_group, re-checking that
-        it is still in the child's session."""
-        if not fg:
-            return False
-        try:
-            if os.getsid(fg) != self.pgid:
+    def _signal_foreground(self, sig) -> bool:
+        with self._reap_lock:
+            fg = self._foreground_group()
+            if fg is None:
                 return False
-            os.killpg(fg, sig)
-            return True
-        except OSError:
-            return False
-
-    def _foreground_alive(self, fg) -> bool:
-        if not fg:
-            return False
-        try:
-            return os.getsid(fg) == self.pgid
-        except OSError:
-            return False
+            try:
+                os.killpg(fg, sig)
+                return True
+            except OSError:
+                return False
 
     def close(self, signal_name: str = "TERM") -> bool:
         """Signal the process group, wait for the reader, then release the fd.
@@ -423,15 +417,14 @@ class Pty:
         publish one worker's output as another's.
         """
         sig = signal.SIGTERM if signal_name == "TERM" else signal.SIGKILL
-        fg = self._foreground_group()
-        killed = self._signal_group(sig)
-        killed = self._signal_foreground(fg, sig) or killed
+        job_killed = self._signal_foreground(sig)
+        killed = self._signal_group(sig) or job_killed
         if killed:
             deadline = _now() + 3.0
-            while _now() < deadline and (self.alive() or self._foreground_alive(fg)):
+            while _now() < deadline and (self.alive() or self._foreground_group() is not None):
                 time.sleep(0.05)
+            self._signal_foreground(signal.SIGKILL)
             self._signal_group(signal.SIGKILL)
-            self._signal_foreground(fg, signal.SIGKILL)
         self._closed.set()
         with self._reap_lock:
             try:

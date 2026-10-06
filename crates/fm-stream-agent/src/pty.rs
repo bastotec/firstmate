@@ -167,43 +167,38 @@ impl Pty {
     // when it belongs to the child's own session, so it can never be a
     // stranger's.
     fn foreground_group(&self) -> Option<i32> {
-        let mut child = self.child.lock().unwrap();
+        self.foreground_group_locked(&mut self.child.lock().unwrap())
+    }
+    fn foreground_group_locked(&self, child: &mut Child) -> Option<i32> {
         if !matches!(child.try_wait(), Ok(None)) {
             return None;
         }
-        // SAFETY: tcgetpgrp reads the owned master fd; getpgrp/getsid only
-        // inspect process ids, and the child lock keeps our session id unreused.
         unsafe {
             let fg = libc::tcgetpgrp(self.master.as_raw_fd());
             if fg <= 0 || fg == self.pgid || fg == libc::getpgrp() || fg == libc::getsid(0) {
                 return None;
             }
-            (libc::getsid(fg) == self.pgid).then_some(fg)
+            (libc::tcgetsid(self.master.as_raw_fd()) == self.pgid).then_some(fg)
         }
     }
-    // Signal a job named by foreground_group, re-checking it is still in the
-    // child's session.
-    fn signal_foreground(&self, fg: Option<i32>, signal: i32) -> bool {
-        let Some(fg) = fg else { return false };
-        // SAFETY: the group is signalled only while it is still in our session.
-        unsafe { libc::getsid(fg) == self.pgid && libc::killpg(fg, signal) == 0 }
-    }
-    fn foreground_alive(&self, fg: Option<i32>) -> bool {
-        // SAFETY: getsid only inspects a process id.
-        fg.is_some_and(|fg| unsafe { libc::getsid(fg) } == self.pgid)
+    fn signal_foreground(&self, signal: i32) -> bool {
+        let mut child = self.child.lock().unwrap();
+        let Some(fg) = self.foreground_group_locked(&mut child) else {
+            return false;
+        };
+        unsafe { libc::killpg(fg, signal) == 0 }
     }
     pub fn close(&self, kill: bool) -> io::Result<()> {
         let signal = if kill { libc::SIGKILL } else { libc::SIGTERM };
-        let fg = self.foreground_group();
+        let job_signalled = self.signal_foreground(signal);
         let signalled = self.signal(signal)?;
-        let job_signalled = self.signal_foreground(fg, signal);
         if signalled || job_signalled {
             let until = Instant::now() + Duration::from_secs(3);
-            while Instant::now() < until && (self.alive() || self.foreground_alive(fg)) {
+            while Instant::now() < until && (self.alive() || self.foreground_group().is_some()) {
                 std::thread::sleep(Duration::from_millis(20));
             }
+            self.signal_foreground(libc::SIGKILL);
             self.signal(libc::SIGKILL)?;
-            self.signal_foreground(fg, libc::SIGKILL);
         }
         if !self.wait(Duration::from_secs(2)) {
             return Err(io::Error::other("child exit unconfirmed"));
@@ -367,34 +362,63 @@ mod tests {
     }
     #[test]
     fn foreground_job_dies_with_its_endpoint() {
+        assert_foreground_job_dies(
+            b"bash -c 'trap \"\" HUP; echo FG_JOB_''READY; exec sleep 300'\n",
+            "FG_JOB_READY",
+        );
+    }
+    #[test]
+    fn foreground_pipeline_dies_with_its_endpoint() {
+        assert_foreground_job_dies(
+            b"true | bash -c 'trap \"\" HUP; echo FG_JOB_''READY; exec sleep 300'\n",
+            "FG_JOB_READY",
+        );
+    }
+    #[test]
+    fn foreground_job_started_during_close_dies() {
+        assert_foreground_job_dies(
+            b"late_job() { bash -c 'trap \"\" HUP TERM; echo FG_JOB_''READY; exec sleep 300'; }; trap late_job TERM; echo SHELL_''READY\n",
+            "SHELL_READY",
+        );
+    }
+    fn assert_foreground_job_dies(command: &[u8], ready_marker: &str) {
         let pty = Pty::spawn("/", 40, 200, "test", "http://localhost").unwrap();
         // A job that ignores SIGHUP survives its shell's death, which is the
         // orphan a close that signals only the shell's group leaves behind.
         // The marker is split in the typed text so the echo never matches it.
-        (&pty.master)
-            .write_all(b"bash -c 'trap \"\" HUP; echo FG_JOB_''READY; exec sleep 300'\n")
-            .unwrap();
+        (&pty.master).write_all(command).unwrap();
         let until = Instant::now() + Duration::from_secs(20);
         let mut seen = Vec::new();
         let mut buffer = [0u8; 4096];
-        let mut job = None;
-        while Instant::now() < until && job.is_none() {
+        while Instant::now() < until && !String::from_utf8_lossy(&seen).contains(ready_marker) {
             if let Ok(Some(n)) = pty.read(&mut buffer) {
                 seen.extend_from_slice(&buffer[..n]);
             }
-            if String::from_utf8_lossy(&seen).contains("FG_JOB_READY") {
-                job = pty.foreground_group();
-            }
         }
-        let job = job.expect("the typed job never became the terminal's foreground group");
+        assert!(String::from_utf8_lossy(&seen).contains(ready_marker));
+        let job = Mutex::new(None);
+        if ready_marker == "FG_JOB_READY" {
+            *job.lock().unwrap() = Some(unsafe { libc::tcgetpgrp(pty.master.as_raw_fd()) });
+        } else {
+            assert_eq!(unsafe { libc::tcgetpgrp(pty.master.as_raw_fd()) }, pty.pgid);
+        }
         // Keep draining the terminal while it closes, as the agent's reader
         // does: an exiting shell can wait on undrained tty output.
         let done = std::sync::atomic::AtomicBool::new(false);
         let closed = std::thread::scope(|scope| {
             scope.spawn(|| {
                 let mut sink = [0u8; 4096];
+                let mut output = Vec::new();
                 while !done.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _ = pty.read(&mut sink);
+                    if let Ok(Some(n)) = pty.read(&mut sink) {
+                        output.extend_from_slice(&sink[..n]);
+                        if String::from_utf8_lossy(&output).contains("FG_JOB_READY") {
+                            let mut job = job.lock().unwrap();
+                            if job.is_none() {
+                                *job = Some(unsafe { libc::tcgetpgrp(pty.master.as_raw_fd()) });
+                            }
+                        }
+                    }
                 }
             });
             let closed = pty.close(false);
@@ -402,13 +426,18 @@ mod tests {
             closed
         });
         closed.unwrap();
+        let job = job
+            .into_inner()
+            .unwrap()
+            .expect("no foreground job started");
+        assert!(job > 0 && job != pty.pgid);
         let until = Instant::now() + Duration::from_secs(8);
         // SAFETY: kill with signal 0 only probes whether the pid still exists.
-        while Instant::now() < until && unsafe { libc::kill(job, 0) } == 0 {
+        while Instant::now() < until && unsafe { libc::killpg(job, 0) } == 0 {
             std::thread::sleep(Duration::from_millis(50));
         }
         // SAFETY: as above; the cleanup kill only reaches a job this test started.
-        let survived = unsafe { libc::kill(job, 0) } == 0;
+        let survived = unsafe { libc::killpg(job, 0) } == 0;
         if survived {
             unsafe { libc::killpg(job, libc::SIGKILL) };
         }
