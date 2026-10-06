@@ -17,6 +17,7 @@ import os
 import pty
 import secrets
 import select
+import signal
 import struct
 import subprocess
 import sys
@@ -224,6 +225,8 @@ try:
         resize_mode = 200
         resize_received = []
         stream_mode = 200
+        snapshot_requested = threading.Event()
+        snapshot_release = None
 
         def log_message(self, *args):
             pass
@@ -251,6 +254,10 @@ try:
                 self.wfile.flush()
                 time.sleep(5)
             elif self.path.endswith("/snapshot"):
+                release = self.snapshot_release
+                if release is not None:
+                    self.snapshot_requested.set()
+                    release.wait(10)
                 self.reply(200, {"screen": "stub-ready", "stream_offset": 0})
             else:
                 self.reply(200, {"task": {"closed_at": None}})
@@ -277,6 +284,57 @@ try:
     stub = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RefusingHub)
     threading.Thread(target=stub.serve_forever, daemon=True).start()
     try:
+        for mode in [200, "stall"]:
+            RefusingHub.mode = mode
+            RefusingHub.received = []
+            RefusingHub.resize_received = []
+            RefusingHub.snapshot_requested.clear()
+            RefusingHub.snapshot_release = threading.Event()
+            start_attach("http://127.0.0.1:%d" % stub.server_port)
+            if not RefusingHub.snapshot_requested.wait(4):
+                fail("attach did not reach the delayed startup snapshot")
+            saved_mode = termios.tcgetattr(master)
+            if RefusingHub.resize_received != [{"rows": 24, "cols": 80}]:
+                fail("attach did not sample the initial terminal geometry")
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 33, 103, 0, 0))
+            RefusingHub.snapshot_release.set()
+            if not read_until(b"stub-ready"):
+                fail("delayed startup attach did not paint")
+            end = time.monotonic() + 2
+            while len(RefusingHub.resize_received) < 2:
+                if time.monotonic() > end:
+                    fail("resize during startup was lost")
+                time.sleep(0.05)
+            if RefusingHub.resize_received[-1] != {"rows": 33, "cols": 103}:
+                fail("startup resize forwarded stale geometry")
+            if termios.tcgetattr(master)[3] & (termios.ICANON | termios.ECHO | termios.ISIG):
+                fail("attach did not enter raw mode")
+            keys = b"\x03" if mode == 200 else b"x"
+            os.write(master, keys)
+            end = time.monotonic() + 2
+            while not RefusingHub.received:
+                if time.monotonic() > end:
+                    fail("input did not reach the hub before interrupt")
+                time.sleep(0.05)
+            if RefusingHub.received != [{"text": keys.decode()}]:
+                fail("typed Ctrl-C was not forwarded as ordinary input")
+            started = time.monotonic()
+            os.kill(pid, signal.SIGINT)
+            message = b"detached from" if mode == 200 else b"detach drain timed out"
+            if not read_until(message, 4):
+                fail("external SIGINT bypassed cleanup: %r" % seen)
+            _, status = os.waitpid(pid, 0)
+            if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != (0 if mode == 200 else 1):
+                fail("external SIGINT returned the wrong status")
+            if mode == "stall" and time.monotonic() - started > 3:
+                fail("SIGINT drain exceeded its bound")
+            if reset not in seen or seen.index(reset) > seen.index(message):
+                fail("SIGINT did not restore display modes before the final message")
+            if termios.tcgetattr(master) != saved_mode:
+                fail("SIGINT did not restore the saved terminal mode")
+            os.close(master)
+        RefusingHub.snapshot_release = None
+
         for mode, keys, message in [
             (403, b"x", b"input delivery failed: HTTP 403"),
             (504, b"x", b"input delivery failed: HTTP 504"),

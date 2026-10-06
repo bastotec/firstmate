@@ -260,6 +260,16 @@ pub fn run(args: &[String]) -> Result<(), String> {
     if !task["task"]["closed_at"].is_null() {
         return Err(format!("endpoint {} has closed", session.endpoint));
     }
+    let resized = Arc::new(AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    for (signal, flag) in [
+        (signal_hook::consts::SIGWINCH, &resized),
+        (signal_hook::consts::SIGINT, &stop),
+        (signal_hook::consts::SIGTERM, &stop),
+        (signal_hook::consts::SIGHUP, &stop),
+    ] {
+        signal_hook::flag::register(signal, flag.clone()).map_err(|e| e.to_string())?;
+    }
     let mut resize_supported = true;
     if let Some((rows, cols)) = local_size() {
         resize_supported = session.resize(rows, cols)?;
@@ -289,15 +299,6 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
-    let resized = Arc::new(AtomicBool::new(false));
-    let stop = Arc::new(AtomicBool::new(false));
-    for (signal, flag) in [
-        (signal_hook::consts::SIGWINCH, &resized),
-        (signal_hook::consts::SIGTERM, &stop),
-        (signal_hook::consts::SIGHUP, &stop),
-    ] {
-        signal_hook::flag::register(signal, flag.clone()).map_err(|e| e.to_string())?;
-    }
     let raw = RawMode::enter()?;
     paint(&snapshot);
     let session = Arc::new(session);
