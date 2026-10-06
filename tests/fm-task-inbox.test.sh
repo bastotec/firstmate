@@ -484,16 +484,16 @@ setup_watch_case() {  # <name> -> echoes case dir; state in <dir>/state
   dir="$TMP_ROOT/$name"
   mkdir -p "$dir/state"
   make_watch_stubs "$dir" >/dev/null
-  fm_write_meta "$dir/state/t1.meta" "window=sess:fm-t1" "kind=ship" "harness=pi"
+  fm_write_meta "$dir/state/t1.meta" "window=sess:fm-t1" "kind=ship" "harness=deck"
   printf '%s\n' "$dir"
 }
 
 # Record a running turn the way the Pi extension does: arm the task's busy gen,
-# then apply a pi-ext turn-start through the production busy-event writer.
+# then apply a deck-wrapper turn-start through the production busy-event writer.
 mark_turn_busy() {  # <state>
   local gen
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$1" t1) || fail "busy arm failed"
-  "$ROOT/bin/fm-busy-event.sh" apply "$1" t1 busy --gen "$gen" --source pi-ext --event turn-start \
+  "$ROOT/bin/fm-busy-event.sh" apply "$1" t1 busy --gen "$gen" --source deck-wrapper --event turn-start \
     || fail "busy apply failed"
 }
 

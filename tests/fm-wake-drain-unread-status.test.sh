@@ -345,33 +345,26 @@ test_empty_queue_does_not_swallow_later_signal_annotation() {
   pass "an empty-queue backstop presentation still preserves the status for its later signal annotation"
 }
 
-test_routine_working_and_covered_done_stay_silent_on_the_empty_queue() {
-  local dir state out old
+test_routine_working_stays_silent_on_the_empty_queue() {
+  local dir state out
   dir=$(make_case silent-working)
   state="$dir/state"
   out="$dir/drain.out"
   printf 'working: on it\n' > "$state/task7.status"
-  printf 'done: shipped clean\n' > "$state/task8.status"
-  old=$(( $(date +%s) - 20 ))
-  perl -e 'utime($ARGV[0], $ARGV[0], $ARGV[1]) or exit 1' "$old" "$state/task8.status" \
-    || fail "could not age the covered done fixture"
-  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-branch-outcome.sh" append \
-    --task task8 --verdict captain --summary 'shipped clean was handled' >/dev/null \
-    || fail "could not record the newer branch outcome fixture"
 
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed with routine working and covered done lines"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed with a routine working line"
 
   if grep -F 'UNREAD STATUS' "$out" >/dev/null; then
-    fail "routine working/covered done lines printed an UNREAD STATUS section: $(cat "$out")"
+    fail "a routine working line printed an UNREAD STATUS section: $(cat "$out")"
   fi
   if grep -F 'STATUS OUTCOME BACKSTOP' "$out" >/dev/null; then
-    fail "a covered done line printed the outcome backstop: $(cat "$out")"
+    fail "a routine working line printed the outcome backstop: $(cat "$out")"
   fi
   if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
-    fail "routine working/covered done lines printed OPEN DECISIONS: $(cat "$out")"
+    fail "a routine working line printed OPEN DECISIONS: $(cat "$out")"
   fi
-  [ ! -s "$out" ] || fail "the empty-queue covered routine case was not silent: $(cat "$out")"
-  pass "routine working and branch-covered done lines print nothing on an empty-queue drain"
+  [ ! -s "$out" ] || fail "the empty-queue routine case was not silent: $(cat "$out")"
+  pass "a routine working line prints nothing on an empty-queue drain"
 }
 
 test_incident_note_answer_buried_under_routine_note_surfaces_both
@@ -386,4 +379,4 @@ test_weak_identity_still_presents_and_advances
 test_snapshot_failure_is_visible
 test_open_decisions_fold_is_unchanged
 test_empty_queue_does_not_swallow_later_signal_annotation
-test_routine_working_and_covered_done_stay_silent_on_the_empty_queue
+test_routine_working_stays_silent_on_the_empty_queue

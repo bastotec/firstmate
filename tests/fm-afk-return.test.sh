@@ -9,9 +9,8 @@
 # Bearings renders behind the catch-up gate and surfaces the catch-up posture
 # as content, so a returning captain still gets the picture.
 # The brief cases pin the away-posture redesign's return: the brief is composed
-# from the archived posture record, the outcome store, the held set, and the
-# status logs, health first, and the gate shrinks to what the away session could
-# not fix.
+# from the archived posture record, the held set, and the status logs, health
+# first, and the gate shrinks to what the away session could not fix.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -28,10 +27,9 @@ install_runner() {  # <case-dir>
   # fm-timeout-lib.sh: the shared hard bound fm-classify-lib.sh sources for the
   # wedge detector's bounded worktree write probe.
   cp "$ROOT/bin/fm-timeout-lib.sh" "$dir/bin/"
-  # The return brief's durable sources: the posture-record owner, the outcome
-  # store owner, and the backlog reader with its tasks-axi probe.
+  # The return brief's durable sources: the posture-record owner and the
+  # backlog reader with its tasks-axi probe.
   cp "$ROOT/bin/fm-afk-contract.sh" "$dir/bin/"
-  cp "$ROOT/bin/fm-branch-outcome.sh" "$dir/bin/"
   cp "$ROOT/bin/fm-tasks-axi-lib.sh" "$dir/bin/"
   cp "$ROOT/bin/fm-tool-version-lib.sh" "$dir/bin/"
   cp "$ROOT/bin/fm-backlog-transition-lib.sh" "$dir/bin/"
@@ -351,7 +349,7 @@ test_check_retries_recorded_terminal_teardown() {
 
 # --- the return brief -------------------------------------------------------
 # Rendered from durable records only: the archived away-posture record, the
-# outcome store, the held set, and the status logs. Health comes first, then
+# held set, and the status logs. Health comes first, then
 # the mandate, then what waits on the captain, then what could not be fixed;
 # the blocker gate shrinks to what the away session could not fix.
 
@@ -359,12 +357,6 @@ contract_in() {  # <case-dir> <args...>
   local dir=$1
   shift
   FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$dir/bin/fm-afk-contract.sh" "$@"
-}
-
-outcome_in() {  # <case-dir> <args...>
-  local dir=$1
-  shift
-  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$dir/bin/fm-branch-outcome.sh" "$@"
 }
 
 line_of() {  # <haystack> <needle> -> 1-based line number of the first match, or empty
@@ -383,20 +375,13 @@ test_return_brief_composes_from_record_store_and_held_set() {
     --action prerelease --object 'repo no-mistakes' --when 'after clause 1' \
     --action merge --object everything >/dev/null 2>&1 || true
   contract_in "$dir" confirm >/dev/null 2>&1 || fail "could not confirm the away-posture record"
-  # Two live blockers, one on a task with a captain-verdict outcome and one on a
-  # task with a routine outcome. A third task failed outright.
+  # Two live blockers on two tasks. A third task failed outright.
   printf 'window=synthetic:fm-fix-windows\nbackend=tmux\nkind=ship\n' > "$dir/home/state/fix-windows.meta"
   printf 'blocked [key=token]: firstmate can refresh the token\n' > "$dir/home/state/fix-windows.status"
   printf 'window=synthetic:fm-other\nbackend=tmux\nkind=ship\n' > "$dir/home/state/other.meta"
   printf 'blocked [key=dep]: needs the upstream dependency\nneeds-decision [key=pick]: choose the target\n' > "$dir/home/state/other.status"
   printf 'window=synthetic:fm-dead\nbackend=tmux\nkind=scout\n' > "$dir/home/state/dead.meta"
   printf 'failed: the reproduction never compiled\n' > "$dir/home/state/dead.status"
-  outcome_in "$dir" append --task fix-windows --verdict captain \
-    --summary 'blocked on a token only the captain holds; held for return' --wake 'signal: fix-windows.status' >/dev/null \
-    || fail "could not seed the captain outcome row"
-  outcome_in "$dir" append --task other --verdict routine \
-    --summary 'resent the steer; worker resumed' --wake 'stale: synthetic:fm-other' >/dev/null \
-    || fail "could not seed the routine outcome row"
   touch "$dir/home/state/.last-watcher-beat"
   : > "$dir/home/state/.fake-drain"
 
@@ -425,15 +410,12 @@ test_return_brief_composes_from_record_store_and_held_set() {
   assert_contains "$out" 'fix-windows,queued,task' "the held backlog item was not listed under waiting on you"
   assert_contains "$out" 'awaiting the captain on the merge' "the hold reason was not listed"
   assert_contains "$out" 'other [key=pick] needs your decision: choose the target' "the open decision was not listed under waiting on you"
-  assert_contains "$out" 'fix-windows: blocked on a token only the captain holds; held for return' "the captain-verdict outcome was not listed"
-  assert_contains "$out" 'fix-windows [key=token] still blocked, firstmate remediates before ordinary work' "the blocker sharing a task with a captain outcome was exempted"
+  assert_contains "$out" 'fix-windows [key=token] still blocked, firstmate remediates before ordinary work' "the first blocker was not listed as could-not-fix"
   assert_contains "$out" 'other [key=dep] still blocked, firstmate remediates before ordinary work' "the unreached blocker was not listed as could-not-fix"
   assert_contains "$out" 'dead: failed: the reproduction never compiled' "the failed task was not listed"
-  assert_contains "$out" '1 routine outcome(s) recorded' "the routine outcome count was not reported"
-  assert_contains "$out" 'other: resent the steer; worker resumed' "the routine outcome was not listed"
-  assert_contains "$out" 'Cost: 2 supervision outcome(s) recorded (1 routine, 1 captain); 3 task(s) live at return.' "the cost line is wrong"
+  assert_contains "$out" 'Cost: 3 task(s) live at return.' "the cost line is wrong"
   assert_contains "$out" 'firstmate-actionable blocker: other [key=dep]' "the unreached blocker did not gate"
-  assert_contains "$out" 'firstmate-actionable blocker: fix-windows [key=token]' "a captain outcome incorrectly exempted an open blocker"
+  assert_contains "$out" 'firstmate-actionable blocker: fix-windows [key=token]' "the first blocker did not gate"
   grep -F "$(printf 'contract\t')" "$gate" >/dev/null || fail "the gate did not retain the posture-record window"
   grep -F "$(printf 'evidence\thealth\t')" "$gate" >/dev/null || fail "the gate did not retain the health snapshot"
 
@@ -448,7 +430,7 @@ test_return_brief_composes_from_record_store_and_held_set() {
   [ ! -e "$gate" ] || fail "the cleared check left the gate behind"
   FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$dir/bin/fm-afk-return.sh" guard \
     || fail "guard still refused after the record was archived and the gate cleared"
-  pass "the return brief renders health, mandate, waiting, could-not-fix, handled, and cost from durable records, and the gate shrinks to what the away session could not fix"
+  pass "the return brief renders health, mandate, waiting, could-not-fix, and cost from durable records, and the gate shrinks to what the away session could not fix"
 }
 
 test_return_brief_keeps_refresh_history() {
@@ -459,9 +441,6 @@ test_return_brief_keeps_refresh_history() {
     --action merge --object 'task first PR' --when 'checks green' >/dev/null 2>&1 || fail "could not propose the first mandate"
   contract_in "$dir" confirm >/dev/null 2>&1 || fail "could not confirm the first mandate"
   first_epoch=$(contract_in "$dir" field entered_epoch)
-  outcome_in "$dir" append --task first --verdict routine \
-    --summary 'completed before the mandate refresh' --wake 'signal: first.status' >/dev/null \
-    || fail "could not seed the pre-refresh outcome"
   contract_in "$dir" propose --words $'replacement mandate\n\n' \
     --action wake-me --object 'task second' --when 'at 2026-09-08T08:00Z' >/dev/null 2>&1 || fail "could not propose the replacement mandate"
   contract_in "$dir" confirm >/dev/null 2>&1 || fail "could not confirm the replacement mandate"
@@ -471,10 +450,9 @@ test_return_brief_keeps_refresh_history() {
   out=$(run_return "$dir" begin) || fail "refreshed posture return did not clear: $out"
   assert_contains "$out" 'merge task first PR when checks green - superseded at ' "the superseded mandate was omitted"
   assert_contains "$out" 'wake-me task second when at 2026-09-08T08:00Z - recorded' "the final mandate was omitted"
-  assert_contains "$out" 'first: completed before the mandate refresh' "the pre-refresh outcome was omitted"
   assert_contains "$out" $'    replacement mandate\n    \nWaiting on you:' "the return brief dropped a trailing blank line from the final words"
   [ -f "$dir/home/state/afk-contracts/$first_epoch.afk-contract" ] || fail "return did not archive the final session record at the canonical path"
-  pass "a refreshed posture keeps its original window, superseded mandate, and earlier outcomes"
+  pass "a refreshed posture keeps its original window and superseded mandate"
 }
 
 test_malformed_posture_record_keeps_catchup_gated() {
@@ -541,29 +519,6 @@ test_missing_epoch_record_stays_required_after_disappearing() {
   assert_contains "$out" 'catch-up clear' "the restored valid record did not clear catch-up"
   [ ! -e "$gate" ] || fail "the restored valid record left the gate behind"
   pass "an epochless malformed record remains required until restored valid"
-}
-
-test_unreadable_outcome_store_keeps_catchup_gated() {
-  local dir out rc gate
-  dir="$TMP_ROOT/unreadable-outcome-store"
-  install_runner "$dir"
-  gate="$dir/home/state/.afk-return-catchup"
-  printf '{malformed json\n' > "$dir/home/state/branch-outcomes.jsonl"
-  touch "$dir/home/state/.last-watcher-beat"
-  : > "$dir/home/state/.fake-drain"
-  set +e
-  out=$(run_return "$dir" begin)
-  rc=$?
-  set -e
-  [ "$rc" -eq 3 ] || fail "an unreadable outcome store should keep catch-up gated (rc=$rc): $out"
-  [ -f "$gate" ] || fail "an unreadable outcome store did not retain the return gate"
-  assert_contains "$out" 'outcome store unreadable, catch-up stays gated' "the partial brief did not disclose its unreadable store"
-  : > "$dir/home/state/branch-outcomes.jsonl"
-  out=$(run_return "$dir" check) || fail "catch-up did not clear after the outcome store was repaired: $out"
-  assert_contains "$out" 'catch-up clear' "the repaired outcome store did not clear catch-up"
-  assert_not_contains "$out" 'outcome store unreadable' "the repaired store retained stale failure evidence"
-  [ ! -e "$gate" ] || fail "the repaired outcome store left the return gate behind"
-  pass "an unreadable outcome store gates catch-up until a successful reread"
 }
 
 test_failed_held_listing_keeps_catchup_gated() {
@@ -798,7 +753,6 @@ test_return_brief_composes_from_record_store_and_held_set
 test_return_brief_keeps_refresh_history
 test_malformed_posture_record_keeps_catchup_gated
 test_missing_epoch_record_stays_required_after_disappearing
-test_unreadable_outcome_store_keeps_catchup_gated
 test_failed_held_listing_keeps_catchup_gated
 test_unreadable_status_file_keeps_catchup_gated
 test_return_guard_refuses_while_the_record_exists

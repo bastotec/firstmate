@@ -14,8 +14,8 @@
 # FM_FAKE_TMUX_WINDOW, capture-pane echoes FM_FAKE_TMUX_CAPTURE) plus a fake
 # treehouse (durable lease of FM_FAKE_TREEHOUSE_HOME, recording the lease holder
 # to FM_FAKE_TREEHOUSE_LEASE_FILE; `return` removes the target and lease unless
-# FM_FAKE_TREEHOUSE_RETURN_FAIL is set), plus exit-0 `pi` and `deck` stubs so a
-# secondmate launch on either verified harness resolves its executable without
+# FM_FAKE_TREEHOUSE_RETURN_FAIL is set), plus an exit-0 `deck` stub so a
+# secondmate launch on the verified harness resolves its executable without
 # depending on what the host has installed. Echoes the fakebin dir.
 make_fake_tmux() {
   local dir=$1 fakebin capture
@@ -137,7 +137,7 @@ exit 0
 SH
   chmod +x "$fakebin/tmux"
   chmod +x "$fakebin/treehouse"
-  fm_fake_exit0 "$fakebin" pi deck
+  fm_fake_exit0 "$fakebin" deck
   : > "$dir/tmux.log"
   printf '%s\n' "$fakebin"
 }

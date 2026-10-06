@@ -28,8 +28,7 @@ registry = temp / 'registry'
 primary = dict(machine='fixture-host', label='supervisor', fm_home=str(home), task_id=None)
 task = dict(machine='fixture-host', label='fm-sample', fm_home=str(home), task_id='sample')
 env = os.environ.copy()
-for key in ('PI_CODING_AGENT', 'FM_SUPERVISION_ACTOR', 'FM_LEASE_HOLDER_PID', 'FM_STREAM_MACHINE'):
-    env.pop(key, None)
+env.pop('FM_STREAM_MACHINE', None)
 env.update(FM_HOME=str(wrong), FM_STATE_OVERRIDE=str(wrong / 'state'),
            FM_DATA_OVERRIDE=str(wrong / 'data'), FM_CONFIG_OVERRIDE=str(wrong / 'config'))
 
@@ -169,7 +168,7 @@ refused('supervisor', 'ambiguous registry', note)
 write([task])
 for words in ('/quit', '--key Enter'):
     refused('fm-sample', 'harness invocation or send option', dict(kind='resolve-key', key='fixture-key', text=words))
-(home / 'state/sample.meta').write_text('remote_host=fixture-remote\nharness=pi\n')
+(home / 'state/sample.meta').write_text('remote_host=fixture-remote\nharness=deck\n')
 result, records = stream_command('fm-sample', dict(kind='resolve-key', key='fixture-key', text='$5/month is approved'))
 assert not records and 'unconfirmed' in result.stderr, result
 fakebin = temp / 'fakebin'
@@ -187,9 +186,9 @@ exit 0
 tmux.chmod(0o755)
 env['PATH'] = str(fakebin) + os.pathsep + env['PATH']
 words = '$5/month is approved\nKeep the answer unchanged.'
-# A leading `$` is plain text on every harness, so the answer rides the inbox
-# byte-exact whatever the recorded harness is.
-for harness, answer in (('pi', words), ('pi-signed', words), ('deck', words), ('', words)):
+# A leading `$` is plain text, so the answer rides the inbox byte-exact
+# whether or not the record names its harness.
+for harness, answer in (('deck', words), ('', words)):
     (home / 'state/sample.meta').write_text('window=fixture:fm-sample\nkind=ship\nharness=' + harness + '\n')
     (home / 'state/sample.status').write_text('needs-decision [key=fixture-key]: approve the price\n')
     before = set((home / 'state/sample.inbox').glob('*.msg'))
@@ -231,37 +230,7 @@ for contents, override in (('# fixture comment\n\nfixture host/@\nignored-host\n
 env.pop('FM_STREAM_MACHINE', None)
 machine_file.write_text('fixture-host\n')
 write([task])
-(home / 'state/sample.meta').write_text('window=fixture:fm-sample\nkind=ship\nharness=pi\n')
-(home / 'state/sample.status').write_text('needs-decision [key=fixture-key]: approve the price\n')
-lock = home / 'state/.lock'
-lock.write_text(str(os.getpid()) + '\n')
-lease_env = dict(os.environ, FM_HOME=str(home), PI_CODING_AGENT='true',
-                 FM_SUPERVISION_ACTOR='branch', FM_LEASE_HOLDER_PID=str(os.getpid()))
-for key in ('FM_ROOT_OVERRIDE', 'FM_STATE_OVERRIDE', 'FM_DATA_OVERRIDE', 'FM_CONFIG_OVERRIDE'):
-    lease_env.pop(key, None)
-lease_command = [str(root / 'bin/fm-lease.sh')]
-subprocess.run(lease_command + ['claim', 'sample'], env=lease_env, check=True, capture_output=True)
-lease = home / 'state/.lease-sample'
-lease_bytes = lease.read_bytes()
-status_bytes = (home / 'state/sample.status').read_bytes()
-inbox_before = set((home / 'state/sample.inbox').glob('*.msg'))
-for inherited_actor in (None, 'branch'):
-    if inherited_actor is None:
-        env.pop('FM_SUPERVISION_ACTOR', None)
-    else:
-        env['FM_SUPERVISION_ACTOR'] = inherited_actor
-    for payload in (dict(kind='interrupt'), dict(kind='resolve-key', key='fixture-key', text='Approved')):
-        result, records = stream_command('fm-sample', payload)
-        assert not records, result
-        diagnostic = owner_results(result)[0]
-        assert diagnostic['exit_code'] == 6 and 'leased to the branch' in diagnostic['stderr'], diagnostic
-        assert lease.read_bytes() == lease_bytes
-        assert (home / 'state/sample.status').read_bytes() == status_bytes
-        assert set((home / 'state/sample.inbox').glob('*.msg')) == inbox_before
-subprocess.run(lease_command + ['release', 'sample'], env=lease_env, check=True, capture_output=True)
-lock.unlink()
-env.pop('FM_SUPERVISION_ACTOR', None)
-print('nonnull text, authoritative machine identities and independent-host lease preservation passed')
+print('nonnull text and authoritative machine identities passed')
 racebin = temp / 'racebin'
 racebin.mkdir()
 race_router = racebin / 'fm-ui-host-control.py'
@@ -292,7 +261,7 @@ def race_request(task_id, command_id, text):
                 payload=dict(kind='resolve-key', key='race-key', text=text))
 
 
-def seed_race(task_id, harness='pi'):
+def seed_race(task_id, harness='deck'):
     meta = home / ('state/' + task_id + '.meta')
     meta.write_text('window=fixture:fm-' + task_id + '\nkind=ship\nharness=' + harness + '\nspawn_gen=old\n')
     status = home / ('state/' + task_id + '.status')
@@ -377,12 +346,12 @@ fi
 exec /bin/sleep "$@"
 ''')
 sleep_spy.chmod(0o755)
-for old_harness, new_harness in (('pi', 'deck'), ('deck', 'pi')):
-    exact = 'lock-switch-' + new_harness
-    meta, status = seed_race(exact, old_harness)
+for old_gen, new_gen in (('old', 'new'),):
+    exact = 'lock-publish-' + new_gen
+    meta, status = seed_race(exact)
     before = status.read_bytes()
     staged = meta.with_suffix('.replacement')
-    staged.write_text(meta.read_text().replace('harness=' + old_harness, 'harness=' + new_harness))
+    staged.write_text(meta.read_text().replace('spawn_gen=' + old_gen, 'spawn_gen=' + new_gen))
     meta_lock = home / ('state/.meta-' + exact + '.lock')
     holder = subprocess.Popen(['bash', '-c',
                                '. "$1"; fm_lock_acquire_wait "$2"; trap \'fm_lock_release "$2"\' EXIT; '
@@ -430,8 +399,7 @@ import json
 import os
 from pathlib import Path
 import sys
-entry = dict(argv=sys.argv[1:], stdin=sys.stdin.read(), home=os.environ['FM_HOME'],
-             actor=os.environ.get('FM_SUPERVISION_ACTOR'))
+entry = dict(argv=sys.argv[1:], stdin=sys.stdin.read(), home=os.environ['FM_HOME'])
 if '--decision-file' in sys.argv:
     entry['answer'] = Path(sys.argv[sys.argv.index('--decision-file') + 1]).read_text()
 with open(os.environ['FM_TEST_OWNER_LOG'], 'a') as log:
@@ -491,7 +459,7 @@ finally:
         process.communicate()
 invocations = [json.loads(line) for line in spy_log.read_text().splitlines()]
 assert [entry['stdin'] for entry in invocations] == ['', 'exact note\nsecond line', '', '', ''], invocations
-assert all(entry['home'] == str(home) and entry['actor'] == 'main' for entry in invocations), invocations
+assert all(entry['home'] == str(home) for entry in invocations), invocations
 assert invocations[3]['answer'] == 'Exact captain words', invocations
 failure = dict(record='command', command_id='fixture-failure',
                identity=dict(parent_mate_id='fixture-host', leaf_worker_id='fixture-host/fm-sample'),
@@ -626,7 +594,7 @@ for invocation, row in zip(invocations[:2], primary_calls):
     assert invocation['answer'] == 'Exact words for ' + row['label'], invocation
 assert '--release' not in invocations[0]['argv'] and invocations[1]['argv'][-1] == '--release', invocations
 assert invocations[2]['argv'] == ['sample', 'interrupt'], invocations
-assert all(entry['home'] == str(home) and entry['actor'] == 'main' for entry in invocations), invocations
+assert all(entry['home'] == str(home) for entry in invocations), invocations
 discover([dict(task, label='sample')], 'publisher label')
 discover([dict(primary, secret='private-secret')], 'malformed registry')
 (home / 'config/stream-machine').write_text('other-machine\n')

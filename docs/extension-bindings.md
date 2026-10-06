@@ -29,7 +29,7 @@ A captured external result therefore remains unhandled until the existing Firstm
 
 Discovery reads only regular mode-`0600` JSON files in the effective home's mode-`0700` `config/extensions.d/` directory.
 The effective home follows the repository convention of `FM_HOME`, then `FM_ROOT_OVERRIDE`, then the tracked Firstmate root, but no environment value names a package or binding inside that home.
-The current directory, project files, task copies, worker text, Pi packages, and package-manager metadata are never searched.
+The current directory, project files, task copies, worker text, and package-manager metadata are never searched.
 A package cannot bind an adapter name already owned by an installed `bin/fm-procevent-<adapter>.sh` built-in.
 If a later Firstmate release adds the same built-in name, already captured extension evidence retains its immutable package owner and is never reinterpreted by that built-in; the pinned extension registration remains explicit until owner-matched retirement.
 
@@ -216,7 +216,7 @@ The process-event durability boundary remains owned by [`configuration.md`](conf
 ## Runtime independence
 
 The host runs in the Firstmate home that owns the source, never in a task worker or its session container.
-Claude, Codex, OpenCode, Pi, pi-signed, Grok, and Cursor therefore expose no package-loading surface for this capability.
+Deck therefore exposes no package-loading surface for this capability.
 The result reaches every supported primary through the existing bounded `check` wake path, including the unknown-protocol fallback used where no specialized primary continuation exists.
 The tmux, Herdr, and stream session providers are not consulted because a process-event source has no task endpoint.
 Remote and local secondmate homes bind and install independently, and the primary never executes a missing remote-home package locally. `remote-bind` carries one canonical `firstmate.extension-package-transfer.v1` JSON envelope over the existing bounded `fm-on` stdin/stdout job. Its hashed manifest pins the extension id, version, complete package-tree digest, entry count, total bytes, and byte-sorted entries. Entries are limited to normalized relative directories at mode 0755 and single regular files at mode 0644 or 0755, each with an exact size and SHA-256 payload digest. The receiver accepts at most 128 entries, 256 KiB per file, 512 KiB of package bytes, and 900,000 serialized bytes; it rejects malformed or truncated JSON, duplicate keys or paths, collisions, absolute or traversing names, links and special files, noncanonical modes, hash or size mismatches, and duplicate transfer identities.

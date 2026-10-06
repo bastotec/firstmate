@@ -2,9 +2,9 @@
 
 Deck (`bastotec/deck`) is a Rust coding agent with headless `run` and interactive `chat` surfaces.
 Firstmate runs workers through its own pane driver, `../../../../../bin/fm-deck-worker.sh`, whose header owns the driver's behavior.
-Deck supports crewmates, scouts, persistent secondmates, and the opt-in primary launch choices in [`managed primary setup`](../../../../../docs/managed-primary.md).
-The stable `run` driver uses `--secondmate` for secondmates and `--primary` for the `fm-primary.py` managed entry point; [`bin/fm-deck-chat.sh`](../../../../../bin/fm-deck-chat.sh) owns the separate chat host.
-`../../../../../docs/verification/deck.md` owns the worker and secondmate live evidence; [runtime verification](../../../../../docs/verification/runtime-backends.md#managed-primary-ownership-and-execution-bound-steering) owns managed-primary fixture evidence.
+Deck supports crewmates, scouts, persistent secondmates, and the primary.
+The stable `run` driver uses `--secondmate` for secondmates; [`bin/fm-deck-chat.sh`](../../../../../bin/fm-deck-chat.sh) owns the primary chat host.
+`../../../../../docs/verification/deck.md` owns the worker and secondmate live evidence.
 
 ## Pane-driver operating facts
 
@@ -42,8 +42,7 @@ A missing key fails the first turn with Deck's own error in the pane; a quota re
 
 ## Primary integration
 
-Persistent secondmates, opt-in managed Deck primaries and Deck chat primaries use `../../../../../docs/supervision-protocols/deck.md`.
-[`docs/managed-primary.md`](../../../../../docs/managed-primary.md) owns both primary launch choices and their supported boundaries; the managed owner cannot adopt an unregistered process.
+Persistent secondmates and Deck chat primaries use `../../../../../docs/supervision-protocols/deck.md`.
 A Deck secondmate uses the same persistent driver and durable inbox wake path on every backend that hosts secondmates; [runtime configuration](../../../../../docs/configuration.md#runtime-backend-configbackend--fm_backend) and [remote placement](../../../../../docs/remote-secondmates.md) own the supported backend choices.
 The driver header owns startup, lock lifetime, watcher wake turns, and the supervisor-specific completion postcondition.
 The `run` driver refuses daemon-owned away/quiet mode (`state/.afk`) rather than competing with a daemon; clear that posture through the owning supervisor before relaunch.

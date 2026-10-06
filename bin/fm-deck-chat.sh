@@ -28,7 +28,7 @@
 #   - it writes state/primary-chat.json (bin/fm_primary_chat.py owns the layout)
 #     and marks it stopped on exit.
 # The primary's own tool calls run under deck, under this host, so
-# fm_session_lock_owned_by_self holds for them exactly as for a Pi primary.
+# fm_session_lock_owned_by_self holds for them.
 #
 # USAGE
 #   fm-deck-chat.sh [--home H] [--model ROUTE] [--session ID]
@@ -158,9 +158,6 @@ if [ "${FM_DECK_CHAT_HOST:-}" != "$$" ]; then
   FM_DECK_CHAT_HOST=$$ exec -a fm-deck-chat bash "$SCRIPT_DIR/fm-deck-chat.sh" "${again[@]}"
 fi
 unset FM_DECK_CHAT_HOST
-# Harness identity markers inherited from a launching session would misdetect
-# this primary's harness (bin/fm-harness.sh); deck sets none of its own.
-unset CLAUDECODE PI_CODING_AGENT GROK_AGENT FM_PI_HARNESS
 cd "$FM_HOME" || exit 2
 DECK=${FM_DECK_BIN:-$(command -v deck 2>/dev/null || true)}
 [ -n "$DECK" ] && [ -x "$DECK" ] || die 'deck is not installed (set FM_DECK_BIN)' 2

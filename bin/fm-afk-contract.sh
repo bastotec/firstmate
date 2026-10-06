@@ -173,8 +173,8 @@ fm_afk_contract_lock_path() {  # [state-dir]
 }
 
 # Lazily reach the lock primitive. bin/fm-wake-lib.sh is a canonical lint root
-# in its own right, so keep this an analysis boundary for the same reason
-# bin/fm-lease-lib.sh's fm_lease_lock_helpers does.
+# in its own right, so keep this an analysis boundary: sourcing it eagerly
+# would pull its whole lint surface into every caller of this library.
 fm_afk_contract_lock_helpers() {
   command -v fm_lock_acquire_wait_bounded >/dev/null 2>&1 && return 0
   # shellcheck source=/dev/null

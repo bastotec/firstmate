@@ -374,7 +374,7 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
     printf 'report with trailing blank lines\n\n\n' > "$source/data/report/report.md"
     printf 'pending note\n' > "$source/state/inbox/note.md"
     printf 'needs-decision [key=old]: preserved historical event\n' > "$source/state/old.status"
-    printf 'pi\n' > "$source/config/crew-harness"
+    printf 'deck\n' > "$source/config/crew-harness"
     printf 'secret-value-never-transfer\n' > "$source/config/cmux-socket-password"
     printf 'secret-value-never-transfer\n' > "$source/.env"
     mkdir "$source/data/credentials"
@@ -404,7 +404,7 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   # A harness-named argv[0] is what both platforms can see - macOS reports it as
   # the command name and procps exposes it as argv[0] - and it needs no binary
   # copy, which macOS refuses to execute once its signature no longer matches.
-  bash -c 'exec -a pi sleep 600' &
+  bash -c 'exec -a fm-deck-chat sleep 600' &
   harness_pid=$!
   printf '%s\n' "$harness_pid" > "$TMP_ROOT/source-move-work/state/.lock"
   if migrate move-work > "$TMP_ROOT/migrate.out" 2>&1; then fail 'migration accepted a live session'; fi
@@ -640,7 +640,7 @@ SH
   migration_source guard-work
   lock_session() {
     FM_HOME="$TMP_ROOT/source-guard-work" FM_STATE_OVERRIDE="$TMP_ROOT/source-guard-work/state" \
-      bash -c 'exec -a pi bash "$0"' "$ROOT/bin/fm-lock.sh"
+      bash -c 'exec -a fm-deck-chat bash "$0"' "$ROOT/bin/fm-lock.sh"
   }
   printf 'x=1\n' > "$TMP_ROOT/source-guard-work/config/x-mode.env"
   if migrate guard-work > "$TMP_ROOT/migrate.out" 2>&1; then fail 'migration accepted an unclassifiable config file'; fi
@@ -1096,7 +1096,7 @@ pass "mixed local and remote routes validate without migration"
 
 # Launch on the remote home's own configured backend. Parent metadata records
 # host placement separately from that backend and arms the reply source.
-printf 'pi\n' > "$PARENT/config/crew-harness"
+printf 'deck\n' > "$PARENT/config/crew-harness"
 printf 'deck codex/gpt-6-luna\n' > "$PARENT/config/secondmate-harness"
 launches_before_inherit=0
 [ ! -f "$HERDR_LOG" ] || launches_before_inherit=$(grep -c '^tab create' "$HERDR_LOG" || true)
@@ -1429,7 +1429,7 @@ pass "marked send and routed reply complete through the existing parent correlat
 rm -f "$PARENT/state/.wake-queue"
 
 printf '{"revision":2}\n' > "$PARENT/config/crew-dispatch.json"
-printf 'pi-signed\n' > "$PARENT/config/crew-harness"
+printf 'default\n' > "$PARENT/config/crew-harness"
 set +e
 FM_FAKE_SSH_MODE=inherit-partial remote_env "$ROOT/bin/fm-config-push.sh" \
   > "$TMP_ROOT/config-partial.out" 2>&1
@@ -1437,14 +1437,14 @@ config_partial_rc=$?
 set -e
 [ "$config_partial_rc" -ne 0 ] || fail "partial remote inheritance claimed complete convergence"
 assert_grep '"revision":2' "$REMOTE_HOME/config/crew-dispatch.json" "partial inheritance did not apply its first file"
-[ "$(cat "$REMOTE_HOME/config/crew-harness")" != pi-signed ] \
+[ "$(cat "$REMOTE_HOME/config/crew-harness")" != default ] \
   || fail "partial inheritance unexpectedly applied the failed file"
 NUDGE_MARKER="$PARENT/state/.secondmate-nudge-pending/ios.pending"
 assert_grep 'remote=1' "$NUDGE_MARKER" "partial inheritance left no durable remote reread marker"
 publish_healthy_watcher_identity "$PARENT/state" "$PARENT" "$REMOTE_ROOT/bin/fm-watch.sh"
 remote_env "$ROOT/bin/fm-bootstrap.sh" > "$TMP_ROOT/config-partial-retry.out" \
   || fail "bootstrap did not converge partial remote inheritance"
-[ "$(cat "$REMOTE_HOME/config/crew-harness")" = pi-signed ] \
+[ "$(cat "$REMOTE_HOME/config/crew-harness")" = default ] \
   || fail "bootstrap did not apply the remaining inherited file"
 assert_absent "$NUDGE_MARKER" "bootstrap cleared no remote reread marker after convergence"
 PARTIAL_CONFIG_CORR=$(newest_remote_inbox_corr)
@@ -1496,7 +1496,7 @@ wait "$config_second" || fail "bootstrap inheritance transaction failed after wa
   || fail "later bootstrap convergence was overwritten by stale inherited bytes"
 pass "config push and bootstrap serialize remote inheritance convergence"
 
-printf 'pi\n' > "$PARENT/config/crew-harness"
+printf 'deck\n' > "$PARENT/config/crew-harness"
 # A failed reread nudge now means the durable remote inbox RECORD could not be
 # written (a swallowed doorbell alone no longer fails a recorded steer), so
 # the failure is induced by making the remote steering inbox unwritable.

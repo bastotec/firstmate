@@ -333,13 +333,10 @@ cmd_launch() {
   validate_id "$id"
   validate_home "$id"
   case "$harness" in
-    pi|pi-signed|deck) ;;
+    deck) ;;
     *) die "unverified remote secondmate harness: $harness" ;;
   esac
-  case "$effort" in -|low|medium|high|xhigh|max|ultra) ;; *) die "invalid remote secondmate effort: $effort" ;; esac
-  if [ "$effort" = ultra ]; then
-    "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$harness" "$model" "$effort" || return 1
-  fi
+  case "$effort" in -|low|medium|high|xhigh|max) ;; *) die "invalid remote secondmate effort: $effort" ;; esac
   # Both backends outlive the SSH connection that launches them: Herdr's server
   # belongs to the GUI login session, and a stream agent is started in its own
   # session (setsid) and publishes to the hub, which needs a host whose login
@@ -428,14 +425,11 @@ cmd_relaunch() {
   validate_id "$id"
   validate_home "$id"
   case "$harness" in
-    pi|pi-signed|deck) ;;
+    deck) ;;
     *) die "unverified remote secondmate harness: $harness" ;;
   esac
-  case "$effort" in -|default|low|medium|high|xhigh|max|ultra) ;; *) die "invalid remote secondmate effort: $effort" ;; esac
+  case "$effort" in -|default|low|medium|high|xhigh|max) ;; *) die "invalid remote secondmate effort: $effort" ;; esac
   case "$model" in *[[:space:]]*) die "invalid remote secondmate model: $model" ;; esac
-  if [ "$effort" = ultra ]; then
-    "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$harness" "$model" "$effort" || return 1
-  fi
   reconcile_route_state_mode "$CONTROL_STATE"
   remote_endpoint_require "$id"
   [ "$model" != - ] || model=default

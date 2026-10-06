@@ -414,8 +414,6 @@ fm_send_resolve_target() {  # <raw-target>
   return 1
 }
 
-# shellcheck source=bin/fm-lease-lib.sh
-. "$SCRIPT_DIR/fm-lease-lib.sh"
 DECISION_ANSWER=0
 DECISION_META_LOCK=
 if [ "${1:-}" = --decision-answer ]; then
@@ -424,7 +422,6 @@ if [ "${1:-}" = --decision-answer ]; then
 fi
 fm_send_release_locks() {
   [ -z "$DECISION_META_LOCK" ] || fm_lock_release "$DECISION_META_LOCK"
-  fm_lease_guard_release
 }
 RAW_TARGET=${1:-}
 # A `deck chat` primary (bin/fm-deck-chat.sh) is not a task: the target
@@ -445,7 +442,6 @@ if [ "$DECISION_ANSWER" = 1 ]; then
       exit 1
       ;;
   esac
-  fm_lease_guard "$RAW_TARGET" "decision answer (fm-send)"
   trap fm_send_release_locks EXIT
   DECISION_META_LOCK=$(fm_meta_lock_path "$STATE/$RAW_TARGET.meta") || exit 1
   if ! fm_task_inbox_lock_acquire "$DECISION_META_LOCK"; then
@@ -458,18 +454,6 @@ T=$RESOLVED_TARGET
 DELIVERY_TASK_ID=
 [ -z "$TARGET_META" ] || DELIVERY_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
 shift
-
-# Supervision lease guard: a steer is overlap territory between the two Pi
-# supervision actors, so refuse while the OTHER actor holds this task's live
-# lease. A home with no supervision branch has no lease files and passes
-# untouched (contract: bin/fm-lease-lib.sh).
-if [ "$DECISION_ANSWER" != 1 ] && [ -n "$TARGET_META" ]; then
-  LEASE_GUARD_TASK=$(fm_send_id_from_meta "$TARGET_META")
-  if [ -n "$LEASE_GUARD_TASK" ]; then
-    fm_lease_guard "$LEASE_GUARD_TASK" "steer (fm-send)"
-    trap fm_send_release_locks EXIT
-  fi
-fi
 
 # Collect --resolve-key flags (answerer-closes; see the header contract). They
 # must precede --key or the message text; everything after the last flag is the

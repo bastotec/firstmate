@@ -124,22 +124,6 @@ EOF
   pass "operational input: quoted, ASCII-only, arbitrary-U+2063, altered-legacy, and label-only near misses stay genuine"
 }
 
-test_cross_language_adapter_uses_the_owner() {
-  local encoded parsed
-  encoded=$(HELPER="$ROOT/.pi/extensions/lib/fm-operational-input.ts" \
-    node --input-type=module <<'JS'
-import { pathToFileURL } from "node:url";
-const { encodeFirstmateOperationalInput } = await import(pathToFileURL(process.env.HELPER).href);
-process.stdout.write(encodeFirstmateOperationalInput("watcher", "CROSS_LANGUAGE_BODY"));
-JS
-  ) || fail "Pi cross-language adapter could not invoke the canonical owner"
-  fm_operational_input_kind "$encoded" parsed \
-    || fail "Pi cross-language adapter returned an invalid current envelope"
-  [ "$parsed" = watcher ] \
-    || fail "Pi cross-language adapter changed watcher to $parsed"
-  pass "operational input: the Pi adapter constructs through the canonical owner"
-}
-
 test_invalid_current_encodings_are_rejected() {
   local output
   output=$(printf 'body' | "$OWNER" encode legacy-operational 2>/dev/null) \
@@ -156,5 +140,4 @@ test_current_from_firstmate_carrier
 test_landed_untyped_prefix_is_explicitly_legacy
 test_isolated_legacy_matrix
 test_genuine_near_misses_remain_unclassified
-test_cross_language_adapter_uses_the_owner
 test_invalid_current_encodings_are_rejected

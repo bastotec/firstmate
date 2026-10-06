@@ -256,7 +256,7 @@ make_remote_ledger_fleet() {  # <parent-home> <count>
     printf -- '- %s - ledger fixture (host: host-%s; root: /remote/root; home: %s; scope: fixture; projects: sample; added 2026-09-01)\n' \
       "$id" "$i" "$remote_home" >> "$parent/data/secondmates.md"
     fm_write_meta "$parent/state/$id.meta" \
-      "kind=secondmate" "mode=secondmate" "harness=pi" \
+      "kind=secondmate" "mode=secondmate" "harness=deck" \
       "remote_host=host-$i" "remote_root=/remote/root" "home=$remote_home"
     write_remote_home_summary "$remote_home" 1000
     i=$((i + 1))
@@ -1205,7 +1205,7 @@ test_undated_hold_phrasing_and_aging_projection() {
   printf -- '- aging-mate - hold aging fixture (home: %s; scope: captain holds; projects: firstmate; added 2026-07-11)\n' \
     "$mate" > "$home/data/secondmates.md"
   fm_write_meta "$home/state/aging-mate.meta" \
-    "kind=secondmate" "mode=secondmate" "harness=pi" "home=$mate" "projects=firstmate"
+    "kind=secondmate" "mode=secondmate" "harness=deck" "home=$mate" "projects=firstmate"
   cat > "$mate/data/backlog.md" <<'EOF'
 ## In flight
 

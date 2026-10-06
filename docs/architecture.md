@@ -75,7 +75,7 @@ A status-declared external wait or an attended verified captain-held transfer tr
 Crew status files are append-only wake-event logs, not current-state fields.
 Because of that, a per-wake read of only the latest line can bury an earlier still-open `needs-decision`/`blocked` under later unrelated appends; `fm-wake-drain.sh` prints a separate, fleet-wide OPEN DECISIONS section on every presentation (including the empty-queue path session-start relies on), built through `fm-classify-lib.sh`'s cursor-backed incremental scan using the authoritative `status_open_decisions` fold semantics so the buried decision keeps surfacing until it is explicitly resolved while each presentation folds only new status-log appends.
 The drain coordinates that fold and its annotations through a locked fleet-wide snapshot whose `.status-presentation-cursor` manifest records each status file's identity plus independent annotation and outcome-backstop byte offsets.
-[`pi-supervision-branch.md`](pi-supervision-branch.md#lost-wake-outcome-backstop) owns the bounded lost-wake backstop that uses the latter offset.
+The latter offset drives the bounded STATUS OUTCOME BACKSTOP, which re-presents a task's newest captain-facing status event that no drain ever presented; `bin/fm-wake-drain.sh` owns it.
 A queued signal annotation prints every status line still unread at that cursor, while the fleet-wide UNREAD STATUS section prints `note:` lines and reserved-key pending-reply resolutions once even on an empty-queue drain because those verbs never enter the OPEN DECISIONS fold.
 A third bounded section, RECORD DIVERGENCE, prints on the same drains for the opposite failure: the status fold went quiet on a key that the durable captain-held task still shows as open, so the status side reads as complete while the two records contradict each other; `bin/fm-captain-hold.sh diverged` decides what counts and closes nothing, and `docs/captain-hold-lifecycle.md` owns the mechanism.
 A failed read, output, or concurrent-replacement check prevents the snapshot cursor from advancing across uncertain bytes, and teardown retires a task's manifest row before that task ID can be reused.
@@ -102,11 +102,6 @@ The fleet snapshot and Bearings paths use the concurrent remote-ledger collectio
 `bin/fm-fleet-view.sh` renders that snapshot as Markdown for humans, while `bin/fm-bearings-snapshot.sh` provides the bounded bearings projection, so both views consume one structured contract instead of reparsing raw fleet files.
 The script header owns the exact JSON schema.
 
-On a Pi primary, supervision is default-on: the watcher extension can hand eligible task-local rows from an ordinary actionable wake, plus selected fleet-wide heartbeat reviews, to a persistent in-process supervision conversation while main-only rows remain on the captain-facing path.
-The branch handles those rows, stores the outcome durably, and merges it back into main.
-A captain-facing outcome persists as one exact, sequence-keyed visible transcript entry and then opens one sequence-keyed processing turn on main, which only main's sequence-bound acknowledgement closes.
-[docs/pi-supervision-branch.md](pi-supervision-branch.md) owns row eligibility, dispatch architecture, deterministic outcome delivery, and processing re-presentation, while the generated [Pi supervision protocol](supervision-protocols/pi.md) owns MAIN's merged-event handling and acknowledgement duty; every other harness keeps the wake-to-main path unchanged.
-
 ### Registered secondmate current state
 
 A registered secondmate's validated home is the authority for bearings current state because it owns the child metadata inventory, each child's current-state result, endpoint observations, backlog holds and dependencies, keyed unresolved decisions, and recent Done baseline.
@@ -121,31 +116,24 @@ Live GitHub enrichment exists only behind the bearings `--include-prs` opt-in.
 Optional Relay integrates with the watcher only after explicit opt-in; [configuration.md](configuration.md#relay-env) owns its generated-artifact and dispatch mechanics.
 
 At session start, `bin/fm-session-start.sh` emits exactly one primary-harness supervision block rendered by `bin/fm-supervision-instructions.sh` from `docs/supervision-protocols/`.
-That block owns the live wait shape for the running primary harness: Pi and pi-signed use the same two tracked primary extensions.
-[Deck's home-driver protocol](supervision-protocols/deck.md) covers persistent secondmates and the opt-in primary path owned by [managed primary setup](managed-primary.md).
+That block owns the live wait shape for the running primary harness: [Deck's home-driver protocol](supervision-protocols/deck.md) covers persistent secondmates and the [Deck chat host](../bin/fm-deck-chat.sh) primary.
 `bin/fm-watch-arm.sh` remains the verified arm wrapper for protocols that call it; it forks the watcher as a tracked child, verifies it is genuinely alive with a fresh liveness beacon, and prints an honest `started`, `attached`, or nonzero `FAILED` status.
 [`watcher-continuity.md`](watcher-continuity.md#arm-layer-cycle-contract) owns the arm layer's successor, terminal-delivery, re-arm recovery, and typed clean-close failure contract.
 The arm layer records one bounded lifecycle row per observed cycle in `state/.watch-cycle-exits.log`; `state/.watch-triage.log` remains exclusively the absorbed-wake debug log.
-Pi verifies session-lock ownership and launches one singleton successor from its child-close handlers before delivering an actionable wake prompt, with bounded exponential retry for failed restoration.
-The existing turn-end guard remains the final backstop for the Pi protocol, which pi-signed shares.
-Deck `run` home hosts use the persistent driver's equivalent postcondition instead; the separate chat host's supervision boundary is described in [`turnend-guard.md`](turnend-guard.md).
+Deck `run` home hosts check the persistent driver's postcondition before each turn completes; the chat host's supervisor child owns the watcher for the primary, as its [header](../bin/fm-deck-chat.sh) describes.
 Its `--restart` mode signals only the watcher recorded in the current home's `state/.watch.lock`, so restarting one home cannot kill sibling secondmate watchers.
 A pull-based guard (`bin/fm-guard.sh`) warns through supervision tool output if the primary checkout is tangled or if work, process-event sources, registered custom checks, or Relay polling has an unhealthy model-aware supervision verdict; on main it also warns when queued wakes are waiting for main itself to drain.
 The drain script calls that guard after presenting the queue; records remain durable until the exact generation-bound acknowledgement printed by the drain succeeds after handling, and main may keep the queued-wakes warning visible until then.
-The Pi supervision branch's deliberate queued-wake warning exception is owned by [`pi-supervision-branch.md`](pi-supervision-branch.md#components-and-their-owners), while [`watcher-continuity.md`](watcher-continuity.md#per-actor-acknowledgement) owns the guard's per-actor counting, the advisory main gets for rows a live branch grant holds, and main's retirement of queue rows no actor could ever present or acknowledge.
 It leads with a prominent bordered tangle banner, while `bin/fm-guard.sh` owns the watcher-down banner and reminder policy so repeated guarded commands stay noisy without reprinting the full banner in the same episode.
-On Pi, the tracked turn-end extension gives the primary session a push-based backstop: when work, a process-event source, a registered custom check, or Relay polling needs supervision and no supervision owner provably holds this home with a fresh beacon, it forces one bounded follow-up.
-The guard covers the main primary and genuinely marked secondmate homes, exempts child crewmate/scout worktrees, is loop-safe, and is documented in [turnend-guard.md](turnend-guard.md).
 
 Away mode is a posture of the one supervision session, recorded in `state/.afk-contract` by `bin/fm-afk-contract.sh` after the captain confirms a read-back of their away words and mandate clauses, and announced at entry as hold-for-return only because no phone channel exists.
 The record owner's header is the single owner of the record schema and clause fields, and by the captain's mandate no static parser reads the clause text: the object and precondition are recorded verbatim, structural presence and the verb list are checked, and the coarse best-effort never-set flag can miss spellings including joined compounds such as `oneTimeCode`.
 That scan flags a clause without refusing it and is not authoritative; never-set, forbidden-action, and precondition judgment belongs to the supervision session at execution time in phase 4.
 Forbidden, destructive, irreversible, and security-sensitive actions are never pre-authorizable regardless of clause text, and no recorded clause is authority by itself.
-The record's presence is the posture on every harness, `bin/fm-afk-launch.sh` owns entry and exit, and `bin/fm-afk-return.sh` archives the record and renders the return brief (supervisor health first, then the recorded clauses, what waits on the captain, what could not be fixed, what was handled, and cost) from the outcome store, the held set, and the status logs.
+The record's presence is the posture on every harness, `bin/fm-afk-launch.sh` owns entry and exit, and `bin/fm-afk-return.sh` archives the record and renders the return brief (supervisor health first, then the recorded clauses, what waits on the captain, what could not be fixed, what was handled, and cost) from the held set and the status logs.
 While the record exists neither supervisor rechecks an item held for the captain, and a status-declared external wait names when it clears with `until` for a condition-aware recheck in both postures that occurs at the declared time or the hours-long `FM_PAUSE_RESURFACE_SECS` bound, whichever comes first.
 This release records clauses and does not execute them.
-On Pi and pi-signed the away daemon is no longer launched: the ordinary supervision session continues under the record.
-A presence-gated sub-supervisor (`bin/fm-supervise-daemon.sh`) still extends this for walk-away supervision on the other harnesses: the `/afk` skill starts it through the tracked foreground helper `bin/fm-afk-start.sh` once the record exists, after which the watcher reverts to daemon-managed one-shot mode and the daemon self-handles routine wakes in bash.
+A presence-gated sub-supervisor (`bin/fm-supervise-daemon.sh`) still extends this for walk-away supervision: the `/afk` skill starts it through the tracked foreground helper `bin/fm-afk-start.sh` once the record exists, after which the watcher reverts to daemon-managed one-shot mode and the daemon self-handles routine wakes in bash.
 The watcher and daemon share `bin/fm-classify-lib.sh` for captain-relevant status verbs, declared-wait vocabulary (a `paused:` external wait and a verified `captain-held` transfer alike, through one combined predicate), and status-scan primitives.
 Terminal verbs remain captain-relevant, while a nonterminal progress verb cannot become terminal merely because its prose contains a legacy free-text token such as `merged`; bare legacy free-text lines remain compatible.
 Both supervisors classify the status bytes appended since they last classified that log, never its last line alone, and report every actionable event through the captured endpoint before committing that position.
@@ -167,7 +155,7 @@ For typed-input delivery, the daemon injects only into an affirmatively `empty` 
 The current operator boundary is in [Composer and injection safety](herdr-backend.md#composer-and-injection-safety).
 Stalled escalation delivery writes `state/.subsuper-inject-wedged` and attempts a configured backend-independent active alert after `FM_MAX_DEFER_SECS` instead of silently deferring forever.
 On an unmarked return, `bin/fm-afk-return.sh` owns ordered shutdown, the record archive, durable catch-up evidence, the return brief, and the fail-closed gate that keeps ordinary work behind every live firstmate-actionable blocker the away session could not fix.
-For task steers, `fm-send.sh`'s header owns durable-inbox and typed-plane routing; the separate [Deck chat primary input path](managed-primary.md#deck-chat-primary) uses the primary steering inbox instead.
+For task steers, `fm-send.sh`'s header owns durable-inbox and typed-plane routing; the [Deck chat host](../bin/fm-deck-chat.sh) primary uses the primary steering inbox instead.
 A task inbox's doorbell line is a shell no-op and is never typed into an endpoint classified as dead or missing; that record surfaces once for recovery instead of walking the re-ring ladder (`bin/fm-task-inbox-lib.sh` header).
 Its local-only typed plane - harness-native invocations and explicit backend targets - selects a pre-Enter popup-settle for slash commands, then adds its own `FM_SEND_SETTLE` pause after successful typed sends so immediate peeks catch the receiving turn starting; the sub-supervisor uses only the shared submit core and does not pay that post-submit pause.
 
@@ -181,7 +169,7 @@ Text for a worker to read and commands that drive a worker's process are separat
 `bin/fm-busy-lib.sh` is the single owner of what "this worker is busy" means, and `bin/fm-busy-event.sh` is the only writer of the per-task records it reads.
 Every classification returns a verdict of busy, idle, unknown, or dead together with the source that produced it, so a consumer or a diagnostic can never confuse semantic state with a fallback.
 
-Each worker adapter reports its own turn lifecycle through a machine-readable semantic contract rather than through rendered footer text: Pi and pi-signed through the Firstmate-owned extension's `agent_start` and `agent_settled` confirmed by `ctx.isIdle()`, and Deck through its Firstmate-owned worker wrapper.
+Each worker adapter reports its own turn lifecycle through a machine-readable semantic contract rather than through rendered footer text: Deck through its Firstmate-owned worker wrapper.
 Any other recorded harness has no trusted record source; the classification precedence, including Herdr's native-busy fallback when no record exists, is owned by `bin/fm-busy-lib.sh`.
 
 Missing, malformed, stale, untrusted, or unverified semantic state is unknown, never idle, and unknown is never promoted to busy either.
@@ -321,7 +309,7 @@ An attended `--allow-red <check-name>` may appear once, waives only GitHub check
 Because away merge authority is read from that record and then acted on by the forge, the authority read and synchronous forge command share the record's cross-subsystem lock, closing the common live-owner TOCTOU.
 A lock that cannot be taken refuses the merge.
 While the record exists, GitHub auto-merge and any base whose rules cannot prove the absence of a merge queue are refused before submission, and GitLab auto-merge flags or scheduled state are refused while an immediate merge is forced with a final `--auto-merge=false`; a branch-rules read that fails only because the repository's plan does not expose branch rules at all (GitHub's plan-upgrade 403) proves the absence of a merge queue on its own and does not refuse, while every other failure to read that state still does.
-This is deliberately confused-agent-grade, as `bin/fm-lease-lib.sh` defines that grade, rather than fully atomic.
+This is deliberately confused-agent-grade rather than fully atomic: it stops an accidental merge, not a determined bypass.
 A GitHub queue-rule or PR-base change after the queue-free preflight can still enqueue a merge that lands after its away grant lapses, and killing the lock-owning shell while its forge child survives lets stale-owner recovery admit archive or replacement before that child completes.
 These are accepted limitations, not oversights; durable authority, landing re-verification, and child-lock handoff are outside this boundary.
 `bin/fm-afk-contract.sh` owns the lock contract, while `tests/fm-afk-contract.test.sh` and `tests/fm-pr-merge.test.sh` pin the serialization and fail-closed merge behavior.
@@ -438,4 +426,4 @@ Use `/stow` before an intentional reset when the conversation may hold durable k
 ## Development notes
 
 The current watcher reliability work combines always-on bash triage with a durable queue for actionable wakes, generation-bound post-handling acknowledgement, deterministic re-arm recovery after watcher downtime, a race-proof singleton lock, duplicate self-eviction, drain-time liveness assertion, and a self-verifying tracked-child arm wrapper.
-The away posture is the record `bin/fm-afk-contract.sh` owns; on the harnesses other than Pi the presence-gated sub-supervisor (`bin/fm-supervise-daemon.sh`) still provides walk-away delivery via the `/afk` skill while reusing the same shared wake classifier as the always-on watcher.
+The away posture is the record `bin/fm-afk-contract.sh` owns; the presence-gated sub-supervisor (`bin/fm-supervise-daemon.sh`) still provides walk-away delivery via the `/afk` skill while reusing the same shared wake classifier as the always-on watcher.

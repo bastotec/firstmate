@@ -7,7 +7,7 @@
 # backend dispatch, while bin/fm-composer-lib.sh owns the shared verdict.
 #
 # Composer shapes and verdicts are owned by bin/fm-composer-lib.sh.
-# This file owns only tmux's styled capture, cursor and Pi identity primitives,
+# This file owns only tmux's styled capture and cursor primitives,
 # delivery busy read, and submit conversions that consume the shared verdict.
 # Styled captures remain internal; fm-peek and every human-facing capture stay
 # plain.
@@ -37,14 +37,11 @@
 # bin/fm-composer-lib.sh (fm_composer_classify_screen), sourced below and
 # reused by every backend adapter so the decision cannot drift. This file
 # keeps only tmux's genuine capture-side primitives - the styled pane
-# capture, the #{cursor_y} cursor read, the pi foreground-process identity
-# probe, and the capability descriptor - plus the busy detection and submit
+# capture, the #{cursor_y} cursor read, and the capability descriptor - plus the busy detection and submit
 # cores that consume the shared verdict.
 
 # shellcheck source=bin/fm-composer-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-composer-lib.sh"
-# shellcheck source=bin/fm-cursor-lib.sh
-. "$(dirname -- "${BASH_SOURCE[0]}")/fm-cursor-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-busy-lib.sh"
 
@@ -60,9 +57,9 @@ fm_tmux_strip_ghost() { fm_composer_strip_ghost; }
 
 # --- tmux composer capture and capability primitives ------------------------
 #
-# These four functions are the ONLY tmux-specific composer knowledge left:
-# how to capture a styled screen, how to read the cursor row, how to probe a
-# live pi agent, and the static capability facts. Every shape, glyph, border
+# These functions are the ONLY tmux-specific composer knowledge left: how to
+# capture a styled screen, how to read the cursor row, and the static
+# capability facts. Every shape, glyph, border
 # family, and verdict decision lives in the shared owner
 # (bin/fm-composer-lib.sh, fm_composer_classify_screen), so a new harness
 # shape is taught there once and never here.
@@ -83,112 +80,20 @@ fm_tmux_composer_cursor_row() {  # <target>
 # fm_tmux_composer_caps: the tmux capability descriptor - static data, not
 # logic (see the capability model in bin/fm-composer-lib.sh).
 fm_tmux_composer_caps() {
-  printf 'styled=1\ncursor=1\nidentity=1\nrows=0\n'
-}
-
-# fm_tmux_composer_identity: the tmux agent-identity probe backing the
-# separated (pi) composer shape, tmux's analogue of herdr's native
-# `agent get`. It answers only for pi, from two live signals:
-#   - identity: the pane tty's FOREGROUND process group (pgid = tpgid, the
-#     same scoping as fm_backend_tmux_foreground_comms) contains a pi-family
-#     process (pi, pi-signed, pi-launcher - docs/verification/
-#     runtime-backends.md "Agent liveness name sources"), falling back to
-#     tmux's own foreground-derived #{pane_current_command}. A pane whose
-#     agent died to a shell has no pi foreground process and gets NO identity,
-#     which is exactly what keeps the strict blank-row rule honest: a blank
-#     row between two stale rules stays unknown.
-#   - status: pi's verified busy footer via fm_pane_is_busy, mapped onto the
-#     idle/working vocabulary herdr's probe reports natively.
-# Prints "pi<TAB>idle" or "pi<TAB>working"; exits 1 when the pane is not a
-# live pi.
-fm_tmux_composer_identity() {  # <target>
-  local target=$1 tty pgid tpgid comm found=0 status
-  tty=$(tmux display-message -p -t "$target" '#{pane_tty}' 2>/dev/null) || tty=
-  case "$tty" in
-    /dev/*)
-      while read -r _ pgid tpgid comm; do
-        [ -n "$comm" ] || continue
-        [ "$pgid" = "$tpgid" ] || continue
-        case "${comm##*/}" in
-          pi|pi-signed|pi-launcher|Pi) found=1 ;;
-        esac
-      done <<EOF
-$(LC_ALL=C ps -t "${tty#/dev/}" -o pid=,pgid=,tpgid=,comm= 2>/dev/null)
-EOF
-      ;;
-  esac
-  if [ "$found" -ne 1 ]; then
-    comm=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null) || comm=
-    case "${comm##*/}" in
-      pi|pi-signed|pi-launcher) found=1 ;;
-    esac
-  fi
-  [ "$found" -eq 1 ] || return 1
-  status=$(fm_pane_busy_state "$target" pi)
-  case "$status" in
-    busy) printf 'pi\tworking' ;;
-    idle) printf 'pi\tidle' ;;
-    *) return 1 ;;
-  esac
+  printf 'styled=1\ncursor=1\nidentity=0\nrows=0\n'
 }
 
 # fm_tmux_composer_state: the tmux composer verdict - a thin adapter over the
 # shared screen classifier. The verdict contract (empty | pending |
 # pending-unproven | unknown, positive proof required for empty, unrecognized
-# future verdicts failing safe) is owned by bin/fm-composer-lib.sh. Identity
-# is fetched lazily, only when the classifier reports the verdict depends on
-# it (a pi separator pair under the cursor), so the common read never pays
-# for the process probe.
+# future verdicts failing safe) is owned by bin/fm-composer-lib.sh.
 fm_tmux_composer_state() {  # <target> -> empty|pending|pending-unproven|unknown
-  local target=$1 cy pane verdict identity
+  local target=$1 cy pane verdict
   cy=$(fm_tmux_composer_cursor_row "$target") || { printf 'unknown'; return 0; }
   case "$cy" in ''|*[!0-9]*) printf 'unknown'; return 0 ;; esac
   pane=$(fm_tmux_composer_capture "$target") || { printf 'unknown'; return 0; }
   verdict=$(fm_composer_classify_screen "$(fm_tmux_composer_caps)" "$pane" "$cy")
-  if [ "$verdict" = need-identity ]; then
-    if ! identity=$(fm_tmux_composer_identity "$target") || [ -z "$identity" ]; then
-      identity=probe-absent
-    fi
-    verdict=$(fm_composer_classify_screen "$(fm_tmux_composer_caps)" "$pane" "$cy" "$identity")
-    [ "$verdict" != need-identity ] || verdict=unknown
-  fi
-  # Cursor Agent CLI parks its terminal cursor OUTSIDE its composer, below the
-  # footer, with #{cursor_flag} 0 - so on a Cursor pane tmux's cursor row is not
-  # a composer locator and the cursor-anchored read can only ever answer
-  # `unknown`. Reclassify that pane the way every cursorless backend already
-  # classifies it, letting the bottom-most shape win, which is the same rule
-  # herdr and stream use for every harness including this one.
-  # Gated on Cursor's own structural process identity, never on the verdict
-  # alone, so the strict blank-row posture that owns `unknown` for every other
-  # harness is untouched.
-  if [ "$verdict" = unknown ] && fm_tmux_pane_is_cursor "$target"; then
-    verdict=$(fm_composer_classify_screen "$(fm_tmux_composer_caps)" "$pane" '')
-  fi
   printf '%s' "$verdict"
-}
-
-# fm_tmux_pane_is_cursor: true when the pane's FOREGROUND process group contains
-# a genuine Cursor Agent CLI process. Cursor runs as a bundled node script, so
-# tmux's own #{pane_current_command} reports a bare `node`; identity therefore
-# comes from Cursor's name or install tree in the command path or argv[0], whose
-# single owner is bin/fm-cursor-lib.sh. The foreground scoping (pgid = tpgid)
-# matches fm_tmux_composer_identity, so a pane whose agent exited to a shell has
-# no Cursor foreground process and gets no reclassification.
-fm_tmux_pane_is_cursor() {  # <target>
-  local target=$1 tty pid pgid tpgid comm args argv0
-  tty=$(tmux display-message -p -t "$target" '#{pane_tty}' 2>/dev/null) || return 1
-  case "$tty" in /dev/*) ;; *) return 1 ;; esac
-  while read -r pid pgid tpgid comm; do
-    [ -n "$comm" ] || continue
-    [ "$pgid" = "$tpgid" ] || continue
-    args=$(LC_ALL=C ps -p "$pid" -o args= 2>/dev/null) || args=
-    args=${args#"${args%%[![:space:]]*}"}
-    argv0=${args%%[[:space:]]*}
-    fm_cursor_process_matches "$comm" '' "$argv0" && return 0
-  done <<EOF
-$(LC_ALL=C ps -t "${tty#/dev/}" -o pid=,pgid=,tpgid=,comm= 2>/dev/null)
-EOF
-  return 1
 }
 
 # fm_tmux_pane_input_mode: read the target pane's tty LINE DISCIPLINE, which is
@@ -296,8 +201,8 @@ fm_pane_is_busy() {  # <target> [harness]
 # a genuine swallow. Pending-unproven receives the same Enter retry budget but
 # never reaches this exception.
 # Turn-started confirmation (the strict blank-row posture's counterpart): a
-# harness whose mid-turn screen the classifier cannot positively identify (pi
-# replaces its separated composer while working) reads `unknown` right after a
+# harness whose mid-turn screen the classifier cannot positively identify reads
+# `unknown` right after a
 # successful submit. When and only when the pane was IDLE before the text was
 # typed, an idle-to-busy transition across our Enter is proof the harness
 # accepted the submission - the same semantic signal herdr's native

@@ -50,14 +50,6 @@ set -u
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-config-inherit-lib.sh"
 
-# The harness-detection cases below fake `ps` so process ancestry is fully
-# controlled, but bin/fm-harness.sh also reads verified ENV markers. A suite run
-# from inside one of those harnesses inherits its marker, and it wins over
-# everything these cases set up wherever ancestry is silent. Drop the ambient
-# markers so what this suite asserts does not depend on which harness it was
-# launched from; every case states the marker it means to test.
-unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_INVOKED_AS
-
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 fm_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(fm_test_tmproot fm-secondmate-harness)
@@ -65,22 +57,20 @@ export FM_BACKEND=tmux
 
 # Every spawn below pins a throwaway HOME so nothing a launch writes under the
 # user's home can reach the developer's real one.
-# Dropping the ambient markers is only half the isolation: a structural ancestor
-# outranks a marker, so a case that PINS detect_own with PI_CODING_AGENT=true also has to
-# blind the ancestry walk, or the harness this suite was launched from answers
-# instead of the pin. BLIND_BIN goes AFTER a case's own fakebin in PATH, so a
-# fixture that deliberately supplies its own ps or a harness-named ancestor keeps
-# it (tests/fm-harness-precedence.test.sh owns the precedence boundary itself).
+# BLIND_BIN blinds the ancestry walk so the Deck session this suite may be
+# launched from never answers for a case. It goes AFTER a case's own fakebin in
+# PATH, so a fixture that deliberately supplies its own ps keeps it
+# (tests/fm-harness-precedence.test.sh owns detection itself).
 BLIND_BIN=$(fm_fakebin "$TMP_ROOT/blind-ancestry")
 fm_fake_blind_ancestry "$BLIND_BIN"
 
 # ===========================================================================
-# A) fm-harness.sh secondmate resolution + fallback (deterministic detect_own)
+# A) fm-harness.sh secondmate resolution + fallback
 # ===========================================================================
-# detect_own is pinned to pi via PI_CODING_AGENT=true over a blinded ancestry walk so
-# the "fall through to own" cases are reproducible on any host harness. Each row sets crew-harness / secondmate-harness in a
-# fresh config dir (a literal '-' means leave the file absent) and asserts BOTH
-# the secondmate resolution AND that crew resolution is unchanged (backward-compat).
+# Each row sets crew-harness / secondmate-harness in a fresh config dir (a
+# literal '-' means leave the file absent) and asserts BOTH the secondmate
+# resolution AND the crew resolution. Deck is the only supported harness, so an
+# absent or default file resolves to deck and any other harness is refused.
 #   <label>^<crew-harness>^<secondmate-harness>^<expect-secondmate>^<expect-crew>
 test_harness_resolution() {
   local label crew sm exp_sm exp_crew case_dir cfg got_sm got_crew n
@@ -93,52 +83,31 @@ test_harness_resolution() {
     mkdir -p "$cfg"
     [ "$crew" = "-" ] || printf '%s\n' "$crew" > "$cfg/crew-harness"
     [ "$sm" = "-" ] || printf '%s\n' "$sm" > "$cfg/secondmate-harness"
-    got_sm=$(PATH="$BLIND_BIN:$BASE_PATH" PI_CODING_AGENT=true FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate)
-    got_crew=$(PATH="$BLIND_BIN:$BASE_PATH" PI_CODING_AGENT=true FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" crew)
+    got_sm=$(PATH="$BLIND_BIN:$BASE_PATH" FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate 2>/dev/null) || got_sm=REFUSED
+    got_crew=$(PATH="$BLIND_BIN:$BASE_PATH" FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" crew 2>/dev/null) || got_crew=REFUSED
     [ "$got_sm" = "$exp_sm" ] || fail "$label: secondmate resolved '$got_sm', expected '$exp_sm'"
     [ "$got_crew" = "$exp_crew" ] || fail "$label: crew resolved '$got_crew', expected '$exp_crew'"
   done <<'ROWS'
-both absent -> own (backward-compat)^-^-^pi^pi
-crew set, secondmate absent -> crew (backward-compat)^deck^-^deck^deck
-crew set, secondmate set -> secondmate wins, crew untouched^pi^deck^deck^pi
-crew absent, secondmate set -> secondmate value, crew own^-^deck^deck^pi
-signed Pi wrapper remains a distinct secondmate value^deck^pi-signed^pi-signed^deck
+both absent -> deck^-^-^deck^deck
+crew set, secondmate absent -> crew^deck^-^deck^deck
+crew set, secondmate set -> secondmate wins^deck^deck^deck^deck
+crew absent, secondmate set -> secondmate value, crew deck^-^deck^deck^deck
 secondmate=default defers to crew^deck^default^deck^deck
-crew=default resolves to own, secondmate follows^default^-^pi^pi
-secondmate=default with crew absent -> own^-^default^pi^pi
+crew=default resolves to deck, secondmate follows^default^-^deck^deck
+secondmate=default with crew absent -> deck^-^default^deck^deck
+removed secondmate harness is refused, crew unaffected^-^pi^REFUSED^deck
+removed crew harness is refused and secondmate inherits the refusal^pi-signed^-^REFUSED^REFUSED
 ROWS
-  pass "A1 fm-harness.sh secondmate resolves the fallback chain; crew mode unchanged"
-}
-
-test_cursor_marker_detection() {
-  local dir fakebin got
-  dir="$TMP_ROOT/cursor-marker"
-  fakebin=$(fm_fakebin "$dir")
-  cat > "$fakebin/ps" <<'SH'
-#!/usr/bin/env bash
-case "$*" in
-  *'ppid='*) printf '%s\n' 1 ;;
-  *) printf '%s\n' bash ;;
-esac
-SH
-  chmod +x "$fakebin/ps"
-  got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT \
-    PATH="$fakebin:$BASE_PATH" CURSOR_INVOKED_AS=cursor-agent "$ROOT/bin/fm-harness.sh")
-  [ "$got" = cursor ] || fail "Cursor's exact launcher marker resolved '$got', expected cursor"
-  got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT \
-    PATH="$fakebin:$BASE_PATH" CURSOR_INVOKED_AS=cursor "$ROOT/bin/fm-harness.sh")
-  [ "$got" != cursor ] || fail "an inexact Cursor marker value was accepted as Cursor Agent CLI"
-  pass "fm-harness detects only Cursor Agent CLI's exact invocation marker"
+  pass "A1 fm-harness.sh secondmate resolves the fallback chain to deck and refuses removed harnesses"
 }
 
 # ===========================================================================
 # C) fm-harness.sh secondmate-model / secondmate-effort token resolution
 # ===========================================================================
 # config/secondmate-harness holds "<harness> [<model>] [<effort>]" on one line.
-# A bare harness (today's format) must yield empty model/effort - the
-# backward-compat requirement. The file-line field uses \n for an embedded
-# newline (expanded via printf '%b') so a row can express a multi-line file; the
-# literal token ABSENT skips creating the file entirely.
+# A bare harness must yield empty model/effort. The file-line field uses \n for
+# an embedded newline (expanded via printf '%b') so a row can express a
+# multi-line file; the literal token ABSENT skips creating the file entirely.
 #   <label>^<file-line-or-ABSENT>^<expect-harness>^<expect-model>^<expect-effort>
 test_secondmate_model_effort_tokens() {
   local label line exp_harness exp_model exp_effort case_dir cfg got_h got_m got_e n
@@ -150,88 +119,22 @@ test_secondmate_model_effort_tokens() {
     cfg="$case_dir/config"
     mkdir -p "$cfg"
     [ "$line" = ABSENT ] || printf '%b\n' "$line" > "$cfg/secondmate-harness"
-    got_h=$(PATH="$BLIND_BIN:$BASE_PATH" PI_CODING_AGENT=true FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate)
-    got_m=$(PATH="$BLIND_BIN:$BASE_PATH" PI_CODING_AGENT=true FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate-model)
-    got_e=$(PATH="$BLIND_BIN:$BASE_PATH" PI_CODING_AGENT=true FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate-effort)
+    got_h=$(PATH="$BLIND_BIN:$BASE_PATH" FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate)
+    got_m=$(PATH="$BLIND_BIN:$BASE_PATH" FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate-model)
+    got_e=$(PATH="$BLIND_BIN:$BASE_PATH" FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate-effort)
     [ "$got_h" = "$exp_harness" ] || fail "$label: harness resolved '$got_h', expected '$exp_harness'"
     [ "$got_m" = "$exp_model" ] || fail "$label: model resolved '$got_m', expected '$exp_model'"
     [ "$got_e" = "$exp_effort" ] || fail "$label: effort resolved '$got_e', expected '$exp_effort'"
   done <<'ROWS'
-absent file -> own harness, empty model/effort^ABSENT^pi^^
-bare harness only -> empty model/effort (backward-compat)^deck^deck^^
-harness + model -> model only^deck anthropic/opus^deck^anthropic/opus^
-harness + model + effort -> both^pi anthropic/opus high^pi^anthropic/opus^high
-signed Pi wrapper + model + effort preserves every token^pi-signed openai-codex/gpt-5.6-sol max^pi-signed^openai-codex/gpt-5.6-sol^max
-default harness token -> falls back to crew, empty model/effort^default^pi^^
-extra whitespace between tokens is tolerated^pi   openai/gpt-5    xhigh^pi^openai/gpt-5^xhigh
-leading/trailing blank lines and a comment are skipped^# a comment\n\npi anthropic/opus low\n^pi^anthropic/opus^low
+absent file -> deck, empty model/effort^ABSENT^deck^^
+bare harness only -> empty model/effort^deck^deck^^
+harness + model -> model only^deck zai/glm-5.3-flash^deck^zai/glm-5.3-flash^
+harness + model + effort -> both^deck anthropic/opus high^deck^anthropic/opus^high
+default harness token -> falls back to crew, empty model/effort^default^deck^^
+extra whitespace between tokens is tolerated^deck   openai/gpt-5    xhigh^deck^openai/gpt-5^xhigh
+leading/trailing blank lines and a comment are skipped^# a comment\n\ndeck anthropic/opus low\n^deck^anthropic/opus^low
 ROWS
-  pass "C1 fm-harness.sh secondmate-model/secondmate-effort resolve the optional tokens; bare harness stays empty (backward-compat)"
-}
-
-# ===========================================================================
-# A/C) pi-signed process identity and shared Pi marker behavior
-# ===========================================================================
-test_pi_signed_detection_and_session_lock_identity() {
-  local dir fakebin got
-  dir="$TMP_ROOT/pi-signed-identity"
-  fakebin=$(fm_fakebin "$dir")
-  cat > "$fakebin/ps" <<'SH'
-#!/usr/bin/env bash
-set -u
-field= pid=
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) field=$2; shift 2 ;;
-    -p) pid=$2; shift 2 ;;
-    *) shift ;;
-  esac
-done
-case "$pid:$field:${FM_TEST_SIGNED_SHAPE:-exact}" in
-  100:comm=:*) printf '%s\n' '/test/Pi.app/bin/pi' ;;
-  100:args=:*) printf '%s\n' 'Pi' ;;
-  100:ppid=:*) printf '%s\n' 200 ;;
-  200:comm=:exact) printf '%s\n' '/opt/test/bin/pi-signed' ;;
-  200:args=:exact) printf '%s\n' 'pi-signed --model test/model' ;;
-  200:comm=:helper) printf '%s\n' '/opt/test/bin/pi-signed-helper' ;;
-  200:args=:helper) printf '%s\n' 'pi-signed-helper' ;;
-  200:comm=:plain) printf '%s\n' '/bin/zsh' ;;
-  200:args=:plain) printf '%s\n' 'zsh' ;;
-  200:ppid=:*) printf '%s\n' 1 ;;
-  *:comm=:*) printf '%s\n' bash ;;
-  *:args=:*) printf '%s\n' bash ;;
-  *:ppid=:*) printf '%s\n' 100 ;;
-esac
-SH
-  chmod +x "$fakebin/ps"
-
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true "$ROOT/bin/fm-harness.sh")
-  [ "$got" = pi ] || fail "unmarked shared signed-wrapper ancestry resolved '$got', expected pi"
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed "$ROOT/bin/fm-harness.sh")
-  [ "$got" = pi-signed ] || fail "selected signed wrapper resolved '$got', expected pi-signed"
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi "$ROOT/bin/fm-harness.sh")
-  [ "$got" = pi ] || fail "selected plain Pi resolved '$got', expected pi"
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed-helper "$ROOT/bin/fm-harness.sh")
-  [ "$got" = pi ] || fail "inexact signed selection marker resolved '$got', expected pi"
-  got=$(env -u CLAUDECODE -u GROK_AGENT -u PI_CODING_AGENT PATH="$fakebin:$BASE_PATH" FM_PI_HARNESS=pi-signed "$ROOT/bin/fm-harness.sh")
-  [ "$got" = pi ] || fail "signed selection marker without Pi's family marker resolved '$got', expected pi"
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_TEST_SIGNED_SHAPE=plain "$ROOT/bin/fm-harness.sh")
-  [ "$got" = pi ] || fail "plain Pi marker resolved '$got', expected pi"
-  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_TEST_SIGNED_SHAPE=helper "$ROOT/bin/fm-harness.sh")
-  [ "$got" = pi ] || fail "unrelated pi-signed-helper ancestry resolved '$got', expected pi"
-
-  got=$(PATH="$fakebin:$BASE_PATH" bash -c \
-    '. "$0/bin/fm-session-lock-lib.sh"; fm_harness_ancestry_pid' "$ROOT")
-  [ "$got" = 100 ] || fail "session-lock ancestry selected '$got', expected the inner Pi engine pid 100"
-  PATH="$fakebin:$BASE_PATH" bash -c \
-    '. "$0/bin/fm-session-lock-lib.sh"; kill() { return 0; }; fm_harness_pid_alive 200' "$ROOT" \
-    || fail "session-lock liveness rejected exact pi-signed holder"
-  if PATH="$fakebin:$BASE_PATH" FM_TEST_SIGNED_SHAPE=helper bash -c \
-    '. "$0/bin/fm-session-lock-lib.sh"; kill() { return 0; }; fm_harness_pid_alive 200' "$ROOT"; then
-    fail "session-lock liveness accepted unrelated pi-signed-helper"
-  fi
-
-  pass "pi-signed identity: authoritative launch selection distinguishes shared wrapper ancestry"
+  pass "C1 fm-harness.sh secondmate-model/secondmate-effort resolve the optional tokens; bare harness stays empty"
 }
 
 test_dash_leading_process_names_are_basename_operands() {
@@ -250,11 +153,11 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$pid:$field" in
-  4242:comm=) printf '%s\n' '/opt/test/bin/pi' ;;
-  4242:args=) printf '%s\n' 'pi' ;;
+  4242:comm=) printf '%s\n' '/opt/test/bin/fm-deck-chat' ;;
+  4242:args=) printf '%s\n' 'fm-deck-chat' ;;
   4242:ppid=) printf '%s\n' 1 ;;
-  5252:comm=) printf '%s\n' '-pi' ;;
-  5252:args=) printf '%s\n' '-pi' ;;
+  5252:comm=) printf '%s\n' '-fm-deck-chat' ;;
+  5252:args=) printf '%s\n' '-fm-deck-chat' ;;
   5252:ppid=) printf '%s\n' 1 ;;
   *:comm=) printf '%s\n' '-zsh' ;;
   *:args=) printf '%s\n' '-zsh' ;;
@@ -264,9 +167,8 @@ SH
   chmod +x "$fakebin/ps"
 
   err="$dir/fm-harness.err"
-  got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS \
-    PATH="$fakebin:$BASE_PATH" "$ROOT/bin/fm-harness.sh" 2>"$err")
-  [ "$got" = pi ] || fail "dash-leading shell ancestry resolved '$got', expected pi"
+  got=$(PATH="$fakebin:$BASE_PATH" "$ROOT/bin/fm-harness.sh" 2>"$err")
+  [ "$got" = deck ] || fail "dash-leading shell ancestry resolved '$got', expected deck"
   [ ! -s "$err" ] || fail "fm-harness wrote basename option noise for literal -zsh: $(cat "$err")"
 
   err="$dir/fm-session-lock-ancestry.err"
@@ -279,8 +181,8 @@ SH
   PATH="$fakebin:$BASE_PATH" bash -c \
     '. "$0/bin/fm-session-lock-lib.sh"; kill() { return 0; }; fm_harness_pid_alive 5252' \
     "$ROOT" 2>"$err"; status=$?
-  expect_code 1 "$status" "session-lock liveness should reject literal -pi as a primary harness process name"
-  [ ! -s "$err" ] || fail "session-lock liveness wrote basename option noise for literal -pi: $(cat "$err")"
+  expect_code 1 "$status" "session-lock liveness should reject literal -fm-deck-chat as a primary host process name"
+  [ ! -s "$err" ] || fail "session-lock liveness wrote basename option noise for literal -fm-deck-chat: $(cat "$err")"
 
   pass "harness identity: dash-leading ps command names are basename operands, not options"
 }
@@ -436,9 +338,8 @@ make_noop_tmux() {
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  # The verified secondmate harnesses must resolve on PATH for the launch to be
-  # built; exit-0 stubs are enough because tmux never runs them.
-  fm_fake_exit0 "$fakebin" pi pi-signed
+  # The verified secondmate harness must resolve on PATH for the launch to be
+  # built; a stub is enough because tmux never runs it.
   fm_test_fake_deck "$fakebin"
   printf '%s\n' "$fakebin"
 }
@@ -456,9 +357,8 @@ make_seeded_home() {
 
 # spawn_secondmate <world> <id> <home> [explicit-harness]
 # Runs fm-spawn.sh in secondmate mode. FM_ROOT is the real repo (so fm-harness.sh
-# resolves), the primary config dir is <world>/home/config, and PI_CODING_AGENT
-# over a blinded ancestry walk pins detect_own to pi. stderr is discarded (the local-HEAD ff sync harmlessly skips a
-# non-worktree home). Inspect <world>/home/state/<id>.meta and <home>/config after.
+# resolves) and the primary config dir is <world>/home/config. stderr is
+# discarded (the local-HEAD ff sync harmlessly skips a non-worktree home). Inspect <world>/home/state/<id>.meta and <home>/config after.
 spawn_secondmate() {
   local world=$1 id=$2 home=$3 harness=${4:-} fakebin
   mkdir -p "$world/home/state" "$world/home/data"
@@ -468,7 +368,7 @@ spawn_secondmate() {
   local spawn_args=("$id" "$home")
   [ -n "$harness" ] && spawn_args+=("$harness")
   spawn_args+=(--secondmate)
-  PATH="$fakebin:$BLIND_BIN:$BASE_PATH" TMUX='' PI_CODING_AGENT=true \
+  PATH="$fakebin:$BLIND_BIN:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$world/home" HOME="$world/home/user-home" \
     FM_STATE_OVERRIDE="$world/home/state" FM_DATA_OVERRIDE="$world/home/data" \
     FM_PROJECTS_OVERRIDE="$world/home/projects" FM_CONFIG_OVERRIDE="$world/home/config" \
@@ -478,16 +378,16 @@ spawn_secondmate() {
 
 meta_harness() { grep '^harness=' "$1" 2>/dev/null | tail -1 | cut -d= -f2-; }
 
-# Split active: crew-harness=pi + secondmate-harness=deck. The secondmate
-# AGENT launches on deck; its own crewmates inherit pi; secondmate-harness
-# does not flow into the home.
+# Split active: crew-harness + crew-dispatch.json + secondmate-harness=deck. The
+# secondmate AGENT launches on deck; its home inherits the crew config;
+# secondmate-harness does not flow into the home.
 test_spawn_split_and_inherit() {
   local w sm meta
   w="$TMP_ROOT/spawn-split"
   sm="$w/sm"
   mkdir -p "$w/home/config"
-  printf '{"default":{"harness":"pi","model":"haiku","effort":"low"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'pi\n' > "$w/home/config/crew-harness"
+  printf '{"default":{"harness":"deck","model":"zai/glm-5.3-flash"}}\n' > "$w/home/config/crew-dispatch.json"
+  printf 'deck\n' > "$w/home/config/crew-harness"
   printf 'deck\n' > "$w/home/config/secondmate-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
   printf 'tmux\n' > "$w/home/config/backend"
@@ -499,9 +399,9 @@ test_spawn_split_and_inherit() {
   [ -f "$meta" ] || fail "split: no meta written"
   [ "$(meta_harness "$meta")" = deck ] \
     || fail "split: secondmate launched on '$(meta_harness "$meta")', expected deck"
-  [ "$(cat "$sm/config/crew-harness" 2>/dev/null)" = pi ] \
-    || fail "split: home crew-harness not inherited as pi (got '$(cat "$sm/config/crew-harness" 2>/dev/null)')"
-  [ "$(cat "$sm/config/crew-dispatch.json" 2>/dev/null)" = '{"default":{"harness":"pi","model":"haiku","effort":"low"}}' ] \
+  [ "$(cat "$sm/config/crew-harness" 2>/dev/null)" = deck ] \
+    || fail "split: home crew-harness not inherited as deck (got '$(cat "$sm/config/crew-harness" 2>/dev/null)')"
+  [ "$(cat "$sm/config/crew-dispatch.json" 2>/dev/null)" = '{"default":{"harness":"deck","model":"zai/glm-5.3-flash"}}' ] \
     || fail "split: home crew-dispatch.json not inherited"
   [ "$(cat "$sm/config/backlog-backend" 2>/dev/null)" = manual ] \
     || fail "split: home backlog-backend not inherited as manual"
@@ -533,9 +433,8 @@ test_spawn_backward_compat_crew_fallback() {
   pass "B3 spawn: an absent secondmate-harness falls back to the crew harness (backward-compat)"
 }
 
-# Bare backward-compat: no config at all. The secondmate falls through to its own
-# harness (pi here), and with no inheritable file the home is left untouched -
-# no config/ side effects.
+# Bare default: no config at all. The secondmate launches on deck, and with no
+# inheritable file the home is left untouched - no config/ side effects.
 test_spawn_bare_backward_compat() {
   local w sm meta
   w="$TMP_ROOT/spawn-bare"
@@ -545,36 +444,37 @@ test_spawn_bare_backward_compat() {
   spawn_secondmate "$w" sm "$sm"
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_harness "$meta")" = pi ] \
-    || fail "bare: secondmate launched on '$(meta_harness "$meta")', expected own harness pi"
+  [ "$(meta_harness "$meta")" = deck ] \
+    || fail "bare: secondmate launched on '$(meta_harness "$meta")', expected deck"
   [ -e "$sm/config/crew-dispatch.json" ] && fail "bare: an unset primary still created a home crew-dispatch.json"
   [ -e "$sm/config/crew-harness" ] && fail "bare: an unset primary still created a home crew-harness"
-  pass "B4 spawn: no config at all -> own harness and no propagation side effects"
+  pass "B4 spawn: no config at all -> deck and no propagation side effects"
 }
 
-# An explicit per-spawn harness arg wins over config/secondmate-harness.
+# An explicit per-spawn harness arg wins over config/secondmate-harness, so a
+# home still configured for a removed harness can launch deck explicitly.
 test_spawn_explicit_harness_wins() {
   local w sm meta
   w="$TMP_ROOT/spawn-explicit"
   sm="$w/sm"
   mkdir -p "$w/home/config"
-  printf 'deck\n' > "$w/home/config/secondmate-harness"
+  printf 'pi-signed\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
-  spawn_secondmate "$w" sm "$sm" pi-signed
+  spawn_secondmate "$w" sm "$sm" deck
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_harness "$meta")" = pi-signed ] \
-    || fail "explicit: launched on '$(meta_harness "$meta")', expected explicit pi-signed over config deck"
+  [ "$(meta_harness "$meta")" = deck ] \
+    || fail "explicit: launched on '$(meta_harness "$meta")', expected explicit deck over config pi-signed"
   pass "B5 spawn: an explicit per-spawn harness arg overrides config/secondmate-harness"
 }
 
 # The unverified-adapter guard holds on the resolved secondmate path: an unknown
 # config/secondmate-harness aborts the spawn (no meta written) and names the
-# source. A removed worker adapter (claude, cursor) is refused the same way.
+# source. A removed adapter (pi, claude, cursor) is refused the same way.
 test_spawn_unverified_secondmate_harness_refused() {
   local w sm fakebin err rc harness
-  for harness in bogus claude cursor; do
+  for harness in bogus pi claude cursor; do
     w="$TMP_ROOT/spawn-unverified-$harness"
     sm="$w/sm"
     mkdir -p "$w/home/config" "$w/home/state"
@@ -584,7 +484,7 @@ test_spawn_unverified_secondmate_harness_refused() {
     fm_fake_exit0 "$fakebin" "$harness"
     err="$w/spawn.err"
     rc=0
-    PATH="$fakebin:$BASE_PATH" TMUX='' PI_CODING_AGENT=true \
+    PATH="$fakebin:$BASE_PATH" TMUX='' \
       FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$w/home" HOME="$w/home/user-home" \
       FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
       FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
@@ -592,7 +492,7 @@ test_spawn_unverified_secondmate_harness_refused() {
       "$ROOT/bin/fm-spawn.sh" sm "$sm" --secondmate >/dev/null 2>"$err" || rc=$?
 
     [ "$rc" -ne 0 ] || fail "unverified $harness: spawn should have failed"
-    assert_contains "$(cat "$err")" "no launch template for harness '$harness'" \
+    assert_contains "$(cat "$err")" "names harness '$harness'; deck is the only supported harness" \
       "unverified $harness: error names the rejected harness"
     assert_contains "$(cat "$err")" "config/secondmate-harness" \
       "unverified $harness: error names the secondmate-harness source"
@@ -643,7 +543,6 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" pi pi-signed
   fm_test_fake_deck "$fakebin"
   printf '%s\n' "$fakebin"
 }
@@ -657,7 +556,7 @@ spawn_secondmate_capture() {
   mkdir -p "$world/home/state" "$world/home/data"
   fakebin=$(make_launch_capturing_tmux "$world/tmux-$id")
   : > "$launchlog"
-  PATH="$fakebin:$BLIND_BIN:$BASE_PATH" TMUX='' PI_CODING_AGENT=true \
+  PATH="$fakebin:$BLIND_BIN:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$world/home" HOME="$world/home/user-home" \
     FM_STATE_OVERRIDE="$world/home/state" FM_DATA_OVERRIDE="$world/home/data" \
     FM_PROJECTS_OVERRIDE="$world/home/projects" FM_CONFIG_OVERRIDE="$world/home/config" \
@@ -718,7 +617,7 @@ test_spawn_bare_harness_no_model_effort_flag() {
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'pi\n' > "$w/home/config/secondmate-harness"
+  printf 'deck\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
   out=$(spawn_secondmate_capture "$w" sm "$sm" "$launchlog" 2>&1); status=$?
@@ -728,13 +627,10 @@ test_spawn_bare_harness_no_model_effort_flag() {
   [ "$(meta_field "$meta" model)" = default ] || fail "bare-tokens: meta model not default (got '$(meta_field "$meta" model)')"
   [ "$(meta_field "$meta" effort)" = default ] || fail "bare-tokens: meta effort not default (got '$(meta_field "$meta" effort)')"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "FM_PI_HARNESS=pi " \
-    "bare-tokens: Pi secondmate launch did not select plain Pi"
-  assert_contains "$launch" "fm-primary-pi-watch.ts" \
-    "bare-tokens: Pi secondmate launch did not load the primary watch extension"
+  assert_contains "$launch" "exec -a fm-deck-worker" "bare-tokens: secondmate launch did not use the deck worker"
+  assert_contains "$launch" "--secondmate --id 'sm'" "bare-tokens: deck launch did not mark the worker as a secondmate"
   assert_not_contains "$launch" "--model" "bare-tokens: launch must not carry a --model flag"
-  assert_not_contains "$launch" "--thinking" "bare-tokens: launch must not carry a --thinking flag"
-  pass "C2 spawn: a bare harness-only secondmate-harness file launches with no model/effort flag (backward-compat)"
+  pass "C2 spawn: a bare harness-only secondmate-harness file launches with no model flag"
 }
 
 # "<harness> <model>" durably threads --model into the secondmate launch and
@@ -745,19 +641,18 @@ test_spawn_secondmate_harness_model_token() {
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'pi opus\n' > "$w/home/config/secondmate-harness"
+  printf 'deck opus\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
   spawn_secondmate_capture "$w" sm "$sm" "$launchlog" >/dev/null 2>&1
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_field "$meta" harness)" = pi ] || fail "model-token: meta harness not pi"
+  [ "$(meta_field "$meta" harness)" = deck ] || fail "model-token: meta harness not deck"
   [ "$(meta_field "$meta" model)" = opus ] || fail "model-token: meta model not opus (got '$(meta_field "$meta" model)')"
   [ "$(meta_field "$meta" effort)" = default ] || fail "model-token: meta effort not default (got '$(meta_field "$meta" effort)')"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "/pi' --model 'opus' -e " \
+  assert_contains "$launch" "--model 'opus' -- " \
     "model-token: launch did not carry --model opus"
-  assert_not_contains "$launch" "--thinking" "model-token: launch must not carry a --thinking flag"
   pass "C3 spawn: config/secondmate-harness's model token threads --model into the launch and meta"
 }
 
@@ -768,7 +663,7 @@ test_spawn_secondmate_harness_model_and_effort_tokens() {
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'pi opus high\n' > "$w/home/config/secondmate-harness"
+  printf 'deck opus high\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
   spawn_secondmate_capture "$w" sm "$sm" "$launchlog" >/dev/null 2>&1
@@ -777,9 +672,11 @@ test_spawn_secondmate_harness_model_and_effort_tokens() {
   [ "$(meta_field "$meta" model)" = opus ] || fail "model-effort-tokens: meta model not opus"
   [ "$(meta_field "$meta" effort)" = high ] || fail "model-effort-tokens: meta effort not high (got '$(meta_field "$meta" effort)')"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "/pi' --model 'opus' --thinking 'high' -e " \
-    "model-effort-tokens: launch did not carry both --model opus and --thinking high"
-  pass "C4 spawn: config/secondmate-harness's model+effort tokens thread into the launch and meta"
+  assert_contains "$launch" "--model 'opus' -- " \
+    "model-effort-tokens: launch did not carry --model opus"
+  assert_not_contains "$launch" "high" \
+    "model-effort-tokens: deck has no effort control, so the launch must not carry the effort token"
+  pass "C4 spawn: config/secondmate-harness's model+effort tokens reach meta; deck launches with the model only"
 }
 
 # Precedence: an explicit per-spawn --model overrides the file's model token.
@@ -789,7 +686,7 @@ test_spawn_explicit_model_overrides_secondmate_harness_token() {
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'pi opus high\n' > "$w/home/config/secondmate-harness"
+  printf 'deck opus high\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
   spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --model sonnet >/dev/null 2>&1
@@ -801,33 +698,27 @@ test_spawn_explicit_model_overrides_secondmate_harness_token() {
   launch=$(cat "$launchlog")
   assert_contains "$launch" "--model 'sonnet'" "explicit-model: launch did not use the explicit --model"
   assert_not_contains "$launch" "--model 'opus'" "explicit-model: launch leaked the file's model token"
-  assert_contains "$launch" "--thinking 'high'" "explicit-model: launch dropped the file's effort token"
   pass "C5 spawn: an explicit --model overrides config/secondmate-harness's model token; the file's effort token still applies"
 }
 
 # Precedence: an explicit per-spawn --effort overrides the file's effort token.
-test_spawn_explicit_effort_overrides_secondmate_harness_token() {
-  local w sm meta launchlog launch
+test_spawn_explicit_effort_is_refused_for_deck() {
+  local w sm launchlog out status
   w="$TMP_ROOT/spawn-explicit-effort"
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'pi opus high\n' > "$w/home/config/secondmate-harness"
+  printf 'deck opus high\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
-  spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --effort low >/dev/null 2>&1
-
-  meta="$w/home/state/sm.meta"
-  [ "$(meta_field "$meta" model)" = opus ] || fail "explicit-effort: file's model token should still apply"
-  [ "$(meta_field "$meta" effort)" = low ] \
-    || fail "explicit-effort: meta effort not low (got '$(meta_field "$meta" effort)'), explicit flag did not win over file token"
-  launch=$(cat "$launchlog")
-  assert_contains "$launch" "--thinking 'low'" "explicit-effort: launch did not use the explicit --effort"
-  assert_not_contains "$launch" "--thinking 'high'" "explicit-effort: launch leaked the file's effort token"
-  pass "C6 spawn: an explicit --effort overrides config/secondmate-harness's effort token; the file's model token still applies"
+  out=$(spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --effort low 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "explicit-effort: deck accepted an explicit --effort"
+  assert_contains "$out" "deck has no effort control" "explicit-effort: refusal did not name the missing effort control"
+  [ ! -e "$w/home/state/sm.meta" ] || fail "explicit-effort: a meta was written despite the refusal"
+  pass "C6 spawn: an explicit --effort is refused because deck has no effort control"
 }
 
-# An explicit --harness starts clean: deck must not pick up the file's pi effort
+# An explicit --harness starts clean: deck must not pick up the file's effort
 # token (deck refuses any effort), nor its model token.
 test_spawn_explicit_harness_does_not_inherit_secondmate_harness_tokens() {
   local w sm meta launchlog launch out status
@@ -835,7 +726,7 @@ test_spawn_explicit_harness_does_not_inherit_secondmate_harness_tokens() {
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'pi opus high\n' > "$w/home/config/secondmate-harness"
+  printf 'deck opus high\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
   out=$(spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --harness deck 2>&1); status=$?
@@ -862,75 +753,55 @@ test_spawn_explicit_harness_uses_explicit_profile_axes() {
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'pi opus high\n' > "$w/home/config/secondmate-harness"
+  printf 'deck opus high\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
-  spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --harness pi-signed --model gpt-5.5 --effort xhigh >/dev/null 2>&1
+  spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --harness deck --model gpt-5.5 >/dev/null 2>&1
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_field "$meta" harness)" = pi-signed ] || fail "explicit-harness-explicit-axes: meta harness not pi-signed"
+  [ "$(meta_field "$meta" harness)" = deck ] || fail "explicit-harness-explicit-axes: meta harness not deck"
   [ "$(meta_field "$meta" model)" = gpt-5.5 ] || fail "explicit-harness-explicit-axes: meta model did not use explicit value"
-  [ "$(meta_field "$meta" effort)" = xhigh ] || fail "explicit-harness-explicit-axes: meta effort did not use explicit value"
+  [ "$(meta_field "$meta" effort)" = default ] || fail "explicit-harness-explicit-axes: meta effort should stay default"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "FM_PI_HARNESS=pi-signed " \
-    "explicit-harness-explicit-axes: launch did not select the signed Pi wrapper"
   assert_contains "$launch" "--model 'gpt-5.5'" \
     "explicit-harness-explicit-axes: launch did not use the explicit --model"
-  assert_contains "$launch" "--thinking 'xhigh'" \
-    "explicit-harness-explicit-axes: launch did not use the explicit --effort"
   assert_not_contains "$launch" "--model 'opus'" \
     "explicit-harness-explicit-axes: launch leaked the file's model token"
-  assert_not_contains "$launch" "--thinking 'high'" \
-    "explicit-harness-explicit-axes: launch leaked the file's effort token"
-  pass "C8 spawn: an explicit --harness still honors explicit model/effort flags"
+  pass "C8 spawn: an explicit --harness still honors an explicit model flag"
 }
 
-# The secondmate launch pins FM_SUPERVISION_MODEL to its own harness: deck gets
-# the autoarm verdict (its persistent driver replaces exited watchers, so a fresh
-# beacon with no live watcher is healthy), pi gets extension (a fresh beacon with
-# no live watcher is healthy only when the Pi extension provably owns
-# supervision, which this fixture home does not prove). The guard runs under the
-# exact env prefix the launch sets.
+# The secondmate launch pins FM_SUPERVISION_MODEL to autoarm: a Deck
+# secondmate's persistent driver replaces exited watchers, so a fresh beacon
+# with no live watcher is healthy. The guard runs under the exact env prefix the
+# launch sets.
 test_spawned_secondmate_uses_its_harness_supervision_model() {
-  local harness w sm launchlog launch prefix out
-  for harness in deck pi; do
-    w="$TMP_ROOT/spawn-supervision-model-$harness"
-    sm="$w/sm"
-    launchlog="$w/launch.log"
-    mkdir -p "$w/home/config"
-    printf '%s\n' "$harness" > "$w/home/config/secondmate-harness"
-    make_seeded_home "$sm" sm
-    spawn_secondmate_capture "$w" sm "$sm" "$launchlog" >/dev/null 2>&1
-    fm_write_meta "$sm/state/task.meta" "window=firstmate:fm-task" "kind=ship"
-    touch "$sm/state/.last-watcher-beat"
-    launch=$(cat "$launchlog")
-    prefix=${launch%%env -u CURSOR_AGENT*}
-    [ "$prefix" != "$launch" ] || fail "$harness secondmate launch lost its env prefix: $launch"
-    # Point the guard at the fixture home, not at whatever checkout this suite
-    # happens to be running from. The guard also reports a tangled primary
-    # checkout, so without this the branch a contributor is working on decides
-    # whether this assertion passes.
-    out=$(env -u PI_CODING_AGENT -u FM_PI_HARNESS PATH="$BLIND_BIN:$BASE_PATH" \
-      bash -c "$prefix FM_ROOT_OVERRIDE=$(printf '%q' "$sm") $(printf '%q' "$ROOT/bin/fm-guard.sh")" 2>&1)
-    case "$harness" in
-      deck)
-        assert_contains "$launch" "FM_SUPERVISION_MODEL=autoarm " \
-          "Deck secondmate launch did not pin the autoarm supervision model"
-        [ -z "$out" ] \
-          || fail "Deck secondmate with a fresh beacon should use auto-arm supervision, got: $out"
-        ;;
-      pi)
-        assert_contains "$launch" "FM_SUPERVISION_MODEL=extension " \
-          "Pi secondmate launch did not pin the extension supervision model"
-        assert_contains "$out" 'WATCHER DOWN - SUPERVISION IS OFF' \
-          "Pi secondmate inherited auto-arm tolerance despite its extension supervision model"
-        ;;
-    esac
-  done
-  pass "C9 spawn: secondmate launch pins supervision to its own harness"
+  local w sm launchlog launch prefix out
+  w="$TMP_ROOT/spawn-supervision-model-deck"
+  sm="$w/sm"
+  launchlog="$w/launch.log"
+  mkdir -p "$w/home/config"
+  printf 'deck\n' > "$w/home/config/secondmate-harness"
+  make_seeded_home "$sm" sm
+  spawn_secondmate_capture "$w" sm "$sm" "$launchlog" >/dev/null 2>&1
+  fm_write_meta "$sm/state/task.meta" "window=firstmate:fm-task" "kind=ship"
+  touch "$sm/state/.last-watcher-beat"
+  launch=$(cat "$launchlog")
+  prefix=${launch%%bash -c *}
+  [ "$prefix" != "$launch" ] || fail "deck secondmate launch lost its env prefix: $launch"
+  # Point the guard at the fixture home, not at whatever checkout this suite
+  # happens to be running from. The guard also reports a tangled primary
+  # checkout, so without this the branch a contributor is working on decides
+  # whether this assertion passes.
+  out=$(env PATH="$BLIND_BIN:$BASE_PATH" \
+    bash -c "$prefix FM_ROOT_OVERRIDE=$(printf '%q' "$sm") $(printf '%q' "$ROOT/bin/fm-guard.sh")" 2>&1)
+  assert_contains "$launch" "FM_SUPERVISION_MODEL=autoarm " \
+    "Deck secondmate launch did not pin the autoarm supervision model"
+  [ -z "$out" ] \
+    || fail "Deck secondmate with a fresh beacon should use auto-arm supervision, got: $out"
+  pass "C9 spawn: secondmate launch pins the autoarm supervision model"
 }
 
-# The harness fallback chain (secondmate-harness -> crew-harness -> own) still
+# The harness fallback chain (secondmate-harness -> crew-harness -> deck) still
 # resolves correctly with no model/effort tokens anywhere in the chain, and a
 # crew/scout (non-secondmate) launch is entirely unaffected by this feature: no
 # model/effort is invented for it even though its own project has no profile set.
@@ -970,7 +841,7 @@ Exercise an ordinary crew launch.
 Verify secondmate harness settings do not affect it.
 EOF
   : > "$launchlog"
-  PATH="$fakebin:$BASE_PATH" TMUX="fake,1,0" PI_CODING_AGENT=true \
+  PATH="$fakebin:$BASE_PATH" TMUX="fake,1,0" \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
@@ -2441,12 +2312,12 @@ test_config_reread_bootstrap_path_and_spawn_flexibility() {
   fm_config_reread_mark_pending "$stale" "$stale.pending" \
     || fail "could not create spawn stale reread marker"
   launchlog="$w/spawn-flex.launch.log"
-  spawn_secondmate_capture "$w" sm-flex "$sm" "$launchlog" --harness pi >/dev/null 2>&1
+  spawn_secondmate_capture "$w" sm-flex "$sm" "$launchlog" --harness deck --model opus >/dev/null 2>&1
   assert_no_reread_pending "$sm"
   assert_no_reread_instructions "$sm"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "pi" \
-    "explicit --harness pi must still win over configured deck defaults"
+  assert_contains "$launch" "--model 'opus'" \
+    "an explicit --model must still win over configured deck defaults"
   pass "B18 bootstrap config reread path works; spawn flexibility remains defaults-only"
 }
 
@@ -2539,7 +2410,7 @@ exec "$real_rm" "\$@"
 SH
   chmod +x "$fakebin/rm"
   launchlog="$w/spawn-quarantine.launch.log"
-  out=$(PATH="$fakebin:$BASE_PATH" TMUX='' PI_CODING_AGENT=true \
+  out=$(PATH="$fakebin:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$w/home" HOME="$w/home/user-home" \
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
@@ -2576,9 +2447,7 @@ SH
 }
 
 test_harness_resolution
-test_cursor_marker_detection
 test_secondmate_model_effort_tokens
-test_pi_signed_detection_and_session_lock_identity
 test_dash_leading_process_names_are_basename_operands
 test_propagate_lib
 test_spawn_split_and_inherit
@@ -2592,7 +2461,7 @@ test_spawn_bare_harness_no_model_effort_flag
 test_spawn_secondmate_harness_model_token
 test_spawn_secondmate_harness_model_and_effort_tokens
 test_spawn_explicit_model_overrides_secondmate_harness_token
-test_spawn_explicit_effort_overrides_secondmate_harness_token
+test_spawn_explicit_effort_is_refused_for_deck
 test_spawn_explicit_harness_does_not_inherit_secondmate_harness_tokens
 test_spawn_explicit_harness_uses_explicit_profile_axes
 test_spawned_secondmate_uses_its_harness_supervision_model

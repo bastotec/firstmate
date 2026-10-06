@@ -1,36 +1,23 @@
-# Primary startup and hooks
+# Primary startup and turn end
 
-Load this before changing session startup, turn-end handling, pre-tool protection, watcher supervision, or secondmate integration.
-Load the detected primary's worker tool reference only when the router has one; otherwise use the primary owners below.
-`../../../README.md` owns primary harness support, independently of worker adapter support.
-
-## Turn end
-
-`../../../docs/turnend-guard.md` owns the "no turn ends blind" contract, hook installation, per-surface blocking behavior, and tradeoffs when a hook cannot block.
-`../../../docs/supervision-protocols/` and `../../../bin/fm-supervision-instructions.sh` own harness-specific wake protocols.
-Never substitute another harness's wait shape.
-`../../../bin/fm-busy-lib.sh` remains the semantic busy owner; a tool reference names only its source and evidence.
-
-Validate any turn-end change against the real harness in a scratch project or throwaway home.
-Update its executable or hook owner, any retained tool reference, and `../../../docs/verification/supervision.md` under "Turn-end guard".
-
-## Pre-tool protection
-
-`../../../docs/arm-pretool-check.md` owns Pi's watcher-arm seatbelt, its scope, hook commands, output quirks, and evidence.
-Do not infer PreToolUse protection for Deck hosts from Pi's integration.
-Any retained worker tool reference points to that integration owner.
-Validate changes against the real harness in a scratch project before trusting them.
+Load this before changing session startup, turn-end handling, watcher supervision, or secondmate integration.
+`../../../README.md` owns primary harness support; deck is the only primary harness, hosted by `../../../bin/fm-deck-chat.sh`.
 
 ## Session start
 
 `../../../AGENTS.md` section 3 remains the behavioral owner.
-`../../../docs/sessionstart-nudge.md` owns native tier assignment, transport, source routing, runtime bound, and fail-open behavior.
-Read it before changing session-open behavior.
-`../../../docs/verification/supervision.md` under "Native session-start delivery" owns active dated evidence.
+`../../../bin/fm-deck-chat.sh` runs `../../../bin/fm-session-start.sh` once per host start and hands its digest to the Deck session.
+There are no harness hooks: the host itself owns startup, supervision, and cleanup for its whole lifetime.
+
+## Turn end
+
+`../../../bin/fm-deck-worker.sh` (secondmates) and `../../../bin/fm-deck-chat.sh` (primaries) own turn-end handling through Deck's `pre_complete` hook, which proves the turn still runs inside the session that holds the home lock.
+`../../../bin/fm-busy-lib.sh` remains the semantic busy owner; the deck tool reference names only its source and evidence.
+Validate any turn-end change against the real harness in a scratch project or throwaway home, and record the evidence in `../../../docs/verification/supervision.md`.
 
 ## Watcher supervision
 
 `../../../bin/fm-session-start.sh` prints exactly one block for the detected primary.
 Follow only that rendered protocol.
-When changing a watcher adapter, update its file under `../../../docs/supervision-protocols/`, update `../../../docs/turnend-guard.md` if shared idle or turn-end behavior changed, and refresh any retained tool reference.
+When changing the watcher adapter, update `../../../docs/supervision-protocols/deck.md` and refresh the deck tool reference.
 An identity without a dedicated protocol uses its documented unsupported or unknown boundary; never invent one from a similar TUI.

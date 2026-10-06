@@ -323,7 +323,7 @@ test_backend_validate_spawn_accepts_known() {
 
 test_meta_get_and_backend_of_meta() {
   local meta=$TMP_ROOT/meta-get.meta edge=$TMP_ROOT/meta-get-edge.meta
-  fm_write_meta "$meta" "window=firstmate:fm-x1" "harness=pi"
+  fm_write_meta "$meta" "window=firstmate:fm-x1" "harness=deck"
   [ "$(fm_meta_get "$meta" window)" = "firstmate:fm-x1" ] || fail "fm_meta_get did not read window="
   [ "$(fm_meta_get "$meta" missing)" = "" ] || fail "fm_meta_get should print nothing for an absent key"
   [ "$(fm_backend_of_meta "$meta")" = tmux ] || fail "fm_backend_of_meta should default absent backend= to tmux"
@@ -766,10 +766,10 @@ test_teardown_conformance_old_vs_new() {
   mkdir -p "$state_old" "$state_new" "$config_old" "$config_new"
 
   fm_write_meta "$state_old/$id.meta" \
-    "window=firstmate:fm-$id" "worktree=$wt" "project=$proj" "harness=pi" "kind=scout" "mode=no-mistakes" "yolo=off" \
+    "window=firstmate:fm-$id" "worktree=$wt" "project=$proj" "harness=deck" "kind=scout" "mode=no-mistakes" "yolo=off" \
     "decisions_reviewed=1" "decision_keys="
   fm_write_meta "$state_new/$id.meta" \
-    "window=firstmate:fm-$id" "worktree=$wt" "project=$proj" "harness=pi" "kind=scout" "mode=no-mistakes" "yolo=off" \
+    "window=firstmate:fm-$id" "worktree=$wt" "project=$proj" "harness=deck" "kind=scout" "mode=no-mistakes" "yolo=off" \
     "decisions_reviewed=1" "decision_keys="
   touch "$state_old/.last-watcher-beat" "$state_new/.last-watcher-beat"
 

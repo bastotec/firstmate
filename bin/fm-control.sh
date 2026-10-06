@@ -274,9 +274,6 @@ control_cleanup() {
     CONTROL_LOCK_HELD=0
     fm_lock_release "$CONTROL_LOCK" || true
   fi
-  if declare -F fm_lease_guard_release >/dev/null 2>&1; then
-    fm_lease_guard_release || true
-  fi
   return "$status"
 }
 
@@ -290,7 +287,7 @@ shift 2
 if ! fm_control_verb_allowed "$VERB"; then
   {
     if [ "$VERB" = resume ]; then
-      echo "error: 'resume' is not a control verb: resuming an exited agent is not deterministic: pi, pi-signed, and deck have no verified pane-resume contract. Use 'relaunch', which carries the brief plus a progress note into a fresh agent on any adapter."
+      echo "error: 'resume' is not a control verb: resuming an exited agent is not deterministic: deck has no verified pane-resume contract. Use 'relaunch', which carries the brief plus a progress note into a fresh agent on any adapter."
     else
       echo "error: '$VERB' is not a control verb"
     fi
@@ -374,8 +371,8 @@ fi
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
 case "$NEW_EFFORT" in
-  ''|default|low|medium|high|xhigh|max|ultra) ;;
-  *) die "--effort must be one of default, low, medium, high, xhigh, max, ultra" ;;
+  ''|default|low|medium|high|xhigh|max) ;;
+  *) die "--effort must be one of default, low, medium, high, xhigh, max" ;;
 esac
 
 # --- exact task-id resolution ----------------------------------------------
@@ -387,12 +384,6 @@ if ! fm_task_id_creation_valid "$RAW_ID"; then
   die "'$RAW_ID' is not a valid task id"
 fi
 ID=$RAW_ID
-# Supervision lease guard: lifecycle control is overlap territory between the
-# two Pi supervision actors; refuse while the OTHER actor holds this task's
-# live lease (contract: bin/fm-lease-lib.sh; no-op in homes without leases).
-# shellcheck source=bin/fm-lease-lib.sh
-. "$SCRIPT_DIR/fm-lease-lib.sh"
-fm_lease_guard "$ID" "lifecycle control (fm-control)"
 CONTROL_LOCK="$STATE/.control-$ID.lock"
 trap control_cleanup EXIT
 fm_lock_try_acquire "$CONTROL_LOCK" \
@@ -931,9 +922,9 @@ resolve_relaunch_profile() {
     CONFIG_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
     CONFIG_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
     case "$CONFIG_EFFORT" in
-      ''|low|medium|high|xhigh|max|ultra) ;;
+      ''|low|medium|high|xhigh|max) ;;
       *)
-        echo "warning: config/secondmate-harness effort token '$CONFIG_EFFORT' is not one of low, medium, high, xhigh, max, ultra; ignoring" >&2
+        echo "warning: config/secondmate-harness effort token '$CONFIG_EFFORT' is not one of low, medium, high, xhigh, max; ignoring" >&2
         CONFIG_EFFORT=
         ;;
     esac
@@ -1000,9 +991,6 @@ resolve_relaunch_profile() {
       TARGET_MODEL=$RESOLVED
       ;;
   esac
-  if [ "$TARGET_EFFORT" = ultra ]; then
-    "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
-  fi
 }
 
 # safe_checkpoint: prove, before anything is stopped, that the work a relaunch

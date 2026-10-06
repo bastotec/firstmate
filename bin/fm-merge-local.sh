@@ -39,13 +39,6 @@ META="$STATE/$ID.meta"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 "$FM_ROOT/bin/fm-guard.sh" || true
-# Role partition: landing local-only work is MAIN-owned; the Pi supervision
-# branch reports readiness and never lands (contract: bin/fm-lease-lib.sh;
-# no-op in homes without a branch actor). This precedes reading the task
-# record, because the wrong actor is refused for its role whatever it says.
-# shellcheck source=bin/fm-lease-lib.sh
-. "$SCRIPT_DIR/fm-lease-lib.sh"
-fm_lease_forbid_branch "local-only landing (fm-merge-local)"
 
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
 if ! fm_backlog_meta_spawn_gen_optional "$META" "$STATE"; then

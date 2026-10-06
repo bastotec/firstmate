@@ -306,20 +306,6 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 }
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
-# Supervision lease guard: post-landing cleanup is overlap territory between
-# the two Pi supervision actors; refuse while the OTHER actor holds this
-# task's live lease (contract: bin/fm-lease-lib.sh; no-op in homes without
-# leases).
-# shellcheck source=bin/fm-lease-lib.sh
-. "$SCRIPT_DIR/fm-lease-lib.sh"
-# Role partition: forced teardown discards work, and the supervision branch
-# never discards anything - only an ordinary landed-work teardown is branch
-# territory (contract: bin/fm-lease-lib.sh).
-if [ "$FORCE" = --force ] && [ "$(fm_lease_actor)" = branch ]; then
-  echo "error: forced teardown refused - the supervision branch cannot discard work" >&2
-  exit "$FM_LEASE_REFUSE_EXIT"
-fi
-fm_lease_guard "$ID" "teardown (fm-teardown)"
 
 META="$STATE/$ID.meta"
 TREEHOUSE_PROJECT_LOCK=
@@ -389,7 +375,6 @@ teardown_release_locks() {
     fm_lock_release "$TREEHOUSE_PROJECT_LOCK" || true
     TREEHOUSE_PROJECT_LOCK_HELD=0
   fi
-  fm_lease_guard_release || true
   return "$status"
 }
 trap teardown_release_locks EXIT
@@ -3141,8 +3126,7 @@ cleanup_firstmate_home_children() {
     retire_wake_gate_task_state "$sub_state" "$child_id" || return 1
     fm_backlog_atomic_transition remove "$sub_state/$child_id.meta" "task record" "$sub_state" || return 1
     rm -f "$sub_state/$child_id.turn-ended" "$sub_state/$child_id.progress" \
-      "$sub_state/$child_id.pi-ext.ts" "$sub_state/$child_id.reconcile-nudged" \
-      "$sub_state/.$child_id.branch-outcome-index"
+      "$sub_state/$child_id.reconcile-nudged"
   done
 }
 
@@ -3538,11 +3522,9 @@ retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
 status_retire_presentation_task "$STATE" "$ID" || exit 1
 retire_wake_gate_task_state "$STATE" "$ID" || exit 1
 rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
-  "$STATE/$ID.pi-ext.ts" \
   "$STATE/$ID.control-relaunch" "$STATE/$ID.control-relaunch.meta-prior" \
   "$STATE/$ID.control-relaunch.brief-prior" "$STATE/$ID.control-relaunch.note" \
-  "$STATE/$ID.reconcile-nudged" \
-  "$STATE/.$ID.branch-outcome-index"
+  "$STATE/$ID.reconcile-nudged"
 # The steering inbox (bin/fm-task-inbox-lib.sh) is runtime state for the
 # retired endpoint; teardown only runs after landing is confirmed, so any
 # leftover unhandled steer here is moot rather than unlanded work.

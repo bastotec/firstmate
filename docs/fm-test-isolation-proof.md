@@ -209,8 +209,7 @@ Two scripts left the residual set rather than joining it.
 Its current live-backend result is recorded under [workspace-removal focus safety](verification/runtime-backends.md#workspace-removal-focus-safety).
 The former `tests/fm-claude-stop-autoarm-live-e2e.test.sh` was moved to `live-harness-optin` because a gate-skipping candidate cannot prove concurrency; it has since been removed with the Claude primary integration.
 
-Both runs above selected Pi 0.84.4 with `FM_PI_PACKAGE_DIR` for `tests/fm-pi-branch-extension.test.sh` rather than the proof host's global Pi 0.81.1.
-That historical package selection is evidence context, not a current extension compatibility requirement; the [Calm regression coverage](calm-mode-feasibility.md#regression-coverage) owns the current renderer comparison and links its fixture-floor rationale.
+Both runs above selected Pi 0.84.4 with `FM_PI_PACKAGE_DIR` for the since-removed Pi extension tests rather than the proof host's global Pi 0.81.1; that is historical evidence context only.
 
 ## Production runner effect of the 2026-09-03 admissions
 

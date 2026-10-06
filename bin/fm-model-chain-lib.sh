@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
-# fm-model-chain-lib.sh - the spawn-side model fallback chain, a literal reuse
-# of the supervision branch's approved model-chain idiom
-# (.pi/extensions/lib/fm-branch-model-chain.ts): one "<provider>/<model-id>"
-# entry per line in preference order, blank lines and "#" comments skipped,
+# fm-model-chain-lib.sh - the spawn-side model fallback chain: one
+# "<provider>/<model-id>" entry per line in preference order, blank lines and
+# "#" comments skipped,
 # a split at the FIRST "/" so a provider-qualified model id survives, any
 # malformed or duplicate non-comment line is a loud refusal naming that line
 # instead of a silent selection around it, a failed model sits out for five
 # minutes doubling to an hour, and an expired cooldown restores the head of
 # the chain. docs/configuration.md "Model fallback chains" owns the
-# operator-facing format and the chain sources; the branch extension file
-# remains the origin of the idiom. The deliberate divergences are
-# shell-vs-TypeScript and the cooldowns living in durable home-local files
-# (state/model-chain/<lane>.state) instead of the branch's memory, so a
-# refused model is not retried immediately on the next launch.
+# operator-facing format and the chain sources. The cooldowns live in durable
+# home-local files (state/model-chain/<lane>.state), so a refused model is not
+# retried immediately on the next launch.
 #
 # The pure choice functions here print their results or one diagnostic line
 # and never mutate anything but their own cooldown state file; callers own
@@ -32,8 +29,8 @@
 #                                        diagnostic to stderr and return 1
 #   fm_model_chain_record_refusal <state-path> <label> <now-seconds>
 #                                        put <label> into cooldown with the
-#                                        branch backoff (five minutes,
-#                                        doubling to an hour)
+#                                        backoff (five minutes, doubling to
+#                                        an hour)
 #   fm_model_chain_clear <state-path> <label>
 #                                        drop <label>'s cooldown record so a
 #                                        later launch reads it ready again
@@ -42,7 +39,7 @@
 # ("<label><TAB><retry-epoch><TAB><cooldown-secs>"): written by
 # fm_model_chain_record_refusal and fm_model_chain_clear under the lock below,
 # read by fm_model_chain_select. An entry whose retry epoch has passed is
-# simply ready again, exactly like the branch's in-memory cooldowns; the
+# simply ready again; the
 # stored cooldown duration is what the next refusal of the same streak doubles.
 set -u
 
@@ -59,10 +56,9 @@ fm_model_chain__parse_stream() {
     trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
     [ -n "$trimmed" ] || continue
     case "$trimmed" in '#'*) continue ;; esac
-    # A model reference contains no whitespace or control characters: the
-    # branch chain tests the raw line for \s and U+0000-U+001F, U+007F-U+009F,
-    # which over UTF-8 bytes is exactly the set below (space through control,
-    # DEL, and the C1 range).
+    # A model reference contains no whitespace or control characters: \s and
+    # U+0000-U+001F, U+007F-U+009F, which over UTF-8 bytes is exactly the set
+    # below (space through control, DEL, and the C1 range).
     bad=0
     for byte in $(printf '%s' "$line" | LC_ALL=C od -An -tu1 | tr -s ' \n' '  '); do
       if [ "$byte" -le 32 ] || [ "$byte" -eq 127 ] || { [ "$byte" -ge 128 ] && [ "$byte" -le 159 ]; }; then
@@ -150,9 +146,9 @@ fm_model_chain__fmt_epoch() {
 }
 
 fm_model_chain_record_refusal() {
-  # Put <label> into cooldown with the branch backoff: five minutes on the
+  # Put <label> into cooldown with backoff: five minutes on the
   # first refusal of a streak, then the previous cooldown doubled, capped at
-  # an hour - the arithmetic of the branch's nextBranchModelCooldown. The
+  # an hour. The
   # stored record carries the current cooldown duration beside the retry
   # epoch, which is what doubles on the next refusal of the same streak;
   # an expired or absent record starts a fresh streak at the base. One label
@@ -199,8 +195,7 @@ fm_model_chain_record_refusal() {
 
 fm_model_chain_clear() {
   # Drop every record for <label>: a launch that succeeded on the model clears
-  # its streak, exactly like the branch clearing a backoff after a turn that
-  # settles cleanly.
+  # its streak.
   local state=$1 label=$2
   [ -f "$state" ] || return 0
   fm_model_chain__state_lock "$state" || return 1
@@ -241,7 +236,7 @@ fm_model_chain__state_unlock() {
 
 # A chained model surface ("a/b,c/d") must be a comma-separated list of
 # <provider>/<model-id> labels: no surrounding whitespace (the split below is
-# verbatim, the same no-trim rule the branch applies to raw lines), no empty
+# verbatim, with no trimming), no empty
 # label from a leading, trailing, or doubled comma, and no second comma in any
 # label. The per-label well-formedness itself (first slash, no whitespace or
 # control characters, no duplicates) is the parser's refusal contract above.

@@ -32,8 +32,8 @@
 #      be proven on the recorded backend is refused rather than performed
 #      blind.
 #
-# `resume` is deliberately NOT a verb. Neither pi, pi-signed, nor deck has a
-# verified pane-resume contract. `relaunch` covers the same need deterministically for every adapter,
+# `resume` is deliberately NOT a verb. Deck has no verified pane-resume
+# contract. `relaunch` covers the same need deterministically for every adapter,
 # because the brief on disk - not a harness-private session - is the durable
 # instruction.
 
@@ -54,22 +54,21 @@ fm_control_verb_allowed() {  # <verb>
   return 1
 }
 
-# The harnesses whose control mechanics are implemented.
+# The harnesses whose control mechanics are implemented. A record naming a
+# removed harness (pi, claude, ...) is unsupported here, so every verb refuses
+# it instead of guessing its mechanics.
 fm_control_harness_supported() {  # <harness>
   case "${1-}" in
-    pi|pi-signed|deck) return 0 ;;
+    deck) return 0 ;;
   esac
   return 1
 }
 
 # The recognized adapter a RECORDED harness value belongs to. Every table below
-# is keyed by the exact adapter name. `pi` and `pi-signed` are exact because a
-# `pi*` prefix would swallow the signed adapter, and an unrecognized value
-# returns nonzero rather than being guessed into a family.
+# is keyed by the exact adapter name, and an unrecognized value returns nonzero
+# rather than being guessed into a family.
 fm_control_harness_family() {  # <recorded-harness>
   case "${1-}" in
-    pi) printf 'pi' ;;
-    pi-signed) printf 'pi-signed' ;;
     deck) printf 'deck' ;;
     *) return 1 ;;
   esac
@@ -85,11 +84,9 @@ fm_control_harness_supports_kind() {  # <harness> <kind>
   return 0
 }
 
-# The key that cancels a running turn. Pi cancels on a single Escape and
-# leaves an empty composer.
+# The key that cancels a running turn.
 fm_control_interrupt_key() {  # <harness>
   case "${1-}" in
-    pi|pi-signed) printf 'Escape' ;;
     # deck's pane runs bin/fm-deck-worker.sh, which cancels the running turn on
     # Ctrl+C (the whole foreground group gets SIGINT; the driver traps it and
     # returns to its prompt), and has no Escape binding.
@@ -102,7 +99,7 @@ fm_control_interrupt_key() {  # <harness>
 # interrupts on a single press.
 fm_control_interrupt_repeat() {  # <harness>
   case "${1-}" in
-    pi|pi-signed|deck) printf '1' ;;
+    deck) printf '1' ;;
     *) return 1 ;;
   esac
 }
@@ -113,7 +110,7 @@ fm_control_interrupt_repeat() {  # <harness>
 # with no verified mechanics returns nonzero, matching the tables above.
 fm_control_interrupt_clear_key() {  # <harness>
   case "${1-}" in
-    pi|pi-signed|deck) ;;
+    deck) ;;
     *) return 1 ;;
   esac
 }
@@ -138,7 +135,6 @@ fm_control_interrupt_clear_key() {  # <harness>
 fm_control_composer_clear_keys() {  # <harness>
   case "${1-}" in
     deck) printf 'C-u\nEnter\n' ;;
-    pi|pi-signed) ;;
     *) return 1 ;;
   esac
 }
@@ -146,7 +142,7 @@ fm_control_composer_clear_keys() {  # <harness>
 # The command that exits the agent from its own composer.
 fm_control_exit_command() {  # <harness>
   case "${1-}" in
-    pi|pi-signed|deck) printf '/quit' ;;
+    deck) printf '/quit' ;;
     *) return 1 ;;
   esac
 }
@@ -183,9 +179,9 @@ fm_control_backend_state_verified() {  # <backend>
 # line: worktree-resident hook files and firstmate-owned state tokens only,
 # never a harness's own managed config.
 fm_control_harness_wiring_paths() {  # <harness> <worktree> <state-dir> <id>
-  local harness=${1-} wt=${2-} state=${3-} id=${4-}
+  local wt=${2-} state=${3-} id=${4-}
   [ -n "$wt" ] && [ -n "$state" ] && [ -n "$id" ] || return 1
-  case "$harness" in
-    pi|pi-signed) printf '%s\n' "$state/$id.pi-ext.ts" ;;
-  esac
+  # Deck installs no per-task wiring file: bin/fm-deck-worker.sh passes its
+  # hooks per run.
+  return 0
 }

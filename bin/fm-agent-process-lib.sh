@@ -10,8 +10,7 @@
 # harness one backend recognizes silently reads as a dead pane on the other.
 # The classifier moved here verbatim from the tmux adapter, where it was born;
 # docs/tmux-backend.md "Agent liveness probe" owns the empirical basis for the
-# names below, and tests/fm-tmux-agent-liveness.test.sh plus
-# tests/fm-harness-liveness-drift-live-e2e.test.sh keep them honest.
+# names below, and tests/fm-tmux-agent-liveness.test.sh keeps them honest.
 
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-session-lock-lib.sh"
@@ -28,30 +27,17 @@ fm_agent_process_classify_name() {  # <path> [argv0] -> agent|shell|other
   base=${base##*/}
   base=${base#-}
   case "$base" in
-    # omp (Oh My Pi) is anchored rather than globbed like its neighbours: its
-    # live process name is the bare word `omp` (verified, omp 18.1.11) and a
-    # glob would claim unrelated commands such as ompd or comp.
-    *claude*|*codex*|*opencode*|*grok*|pi|pi-signed|pi-launcher|Pi|omp) printf 'agent' ;;
     # A Deck worker's pane foreground is bin/fm-deck-worker.sh, a bash script
     # launched with argv[0] `fm-deck-worker` so it never reads as an idle
-    # shell; `deck` itself is the headless binary it runs per turn. Both
-    # anchored, like omp.
-    fm-deck-worker|deck) printf 'agent' ;;
+    # shell; a `deck chat` primary's is bin/fm-deck-chat.sh (argv[0]
+    # `fm-deck-chat`); `deck` itself is the binary they run. All anchored, so
+    # unrelated commands containing these words never read as an agent. Any
+    # other process - including a harness Firstmate no longer supports - is
+    # `other`, which callers fold into `ambiguous` rather than `dead`.
+    fm-deck-worker|fm-deck-chat|deck) printf 'agent' ;;
     zsh|bash|sh|dash|ash|ksh|mksh|tcsh|csh|fish) printf 'shell' ;;
     *)
       if fm_harness_path_name "$path" >/dev/null || fm_harness_path_name "$argv0" >/dev/null; then
-        printf 'agent'
-      # cursor-agent runs as a bundled node script, so tmux reports the pane
-      # command as a bare `node` that no name pattern above can own, and its
-      # other installed name is the far-too-generic `agent` (verified live on
-      # cursor-agent 2026.08.11-e8db854: #{pane_current_command} is `node` while
-      # `ps -o comm=` carries the cursor-agent install path). Identity therefore
-      # comes from the narrowed structural rule in bin/fm-cursor-lib.sh, which
-      # demands Cursor's own name or install tree in the path or argv[0]. An
-      # unrelated `node` or `agent` matches nothing here and stays `other`,
-      # which the callers fold into `ambiguous` rather than `dead`, so a
-      # stranger's node pane is never reported as an agent-free pane.
-      elif fm_cursor_process_matches "${path:-$argv0}" '' "$argv0"; then
         printf 'agent'
       else
         printf 'other'
@@ -78,8 +64,9 @@ fm_agent_process_classify() {  # <name> <argv0> <args> [pid] -> agent|shell|othe
   by_name=$(fm_agent_process_classify_name "$name" "$argv0")
   [ "$by_name" != agent ] || { printf 'agent'; return 0; }
   if [ -n "$argv0" ]; then
-    # argv[0] is classified as a path in its own right, so a bare `pi` or a
-    # `-zsh` login name reads by basename and an install path by component.
+    # argv[0] is classified as a path in its own right, so a bare
+    # `fm-deck-worker` or a `-zsh` login name reads by basename and an install
+    # path by component.
     by_argv0=$(fm_agent_process_classify_name "$argv0" "$argv0")
     [ "$by_argv0" != agent ] || { printf 'agent'; return 0; }
   else

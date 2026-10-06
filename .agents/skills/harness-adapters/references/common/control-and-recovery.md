@@ -16,9 +16,7 @@ Inspect after spawn within the tool's readiness window.
 Select only its documented trust choice from the active Firstmate home, binding `FM_HOME` unless already correct, then inspect again under the router-owned completion postcondition.
 No observed dialog proves only that launch.
 
-Each supported harness handles its folder-trust gate differently, and the tool reference owns the detail.
-Pi gates the fresh-worktree case, its dialog is answered with Enter, and `references/harness/pi.md` owns that recipe and where the decision persists.
-Deck is headless and shows no trust dialog.
+Deck is headless and shows no trust dialog; a new adapter's tool reference owns its own trust recipe.
 
 Use the tool's exact skill form, or natural language only when no separate command is verified or the form remains uncertain.
 A successful send or key return is not proof of submission; require the tool-specific postcondition.

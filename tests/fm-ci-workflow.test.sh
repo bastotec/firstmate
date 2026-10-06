@@ -195,7 +195,7 @@ end
     if [ "$job" = invariants ]; then
       expected="CALL"$'\n'"--check-coverage"
     else
-      expected="CALL"$'\n'"--proven-isolated"$'\n'"--jobs"$'\n'"4"$'\n'"--fail-on-gate-skip"$'\n'"Pi extension typecheck prerequisite not found"$'\n'"--json"$'\n'"$tmp/fm-test/fm-test-timing-portable-parallel.json"
+      expected="CALL"$'\n'"--proven-isolated"$'\n'"--jobs"$'\n'"4"$'\n'"--json"$'\n'"$tmp/fm-test/fm-test-timing-portable-parallel.json"
     fi
     [ "$args" = "$expected" ] || fail "$job did not execute its required runner invocation: $args"
   done

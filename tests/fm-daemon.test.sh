@@ -1010,10 +1010,10 @@ test_housekeeping_paused_resumed_cleared() {
   printf 'paused: holding for the upstream tool release\nworking: upstream landed, resuming\n' \
     > "$state/held-w12.status"
   printf 'Working...\n' > "$pane"
-  fm_write_meta "$state/held-w12.meta" "window=$win" "worktree=$dir/wt" "kind=ship" "harness=pi"
+  fm_write_meta "$state/held-w12.meta" "window=$win" "worktree=$dir/wt" "kind=ship" "harness=deck"
   local gen; gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" held-w12)
   "$ROOT/bin/fm-busy-event.sh" apply "$state" held-w12 busy --gen "$gen" \
-    --source pi-ext --event agent-start
+    --source deck-wrapper --event agent-start
   key=$(printf '%s' "held-w12" | tr ':/.' '___')
   echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-paused-$key"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
@@ -1049,10 +1049,10 @@ test_housekeeping_busy_declared_wait_matures_its_window() {
               digest="awaiting the captain" ;;
     esac
     printf 'Working...\n' > "$pane"
-    fm_write_meta "$state/$task.meta" "window=$win" "worktree=$dir/wt" "kind=ship" "harness=pi"
+    fm_write_meta "$state/$task.meta" "window=$win" "worktree=$dir/wt" "kind=ship" "harness=deck"
     gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" "$task")
     "$ROOT/bin/fm-busy-event.sh" apply "$state" "$task" busy --gen "$gen" \
-      --source pi-ext --event agent-start
+      --source deck-wrapper --event agent-start
     key=$(printf '%s' "$task" | tr ':/.' '___')
     PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
       FM_STATE_OVERRIDE="$state" stale_window_is_busy "$win" "$state" \
@@ -1113,7 +1113,7 @@ test_housekeeping_declared_time_controls_pause_recheck() {
   state="$dir/state"; fakebin="$dir/fakebin"
   task='held-until'; win="sess:fm-$task"; pane="$dir/pane.txt"
   printf 'idle prompt $\n' > "$pane"
-  fm_write_meta "$state/$task.meta" "window=$win" "worktree=$dir/wt" "kind=ship" "harness=pi"
+  fm_write_meta "$state/$task.meta" "window=$win" "worktree=$dir/wt" "kind=ship" "harness=deck"
   key=$(printf '%s' "$task" | tr ':/.' '___')
   now=$(date +%s)
   if [ "$(uname)" = Darwin ]; then
@@ -1268,7 +1268,7 @@ test_housekeeping_capture_failure_escalates_without_losing_retry() {
   dir=$(make_supercase stale-capture-failure)
   state="$dir/state"
   win="sess:fm-unreadable-w5"
-  fm_write_meta "$state/unreadable-w5.meta" "window=$win" "backend=tmux" "harness=pi"
+  fm_write_meta "$state/unreadable-w5.meta" "window=$win" "backend=tmux" "harness=deck"
   printf 'working: compiling\n' > "$state/unreadable-w5.status"
   key=$(printf '%s' unreadable-w5 | tr ':/.' '___')
   marker="$state/.subsuper-stale-$key"
@@ -1311,7 +1311,7 @@ test_housekeeping_wedge_gate_absorbs_or_commits_after_escalation() {
   gate_log="$dir/gate.log"
   printf 'working: compiling\n' > "$state/gated-w5.status"
   printf 'idle prompt $\n' > "$pane"
-  fm_write_meta "$state/gated-w5.meta" "window=$win" "backend=tmux" "harness=pi"
+  fm_write_meta "$state/gated-w5.meta" "window=$win" "backend=tmux" "harness=deck"
   key=$(printf '%s' gated-w5 | tr ':/.' '___')
   marker="$state/.subsuper-stale-$key"
   cat > "$fakebin/fm-wake-gate.sh" <<'SH'
@@ -1364,10 +1364,10 @@ test_housekeeping_resumed_stale_cleared() {
   printf 'Working...\n' > "$pane"
   # A resumed crew proves it is working through its own semantic busy-state
   # record (bin/fm-busy-lib.sh), not through the pane's rendered footer.
-  fm_write_meta "$state/res-w6.meta" "window=$win" "worktree=$dir/wt" "kind=ship" "harness=pi"
+  fm_write_meta "$state/res-w6.meta" "window=$win" "worktree=$dir/wt" "kind=ship" "harness=deck"
   local gen; gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" res-w6)
   "$ROOT/bin/fm-busy-event.sh" apply "$state" res-w6 busy --gen "$gen" \
-    --source pi-ext --event agent-start
+    --source deck-wrapper --event agent-start
   key=$(printf '%s' "res-w6" | tr ':/.' '___')
   echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \

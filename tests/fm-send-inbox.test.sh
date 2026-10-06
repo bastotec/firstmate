@@ -90,7 +90,7 @@ SH
 }
 
 setup_case() {  # <name> [harness] -> echoes case dir with home/state + t1 meta
-  local name=$1 harness=${2:-pi} dir
+  local name=$1 harness=${2:-deck} dir
   dir="$TMP_ROOT/$name"
   mkdir -p "$dir/home/state"
   make_stubs "$dir" >/dev/null
@@ -223,7 +223,7 @@ test_harness_invocations_stay_typed() {
   # A leading `$` is not a typed invocation on any harness: it is plain text
   # and rides the inbox, whether it reads like a skill name or like prose.
   for msg in '$no-mistakes' '$5/month is cheap'; do
-    dir=$(setup_case "dollartext-${#msg}" pi); err="$dir/send.err"
+    dir=$(setup_case "dollartext-${#msg}" deck); err="$dir/send.err"
     run_send "$dir" "$err" -- t1 "$msg" || fail "a \$-text send should succeed: $msg"
     [ -f "$dir/home/state/t1.inbox/001.msg" ] || fail "a \$-message should ride the inbox: $msg"
     [ "$(record_body _ "$dir/home/state/t1.inbox/001.msg")" = "$msg" ] \

@@ -54,7 +54,7 @@
 # tests/fm-gate-refuse.test.sh strips the bypass so it still verifies real refusal.
 #
 # docs/architecture.md "No-mistakes gate authority boundary" routes entrypoint
-# coverage; docs/sessionstart-nudge.md owns silent session-open wrapper use.
+# coverage.
 # No side effects on source. set -u / set -e safe. The refusal is a hard exit,
 # not a return, because there is no safe way to continue a fleet mutation from a
 # gate context.
