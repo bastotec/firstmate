@@ -173,6 +173,15 @@ impl Pty {
     /// Read what is available, waiting at most `millis` for the first byte.
     /// The wait only bounds an idle read: output returns as soon as it exists.
     pub fn read_within(&self, buffer: &mut [u8], millis: i32) -> io::Result<Option<usize>> {
+        if !self.wait_readable(millis)? {
+            return Ok(None);
+        }
+        match (&self.master).read(buffer) {
+            Err(e) if e.raw_os_error() == Some(libc::EIO) => Ok(Some(0)),
+            other => other.map(Some),
+        }
+    }
+    pub fn wait_readable(&self, millis: i32) -> io::Result<bool> {
         let mut fd = libc::pollfd {
             fd: self.master.as_raw_fd(),
             events: libc::POLLIN,
@@ -183,13 +192,7 @@ impl Pty {
         if rc < 0 {
             return Err(io::Error::last_os_error());
         }
-        if rc == 0 {
-            return Ok(None);
-        }
-        match (&self.master).read(buffer) {
-            Err(e) if e.raw_os_error() == Some(libc::EIO) => Ok(Some(0)),
-            other => other.map(Some),
-        }
+        Ok(rc != 0)
     }
     pub fn resize(&self, rows: u16, cols: u16) -> io::Result<()> {
         let size = libc::winsize {

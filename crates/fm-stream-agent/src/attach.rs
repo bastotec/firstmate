@@ -599,17 +599,12 @@ fn run_local(
     paint(&snapshot);
     let (events, inbox) = mpsc::channel::<Event>();
     let detaching = Arc::new(AtomicBool::new(false));
-    // Begin the drain once: stop writing, and let the agent's close prove
-    // that everything before it reached the pty.
     let begin_detach = {
         let writer = writer.clone();
         let events = events.clone();
         let detaching = detaching.clone();
         move || {
-            if !detaching.swap(true, Ordering::SeqCst) {
-                let _ = events.send(Event::Detaching(Instant::now() + Duration::from_secs(2)));
-                let _ = writer.lock().unwrap().shutdown(std::net::Shutdown::Write);
-            }
+            begin_local_detach(&writer, &events, &detaching);
         }
     };
 
@@ -617,49 +612,13 @@ fn run_local(
         let events = events.clone();
         let output = raw.output.clone();
         let detaching = detaching.clone();
-        std::thread::spawn(move || {
-            let mut stdout = std::io::stdout();
-            loop {
-                match local::read_frame(&mut reader) {
-                    Ok(Some((b'O', bytes))) => {
-                        let active = output.lock().unwrap();
-                        if !*active {
-                            return;
-                        }
-                        let _ = stdout.write_all(&bytes);
-                        let _ = stdout.flush();
-                    }
-                    Ok(Some((b'C', payload))) => {
-                        let exit = serde_json::from_slice::<Value>(&payload)
-                            .map(|v| v["exit_code"].clone())
-                            .unwrap_or(Value::Null);
-                        let _ = events.send(Event::Closed(exit));
-                        return;
-                    }
-                    Ok(Some((b'E', payload))) => {
-                        let _ = events.send(Event::Lost(format!(
-                            "local agent: {}",
-                            message_of(&payload)
-                        )));
-                        return;
-                    }
-                    Ok(Some(_)) => (),
-                    Ok(None) | Err(_) => {
-                        let _ = events.send(if detaching.load(Ordering::SeqCst) {
-                            Event::Detach
-                        } else {
-                            Event::Lost("the local agent closed the connection".into())
-                        });
-                        return;
-                    }
-                }
-            }
-        });
+        std::thread::spawn(move || local_output(&mut reader, output, events, detaching));
     }
 
     {
         let events = events.clone();
         let writer = writer.clone();
+        let detaching = detaching.clone();
         let begin_detach = begin_detach.clone();
         std::thread::spawn(move || {
             let mut stdin = std::io::stdin().lock();
@@ -672,14 +631,18 @@ fn run_local(
                         None => (&buffer[..n], false),
                     },
                 };
-                if !chunk.is_empty()
-                    && local::write_frame(&mut *writer.lock().unwrap(), b'I', chunk).is_err()
-                {
-                    let _ = events.send(Event::Lost(
-                        "input delivery failed: the local agent connection closed; not retried"
-                            .into(),
-                    ));
-                    return;
+                if !chunk.is_empty() {
+                    let mut writer = writer.lock().unwrap();
+                    if detaching.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    if local::write_frame(&mut *writer, b'I', chunk).is_err() {
+                        let _ = events.send(Event::Lost(
+                            "input delivery failed: the local agent connection closed; not retried"
+                                .into(),
+                        ));
+                        return;
+                    }
                 }
                 if last {
                     begin_detach();
@@ -692,13 +655,17 @@ fn run_local(
     {
         let stop = stop.clone();
         let writer = writer.clone();
+        let detaching = detaching.clone();
         std::thread::spawn(move || {
-            while !stop.load(Ordering::SeqCst) {
+            while !stop.load(Ordering::SeqCst) && !detaching.load(Ordering::SeqCst) {
                 if resized.swap(false, Ordering::SeqCst) {
                     if let Some((rows, cols)) = local_size() {
                         let body = json!({ "rows": rows, "cols": cols }).to_string();
-                        let _ =
-                            local::write_frame(&mut *writer.lock().unwrap(), b'Z', body.as_bytes());
+                        let mut writer = writer.lock().unwrap();
+                        if detaching.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        let _ = local::write_frame(&mut *writer, b'Z', body.as_bytes());
                     }
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -707,6 +674,69 @@ fn run_local(
     }
     let outcome = await_outcome(&inbox, &stop, begin_detach);
     conclude(outcome, &stop, raw, &endpoint)
+}
+
+fn begin_local_detach(
+    writer: &Arc<Mutex<UnixStream>>,
+    events: &mpsc::Sender<Event>,
+    detaching: &AtomicBool,
+) {
+    if !detaching.swap(true, Ordering::SeqCst) {
+        let _ = events.send(Event::Detaching(Instant::now() + Duration::from_secs(2)));
+        let writer = writer.clone();
+        std::thread::spawn(move || {
+            let _ = writer.lock().unwrap().shutdown(std::net::Shutdown::Write);
+        });
+    }
+}
+
+fn local_output(
+    reader: &mut UnixStream,
+    output: Arc<Mutex<bool>>,
+    events: mpsc::Sender<Event>,
+    detaching: Arc<AtomicBool>,
+) {
+    let mut stdout = std::io::stdout();
+    loop {
+        match local::read_frame(reader) {
+            Ok(Some((b'O', bytes))) => {
+                let active = output.lock().unwrap();
+                if !*active {
+                    return;
+                }
+                let _ = stdout.write_all(&bytes);
+                let _ = stdout.flush();
+            }
+            Ok(Some((b'C', payload))) => {
+                let exit = serde_json::from_slice::<Value>(&payload)
+                    .map(|v| v["exit_code"].clone())
+                    .unwrap_or(Value::Null);
+                let _ = events.send(Event::Closed(exit));
+                return;
+            }
+            Ok(Some((b'E', payload))) => {
+                let _ = events.send(Event::Lost(format!(
+                    "local agent: {}",
+                    message_of(&payload)
+                )));
+                return;
+            }
+            Ok(Some((b'A', payload))) if payload.is_empty() && detaching.load(Ordering::SeqCst) => {
+                let _ = events.send(Event::Detach);
+                return;
+            }
+            Ok(Some(_)) => (),
+            Ok(None) | Err(_) => {
+                let reason = if detaching.load(Ordering::SeqCst) {
+                    "input delivery uncertain: the local agent disconnected before drain acknowledgement; not retried"
+                } else {
+                    "the local agent closed the connection"
+                };
+                let _ = events.send(Event::Lost(reason.into()));
+                return;
+            }
+        }
+    }
 }
 
 fn exit_status(exit: &Value) -> i32 {
@@ -720,6 +750,67 @@ fn exit_status(exit: &Value) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_signal_drain_deadline_does_not_wait_for_the_input_writer() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let writer = Arc::new(Mutex::new(stream));
+        let held = writer.lock().unwrap();
+        let detaching = Arc::new(AtomicBool::new(false));
+        let (events, inbox) = mpsc::channel();
+        let (done, finished) = mpsc::channel();
+        let worker = {
+            let writer = writer.clone();
+            let detaching = detaching.clone();
+            std::thread::spawn(move || {
+                let started = Instant::now();
+                let outcome = await_outcome(&inbox, &AtomicBool::new(true), || {
+                    begin_local_detach(&writer, &events, &detaching);
+                });
+                done.send((outcome, started.elapsed())).unwrap();
+            })
+        };
+        let result = finished.recv_timeout(Duration::from_secs(3));
+        drop(held);
+        worker.join().unwrap();
+        let (outcome, elapsed) = result.unwrap();
+        assert!(matches!(outcome, Event::Lost(reason) if reason.contains("drain timed out")));
+        assert!(elapsed < Duration::from_secs(3));
+        assert!(detaching.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn only_an_explicit_acknowledgement_confirms_a_local_drain() {
+        for ack in [false, true] {
+            let (mut reader, mut server) = UnixStream::pair().unwrap();
+            let (events, inbox) = mpsc::channel();
+            let detaching = Arc::new(AtomicBool::new(true));
+            if ack {
+                local::write_frame(&mut server, b'A', b"").unwrap();
+            }
+            drop(server);
+            local_output(&mut reader, Arc::new(Mutex::new(true)), events, detaching);
+            let outcome = inbox.recv().unwrap();
+            if ack {
+                assert!(matches!(outcome, Event::Detach));
+            } else {
+                assert!(matches!(outcome, Event::Lost(reason) if reason.contains("uncertain")));
+            }
+        }
+        let (mut reader, mut server) = UnixStream::pair().unwrap();
+        server.write_all(b"A\0\0").unwrap();
+        drop(server);
+        let (events, inbox) = mpsc::channel();
+        local_output(
+            &mut reader,
+            Arc::new(Mutex::new(true)),
+            events,
+            Arc::new(AtomicBool::new(true)),
+        );
+        assert!(
+            matches!(inbox.recv().unwrap(), Event::Lost(reason) if reason.contains("uncertain"))
+        );
+    }
 
     #[test]
     fn detach_keys_map_to_control_bytes() {

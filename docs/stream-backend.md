@@ -155,8 +155,8 @@ Ordinary supervision does not need any of that.
 When the endpoint's native agent runs on the same machine as the client, the session skips the hub entirely and runs over that agent's private unix socket, `<dir>/<endpoint-id>.sock`:
 
 - `<dir>` is `FM_STREAM_LOCAL_DIR`, else `/tmp/fm-stream-<uid>`. It must be a directory this user owns with no group or other permissions (the agent creates it 0700), the socket is 0600, and the agent only serves a peer with its own uid. Anything else disables the fast path rather than trusting it.
-- The agent keeps its own copy of the hub's screen model fed with the same bytes it publishes, so the session has the same shape: resize first, then a snapshot and the output that continues exactly after it, every keystroke written straight to the pseudoterminal, resizes forwarded, Ctrl-] and the signals detaching after a drain the agent confirms by closing its end, at most two seconds, and the endpoint's exit status propagated.
-  A client that falls far enough behind to queue 4096 output chunks is cut off with a message rather than stalling the endpoint.
+- The agent keeps its own copy of the hub's screen model fed with the same bytes it publishes, so the session has the same shape: resize first, then a snapshot and the output that continues exactly after it, every keystroke written straight to the pseudoterminal, resizes forwarded, Ctrl-] and the signals detaching after an explicit input-drain acknowledgement from the agent, at most two seconds, and the endpoint's exit status propagated.
+  A client that falls far enough behind to queue 4096 output chunks is disconnected rather than stalling the endpoint.
 - Output still reaches the hub for every other watcher, and a local resize reaches the hub's screen in order with that output, but a session in progress does not depend on the hub at all.
 - No socket, a stale one, a Python agent, or an endpoint on another machine falls back to the hub path above. `FM_STREAM_ATTACH_LOCAL=0` forces the hub path.
 - A long `FM_STREAM_LOCAL_DIR` can push the socket path past the 104-byte limit macOS puts on it, which also just disables the fast path.

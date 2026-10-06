@@ -8,7 +8,7 @@ use super::{
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io;
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::{atomic::Ordering, mpsc, Arc};
 use std::time::{Duration, Instant};
 
 struct Receipt {
@@ -153,10 +153,8 @@ impl Agent {
             self.options.machine, self.id, self.options.poll_secs as u64
         );
         std::thread::scope(|scope| {
-            let mut take: Option<
-                std::thread::ScopedJoinHandle<'_, Result<hub_json::Response, Error>>,
-            > = None;
-            let mut post: Option<(String, std::thread::ScopedJoinHandle<'_, bool>)> = None;
+            let mut take: Option<mpsc::Receiver<Result<hub_json::Response, Error>>> = None;
+            let mut post: Option<(String, mpsc::Receiver<bool>)> = None;
             loop {
                 // Taken before looking at the threads, so a take or post that
                 // finishes after this point still ends this iteration's wait.
@@ -179,8 +177,9 @@ impl Agent {
                 {
                     break;
                 }
-                if take.as_ref().is_some_and(|task| task.is_finished()) {
-                    match take.take().unwrap().join().expect("command take thread") {
+                if let Some(answer) = take.as_ref().and_then(completed) {
+                    take = None;
+                    match answer {
                         Ok(answer) => {
                             backoff = 2.0;
                             // Poll again at once after a command (the next key
@@ -215,9 +214,8 @@ impl Agent {
                         }
                     }
                 }
-                if post.as_ref().is_some_and(|(_, task)| task.is_finished()) {
-                    let (id, task) = post.take().unwrap();
-                    let settled = task.join().expect("command result thread");
+                if let Some(settled) = post.as_ref().and_then(|(_, task)| completed(task)) {
+                    let (id, _) = post.take().unwrap();
                     let record = outcomes.get_mut(&id).unwrap();
                     let mut limit = record["expires_at"].as_f64().unwrap();
                     if let Some(at) = shutdown {
@@ -367,16 +365,18 @@ impl Agent {
                     if Instant::now() >= poll_due {
                         take_started = Instant::now();
                         let path = &path;
-                        take = Some(scope.spawn(move || {
+                        let (done, completion) = mpsc::channel();
+                        take = Some(completion);
+                        scope.spawn(move || {
                             let answer = self.hub.call(
                                 "GET",
                                 path,
                                 None,
                                 Duration::from_secs_f64(self.options.poll_secs + 15.0),
                             );
+                            let _ = done.send(answer);
                             self.tick.notify();
-                            answer
-                        }));
+                        });
                     }
                 }
                 if post.is_none() {
@@ -398,26 +398,25 @@ impl Agent {
                         let record = outcomes.get_mut(&id).unwrap();
                         record["_last_attempt_at"] = json!(now());
                         let result = record["result"].clone();
-                        post = Some((
-                            id,
-                            scope.spawn(move || {
-                                let settled = matches!(
-                                    self.hub.call(
-                                        "POST",
-                                        "/v1/agent/results",
-                                        Some(&result),
-                                        Duration::from_secs(RESULT_POST_SECS)
-                                    ),
-                                    // A definitive rejection settles; an
-                                    // UNMATCHED command id does not, because
-                                    // it is not a verdict on this result and
-                                    // the hub may still be able to accept it.
-                                    Ok(_) | Err(Error::Rejected)
-                                );
-                                self.tick.notify();
-                                settled
-                            }),
-                        ));
+                        let (done, completion) = mpsc::channel();
+                        post = Some((id, completion));
+                        scope.spawn(move || {
+                            let settled = matches!(
+                                self.hub.call(
+                                    "POST",
+                                    "/v1/agent/results",
+                                    Some(&result),
+                                    Duration::from_secs(RESULT_POST_SECS)
+                                ),
+                                // A definitive rejection settles; an
+                                // UNMATCHED command id does not, because
+                                // it is not a verdict on this result and
+                                // the hub may still be able to accept it.
+                                Ok(_) | Err(Error::Rejected)
+                            );
+                            let _ = done.send(settled);
+                            self.tick.notify();
+                        });
                     }
                 }
                 // Timers (retries, Deck application) still run on this
@@ -425,6 +424,39 @@ impl Agent {
                 self.tick.settle(tick, Duration::from_millis(100));
             }
         });
+    }
+}
+fn completed<T>(receiver: &mpsc::Receiver<T>) -> Option<T> {
+    match receiver.try_recv() {
+        Ok(value) => Some(value),
+        Err(mpsc::TryRecvError::Empty) => None,
+        Err(mpsc::TryRecvError::Disconnected) => panic!("command worker disconnected"),
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Wake;
+
+    #[test]
+    fn completion_is_consumable_before_the_worker_returns() {
+        let wake = Arc::new(Wake::default());
+        let generation = wake.snapshot();
+        let (done, completion) = mpsc::channel();
+        let (exit, hold) = mpsc::channel();
+        let worker_wake = wake.clone();
+        let worker = std::thread::spawn(move || {
+            done.send(true).unwrap();
+            worker_wake.notify();
+            hold.recv().unwrap();
+        });
+        wake.settle(generation, Duration::from_secs(1));
+        let result = completed(&completion);
+        let running = !worker.is_finished();
+        exit.send(()).unwrap();
+        worker.join().unwrap();
+        assert_eq!(result, Some(true));
+        assert!(running);
     }
 }
 fn applied(result: Result<(), Error>) -> Decision {

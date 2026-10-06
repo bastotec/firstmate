@@ -364,6 +364,7 @@ impl Outbox {
         }
         let mut frames = Vec::new();
         let mut bytes = Vec::new();
+        let mut total = 0;
         while let Some(item) = state.0.front_mut() {
             match item {
                 Item::Geometry(rows, cols) => {
@@ -375,17 +376,19 @@ impl Outbox {
                     state.0.pop_front();
                 }
                 Item::Bytes(chunk) => {
-                    let room = FRAME_BYTES - bytes.len();
+                    let room = FRAME_BYTES - total;
                     if chunk.len() <= room {
                         bytes.extend_from_slice(chunk);
+                        total += chunk.len();
                         state.1 -= chunk.len();
                         state.0.pop_front();
                     } else {
                         bytes.extend_from_slice(&chunk[..room]);
                         chunk.drain(..room);
                         state.1 -= room;
+                        total += room;
                     }
-                    if bytes.len() == FRAME_BYTES {
+                    if total == FRAME_BYTES {
                         break;
                     }
                 }
@@ -420,6 +423,7 @@ struct Agent {
     /// The PTY's current rows and cols; a resize changes it, and every
     /// re-registration reports it so a restarted hub renders the same size.
     geometry: Mutex<(u16, u16)>,
+    output: Mutex<Vec<u8>>,
 }
 impl Agent {
     fn registration(&self) -> Value {
@@ -532,15 +536,22 @@ impl Agent {
     /// round trip per chunk.
     fn reader(&self) {
         let mut buffer = vec![0u8; FRAME_BYTES];
-        let mut batch: Vec<u8> = Vec::new();
         let mut since = Instant::now();
         while !self.reader_stop.load(Ordering::SeqCst) {
-            let wait = if batch.is_empty() {
+            let wait = if self.output.lock().unwrap().is_empty() {
                 100
             } else {
                 COALESCE_MILLIS
             };
-            let ended = match self.pty.read_within(&mut buffer, wait) {
+            let ready = self.pty.wait_readable(wait);
+            let mut batch = self.output.lock().unwrap();
+            let ended = match ready.and_then(|ready| {
+                if ready {
+                    self.pty.read_within(&mut buffer, 0)
+                } else {
+                    Ok(None)
+                }
+            }) {
                 Ok(Some(0)) => true,
                 Ok(Some(n)) => {
                     if batch.is_empty() {
@@ -557,17 +568,45 @@ impl Agent {
                 Err(_) => true,
             };
             if !batch.is_empty() {
-                self.publish(std::mem::take(&mut batch));
+                self.publish(std::mem::take(&mut *batch));
             }
             if ended {
                 break;
             }
         }
+        let mut batch = self.output.lock().unwrap();
         if !batch.is_empty() {
-            self.publish(batch);
+            self.publish(std::mem::take(&mut *batch));
         }
         self.outbox.finish();
         self.halt();
+    }
+    fn resize_output(&self, rows: u16, cols: u16) -> Result<(), Error> {
+        if !(1..=1000).contains(&rows) || !(1..=1000).contains(&cols) {
+            return Err(Error::Other("resize rows and cols must be 1-1000".into()));
+        }
+        let mut batch = self.output.lock().unwrap();
+        if !self.pty.alive() {
+            return Err(Error::Other("the endpoint process has exited".into()));
+        }
+        if *self.geometry.lock().unwrap() == (rows, cols) {
+            return Ok(());
+        }
+        if !batch.is_empty() {
+            self.publish(std::mem::take(&mut *batch));
+        }
+        let mut buffer = vec![0; FRAME_BYTES];
+        while let Some(n) = self.pty.read_within(&mut buffer, 0)? {
+            if n == 0 {
+                break;
+            }
+            self.publish(buffer[..n].to_vec());
+        }
+        self.pty.resize(rows, cols)?;
+        self.local.resize(rows, cols);
+        *self.geometry.lock().unwrap() = (rows, cols);
+        self.outbox.push(Item::Geometry(rows, cols));
+        Ok(())
     }
     fn publish(&self, bytes: Vec<u8>) {
         // The hub's copy first: the local screen parse must not delay it.
@@ -636,27 +675,9 @@ impl Agent {
                 Ok(())
             }
             "resize" => {
-                let side = |name: &str| {
-                    payload[name]
-                        .as_u64()
-                        .and_then(|v| u16::try_from(v).ok())
-                        .filter(|v| *v > 0)
-                        .ok_or_else(|| Error::Other(format!("resize {name} must be 1-65535")))
-                };
-                let (rows, cols) = (side("rows")?, side("cols")?);
-                if !self.pty.alive() {
-                    return Err(Error::Other("the endpoint process has exited".into()));
-                }
-                self.hub.call(
-                    "POST",
-                    "/v1/agent/frames",
-                    Some(&json!({"machine":self.options.machine,"frames":[{"endpoint_id":self.id,"geometry":{"rows":rows,"cols":cols}}]})),
-                    Duration::from_secs(15),
-                )?;
-                self.pty.resize(rows, cols)?;
-                self.local.resize(rows, cols);
-                *self.geometry.lock().unwrap() = (rows, cols);
-                Ok(())
+                let (rows, cols) = local::geometry(payload)
+                    .ok_or_else(|| Error::Other("resize rows and cols must be 1-1000".into()))?;
+                self.resize_output(rows, cols)
             }
             "kill" => {
                 self.pty.close(
@@ -805,21 +826,8 @@ impl local::Endpoint for Agent {
     /// The local twin of the hub's `resize` command. The hub's screen follows
     /// through the outbox, in order with the output, and never blocks it.
     fn resize(&self, rows: u16, cols: u16) -> Result<(), String> {
-        if !self.pty.alive() {
-            return Err("the endpoint process has exited".into());
-        }
-        let mut geometry = self.geometry.lock().unwrap();
-        if *geometry == (rows, cols) {
-            return Ok(());
-        }
-        self.pty
-            .resize(rows, cols)
-            .map_err(|error| error.to_string())?;
-        self.local.resize(rows, cols);
-        *geometry = (rows, cols);
-        drop(geometry);
-        self.outbox.push(Item::Geometry(rows, cols));
-        Ok(())
+        self.resize_output(rows, cols)
+            .map_err(|error| error.to_string())
     }
 }
 fn now() -> f64 {
@@ -907,6 +915,7 @@ fn serve(args: &[String]) -> Result<(), Error> {
         }),
         result_deadline: Mutex::new(None),
         geometry: Mutex::new((options_rows, options_cols)),
+        output: Mutex::new(Vec::new()),
     });
     let startup = (|| {
         agent.hub.call(
@@ -1010,6 +1019,167 @@ mod tests {
         assert_eq!(outbox.state.lock().unwrap().1, 0);
         outbox.finish();
         assert!(outbox.take("id").is_none());
+    }
+
+    #[test]
+    fn geometry_does_not_reset_the_post_output_budget() {
+        let outbox = Outbox::default();
+        let mut expected = Vec::new();
+        for row in 25..35 {
+            let chunk = vec![row as u8; FRAME_BYTES / 2 + 7];
+            expected.extend_from_slice(&chunk);
+            outbox.push(Item::Bytes(chunk));
+            outbox.push(Item::Geometry(row, 80));
+        }
+        outbox.finish();
+        let mut output = Vec::new();
+        let mut geometries = Vec::new();
+        while let Some(frames) = outbox.take("id") {
+            let mut total = 0;
+            for frame in frames {
+                if frame.get("b64").is_some() {
+                    let bytes = decoded(&frame);
+                    total += bytes.len();
+                    output.extend(bytes);
+                } else {
+                    geometries.push(frame["geometry"]["rows"].as_u64().unwrap());
+                }
+            }
+            assert!(total <= FRAME_BYTES);
+        }
+        assert_eq!(output, expected);
+        assert_eq!(geometries, (25..35).collect::<Vec<_>>());
+    }
+
+    fn resize_test_agent() -> Arc<Agent> {
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let options = Options::parse(&[
+            "--hub".into(),
+            "http://127.0.0.1:1".into(),
+            "--label".into(),
+            "resize-test".into(),
+            "--cwd".into(),
+            cwd.clone(),
+            "--rows".into(),
+            "24".into(),
+            "--cols".into(),
+            "80".into(),
+        ])
+        .unwrap();
+        let client = Client::builder().build().unwrap();
+        Arc::new(Agent {
+            options,
+            hub: Hub {
+                url: "http://127.0.0.1:1".into(),
+                token: String::new(),
+                client: client.clone(),
+                output: client,
+                capability: Mutex::new(String::new()),
+                deadline: Mutex::new(None),
+            },
+            pty: Pty::spawn(&cwd, 24, 80, "resize-test", "http://127.0.0.1:1").unwrap(),
+            id: "0123456789abcdef0123456789abcdef".into(),
+            stop: Arc::new(AtomicBool::new(false)),
+            reader_stop: AtomicBool::new(false),
+            stood_down: AtomicBool::new(false),
+            wake: Wake::default(),
+            tick: Wake::default(),
+            outbox: Outbox::default(),
+            local: local::Local::new(24, 80),
+            registration: Mutex::new(Registration {
+                not_before: Instant::now(),
+                backoff: 2.0,
+            }),
+            result_deadline: Mutex::new(None),
+            geometry: Mutex::new((24, 80)),
+            output: Mutex::new(Vec::new()),
+        })
+    }
+
+    #[test]
+    fn both_resize_paths_flush_old_output_before_new_geometry_and_redraw() {
+        for hub_command in [false, true] {
+            let agent = resize_test_agent();
+            let mut discard = [0; FRAME_BYTES];
+            let marker = std::env::current_dir().unwrap().join(format!(
+                ".resize-marker-{}-{hub_command}",
+                std::process::id()
+            ));
+            let setup = format!(
+                "PS1=; PS2=; stty -echo; printf ready > '{}'\r",
+                marker.display()
+            );
+            agent.pty.write(setup.as_bytes()).unwrap();
+            let until = Instant::now() + Duration::from_secs(10);
+            while !marker.is_file() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(marker.is_file());
+            fs::remove_file(&marker).unwrap();
+            while agent.pty.read_within(&mut discard, 100).unwrap().is_some() {}
+            *agent.output.lock().unwrap() = b"\x1b[24;1Hold-batch".to_vec();
+            let command = format!(
+                "printf '\\033[23;1Hold-kernel'; printf done > '{}'\r",
+                marker.display()
+            );
+            agent.pty.write(command.as_bytes()).unwrap();
+            let until = Instant::now() + Duration::from_secs(10);
+            while !marker.is_file() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(marker.is_file());
+            fs::remove_file(&marker).unwrap();
+            if hub_command {
+                agent
+                    .apply(
+                        &json!({"kind":"resize", "payload":{"rows":40,"cols":80}}),
+                        &hub_json::decode(b"{}", false).unwrap(),
+                    )
+                    .unwrap();
+            } else {
+                local::Endpoint::resize(&*agent, 40, 80).unwrap();
+            }
+            assert!(agent.local.lines()[23].contains("old-batch"));
+            assert!(agent.local.lines()[22].contains("old-kernel"));
+            assert_eq!(agent.registration()["rows"], 40);
+            let reader_agent = agent.clone();
+            let reader = std::thread::spawn(move || reader_agent.reader());
+            agent
+                .pty
+                .write(b"printf '\\033[40;1Hnew-bottom'\r")
+                .unwrap();
+            let until = Instant::now() + Duration::from_secs(10);
+            while !agent.local.lines()[39].contains("new-bottom") && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            agent.reader_stop.store(true, Ordering::SeqCst);
+            reader.join().unwrap();
+            assert!(agent.local.lines()[39].contains("new-bottom"));
+            let mut before = Vec::new();
+            let mut after = Vec::new();
+            let mut resized = false;
+            while let Some(frames) = agent.outbox.take(&agent.id) {
+                for frame in frames {
+                    if frame.get("geometry").is_some() {
+                        assert_eq!(frame["geometry"], json!({"rows":40,"cols":80}));
+                        resized = true;
+                    } else if resized {
+                        after.extend(decoded(&frame));
+                    } else {
+                        before.extend(decoded(&frame));
+                    }
+                }
+            }
+            assert!(resized);
+            assert!(String::from_utf8_lossy(&before).contains("old-batch"));
+            assert!(String::from_utf8_lossy(&before).contains("old-kernel"));
+            assert!(String::from_utf8_lossy(&after).contains("new-bottom"));
+            agent.pty.close(true).unwrap();
+        }
     }
 
     #[test]

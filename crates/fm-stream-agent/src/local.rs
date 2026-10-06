@@ -19,8 +19,7 @@
 //!                    O <bytes>                      output, in order
 //!                    C {"exit_code"}                the endpoint closed
 //!                    E {"message"}                  refusal or failure
-//! A client that is done shuts down its write half; the agent finishes the
-//! input it already read, then closes, which is the client's drain proof.
+//!                    A <empty>                      input drain acknowledgement
 #[allow(dead_code)]
 #[path = "../../fm-stream-hub/src/screen.rs"]
 mod screen;
@@ -34,6 +33,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
@@ -143,12 +143,26 @@ fn peer_uid(stream: &UnixStream) -> Option<u32> {
 enum Message {
     Output(Arc<[u8]>),
     Closed(Value),
+    Drained,
+    Error(String),
+}
+
+#[derive(Debug)]
+struct Connection {
+    stream: UnixStream,
+    stopped: AtomicBool,
+}
+impl Connection {
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::SeqCst);
+        hang_up(&self.stream);
+    }
 }
 
 struct Inner {
     screen: Screen,
     tail: VecDeque<u8>,
-    subscribers: Vec<SyncSender<Message>>,
+    subscribers: Vec<(Arc<Connection>, SyncSender<Message>)>,
     closed: Option<Value>,
 }
 
@@ -181,7 +195,6 @@ impl Local {
             let _ = fs::DirBuilder::new().mode(0o700).create(&dir);
         }
         let path = socket_path(endpoint)?;
-        sweep(&dir);
         let _ = fs::remove_file(&path);
         let listener = UnixListener::bind(&path).ok()?;
         if fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).is_err() {
@@ -199,10 +212,13 @@ impl Local {
         let mut inner = self.inner.lock().unwrap();
         if !inner.subscribers.is_empty() {
             let chunk: Arc<[u8]> = bytes.into();
-            inner.subscribers.retain(|subscriber| {
-                // Full: the client fell behind and is cut off (it is told so);
-                // Disconnected: it already left.
-                subscriber.try_send(Message::Output(chunk.clone())).is_ok()
+            inner.subscribers.retain(|(connection, subscriber)| {
+                if subscriber.try_send(Message::Output(chunk.clone())).is_ok() {
+                    true
+                } else {
+                    connection.stop();
+                    false
+                }
             });
         }
         inner.screen.feed(bytes);
@@ -211,6 +227,11 @@ impl Local {
         inner.tail.drain(..overflow);
         let keep = bytes.len().saturating_sub(TAIL);
         inner.tail.extend(&bytes[keep..]);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lines(&self) -> Vec<String> {
+        self.inner.lock().unwrap().screen.lines(true)
     }
 
     pub fn resize(&self, rows: u16, cols: u16) {
@@ -227,8 +248,10 @@ impl Local {
         if inner.closed.is_some() {
             return;
         }
-        for subscriber in inner.subscribers.drain(..) {
-            let _ = subscriber.try_send(Message::Closed(exit.clone()));
+        for (connection, subscriber) in inner.subscribers.drain(..) {
+            if subscriber.try_send(Message::Closed(exit.clone())).is_err() {
+                connection.stop();
+            }
         }
         inner.closed = Some(exit);
         drop(inner);
@@ -243,7 +266,10 @@ impl Local {
 
     /// The snapshot, the unparsed tail it leaves for the stream, and the
     /// subscription that continues exactly after it - taken under one lock.
-    fn subscribe(&self) -> Result<(Value, Vec<u8>, Receiver<Message>), Value> {
+    fn subscribe(
+        &self,
+        stream: UnixStream,
+    ) -> Result<(Value, Vec<u8>, Receiver<Message>, Arc<Connection>), Value> {
         let mut inner = self.inner.lock().unwrap();
         if let Some(exit) = &inner.closed {
             return Err(exit.clone());
@@ -259,35 +285,34 @@ impl Local {
         let skip = inner.tail.len() - pending;
         let tail: Vec<u8> = inner.tail.iter().skip(skip).copied().collect();
         let (sender, receiver) = sync_channel(QUEUE);
-        inner.subscribers.push(sender);
-        Ok((snapshot, tail, receiver))
+        let connection = Arc::new(Connection {
+            stream,
+            stopped: AtomicBool::new(false),
+        });
+        inner.subscribers.push((connection.clone(), sender));
+        Ok((snapshot, tail, receiver, connection))
+    }
+
+    fn end_session(&self, connection: &Arc<Connection>, final_message: Option<Message>) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(index) = inner
+            .subscribers
+            .iter()
+            .position(|(c, _)| Arc::ptr_eq(c, connection))
+        {
+            let (_, sender) = inner.subscribers.remove(index);
+            if final_message.is_none_or(|message| sender.try_send(message).is_err()) {
+                connection.stop();
+            }
+        } else {
+            connection.stop();
+        }
     }
 }
 
 impl Drop for Local {
     fn drop(&mut self) {
         self.unlink();
-    }
-}
-
-/// Remove sockets a killed agent left behind: nothing answers on them.
-fn sweep(dir: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".sock")) else {
-            continue;
-        };
-        if !fm_stream_wire::is_endpoint_id(id) {
-            continue;
-        }
-        if let Err(error) = UnixStream::connect(entry.path()) {
-            if error.kind() == io::ErrorKind::ConnectionRefused {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
     }
 }
 
@@ -311,12 +336,12 @@ pub fn serve<E: Endpoint>(endpoint: Arc<E>, listener: UnixListener) {
     }
 }
 
-fn geometry(value: &Value) -> Option<(u16, u16)> {
+pub(crate) fn geometry(value: &Value) -> Option<(u16, u16)> {
     let side = |name: &str| {
         value[name]
             .as_u64()
             .and_then(|v| u16::try_from(v).ok())
-            .filter(|v| *v > 0)
+            .filter(|v| (1..=1000).contains(v))
     };
     Some((side("rows")?, side("cols")?))
 }
@@ -337,12 +362,21 @@ fn session<E: Endpoint>(endpoint: Arc<E>, mut stream: UnixStream) {
     }
     // Resize before the snapshot, like the hub path, so the first paint is
     // already at the client's geometry.
-    if let Some((rows, cols)) = geometry(&hello) {
+    if hello.get("rows").is_some() || hello.get("cols").is_some() {
+        let Some((rows, cols)) = geometry(&hello) else {
+            return refuse(&mut stream, "a resize needs rows and cols in 1-1000");
+        };
         if let Err(message) = endpoint.resize(rows, cols) {
             return refuse(&mut stream, &format!("resize failed: {message}"));
         }
     }
-    let (snapshot, tail, receiver) = match endpoint.local().subscribe() {
+    let Ok(mut writer) = stream.try_clone() else {
+        return;
+    };
+    let Ok(control) = stream.try_clone() else {
+        return;
+    };
+    let (snapshot, tail, receiver, connection) = match endpoint.local().subscribe(control) {
         Ok(subscription) => subscription,
         Err(exit) => {
             let _ = write_frame(
@@ -354,43 +388,43 @@ fn session<E: Endpoint>(endpoint: Arc<E>, mut stream: UnixStream) {
             return;
         }
     };
-    let Ok(mut writer) = stream.try_clone() else {
-        return;
-    };
-    if write_frame(&mut writer, b'S', snapshot.to_string().as_bytes()).is_err()
-        || (!tail.is_empty() && write_frame(&mut writer, b'O', &tail).is_err())
-    {
-        return;
-    }
-    std::thread::spawn(move || {
-        for message in receiver.iter() {
-            let sent = match message {
-                Message::Output(bytes) => write_frame(&mut writer, b'O', &bytes),
-                Message::Closed(exit) => {
-                    let _ = write_frame(
-                        &mut writer,
-                        b'C',
-                        json!({ "exit_code": exit }).to_string().as_bytes(),
-                    );
-                    hang_up(&writer);
-                    return;
+    let output_connection = connection.clone();
+    let output = std::thread::spawn(move || {
+        let painted = write_frame(&mut writer, b'S', snapshot.to_string().as_bytes()).is_ok()
+            && (tail.is_empty() || write_frame(&mut writer, b'O', &tail).is_ok());
+        if painted {
+            for message in receiver.iter() {
+                if output_connection.stopped.load(Ordering::SeqCst) {
+                    break;
                 }
-            };
-            if sent.is_err() {
-                return;
+                let (sent, last) = match message {
+                    Message::Output(bytes) => (write_frame(&mut writer, b'O', &bytes), false),
+                    Message::Closed(exit) => (
+                        write_frame(
+                            &mut writer,
+                            b'C',
+                            json!({ "exit_code": exit }).to_string().as_bytes(),
+                        ),
+                        true,
+                    ),
+                    Message::Drained => (write_frame(&mut writer, b'A', b""), true),
+                    Message::Error(message) => {
+                        (write_frame(&mut writer, b'E', &error(&message)), true)
+                    }
+                };
+                if sent.is_err() || last {
+                    break;
+                }
             }
         }
-        // The agent dropped this subscriber without closing: it fell behind.
-        let _ = write_frame(
-            &mut writer,
-            b'E',
-            &error("output fell behind this terminal; attach again"),
-        );
-        hang_up(&writer);
+        output_connection.stop();
     });
-    // Until the client finishes (or vanishes): everything it sent before that
-    // point has then been written to the pty, which is what its drain waits for.
-    while let Ok(Some(frame)) = read_frame(&mut stream) {
+    let final_message = loop {
+        let frame = match read_frame(&mut stream) {
+            Ok(Some(frame)) => frame,
+            Ok(None) => break Some(Message::Drained),
+            Err(_) => break None,
+        };
         let outcome = match frame {
             (b'I', bytes) if !bytes.is_empty() => endpoint.input(&bytes),
             (b'Z', payload) => match serde_json::from_slice::<Value>(&payload)
@@ -399,16 +433,17 @@ fn session<E: Endpoint>(endpoint: Arc<E>, mut stream: UnixStream) {
                 .and_then(geometry)
             {
                 Some((rows, cols)) => endpoint.resize(rows, cols),
-                None => Err("a resize needs rows and cols in 1-65535".into()),
+                None => Err("a resize needs rows and cols in 1-1000".into()),
             },
             _ => Ok(()),
         };
         if let Err(message) = outcome {
-            let _ = write_frame(&mut stream, b'E', &error(&message));
-            break;
+            break Some(Message::Error(message));
         }
-    }
-    hang_up(&stream);
+    };
+    endpoint.local().end_session(&connection, final_message);
+    let _ = output.join();
+    connection.stop();
 }
 
 /// End the connection for the peer. Write first: once the peer has shut its
@@ -446,7 +481,8 @@ mod tests {
     fn snapshot_and_stream_continue_exactly() {
         let local = Local::new(4, 20);
         local.feed(b"first line\r\nsecond\x1b[3");
-        let (snapshot, tail, receiver) = local.subscribe().unwrap();
+        let (client, server) = UnixStream::pair().unwrap();
+        let (snapshot, tail, receiver, connection) = local.subscribe(server).unwrap();
         assert!(snapshot["screen"].as_str().unwrap().contains("first line"));
         assert_eq!(snapshot["cursor_row"], 1);
         // The unfinished escape is replayed, then the stream continues.
@@ -454,11 +490,15 @@ mod tests {
         local.feed(b"1mred");
         match receiver.try_recv().unwrap() {
             Message::Output(bytes) => assert_eq!(&bytes[..], b"1mred"),
-            Message::Closed(_) => panic!("not closed"),
+            _ => panic!("not output"),
         }
         local.close(json!(3));
         assert!(matches!(receiver.try_recv().unwrap(), Message::Closed(code) if code == 3));
-        assert_eq!(local.subscribe().unwrap_err(), json!(3));
+        assert_eq!(
+            local.subscribe(client.try_clone().unwrap()).unwrap_err(),
+            json!(3)
+        );
+        connection.stop();
     }
 
     const ID: &str = "0123456789abcdef0123456789abcdef";
@@ -520,12 +560,13 @@ mod tests {
         write_frame(&mut client, b'I', b"typed\r").unwrap();
         write_frame(&mut client, b'Z', br#"{"rows":6,"cols":31}"#).unwrap();
         write_frame(&mut client, b'I', b"more").unwrap();
-        // Done: the agent finishes what it read, then closes - the drain proof.
         client.shutdown(std::net::Shutdown::Write).unwrap();
         handle.join().unwrap();
         assert_eq!(*endpoint.typed.lock().unwrap(), b"typed\rmore");
         assert_eq!(*endpoint.sizes.lock().unwrap(), vec![(5, 30), (6, 31)]);
+        assert_eq!(read_frame(&mut client).unwrap(), Some((b'A', Vec::new())));
         assert!(read_frame(&mut client).map_or(true, |frame| frame.is_none()));
+        assert!(endpoint.local.inner.lock().unwrap().subscribers.is_empty());
     }
 
     #[test]
@@ -579,11 +620,86 @@ mod tests {
     #[test]
     fn a_stalled_client_is_cut_off_not_waited_for() {
         let local = Local::new(4, 20);
-        let (_, _, receiver) = local.subscribe().unwrap();
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let (_, _, receiver, connection) = local.subscribe(server).unwrap();
         for _ in 0..QUEUE + 1 {
             local.feed(b"x");
         }
         assert!(local.inner.lock().unwrap().subscribers.is_empty());
         assert_eq!(receiver.iter().count(), QUEUE);
+        assert!(connection.stopped.load(Ordering::SeqCst));
+        assert_eq!(read_frame(&mut client).unwrap(), None);
+    }
+
+    #[test]
+    fn idle_detach_and_disconnect_release_every_subscription() {
+        let endpoint = fake();
+        for _ in 0..32 {
+            let (mut client, handle) = open(&endpoint, json!({"endpoint": ID}));
+            assert_eq!(read_frame(&mut client).unwrap().unwrap().0, b'S');
+            client.shutdown(std::net::Shutdown::Write).unwrap();
+            assert_eq!(read_frame(&mut client).unwrap(), Some((b'A', Vec::new())));
+            handle.join().unwrap();
+            assert!(endpoint.local.inner.lock().unwrap().subscribers.is_empty());
+            assert_eq!(read_frame(&mut client).unwrap(), None);
+        }
+        let (mut client, handle) = open(&endpoint, json!({"endpoint": ID}));
+        assert_eq!(read_frame(&mut client).unwrap().unwrap().0, b'S');
+        drop(client);
+        handle.join().unwrap();
+        assert!(endpoint.local.inner.lock().unwrap().subscribers.is_empty());
+    }
+
+    #[test]
+    fn overflow_unblocks_a_stalled_socket_writer_and_input_session() {
+        let endpoint = fake();
+        let (mut client, handle) = open(&endpoint, json!({"endpoint": ID}));
+        assert_eq!(read_frame(&mut client).unwrap().unwrap().0, b'S');
+        let (done, finished) = std::sync::mpsc::channel();
+        let join = std::thread::spawn(move || {
+            handle.join().unwrap();
+            done.send(()).unwrap();
+        });
+        let chunk = vec![b'x'; 64];
+        for _ in 0..QUEUE * 4 {
+            endpoint.local.feed(&chunk);
+            if endpoint.local.inner.lock().unwrap().subscribers.is_empty() {
+                break;
+            }
+        }
+        let result = finished.recv_timeout(std::time::Duration::from_secs(3));
+        if result.is_err() {
+            hang_up(&client);
+        }
+        join.join().unwrap();
+        assert!(result.is_ok());
+        assert!(endpoint.local.inner.lock().unwrap().subscribers.is_empty());
+        while matches!(read_frame(&mut client), Ok(Some(_))) {}
+    }
+
+    #[test]
+    fn unsupported_geometry_is_refused_before_resize() {
+        for size in [0, 1001, 65535] {
+            let endpoint = fake();
+            let (mut client, handle) =
+                open(&endpoint, json!({"endpoint": ID, "rows": 24, "cols": size}));
+            assert_eq!(read_frame(&mut client).unwrap().unwrap().0, b'E');
+            handle.join().unwrap();
+            assert!(endpoint.sizes.lock().unwrap().is_empty());
+            assert!(endpoint.local.inner.lock().unwrap().subscribers.is_empty());
+
+            let (mut client, handle) = open(&endpoint, json!({"endpoint": ID}));
+            assert_eq!(read_frame(&mut client).unwrap().unwrap().0, b'S');
+            write_frame(
+                &mut client,
+                b'Z',
+                json!({"rows": size, "cols": 80}).to_string().as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(read_frame(&mut client).unwrap().unwrap().0, b'E');
+            handle.join().unwrap();
+            assert!(endpoint.sizes.lock().unwrap().is_empty());
+            assert!(endpoint.local.inner.lock().unwrap().subscribers.is_empty());
+        }
     }
 }
