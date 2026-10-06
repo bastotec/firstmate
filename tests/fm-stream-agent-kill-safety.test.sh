@@ -310,6 +310,50 @@ while time.time() < deadline and alive(child):
 report("live-endpoint-is-killed", killed and not alive(child),
        "close() returned %r, child alive=%r" % (killed, alive(child)))
 
+# --- a job-control shell's foreground job dies with its endpoint ------------
+# The endpoint's interactive shell runs each command in a process group of its
+# own. A job that ignores SIGHUP survives the shell's death, so a close that
+# signals only the shell's group would orphan it with the pty still open. The
+# marker is split in the typed text so the terminal's echo never matches it.
+pty = make_pty(["/bin/bash", "--norc", "--noprofile", "-i"])
+job = None
+try:
+    os.write(pty.master_fd,
+             b"bash -c 'trap \"\" HUP; echo FG_JOB_''READY; exec sleep 300'\n")
+    read_until(pty, b"FG_JOB_READY", 20)
+    deadline = time.time() + 5
+    while time.time() < deadline and job is None:
+        job = pty._foreground_group()
+        if job is None:
+            time.sleep(0.05)
+    drained = threading.Event()
+
+    def drain():
+        while not drained.is_set():
+            if select.select([pty.master_fd], [], [], 0.1)[0]:
+                try:
+                    pty.read()
+                except OSError:
+                    return
+
+    drainer = threading.Thread(target=drain, daemon=True)
+    drainer.start()
+    pty.close("TERM")
+    drained.set()
+    drainer.join(5)
+    pty.release()
+    deadline = time.time() + 8
+    while job and time.time() < deadline and alive(job):
+        time.sleep(0.05)
+    report("foreground-job-dies-with-endpoint", job is not None and not alive(job),
+           "job=%r alive=%r" % (job, job is not None and alive(job)))
+finally:
+    if job and alive(job):
+        try:
+            os.killpg(job, signal.SIGKILL)
+        except OSError:
+            pass
+
 # --- a reaped endpoint is never signalled ----------------------------------
 guard, guard_pgid = sentinel()
 pty = make_pty(["true"])
@@ -399,7 +443,7 @@ for case_name in partial-write-completes \
   child-handles-sigint-with-parent-0 child-handles-sigint-with-parent-1 \
   parent-sigint-disposition-unchanged-0 parent-sigint-disposition-unchanged-1 \
   endpoint-is-session-leader recorded-pgid-matches-kernel \
-  live-endpoint-is-killed reaped-endpoint-is-not-signalled \
+  live-endpoint-is-killed foreground-job-dies-with-endpoint reaped-endpoint-is-not-signalled \
   concurrent-reap-never-escapes refuses-own-process-group refuses-own-session; do
   line=$(printf '%s\n' "$out" | grep -E "^(OK|FAIL) $case_name( |$)") \
     || fail "$case_name: the driver reported no verdict at all, so this guard proved nothing"

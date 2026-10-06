@@ -157,10 +157,53 @@ impl Pty {
         deliver()?;
         Ok(true)
     }
+    // The terminal's foreground process group, when it is a job of ours. The
+    // endpoint's interactive shell runs each command in a process group of its
+    // own and hands it the terminal, so the worker is usually NOT in the group
+    // the child leads. Signalling only that group kills the shell and orphans
+    // the worker: on Linux the orphan keeps the pty open, the reader never sees
+    // EOF, and the endpoint (and its label) stays open with the worker still
+    // running. The group is named only while the child is unreaped and only
+    // when it belongs to the child's own session, so it can never be a
+    // stranger's.
+    fn foreground_group(&self) -> Option<i32> {
+        let mut child = self.child.lock().unwrap();
+        if !matches!(child.try_wait(), Ok(None)) {
+            return None;
+        }
+        // SAFETY: tcgetpgrp reads the owned master fd; getpgrp/getsid only
+        // inspect process ids, and the child lock keeps our session id unreused.
+        unsafe {
+            let fg = libc::tcgetpgrp(self.master.as_raw_fd());
+            if fg <= 0 || fg == self.pgid || fg == libc::getpgrp() || fg == libc::getsid(0) {
+                return None;
+            }
+            (libc::getsid(fg) == self.pgid).then_some(fg)
+        }
+    }
+    // Signal a job named by foreground_group, re-checking it is still in the
+    // child's session.
+    fn signal_foreground(&self, fg: Option<i32>, signal: i32) -> bool {
+        let Some(fg) = fg else { return false };
+        // SAFETY: the group is signalled only while it is still in our session.
+        unsafe { libc::getsid(fg) == self.pgid && libc::killpg(fg, signal) == 0 }
+    }
+    fn foreground_alive(&self, fg: Option<i32>) -> bool {
+        // SAFETY: getsid only inspects a process id.
+        fg.is_some_and(|fg| unsafe { libc::getsid(fg) } == self.pgid)
+    }
     pub fn close(&self, kill: bool) -> io::Result<()> {
-        if self.signal(if kill { libc::SIGKILL } else { libc::SIGTERM })? {
-            self.wait(Duration::from_secs(3));
+        let signal = if kill { libc::SIGKILL } else { libc::SIGTERM };
+        let fg = self.foreground_group();
+        let signalled = self.signal(signal)?;
+        let job_signalled = self.signal_foreground(fg, signal);
+        if signalled || job_signalled {
+            let until = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < until && (self.alive() || self.foreground_alive(fg)) {
+                std::thread::sleep(Duration::from_millis(20));
+            }
             self.signal(libc::SIGKILL)?;
+            self.signal_foreground(fg, libc::SIGKILL);
         }
         if !self.wait(Duration::from_secs(2)) {
             return Err(io::Error::other("child exit unconfirmed"));
@@ -321,6 +364,58 @@ mod tests {
         assert!(bystander.try_wait().unwrap().is_none());
         bystander.kill().unwrap();
         bystander.wait().unwrap();
+    }
+    #[test]
+    fn foreground_job_dies_with_its_endpoint() {
+        let pty = Pty::spawn("/", 40, 200, "test", "http://localhost").unwrap();
+        // A job that ignores SIGHUP survives its shell's death, which is the
+        // orphan a close that signals only the shell's group leaves behind.
+        // The marker is split in the typed text so the echo never matches it.
+        (&pty.master)
+            .write_all(b"bash -c 'trap \"\" HUP; echo FG_JOB_''READY; exec sleep 300'\n")
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(20);
+        let mut seen = Vec::new();
+        let mut buffer = [0u8; 4096];
+        let mut job = None;
+        while Instant::now() < until && job.is_none() {
+            if let Ok(Some(n)) = pty.read(&mut buffer) {
+                seen.extend_from_slice(&buffer[..n]);
+            }
+            if String::from_utf8_lossy(&seen).contains("FG_JOB_READY") {
+                job = pty.foreground_group();
+            }
+        }
+        let job = job.expect("the typed job never became the terminal's foreground group");
+        // Keep draining the terminal while it closes, as the agent's reader
+        // does: an exiting shell can wait on undrained tty output.
+        let done = std::sync::atomic::AtomicBool::new(false);
+        let closed = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let mut sink = [0u8; 4096];
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = pty.read(&mut sink);
+                }
+            });
+            let closed = pty.close(false);
+            done.store(true, std::sync::atomic::Ordering::Relaxed);
+            closed
+        });
+        closed.unwrap();
+        let until = Instant::now() + Duration::from_secs(8);
+        // SAFETY: kill with signal 0 only probes whether the pid still exists.
+        while Instant::now() < until && unsafe { libc::kill(job, 0) } == 0 {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        // SAFETY: as above; the cleanup kill only reaches a job this test started.
+        let survived = unsafe { libc::kill(job, 0) } == 0;
+        if survived {
+            unsafe { libc::killpg(job, libc::SIGKILL) };
+        }
+        assert!(
+            !survived,
+            "closing the endpoint orphaned its foreground job {job}"
+        );
     }
     #[test]
     fn own_group_and_session_are_refused() {

@@ -367,8 +367,55 @@ class Pty:
                     return False
             return True
 
+    def _foreground_group(self):
+        """The terminal's foreground process group, when it is a job of ours.
+
+        A job-control shell runs each command in a process group of its own and
+        hands it the terminal, so the worker is usually NOT in the group the
+        child leads. Signalling only that group kills the shell and orphans the
+        worker: on Linux the orphan keeps the pty open, the reader never sees
+        EOF, and the endpoint (and its label) stays open with the worker still
+        running. The group is named only while the child is unreaped and only
+        when it belongs to the child's own session, so it can never be a
+        stranger's.
+        """
+        with self._reap_lock:
+            if self.proc.poll() is not None:
+                return None
+            try:
+                fg = os.tcgetpgrp(self.master_fd)
+                if fg <= 0 or fg == self.pgid or fg in (os.getpgrp(), os.getsid(0)):
+                    return None
+                return fg if os.getsid(fg) == self.pgid else None
+            except OSError:
+                return None
+
+    def _signal_foreground(self, fg, sig) -> bool:
+        """Signal a foreground job named by _foreground_group, re-checking that
+        it is still in the child's session."""
+        if not fg:
+            return False
+        try:
+            if os.getsid(fg) != self.pgid:
+                return False
+            os.killpg(fg, sig)
+            return True
+        except OSError:
+            return False
+
+    def _foreground_alive(self, fg) -> bool:
+        if not fg:
+            return False
+        try:
+            return os.getsid(fg) == self.pgid
+        except OSError:
+            return False
+
     def close(self, signal_name: str = "TERM") -> bool:
         """Signal the process group, wait for the reader, then release the fd.
+
+        The terminal's foreground job is signalled with the child's group, for
+        the reason _foreground_group gives.
 
         The reader is woken and joined BEFORE the descriptor is closed. A reader
         still blocked in os.read() on a closed fd can be handed a later
@@ -376,12 +423,15 @@ class Pty:
         publish one worker's output as another's.
         """
         sig = signal.SIGTERM if signal_name == "TERM" else signal.SIGKILL
+        fg = self._foreground_group()
         killed = self._signal_group(sig)
+        killed = self._signal_foreground(fg, sig) or killed
         if killed:
             deadline = _now() + 3.0
-            while _now() < deadline and self.alive():
+            while _now() < deadline and (self.alive() or self._foreground_alive(fg)):
                 time.sleep(0.05)
             self._signal_group(signal.SIGKILL)
+            self._signal_foreground(fg, signal.SIGKILL)
         self._closed.set()
         with self._reap_lock:
             try:
