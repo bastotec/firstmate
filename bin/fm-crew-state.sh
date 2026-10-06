@@ -81,9 +81,10 @@
 #      `resolved` never become current state or detail.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
-#      than trusting a stale status log. On tmux and herdr, which own a
-#      recovery-grade classifier, only its positive death evidence reads as gone
-#      (the endpoint is authoritatively absent, or its pane holds no agent); an
+#      than trusting a stale status log. On classifier-backed runtimes, only
+#      `missing` or `dead` reads as gone, under the verdict contract owned by
+#      bin/fm-backend.sh's fm_backend_agent_state. Stream `missing` is registry
+#      absence, not proof the worker stopped (docs/stream-backend.md); an
 #      endpoint that merely failed to answer reports unknown · none as
 #      unreachable, and an alive endpoint whose scrollback read failed is still
 #      classified by step 4. Backends with no classifier keep reading a failed
@@ -772,17 +773,17 @@ fi
 # --- fallback: no run attributed to this crew ------------------------------
 # The run-step path above already handled any crew with a run, regardless of pane
 # liveness, so a finished-but-pane-closed crew never reaches here. Down here there
-# is no run to consult, so only positive evidence that the target is gone may
-# read as death - a backend that failed to answer is unknown, never death, for
-# both classifier-backed backends (tmux and herdr) - and every death-class
-# verdict reports unknown rather than trusting a possibly-stale status log as
-# the current state.
+# is no run to consult, so a classifier's `missing` or `dead` verdict reports
+# unknown rather than trusting a possibly-stale status log as current state.
+# A backend that failed to answer is unknown, never death, for every
+# classifier-backed runtime; stream registry absence alone does not prove its
+# worker stopped (docs/stream-backend.md).
 [ -n "$BACKEND_TARGET" ] || emit unknown none "no backend target recorded"
 if ! pane_readable "$BACKEND_TARGET"; then
   # A failed probe is not itself evidence the pane is gone: the herdr CLI can
   # error or stall under load, and tmux can fail to be executed at all (a
   # trimmed PATH) or answer non-definitively, while the pane is alive - a busy
-  # box would otherwise score dozens of live claims dead. Both backends own a
+  # box would otherwise score dozens of live claims dead. These backends own a
   # recovery-grade classifier (fm_backend_agent_state), which separates the
   # outcomes:
   #   missing - the endpoint is authoritatively absent: herdr's pane get
@@ -803,8 +804,8 @@ if ! pane_readable "$BACKEND_TARGET"; then
   #             normal flow below instead of being discarded.
   #   anything else - the cheap probes themselves failed to answer or
   #             contradicted themselves, which is unknown, never death.
-  #   stream  - the owning agent publishes the same three answers separately:
-  #             whether the hub still has the endpoint (missing), whether its
+  #   stream  - `missing` comes from the hub's registry, not the owning agent,
+  #             and never proves the worker stopped. The agent reports whether its
   #             process is gone or its foreground group is only shells (dead),
   #             and whether a verified harness is in that group (alive). A
   #             silent agent is `unreadable`, never `dead`, so a partition
