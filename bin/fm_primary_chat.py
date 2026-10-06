@@ -31,6 +31,7 @@ Subcommands:
   record write --home H --session ID --host-pid N [--endpoint T] [--startup-file F]
       publishes startup before making the host visible, retaining pending messages
   record stop --home H --host-pid N
+  record pid --home H        print the live host pid; exit 3 when none
   supervise --home H --host-pid N --gen G --events-offset N
       events -> busy-state (state/primary.busy-state, source deck-wrapper) and
       the watcher child (bin/fm-watch-arm.sh) whose wakes become steer
@@ -97,7 +98,12 @@ def read_record(home):
         return None
 
 
-def host_alive(pid):
+def host_alive(pid, home):
+    """True when pid is a live fm-deck-chat host for exactly this home.
+
+    The host runs as argv[0] fm-deck-chat with --home <canonical home>, so a
+    recycled pid that now hosts another home's primary is not this one.
+    """
     if not isinstance(pid, int) or pid <= 1:
         return False
     try:
@@ -109,14 +115,27 @@ def host_alive(pid):
     # An exited host can linger as a zombie until its parent (a stream agent)
     # reaps it; that is not a live host.
     out = subprocess.run(['ps', '-o', 'stat=,args=', '-p', str(pid)], capture_output=True, text=True)
-    return 'fm-deck-chat' in out.stdout and not out.stdout.lstrip().startswith('Z')
+    fields = out.stdout.strip().split(None, 1)
+    if len(fields) != 2 or fields[0].startswith('Z'):
+        return False
+    args = fields[1] + ' '
+    home = str(Path(home).resolve())
+    return args.startswith('fm-deck-chat ') and (' --home %s ' % home) in args
 
 
 def live_record(home):
     record = read_record(home)
-    if not record or record.get('stopped_at') or not host_alive(record.get('host_pid')):
+    if not record or record.get('stopped_at') or not host_alive(record.get('host_pid'), home):
         return None
     return record
+
+
+def record_pid(args):
+    record = live_record(args.home)
+    if record is None:
+        return 3
+    print(record['host_pid'])
+    return 0
 
 
 def msg_seqs(directory):
@@ -551,6 +570,7 @@ def main(argv):
     write.add_argument('--endpoint', default='')
     write.add_argument('--startup-file')
     stop = record.add_parser('stop')
+    record.add_parser('pid').add_argument('--home', required=True)
     for command in (write, stop):
         command.add_argument('--home', required=True)
         command.add_argument('--host-pid', type=int, required=True)
@@ -569,7 +589,7 @@ def main(argv):
     if args.cmd == 'prepare':
         return prepare(args)
     if args.cmd == 'record':
-        return {'write': record_write, 'stop': record_stop}[args.action](args)
+        return {'write': record_write, 'stop': record_stop, 'pid': record_pid}[args.action](args)
     return Supervisor(args).run()
 
 

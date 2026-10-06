@@ -124,11 +124,22 @@ test_steer_contract_without_a_host() {
   expect_code 3 "$rc" "delivered with no registered primary"
 
   # A registered host: any live process whose argv carries fm-deck-chat.
-  bash -c 'exec -a fm-deck-chat sleep 300' &
+  # shellcheck disable=SC2016 # Expanded by the inner bash.
+  bash -c 'exec -a fm-deck-chat bash -c "sleep 300; :" fm-deck-chat --home "$1"' _ "$home" &
   pid=$!
   fm_test_track_helper_pid "$pid"
   python3 "$BIN/fm_primary_chat.py" prepare --home "$home" --session s1 >/dev/null
   python3 "$BIN/fm_primary_chat.py" record write --home "$home" --session s1 --host-pid "$pid"
+  # The same pid recorded by another home is not that home's primary (pid reuse).
+  local other
+  other=$(new_home steer-other)
+  python3 "$BIN/fm_primary_chat.py" prepare --home "$other" --session s1 >/dev/null
+  python3 "$BIN/fm_primary_chat.py" record write --home "$other" --session s1 --host-pid "$pid"
+  rc=0; "$STEER" status --home "$other" >/dev/null || rc=$?
+  expect_code 3 "$rc" "a host serving another home is not present"
+  rc=0; "$BIN/fm-deck-chat.sh" stop --home "$other" 2>/dev/null || rc=$?
+  expect_code 1 "$rc" "stop refuses a host serving another home"
+  alive "$pid" || fail "stop never signals another home's host"
   local steer="$home/state/primary-chat/s1/steer" events="$home/state/primary-chat/s1/events.ndjson"
   assert_equals '0o600' "$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' \
     "$home/state/primary-chat.json")" "the record is 0600"
@@ -339,6 +350,18 @@ PY
   pass "fm-deck-chat.sh: oversized ASCII and multibyte wakes retain instructions within the byte limit"
 }
 
+test_task_named_primary_blocks_the_host() {
+  local home rc=0
+  home=$(new_home primary-task)
+  printf 'id=primary\n' > "$home/state/primary.meta"
+  FAKE_DECK_LOG="$LAB/deck-task.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/host-task.out" 2>&1 || rc=$?
+  expect_code 1 "$rc" "the host refuses a home with a task named primary"
+  assert_grep 'a task named primary exists' "$LAB/host-task.out" "the refusal names the task"
+  assert_absent "$home/state/.lock" "the refused host takes no lock"
+  assert_absent "$LAB/deck-task.log" "the refused host never starts deck"
+  pass "fm-deck-chat.sh: a task named primary blocks the host"
+}
+
 test_away_mode_pauses_the_watcher() {
   local home host watch
   home=$(new_home away)
@@ -446,4 +469,5 @@ test_startup_handoff
 test_host_lifecycle
 test_oversized_watcher_output
 test_stream_endpoint_host
+test_task_named_primary_blocks_the_host
 test_away_mode_pauses_the_watcher

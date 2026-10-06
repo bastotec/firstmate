@@ -92,19 +92,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ] || die "home not found: $HOME_DIR" 2
-HOME_DIR=$(cd "$HOME_DIR" && pwd)
+HOME_DIR=$(cd "$HOME_DIR" && pwd -P)
 export FM_HOME=$HOME_DIR
 STATE="$FM_HOME/state"
 command -v python3 >/dev/null 2>&1 || die 'python3 is required' 2
 
 if [ "$MODE" = stop ]; then
-  pid=$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print("" if r.get("stopped_at") else r.get("host_pid",""))' \
-    "$STATE/primary-chat.json" 2>/dev/null) || pid=''
-  case "$pid" in ''|*[!0-9]*) die 'no deck-chat primary is registered for this home' ;; esac
-  case "$(ps -o args= -p "$pid" 2>/dev/null)" in
-    *fm-deck-chat*) ;;
-    *) die "registered host pid $pid is not running" ;;
-  esac
+  # Only a live host for exactly this home is signalled, never a recycled pid.
+  pid=$(python3 "$PRIMARY_CHAT" record pid --home "$FM_HOME") \
+    || die 'no live deck-chat primary is registered for this home'
   kill -TERM "$pid" || die "could not signal host pid $pid"
   # A stream agent reaps its child on its own poll, so an exited host can
   # linger as a zombie; that counts as stopped.
@@ -201,6 +197,9 @@ trap 'exit 1' HUP TERM
 
 # The lock comes first: it refuses a second primary of any harness, including
 # a second host, before this one changes anything.
+# The busy-state id `primary` belongs to the primary; a task with that id
+# would share its records, so the host refuses to start next to one.
+[ ! -e "$STATE/primary.meta" ] || die 'a task named primary exists in this home (state/primary.meta); not starting'
 "$SCRIPT_DIR/fm-lock.sh" >&2 || die 'the home session lock is held by another session; not starting'
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/fm-deck-chat.XXXXXX") || exit 1
 prepared=$(python3 "$PRIMARY_CHAT" prepare --home "$FM_HOME" --session "$SESSION") || die "could not prepare the primary-chat state" 2
