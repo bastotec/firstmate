@@ -22,7 +22,6 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 CHECK="$ROOT/bin/fm-tool-update-check.sh"
-CHECKPOINT="$ROOT/bin/fm-watch-checkpoint.sh"
 TMP_ROOT=$(fm_test_tmproot fm-tool-update-check)
 
 # Exported here, at the top level, because git_fixture runs inside a command
@@ -109,6 +108,12 @@ run_check() {
 }
 
 # --- the regression this script exists for ----------------------------------
+
+# One bounded foreground run of the real watcher: bin/fm-watch.sh exits on its
+# first actionable wake, and fm_run_timed bounds a quiet run.
+run_watch_bounded() {  # <seconds>
+  bash -c '. "$1"; shift; fm_run_timed "$@"' _ "$ROOT/bin/fm-timeout-lib.sh" "$1" "$ROOT/bin/fm-watch.sh"
+}
 
 test_path_skew_is_reported_from_every_copy() {
   local home stale fresh out report
@@ -996,10 +1001,10 @@ test_armed_check_wakes_the_watcher_with_the_skew_report() {
   out="$home/out.txt"
   err="$home/err.txt"
   status=0
-  env FM_HOME="$home" PATH="$(fixture_path "$stale:$fresh")" FM_CHECK_TIMEOUT=30 FM_TOOL_UPDATE_INTERVAL=0 \
+  FM_HOME="$home" PATH="$(fixture_path "$stale:$fresh")" FM_CHECK_TIMEOUT=30 FM_TOOL_UPDATE_INTERVAL=0 \
     FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=1 \
-    "$CHECKPOINT" --seconds 10 >"$out" 2>"$err" || status=$?
-  expect_code 0 "$status" "watcher checkpoint exit"
+    run_watch_bounded 10 >"$out" 2>"$err" || status=$?
+  expect_code 0 "$status" "bounded watcher exit"
   assert_contains "$(cat "$out")" "check:" "the armed check did not reach the watcher as a check wake"
   assert_contains "$(cat "$out")" "tool updates: herdr update not in effect" "the wake did not carry the PATH skew report"
   pass "the armed check reaches the watcher as an ordinary check wake"

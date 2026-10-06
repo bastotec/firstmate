@@ -6,10 +6,12 @@
 # deterministic fake ps, so both platforms' reporting semantics are covered from
 # either host: macOS reports argv[0] in `ps -o comm=`, while procps on Linux
 # reports the kernel exec name and ignores argv[0] entirely. The end-to-end cases
-# run the REAL Stop auto-arm inside real process trees whose shapes differ only
-# in how the per-session process is named and what its parent is. Those trees are
-# orphaned before the hook fires, so the ancestry walk terminates inside the
-# fixture and can never escape into the session running this suite.
+# run the REAL bin/fm-lock.sh acquisition, then the same ownership check
+# bin/fm-deck-worker.sh runs before every turn completes, inside real process
+# trees whose shapes differ only in how the per-session process is named and what
+# its parent is. Those trees are orphaned before the session acquires, so the
+# ancestry walk terminates inside the fixture and can never escape into the
+# session running this suite.
 # shellcheck disable=SC2016 # single quotes are deliberate: $FM_HOME and $$ expand inside the fixture child
 set -u
 
@@ -21,14 +23,19 @@ fm_git_identity fmtest fmtest@example.invalid
 
 LIB="$ROOT/bin/fm-session-lock-lib.sh"
 
-# Claude Code's native installer names the per-session executable by its version,
-# so the harness identity has to survive a basename that says nothing.
-CLAUDE_VERSION_DIR="$TMP_ROOT/claude-install/share/claude/versions"
-mkdir -p "$CLAUDE_VERSION_DIR"
-ln -s /bin/bash "$CLAUDE_VERSION_DIR/2.1.220"
-VERSIONED_CLAUDE="$CLAUDE_VERSION_DIR/2.1.220"
+# An installer that names the per-session executable by its version leaves a
+# basename that says nothing, so the harness identity has to survive on the
+# install path alone.
+PI_VERSION_DIR="$TMP_ROOT/pi-install/share/pi/versions"
+mkdir -p "$PI_VERSION_DIR"
+ln -s /bin/bash "$PI_VERSION_DIR/0.80.5"
+VERSIONED_PI="$PI_VERSION_DIR/0.80.5"
 
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/harness-bin")
+ln -s /bin/bash "$FAKEBIN/pi"
+NAMED_PI="$FAKEBIN/pi"
+ln -s /bin/bash "$FAKEBIN/fm-deck-worker"
+NAMED_DECK="$FAKEBIN/fm-deck-worker"
 ln -s /bin/bash "$FAKEBIN/claude"
 NAMED_CLAUDE="$FAKEBIN/claude"
 
@@ -61,14 +68,14 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-case "$pid:$field:${FM_TEST_CLAUDE_SHAPE:-linux}" in
-  700:comm=:linux) printf '%s\n' '2.1.220' ;;
-  700:args=:linux) printf '%s\n' '/opt/claude/versions/2.1.220 --resume' ;;
-  700:comm=:macos) printf '%s\n' '/Users/u/.local/share/claude/versions/2.1.220' ;;
-  700:args=:macos) printf '%s\n' '/Users/u/.local/share/claude/versions/2.1.220 --resume' ;;
+case "$pid:$field:${FM_TEST_PI_SHAPE:-linux}" in
+  700:comm=:linux) printf '%s\n' '0.80.5' ;;
+  700:args=:linux) printf '%s\n' '/opt/pi/versions/0.80.5 --continue' ;;
+  700:comm=:macos) printf '%s\n' '/Users/u/.local/share/pi/versions/0.80.5' ;;
+  700:args=:macos) printf '%s\n' '/Users/u/.local/share/pi/versions/0.80.5 --continue' ;;
   700:ppid=:*) printf '%s\n' 1 ;;
   *:comm=:*) printf '%s\n' bash ;;
-  *:args=:*) printf '%s\n' 'bash /repo/bin/fm-claude-stop-autoarm.sh' ;;
+  *:args=:*) printf '%s\n' 'bash /repo/bin/fm-lock.sh' ;;
   *:ppid=:*) printf '%s\n' 700 ;;
 esac
 SH
@@ -76,19 +83,19 @@ SH
   printf '700\n' > "$dir/state/.lock"
 
   for shape in linux macos; do
-    got=$(FM_TEST_CLAUDE_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_ancestry_pid') \
+    got=$(FM_TEST_PI_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_ancestry_pid') \
       || fail "$shape: the version-named session was not found in the ancestry at all"
     [ "$got" = 700 ] || fail "$shape: ancestry resolved '$got', expected the version-named session pid 700"
-    FM_TEST_CLAUDE_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_pid_alive 700' \
+    FM_TEST_PI_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_pid_alive 700' \
       || fail "$shape: a live version-named session was not recognized as a harness"
-    FM_TEST_CLAUDE_SHAPE="$shape" lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'" \
+    FM_TEST_PI_SHAPE="$shape" lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'" \
       || fail "$shape: the session holding the lock did not recognize itself as the owner"
   done
-  pass "session-lock: a version-named Claude Code session is identified from its install path and argv[0]"
+  pass "session-lock: a version-named Pi session is identified from its install path and argv[0]"
 }
 
-# A harness that is pid 1 of its own PID namespace - a container, or the
-# `codex sandbox` this shape was verified in - used to be invisible: the walk
+# A harness that is pid 1 of its own PID namespace - a container or a sandbox -
+# used to be invisible: the walk
 # stopped as soon as the NEXT pid was 1, so the one process that identifies the
 # session was never examined and the session could not recognize its own lock.
 test_harness_at_namespace_pid1_is_examined() {
@@ -108,8 +115,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$pid:$field" in
-  1:comm=) printf '%s\n' "${FM_TEST_PID1_COMM:-claude}" ;;
-  1:args=) printf '%s\n' "${FM_TEST_PID1_COMM:-claude}" ;;
+  1:comm=) printf '%s\n' "${FM_TEST_PID1_COMM:-pi}" ;;
+  1:args=) printf '%s\n' "${FM_TEST_PID1_COMM:-pi}" ;;
   1:ppid=) printf '%s\n' 0 ;;
   *:comm=) printf '%s\n' bash ;;
   *:args=) printf '%s\n' 'bash /repo/bin/fm-watch.sh' ;;
@@ -197,14 +204,14 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$pid:$field" in
-  900:comm=) printf '%s\n' claude ;;
-  900:args=) printf '%s\n' 'claude' ;;
+  900:comm=) printf '%s\n' pi ;;
+  900:args=) printf '%s\n' 'pi' ;;
   900:ppid=) printf '%s\n' 910 ;;
   910:comm=) printf '%s\n' bash ;;
   910:args=) printf '%s\n' 'bash tests/run.sh' ;;
   910:ppid=) printf '%s\n' 920 ;;
-  920:comm=) printf '%s\n' claude ;;
-  920:args=) printf '%s\n' 'claude' ;;
+  920:comm=) printf '%s\n' pi ;;
+  920:args=) printf '%s\n' 'pi' ;;
   920:ppid=) printf '%s\n' 1 ;;
   *:comm=) printf '%s\n' bash ;;
   *:args=) printf '%s\n' bash ;;
@@ -213,7 +220,7 @@ esac
 SH
   chmod +x "$fakebin/ps"
 
-  got=$(lib_eval "$fakebin" 'fm_harness_ancestry_pid') || fail "the contiguous harness run was not resolved"
+  got=$(lib_eval "$fakebin" 'fm_harness_ancestry_pid') || fail "the innermost harness was not resolved"
   [ "$got" = 900 ] || fail "ancestry crossed a non-harness gap, resolved '$got' instead of 900"
   printf '920\n' > "$dir/state/.lock"
   if lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'"; then
@@ -221,8 +228,8 @@ SH
   fi
   printf '900\n' > "$dir/state/.lock"
   lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'" \
-    || fail "the contiguous harness run did not recognize its own lock"
-  pass "session-lock: ownership stops at the first non-harness gap above the contiguous run"
+    || fail "the innermost harness did not recognize its own lock"
+  pass "session-lock: ownership stops at the innermost harness and never crosses a non-harness gap"
 }
 
 test_competing_version_named_session_is_seen_as_live() {
@@ -242,11 +249,11 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$pid:$field" in
-  600:comm=) printf '%s\n' '2.1.220' ;;
-  600:args=) printf '%s\n' '/opt/claude/versions/2.1.220' ;;
+  600:comm=) printf '%s\n' '0.80.5' ;;
+  600:args=) printf '%s\n' '/opt/pi/versions/0.80.5' ;;
   600:ppid=) printf '%s\n' 1 ;;
-  650:comm=) printf '%s\n' claude ;;
-  650:args=) printf '%s\n' claude ;;
+  650:comm=) printf '%s\n' pi ;;
+  650:args=) printf '%s\n' pi ;;
   650:ppid=) printf '%s\n' 1 ;;
   *:comm=) printf '%s\n' bash ;;
   *:args=) printf '%s\n' bash ;;
@@ -266,44 +273,71 @@ SH
   pass "session-lock: a live version-named session holding the lock is not mistaken for a stale owner"
 }
 
-# --- end-to-end layer: the real Stop auto-arm in real process trees ----------
-
-install_autoarm_scripts() {
-  local dir=$1
-  mkdir -p "$dir/bin"
-  cp "$ROOT/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-claude-stop-autoarm.sh"
-  cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
-  cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
-  cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
-  cp "$ROOT/bin/fm-session-lock-lib.sh" "$dir/bin/fm-session-lock-lib.sh"
-  cp "$ROOT/bin/fm-cursor-lib.sh" "$dir/bin/fm-cursor-lib.sh"
-  cp "$ROOT/bin/fm-hook-host-lib.sh" "$dir/bin/fm-hook-host-lib.sh"
-  cp "$ROOT/bin/fm-lock.sh" "$dir/bin/fm-lock.sh"
-  chmod +x "$dir/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-lock.sh"
-  cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+# Only the kept primaries (pi, pi-signed, the persistent fm-deck-worker driver)
+# may own a home session lock. Worker-only harness names - including a Claude
+# Code install path, which worker liveness still recognizes - never do.
+test_removed_primaries_never_own_the_lock() {
+  local dir fakebin name
+  dir="$TMP_ROOT/removed-primaries"
+  fakebin=$(fm_fakebin "$dir")
+  mkdir -p "$dir/state"
+  cat > "$fakebin/ps" <<'SH'
 #!/usr/bin/env bash
-echo "$$" >> "$FM_HOME/state/arm-ran"
-printf 'pending:downtime:fixture-generation\n' > "$FM_HOME/state/.watcher-down"
-touch "$FM_HOME/state/.last-watcher-beat"
-printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
-printf 'stale: fixture-win actionable\n'
-exit 0
+set -u
+field= pid=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) field=$2; shift 2 ;;
+    -p) pid=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$pid:$field" in
+  500:comm=) printf '%s\n' "$FM_TEST_COMM" ;;
+  500:args=) printf '%s\n' "$FM_TEST_COMM" ;;
+  500:ppid=) printf '%s\n' 1 ;;
+  *:comm=) printf '%s\n' bash ;;
+  *:args=) printf '%s\n' bash ;;
+  *:ppid=) printf '%s\n' 500 ;;
+esac
 SH
-  chmod +x "$dir/bin/fm-watch-arm.sh"
+  chmod +x "$fakebin/ps"
+  printf '500\n' > "$dir/state/.lock"
+  for name in claude codex opencode grok kimi omp cursor-agent /Users/u/.local/share/cursor-agent/versions/2026.01.01-abc/cursor-agent /Users/u/.local/share/claude/versions/2.1.220; do
+    if FM_TEST_COMM="$name" lib_eval "$fakebin" 'fm_harness_ancestry_pid' >/dev/null; then
+      fail "$name was resolved as a primary harness"
+    fi
+    if FM_TEST_COMM="$name" lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'"; then
+      fail "$name claimed the home's session lock"
+    fi
+  done
+  for name in pi pi-signed fm-deck-worker fm-deck-chat; do
+    FM_TEST_COMM="$name" lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'" \
+      || fail "$name did not recognize its own session lock"
+  done
+  pass "session-lock: only pi, pi-signed, fm-deck-worker, and fm-deck-chat may own a home session lock"
 }
 
-# A primary home with one task in flight, so the hook's scope and supervision-need
-# gates both pass and only identity decides the outcome.
+# --- end-to-end layer: real lock acquisition in real process trees ----------
+
+install_lock_scripts() {
+  local dir=$1
+  mkdir -p "$dir/bin"
+  cp "$ROOT/bin/fm-lock.sh" "$ROOT/bin/fm-session-lock-lib.sh" "$ROOT/bin/fm-cursor-lib.sh" \
+    "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/"
+  chmod +x "$dir/bin/fm-lock.sh"
+}
+
+# A primary home whose session process acquires the session lock through the
+# real bin/fm-lock.sh, exactly as session start does, and then runs the same
+# ownership check bin/fm-deck-worker.sh runs before each turn completes.
 make_primary_home() {  # <dir>
   local dir=$1
   mkdir -p "$dir/state"
   git init -q "$dir"
   git -C "$dir" commit -q --allow-empty -m init
   : > "$dir/AGENTS.md"
-  : > "$dir/state/task.meta"
-  install_autoarm_scripts "$dir"
-  # The process that fires the hook records its own pid as the session lock
-  # owner, exactly as a real session does at session start.
+  install_lock_scripts "$dir"
   cat > "$dir/session.sh" <<'SH'
 #!/usr/bin/env bash
 if [ "${FM_FIXTURE_ORPHAN_HERE:-0}" = 1 ]; then
@@ -314,9 +348,12 @@ if [ "${FM_FIXTURE_ORPHAN_HERE:-0}" = 1 ]; then
   done
 fi
 printf '%s\n' "$$" > "$FM_HOME/state/session-pid"
-printf '%s\n' "$$" > "$FM_HOME/state/.lock"
-"$FM_HOME/bin/fm-claude-stop-autoarm.sh" </dev/null > "$FM_HOME/state/hook.out" 2>&1
-printf '%s\n' "$?" > "$FM_HOME/state/hook.rc"
+"$FM_HOME/bin/fm-lock.sh" > "$FM_HOME/state/lock.out" 2>&1
+lock_rc=$?
+bash -c '. "$1"; fm_session_lock_owned_by_self "$2"' _ \
+  "$FM_HOME/bin/fm-session-lock-lib.sh" "$FM_HOME/state"
+owned_rc=$?
+printf '%s %s\n' "$lock_rc" "$owned_rc" > "$FM_HOME/state/session.rc"
 SH
   cat > "$dir/daemon.sh" <<'SH'
 #!/usr/bin/env bash
@@ -334,8 +371,8 @@ SH
 
 # Start the fixture tree detached from this suite's own process tree: the
 # launcher exits immediately, so the tree is reparented to init and the ancestry
-# walk terminates inside the fixture. Returns once the hook has recorded its exit
-# code.
+# walk terminates inside the fixture. Returns once the session has recorded its
+# exit codes.
 run_fixture_tree() {  # <dir> <session-bin> [<daemon-bin>]
   local dir=$1 session_bin=$2 daemon_bin=${3:-} i
   if [ -n "$daemon_bin" ]; then
@@ -346,62 +383,80 @@ run_fixture_tree() {  # <dir> <session-bin> [<daemon-bin>]
       bash -c '"$0" "$1" &' "$session_bin" "$dir/session.sh"
   fi
   i=0
-  while [ "$i" -lt 400 ] && [ ! -s "$dir/state/hook.rc" ]; do
+  while [ "$i" -lt 400 ] && [ ! -s "$dir/state/session.rc" ]; do
     sleep 0.05
     i=$((i + 1))
   done
-  [ -s "$dir/state/hook.rc" ] || fail "the fixture hook never finished"
+  [ -s "$dir/state/session.rc" ] || fail "the fixture session never finished"
 }
 
-hook_rc() {
-  tr -d '[:space:]' < "$1/state/hook.rc"
-}
-
-epoch_outcome() {
-  sed -n 's/^.*outcome=\([a-z][a-z]*\) .*$/\1/p' "$1/state/.claude-autoarm-epoch" 2>/dev/null || true
+# Assert the session acquired the lock under its own pid and then recognized
+# itself as the owner.
+assert_session_owns_home() {  # <dir> <label>
+  local dir=$1 label=$2 session_pid lock_after
+  session_pid=$(tr -d '[:space:]' < "$dir/state/session-pid")
+  lock_after=$(tr -d '[:space:]' < "$dir/state/.lock" 2>/dev/null || true)
+  [ "$(cat "$dir/state/session.rc")" = "0 0" ] \
+    || fail "$label: acquire/ownership rc was '$(cat "$dir/state/session.rc")': $(cat "$dir/state/lock.out")"
+  [ "$lock_after" = "$session_pid" ] || fail "$label: the session lock names $lock_after, expected the session pid $session_pid"
 }
 
 test_e2e_version_named_session_claims_the_home() {
   local dir
   dir="$TMP_ROOT/e2e-version-named"
   make_primary_home "$dir"
-  run_fixture_tree "$dir" "$VERSIONED_CLAUDE"
-  expect_code 2 "$(hook_rc "$dir")" "a version-named session must claim its home and rewake"
-  [ -e "$dir/state/arm-ran" ] || fail "supervision never armed for a version-named session"
-  [ "$(epoch_outcome "$dir")" = rewake ] || fail "no claim was recorded, got: $(epoch_outcome "$dir")"
-  pass "session-lock e2e: a version-named session claims the home and arms supervision"
+  run_fixture_tree "$dir" "$VERSIONED_PI"
+  assert_session_owns_home "$dir" "version-named session"
+  pass "session-lock e2e: a version-named Pi session acquires its home and owns it"
+}
+
+test_e2e_deck_driver_claims_the_home() {
+  local dir
+  dir="$TMP_ROOT/e2e-deck-driver"
+  make_primary_home "$dir"
+  run_fixture_tree "$dir" "$NAMED_DECK"
+  assert_session_owns_home "$dir" "deck driver"
+  pass "session-lock e2e: the persistent fm-deck-worker driver acquires its home and owns it"
 }
 
 test_e2e_daemon_parented_session_claims_the_home() {
-  local dir session_pid daemon_pid lock_after
+  local dir session_pid daemon_pid
   dir="$TMP_ROOT/e2e-daemon-parented"
   make_primary_home "$dir"
-  run_fixture_tree "$dir" "$NAMED_CLAUDE" "$NAMED_CLAUDE"
+  run_fixture_tree "$dir" "$NAMED_PI" "$NAMED_PI"
   session_pid=$(tr -d '[:space:]' < "$dir/state/session-pid")
   daemon_pid=$(tr -d '[:space:]' < "$dir/state/daemon-pid")
   [ -n "$session_pid" ] && [ "$session_pid" != "$daemon_pid" ] \
     || fail "fixture did not produce a distinct daemon and session: session=$session_pid daemon=$daemon_pid"
-  lock_after=$(tr -d '[:space:]' < "$dir/state/.lock")
-  expect_code 2 "$(hook_rc "$dir")" "a session parented by a harness-named daemon must claim its home and rewake"
-  [ -e "$dir/state/arm-ran" ] || fail "supervision never armed for a daemon-parented session"
-  [ "$lock_after" = "$session_pid" ] || fail "the session lock moved off the session: expected $session_pid, got $lock_after"
-  pass "session-lock e2e: a session parented by a harness-named daemon claims the home and arms supervision"
+  assert_session_owns_home "$dir" "daemon-parented session"
+  pass "session-lock e2e: a session parented by a harness-named daemon locks to itself, not the daemon"
 }
 
 test_e2e_daemon_parented_version_named_session_keeps_its_lock() {
-  local dir session_pid daemon_pid lock_after
+  local dir daemon_pid lock_after
   dir="$TMP_ROOT/e2e-daemon-version-named"
   make_primary_home "$dir"
-  run_fixture_tree "$dir" "$VERSIONED_CLAUDE" "$NAMED_CLAUDE"
-  session_pid=$(tr -d '[:space:]' < "$dir/state/session-pid")
+  run_fixture_tree "$dir" "$VERSIONED_PI" "$NAMED_PI"
   daemon_pid=$(tr -d '[:space:]' < "$dir/state/daemon-pid")
-  lock_after=$(tr -d '[:space:]' < "$dir/state/.lock")
+  lock_after=$(tr -d '[:space:]' < "$dir/state/.lock" 2>/dev/null || true)
   [ "$lock_after" != "$daemon_pid" ] \
-    || fail "the live session's lock was reclaimed as stale and rewritten to the shared daemon pid $daemon_pid"
-  [ "$lock_after" = "$session_pid" ] || fail "the session lock moved off the session: expected $session_pid, got $lock_after"
-  expect_code 2 "$(hook_rc "$dir")" "a version-named session under a daemon must claim its home and rewake"
-  [ -e "$dir/state/arm-ran" ] || fail "supervision never armed for a version-named daemon-parented session"
+    || fail "the session lock was written to the shared daemon pid $daemon_pid"
+  assert_session_owns_home "$dir" "version-named session under a daemon"
   pass "session-lock e2e: a version-named session under a harness-named daemon keeps its own lock"
+}
+
+test_e2e_removed_primary_cannot_claim_the_home() {
+  local dir
+  dir="$TMP_ROOT/e2e-removed-primary"
+  make_primary_home "$dir"
+  run_fixture_tree "$dir" "$NAMED_CLAUDE"
+  case "$(cat "$dir/state/session.rc")" in
+    "0 "*) fail "a claude-named session acquired the home lock: $(cat "$dir/state/lock.out")" ;;
+  esac
+  [ ! -e "$dir/state/.lock" ] || fail "a claude-named session left a session lock behind"
+  assert_contains "$(cat "$dir/state/lock.out")" "cannot locate harness process in ancestry" \
+    "a claude-named session must be refused for lack of a primary harness"
+  pass "session-lock e2e: a claude-named session is not a primary and cannot claim the home"
 }
 
 test_version_named_session_is_identified_on_both_platforms
@@ -409,6 +464,9 @@ test_harness_at_namespace_pid1_is_examined
 test_ordinary_paths_are_never_harness_processes
 test_harness_beyond_a_gap_never_owns_the_lock
 test_competing_version_named_session_is_seen_as_live
+test_removed_primaries_never_own_the_lock
 test_e2e_version_named_session_claims_the_home
+test_e2e_deck_driver_claims_the_home
 test_e2e_daemon_parented_session_claims_the_home
 test_e2e_daemon_parented_version_named_session_keeps_its_lock
+test_e2e_removed_primary_cannot_claim_the_home

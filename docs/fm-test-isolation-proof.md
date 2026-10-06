@@ -207,7 +207,7 @@ This family is the residual set that used to sit in `unclassified`, and it exist
 Two scripts left the residual set rather than joining it.
 `tests/fm-backend-herdr-focus-flash-e2e.test.sh` is a real-Herdr lab regression and is now `real-herdr-gated`, which also moves it out of the portable serial lane and into the required Herdr lane; it had been gate-skipping on Linux CI, so that real-Herdr regression was not running anywhere.
 Its current live-backend result is recorded under [workspace-removal focus safety](verification/runtime-backends.md#workspace-removal-focus-safety).
-`tests/fm-claude-stop-autoarm-live-e2e.test.sh` gate-skips on its opt-in variable and is now `live-harness-optin`, since a candidate that gate-skips cannot prove concurrency.
+The former `tests/fm-claude-stop-autoarm-live-e2e.test.sh` was moved to `live-harness-optin` because a gate-skipping candidate cannot prove concurrency; it has since been removed with the Claude primary integration.
 
 Both runs above selected Pi 0.84.4 with `FM_PI_PACKAGE_DIR` for `tests/fm-pi-branch-extension.test.sh` rather than the proof host's global Pi 0.81.1.
 That historical package selection is evidence context, not a current extension compatibility requirement; the [Calm regression coverage](calm-mode-feasibility.md#regression-coverage) owns the current renderer comparison and links its fixture-floor rationale.

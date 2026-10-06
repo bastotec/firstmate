@@ -126,11 +126,9 @@ test_guard_warnings() {
   #   (2) a fresh watcher and an empty queue: total silence.
   local dir state err first banner_line queue_line pid identity blind
   dir=$(make_case guard)
-  # The repair line the cases below assert is the CLAUDE one, so detect_own has to
-  # answer claude. A marker alone no longer pins that: a structural ancestor of a
-  # different harness outranks it, so the harness this suite was launched from
-  # would otherwise choose the wording. Blind the ancestry walk as well; every
-  # other ps query (watcher liveness below) still reaches the real ps.
+  # Pin Pi repair guidance independently of the harness launching the suite:
+  # blind ancestry and select Pi with its marker. Other ps queries (watcher
+  # liveness below) still reach the real ps.
   blind=$(fm_fakebin "$dir/blind")
   fm_fake_blind_ancestry "$blind"
   state="$dir/state"
@@ -142,7 +140,7 @@ test_guard_warnings() {
   printf 'project=x\n' > "$state/task.meta"
   printf 'project=y\n' > "$state/task2.meta"
   append_wake "$state" heartbeat heartbeat heartbeat || fail "guard heartbeat append failed"
-  PATH="$blind:$PATH" CLAUDECODE=1 PI_CODING_AGENT='' GROK_AGENT='' FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "guard failed"
+  PATH="$blind:$PATH" CLAUDECODE='' PI_CODING_AGENT=true GROK_AGENT='' CURSOR_AGENT='' CURSOR_INVOKED_AS='' FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "guard failed"
   first=$(grep -v '^[[:space:]]*$' "$err" | head -1)
   case "$first" in
     '●'*) ;;
@@ -153,9 +151,9 @@ test_guard_warnings() {
   grep -F 'last beat: never' "$err" >/dev/null || fail "guard banner missing the beacon age"
   grep -F 'guarded operation WILL still run' "$err" >/dev/null || fail "guard banner missing generic continuation wording"
   ! grep -F 'requested message WILL still be sent' "$err" >/dev/null || fail "shared guard used send-specific continuation wording"
-  grep -F 'watcher supervision needs Stop-owned automatic recovery' "$err" >/dev/null || fail "guard banner missing neutral automatic-recovery guidance"
+  grep -F 'repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi' "$err" >/dev/null || fail "guard banner missing Pi recovery guidance"
   grep -F 'queued wakes pending - drain them' "$err" >/dev/null || fail "guard did not warn about pending queue"
-  grep -F 'After draining queued wakes, watcher supervision needs Stop-owned automatic recovery' "$err" >/dev/null || fail "guard did not order neutral automatic recovery after drain"
+  grep -F 'After draining queued wakes, repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi' "$err" >/dev/null || fail "guard did not order Pi recovery after drain"
   ! grep -F 'Restart it NOW, before anything else' "$err" >/dev/null || fail "guard still gave conflicting restart-first instruction"
   ! grep -F 'as the harness-tracked background task' "$err" >/dev/null || fail "guard still printed the old universal background-task repair text"
   banner_line=$(grep -n 'WATCHER DOWN' "$err" | head -1 | cut -d: -f1)
@@ -168,7 +166,7 @@ test_guard_warnings() {
   mkdir -p "$dir/config"
   printf 'project=x\n' > "$state/task.meta"
   : > "$dir/config/x-mode.env"
-  PATH="$blind:$PATH" CLAUDECODE=1 PI_CODING_AGENT='' GROK_AGENT='' FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "guard failed"
+  PATH="$blind:$PATH" CLAUDECODE='' PI_CODING_AGENT=true GROK_AGENT='' CURSOR_AGENT='' CURSOR_INVOKED_AS='' FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "guard failed"
   grep -F "source '$dir/config/x-mode.env' first" "$err" >/dev/null || fail "guard repair line did not source the X-mode cadence config"
 
   # (2) live watcher plus fresh beacon, empty queue -> silence.

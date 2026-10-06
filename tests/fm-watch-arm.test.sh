@@ -1048,7 +1048,7 @@ SH
 
   # FM_HOME, FM_ROOT, FM_ROOT_OVERRIDE and FM_STATE_OVERRIDE all short-circuit the
   # derivation under test, and the shared harness exports FM_ROOT_OVERRIDE, so the
-  # arm has to run without any of them - exactly as bin/fm-claude-stop-autoarm.sh
+  # arm has to run without any of them - exactly as a hook-launched arm
   # invokes it. An unusable launch-confirm window then ends the cycle promptly;
   # reaching that refusal at all proves the library loaded and STATE was defined.
   ( cd "$cwd" && env -u FM_HOME -u FM_ROOT -u FM_ROOT_OVERRIDE -u FM_STATE_OVERRIDE \

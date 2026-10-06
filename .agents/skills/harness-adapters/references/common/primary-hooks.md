@@ -16,14 +16,10 @@ Update its executable or hook owner, any retained tool reference, and `../../../
 
 ## Pre-tool protection
 
-Supported primaries deny watcher-arm anti-patterns before execution, including shell `&`, truncating pipes, bundling, and broad `pkill -f fm-watch`.
-`../../../docs/arm-pretool-check.md` owns hook commands, output quirks, and evidence.
+`../../../docs/arm-pretool-check.md` owns Pi's watcher-arm seatbelt, its scope, hook commands, output quirks, and evidence.
+Do not infer PreToolUse protection for Deck hosts from Pi's integration.
 Any retained worker tool reference points to that integration owner.
 Validate changes against the real harness in a scratch project before trusting them.
-
-A primary must also account for built-in delegation that can create work outside Firstmate's durable records.
-`../../../docs/subagent-guard.md` owns Claude's verified delegation guard: its full contract, local hardening, escape hatch, and per-harness applicability review.
-Never generalize Claude tool names or permissions without live evidence.
 
 ## Session start
 

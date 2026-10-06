@@ -10,12 +10,11 @@ RENDER="$ROOT/bin/fm-supervision-instructions.sh"
 
 test_selected_harness_block_only() {
   local out
-  out=$("$RENDER" --harness codex)
-  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: codex" "codex heading missing"
-  assert_contains "$out" "Mode: Codex foreground checkpoint." "codex snippet missing"
-  assert_contains "$out" "bin/fm-watch-checkpoint.sh" "codex checkpoint helper missing"
-  assert_not_contains "$out" "Mode: Claude Stop-hook-owned supervision." "renderer printed the claude snippet too"
-  assert_not_contains "$out" "Mode: Pi extension background wake." "renderer printed the pi snippet too"
+  out=$("$RENDER" --harness pi)
+  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: pi" "pi heading missing"
+  assert_contains "$out" "Mode: Pi extension background wake." "pi snippet missing"
+  assert_not_contains "$out" "Mode: Deck home-driver-owned wake turns." "renderer printed the deck snippet too"
+  assert_not_contains "$out" "Mode: Unknown harness fallback." "renderer printed the unknown snippet too"
   pass "renderer prints exactly the selected harness block"
 }
 
@@ -27,18 +26,32 @@ test_unknown_fallback() {
   pass "renderer falls back to unknown.md for unverified harness names"
 }
 
+# The primary hooks for these harnesses are gone, so none of them may render a
+# protocol of its own: each falls back to the unknown block and its generic
+# repair line, never a stale per-harness mechanism.
+test_removed_primary_harnesses_fall_back_to_unknown() {
+  local harness out
+  for harness in claude codex opencode grok cursor omp; do
+    out=$("$RENDER" --harness "$harness")
+    assert_contains "$out" "primary harness: unknown" "$harness did not fall back to the unknown heading"
+    assert_contains "$out" "Mode: Unknown harness fallback." "$harness did not fall back to the unknown snippet"
+    out=$("$RENDER" --harness "$harness" --repair-line)
+    assert_contains "$out" "according to the session-start block for this harness" "$harness repair line is not the generic fallback"
+  done
+  pass "removed primary harnesses render the unknown fallback block and repair line"
+}
+
 test_conditional_stanzas() {
   local home config out
   home="$TMP_ROOT/conditional-home"
   config="$TMP_ROOT/conditional-config"
   mkdir -p "$home/state" "$home/config" "$config"
-  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --read-only 1 --afk 1 --x-mode 1)
+  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness pi --read-only 1 --afk 1 --x-mode 1)
   assert_contains "$out" "- Lock: read-only" "read-only stanza missing"
   assert_contains "$out" "- Away mode: active" "afk stanza missing"
   assert_contains "$out" "- X mode: active" "x-mode stanza missing"
   assert_contains "$out" "$config/x-mode.env" "x-mode stanza did not render the effective config path"
-  assert_contains "$out" 'Mode: Codex foreground checkpoint.' "codex snippet missing"
-  assert_not_contains "$out" "Source \`config/x-mode.env\`" "snippet kept the repo-relative x-mode config path"
+  assert_contains "$out" 'Mode: Pi extension background wake.' "pi snippet missing"
   pass "renderer includes read-only, afk, and effective x-mode current-state stanzas"
 }
 
@@ -47,22 +60,22 @@ test_quiet_mode_stanzas() {
   home="$TMP_ROOT/quiet-home"
   config="$TMP_ROOT/quiet-config"
   mkdir -p "$home/state" "$config"
-  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --afk 1 --afk-mode quiet)
+  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness pi --afk 1 --afk-mode quiet)
   assert_contains "$out" "- Quiet mode: active" "quiet stanza missing"
   assert_contains "$out" "load /quiet" "quiet stanza did not name the /quiet skill"
   assert_contains "$out" "Ordinary captain chat does NOT exit it" "quiet stanza lost the explicit-only exit rule"
   assert_not_contains "$out" "- Away mode: active" "quiet mode incorrectly rendered as away mode"
-  out=$(FM_HOME="$home" "$RENDER" --harness codex --afk 1 --afk-mode quiet --repair-line)
+  out=$(FM_HOME="$home" "$RENDER" --harness pi --afk 1 --afk-mode quiet --repair-line)
   assert_contains "$out" "Quiet mode owns watcher supervision; load /quiet" "quiet repair line did not name /quiet"
 
-  out=$(FM_HOME="$home" "$RENDER" --harness codex --afk 1)
+  out=$(FM_HOME="$home" "$RENDER" --harness pi --afk 1)
   assert_contains "$out" "- Away mode: active" "omitting --afk-mode did not default to away (regression)"
   assert_not_contains "$out" "Quiet mode" "omitting --afk-mode leaked quiet-mode text"
 
-  out=$(FM_HOME="$home" "$RENDER" --harness codex --afk 1 --afk-mode not-a-real-mode)
+  out=$(FM_HOME="$home" "$RENDER" --harness pi --afk 1 --afk-mode not-a-real-mode)
   assert_contains "$out" "- Away mode: active" "unrecognized --afk-mode value did not fall back to away"
 
-  out=$(FM_HOME="$home" "$RENDER" --harness codex --afk 0)
+  out=$(FM_HOME="$home" "$RENDER" --harness pi --afk 0)
   assert_contains "$out" "- Away/quiet mode: inactive" "inactive stanza missing"
   pass "renderer's away/quiet stanzas are mode-aware, default to away, and fall back safely on garbage input"
 }
@@ -71,36 +84,22 @@ test_repair_lines() {
   local home out
   home="$TMP_ROOT/repair-home"
   mkdir -p "$home/state" "$home/config"
-  out=$(FM_HOME="$home" FM_CODEX_WATCH_CHECKPOINT=7 "$RENDER" --harness codex --repair-line)
-  assert_contains "$out" "bin/fm-watch-checkpoint.sh --seconds 7" "codex repair line did not use checkpoint helper and env override"
-
-  out=$(FM_HOME="$home" "$RENDER" --harness claude --queue-pending 1 --repair-line)
+  out=$(FM_HOME="$home" "$RENDER" --harness pi --queue-pending 1 --repair-line)
   assert_contains "$out" "After draining queued wakes" "queue-pending prefix missing"
-  assert_contains "$out" "watcher supervision needs Stop-owned automatic recovery" "claude pre-verification repair line is not neutral"
-  assert_not_contains "$out" "is broken" "claude pre-verification repair line claimed a verified mechanism failure"
-  assert_not_contains "$out" "FAILED" "claude pre-verification repair line emitted a verified failure notice"
-  assert_not_contains "$out" "manual background" "claude pre-verification repair line directed a manual background arm"
-  assert_not_contains "$out" "bin/fm-watch-arm.sh" "claude pre-verification repair line directed an arm command"
-
-  : > "$home/config/x-mode.env"
-  out=$(FM_HOME="$home" FM_CODEX_WATCH_CHECKPOINT=7 "$RENDER" --harness codex --x-mode 1 --repair-line)
-  assert_contains "$out" "source '$home/config/x-mode.env' first" "x-mode repair line did not source the effective cadence config"
-  assert_contains "$out" "bin/fm-watch-checkpoint.sh --seconds 7" "x-mode codex repair line lost the checkpoint helper"
-
-  out=$(FM_HOME="$home" "$RENDER" --harness opencode --read-only 1 --repair-line)
-  assert_contains "$out" "session holding the fleet lock" "read-only repair line missing"
-
-  out=$(FM_HOME="$home" "$RENDER" --harness pi --repair-line)
   assert_contains "$out" "Pi tool fm_watch_arm_pi" "pi repair line does not direct the model to the extension-owned tool"
   assert_not_contains "$out" "extension command /fm-watch-arm-pi" "pi repair line still directs the model to the human slash command"
-  out=$(FM_HOME="$home" "$RENDER" --harness omp --repair-line)
-  assert_contains "$out" "omp tool fm_watch_arm_omp" "omp repair line does not direct the model to the extension-owned tool"
-  assert_contains "$out" ".omp/extensions/fm-primary-turnend-guard.ts" "omp repair line does not name its own turn-end extension"
-  assert_not_contains "$out" "fm_watch_arm_pi" "omp repair line must not borrow the Pi tool"
+
+  : > "$home/config/x-mode.env"
+  out=$(FM_HOME="$home" "$RENDER" --harness pi --x-mode 1 --repair-line)
+  assert_contains "$out" "source '$home/config/x-mode.env' first" "x-mode repair line did not source the effective cadence config"
+  assert_contains "$out" "Pi tool fm_watch_arm_pi" "x-mode pi repair line lost the extension-owned tool"
+
+  out=$(FM_HOME="$home" "$RENDER" --harness pi --read-only 1 --repair-line)
+  assert_contains "$out" "session holding the fleet lock" "read-only repair line missing"
   pass "renderer repair-line mode is harness-aware and honors conditional state"
 }
 
-test_cross_harness_ordinary_continuation_and_repair_matrix() {
+test_ordinary_continuation_and_repair_matrix() {
   local ordinary out
 
   out=$("$RENDER" --harness pi)
@@ -110,54 +109,13 @@ test_cross_harness_ordinary_continuation_and_repair_matrix() {
   out=$("$RENDER" --harness pi --repair-line)
   assert_contains "$out" "fm_watch_arm_pi" "pi recovery line lost the extension-owned repair tool"
 
-  out=$("$RENDER" --harness omp)
-  assert_contains "$out" "primary harness: omp" "omp heading missing"
-  assert_contains "$out" "Mode: omp (Oh My Pi) extension background wake." "omp snippet missing"
-  assert_contains "$out" "the omp extension already owns watcher continuity" "omp ordinary-wake line does not leave continuity to the extension"
-  assert_contains "$out" ".omp/extensions/fm-primary-omp-watch.ts" "omp snippet did not substitute its watch extension path"
-  assert_not_contains "$out" "__FM_OMP_EXT__" "omp snippet left a placeholder unsubstituted"
-  assert_not_contains "$out" "__FM_OMP_TURNEND_EXT__" "omp snippet left the turn-end placeholder unsubstituted"
-  assert_not_contains "$out" "project trust" "omp snippet must not carry Pi's trust prerequisite"
-  out=$("$RENDER" --harness omp --repair-line)
-  assert_contains "$out" "fm_watch_arm_omp" "omp recovery line lost the extension-owned repair tool"
-
-  out=$("$RENDER" --harness opencode)
+  out=$("$RENDER" --harness not-real)
   ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
-  assert_contains "$ordinary" "plugin already owns watcher continuity" "opencode ordinary-wake line does not leave continuity to the plugin"
-  assert_not_contains "$ordinary" "bin/fm-watch-arm.sh" "opencode ordinary-wake line incorrectly calls the recovery probe"
-  out=$("$RENDER" --harness opencode --repair-line)
-  assert_contains "$out" "manual recovery probe" "opencode recovery line lost its manual probe"
+  assert_contains "$ordinary" "follow the continuation in the harness protocol below" "unknown ordinary-wake line lost its protocol pointer"
+  out=$("$RENDER" --harness not-real --repair-line)
+  assert_contains "$out" "do not use shell &" "unknown recovery line lost the shell & prohibition"
 
-  out=$("$RENDER" --harness claude)
-  ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
-  assert_contains "$ordinary" "Stop-owned auto-arm" "claude ordinary-wake line does not leave continuity to the Stop hook"
-  assert_contains "$ordinary" "bin/fm-claude-stop-autoarm.sh" "claude ordinary-wake line lost the auto-arm script name"
-  assert_contains "$ordinary" "do not arm another cycle" "claude ordinary-wake line does not forbid a model re-arm"
-  assert_not_contains "$ordinary" "bin/fm-watch-arm.sh" "claude ordinary-wake line incorrectly calls the manual arm"
-  out=$("$RENDER" --harness claude --repair-line)
-  assert_contains "$out" "watcher supervision needs Stop-owned automatic recovery" "claude recovery line lost its neutral automatic-recovery guidance"
-  assert_not_contains "$out" "is broken" "claude recovery line claimed failure before verification"
-  assert_not_contains "$out" "bin/fm-watch-arm.sh" "claude recovery line must not create a repeatable manual arm loop"
-
-  out=$("$RENDER" --harness grok)
-  ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
-  assert_contains "$ordinary" "re-arm" "grok ordinary-wake line does not tell the model to re-arm"
-  assert_contains "$ordinary" "Grok tracked background task" "grok ordinary-wake line lost tracked background ownership"
-  assert_contains "$ordinary" "bin/fm-watch-arm.sh" "grok ordinary-wake line lost the background arm command"
-  out=$("$RENDER" --harness grok --repair-line)
-  assert_contains "$out" "Grok tracked background task" "grok recovery line lost its tracked background repair"
-  assert_contains "$out" "bin/fm-watch-arm.sh" "grok recovery line lost the arm command"
-
-  out=$("$RENDER" --harness codex)
-  ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
-  assert_contains "$ordinary" "next foreground" "codex ordinary-wake line lost its foreground checkpoint"
-  assert_contains "$ordinary" "bin/fm-watch-checkpoint.sh" "codex ordinary-wake line lost the checkpoint command"
-  assert_not_contains "$ordinary" "bin/fm-watch-arm.sh" "codex ordinary-wake line incorrectly uses a background arm"
-  out=$("$RENDER" --harness codex --repair-line)
-  assert_contains "$out" "foreground checkpoint" "codex recovery line lost its checkpoint repair"
-  assert_contains "$out" "bin/fm-watch-checkpoint.sh" "codex recovery line lost the checkpoint command"
-
-  pass "renderer preserves every harness ordinary-continuation and missing-cycle repair path"
+  pass "renderer preserves the pi and fallback ordinary-continuation and missing-cycle repair paths"
 }
 
 test_pi_signed_preserves_identity_with_pi_supervision_protocol() {
@@ -174,30 +132,6 @@ test_pi_signed_preserves_identity_with_pi_supervision_protocol() {
   assert_contains "$out" "Pi tool fm_watch_arm_pi" \
     "pi-signed repair semantics diverged from Pi"
   pass "pi-signed keeps its identity while sharing Pi's supervision protocol"
-}
-
-test_grok_is_background_notify() {
-  local out
-  out=$("$RENDER" --harness grok)
-  assert_contains "$out" "Mode: Grok background-notify supervision." "grok snippet missing background-notify mode"
-  assert_contains "$out" "background: true" "grok snippet missing tracked background tool instruction"
-  assert_contains "$out" "synthetic_reason: task_completed" "grok snippet missing auto-wake synthetic prompt detail"
-  assert_contains "$out" "bin/fm-watch-arm.sh" "grok snippet missing watcher arm"
-  assert_not_contains "$out" "__FM_X_MODE_ENV" "renderer leaked an x-mode path placeholder"
-  assert_not_contains "$out" "foreground checkpoint" "grok snippet must not be Codex-style foreground checkpoint"
-  out=$("$RENDER" --harness grok --repair-line)
-  assert_contains "$out" "Grok tracked background task" "grok repair line is not background-notify shaped"
-  pass "grok supervision is Claude-shaped background notify with passive Stop-hook backstop"
-}
-
-test_grok_command_sources_effective_config() {
-  local home config out
-  home="$TMP_ROOT/grok-home"
-  config="$TMP_ROOT/grok-config"
-  mkdir -p "$home/state" "$config"
-  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness grok --x-mode 1)
-  assert_contains "$out" "[ -f '$config/x-mode.env' ] && . '$config/x-mode.env'; exec bin/fm-watch-arm.sh" "grok arm command did not use the effective x-mode config path"
-  pass "grok rendered command sources the effective x-mode config"
 }
 
 test_pi_snippet_uses_effective_extension_path() {
@@ -234,11 +168,10 @@ test_deck_protocol() {
 test_deck_protocol
 test_selected_harness_block_only
 test_unknown_fallback
+test_removed_primary_harnesses_fall_back_to_unknown
 test_conditional_stanzas
 test_quiet_mode_stanzas
 test_repair_lines
-test_cross_harness_ordinary_continuation_and_repair_matrix
+test_ordinary_continuation_and_repair_matrix
 test_pi_signed_preserves_identity_with_pi_supervision_protocol
-test_grok_is_background_notify
-test_grok_command_sources_effective_config
 test_pi_snippet_uses_effective_extension_path

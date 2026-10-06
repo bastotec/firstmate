@@ -716,33 +716,32 @@ SH
 
 # --- 7. Session start's supervision protocol follows the corrected verdict ---
 
-# The consequence the captain actually hit: the wrong verdict emitted Claude's
-# Stop-owned protocol to a Codex primary, so every turn end was blocked for
-# missing Claude recovery.
+# A retained Claude marker now falls back to the unknown protocol on its own,
+# but must not keep a real Pi ancestor from selecting Pi's kept protocol.
 test_supervision_protocol_follows_corrected_verdict() {
   local dir home fakebin bin got
   dir="$TMP_ROOT/supervision"
   home="$dir/home"
   mkdir -p "$home/state" "$home/config"
-  bin=$(named_bin "$dir/codex-tree" codex)
+  bin=$(named_bin "$dir/pi-tree" pi)
   fakebin=$(blind_ancestry_bin "$dir/blind")
 
   got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
     -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDECODE=1 FM_HOME="$home" \
     PATH="$fakebin:$BASE_PATH" "$RENDER")
-  assert_contains "$got" "primary harness: claude" \
-    "with ancestry blinded, the retained marker must still render claude (the case is otherwise vacuous)"
+  assert_contains "$got" "primary harness: unknown" \
+    "with ancestry blinded, the removed Claude primary must render the unknown protocol"
 
   got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
     -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDECODE=1 FM_HOME="$home" \
     "$bin" -c "r=\$(\"$RENDER\"); printf '%s' \"\$r\"")
-  assert_contains "$got" "primary harness: codex" \
-    "a Codex primary carrying a retained CLAUDECODE did not render the Codex protocol"
-  assert_contains "$got" "Mode: Codex foreground checkpoint." \
-    "the rendered block is not Codex's foreground-checkpoint protocol"
+  assert_contains "$got" "primary harness: pi" \
+    "a Pi primary carrying a retained CLAUDECODE did not render the Pi protocol"
+  assert_contains "$got" "Mode: Pi extension background wake." \
+    "the rendered block is not Pi's extension-owned protocol"
   assert_not_contains "$got" "Mode: Claude Stop-hook-owned supervision." \
     "the rendered block still carries Claude's Stop-owned protocol"
-  pass "session start renders the Codex protocol for a Codex primary holding a retained CLAUDECODE"
+  pass "session start renders the Pi protocol for a Pi primary holding a retained CLAUDECODE"
 }
 
 test_markerless_ancestry_outranks_foreign_marker

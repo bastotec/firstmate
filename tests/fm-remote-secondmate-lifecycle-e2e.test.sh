@@ -404,7 +404,7 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   # A harness-named argv[0] is what both platforms can see - macOS reports it as
   # the command name and procps exposes it as argv[0] - and it needs no binary
   # copy, which macOS refuses to execute once its signature no longer matches.
-  bash -c 'exec -a codex sleep 600' &
+  bash -c 'exec -a pi sleep 600' &
   harness_pid=$!
   printf '%s\n' "$harness_pid" > "$TMP_ROOT/source-move-work/state/.lock"
   if migrate move-work > "$TMP_ROOT/migrate.out" 2>&1; then fail 'migration accepted a live session'; fi
@@ -640,7 +640,7 @@ SH
   migration_source guard-work
   lock_session() {
     FM_HOME="$TMP_ROOT/source-guard-work" FM_STATE_OVERRIDE="$TMP_ROOT/source-guard-work/state" \
-      bash -c 'exec -a codex bash "$0"' "$ROOT/bin/fm-lock.sh"
+      bash -c 'exec -a pi bash "$0"' "$ROOT/bin/fm-lock.sh"
   }
   printf 'x=1\n' > "$TMP_ROOT/source-guard-work/config/x-mode.env"
   if migrate guard-work > "$TMP_ROOT/migrate.out" 2>&1; then fail 'migration accepted an unclassifiable config file'; fi

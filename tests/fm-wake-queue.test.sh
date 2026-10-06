@@ -31,6 +31,12 @@ foreign_queue_checkpoint() { # <poll-plus-publication-seconds>
   FM_WATCH_HANDLING_SUCCESSOR=1 python3 "$ROOT/tests/assets/watcher-queue-fixture.py" checkpoint "$WATCH" "$1"
 }
 
+# One bounded foreground run of the real watcher: bin/fm-watch.sh exits on its
+# first actionable wake, and fm_run_timed bounds a quiet run.
+run_watch_bounded() {  # <seconds>
+  bash -c '. "$1"; shift; fm_run_timed "$@"' _ "$ROOT/bin/fm-timeout-lib.sh" "$1" "$ROOT/bin/fm-watch.sh"
+}
+
 test_concurrent_append_and_drain() {
   local dir state out1 out2 pids i pid count unique malformed sequence generation
   dir=$(make_case concurrent)
@@ -538,7 +544,7 @@ SH
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 \
     FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 4 \
+    run_watch_bounded 4 \
     > "$dir/watch-busy.out" 2> "$dir/watch-busy.err" || true
   ! grep -F 'secondmate wake-loop stalled' "$dir/watch-busy.out" >/dev/null \
     || fail "a mate inside an active turn was escalated as a stalled wake loop: $(cat "$dir/watch-busy.out")"
@@ -551,7 +557,7 @@ SH
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 \
     FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 4 \
+    run_watch_bounded 4 \
     > "$dir/watch-idle.out" 2> "$dir/watch-idle.err" || true
   grep -F 'check: secondmate wake-loop stalled: mate=mate row=7' "$dir/watch-idle.out" >/dev/null \
     || fail "the same frozen queue stayed hidden after the turn ended: $(cat "$dir/watch-idle.out")"
@@ -591,7 +597,7 @@ SH
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 \
     FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 \
+    run_watch_bounded 2 \
     > "$dir/watch.out" 2> "$dir/watch.err" || true
   [ "$(cat "$outside")" = "$expected" ] || fail "stall marker write followed an unsafe symlink"
   [ -L "$marker" ] || fail "stall marker write replaced rather than rejected an unsafe path"
@@ -628,7 +634,7 @@ test_acknowledged_stall_publication_survives_pre_marker_crash() {
     FM_FAKE_TMUX_LOG="$dir/tmux.log" FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$out" 2> "$dir/watch.err" || true
+    run_watch_bounded 2 > "$out" 2> "$dir/watch.err" || true
   ! grep -F 'secondmate wake-loop stalled' "$out" >/dev/null \
     || fail "an acknowledged publication was duplicated after the pre-marker crash state"
   [ ! -s "$state/.wake-queue" ] \
@@ -671,7 +677,7 @@ test_empty_prefix_mate_preserves_other_mate_receipt() {
       FM_FAKE_TMUX_LOG="$dir/tmux.log" FM_FAKE_TMUX_CAPTURE="$dir/fake-tmux/pane.txt" \
       FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
       FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-      "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 \
+      run_watch_bounded 2 \
       > "$dir/watch-$round.out" 2> "$dir/watch-$round.err" || true
     ! grep -F 'secondmate wake-loop stalled' "$dir/watch-$round.out" >/dev/null \
       || fail "empty ios queue erased ios-ui idempotency on checkpoint $round"
@@ -1700,7 +1706,6 @@ test_subshell_lock_ownership_without_bashpid() {
       fm_lock_acquire_wait "$lock" || exit 13
       [ "$(cat "$lock/pid")" != "$$" ] || exit 14
       fm_lock_try_acquire "$lock" || exit 15
-      fm_lock_set_role "$lock" terminal-check || exit 16
       fm_lock_release "$lock"
       [ ! -e "$lock" ] && [ ! -L "$lock" ] || exit 17
     ) || exit $?
