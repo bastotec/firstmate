@@ -29,7 +29,8 @@
 #             it with config/stream-hub. --foreground runs it in this terminal.
 #   hub stop  Signal the recorded hub process and wait for the port to be
 #             released. Endpoints survive it - their agents own the ptys - but
-#             nothing can be watched or steered until the hub is back.
+#             hub-backed observation and steering wait until it is back; see
+#             docs/stream-backend.md "When the hub is down" for local attach.
 #   hub unit  Print a systemd user unit that runs `hub start --foreground` for
 #             this home. It installs nothing.
 #   native    build: cargo build --release --locked --target <host-triple> the

@@ -532,8 +532,8 @@ impl Agent {
     }
     /// Read the pty as fast as it produces, and hand each burst on at once:
     /// to local attach clients directly, and to the publisher for the hub.
-    /// Reading never waits on the network, so a redraw is never split by a
-    /// round trip per chunk.
+    /// Only a full outbox back-pressures reading; individual kernel reads do
+    /// not wait for a network round trip.
     fn reader(&self) {
         let mut buffer = vec![0u8; FRAME_BYTES];
         let mut since = Instant::now();
@@ -613,7 +613,7 @@ impl Agent {
         self.outbox.push(Item::Bytes(bytes.clone()));
         self.local.feed(&bytes);
     }
-    /// Post queued output in order, everything already queued in one request.
+    /// Post queued output in order, capped at FRAME_BYTES across each request.
     fn publisher(&self) {
         while let Some(frames) = self.outbox.take(&self.id) {
             self.post_frames(frames, &self.hub.output);

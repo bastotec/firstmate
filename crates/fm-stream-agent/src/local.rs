@@ -4,12 +4,9 @@
 //! The agent keeps its own copy of the hub's small VT model (the hub's
 //! screen.rs, compiled in here) fed with exactly the bytes it publishes, so a
 //! local attach paints the same kind of snapshot the hub's /snapshot route
-//! returns, then streams from exactly where that screen ends. The socket lives
-//! at `<dir>/<endpoint-id>.sock`, where `<dir>` is `$FM_STREAM_LOCAL_DIR` or
-//! `/tmp/fm-stream-<uid>`: a 0700 directory this user owns (anything else and
-//! neither side uses it), the socket itself 0600, and every connection's peer
-//! must be this same user. docs/stream-backend.md "Interactive attach" owns the
-//! operator contract.
+//! returns, then streams from exactly where that screen ends.
+//! docs/stream-backend.md "Interactive attach" owns socket discovery,
+//! filesystem isolation, peer authentication, and the operator contract.
 //!
 //! Wire: frames of `[tag u8][len u32 big-endian][payload]`.
 //!   client -> agent  H {"endpoint","rows","cols"}  hello, sent once, first
@@ -37,7 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
-/// Largest frame either side accepts; output is published in chunks this size.
+/// Bound peer-provided frame allocations before reading their payload.
 pub const MAX_FRAME: usize = 1 << 20;
 /// Output chunks a slow client may have queued before it is cut off, so a
 /// stalled local terminal can never stall the endpoint itself.

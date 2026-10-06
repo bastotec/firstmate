@@ -989,6 +989,34 @@ The daemon injection transport into a live composer keeps its coverage in `tests
 
 ## stream
 
+### Interactive attach latency
+
+[`stream-attach-bench.py`](../../tests/assets/stream-attach-bench.py) measures keystroke echo and full-redraw delivery through a real attach PTY, using a disposable native endpoint that writes a known colored frame in one write.
+Its docstring owns the benchmark options and metric definitions.
+Run against each separately built native binary directory to compare the baseline hub path, the updated hub path, and the same-machine path:
+
+```sh
+python3 tests/assets/stream-attach-bench.py /path/to/baseline-native --path hub --rtt-ms 10 --rows 200 --cols 120
+python3 tests/assets/stream-attach-bench.py /path/to/updated-native --path hub --rtt-ms 10 --rows 200 --cols 120
+FM_STREAM_ATTACH_LOCAL=1 python3 tests/assets/stream-attach-bench.py /path/to/updated-native --path auto --rtt-ms 10 --rows 200 --cols 120
+```
+
+For the `auto` run, ensure the agent offers its private socket and both processes resolve the same directory; `auto` permits hub fallback and is not by itself proof of local transport.
+[The stream guide](../stream-backend.md#interactive-attach) owns that selection and its safety checks.
+Redraw spread measures first-to-last byte arrival at the attach PTY, not a terminal emulator's actual display refresh.
+Retain the full JSON, run date, host/tool versions, and binary revisions in PR evidence when refreshing the comparison.
+
+Recorded rounded macOS observations with a 10 ms simulated hub round trip and a roughly 26 KB, 200-line frame:
+
+| Path | Median echo | Redraw paint spread | Redraw to last byte |
+| --- | --- | --- | --- |
+| Baseline hub | 52 ms | 442 ms | 558 ms |
+| Updated hub | 35 ms | 1 ms | 46 ms |
+| Same-machine socket | 3 ms | Not recorded | 9 ms |
+
+These observations were supplied without a run date, tool versions, binary revisions, or raw JSON, so they are indicative comparisons rather than version-scoped verification or a guaranteed latency budget.
+`tests/fm-stream-attach-rust.test.sh` is the functional regression entry point for snapshot, input, resize, detach, and exit-status behavior over both transports; it is not a timing assertion.
+
 ### Portable stream-parity regressions
 
 [`tests/fixtures.sh`](../../tests/fixtures.sh)'s `fm_test_fake_stream` supplies fake fleet endpoints to the real adapter; its header owns setup and helper usage, and [`stream-hub-stub.py`](../../tests/assets/stream-hub-stub.py)'s docstring owns fake-shell behavior.
