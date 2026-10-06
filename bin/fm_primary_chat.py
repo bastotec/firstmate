@@ -61,7 +61,9 @@ Subcommands:
       `fm-deck-chat.sh service-alert` once per outage, across keeper replacement;
       a stable run or explicit stop clears the marker. Env: FM_DECK_CHAT_SERVICE_POLL (2),
       _BACKOFF (5), _BACKOFF_MAX (300), _STABLE_SECS (120), _ALERT_SECS (120),
-      _START_TIMEOUT (200, expected launcher window, not a termination deadline).
+      _START_TIMEOUT (200, expected launcher window, not a termination deadline),
+      _START_GRACE (60: once the stopped marker goes, the keeper leaves the
+      captain's own start that long to register before starting one itself).
 """
 import argparse
 import fcntl
@@ -604,6 +606,7 @@ class Keeper:
         self.stable = env_seconds('FM_DECK_CHAT_SERVICE_STABLE_SECS', 120)
         self.alert_after = env_seconds('FM_DECK_CHAT_SERVICE_ALERT_SECS', 120)
         self.start_timeout = env_seconds('FM_DECK_CHAT_SERVICE_START_TIMEOUT', 200)
+        self.start_grace = env_seconds('FM_DECK_CHAT_SERVICE_START_GRACE', 60)
         self.view = None
 
     def log(self, message):
@@ -721,6 +724,7 @@ class Keeper:
         next_try = 0.0
         alerted = outage is not None
         was_down = False
+        was_stopped = False
         while not self.stop.is_set():
             now = time.time()
             if self.stopped_on_purpose():
@@ -731,9 +735,19 @@ class Keeper:
                     self.log('stopped on purpose; not restarting')
                 self.publish('stopped', 'state/primary-chat/stopped present')
                 outage, up_since, alerted, was_down, delay = None, None, False, False, 0.0
+                was_stopped = True
                 self.recovered()
                 self.stop.wait(self.poll)
                 continue
+            if was_stopped:
+                # The marker goes as the captain starts a host, before that
+                # host takes the lock: let that start land rather than race it.
+                was_stopped = False
+                if not live_record(self.home):
+                    was_down, outage, delay = True, now, 0.0
+                    next_try = now + self.start_grace
+                    self.log('stop withdrawn; starting the primary at %s unless one registers first'
+                             % time.strftime('%H:%M:%S', time.localtime(next_try)))
             record = live_record(self.home)
             if record:
                 if was_down:
