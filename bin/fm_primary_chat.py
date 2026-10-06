@@ -401,8 +401,13 @@ class Supervisor:
                 proc.wait()
 
     def publish(self, body):
-        with tempfile.NamedTemporaryFile('w', delete=False, dir=str(self.root), prefix='.wake.') as tmp:
-            tmp.write(body[-(MAX_BODY - 1024):] if len(body.encode()) > MAX_BODY else body)
+        data = body.encode('utf-8')
+        if len(data) > MAX_BODY:
+            # Keep the end: the reason line is last. The wake stays durable in
+            # the home queue, which the steer tells the primary to drain.
+            data = data[-(MAX_BODY - 1024):]
+        with tempfile.NamedTemporaryFile('wb', delete=False, dir=str(self.root), prefix='.wake.') as tmp:
+            tmp.write(data.decode('utf-8', 'ignore').encode('utf-8'))
         try:
             while not self.stop.is_set():
                 result = subprocess.run([self.steer_bin, 'publish', '--home', str(self.home),
@@ -411,6 +416,9 @@ class Supervisor:
                 if result.returncode == 0:
                     self.log('wake published %s' % result.stdout.strip())
                     return True
+                if result.returncode == 2:
+                    self.log('wake publish refused: %s' % result.stderr.strip())
+                    return False
                 self.log('wake publish failed (exit %d): %s; retrying'
                          % (result.returncode, result.stderr.strip()))
                 self.stop.wait(2)
