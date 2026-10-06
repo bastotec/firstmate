@@ -7,11 +7,11 @@
 # overlapping triage policy lives in one place instead of two copies that can
 # drift apart.
 #
-# Most functions are pure, side-effect-free reads of status files: each takes
-# what it needs as arguments and touches no globals beyond the optional
-# FM_CAPTAIN_RE override. Consumers layer their own dedup/marker state on top (the
-# daemon keeps its escalation-digest seen-markers; the watcher keeps its .seen-*
-# signatures).
+# Most public readers take their inputs as arguments and print their results;
+# optional FM_* overrides customize classification. Internal parsing cores use
+# the caller-local result-variable contract documented under "Fork-free parsing"
+# below. Consumers layer their own dedup/marker state on top (the daemon keeps
+# its escalation-digest seen-markers; the watcher keeps its .seen-* signatures).
 # Status-span classification captures one file endpoint and reports every
 # actionable event through that endpoint before the endpoint may be committed.
 # An absent status file is a successful empty span, while an existing status
@@ -312,20 +312,19 @@ _fm_classify_is_corr_token() {  # <word>
   return 1
 }
 
-# Fork-free parsing. Every per-line helper below has an `_into` core that
-# assigns its result to a fixed variable instead of printing it, and the public
-# printing function is a thin wrapper over that core. A whole-file fold calls
-# the cores directly: under the printing API each line paid five or more
-# command-substitution forks, which on a macOS host folded a 1,800-line status
-# log in about forty seconds. The cores are the single statement of each parse,
-# so the wrapper and the fold can never disagree.
+# Fork-free parsing. The printing helpers below are thin wrappers over `_into`
+# cores, so the whole-file, incremental, activities, and origins folds call the
+# same parsers without command substitutions or a second implementation.
+# Callers declare each result variable local; Bash's dynamic scoping lets the
+# core assign it without leaking shared scratch state. Read a result only after
+# a successful call, since a failed parse need not assign it.
 #
+# _fm_strip_trailing_newlines_into <text> sets _FM_STRIPPED, as $(...) would
 # _fm_status_line_verb_into <line>       sets _FM_VERB
 # _fm_key_at_note_head_into <line>       sets _FM_KEYHEAD, fails like the wrapper
 # _fm_status_line_note_into <line>       sets _FM_NOTE
 # _fm_decision_key_into <line>           sets _FM_KEY, fails like the wrapper
-# _fm_decision_drop_into <set> <key>     sets _FM_SET (trailing newlines removed,
-#                                        exactly as the wrapper's $(...) caller saw)
+# _fm_decision_drop_into <set> <key>     sets _FM_SET; newline contract below
 # _fm_decision_fold_line_into <open> <line> <resolve> <held>
 #                                        sets _FM_OPEN to what the wrapper prints
 _fm_strip_trailing_newlines_into() {  # <text> -> _FM_STRIPPED, as $(...) would
@@ -457,7 +456,7 @@ _fm_decision_drop() {  # <open-set> <key>
 # The same drop without a caller's command substitution. The result is the
 # wrapper's output with its trailing newlines removed, which is what every
 # `x=$(_fm_decision_drop ...)` caller stored. A set that holds no record for
-# <key> and no blank line is returned as is, skipping the line walk.
+# <key> and no blank line needs only trailing-newline removal, not a line walk.
 _fm_decision_drop_into() {  # <open-set> <key>
   local set=$1 key=$2 line out='' _FM_STRIPPED
   case "$set" in
@@ -483,10 +482,10 @@ EOF
 # Fold ONE status line into an existing "<key>\t<verb>\t<note>\n"-per-line open
 # set, applying the same needs-decision/blocked-opens, resolved/captain-held-closes
 # rule status_open_decisions documents above. Pure text transform, no file I/O.
-# This is the ONE place the per-line open/resolved rule is written; both the
-# whole-file fold (status_open_decisions) and the incremental cursor-backed fold
-# (status_open_decisions_incremental) below call this instead of re-deriving the
-# rule, so the two consumption strategies can never drift apart on semantics.
+# _fm_decision_fold_line_into below is the ONE implementation of that rule.
+# Its printing wrapper and the whole-file, incremental, and origins folds share
+# that core; _fm_decision_fold_step preserves the command-substitution newline
+# handling for folds that previously captured the wrapper's output.
 # Reserved decision-key namespaces, and the rule that makes them mean something.
 #
 # A key like `pending-reply-<id>` names a decision that one library raises and is
@@ -540,10 +539,8 @@ _fm_decision_fold_line_into() {  # <open-set> <status-line> <resolve-verb> <held
   local open=$1 line=$2 resolve=$3 held=$4 verb key note
   local _FM_VERB _FM_KEY _FM_NOTE _FM_SET
   # Blank-line guard. A `case` glob answers "does this line hold any non-space
-  # character" in one pattern match; the equivalent ${line//[[:space:]]/} costs
-  # tens of milliseconds per line under bash 3.2's global bracket-class
-  # substitution, which is the whole per-line cost of both folds on a status log
-  # of ordinary width. Same verdict, bounded cost.
+  # character" in one pattern match; avoid Bash 3.2's expensive global
+  # bracket-class substitution ${line//[[:space:]]/} for the same verdict.
   case "$line" in
     *[![:space:]]*) ;;
     *) _FM_OPEN=$open; return 0 ;;
@@ -1629,7 +1626,7 @@ _fm_status_open_activities_stream() {
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
   pause=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
   while IFS= read -r line || [ -n "$line" ]; do
-    # Blank-line guard; see _fm_decision_fold_line for why this is a glob.
+    # Blank-line guard; see _fm_decision_fold_line_into for why this is a glob.
     case "$line" in
       *[![:space:]]*) ;;
       *) continue ;;
