@@ -34,8 +34,7 @@ The run starts its scripts longest-hint-first from `portable_parallel_weight_hin
 
 The two `portable-parallel-1`/`-2` lanes remain a duration-balanced split of the same set, for a local or two-runner reproduction; CI no longer runs them as separate jobs.
 They use longest-processing-time assignment over those hints.
-The hints for `tests/fm-lint.test.sh` and `tests/fm-test-run.test.sh` were refreshed to 212915 ms and 151312 ms from the completed script markers in [run 37361945831, parallel job 1](https://github.com/bastotec/firstmate/actions/runs/37361945831/job/111938422392), which reached its old 10-minute cap after 583 seconds of script time.
-Repacking with those hints estimated about 469 seconds per lane; removing the Pi and hook-layer tests later shrank both lanes, and the current split is whatever `--check-coverage` reports.
+The hints were subsequently refreshed for the stream-only suites; the current values and lane memberships live only in the runner, and `--check-coverage` reports the derived packing estimates.
 [`bin/fm-test-run.sh`](../bin/fm-test-run.sh) holds the duration values in `portable_parallel_weight_hints` and the ordered memberships beside `list_portable_parallel_1` and `list_portable_parallel_2`.
 Read the derived packing estimates with that runner's `--check-coverage`; its header and `--help` own the output fields and the selection-specific `--list-scheduled` weight rules.
 The largest individual hint sets a lower bound on the estimated duration of any split, regardless of how evenly the remaining work is assigned.
@@ -49,8 +48,8 @@ New artifacts measure scripts sharing the runner at the job's configured concurr
 
 ## Portable serial remainder
 
-`portable-serial` includes every `tests/*.test.sh` that is neither proven-isolated nor `real-herdr-gated`.
-It keeps watcher, lock, AFK, real tmux, daemon, secondmate lifecycle, bootstrap, the `live-harness-optin` family, and other unproven work serial.
+`portable-serial` includes every `tests/*.test.sh` outside the proven-isolated set.
+It keeps watcher, lock, AFK, daemon, secondmate lifecycle, bootstrap, the `live-harness-optin` family, and other unproven work serial.
 Membership is derived rather than enumerated, so a newly added test lands here by default.
 
 ## Portable serial CI shards
@@ -67,7 +66,8 @@ The runner's `PORTABLE_SERIAL_PHASE_JOBS` rationale preserves CPU headroom becau
 `.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the required suite unrun.
 
 `portable_serial_assignments` in [`bin/fm-test-run.sh`](../bin/fm-test-run.sh) owns the phase-aware longest-processing-time packing algorithm; its comments define how family worker loads and unproven hints contribute to the estimate.
-The embedded hints are the slowest completed `duration_ms` per script from the `fm-test-timing-portable-serial-*` artifacts of seven green CI runs from 2026-10-04 to 2026-10-06, [37272453924](https://github.com/bastotec/firstmate/actions/runs/37272453924), [37251695405](https://github.com/bastotec/firstmate/actions/runs/37251695405), [37253443319](https://github.com/bastotec/firstmate/actions/runs/37253443319), [37247916281](https://github.com/bastotec/firstmate/actions/runs/37247916281), [37397713888](https://github.com/bastotec/firstmate/actions/runs/37397713888), [37401433503](https://github.com/bastotec/firstmate/actions/runs/37401433503), and [37413095868](https://github.com/bastotec/firstmate/actions/runs/37413095868), plus the 5121 ms native-Windows focused runner measurement for `tests/fm-pi-windows-shell-invocation.test.sh` from 2026-09-06T21:02Z.
+The embedded hints retain the slowest completed `duration_ms` per script from the `fm-test-timing-portable-serial-*` artifacts of the green CI runs recorded beside `portable_serial_weight_hints` in [`bin/fm-test-run.sh`](../bin/fm-test-run.sh), including [37527983434](https://github.com/bastotec/firstmate/actions/runs/37527983434), the first stream-only run.
+The earlier seven runs remain the baseline for unchanged suites; the last two runs include three-worker family-phase contention.
 Taking the slowest of several CI runs rather than a single run keeps the balance honest on a slow runner.
 A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
@@ -105,7 +105,7 @@ Opt-in live-harness timing hints can measure credential-free CI skips, not nativ
 
 CI runs `bin/fm-test-run.sh --check-coverage` in the `Repo invariants` job.
 It verifies that both parallel lanes partition the proven-isolated set.
-It also verifies that the parallel lanes, portable serial lane, and real-Herdr family are disjoint and cover every `tests/*.test.sh` script.
+It also verifies that the parallel lanes and portable serial lane are disjoint and cover every `tests/*.test.sh` script.
 It separately verifies that the portable serial CI shards are non-empty, disjoint, and together equal the portable serial lane.
 It reports the unmeasured serial share as `serial_unhinted=` and refuses when that share exceeds `PORTABLE_SERIAL_MAX_UNHINTED_PERCENT`, so the shards stay balanced on evidence rather than on the default weight.
 
@@ -114,7 +114,7 @@ A pass on Bash 5 alone does not establish the Bash 3.2 regression, because Bash 
 
 ## Timing artifacts
 
-The portable parallel job, each portable serial shard, and the Herdr lane upload runner-generated timing JSON.
+The portable parallel job and each portable serial shard upload runner-generated timing JSON.
 `bin/fm-test-run.sh --aggregate-json` creates the combined summary artifact.
 `.github/workflows/ci.yml` owns the exact artifact names and aggregation wiring.
 
@@ -129,7 +129,6 @@ The portable parallel job, each portable serial shard, and the Herdr lane upload
 |---|---|---|
 | portable parallel | See [CI workflow](../.github/workflows/ci.yml) | The workflow owns the parallel cap rationale and its evidence limits. |
 | portable serial shards | See [CI workflow](../.github/workflows/ci.yml) | The workflow owns the serial cap and its setup and runner-speed margin; the packing evidence is above. |
-| Herdr | family-run step `timeout-minutes: 20`; job `timeout-minutes: 75` backstop | Healthy runs finished around 7 minutes before this lane gained `fm-backend-herdr-focus-flash-e2e`, which measures about 2 minutes against a real lab locally, so the step bound is still the hang tripwire (cleanup and timing artifacts still upload) while the job cap stays a last-resort backstop. Refresh this figure from the lane's uploaded timing artifact. |
 
 Timeouts are intended as hang tripwires; a passing coverage guard does not establish a healthy job duration.
 `.github/workflows/ci.yml` owns the exact numbers.

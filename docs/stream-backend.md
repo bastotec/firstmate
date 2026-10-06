@@ -51,7 +51,7 @@ Deck's backend-independent host invariants are documented in `bin/fm-deck-worker
 
 Recovery classification remains `fm_backend_agent_state` in `bin/fm-backend.sh`, with one stream-only secondmate rule reading on top of it in `bin/fm-bootstrap.sh`: for a stream mate, `missing` is the hub's in-memory registry not knowing that endpoint, which an agent still pacing its rejoin after a hub restart also produces, so it licenses no respawn and the sweep skips with an `absence from the hub registry` diagnostic.
 The consequence: a stream mate whose own agent is gone reads `unreadable` while the hub still holds its record, then `missing` once the hub reaps that record after an hour of agent silence, so it is never respawned automatically and that skip line is the only signal.
-A stream mate whose worker exited while its agent lived still reads `dead` from the agent's own closing report, and the sweep respawns it exactly as it does on any other backend.
+A stream mate whose worker exited while its agent lived still reads `dead` from the agent's own closing report, and the sweep respawns it only after endpoint closure is confirmed.
 `bin/fm-bootstrap.sh` owns secondmate recovery respawn, preserving the recorded backend rather than selecting a different backend from ambient configuration.
 `bin/fm-control.sh` owns interrupt, exit, same-endpoint relaunch, and `recover-missing`.
 A new stream agent generates a fresh endpoint id rather than recreating the old handle, so `recover-missing` on stream starts a new endpoint on this home's configured hub (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the task's endpoint identity through [`bin/fm-endpoint-rebind-lib.sh`](../bin/fm-endpoint-rebind-lib.sh), keeping its worktree and non-endpoint fields.

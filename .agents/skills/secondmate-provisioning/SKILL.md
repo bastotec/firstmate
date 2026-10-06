@@ -223,13 +223,14 @@ Do not hand off `local-only` items.
 
 ## Recovery
 
-For local `kind=secondmate` meta with no window, treat the secondmate as a dead persistent direct report and respawn it with:
+For a local secondmate whose stream endpoint is positively agent-free and whose closure is confirmed, recover through the normal spawn owner:
 
 ```sh
 bin/fm-spawn.sh <id> --secondmate --backend <recorded-backend>
 ```
 
-Use the recorded `home=` in meta and pass its recorded `backend=` the same way, with an absent `backend=` meaning tmux, so the replacement stays on the mate's own backend rather than the ambient selection, exactly as the session-start liveness sweep's respawn does.
+Use the recorded `home=` and `backend=` so the replacement preserves the mate's placement rather than ambient selection.
+[Runtime backend](../../../docs/configuration.md#runtime-backend-configbackend--fm_backend) owns legacy metadata and retired-backend refusals; [Secondmate lifecycle](../../../docs/stream-backend.md#secondmate-lifecycle) owns missing-registry recovery, which never treats absence from the hub as proof the agent stopped.
 If meta is missing but `data/secondmates.md` still registers the secondmate, respawn from the registry entry and its persistent home.
 For a remote route, the same command probes and relaunches only on the configured host.
 An SSH transport failure or unreadable remote endpoint remains unknown and must be reconciled on that host; never launch a local replacement.
@@ -238,7 +239,7 @@ Respawn re-resolves the secondmate harness from current config, uses the same gu
 If the secondmate is already running and only inherited local material changed, prefer `bin/fm-config-push.sh` over respawning.
 To move a live LOCAL secondmate onto a newly pinned harness, model, or effort without a full recovery, set `config/secondmate-harness` and then relaunch it with `bin/fm-control.sh <id> relaunch`, which re-resolves that pin, stops the agent, and launches the replacement in the same home ([`docs/agent-control.md`](../../../docs/agent-control.md)).
 For a REMOTE mate, the same primary `fm-control.sh` entry point routes interrupt, exit, and relaunch to the host; pass explicit profile flags to replace its recorded profile rather than expecting it to re-read the local secondmate pin.
-[`docs/remote-secondmates.md`](../../../docs/remote-secondmates.md#lifecycle-control) owns remote lifecycle routing, readiness, profile selection, and backend migration.
+[`docs/remote-secondmates.md`](../../../docs/remote-secondmates.md#lifecycle-control) owns remote lifecycle routing, readiness, and profile selection.
 A successful update restarts every live mate of both placements on its own, including one already on the target commit; the `/updatefirstmate` skill owns that pass, and `bin/fm-secondmate-restart.sh` owns its persist gate and failure vocabulary.
 
 Do not reconstruct a secondmate's whole tree from the main home.

@@ -9,18 +9,12 @@
 # backend cannot answer would otherwise stay forever. This is the one way they
 # are ever retired, and it runs only when a human names them.
 #
-# Why this rather than an automatic rule, and how it came to exist. The rule
-# first asked for was the obvious one for the stream hub: report an endpoint
-# gone when a healthy hub's task listing omits it. It was implemented, and then
-# reverted, because it is unsafe here - a worker's agent registers exactly once
-# and has no way back (docs/stream-backend.md), so a hub restart empties the
-# listing while every worker keeps running, and the rule would have read every
-# live worker as gone. Reverting it alone would have left every stream record
-# unretirable after a hub restart, so this command was authorized in its place.
-# No machine on this branch can tell a record the hub pruned from a live worker
-# behind a partition. A human looking at the machine can, and this is where
-# they say so - which is why the assertion is recorded with their name and the
-# time they made it. docs/stream-backend.md carries the operator-facing entry.
+# Absence from the hub is never proof that a worker stopped: a same-protocol
+# restart clears the registry while live agents rejoin on their own schedule,
+# and a partition can leave a worker running without an answer from its backend.
+# Only an operator inspecting that machine can assert it is stopped, which is
+# why this command records their name and the time before removing any record.
+# docs/stream-backend.md owns the operator-facing retirement contract.
 #
 # Retiring a record is RECORD bookkeeping and nothing else. Cleanup runs first,
 # because when its own gates allow it, it does the whole job properly. Two of

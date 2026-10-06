@@ -73,8 +73,12 @@ Every task endpoint lives on the stream backend: one hub serves the whole fleet,
 This home's hub URL and token come from `config/stream-hub` and `config/stream-token` (or `config/stream-hub-tokens` when the fleet separates publishing from control); [`docs/stream-backend.md`](stream-backend.md) owns setup, prerequisites, the security model, and limits.
 [`architecture.md`](architecture.md#runtime-session-backends) owns the runtime-internal axes.
 Treehouse remains the worktree provider, since stream is a session provider only.
-`config/backend` (first non-empty line) and `FM_BACKEND` may name `stream` explicitly; absent means stream.
-The retired `tmux` and `herdr` backends, and the earlier `zellij`, `orca`, and `cmux` ones, are refused with a message, including in existing task metadata: a record on a retired backend reads as gone (`unverified` to the recovery classifier), its kill is unconfirmed, it cannot be relaunched, and [`bin/fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh) retires it once you have checked nothing still runs behind it.
+New local spawns select an explicitly authorized per-task `--backend` first, then `FM_BACKEND`, then the first non-empty line of `config/backend`, then `stream`.
+A per-task override requires a current captain instruction or the task's accepted brief and never establishes precedent for later tasks.
+Any selection other than `stream` is refused; `tmux` and `herdr` refusals point to stream.
+Existing `tmux` and `herdr` metadata remains readable only for reconciliation and retirement, not dispatch: the recovery classifier reports `unverified`, kill is unconfirmed, and relaunch is refused.
+[Endpoint retirement](stream-backend.md#retiring-a-record-no-backend-can-answer-for) owns the operator assertion required to retire these records.
+The earlier `zellij`, `orca`, and `cmux` adapters remain unsupported.
 `fm-spawn.sh` spawns local ship, scout, and `--secondmate` tasks on stream; [remote placement](remote-secondmates.md#normal-operation) owns remote secondmates.
 The session-start secondmate liveness sweep uses the recovery-grade `fm_backend_agent_state` classifier; the comment above that function in `bin/fm-backend.sh` owns its state contract and recovery authorization.
 A backend spawn refusal from a missing dependency, version gate, or unreachable hub is terminal; firstmate surfaces it as a blocker.
@@ -84,13 +88,14 @@ The [`fm-remote-control-lib.sh` header](../bin/fm-remote-control-lib.sh) owns a 
 Ordinary task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` use the shared backend selector vocabulary.
 A selector containing `:` is passed through as an explicit `<hub-tag>:<endpoint-id>` escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that themselves start with `fm-` route to their own metadata instead of being stripped.
-A metadata-routed selector returns the recorded backend target (`window=`), and matching explicit targets can still recover the recorded record when metadata contains the same endpoint.
+A metadata-routed selector returns the recorded backend target (`window=`), and matching explicit targets can still recover the recorded backend when metadata contains the same endpoint.
 Only metadata-routed task selectors carry secondmate-marker and recorded-harness context; explicit endpoint escape hatches do not.
 This paragraph is the single owner of the ordinary task-selector vocabulary; other documents point here instead of restating the resolution order.
 For explicit targets no metadata names, [`fm-send.sh`'s header](../bin/fm-send.sh) owns live-endpoint verification on this home's configured hub.
 Host decision answers instead use the constrained mode owned by [`bin/fm-send.sh`'s header](../bin/fm-send.sh).
 `fm-teardown.sh <id>` takes a task id directly and validates the complete metadata-only endpoint identity before any runtime dispatch or cleanup mutation.
 Missing, empty, duplicate, malformed, backend-inconsistent, or task-mismatched endpoint records are preserved and refused.
+Retired tmux records still require the exact `fm-<id>` window shape; retired Herdr records still require their task binding and consistent session, workspace, tab, and pane fields, so retirement cannot target a mismatched record.
 `config/backend` is inherited into secondmate homes under the primary-authoritative contract owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md).
 
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
@@ -116,14 +121,7 @@ When the steer client reports no deck-chat primary (exit 3), the digest is typed
 
 ## Away-mode wedge alarm channels (config/wedge-alarm)
 
-When away-mode injection wedges past `FM_MAX_DEFER_SECS`, the sub-supervisor raises a loud, rate-limited alarm.
-Beyond the durable `state/.subsuper-inject-wedged` marker, it attempts a configured active alert that can reach the captain even when the primary's endpoint is unreadable.
-`config/wedge-alarm` (local, gitignored) lists channel directives, one per non-empty, non-comment line; every listed non-`off` channel fires, best-effort.
-`FM_WEDGE_ALARM_CHANNEL` overrides the file with a single directive.
-Directives are `off` (a position-independent kill switch that disables every active alert), `auto`/`default`, `osascript` (macOS Notification Center banner), and `command:<cmd>` (run `<cmd>` via `sh -c`, summary on `$1` and stdin).
-An absent file means `auto`, i.e. default-on on macOS: the alarm exists precisely so a wedged away-mode primary is never silent, and it fires at most once per max-defer window after a genuine wedge.
-A missing or failing channel logs and falls through to the next, never crashing the daemon.
-See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) for active evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
+[`wedge-alarm.md`](wedge-alarm.md) owns `config/wedge-alarm` directives, defaults, overrides, delivery bounds, and safety; [`examples/wedge-alarm`](examples/wedge-alarm) is a copyable config.
 
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
 
@@ -1094,7 +1092,7 @@ FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=1 # seconds fm-fleet-sync.sh wait
 FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=30       # min mtime age before fm-fleet-sync.sh treats a leftover packed-refs.lock as provably stale
 FM_BUSY_REGEX=          # optional override for rendered delivery guards; converted worker state ignores it
 FM_COMPOSER_IDLE_RE=    # optional fleet-wide idle-placeholder regex override (bin/fm-composer-lib.sh); a match alone does not prove emptiness because shape-specific position and ANSI de-emphasis safety gates still apply
-FM_COMPOSER_CAPTURE_LINES=20   # fleet-wide bound for tail-capture composer reads; this small window so stale scrollback banners stay out of the candidate set
+FM_COMPOSER_CAPTURE_LINES=20   # fleet-wide bound for tail-capture composer reads; this small window keeps stale scrollback banners out of the candidate set
 FM_COMPOSER_PI_MAX_LINES=8     # fleet-wide: maximum rows admitted between a retained identity-corroborated separator pair; taller or ambiguous candidates stay unknown
 FM_COMPOSER_GHOST_LUMA_MAX=128   # fleet-wide: max perceived luminance (0.299R+0.587G+0.114B, 0-255) for a TRUECOLOR foreground to count as de-emphasised ghost/placeholder text and be stripped; dim/faint (SGR 2) is stripped regardless. Assumes a dark terminal theme (bin/fm-composer-lib.sh's fm_composer_strip_ghost)
 FM_SEND_RETRIES=3       # fm-send typed-plane Enter-retry attempts after typing the line once

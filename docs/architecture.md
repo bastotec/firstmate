@@ -151,7 +151,7 @@ The following pane primitives apply only to typed-input delivery, not deck-chat 
 Endpoint existence, busy checks, composer checks, capture, and verified submit route through `bin/fm-backend.sh` to the stream adapter, which confirms a submit with a proven cleared composer.
 Composer classification has one shared owner, `bin/fm-composer-lib.sh`: the stream adapter contributes only a screen capture plus declarative styled, cursor, identity, and row capabilities, while the shared classifier owns every shape and the `empty`/`pending`/`pending-unproven`/`unknown` verdict.
 For typed-input delivery, the daemon injects only into an affirmatively `empty` composer, so every other or future verdict defers; positive container proof is required, and a blank unidentified row or bare dead-shell prompt cannot receive an escalation.
-The current operator boundary is in Composer and injection safety.
+[`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns delivery routing and fallback; the [`afk` skill](../.agents/skills/afk/SKILL.md#busy-guard-and-composer-guard) owns the typed-injection guards.
 Stalled escalation delivery writes `state/.subsuper-inject-wedged` and attempts a configured backend-independent active alert after `FM_MAX_DEFER_SECS` instead of silently deferring forever.
 On an unmarked return, `bin/fm-afk-return.sh` owns ordered shutdown, the record archive, durable catch-up evidence, the return brief, and the fail-closed gate that keeps ordinary work behind every live firstmate-actionable blocker the away session could not fix.
 For task steers, `fm-send.sh`'s header owns durable-inbox and typed-plane routing; the [Deck chat host](../bin/fm-deck-chat.sh) primary uses the primary steering inbox instead.
@@ -169,7 +169,7 @@ Text for a worker to read and commands that drive a worker's process are separat
 Every classification returns a verdict of busy, idle, unknown, or dead together with the source that produced it, so a consumer or a diagnostic can never confuse semantic state with a fallback.
 
 Each worker adapter reports its own turn lifecycle through a machine-readable semantic contract rather than through rendered footer text: Deck through its Firstmate-owned worker wrapper.
-Any other recorded harness has no trusted record source; the classification precedence, is owned by `bin/fm-busy-lib.sh`.
+Any other recorded harness has no trusted record source; the classification precedence is owned by `bin/fm-busy-lib.sh`.
 
 Missing, malformed, stale, untrusted, or unverified semantic state is unknown, never idle, and unknown is never promoted to busy either.
 Ordinary task-state consumers act only on an exact busy verdict, so an unreadable worker surfaces for a closer look instead of being absorbed as still-working or written off as finished.

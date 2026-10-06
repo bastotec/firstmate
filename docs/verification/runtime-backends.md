@@ -46,7 +46,7 @@ Kimi was not installed on the verification machine; its bordered shape was cover
 The live matrix guard was also removed, so this table and its command are dated evidence, not refresh instructions; `tests/fm-composer-lib.test.sh` still pins the retained shapes portably.
 The 2026-08-23 steering-inbox doorbell run observed grok 1.0.5's idle composer classifying `unknown` (and sometimes pending-family), never `empty`.
 Issue #3436's recorded idle capture reproduced the cause on 2026-09-14: Grok 1.0.5 renders the titled bottom border three columns wider than its aligned top and content rows, so the cursorless Herdr profile rejected the otherwise complete box as ambiguous.
-The classifier now accepts only that exact three-column overhang (`FM_COMPOSER_GROK_TITLE_OVERHANG` in `bin/fm-composer-lib.sh`) carrying a typed `Grok <model> (<effort>)` title; the portable regressions feed the real capture through both the shared Herdr capability profile and `fm_backend_herdr_composer_state`, and prove idle is `empty`, typed content is `pending`, and an unrecognized oversized title remains `unknown`.
+The classifier now accepts only that exact three-column overhang (`FM_COMPOSER_GROK_TITLE_OVERHANG` in `bin/fm-composer-lib.sh`) carrying a typed `Grok <model> (<effort>)` title; `tests/fm-composer-lib.test.sh` feeds the retained capture through the shared styled, cursorless capability profile and proves idle is `empty`, typed content is `pending`, and an unrecognized oversized title remains `unknown`.
 The 2026-09-14 change was not live-verified against Grok; the retired matrix command cannot refresh it, so the retained capture establishes only the measured rendering, not later releases.
 This closes only #3436's idle-composer-misclassification symptom (Grok/Herdr composer read `unknown` instead of `empty`, blocking away-mode injection). The issue's second symptom - a leftover watcher never yielding and never being taken over or refused at AFK start - is unrelated to composer classification and is tracked separately in #2270, where #3436's reproduction serves as corroborating evidence.
 
@@ -162,7 +162,7 @@ These observations were supplied without a run date, tool versions, binary revis
 [`tests/fixtures.sh`](../../tests/fixtures.sh)'s `fm_test_fake_stream` supplies fake fleet endpoints to the real adapter; its header owns setup and helper usage, and [`stream-hub-stub.py`](../../tests/assets/stream-hub-stub.py)'s docstring owns fake-shell behavior.
 `tests/fm-test-fixtures.test.sh`, `tests/fm-backend.test.sh`, `tests/fm-send-strict.test.sh`, and `tests/fm-crew-state.test.sh` exercise fixture round trips, spawn metadata, unrecorded explicit-target routing, and busy/idle/missing/unreachable crew reads.
 `tests/fm-control-recover-missing.test.sh` covers new-endpoint rebinding, refusal for a local agent with the task's label and owning status path, preservation of unrelated agents, and confirmed versus unconfirmed cleanup after a failed rebind.
-`tests/fm-endpoint-rebind-lib.test.sh` pins endpoint-only record replacement and identity refusals; `tests/fm-meta-backfill.test.sh` pins legacy backend backfill, dry-run, idempotency, and classification refusals.
+`tests/fm-endpoint-rebind-lib.test.sh` pins endpoint-only record replacement and identity refusals; `tests/fm-teardown-endpoint-safety.test.sh` pins retired-record cleanup identity, and `tests/fm-backlog-atomicity.test.sh` covers operator retirement.
 These fake-fleet cases prove integration routing, not real PTY behavior or installed-harness identity.
 The local-PID regression in `tests/fm-backend-stream.test.sh` instead runs the real Python hub and agent with a harness-named stand-in process, checks that its reported PID exists locally, and refuses other-machine and unknown-endpoint PID reads.
 `tests/fm-stream-agent-kill-safety.test.sh` exercises Python foreground-job cleanup, and the Rust PTY tests `foreground_job_dies_with_its_endpoint`, `foreground_pipeline_dies_with_its_endpoint`, and `foreground_job_started_during_close_dies` in `crates/fm-stream-agent/src/pty.rs` cover the corresponding native cases.
@@ -233,8 +233,8 @@ The current hub uses the newer wire protocol documented in [`stream-backend.md`]
 The guard defaults to the Python-reference agent through `tests/lib.sh` and starts a Python hub directly; its publisher-PID lookup is Python-specific, so it does not prove installed-harness liveness or partition behavior through the Rust publisher.
 Native adapter CI coverage is described in [the stream guide](../stream-backend.md#rust-pty-agent), and installed-harness verification of that publisher remains unrecorded here.
 
-The stream backend reads a different table by a different route than tmux does: the owning agent reads its own pseudoterminal's foreground process group, publishes it to the hub over HTTP, and the classifier sees a flattened command line rather than tmux's `comm` list.
-A defect in that reading, in the publish path, or in the freshness gate surfaces only here, which is why this guard exists beside the tmux one.
+The owning stream agent reads its own pseudoterminal's foreground process group and publishes it to the hub over HTTP, where the classifier sees a flattened command line.
+This guard exercises the real publish path and freshness gate, not only the process-name classifier.
 
 ```sh
 bash tests/fm-stream-agent-live-e2e.test.sh

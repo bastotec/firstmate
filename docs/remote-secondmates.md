@@ -83,7 +83,9 @@ bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh
 ```
 
 That run is read-only; route seeding and existing-home migration run the same check.
-It covers stream tools, the stream credential, the hub protocol, Linux logout survival, the GUI login session on macOS, and the remote job worker (including its Aqua scope on macOS).
+It checks stream tools, Linux logout survival, the GUI login session on macOS, and the remote job worker (including its Aqua scope on macOS).
+For an absent destination home, the home-specific credential and hub checks report `skip`, allowing seeding and migration to provision it first.
+Once that home exists, the doctor also requires its stream credential and authenticated hub protocol check before launch or relaunch.
 `--backend stream` is still accepted, so a parent that names it explicitly works against any checkout.
 Stream gaps require operator action: `--fix` does not start a hub or mint a credential.
 It prints the exact `PATH` its own entrypoint launch produced, executes its required-tool probe through the installed worker when one is available, reports where each required and optional tool resolved, then reports one line per readiness check.
@@ -107,7 +109,7 @@ These steps are never automated and are always reported rather than silently att
 - The first console login on that Mac, and automatic login in System Settings > Users & Groups when the machine runs headless and must come back on its own after a reboot.
 - FileVault, which holds a reboot at pre-boot authentication before any login session exists.
 - Installing any missing required tool that no safe wrapper can resolve.
-- The required remote tool set is `git`, `jq`, compatible `tasks-axi`, `treehouse`, and `deck`; Deck additionally requires `python3`.
+- The doctor header and required-tool report own the remote tool set, including the stream adapter's tools.
 - Each worker runtime's own `/login`, and any keychain password prompt that login needs.
 
 Firstmate never writes an auto-login password, never changes FileVault, and never stores an account password.
@@ -164,13 +166,15 @@ The second mate must have persisted its work and exited through the ordinary [co
 The command refuses while the home still holds any child work record, a registered state check, in-flight backlog work, a nested secondmate route, an armed process-event source or condition watch, an away or quiet posture, or a live session.
 Its stream endpoint must read positively dead (a missing hub registry entry is not proof), so a home whose agent cannot be proved stopped is refused rather than assumed idle.
 The host is gated on the same read-only [`bin/fm-remote-doctor.sh`](../bin/fm-remote-doctor.sh) readiness the seed uses, and migration never runs `--fix`: an account-level gap is reported with the doctor's own text and no route is switched.
-A file under `config/` that is not in the classified non-secret set is named and refused during the preconditions, before anything is frozen; widening that set is a separate decision because the cost of guessing wrong is a credential on another machine.
+An unclassified file under `config/` is named and refused during the preconditions, before anything is frozen; widening that set is a separate decision because the cost of guessing wrong is a credential on another machine.
 Any refusal that lands before the host has staged anything - an unready host, an unmigratable project, a record the snapshot cannot carry - unwinds the freeze marker and the journal that run created, so a home the command declined to move stays startable.
 Once staging has begun nothing local is unwound: the journal and the archive are retained for reconciliation.
 
 What crosses is durable records only.
-[`bin/fm-home-migration-lib.sh`](../bin/fm-home-migration-lib.sh) owns that transfer boundary: it carries bounded regular files, verifies every record against its own digest at the receiving host, and refuses traversal, links, special files, oversized payloads, and any `config/` file outside the classified non-secret set.
-`.env`, SSH, cloud, and vendor credential stores, key material, and the socket password are excluded and stay on the original machine; the operator still has to read the home's own durable records before authorizing the move, because a secret pasted into ordinary prose is not detectable.
+[`bin/fm-home-migration-lib.sh`](../bin/fm-home-migration-lib.sh) owns that transfer boundary: it carries bounded regular files, verifies every record against its own digest at the receiving host, and refuses traversal, links, special files, oversized payloads, and unclassified `config/` files.
+Credentials, including the home-bound stream token, stay on the original machine, and host-local stream routing and implementation settings are excluded rather than copied; the classifier in [`bin/fm-home-migration-lib.sh`](../bin/fm-home-migration-lib.sh) owns the exact exclusions.
+Provision the destination's own stream configuration before launch as described under [Stream on the remote host](#stream-on-the-remote-host).
+The operator still has to read the home's own durable records before authorizing the move, because a secret pasted into ordinary prose is not detectable.
 Projects are cloned on the host from each project's registered origin, exactly as a seed does, and no project tree, Git object, or working copy is copied.
 `data/` and the classified configuration land live, the captain inbox and pending-reply records keep their operational locations, and the rest of `state/` is retained byte-exact as inert evidence under `.fm-migration/state/` rather than as executable runtime state on a machine it was never written for.
 The original charter and parent binding are retained there too; only the active charter's reply address and steering-inbox path are rewritten for the new placement, so charter prose that names the old path as history stays as written.
@@ -179,7 +183,7 @@ The remote home is staged at an absent path, provisioned, verified byte-for-byte
 That snapshot is re-taken on every run before cutover, so a steer the parent queues for the stopped mate between attempts crosses with the next run rather than failing the comparison against the first attempt's snapshot.
 An unchanged source packs to the same bytes, so a rerun that changes nothing re-sends the same payload and the host recognizes what it already staged.
 A rerun whose snapshot adds records or changes the bytes of records already there re-lands them, but one that has stopped carrying a record the host already holds is refused and names it: the receiver adds and replaces, and never deletes a record on the host.
-The route switch itself happens under the ordinary registry lock, after which the normal [`bin/fm-spawn.sh`](../bin/fm-spawn.sh) launch owner starts the same identity on that host in `fm-remote`.
+The route switch itself happens under the ordinary registry lock, after which the normal [`bin/fm-spawn.sh`](../bin/fm-spawn.sh) launch owner starts the same identity on that host's stream endpoint.
 A launch failure the command can prove - a remote endpoint that reads back dead or missing - restores the original route and endpoint record, and both copies are kept.
 Rerunning after that rollback retries the launch against the home already on the host: once a placement has been published the remote copy is the newer one, so the frozen source's records are never re-sent over it, and steering queued since the rollback reaches the mate through the ordinary steering path after it starts.
 SSH exit 255 or an unreadable probe is unknown rather than failed: the remote placement is preserved, nothing is launched locally, and rerunning the identical command converges through the normal launch owner instead of creating a second endpoint.
@@ -206,14 +210,15 @@ bin/fm-spawn.sh <id> --secondmate
 
 The primary resolves the verified secondmate harness and optional model and effort, runs the same readiness gate the seed runs, transfers the inherited-material allowlist, and asks the remote host to launch on stream.
 An explicit request for any other backend is refused, and the remote host refuses one too.
-A parent record that still names the retired herdr backend is refused; stop any agent left on that endpoint by hand, then retire the record with `bin/fm-retire-endpoint.sh`.
+A parent record that still names a retired backend is refused; stop any agent left on that endpoint by hand, then use the host-local retirement command printed by `fm-remote-secondmate-control.sh`.
+That command selects the remote home's parent-route record, not its ordinary task state; [Endpoint retirement](stream-backend.md#retiring-a-record-no-backend-can-answer-for) owns the assertion and preservation guarantees.
 A launch after a host has drifted out of readiness fails with the doctor's own gap text instead of leaving a half-created endpoint.
 Raw launch commands are not accepted for remote secondmates.
 
 ### Stream on the remote host
 
 A stream launch runs the host-local `bin/fm-spawn.sh` with the mate home's `config/`, so the agent publishes to that home's configured hub using its own credential; [stream setup and security](stream-backend.md#setup) own hub URL resolution and encrypted cross-machine access.
-Remote route seeding does not mint a stream credential or configure the hub URL: provision that home's `config/stream-hub` and a home-specific `config/stream-token` accepted by the hub before selecting stream; [stream Security](stream-backend.md#security) owns credential isolation and hub restart requirements.
+Remote route seeding does not mint a stream credential or configure the hub URL: provision that home's `config/stream-hub` and a home-specific `config/stream-token` accepted by the hub before launching; [stream Security](stream-backend.md#security) owns credential isolation and hub restart requirements.
 The token never travels on a command line or in the launch environment.
 The parent's endpoint binding is read back from the host's route; the [`bin/fm-remote-control-lib.sh` header](../bin/fm-remote-control-lib.sh) owns its exact `remote_*` fields.
 Steering, peek, crew-state, the parent channel, and liveness run through host verbs on the configured host.
