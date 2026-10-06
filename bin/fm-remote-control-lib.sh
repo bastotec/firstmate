@@ -11,8 +11,8 @@
 #   remote_herdr_session=fm-remote                 (herdr only)
 #   remote_stream_hub=<hub URL the host's agent publishes to>   (stream only)
 #   remote_stream_endpoint_id=<32-hex hub endpoint id>          (stream only)
-# For stream, the hub is the host's own loopback hub; a parent that reaches the
-# same hub through a tunnel sees the same endpoint id there.
+# For stream, the hub is the one the remote home configures; a parent that
+# reaches that same hub through a tunnel sees the same endpoint id there.
 #
 # fm_remote_control_run is bin/fm-control.sh's remote arm: interrupt, exit, and
 # relaunch (including relaunch --backend) run that same control plane on the

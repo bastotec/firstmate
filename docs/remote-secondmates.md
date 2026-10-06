@@ -224,7 +224,7 @@ Raw launch commands are not accepted for remote secondmates.
 
 ### Stream on the remote host
 
-A stream launch runs the host-local `bin/fm-spawn.sh` with the mate home's `config/`, so the agent publishes to the hub in that home's `config/stream-hub` with the token in its `config/stream-token`; on the fleet that is the host's own loopback hub, which the primary reaches through its SSH tunnel.
+A stream launch runs the host-local `bin/fm-spawn.sh` with the mate home's `config/`, so the agent publishes to that home's configured hub using its own credential; [stream setup and security](stream-backend.md#setup) own hub URL resolution and encrypted cross-machine access.
 Remote route seeding does not mint a stream credential or configure the hub URL: provision that home's `config/stream-hub` and a home-specific `config/stream-token` accepted by the hub before selecting stream; [stream Security](stream-backend.md#security) owns credential isolation and hub restart requirements.
 The token never travels on a command line or in the launch environment.
 The parent's endpoint binding is read back from the host's route; the [`bin/fm-remote-control-lib.sh` header](../bin/fm-remote-control-lib.sh) owns its exact `remote_*` fields.
@@ -314,7 +314,7 @@ Changed live routes receive a marked instruction to re-read the transferred file
 The primary records that remote nudge before delivery and retries it during locked startup convergence after a failed send.
 Local secondmates retain their generation-specific local pointer contract; remote transfers do not copy those primary-local instruction paths.
 
-A live remote second mate is restarted with `relaunch`, which runs the ordinary [control plane](agent-control.md) on that host: the endpoint record there was written by a host-local launch and carries no remote placement, so the transaction, its checkpoint, and its postconditions are the local ones.
+During updates, [`bin/fm-secondmate-restart.sh`](../bin/fm-secondmate-restart.sh) restarts live remote mates through the host-local `relaunch` route described under [Lifecycle control](#lifecycle-control-and-backend-migration).
 The host then applies the same replacement proof as a launch before it reports the restart: the old agent process, identified before anything touched it, must be gone and the endpoint must host an agent process that did not exist before.
 The primary passes `<harness> <model|default|-> <effort|default|->` explicitly, using `default` when an axis has no parent pin, because `config/secondmate-harness` is not inherited into a second mate's home and the file on that host belongs to a different home; letting the far side re-resolve it would silently move the mate onto another runtime.
 SSH exit 255 leaves completion unknown and the route preserved, exactly as every other verb here.

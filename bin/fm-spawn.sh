@@ -28,26 +28,27 @@
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
-#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
-#   --relaunch launches a replacement agent for an EXISTING task into that
-#   task's own recorded endpoint and worktree instead of creating either. It is
-#   the launch half of the control plane (bin/fm-control.sh relaunch), which
+#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--backend <tmux|herdr|stream>]
+#   --relaunch launches a replacement agent for an EXISTING task in its recorded
+#   worktree or home, adopting its endpoint unless --backend requests migration.
+#   It is the launch half of the control plane (bin/fm-control.sh relaunch), which
 #   owns the checkpoint, the progress note, stopping the previous agent, and the
 #   transaction; call fm-control rather than this flag directly unless you are
 #   deliberately re-launching an already-stopped task. Every identity axis -
 #   backend, kind, project or home, worktree, endpoint - comes from the task's
 #   validated state/<id>.meta, so --scout, --secondmate, a project
-#   positional, and batch pairs are all refused alongside it; only harness,
-#   model, and effort may change, which is what makes a harness switch one
-#   ordinary relaunch. The one exception is --backend <tmux|herdr|stream>
+#   positional, and batch pairs are all refused alongside it; harness, model,
+#   effort, and a ship or scout's account slot may change, making a harness
+#   switch one ordinary relaunch. The one exception is --backend <tmux|herdr|stream>
 #   naming a backend other than the recorded one: that is a backend migration
 #   (bin/fm-control.sh <id> relaunch --backend), which creates a FRESH endpoint
 #   on the new backend in the recorded worktree or home, records it, and leaves
 #   the old agent-free endpoint for the control plane to close once the
-#   replacement is proven up. It refuses unless the recorded endpoint is positively
-#   agent-free on a backend with a recovery-grade agent-state classifier (tmux,
-#   herdr, or stream), and clears the previous harness's per-task wiring before arming
-#   the new incarnation. A relaunch whose recorded prior harness is Deck also
+#   replacement is proven up. The old endpoint must read dead; during migration
+#   only, missing also qualifies on tmux or herdr, where absence proves the old
+#   agent gone. A missing stream registry entry never authorizes a replacement.
+#   It clears the previous harness's per-task wiring before arming the new
+#   incarnation. A relaunch whose recorded prior harness is Deck also
 #   proves every task-bound residual Deck driver stopped before that new
 #   incarnation is armed. The replacement still never starts outside the copy
 #   holding the work: a Herdr shell that has drifted out of the recorded
