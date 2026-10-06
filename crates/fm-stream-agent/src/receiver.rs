@@ -22,6 +22,19 @@ impl Decision {
         Self::Confirmed(false, note.into())
     }
 }
+/// One task-inbox record as a native stream-order source: its binding and
+/// text, or None when the record is not a well-formed stream order.
+fn parse_source(bytes: &[u8]) -> Option<(Value, String)> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let body = text.split_once("\n--\n")?.1;
+    let line_and_rest = body.strip_prefix("[stream-order ")?;
+    let (binding, rest) = line_and_rest.split_once('\n')?;
+    let binding: Value = serde_json::from_str(binding.strip_suffix(']')?).ok()?;
+    if !binding.is_object() {
+        return None;
+    }
+    Some((binding, rest.split_once('\n')?.1.to_owned()))
+}
 fn hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
@@ -145,29 +158,14 @@ impl Receiver {
                     }
                     Err(e) => return Err(e),
                 };
-                let text = String::from_utf8(bytes).map_err(io::Error::other)?;
-                let body = text
-                    .split_once("\n--\n")
-                    .ok_or_else(|| io::Error::other("malformed task inbox record"))?
-                    .1;
-                if !body.starts_with("[stream-order ") {
+                // The task inbox is shared with ordinary steering, so a record
+                // this receiver cannot read as a stream order (plain text, a
+                // foreign format, a corrupt binding) is not ours: leave it in
+                // place for its owner and keep serving every other order.
+                let Some((binding, text)) = parse_source(&bytes) else {
                     continue;
-                }
-                let (line, body) = body
-                    .split_once('\n')
-                    .ok_or_else(|| io::Error::other("malformed stream order"))?;
-                let binding = serde_json::from_str(
-                    line.strip_prefix("[stream-order ")
-                        .unwrap()
-                        .strip_suffix(']')
-                        .ok_or_else(|| io::Error::other("malformed stream binding"))?,
-                )
-                .map_err(io::Error::other)?;
-                let text = body
-                    .split_once('\n')
-                    .ok_or_else(|| io::Error::other("missing stream order text"))?
-                    .1;
-                found.push((path, binding, text.to_owned()));
+                };
+                found.push((path, binding, text));
             }
         }
         Ok(found)
@@ -545,6 +543,41 @@ mod tests {
             &json!({"turn":turn,"active":true,"supported":true}),
         )
         .unwrap();
+    }
+    #[test]
+    fn records_that_are_not_stream_orders_never_block_the_receiver() {
+        let lab = Lab::new();
+        let receiver = lab.receiver();
+        fs::create_dir_all(receiver.inbox.join("handled")).unwrap();
+        let binding = json!({"order_id":"kept","execution":receiver.endpoint,"turn":"t1"});
+        let valid = format!(
+            "from: stream-order\n--\n[stream-order {binding}]\nNative guidance line\nthe order text"
+        );
+        for (name, bytes) in [
+            ("900.msg", b"unhandled steer\n".to_vec()),
+            ("901.msg", vec![0xff, 0xfe, b'\n']),
+            (
+                "902.msg",
+                b"hdr\n--\n[stream-order {not json]\nx\ny".to_vec(),
+            ),
+            ("903.msg", b"hdr\n--\n[stream-order 7]\nx\ny".to_vec()),
+            ("904.msg", b"hdr\n--\n[stream-order {}]".to_vec()),
+            ("905.msg", b"hdr\n--\nordinary steering text".to_vec()),
+        ] {
+            fs::write(receiver.inbox.join(name), bytes).unwrap();
+        }
+        fs::write(receiver.inbox.join("handled/906.msg"), valid).unwrap();
+        let sources = receiver.sources().unwrap();
+        assert_eq!(sources.len(), 1, "{sources:?}");
+        assert_eq!(sources[0].1, binding);
+        assert_eq!(sources[0].2, "the order text");
+        receiver.recover().unwrap();
+        // The unreadable records are left for their owner, untouched.
+        assert_eq!(
+            fs::read(receiver.inbox.join("900.msg")).unwrap(),
+            b"unhandled steer\n"
+        );
+        assert!(receiver.inbox.join("902.msg").is_file());
     }
     #[test]
     fn enqueue_uses_code_root_outside_repository() {
