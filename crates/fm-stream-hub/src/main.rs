@@ -243,6 +243,25 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
                     Hub::spoke(&mut s, &eid)?;
                 }
                 let e = s.endpoints.get_mut(&eid).unwrap();
+                if !frame["geometry"].is_null() {
+                    let side = |name: &str| -> Result<usize> {
+                        frame["geometry"][name]
+                            .as_u64()
+                            .filter(|v| *v > 0 && *v <= u64::from(MAX_GEOMETRY))
+                            .map(|v| v as usize)
+                            .ok_or_else(|| {
+                                Error::new(
+                                    400,
+                                    "bad_geometry",
+                                    "geometry must have rows and cols in 1-1000",
+                                )
+                            })
+                    };
+                    let (rows, cols) = (side("rows")?, side("cols")?);
+                    e.screen.resize(rows, cols);
+                    e.rows = rows;
+                    e.cols = cols;
+                }
                 if truth(&frame["b64"]) {
                     let raw=frame["b64"].as_str().ok_or_else(||Error::new(400,"bad_frame","frame payload is not valid base64: argument should be a bytes-like object or ASCII string"))?;
                     let data = STANDARD.decode(raw).map_err(|_| {
@@ -521,7 +540,6 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
                 "resize",
                 payload::object(&[("rows", rows.to_string()), ("cols", cols.to_string())]),
             )?;
-            h.resize(eid, rows as usize, cols as usize)?;
             return answer(json!({"ok":true,"resized":eid,"rows":rows,"cols":cols}));
         }
         if tail == "status" && method == "POST" {
@@ -595,7 +613,7 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
                         "cursor_col":e.screen.cursor_col(),
                         "rows":e.rows,
                         "cols":e.cols,
-                        "stream_offset":e.end,
+                        "stream_offset":e.end.saturating_sub(e.screen.pending_len() as u64),
                     }))
                 }
                 "stream" => {
@@ -1180,6 +1198,34 @@ mod tests {
             let command = &taken["commands"][0];
             assert_eq!(command["kind"], kind, "{taken}");
             assert_eq!(command["payload"], expected, "{taken}");
+            if kind == "resize" {
+                let frame = json!({"machine":"box","frames":[
+                    {"endpoint_id":eid,"geometry":{"rows":30,"cols":100}},
+                    {"endpoint_id":eid,"b64":STANDARD.encode(format!("\x1b[H{}", "x".repeat(100)))},
+                ]});
+                assert_eq!(
+                    request(address, "POST", "/v1/agent/frames", frame, &cap)
+                        .await
+                        .status(),
+                    200
+                );
+                let (_, snapshot) = json_response(
+                    request(
+                        address,
+                        "GET",
+                        &format!("/v1/tasks/{eid}/snapshot"),
+                        json!({}),
+                        "",
+                    )
+                    .await,
+                )
+                .await;
+                assert_eq!(snapshot["rows"], 30);
+                assert_eq!(snapshot["cols"], 100);
+                let lines: Vec<_> = snapshot["screen"].as_str().unwrap().split('\n').collect();
+                assert_eq!(lines[0], "x".repeat(100));
+                assert_eq!(lines[1], "");
+            }
             let result =
                 json!({"machine":"box","command_id":command["command_id"],"ok":true,"error":""});
             assert_eq!(
@@ -1205,7 +1251,7 @@ mod tests {
             (snapshot["rows"].clone(), snapshot["cols"].clone()),
             (json!(30), json!(100))
         );
-        assert_eq!(snapshot["stream_offset"], 0);
+        assert_eq!(snapshot["stream_offset"], 103);
         for (tail, body) in [
             ("input", json!({"b64":"not base64!"})),
             ("resize", json!({"rows":0,"cols":80})),
@@ -1216,6 +1262,95 @@ mod tests {
                 place(tail, body.clone()).await.unwrap().0,
                 400,
                 "{tail} {body}"
+            );
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn snapshot_replays_unconsumed_parser_prefixes() {
+        let (h, eid, cap) = fixture();
+        let (address, server) = server(h).await;
+        let snapshot_path = format!("/v1/tasks/{eid}/snapshot");
+        let mut end = 0u64;
+        for (prefix, suffix) in [
+            (&b"ok\x1b[3"[..], &b"1mred\x1b[0m"[..]),
+            (&b"\xc3"[..], &b"\xa9"[..]),
+        ] {
+            let frame = json!({"machine":"box","frames":[{"endpoint_id":eid,"b64":STANDARD.encode(prefix)}]});
+            assert_eq!(
+                request(address, "POST", "/v1/agent/frames", frame, &cap)
+                    .await
+                    .status(),
+                200
+            );
+            end += prefix.len() as u64;
+            let (_, snapshot) =
+                json_response(request(address, "GET", &snapshot_path, json!({}), "").await).await;
+            let offset = snapshot["stream_offset"].as_u64().unwrap();
+            assert_eq!(offset, end - if prefix.starts_with(b"ok") { 3 } else { 1 });
+            let mut local = screen::Screen::new(2, 8);
+            local.feed(
+                snapshot["screen"]
+                    .as_str()
+                    .unwrap()
+                    .replace('\n', "\r\n")
+                    .as_bytes(),
+            );
+            local.feed(
+                format!(
+                    "\x1b[{};{}H",
+                    snapshot["cursor_row"].as_u64().unwrap() + 1,
+                    snapshot["cursor_col"].as_u64().unwrap() + 1
+                )
+                .as_bytes(),
+            );
+            let frame = json!({"machine":"box","frames":[{"endpoint_id":eid,"b64":STANDARD.encode(suffix)}]});
+            assert_eq!(
+                request(address, "POST", "/v1/agent/frames", frame, &cap)
+                    .await
+                    .status(),
+                200
+            );
+            end += suffix.len() as u64;
+            let stream = request(
+                address,
+                "GET",
+                &format!("/v1/tasks/{eid}/stream?from={offset}"),
+                json!({}),
+                "",
+            )
+            .await;
+            let mut stream = stream.into_body();
+            let mut records = String::new();
+            let mut replayed = 0;
+            while replayed < (end - offset) as usize {
+                let frame = tokio::time::timeout(Duration::from_secs(1), stream.frame())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+                if let Ok(bytes) = frame.into_data() {
+                    records.push_str(std::str::from_utf8(&bytes).unwrap());
+                    while let Some(at) = records.find("\n\n") {
+                        let event: String = records.drain(..at + 2).collect();
+                        if let Some(data) = event.trim().strip_prefix("data: ") {
+                            let record: Value = serde_json::from_str(data).unwrap();
+                            if let Some(raw) = record["b64"].as_str() {
+                                let bytes = STANDARD.decode(raw).unwrap();
+                                replayed += bytes.len();
+                                local.feed(&bytes);
+                            }
+                        }
+                    }
+                }
+            }
+            let (_, after) =
+                json_response(request(address, "GET", &snapshot_path, json!({}), "").await).await;
+            assert_eq!(after["stream_offset"], end);
+            assert_eq!(
+                local.lines(true).join("\n"),
+                after["screen"].as_str().unwrap()
             );
         }
         server.abort();

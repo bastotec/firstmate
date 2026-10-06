@@ -12,15 +12,21 @@ use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 const POST_SECS: u64 = 15;
 
 enum Event {
+    Detaching(Instant),
     Detach,
     Closed(Value),
     Lost(String),
+}
+
+enum Input {
+    Bytes(Vec<u8>),
+    Detach,
 }
 
 struct Session {
@@ -59,7 +65,10 @@ impl Session {
 }
 
 /// Restores the terminal mode it changed, on every exit path.
-struct RawMode(libc::termios);
+struct RawMode {
+    saved: libc::termios,
+    output: Arc<Mutex<bool>>,
+}
 impl RawMode {
     fn enter() -> Result<Self, String> {
         // SAFETY: termios is plain data; tcgetattr fills it for fd 0.
@@ -73,13 +82,20 @@ impl RawMode {
         if unsafe { libc::tcsetattr(0, libc::TCSANOW, &raw) } != 0 {
             return Err("cannot put the terminal in raw mode".into());
         }
-        Ok(Self(saved))
+        Ok(Self {
+            saved,
+            output: Arc::new(Mutex::new(true)),
+        })
     }
 }
 impl Drop for RawMode {
     fn drop(&mut self) {
-        // SAFETY: restores the attributes read in enter() on the same fd.
-        unsafe { libc::tcsetattr(0, libc::TCSANOW, &self.0) };
+        let mut active = self.output.lock().unwrap();
+        *active = false;
+        let mut stdout = std::io::stdout().lock();
+        let _ = stdout.write_all(b"\x1b[?1049l\x1b[?1047l\x1b[?47l\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[0m");
+        let _ = stdout.flush();
+        unsafe { libc::tcsetattr(0, libc::TCSANOW, &self.saved) };
     }
 }
 
@@ -101,7 +117,6 @@ fn local_size() -> Option<(u16, u16)> {
 fn detach_byte(spec: &str) -> Result<u8, String> {
     let key = spec
         .strip_prefix("C-")
-        .or_else(|| spec.strip_prefix("^"))
         .filter(|k| k.len() == 1)
         .ok_or_else(|| format!("--detach-key must look like C-] or C-a, not {spec:?}"))?;
     let byte = key.as_bytes()[0].to_ascii_uppercase();
@@ -220,6 +235,19 @@ pub fn run(args: &[String]) -> Result<(), String> {
     if !task["task"]["closed_at"].is_null() {
         return Err(format!("endpoint {} has closed", session.endpoint));
     }
+    let mut resize_supported = true;
+    if let Some((rows, cols)) = local_size() {
+        let (status, _) = session.json(
+            "POST",
+            &session.task_path("/resize"),
+            Some(&json!({"rows": rows, "cols": cols})),
+        )?;
+        if status == 404 {
+            resize_supported = false;
+        } else if !(200..300).contains(&status) {
+            return Err(format!("the hub refused the initial resize: HTTP {status}"));
+        }
+    }
     // The snapshot route is the native hub's; the Python rollback hub has
     // only /screen, and then the stream starts from "now" instead of from
     // exactly the painted offset.
@@ -243,6 +271,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
+    let resized = Arc::new(AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    for (signal, flag) in [
+        (signal_hook::consts::SIGWINCH, &resized),
+        (signal_hook::consts::SIGTERM, &stop),
+        (signal_hook::consts::SIGHUP, &stop),
+    ] {
+        signal_hook::flag::register(signal, flag.clone()).map_err(|e| e.to_string())?;
+    }
     let raw = RawMode::enter()?;
     paint(&snapshot);
     let session = Arc::new(session);
@@ -251,6 +288,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     // Output: the endpoint's bytes, verbatim, from the painted offset on.
     {
         let events = events.clone();
+        let output = raw.output.clone();
         std::thread::spawn(move || {
             let mut reader = BufReader::new(stream);
             let mut line = String::new();
@@ -271,6 +309,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
                     continue;
                 };
                 if let Some(bytes) = record["b64"].as_str().and_then(|b| STANDARD.decode(b).ok()) {
+                    let active = output.lock().unwrap();
+                    if !*active {
+                        return;
+                    }
                     let _ = stdout.write_all(&bytes);
                     let _ = stdout.flush();
                 } else if record["closed"] == true {
@@ -283,28 +325,33 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
     // Input: read raw bytes, stop at the detach key, coalesce while a send
     // is in flight so a burst of keys becomes one hub command.
-    let (keys, keyed) = mpsc::channel::<Vec<u8>>();
+    let (keys, keyed) = mpsc::channel::<Input>();
     {
         let events = events.clone();
+        let keys = keys.clone();
         std::thread::spawn(move || {
             let mut stdin = std::io::stdin().lock();
             let mut buffer = [0u8; 4096];
             loop {
                 match stdin.read(&mut buffer) {
                     Ok(0) | Err(_) => {
-                        let _ = events.send(Event::Detach);
+                        let _ =
+                            events.send(Event::Detaching(Instant::now() + Duration::from_secs(2)));
+                        let _ = keys.send(Input::Detach);
                         return;
                     }
                     Ok(n) => {
                         let chunk = &buffer[..n];
                         if let Some(at) = chunk.iter().position(|b| *b == detach) {
                             if at > 0 {
-                                let _ = keys.send(chunk[..at].to_vec());
+                                let _ = keys.send(Input::Bytes(chunk[..at].to_vec()));
                             }
-                            let _ = events.send(Event::Detach);
+                            let _ = events
+                                .send(Event::Detaching(Instant::now() + Duration::from_secs(2)));
+                            let _ = keys.send(Input::Detach);
                             return;
                         }
-                        let _ = keys.send(chunk.to_vec());
+                        let _ = keys.send(Input::Bytes(chunk.to_vec()));
                     }
                 }
             }
@@ -316,72 +363,112 @@ pub fn run(args: &[String]) -> Result<(), String> {
         std::thread::spawn(move || {
             let mut pending = Vec::new();
             while let Ok(first) = keyed.recv() {
-                pending.extend(first);
-                while let Ok(more) = keyed.try_recv() {
-                    pending.extend(more);
+                let mut draining = false;
+                match first {
+                    Input::Bytes(bytes) => pending.extend(bytes),
+                    Input::Detach => draining = true,
                 }
-                while let Some(body) = payload(&mut pending, false) {
-                    // A refused key (the endpoint exiting, a hub without raw
-                    // input) is dropped; the output stream reports an exit.
-                    if let Ok((404, _)) =
-                        session.json("POST", &session.task_path("/input"), Some(&body))
-                    {
-                        let _ =
-                            events.send(Event::Lost("the hub no longer has this endpoint".into()));
-                        return;
+                while !draining {
+                    match keyed.try_recv() {
+                        Ok(Input::Bytes(bytes)) => pending.extend(bytes),
+                        Ok(Input::Detach) => draining = true,
+                        Err(_) => break,
                     }
+                }
+                while let Some(body) = payload(&mut pending, draining) {
+                    match session.json("POST", &session.task_path("/input"), Some(&body)) {
+                        Ok((status, _)) if (200..300).contains(&status) => (),
+                        Ok((status, _)) => {
+                            let _ = events.send(Event::Lost(format!(
+                                "input delivery failed: HTTP {status}; not retried"
+                            )));
+                            return;
+                        }
+                        Err(reason) => {
+                            let _ = events.send(Event::Lost(format!(
+                                "input delivery uncertain: {reason}; not retried"
+                            )));
+                            return;
+                        }
+                    }
+                }
+                if draining {
+                    let _ = events.send(Event::Detach);
+                    return;
                 }
             }
         });
     }
 
-    let resized = Arc::new(AtomicBool::new(true));
-    let stop = Arc::new(AtomicBool::new(false));
-    for (signal, flag) in [
-        (signal_hook::consts::SIGWINCH, &resized),
-        (signal_hook::consts::SIGTERM, &stop),
-        (signal_hook::consts::SIGHUP, &stop),
-    ] {
-        signal_hook::flag::register(signal, flag.clone()).map_err(|e| e.to_string())?;
-    }
-    let mut resize_supported = true;
-    let outcome = loop {
-        if stop.load(Ordering::SeqCst) {
-            break Event::Detach;
-        }
-        if resized.swap(false, Ordering::SeqCst) && resize_supported {
-            if let Some((rows, cols)) = local_size() {
-                let body = json!({"rows": rows, "cols": cols});
-                if let Ok((404, _)) =
-                    session.json("POST", &session.task_path("/resize"), Some(&body))
-                {
-                    resize_supported = false;
+    {
+        let session = session.clone();
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                if resized.swap(false, Ordering::SeqCst) && resize_supported {
+                    if let Some((rows, cols)) = local_size() {
+                        let body = json!({"rows": rows, "cols": cols});
+                        if let Ok((404, _)) =
+                            session.json("POST", &session.task_path("/resize"), Some(&body))
+                        {
+                            resize_supported = false;
+                        }
+                    }
                 }
+                std::thread::sleep(Duration::from_millis(50));
             }
+        });
+    }
+    let mut drain_until = None;
+    let outcome = loop {
+        if stop.load(Ordering::SeqCst) && drain_until.is_none() {
+            drain_until = Some(Instant::now() + Duration::from_secs(2));
+            let _ = keys.send(Input::Detach);
+        }
+        if drain_until.is_some_and(|until| Instant::now() >= until) {
+            break Event::Lost(
+                "input delivery uncertain: detach drain timed out; not retried".into(),
+            );
         }
         match inbox.recv_timeout(Duration::from_millis(50)) {
+            Ok(Event::Detaching(until)) => {
+                drain_until = Some(drain_until.map_or(until, |current| current.min(until)));
+            }
             Ok(event) => break event,
             Err(mpsc::RecvTimeoutError::Timeout) => (),
             Err(mpsc::RecvTimeoutError::Disconnected) => break Event::Lost("internal".into()),
         }
     };
+    stop.store(true, Ordering::SeqCst);
     drop(raw);
     let mut stdout = std::io::stdout();
     let (message, code) = match outcome {
         Event::Detach => (
             format!(
-                "\x1b[0m\r\n[detached from {}; it keeps running]\r\n",
+                "\r\n[detached from {}; it keeps running]\r\n",
                 session.endpoint
             ),
             0,
         ),
-        Event::Closed(exit) => (format!("\x1b[0m\r\n[endpoint closed, exit {exit}]\r\n"), 0),
-        Event::Lost(reason) => (format!("\x1b[0m\r\n[{reason}]\r\n"), 1),
+        Event::Closed(exit) => (
+            format!("\r\n[endpoint closed, exit {exit}]\r\n"),
+            exit_status(&exit),
+        ),
+        Event::Lost(reason) => (format!("\r\n[{reason}]\r\n"), 1),
+        Event::Detaching(_) => unreachable!(),
     };
     let _ = stdout.write_all(message.as_bytes());
     let _ = stdout.flush();
     // Reader threads may still be blocked in read(); exiting ends them.
     std::process::exit(code);
+}
+
+fn exit_status(exit: &Value) -> i32 {
+    match exit.as_i64() {
+        Some(code @ 0..=255) => code as i32,
+        Some(signal @ -127..=-1) => 128 - signal as i32,
+        _ => 1,
+    }
 }
 
 #[cfg(test)]
@@ -394,6 +481,15 @@ mod tests {
         assert_eq!(detach_byte("C-\\").unwrap(), 0x1c);
         assert_eq!(detach_byte("C-a").unwrap(), 0x01);
         assert!(detach_byte("x").is_err());
+        assert!(detach_byte("^]").is_err());
+    }
+
+    #[test]
+    fn endpoint_status_is_propagated() {
+        assert_eq!(exit_status(&json!(7)), 7);
+        assert_eq!(exit_status(&json!(0)), 0);
+        assert_eq!(exit_status(&json!(-15)), 143);
+        assert_eq!(exit_status(&Value::Null), 1);
     }
 
     #[test]
@@ -413,6 +509,9 @@ mod tests {
         // Bytes that are not UTF-8 go raw.
         let mut pending = vec![0xff, b'x'];
         assert_eq!(payload(&mut pending, false), Some(json!({"b64": "/3g="})));
+        assert!(pending.is_empty());
+        let mut pending = vec![0xc3];
+        assert_eq!(payload(&mut pending, true), Some(json!({"b64": "ww=="})));
         assert!(pending.is_empty());
     }
 }

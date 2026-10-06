@@ -542,18 +542,6 @@ impl Hub {
         let e = &s.endpoints[&eid];
         Ok(json!({"ok":true,"endpoint":e.describe(),"command_capability":e.capability}))
     }
-    /// Record a geometry the owning agent already applied to its PTY.
-    pub fn resize(&self, eid: &str, rows: usize, cols: usize) -> Result<()> {
-        let mut s = self.state.lock().unwrap();
-        let e = s
-            .endpoints
-            .get_mut(eid)
-            .ok_or_else(|| Error::new(404, "no_such_endpoint", format!("no endpoint {eid}")))?;
-        e.screen.resize(rows, cols);
-        e.rows = rows;
-        e.cols = cols;
-        Ok(())
-    }
     pub fn delete(&self, eid: &str) -> Result<Value> {
         let (created, machine) = {
             let s = self.state.lock().unwrap();

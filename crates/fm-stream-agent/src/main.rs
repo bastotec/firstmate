@@ -485,7 +485,12 @@ impl Agent {
                 if !self.pty.alive() {
                     return Err(Error::Other("the endpoint process has exited".into()));
                 }
-                // The kernel signals SIGWINCH to the PTY's foreground group.
+                self.hub.call(
+                    "POST",
+                    "/v1/agent/frames",
+                    Some(&json!({"machine":self.options.machine,"frames":[{"endpoint_id":self.id,"geometry":{"rows":rows,"cols":cols}}]})),
+                    Duration::from_secs(15),
+                )?;
                 self.pty.resize(rows, cols)?;
                 *self.geometry.lock().unwrap() = (rows, cols);
                 Ok(())
