@@ -62,6 +62,31 @@ impl Session {
     fn task_path(&self, tail: &str) -> String {
         format!("/v1/tasks/{}{tail}", self.endpoint)
     }
+    fn resize(&self, rows: u16, cols: u16) -> Result<bool, String> {
+        let (status, body) = self
+            .json(
+                "POST",
+                &self.task_path("/resize"),
+                Some(&json!({"rows": rows, "cols": cols})),
+            )
+            .map_err(|reason| format!("resize delivery uncertain: {reason}; not retried"))?;
+        if status == 404
+            || (status == 502
+                && body["error"] == "agent_refused"
+                && body["message"]
+                    .as_str()
+                    .is_some_and(|message| message.starts_with("unknown command kind")))
+        {
+            Ok(false)
+        } else if (200..300).contains(&status) {
+            Ok(true)
+        } else {
+            Err(format!(
+                "resize delivery failed: HTTP {status}: {}; not retried",
+                body["message"].as_str().unwrap_or("unknown error")
+            ))
+        }
+    }
 }
 
 /// Restores the terminal mode it changed, on every exit path.
@@ -237,16 +262,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     let mut resize_supported = true;
     if let Some((rows, cols)) = local_size() {
-        let (status, _) = session.json(
-            "POST",
-            &session.task_path("/resize"),
-            Some(&json!({"rows": rows, "cols": cols})),
-        )?;
-        if status == 404 {
-            resize_supported = false;
-        } else if !(200..300).contains(&status) {
-            return Err(format!("the hub refused the initial resize: HTTP {status}"));
-        }
+        resize_supported = session.resize(rows, cols)?;
     }
     // The snapshot route is the native hub's; the Python rollback hub has
     // only /screen, and then the stream starts from "now" instead of from
@@ -265,9 +281,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
     };
     let stream = session.request("GET", &stream_path, None)?;
     if !stream.status().is_success() {
+        let status = stream.status().as_u16();
+        let body = stream.json::<Value>().unwrap_or(Value::Null);
         return Err(format!(
-            "the hub refused the output stream: HTTP {}",
-            stream.status().as_u16()
+            "the hub refused the output stream: HTTP {status}: {}",
+            body["message"].as_str().unwrap_or("unknown error")
         ));
     }
 
@@ -315,6 +333,12 @@ pub fn run(args: &[String]) -> Result<(), String> {
                     }
                     let _ = stdout.write_all(&bytes);
                     let _ = stdout.flush();
+                } else if let Some(error) = record["error"].as_str() {
+                    let _ = events.send(Event::Lost(format!(
+                        "output stream {error}: {}",
+                        record["message"].as_str().unwrap_or("unknown error")
+                    )));
+                    return;
                 } else if record["closed"] == true {
                     let _ = events.send(Event::Closed(record["exit_code"].clone()));
                     return;
@@ -403,15 +427,17 @@ pub fn run(args: &[String]) -> Result<(), String> {
     {
         let session = session.clone();
         let stop = stop.clone();
+        let events = events.clone();
         std::thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 if resized.swap(false, Ordering::SeqCst) && resize_supported {
                     if let Some((rows, cols)) = local_size() {
-                        let body = json!({"rows": rows, "cols": cols});
-                        if let Ok((404, _)) =
-                            session.json("POST", &session.task_path("/resize"), Some(&body))
-                        {
-                            resize_supported = false;
+                        match session.resize(rows, cols) {
+                            Ok(supported) => resize_supported = supported,
+                            Err(reason) => {
+                                let _ = events.send(Event::Lost(reason));
+                                return;
+                            }
                         }
                     }
                 }

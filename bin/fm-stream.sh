@@ -364,7 +364,6 @@ cmd_attach() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --replay) query="?replay=1"; shift ;;
-      --interactive) shift; cmd_attach_interactive "$raw" "$@"; return ;;
       *) die "unknown option for attach: $1" ;;
     esac
   done

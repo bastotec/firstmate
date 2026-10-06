@@ -183,9 +183,47 @@ try:
         fail("endpoint status or display cleanup was lost")
     os.close(master)
 
+    procs.append(subprocess.Popen(
+        [sys.executable, ROOT + "/bin/fm-stream-agent.py", "serve", "--hub", URL,
+         "--token-file", token_file, "--machine", "mixed-test", "--label", "mixed",
+         "--cwd", LAB + "/cwd", "--ready-file", LAB + "/mixed.ready", "--poll-secs", "1"],
+        env=agent_env, stdout=subprocess.DEVNULL, stderr=open(LAB + "/mixed.log", "w")))
+    _, mixed_endpoint = wait_file(LAB + "/mixed.ready")
+    native_endpoint, endpoint = endpoint, mixed_endpoint
+    api("POST", "/v1/tasks/%s/input" % endpoint, {"text": "echo mixed-$((1+1))", "submit": True})
+    end = time.time() + 10
+    while "mixed-2" not in api("GET", "/v1/tasks/%s/capture" % endpoint):
+        if time.time() > end:
+            fail("Python endpoint did not produce pre-attach output")
+        time.sleep(0.1)
+    start_attach()
+    if not read_until(b"mixed-2"):
+        fail("native hub/Python endpoint attach failed: %r" % seen)
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+    os.write(master, b"echo mixed-typed-$((2+1))\r")
+    if not read_until(b"mixed-typed-3"):
+        fail("mixed deployment did not stay interactive")
+    os.write(master, b"\x1d")
+    if not read_until(b"detached from"):
+        fail("mixed deployment did not detach")
+    _, status = os.waitpid(pid, 0)
+    if os.WEXITSTATUS(status) != 0:
+        fail("unsupported mixed-deployment resize ended the session")
+    os.close(master)
+    endpoint = native_endpoint
+
+    for args in [[endpoint, "--interactive"], [endpoint, "--replay", "--interactive"]]:
+        result = subprocess.run([ROOT + "/bin/fm-stream.sh", "attach"] + args,
+                                env=attach_env, capture_output=True, timeout=5)
+        if result.returncode == 0 or b"unknown option for attach: --interactive" not in result.stderr:
+            fail("trailing interactive syntax was not rejected")
+
     class RefusingHub(http.server.BaseHTTPRequestHandler):
         mode = 403
         received = []
+        resize_mode = 200
+        resize_received = []
+        stream_mode = 200
 
         def log_message(self, *args):
             pass
@@ -199,8 +237,16 @@ try:
 
         def do_GET(self):
             if "/stream" in self.path:
+                if self.stream_mode == 409:
+                    self.reply(409, {"error": "stream_continuity_error",
+                                     "message": "stream continuity lost: offset outside retained range"})
+                    return
                 self.send_response(200)
                 self.end_headers()
+                if self.stream_mode == "overflow":
+                    self.wfile.write(b'data: {"error":"stream_continuity_error","message":"stream continuity lost: ring overflow"}\n\n')
+                    self.wfile.flush()
+                    return
                 self.wfile.write(b": ready\n\n")
                 self.wfile.flush()
                 time.sleep(5)
@@ -212,7 +258,13 @@ try:
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path.endswith("/resize"):
-                self.reply(200, {"ok": True})
+                self.resize_received.append(body)
+                if self.resize_mode == "transport":
+                    self.close_connection = True
+                elif isinstance(self.resize_mode, tuple):
+                    self.reply(*self.resize_mode)
+                else:
+                    self.reply(self.resize_mode, {"ok": self.resize_mode == 200})
                 return
             self.received.append(body)
             if self.mode == "transport":
@@ -252,6 +304,67 @@ try:
                 fail("detach did not flush pending partial bytes")
             if reset not in seen:
                 fail("input failure did not restore display modes")
+            os.close(master)
+
+        unknown_kind = (502, {"error": "agent_refused", "message": "unknown command kind 'resize'"})
+        for initial in [True, False]:
+            for mode, message in [
+                (404, None),
+                (unknown_kind, None),
+                (403, b"resize delivery failed: HTTP 403"),
+                (504, b"resize delivery failed: HTTP 504"),
+                ((502, {"error": "agent_refused", "message": "cannot resize PTY"}),
+                 b"resize delivery failed: HTTP 502"),
+                ((502, {"error": "proxy_error", "message": "unknown command kind"}),
+                 b"resize delivery failed: HTTP 502"),
+                ("transport", b"resize delivery uncertain:"),
+            ]:
+                RefusingHub.resize_mode = mode if initial else 200
+                RefusingHub.resize_received = []
+                start_attach("http://127.0.0.1:%d" % stub.server_port)
+                if not initial:
+                    if not read_until(b"stub-ready"):
+                        fail("resize test attach did not start")
+                    RefusingHub.resize_mode = mode
+                    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+                if message is None:
+                    if not read_until(b"stub-ready"):
+                        fail("unsupported resize ended attach: %r" % seen)
+                    end = time.monotonic() + 2
+                    expected = 1 if initial else 2
+                    while len(RefusingHub.resize_received) < expected:
+                        if time.monotonic() > end:
+                            fail("resize was not attempted")
+                        time.sleep(0.05)
+                    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 102, 0, 0))
+                    time.sleep(0.25)
+                    os.write(master, b"\x1d")
+                    message = b"detached from"
+                    expected_status = 0
+                else:
+                    expected_status = 1
+                if not read_until(message, 4):
+                    fail("resize outcome was not reported: %r" % seen)
+                _, status = os.waitpid(pid, 0)
+                if os.WEXITSTATUS(status) != expected_status:
+                    fail("resize outcome returned the wrong status")
+                if len(RefusingHub.resize_received) != (1 if initial else 2):
+                    fail("failed or unsupported resize was retried")
+                if not initial and reset not in seen:
+                    fail("resize failure did not restore display modes")
+                os.close(master)
+
+        RefusingHub.resize_mode = 200
+        for mode in [409, "overflow"]:
+            RefusingHub.stream_mode = mode
+            start_attach("http://127.0.0.1:%d" % stub.server_port)
+            if not read_until(b"stream continuity lost", 4):
+                fail("stream discontinuity was not reported: %r" % seen)
+            _, status = os.waitpid(pid, 0)
+            if os.WEXITSTATUS(status) != 1:
+                fail("stream discontinuity returned success")
+            if mode == "overflow" and reset not in seen:
+                fail("stream overflow did not restore display modes")
             os.close(master)
     finally:
         stub.shutdown()

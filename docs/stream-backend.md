@@ -129,12 +129,17 @@ Ordinary supervision does not need any of that.
 
 - It first sends the local terminal size when resize is supported, then puts the terminal in raw mode, paints the endpoint's current screen and cursor, and streams output from the snapshot's parser-safe offset (`GET /v1/tasks/<id>/snapshot` and `stream?from=<offset>`).
   The offset excludes incomplete escape sequences and UTF-8 characters, so the stream replays their buffered prefixes.
+  Paint restores cells and cursor only, not the scroll region or pending autowrap; a full-screen TUI should repaint on its own, as most do on `SIGWINCH` or their next frame.
+  An exact offset outside the retained ring range returns HTTP 409 with a continuity error; if output overruns the ring during the subscription, the stream emits a continuity error and closes, and the client reports it and exits non-zero rather than rendering discontinuous bytes.
+  Read-only `--replay` remains best-effort from the oldest retained byte.
 - Every byte typed or pasted, escape sequences included, goes to the endpoint's pseudoterminal through `POST /v1/tasks/<id>/input`: as `text` when it is UTF-8, as `b64` raw bytes when it is not.
   Keys typed while a send is in flight go out together in the next one.
   Any non-2xx response or transport error ends the session with an explicit failed or uncertain delivery message, without retrying input.
 - A local resize goes to `POST /v1/tasks/<id>/resize` (`rows`, `cols`, 1-1000 each).
   Before changing the pseudoterminal and triggering `SIGWINCH`, the native agent posts a geometry frame that resizes the native hub's screen at ingestion; re-registration after a hub restart reports the new size.
   Identical geometry leaves the screen and scroll region unchanged.
+  HTTP 404 or a 502 `agent_refused` response reporting `unknown command kind` disables further resizes while keeping the session open, supporting older hubs and Python-backed endpoints.
+  Any other non-2xx response or transport error ends the session with a failed or uncertain resize delivery message, without retrying.
 - Ctrl-] (or `--detach-key`, written `C-<key>`) detaches and leaves the endpoint running after draining preceding input, including partial-byte payloads, for at most two seconds.
   A failed or timed-out drain reports unsuccessful or uncertain delivery instead of a clean detach.
   Endpoint exit status is propagated; a negative signal status becomes `128 + signal`, and an unknown status becomes 1.

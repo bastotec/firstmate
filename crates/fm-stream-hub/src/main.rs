@@ -696,10 +696,27 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
     ))
 }
 type HttpBody = BoxBody<Bytes, Infallible>;
-fn stream(h: Arc<Hub>, eid: String, replay: bool, from: Option<u64>) -> HttpBody {
+fn check_stream_offset(e: &Endpoint, offset: u64) -> Result<()> {
+    let oldest = e.end - e.ring.len() as u64;
+    if offset < oldest || offset > e.end {
+        return Err(Error::new(
+            409,
+            "stream_continuity_error",
+            format!(
+                "stream continuity lost: offset {offset} is outside retained range {oldest}..={}",
+                e.end
+            ),
+        ));
+    }
+    Ok(())
+}
+fn stream(h: Arc<Hub>, eid: String, replay: bool, from: Option<u64>) -> Result<HttpBody> {
     let (incarnation, mut offset) = {
         let s = h.state.lock().unwrap();
         let endpoint = s.endpoints.get(&eid);
+        if let Some(from) = from {
+            check_stream_offset(Hub::get(&s, &eid)?, from)?;
+        }
         (
             endpoint.map(|e| e.created),
             if let Some(from) = from {
@@ -742,6 +759,14 @@ fn stream(h: Arc<Hub>, eid: String, replay: bool, from: Option<u64>) -> HttpBody
         else {
             return;
         };
+        if from.is_some() {
+            if let Err(error) = check_stream_offset(e, offset) {
+                let record = format!("data: {}\n\n", encode(&error.body()));
+                drop(s);
+                let _ = tx.blocking_send(Ok(Frame::data(Bytes::from(record))));
+                return;
+            }
+        }
         let (start, data) = e.bytes(offset);
         let closed = e.closed > 0.;
         let terminal = closed && data.is_empty();
@@ -769,7 +794,7 @@ fn stream(h: Arc<Hub>, eid: String, replay: bool, from: Option<u64>) -> HttpBody
             return;
         }
     });
-    StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx)).boxed()
+    Ok(StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx)).boxed())
 }
 async fn handle(
     h: Arc<Hub>,
@@ -853,7 +878,14 @@ async fn handle(
         Answer::Text(text, ctype) => (200, Full::new(Bytes::from(text)).boxed(), ctype),
         Answer::Stream(eid, replay, from) => {
             close = true;
-            (200, stream(h, eid, replay, from), "text/event-stream")
+            match stream(h, eid, replay, from) {
+                Ok(body) => (200, body, "text/event-stream"),
+                Err(error) => (
+                    error.status,
+                    Full::new(Bytes::from(encode(&error.body()))).boxed(),
+                    "application/json",
+                ),
+            }
         }
     };
     let mut response = Response::builder()
@@ -1264,6 +1296,106 @@ mod tests {
                 "{tail} {body}"
             );
         }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn exact_stream_offsets_preserve_continuity() {
+        let (h, eid, cap) = fixture();
+        let (address, server) = server(h.clone()).await;
+        let post = |bytes: Vec<u8>| {
+            let eid = eid.clone();
+            let cap = cap.clone();
+            async move {
+                let frame = json!({"machine":"box","frames":[
+                    {"endpoint_id":eid,"b64":STANDARD.encode(bytes)}
+                ]});
+                assert_eq!(
+                    request(address, "POST", "/v1/agent/frames", frame, &cap)
+                        .await
+                        .status(),
+                    200
+                );
+            }
+        };
+        post(vec![b'x'; 262145]).await;
+        for offset in [0, 262146] {
+            let (status, error) = json_response(
+                request(
+                    address,
+                    "GET",
+                    &format!("/v1/tasks/{eid}/stream?from={offset}"),
+                    json!({}),
+                    "",
+                )
+                .await,
+            )
+            .await;
+            assert_eq!(status, 409);
+            assert_eq!(error["error"], "stream_continuity_error");
+            assert!(error["message"].as_str().unwrap().contains("continuity lost"));
+        }
+        for offset in [1, 262145] {
+            let body = stream(h.clone(), eid.clone(), false, Some(offset)).unwrap();
+            drop(body);
+        }
+        let exact = request(
+            address,
+            "GET",
+            &format!("/v1/tasks/{eid}/stream?from=1"),
+            json!({}),
+            "",
+        )
+        .await;
+        assert_eq!(exact.status(), 200);
+        post(vec![b'y'; 262145]).await;
+        let bytes = tokio::time::timeout(Duration::from_secs(2), exact.into_body().collect())
+            .await
+            .unwrap()
+            .unwrap()
+            .to_bytes();
+        let events: Vec<Value> = std::str::from_utf8(&bytes)
+            .unwrap()
+            .split("\n\n")
+            .filter_map(|event| event.strip_prefix("data: "))
+            .map(|event| serde_json::from_str(event).unwrap())
+            .collect();
+        assert_eq!(events.last().unwrap()["error"], "stream_continuity_error");
+        for event in &events {
+            if let Some(raw) = event["b64"].as_str() {
+                assert_eq!(STANDARD.decode(raw).unwrap(), vec![b'x'; 262144]);
+            }
+        }
+        let replay = request(
+            address,
+            "GET",
+            &format!("/v1/tasks/{eid}/stream?replay=1"),
+            json!({}),
+            "",
+        )
+        .await;
+        assert_eq!(replay.status(), 200);
+        {
+            let mut s = h.state.lock().unwrap();
+            s.endpoints.get_mut(&eid).unwrap().close(json!(0), "agent");
+            h.wake.notify_all();
+        }
+        let bytes = tokio::time::timeout(Duration::from_secs(2), replay.into_body().collect())
+            .await
+            .unwrap()
+            .unwrap()
+            .to_bytes();
+        let mut output = Vec::new();
+        for event in std::str::from_utf8(&bytes).unwrap().split("\n\n") {
+            if let Some(data) = event.strip_prefix("data: ") {
+                let record: Value = serde_json::from_str(data).unwrap();
+                assert!(record["error"].is_null());
+                if let Some(raw) = record["b64"].as_str() {
+                    output.extend(STANDARD.decode(raw).unwrap());
+                }
+            }
+        }
+        assert_eq!(output, vec![b'y'; 262144]);
         server.abort();
     }
 
