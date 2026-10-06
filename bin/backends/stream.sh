@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # bin/backends/stream.sh - the stream session-provider adapter (EXPERIMENTAL).
 #
-# The fleet keeps ONE hub (bin/fm-stream-hub.py). Each task's pseudoterminal is
-# owned by a thin agent (bin/fm-stream-agent.py) on the machine that runs it,
-# publishing to that hub. This adapter is firstmate's half: it creates, steers,
+# The fleet keeps ONE hub. Each task's pseudoterminal is owned by a thin agent
+# on the machine that runs it, publishing to that hub. Both are the native
+# binaries from crates/ unless config/stream-impl selects the python rollback
+# (bin/fm-stream-native-lib.sh). This adapter is firstmate's half: it creates, steers,
 # reads, classifies, and closes endpoints through the hub's HTTP API, and never
 # talks to a worker machine directly.
 # docs/stream-backend.md owns setup, security, and limits.
@@ -36,15 +37,18 @@
 # adapters so all three mean the same thing by agent, shell, and other.
 # shellcheck source=bin/fm-agent-process-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../fm-agent-process-lib.sh"
+# Which implementation runs (rust by default, python as the explicit rollback)
+# and where the native binaries live.
+# shellcheck source=bin/fm-stream-native-lib.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-native-lib.sh"
 
 # The wire protocol this adapter implements. A hub announcing anything else is
 # refused loudly rather than driven on guessed routes.
 FM_BACKEND_STREAM_PROTOCOL=3
 FM_BACKEND_STREAM_DEFAULT_URL="http://127.0.0.1:7717"
-# FM_STREAM_AGENT_BIN replaces the agent program (it is still run as
-# `python3 <bin> serve ...`). Only tests set it, to start
-# tests/assets/stream-agent-stub.py against a fake hub (tests/fixtures.sh's
-# fm_test_fake_stream).
+# The Python reference agent, used only when fm_stream_impl says python.
+# FM_STREAM_AGENT_BIN replaces it for tests with
+# tests/assets/stream-agent-stub.py (tests/fixtures.sh's fm_test_fake_stream).
 FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agent.py}"
 
 # How long a 404 has to keep being the answer before it counts as `missing`.
@@ -56,11 +60,11 @@ FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[
 #   Lower bound - what it has to outlast, which is three terms, not one. An
 #   agent discovers the hub forgot it only by publishing, and an idle worker
 #   publishes nothing but its state heartbeat, so the wait comes first: at
-#   shipped defaults every 5s (bin/fm-stream-agent.py's --state-interval
-#   default, capped by the hub's state_max_age_secs/3). Then the frame BUILD,
-#   which is not free - state_loop shells out through Pty.foreground_processes
-#   and foreground_cwd before it posts anything, so a tenth of a second when
-#   the box is idle and appreciably more when it is not. Then the 404 and the
+#   shipped defaults every 5s (both agents' --state-interval default, capped
+#   by the hub's state_max_age_secs/3). Then the frame BUILD, which is not
+#   free - the agent inspects foreground processes and cwd before it posts
+#   anything, so a tenth of a second when the box is idle and appreciably
+#   more when it is not. Then the 404 and the
 #   registration round trip it answers with.
 #   Upper bound - what it has to fit inside. Callers bound this classifier:
 #   fm-fleet-snapshot.sh gives 10s to a whole crew-state read, of which this
@@ -78,8 +82,8 @@ FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[
 # the FIRST attempt the agent makes after a restart. It does not cover a rejoin
 # delayed behind a failed attempt. An attempt that times out or meets a hub
 # still coming up doubles that agent's re-registration backoff and pushes the
-# next attempt out by it (bin/fm-stream-agent.py's REREGISTER_BACKOFF_MIN ->
-# REREGISTER_BACKOFF_MAX with jitter), which can be far longer than this
+# next attempt out by it (both agents back off from 2s to 60s with jitter),
+# which can be far longer than this
 # window; the endpoint is then reported `missing` while its worker is healthy
 # and still coming back. That verdict is not retried into harmlessness later:
 # fm-watch.sh treats `missing` like `dead` and escalates the pending steer, and
@@ -200,10 +204,25 @@ fm_backend_stream_tool_check() {
       return 1
     }
   done
-  [ -f "$FM_BACKEND_STREAM_AGENT_BIN" ] || {
-    echo "error: backend=stream selected but the agent $FM_BACKEND_STREAM_AGENT_BIN is missing" >&2
-    return 1
-  }
+  fm_backend_stream_agent_command >/dev/null
+}
+
+# fm_backend_stream_agent_command: print the agent launcher, one word per line:
+# the native binary for impl=rust, or python3 and the reference script for the
+# python rollback. Refuses (with the fix) when the selected one is missing.
+fm_backend_stream_agent_command() {
+  local impl native
+  impl=$(fm_stream_impl) || return 1
+  if [ "$impl" = python ]; then
+    [ -f "$FM_BACKEND_STREAM_AGENT_BIN" ] || {
+      echo "error: backend=stream selected but the agent $FM_BACKEND_STREAM_AGENT_BIN is missing" >&2
+      return 1
+    }
+    printf 'python3\n%s\n' "$FM_BACKEND_STREAM_AGENT_BIN"
+    return 0
+  fi
+  native=$(fm_stream_native_bin fm-stream-agent) || return 1
+  printf '%s\n' "$native"
 }
 
 # fm_backend_stream_api: one authenticated hub call.
@@ -341,12 +360,23 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path] [state-interval
   # cannot start - is the only account of why a spawn failed, so it is kept
   # rather than discarded into /dev/null. The credential still reaches the agent
   # through a file, never a command line.
-  local -a heartbeat=()
+  local -a heartbeat=() launcher=()
+  local word
+  while IFS= read -r word; do
+    launcher+=("$word")
+  done < <(fm_backend_stream_agent_command)
+  if [ "${#launcher[@]}" -eq 0 ]; then
+    rm -f "$ready" "$token_file" "$agent_log"
+    fm_backend_stream_agent_command >/dev/null
+    return 1
+  fi
   if [ -n "$state_interval" ]; then
     heartbeat=(--state-interval "$state_interval")
   fi
   (
-    fm_backend_stream_detached python3 "$FM_BACKEND_STREAM_AGENT_BIN" serve \
+    export FM_STREAM_CODE_ROOT
+    FM_STREAM_CODE_ROOT=$(fm_stream_native_root) || exit 1
+    fm_backend_stream_detached "${launcher[@]}" serve \
       --hub "$(fm_backend_stream_hub_url)" \
       --token-file "$token_file" \
       --machine "$machine" \

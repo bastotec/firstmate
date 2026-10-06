@@ -1715,7 +1715,7 @@ The existing bridge suite also passes with `FM_TEST_STREAM_HUB_BINARY="$PWD/targ
 A complete hub-suite invocation on this host stops at the existing shell-died-at-birth refusal case documented below, after the earlier HTTP/body, stream, capture, registry, and state-read cases pass against Rust.
 The backend suite no longer requires a `setsid` executable; see [the stream prerequisites](../stream-backend.md#prerequisites) for the fallback dependency.
 This is not a claim that every stream suite passes on macOS: the existing Rust-bridge HTTPS fixture cannot validate its generated certificate with this host's Python trust store.
-The pilot and replacement prerequisites remain owned by [the stream guide](../stream-backend.md#rust-hub-pilot).
+The replacement prerequisites are owned by [the stream guide](../stream-backend.md#rust-hub).
 
 ### Deck home-host lifecycle
 
@@ -1744,6 +1744,8 @@ This is targeted lifecycle evidence, not a claim that the complete stream suite 
 
 The live evidence below was captured with Hub 2.0.0 (protocol 2) on 2026-09-17 on Linux with Python 3.14.4, curl 8.18.0, and jq 1.8.1.
 The current hub uses the newer wire protocol documented in [`stream-backend.md`](../stream-backend.md#when-the-hub-restarts), so rerun the guard before treating this as current evidence.
+The guard defaults to the Python-reference agent through `tests/lib.sh` and starts a Python hub directly; its publisher-PID lookup is Python-specific, so it does not prove installed-harness liveness or partition behavior through the Rust publisher.
+Native adapter CI coverage is described in [the stream guide](../stream-backend.md#rust-pty-agent), and installed-harness verification of that publisher remains unrecorded here.
 
 The stream backend reads a different table by a different route than tmux does: the owning agent reads its own pseudoterminal's foreground process group, publishes it to the hub over HTTP, and the classifier sees a flattened command line rather than tmux's `comm` list.
 A defect in that reading, in the publish path, or in the freshness gate surfaces only here, which is why this guard exists beside the tmux one.

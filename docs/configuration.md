@@ -150,7 +150,8 @@ A home whose `FM_HOME` is elsewhere is never pointed at the code root's data fil
 For spawn-capable adapters, the runtime session-provider backend controls where task windows/endpoints are created, captured, sent to, watched, and killed.
 This section is the authoritative source for the accepted backend list, for each backend's spawn capability, for auto-detected versus explicit-only selection, for secondmate support, for which backends are session providers only versus which own their own worktree lifecycle, and for which guide owns its details; where any other document disagrees on one of those axes, this one is correct.
 [`architecture.md`](architecture.md#runtime-session-backends) owns the runtime-internal axes instead: which backends expose a native busy primitive and which have verified agent-process classifiers.
-`tmux` is the verified reference backend (see [`docs/tmux-backend.md`](tmux-backend.md)); `herdr` has its own required CI lane (see [`docs/herdr-backend.md`](herdr-backend.md)); `stream` remains an experimental spawn backend with no dedicated real-backend CI lane (see [`docs/stream-backend.md`](stream-backend.md)).
+`tmux` is the verified reference backend (see [`docs/tmux-backend.md`](tmux-backend.md)); `herdr` has its own required CI lane (see [`docs/herdr-backend.md`](herdr-backend.md)).
+`stream` remains experimental; [`docs/stream-backend.md`](stream-backend.md#rust-pty-agent) owns its native adapter CI coverage and installed-harness verification limits.
 Treehouse remains the worktree provider for tmux, herdr, and stream, since all three are session providers only.
 New spawns choose the backend in this order: an explicit `--backend` flag that current authority for that exact task alone has authorized (a present captain instruction or the task's own accepted brief; never later-task precedent by analogy), then `FM_BACKEND`, then the first non-empty line of local gitignored `config/backend`, then runtime auto-detection from `$TMUX` or `HERDR_ENV=1`, then default `tmux`.
 If both runtime markers are present, detection resolves innermost-first: `$TMUX` is checked before `HERDR_ENV=1`.
@@ -1163,6 +1164,9 @@ FM_STREAM_HUB=          # stream-only: the fleet hub's base URL, checked before 
 FM_STREAM_TOKEN=        # stream-only: this home's hub client token, checked before config/stream-token; never committed
 FM_STREAM_MACHINE=      # stream-only: the name this home's endpoints are grouped under in the central view, checked before config/stream-machine; defaults to the hostname
 FM_STREAM_HTTP_TIMEOUT=30  # stream-only: seconds bounding each adapter request to the hub
+FM_STREAM_IMPL=rust     # stream-only: rust (native binaries, default) or python (rollback), checked before config/stream-impl (docs/stream-backend.md#implementation-and-native-binaries)
+FM_STREAM_NATIVE_DIR=   # stream-only: prebuilt binary directory override; selection and build bypass: docs/stream-backend.md#implementation-and-native-binaries
+FM_STREAM_NATIVE_CACHE= # stream-only: native build cache override; default and XDG_DATA_HOME resolution: docs/stream-backend.md#implementation-and-native-binaries
 FM_SESSION_START_STATUS_TAIL=5   # state/*.status lines printed per task in the session-start digest; each line is capped by bin/fm-line-cap-lib.sh
 FM_SESSION_START_QUEUED_LIMIT=20   # plain queued backlog rows in the session-start digest; in-flight, held, and blocked rows are never bounded and done rows are never listed
 FM_BACKLOG_ROW_TIMEOUT_SECS=10   # seconds bounding each backlog row read (bin/fm-backlog-transition-lib.sh); nonpositive or invalid values fall back to 10; the first bound hit latches the sweep so later reads return immediately, each still naming its own item

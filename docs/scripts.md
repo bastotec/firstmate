@@ -67,8 +67,9 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `backends/herdr.sh`      | Herdr session-provider adapter with its own required CI lane                         |
 | `backends/stream.sh`     | Experimental stream session-provider adapter, driving the fleet's central hub        |
 | `fm-stream.sh`           | Operate the stream backend: run or resolve the hub, and watch, attach to, steer, or report on its endpoints |
-| `fm-stream-hub.py`       | The central hub every stream endpoint publishes to and every subscriber reads from   |
-| `fm-stream-agent.py`     | The per-task agent that owns one endpoint's pseudoterminal on the machine running it |
+| `fm-stream-native-lib.sh` | Select the stream implementation (rust or the python rollback) and resolve, build, and install the native hub, agent, and bridge binaries |
+| `fm-stream-hub.py`       | Python reference hub for the explicit [stream rollback](stream-backend.md#implementation-and-native-binaries) |
+| `fm-stream-agent.py`     | Python reference agent for the rollback and [managed primary](managed-primary.md) |
 | `fm-stream-bridge.py`    | Adapt stream hub listings and composer orders to the Bridge UI's live wire format   |
 | [`fm-ui-host-control.py`](../bin/fm-ui-host-control.py) | Route private UI actions and expose browser-safe `targets` discovery ([stream-backend.md](stream-backend.md#private-host-control-routing)) |
 | [`fm-primary.py`](../bin/fm-primary.py) | Opt-in primary lifecycle owner ([managed-primary.md](managed-primary.md)) |

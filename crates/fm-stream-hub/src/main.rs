@@ -1,4 +1,4 @@
-//! Isolated Rust hub pilot. No deployed entry point selects this binary.
+//! Native fleet hub. Deployment selection and limits: docs/stream-backend.md.
 mod model;
 mod payload;
 mod screen;

@@ -1,4 +1,4 @@
-//! Independent pilot port. The Python deployment remains the default.
+//! Native PTY agent. Deployment selection and limits: docs/stream-backend.md.
 mod command_value;
 mod commands;
 mod hub_json;
@@ -513,7 +513,22 @@ impl Agent {
         }
     }
     fn abandon(&self) {
-        let _ = self.pty.close(true);
+        // No reader runs before startup finishes, and a kernel that drains a
+        // closing terminal (macOS) holds the child's exit while its output
+        // sits unread, so discard it until the child is gone.
+        let closed = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let mut discard = [0u8; 4096];
+                while !closed.load(Ordering::SeqCst) {
+                    if matches!(self.pty.read(&mut discard), Ok(Some(0)) | Err(_)) {
+                        break;
+                    }
+                }
+            });
+            let _ = self.pty.close(true);
+            closed.store(true, Ordering::SeqCst);
+        });
         *self.hub.deadline.lock().unwrap() = None;
         let _ = self.hub.call("POST", "/v1/agent/frames", Some(&json!({"machine":self.options.machine,"frames":[{"endpoint_id":self.id,"closed":true,"exit_code":null}]})), Duration::from_secs(2));
     }
@@ -568,8 +583,12 @@ fn serve(args: &[String]) -> Result<(), Error> {
     let hub = Hub {
         url: options.hub.trim_end_matches('/').into(),
         token,
+        // One connection per call, like the Python agent: a hub that stalls
+        // one call must not be masked by a pooled connection that stays
+        // fast, and the startup budget bounds each attempt the same way.
         client: Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .pool_max_idle_per_host(0)
             .build()
             .map_err(|_| Error::Other("HTTP client initialization failed".into()))?,
         capability: Mutex::new(String::new()),

@@ -556,6 +556,95 @@ test_primary_update_rebinds_local_watch() {
   pass "T12 a self-update rebinds a locally armed watch on the primary"
 }
 
+
+# --- T13: crate changes rebuild the native stream binaries -----------------
+# The Rust stream binaries are built from crates/, not tracked, so an update
+# that lands new crate sources must build them (via the home's own
+# fm-stream.sh), and an update that changes nothing must not run cargo again.
+test_update_builds_native_stream_binaries() {
+  local w out
+  w=$(new_world t13)
+  cp -R "$ROOT/bin/." "$w/seed/bin/"
+  mkdir -p "$w/seed/crates/demo/src"
+  printf '[workspace]\n' > "$w/seed/Cargo.toml"
+  printf '# lock\n' > "$w/seed/Cargo.lock"
+  printf 'fn main() {}\n' > "$w/seed/crates/demo/src/main.rs"
+  printf '/target/\n/state/\n/config/\n' > "$w/seed/.gitignore"
+  git -C "$w/seed" add -A
+  git -C "$w/seed" commit -qm add-crates
+  git -C "$w/seed" push -q origin main
+  cat > "$w/fakebin/cargo" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$w/cargo.calls"
+output="\${CARGO_TARGET_DIR:-target}"
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    --target) output="\$output/\$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "\$output/release"
+for name in fm-stream-hub fm-stream-agent fm-stream-bridge; do
+  [ -f "\$output/release/\$name" ] && continue
+  printf '#!/bin/sh\n' > "\$output/release/\$name"
+  chmod +x "\$output/release/\$name"
+done
+SH
+  cat > "$w/fakebin/rustc" <<'SH'
+#!/usr/bin/env bash
+[ "$*" = -vV ] || exit 1
+printf 'rustc 1.96.0\nhost: test-host\n'
+SH
+  chmod +x "$w/fakebin/cargo" "$w/fakebin/rustc"
+
+  out=$(FM_STREAM_IMPL=rust FM_STREAM_NATIVE_CACHE="$w/cache" run_update "$w")
+  assert_contains "$out" "firstmate: updated " "the primary advanced onto the crates"
+  assert_contains "$out" "stream-native: built $w/cache/" "an update landing crate sources should build the native binaries"
+  assert_equals 1 "$(wc -l < "$w/cargo.calls" | tr -d ' ')" "the build should run cargo once"
+
+  out=$(FM_STREAM_IMPL=rust FM_STREAM_NATIVE_CACHE="$w/cache" run_update "$w")
+  assert_contains "$out" "stream-native: current $w/cache/" "an unchanged checkout should report its binaries current"
+  assert_equals 1 "$(wc -l < "$w/cargo.calls" | tr -d ' ')" "an unchanged checkout must not rebuild"
+
+  out=$(FM_STREAM_IMPL=python FM_STREAM_NATIVE_CACHE="$w/cache" run_update "$w")
+  assert_not_contains "$out" "stream-native:" "a python-rollback home should not build native binaries"
+
+  add_sm "$w" sm-rust
+  add_sm "$w" sm-python
+  mkdir -p "$w/home/config" "$w/sm-python/config"
+  printf 'python\n' > "$w/home/config/stream-impl"
+  printf 'python\n' > "$w/sm-python/config/stream-impl"
+  out=$(FM_STREAM_IMPL='' FM_STREAM_NATIVE_CACHE="$w/mate-cache" FM_CONFIG_OVERRIDE="$w/home/config" run_update "$w")
+  assert_contains "$out" "stream-native secondmate sm-rust: built $w/mate-cache/" "a rust mate must prepare binaries even with a python primary"
+  assert_not_contains "$out" "stream-native:" "the python primary must not build"
+  assert_not_contains "$out" "stream-native secondmate sm-python:" "a python mate must not build"
+  assert_present "$w/sm-rust/state/.stream-native-build.log" "native output must belong to the mate's own home"
+  assert_equals 2 "$(wc -l < "$w/cargo.calls" | tr -d ' ')" "only the rust mate should build in the fresh cache"
+
+  out=$(FM_STREAM_IMPL='' FM_STREAM_NATIVE_CACHE="$w/mate-cache" run_update "$w")
+  assert_contains "$out" "stream-native secondmate sm-rust: current $w/mate-cache/" "a settled current mate must resolve its native binaries"
+  assert_equals 2 "$(wc -l < "$w/cargo.calls" | tr -d ' ')" "a current mate must reuse its cache"
+
+  printf 'fn main() { println!("updated"); }\n' > "$w/seed/crates/demo/src/main.rs"
+  git -C "$w/seed" add -A
+  git -C "$w/seed" commit -qm update-crate
+  git -C "$w/seed" push -q origin main
+  out=$(FM_STREAM_IMPL='' FM_STREAM_NATIVE_CACHE="$w/mate-cache" run_update "$w")
+  assert_contains "$out" "stream-native secondmate sm-rust: built $w/mate-cache/" "an advanced rust mate must prepare its changed sources"
+  assert_equals 3 "$(wc -l < "$w/cargo.calls" | tr -d ' ')" "the changed mate sources should rebuild once"
+
+  printf '#!/bin/sh\necho "error: simulated build failure" >&2\nexit 1\n' > "$w/fakebin/cargo"
+  printf 'fn main() { println!("failed"); }\n' > "$w/seed/crates/demo/src/main.rs"
+  git -C "$w/seed" add -A
+  git -C "$w/seed" commit -qm failing-crate
+  git -C "$w/seed" push -q origin main
+  out=$(FM_STREAM_IMPL='' FM_STREAM_NATIVE_CACHE="$w/mate-cache" run_update "$w") || fail "a native preparation failure must not fail the update"
+  assert_contains "$out" "stream-native secondmate sm-rust: failed:" "a mate build failure must be reported"
+  assert_contains "$out" "restart-secondmates:" "native failure must leave the update action summary intact"
+  assert_equals 1 "$(printf '%s\n' "$out" | grep -c 'stream-native secondmate sm-rust:')" "native failure should emit only one result line"
+  pass "T13 updates prepare each rust home's binaries and keep native failures best-effort"
+}
+
 test_updates_main_and_secondmate
 test_reread_gate_is_instruction_only
 test_bin_only_advance_restarts
@@ -572,5 +661,6 @@ test_firstmate_wrong_branch_skipped
 test_firstmate_detached_head_skipped
 test_unsafe_secondmate_home_skipped_before_git_update
 test_primary_update_rebinds_local_watch
+test_update_builds_native_stream_binaries
 
 echo "# all fm-update tests passed"

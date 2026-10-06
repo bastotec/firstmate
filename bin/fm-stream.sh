@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # fm-stream.sh - operate the fleet's stream hub and subscribe to its endpoints.
 #
-# The hub (bin/fm-stream-hub.py) is ONE service for the whole fleet. Each task's
-# pseudoterminal is owned by a thin agent (bin/fm-stream-agent.py) on the
-# machine that runs it; bin/backends/stream.sh is the runtime backend that
-# creates and drives those endpoints. docs/stream-backend.md owns setup,
-# security, and limits.
+# The hub is ONE service for the whole fleet. Each task's pseudoterminal is
+# owned by a thin agent on the machine that runs it; bin/backends/stream.sh is
+# the runtime backend that creates and drives those endpoints. Both are the
+# Rust binaries from crates/ by default (FM_STREAM_IMPL / config/stream-impl =
+# rust); python selects bin/fm-stream-hub.py and bin/fm-stream-agent.py as the
+# explicit rollback. docs/stream-backend.md owns setup, security, and limits.
 #
 # Usage:
 #   fm-stream.sh hub start [--bind ADDR] [--port N] [--foreground]
 #   fm-stream.sh hub stop
+#   fm-stream.sh hub unit [--bind ADDR] [--port N]
+#   fm-stream.sh native build|ensure|status|path
 #   fm-stream.sh status
 #   fm-stream.sh url
 #   fm-stream.sh token [--ensure]
@@ -26,6 +29,14 @@
 #   hub stop  Signal the recorded hub process and wait for the port to be
 #             released. Endpoints survive it - their agents own the ptys - but
 #             nothing can be watched or steered until the hub is back.
+#   hub unit  Print a systemd user unit that runs `hub start --foreground` for
+#             this home. It installs nothing.
+#   native    build: cargo build --release --locked --target <host-triple> the
+#             Rust hub, agent and bridge and install them, stamped, for this
+#             checkout's sources.
+#             ensure: the same, only when they are missing or stale.
+#             status: print the selected implementation and binary state.
+#             path: print the binary directory this home resolves.
 #   status    Print the recorded process, the reachable health line, or the
 #             reason neither answers.
 #   url       Print the hub base URL this home resolves.
@@ -105,6 +116,15 @@ cmd_hub_start() {
     esac
   done
   fm_backend_stream_tool_check || exit 1
+  local impl native
+  local -a hub_cmd
+  impl=$(fm_stream_impl) || exit 1
+  if [ "$impl" = rust ]; then
+    native=$(fm_stream_native_bin fm-stream-hub) || exit 1
+    hub_cmd=("$native")
+  else
+    hub_cmd=(python3 "$HUB")
+  fi
   mkdir -p "$STATE"
   # Two different credentials, deliberately kept apart.
   #
@@ -129,11 +149,11 @@ cmd_hub_start() {
   rm -f "$READY_FILE"
   if [ -f "$hub_tokens" ]; then
     if [ "$foreground" -eq 1 ]; then
-      exec python3 "$HUB" serve --bind "$bind" --port "$port" \
+      exec "${hub_cmd[@]}" serve --bind "$bind" --port "$port" \
         --token-file "$hub_tokens" --ready-file "$READY_FILE" --pid-file "$PID_FILE"
     fi
     (
-      fm_backend_stream_detached python3 "$HUB" serve --bind "$bind" --port "$port" \
+      fm_backend_stream_detached "${hub_cmd[@]}" serve --bind "$bind" --port "$port" \
         --token-file "$hub_tokens" --ready-file "$READY_FILE" --pid-file "$PID_FILE" \
         >> "$LOG_FILE" 2>&1 < /dev/null &
     )
@@ -142,11 +162,11 @@ cmd_hub_start() {
     local single
     single=$(fm_backend_stream_token) || exit 1
     if [ "$foreground" -eq 1 ]; then
-      FM_STREAM_TOKEN="$single" exec python3 "$HUB" serve --bind "$bind" --port "$port" \
+      FM_STREAM_TOKEN="$single" exec "${hub_cmd[@]}" serve --bind "$bind" --port "$port" \
         --ready-file "$READY_FILE" --pid-file "$PID_FILE"
     fi
     (
-      FM_STREAM_TOKEN="$single" fm_backend_stream_detached python3 "$HUB" serve --bind "$bind" --port "$port" \
+      FM_STREAM_TOKEN="$single" fm_backend_stream_detached "${hub_cmd[@]}" serve --bind "$bind" --port "$port" \
         --ready-file "$READY_FILE" --pid-file "$PID_FILE" \
         >> "$LOG_FILE" 2>&1 < /dev/null &
     )
@@ -178,6 +198,67 @@ cmd_hub_stop() {
   kill -0 "$pid" 2>/dev/null && die "the hub process $pid did not exit"
   rm -f "$PID_FILE" "$READY_FILE"
   printf 'hub stopped\n'
+}
+
+cmd_hub_unit() {
+  local bind=127.0.0.1 port=7717
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --bind) bind=${2:?--bind needs an address}; shift 2 ;;
+      --port) port=${2:?--port needs a number}; shift 2 ;;
+      *) die "unknown option for hub unit: $1" ;;
+    esac
+  done
+  local value
+  for value in "$FM_HOME" "$BIN_DIR" "$bind" "$port"; do
+    case "$value" in
+      *[[:space:]\"\'\\%\$]*) die "hub unit requires paths and arguments without whitespace, quotes, backslashes, % or \$: $value" ;;
+    esac
+  done
+  # The implementation is not pinned here: the unit follows config/stream-impl,
+  # so a rollback is a config edit plus a restart, not a unit rewrite.
+  cat <<UNIT
+[Unit]
+Description=Firstmate fleet stream hub ($FM_HOME)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$FM_HOME
+Environment=FM_HOME=$FM_HOME
+ExecStart=$BIN_DIR/fm-stream.sh hub start --foreground --bind $bind --port $port
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+UNIT
+}
+
+cmd_native() {
+  local sub=${1:-status} impl dir
+  case "$sub" in
+    build) fm_stream_native_build ;;
+    ensure) fm_stream_native_build --if-stale ;;
+    path) fm_stream_native_dir && printf '\n' ;;
+    status)
+      impl=$(fm_stream_impl) || exit 1
+      dir=$(fm_stream_native_dir) || exit 1
+      printf 'implementation: %s\n' "$impl"
+      printf 'native dir: %s\n' "$dir"
+      if fm_stream_native_installed "$dir"; then
+        printf 'native binaries: installed\n'
+        sed 's/^/  /' "$dir/stamp"
+      elif fm_stream_native_prebuilt >/dev/null && [ -x "$dir/fm-stream-hub" ] && [ -x "$dir/fm-stream-agent" ]; then
+        printf 'native binaries: prebuilt (no stamp)\n'
+      else
+        printf 'native binaries: missing (run: %s native build)\n' "$0"
+        [ "$impl" = rust ] && return 1
+      fi
+      return 0
+      ;;
+    *) die "unknown native subcommand: $sub (build, ensure, status, path)" ;;
+  esac
 }
 
 cmd_status() {
@@ -287,10 +368,12 @@ case "$COMMAND" in
     case "$SUB" in
       start) cmd_hub_start "$@" ;;
       stop) cmd_hub_stop ;;
+      unit) cmd_hub_unit "$@" ;;
       *) die "unknown hub subcommand: $SUB" ;;
     esac
     ;;
   status) cmd_status ;;
+  native) cmd_native "$@" ;;
   url) fm_backend_stream_hub_url && printf '\n' ;;
   token) cmd_token "$@" ;;
   web) cmd_web ;;

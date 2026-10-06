@@ -13,8 +13,8 @@
 # impossible without cutting the whole fleet off.
 #
 # LIMIT this library deliberately does not hide: the hub reads its token file
-# exactly once, at serve start (bin/fm-stream-hub.py load_tokens - no SIGHUP,
-# no reload subcommand). A seeded mate token is therefore INACTIVE until the
+# exactly once, at serve start (both hub implementations have no SIGHUP or
+# reload subcommand). A seeded mate token is therefore INACTIVE until the
 # hub restarts, and a hub restart clears terminal scrollback and Bridge-order
 # reconciliation fleet-wide, so it is a planned quiet-boundary operation rather
 # than part of seeding. docs/stream-backend.md owns that contract; making the

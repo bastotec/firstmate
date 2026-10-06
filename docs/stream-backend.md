@@ -10,11 +10,13 @@ This document owns setup, security, and the limits specific to stream.
 
 Three pieces, and the split matters:
 
-- **The hub** (`bin/fm-stream-hub.py`) is one service for the whole fleet, and it owns no pseudoterminal.
+- **The hub** (`fm-stream-hub`, built from `crates/fm-stream-hub`) is one service for the whole fleet, and it owns no pseudoterminal.
   It holds a bounded ring buffer per endpoint, relays commands, and answers state reads.
-- **The agent** (`bin/fm-stream-agent.py`) runs on the machine that runs the task and owns that task's pseudoterminal.
+- **The agent** (`fm-stream-agent`, built from `crates/fm-stream-agent`) runs on the machine that runs the task and owns that task's pseudoterminal.
   One agent owns one endpoint.
 - **The adapter** (`bin/backends/stream.sh`) is the runtime backend firstmate drives through the shared dispatcher.
+
+The hub and agent are the Rust binaries by default; [Implementation and native binaries](#implementation-and-native-binaries) owns how they are built, where they live, and the Python rollback.
 
 The hub owning no pseudoterminal is the load-bearing part of that split: it is what lets the hub fail without taking a worker with it.
 [When the hub is down](#when-the-hub-is-down) owns what that does and does not cost you.
@@ -22,9 +24,10 @@ The hub owning no pseudoterminal is the load-bearing part of that split: it is w
 ## Setup
 
 The fleet runs one hub.
-Start it on whichever host the fleet can reach:
+Build the native binaries, then start it on whichever host the fleet can reach:
 
 ```
+bin/fm-stream.sh native ensure
 bin/fm-stream.sh hub start
 bin/fm-stream.sh status
 ```
@@ -57,13 +60,51 @@ A matching agent blocks recovery even when the hub has forgotten it; wait for it
 [Agent control](agent-control.md#failure-and-rollback) owns failed-rebind cleanup, retained new-endpoint bindings, and retry handling.
 
 A stream-hosted second mate launches, is steered, and reports its own lifecycle, but it cannot itself spawn or supervise on stream until the hub has restarted since its seeding wrote the home a credential.
-`bin/fm-stream-agent.py` hands the hosted process the hub address and deliberately withholds the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`, so the launch path still carries no credential.
+Both PTY agents hand the hosted process the hub address and deliberately withhold the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`, so the launch path still carries no credential.
 The credential arrives through seeding instead, and until that restart the seeded token is one the running hub has not loaded, so the home's first stream call is refused by the hub rather than dying in `fm_backend_stream_token` (`bin/backends/stream.sh`).
 [Security](#security) owns the seeding contract, including the homes it leaves without a credential; for those the first stream call still dies in `fm_backend_stream_token` before any endpoint exists, and the remedy that refusal names does not work there: `bin/fm-stream.sh token --ensure` mints a fresh random token, which the fleet hub refuses.
+
+## Implementation and native binaries
+
+`FM_STREAM_IMPL`, then `config/stream-impl`, then `rust` selects which implementation `hub start` and endpoint launches run.
+`rust` runs the `fm-stream-hub` and `fm-stream-agent` binaries; `python` runs `bin/fm-stream-hub.py` and `bin/fm-stream-agent.py` and is the rollback until the Rust cutover is verified on the fleet.
+Nothing falls back from one to the other: a rust home without built binaries refuses with the build command and the rollback.
+
+The binaries are built from `crates/`, not tracked in git:
+
+- `bin/fm-stream.sh native build` runs `cargo build --release --locked --target <host-triple> -p fm-stream-hub -p fm-stream-agent -p fm-stream-bridge` (Rust 1.96 or newer; the host triple comes from `rustc -vV`, using the compiler beside Cargo or on `PATH`) and installs the three binaries from `<target-dir>/<host-triple>/release/`, with a `stamp` naming the source key and commit, into `~/.local/share/firstmate/stream-native/<source-key>/` (`FM_STREAM_NATIVE_CACHE` or `XDG_DATA_HOME` move it).
+  The source key hashes existing tracked and non-ignored untracked files under `crates/`, plus `Cargo.toml` and `Cargo.lock`, using their working-tree content; deleted paths are skipped and hashing failures refuse resolution rather than selecting a partial key.
+  A primary and its local secondmate worktrees on the same sources share one build, and a checkout whose crate inputs changed resolves a new, unbuilt directory instead of running stale binaries.
+  Relative `CARGO_TARGET_DIR` values resolve against the build checkout, not the caller's working directory, for both Cargo output and installation.
+  The build unsets `CARGO_BUILD_TARGET` and explicitly selects the host triple, overriding Cargo's `build.target` configuration.
+- `native ensure` reuses a complete stamped install for the current key and builds otherwise.
+  `bin/fm-update.sh` runs it for a rust primary left updated or already current, and for each settled local secondmate with a recorded window whose own selection is rust; skipped homes, registry-only homes without a window, and remote homes are not prepared by this path.
+  Native preparation is best-effort and never fails the update; the script's header owns summary labels and build-log locations.
+- `native status` prints the selection, the resolved directory and its stamp; `native path` prints the directory.
+- Cargo is found on `PATH` or at `~/.cargo/bin/cargo`.
+  Without it the build refuses and names the rustup install (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal`, which installs into `~/.cargo`); the host also needs a C linker (`cc`).
+- A host that should not build can be fed binaries built elsewhere for the same OS and CPU: put the directory in `config/stream-native-dir` (or `FM_STREAM_NATIVE_DIR`).
+  It is used as is, with no source-key check.
+
+Running hubs and agents keep the binary they started with; a rebuild changes only what the next `hub start` or spawn runs.
+
+The managed primary and Bridge order path have their own limits:
+
+- `bin/fm-primary.py` still imports `bin/fm-stream-agent.py` in-process for the managed primary, whatever `config/stream-impl` says, so that path stays on the Python agent until it is ported to launch the native one.
+- The Bridge order path (`command`, `reconcile`) is still Python-only; [Rust bridge](#rust-bridge) owns what the native bridge covers.
+
+### Running the hub as a systemd user service
+
+`bin/fm-stream.sh hub unit [--bind ADDR] [--port N]` prints a unit that runs `fm-stream.sh hub start --foreground` in this home; it installs nothing.
+Generation refuses home or executable-directory paths and bind or port arguments containing whitespace, quotes, backslashes, `%`, or `$`, rather than emitting an unsafe unit.
+The unit does not pin the implementation, so it follows `config/stream-impl`, and a rollback is a config edit plus a restart.
+Install it with `bin/fm-stream.sh hub unit --bind 127.0.0.1 > ~/.config/systemd/user/fm-stream-hub.service`, remove any drop-in under `fm-stream-hub.service.d/` that overrides `ExecStart` with a hand-built binary, then `systemctl --user daemon-reload`.
+Restarting the hub is a quiet-window operation: [Rust hub](#rust-hub) lists what to drain first.
 
 ## Prerequisites
 
 `python3`, `curl`, and `jq` must be present, and the hub's protocol must match the adapter's.
+A rust home also needs the native binaries for its checkout ([Implementation and native binaries](#implementation-and-native-binaries)).
 Launching a local endpoint or a background hub also requires either `setsid` on `PATH` or, when it is absent (as on stock macOS), `perl` with `POSIX::setsid` support.
 A missing dependency, an unreachable hub, a refused token, or a protocol mismatch is terminal for the selected backend: it refuses and names what is wrong rather than falling back to another backend.
 
@@ -119,8 +160,8 @@ Nothing runs it automatically.
 
 ### Rust bridge
 
-The opt-in Rust bridge builds with `cargo build --release --locked -p fm-stream-bridge` (Rust 1.96 or newer).
-Use `target/release/fm-stream-bridge` in place of `bin/fm-stream-bridge.py` for the read-only `serve`, `snapshot`, `translate`, and `compare` subcommands with explicit hub, token-file, and fleet-id flags; this does not replace or restart any deployed Python process.
+The Rust bridge is built and installed with the other native binaries by [the native build commands](#implementation-and-native-binaries), but its use remains opt-in.
+Use `fm-stream-bridge` from the directory resolved by `bin/fm-stream.sh native path` in place of `bin/fm-stream-bridge.py` for the read-only `serve`, `snapshot`, `translate`, and `compare` subcommands with explicit hub, token-file, and fleet-id flags; this does not replace or restart any deployed Python process.
 Order placement and passive reconciliation remain Python-only bridge subcommands.
 Install it beside the existing scripts in `bin/` if using `compare`'s executable-relative home default, or pass `--home` and `--crew-state` explicitly.
 The Cargo workspace shares the protocol handshake and heartbeat wire mapping in `crates/fm-stream-wire`.
@@ -131,22 +172,12 @@ The bridge retains a 128-container nesting bound at its shared JSON compatibilit
 `tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
 Live comparisons exclude process-local clocks; help presentation, top-level command choices, and transport-library error details are not byte contracts.
 
-### Rust PTY agent pilot
+### Rust PTY agent
 
-The opt-in Rust agent builds with `cargo build --release --locked -p fm-stream-agent` (Rust 1.96 or newer).
-Run `target/release/fm-stream-agent serve` instead of `bin/fm-stream-agent.py serve` only for a disposable pilot endpoint, with an explicit isolated hub URL, private publish token file, machine, label, absolute cwd, status-path, and ready-file.
-Its `--help` owns the full option surface; the ready file has the same `machine endpoint_id` format as the Python agent.
-For example, with a disposable Python hub already started according to `bin/fm-stream-hub.py serve --help`, use:
-
-```sh
-target/release/fm-stream-agent serve --hub "$PILOT_HUB" \
-  --token-file "$PILOT_TOKEN_FILE" --machine pilot --label rust-worker \
-  --cwd "$PILOT_CWD" --status-path "$PILOT_STATUS" --ready-file "$PILOT_READY"
-```
-
-Do not use a deployed fleet's label or hub for this test: no backend launcher is switched, and the Python agent remains deployed and available.
+`bin/backends/stream.sh` launches the native `fm-stream-agent serve` for every endpoint when the implementation is `rust`, with the same arguments, ready-file format (`machine endpoint_id`) and status-path contract as the Python agent.
+Its `--help` owns the full option surface.
 The port uses the shared wire protocol with Reqwest/rustls, Serde JSON, POSIX PTYs, and signal-hook; it needs no Python interpreter at runtime.
-Keep the pilot binary under this repository's `target/` tree: native source publication invokes the existing `bin/fm-task-inbox-lib.sh` writer rather than duplicating its sequence and record contract.
+The adapter binds `FM_STREAM_CODE_ROOT` to its checkout so cached native binaries can invoke the existing `bin/fm-task-inbox-lib.sh` writer; when launching the agent directly outside the repository, set that variable to the repository root.
 `crates/fm-stream-agent/src/receiver.rs` implements the native Deck application interface described under [Command path](#command-path); `crates/fm-stream-agent/src/commands.rs` owns the Rust scheduler and durable result reconciliation.
 HTTP redirects are refused rather than forwarding endpoint credentials to a redirect target; point directly at the final HTTP or HTTPS hub URL.
 Option names are full names rather than argparse abbreviations, geometry is bounded to the kernel's unsigned 16-bit values, and heartbeat/poll intervals must be finite, nonnegative, and representable by Rust's monotonic timers.
@@ -154,13 +185,12 @@ Successful command-poll responses preserve Python input/status value conversion,
 Top-level strings containing lone surrogates still fail UTF-8 encoding; literal escapes and valid surrogate pairs retain their meaning, and other hub responses remain strict JSON.
 `tests/fm-stream-agent-rust.test.sh` compares both executable agents against disposable Python hubs for native execution-bound acceptance, duplicate and conflict refusal, stale execution, byte-exact durable sources, handled/rejected application proof, original-turn uncertainty and late acknowledgement without successor delivery, unsupported receiver refusal, PTY input/output, Python command-value conversion including non-finite numbers and composite surrogates, large NUL/surrogate composites and 150-deep lists with exact status rendering and result acknowledgement, zero and multi-day scheduling intervals, concurrent complete local status records, result-response loss, unknown-command result retry without native reapplication, restart/rejoin, stale hub-generation order refusal, revoked private capability refusal, stand-down contests, child exits with fully redirected background jobs, and signal shutdown.
 `cargo test -p fm-stream-agent` covers durable reservation/result recovery, original-turn binding after storage failure, and the process-group signal ownership boundary through executable filesystem and process interfaces.
-Production replacement still requires launcher selection, installed-harness liveness verification through the Rust publisher, and parity with any subsequent Python protocol changes before changing the default.
+`tests/fm-backend-stream.test.sh` runs the whole adapter suite against the native agent in the Rust CI job (`FM_TEST_STREAM_IMPL=rust`); other suites pin the Python reference because their runners have no native build.
 
-## Rust hub pilot
+## Rust hub
 
-The opt-in `fm-stream-hub` workspace binary implements the hub HTTP surfaces alongside the Python reference.
-`bin/fm-stream.sh` still starts the Python hub; building the Rust crate does not select, stop, replace, or restart the central service.
-Rust 1.96 or newer is required to build it.
+The `fm-stream-hub` workspace binary implements the hub HTTP surfaces; `bin/fm-stream.sh hub start` runs it when the implementation is `rust`, with the same bind, port, token file, ready file and pid file as the Python hub.
+Building or rebuilding the binaries does not stop, replace, or restart a running hub.
 The binary's `--help` owns its CLI flags, and it shares the protocol constant and identity validation with `fm-stream-wire`.
 [Security](#security) applies to both hubs, including the plain-HTTP transport boundary.
 CLI option names must be supplied in full with a separate value, rather than argparse-style abbreviations or `--name=value` forms.
@@ -168,7 +198,7 @@ Rust query integers (`wait` and `lines`) must fit signed 64-bit values before cl
 Forwarded input and status values preserve Python JSON semantics, including `NaN`, `Infinity`, `-Infinity`, and escaped lone surrogates, so the owning Python agent receives the original values rather than null or replacement characters.
 Their parsing, encoding, and destruction are stack-safe, preserving Python-supported nested notes without inheriting the control-field parser's 128-container limit; genuinely malformed JSON still returns `bad_json`.
 
-Run an isolated pilot with a newly created token file, an ephemeral loopback port, and ready/pid paths belonging only to that pilot:
+To compare it against the Python hub without touching the fleet, run an isolated pilot with a newly created token file, an ephemeral loopback port, and ready/pid paths belonging only to that pilot:
 
 ```sh
 cargo build --release --locked -p fm-stream-hub
@@ -183,7 +213,7 @@ Do not redirect live agents, reuse the fleet's ready/pid files, or mirror contro
 The existing hub and bridge suites accept `FM_TEST_STREAM_HUB_BINARY` for HTTP compatibility runs; the hub suite's accelerated Python-retention fixture remains reference-only, with Rust expiry boundaries covered by the crate's tests.
 [Runtime verification](verification/runtime-backends.md#stream) records current evidence and host-specific gaps.
 
-Replacing the central hub is a separate, explicitly approved quiet-window operation, not part of this pilot.
+Switching the central hub between implementations is a separate, explicitly approved quiet-window operation.
 Before replacement, require green compatibility checks, a pilot against the deployed agent/bridge versions, the same protocol and token-class configuration, verified endpoint capability rejoin, an unchanged external URL/TLS termination, and an available Python rollback command.
 Drain or resolve every queued, taken-but-unacknowledged, or otherwise unconfirmed command/order before stopping either hub; [Command path](#command-path) and [When the hub restarts](#when-the-hub-restarts) own the in-memory reconciliation and rejoin contracts.
 Plan and verify agent re-registration after replacement under those contracts.
@@ -258,7 +288,7 @@ The retired set is capped at 512 entries per machine, matching the journal bound
 A rejected result does not renew retirement or return the command to pending, and loss of completion eligibility leaves the retained order honestly unconfirmed rather than synthesizing a result or replaying the command.
 `tests/fm-stream-hub-retention.test.sh` and the Rust hub's model and HTTP regressions cover late completion, authorization, duplicate/conflict handling, expiry, and journal-only bounded retention.
 An endpoint whose worker exits while acknowledgement is retrying keeps its publisher alive while the result can still settle.
-Result-post retries do not block local Deck reconciliation or later command polling; `bin/fm-stream-agent.py` and the pilot's `crates/fm-stream-agent/src/commands.rs` own their respective scheduling and durable retry metadata.
+Result-post retries do not block local Deck reconciliation or later command polling; `bin/fm-stream-agent.py` and `crates/fm-stream-agent/src/commands.rs` own their respective scheduling and durable retry metadata.
 A definitive result rejection - including capability revocation after the hub closes the endpoint - or retry expiry ends retrying so the closing frame can publish, while the caller's unresolved order remains unconfirmed.
 Both agents treat `no_such_command` as retryable unknown, not a settled rejection of the result: they retry the same original result within the existing retry budget without reapplying the command.
 A hub restart empties its journal along with the registry, so a resend has no hub-side delivery history.
@@ -487,8 +517,8 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
 ## Limits
 
 - Experimental; CI's Rust agent parity step exercises disposable Python hubs and real PTYs, not installed harnesses.
-  [Rust PTY agent pilot](#rust-pty-agent-pilot) owns the opt-in port's verification coverage and production-replacement requirements.
-  [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) is the live guard that proves each installed harness is still classified through the hub, and the command that refreshes the dated per-harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md).
+  [Rust PTY agent](#rust-pty-agent) owns the native agent's verification coverage.
+  [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) refreshes the dated Python-reference harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md#live-harness-identity), not installed-harness liveness through the Rust publisher.
   Native Deck steering has its own live guard and portable receiver regressions, linked in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
   The other portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, `tests/fm-stream-bridge.test.sh`, `tests/fm-stream-claude-tail.test.sh`, and `tests/fm-stream-opencode-tail.test.sh`.
   The secondmate credential-seeding regressions from the Security section above ride `tests/fm-secondmate-safety.test.sh`.

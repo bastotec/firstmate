@@ -37,7 +37,8 @@ jobs:
   rust-stream:
     name: Rust stream parity
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The adapter suite against the native agent adds about 5 minutes.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust
@@ -53,6 +54,11 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: stable
         run: FM_LIVE=0 bin/fm-test-run.sh tests/fm-stream-agent-rust.test.sh
+      - name: Stream adapter suite against the native agent
+        run: |
+          cargo +stable build --release --locked -p fm-stream-hub -p fm-stream-agent -p fm-stream-bridge
+          FM_TEST_STREAM_IMPL=rust FM_TEST_STREAM_NATIVE_DIR="$PWD/target/release" \
+            FM_LIVE=0 bin/fm-test-run.sh tests/fm-backend-stream.test.sh
 
   lint:
     name: Lint ${{ matrix.shard }}

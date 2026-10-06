@@ -1,7 +1,6 @@
 [workspace]
-# The stream backend is moving from Python to Rust one piece at a time.
-# This workspace contains the shared wire crate and opt-in bridge/agent/hub ports;
-# docs/stream-backend.md owns its operator-facing status and limits.
+# The stream workspace contains the shared wire crate and native hub, agent,
+# and bridge; docs/stream-backend.md owns selection, rollout status, and limits.
 #
 # Cargo.lock is committed so binary builds are reproducible from a clean
 # checkout (every member is a binary or backs one).

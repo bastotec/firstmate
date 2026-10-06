@@ -70,6 +70,20 @@ unset FM_TASK_ID
 # against an ambient override sets TASKS_AXI_FILE itself.
 unset TASKS_AXI_FILE TASKS_AXI_BACKEND
 
+# Pin the stream implementation. Production defaults to the Rust binaries
+# (bin/fm-stream-native-lib.sh), which a test runner has not built, so suites
+# that launch stream hubs and agents through firstmate's scripts run the Python
+# reference unless the runner opts in: FM_TEST_STREAM_IMPL=rust with
+# FM_TEST_STREAM_NATIVE_DIR pointing at built binaries (the Rust CI job does).
+# tests/fm-stream-native.test.sh covers the unpinned default itself.
+export FM_STREAM_IMPL=${FM_TEST_STREAM_IMPL:-python}
+if [ -n "${FM_TEST_STREAM_NATIVE_DIR:-}" ]; then
+  export FM_STREAM_NATIVE_DIR=$FM_TEST_STREAM_NATIVE_DIR
+else
+  unset FM_STREAM_NATIVE_DIR
+fi
+unset FM_STREAM_NATIVE_CACHE
+
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034
