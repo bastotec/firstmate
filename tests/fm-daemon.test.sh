@@ -3086,18 +3086,31 @@ test_inject_msg_stream_no_primary_falls_back_to_endpoint() {
 # process named fm-deck-chat registers state/primary-chat.json, and the test
 # plays deck's side by writing its events file.
 test_inject_msg_stream_with_real_steer_client() {
-  local dir state steer events host rc
+  local dir state steer events host rc client
   dir=$(make_stream_case inject-stream-real-client)
   state="$dir/state"; steer="$dir/chat/steer"; events="$dir/chat/events.ndjson"
-  mkdir -p "$steer"
+  client="$dir/client-bin"
+  mkdir -p "$steer" "$client"
+  cp "$ROOT/bin/fm-primary-steer.sh" "$ROOT/bin/fm_primary_chat.py" "$ROOT/bin/fm-gate-refuse-lib.sh" "$client/"
+  # Keep the real client beside a stand-in host script so its process identity
+  # includes the exact script path and --home suffix, as the real host does.
+  cat > "$client/fm-deck-chat.sh" <<'SH'
+sleep 120 &
+child=$!
+trap 'kill "$child" 2>/dev/null; wait "$child" 2>/dev/null' EXIT
+trap 'exit 0' TERM
+wait "$child"
+SH
   printf '{"type":"idle"}\n' > "$events"
-  bash -c 'exec -a fm-deck-chat sleep 120' &
+  bash -c 'exec -a fm-deck-chat bash "$1" --home "$2"' _ "$client/fm-deck-chat.sh" "$dir" &
   host=$!
+  fm_test_track_helper_pid "$host"
   printf '{"version":1,"home":"%s","session":"s1","steer_dir":"%s","events_file":"%s","endpoint":"hub-7717:0123abcd","host_pid":%s,"started_at":1}\n' \
     "$dir" "$steer" "$events" "$host" > "$state/primary-chat.json"
   (
     cd "$dir" || exit 1
-    unset NO_MISTAKES_GATE FM_PRIMARY_STEER_BIN
+    unset NO_MISTAKES_GATE
+    export FM_PRIMARY_STEER_BIN="$client/fm-primary-steer.sh"
     # shellcheck disable=SC2329 # Invoked indirectly by the function under test.
     fm_backend_send_text_submit() { fail "typed input must not run while the deck-chat host is live"; }
     inject_real() {
