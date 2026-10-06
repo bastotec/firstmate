@@ -238,7 +238,7 @@ probe_bound() {
   fi
 }
 
-# First dotted number in the text, so "herdr 0.8.2" and "v1.46.0" both work.
+# First dotted number in the text, so "deck 0.8.2" and "v1.46.0" both work.
 parse_version() {
   printf '%s' "$1" | grep -oE '[0-9]+(\.[0-9]+)+' | head -n 1
 }

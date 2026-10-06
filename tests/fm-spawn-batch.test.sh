@@ -14,7 +14,7 @@ set -u
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-batch)
-export FM_BACKEND=tmux
+export FM_BACKEND=stream
 
 # Clear ambient firstmate overrides so the behavior test owns its environment.
 run_spawn() {

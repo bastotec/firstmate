@@ -19,7 +19,6 @@ for d in ['state','data','config','projects']:(home/d).mkdir(parents=True,exist_
 (home/'bin').symlink_to(root/'bin') if not (home/'bin').exists() else None
 (home/'.fm-secondmate-home').write_text('host-check\n')
 (home/'config/backlog-backend').write_text('manual\n')
-(home/'config/backend').write_text('tmux\n')
 (home/'AGENTS.md').write_text('This is an isolated Deck host verification home, not a production supervisor. The driver has already run session start. Never run it again. Do not spawn, steer, inspect other homes, install, repair, sync, or change any external resource. Act only on the explicit live-check prompt and its inbox notes in this home. Treat startup diagnostics as evidence, not repair instructions.\n')
 parent=lab/'parent';parent.mkdir(exist_ok=True)
 env=dict(os.environ,FM_HOME=str(home),FM_ROOT_OVERRIDE='',FM_STATE_OVERRIDE='',FM_DATA_OVERRIDE='',FM_CONFIG_OVERRIDE='',FM_PROJECTS_OVERRIDE='',FM_POLL='1',FM_SIGNAL_GRACE='1',FM_HEARTBEAT='999999',FM_DECK_MAX_TURNS='20',FM_DECK_DEADLINE_SECS='180',FM_SUPERVISION_MODEL='autoarm')

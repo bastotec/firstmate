@@ -36,16 +36,14 @@
 #   fm-interrupt     a firstmate-owned interrupt idle event
 #   fm-recovery      a documented recovery reset after relaunch
 # Classifier-only sources (never written into a record):
-#   endpoint-gone, herdr-native, missing, malformed, gen-mismatch,
+#   endpoint-gone, missing, malformed, gen-mismatch,
 #   source-mismatch, no-target
 #
 # Classification (fm_busy_classify): busy | idle | unknown | dead, always
 # with the producing source as the second token. Precedence:
 #   1. dead endpoint (fm_busy_classify_live only) -> dead endpoint-gone
 #   2. a valid, gen-matching, source-trusted record -> its state and source
-#   3. no record at all: herdr's native busy verdict is trusted as busy
-#      (generation state is sufficient for busy, not for idle), then
-#      unknown missing
+#   3. no record at all -> unknown missing
 #   4. malformed, stale, or untrusted records -> unknown, never a fallback
 # The delivery guards in bin/fm-composer-lib.sh match rendered footers for
 # submit acknowledgement and away-mode supervisor injection only; neither is a
@@ -186,7 +184,7 @@ fm_busy_deck_delivery_started() {
 # adapter classifies from rendered output.
 fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
   local backend=$1 target=$2 harness=$3 id=$4 state=$5 tail40=${6-}
-  local out rc r_state r_source native
+  local out rc r_state r_source
   : "$tail40"
   out=$(fm_busy_record_read "$state" "$id") && rc=0 || rc=$?
   if [ "$rc" = 0 ]; then
@@ -206,17 +204,6 @@ fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
       return 0
       ;;
   esac
-  # No record at all. A native herdr busy verdict is semantic enough to trust
-  # for BUSY (streaming means a turn is running); native idle is narrower
-  # than turn state (a long foreground tool call reads idle) and stays
-  # unknown here.
-  if [ "$backend" = herdr ] && command -v fm_backend_busy_state >/dev/null 2>&1; then
-    native=$(fm_backend_busy_state "$backend" "$target" 2>/dev/null || true)
-    if [ "$native" = busy ]; then
-      printf 'busy herdr-native'
-      return 0
-    fi
-  fi
   printf 'unknown missing'
 }
 

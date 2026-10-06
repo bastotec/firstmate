@@ -148,11 +148,10 @@ Away-mode housekeeping has no worktree-write deferral of its own, so while `stat
 The daemon escalates captain-relevant events, plus a bounded recheck for a declared external wait that is still declared, as one batched, single-line digest using the canonical `away-supervisor` kind from `bin/fm-operational-input.sh` so firstmate can distinguish it structurally from real messages; captain-held transfers remain silent until return while the posture record exists.
 [`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns supported supervisor transports and discovery, independently from task-spawn selection.
 The following pane primitives apply only to typed-input delivery, not deck-chat steering.
-Pane existence, busy checks, composer checks, capture, and verified submit route through `bin/fm-backend.sh`: tmux keeps the same submit core used by the tmux send backend, while herdr uses native agent-state submit confirmation on idle baselines, a composer empty fallback when native stays idle, and a pre-Enter rendered-footer transition when that baseline is unavailable.
-The retries-exhausted queued-Enter decision is owned by `fm_composer_queued_enter_verdict` in `bin/fm-composer-lib.sh`; tmux and herdr provide only their backend-specific busy signals.
-Composer classification has one shared owner, `bin/fm-composer-lib.sh`: tmux, herdr, and stream contribute only a screen capture plus declarative styled, cursor, identity, and row capabilities, while the shared classifier owns every shape and the `empty`/`pending`/`pending-unproven`/`unknown` verdict.
+Endpoint existence, busy checks, composer checks, capture, and verified submit route through `bin/fm-backend.sh` to the stream adapter, which confirms a submit with a proven cleared composer.
+Composer classification has one shared owner, `bin/fm-composer-lib.sh`: the stream adapter contributes only a screen capture plus declarative styled, cursor, identity, and row capabilities, while the shared classifier owns every shape and the `empty`/`pending`/`pending-unproven`/`unknown` verdict.
 For typed-input delivery, the daemon injects only into an affirmatively `empty` composer, so every other or future verdict defers; positive container proof is required, and a blank unidentified row or bare dead-shell prompt cannot receive an escalation.
-The current operator boundary is in [Composer and injection safety](herdr-backend.md#composer-and-injection-safety).
+The current operator boundary is in Composer and injection safety.
 Stalled escalation delivery writes `state/.subsuper-inject-wedged` and attempts a configured backend-independent active alert after `FM_MAX_DEFER_SECS` instead of silently deferring forever.
 On an unmarked return, `bin/fm-afk-return.sh` owns ordered shutdown, the record archive, durable catch-up evidence, the return brief, and the fail-closed gate that keeps ordinary work behind every live firstmate-actionable blocker the away session could not fix.
 For task steers, `fm-send.sh`'s header owns durable-inbox and typed-plane routing; the [Deck chat host](../bin/fm-deck-chat.sh) primary uses the primary steering inbox instead.
@@ -170,7 +169,7 @@ Text for a worker to read and commands that drive a worker's process are separat
 Every classification returns a verdict of busy, idle, unknown, or dead together with the source that produced it, so a consumer or a diagnostic can never confuse semantic state with a fallback.
 
 Each worker adapter reports its own turn lifecycle through a machine-readable semantic contract rather than through rendered footer text: Deck through its Firstmate-owned worker wrapper.
-Any other recorded harness has no trusted record source; the classification precedence, including Herdr's native-busy fallback when no record exists, is owned by `bin/fm-busy-lib.sh`.
+Any other recorded harness has no trusted record source; the classification precedence, is owned by `bin/fm-busy-lib.sh`.
 
 Missing, malformed, stale, untrusted, or unverified semantic state is unknown, never idle, and unknown is never promoted to busy either.
 Ordinary task-state consumers act only on an exact busy verdict, so an unreadable worker surfaces for a closer look instead of being absorbed as still-working or written off as finished.
@@ -187,20 +186,13 @@ These delivery checks are harness-scoped rather than a global pattern union, and
 The runtime backend is the session-provider layer below firstmate's scripts.
 It owns task endpoint creation, bounded capture, text/key sends, current-path reads for spawn-time worktree discovery when the backend does not create the worktree itself, live-window fallback lookup, agent-process liveness probes where verified, and endpoint teardown.
 Endpoint teardown carries one cross-backend contract that the layer above depends on: a kill reports whether the endpoint is gone, could not be proved gone, or could never be attempted, and only the first licenses removing the durable records that assert a worker stopped - `fm_backend_kill` in `bin/fm-backend.sh` owns that contract, and each adapter's own header owns what its backend can prove.
-`bin/fm-backend.sh` centralizes backend selection, `state/<id>.meta` helpers, metadata-only cleanup identity validation, selector resolution, and operation dispatch, and each accepted backend has one adapter under `bin/backends/` named after it, with `bin/backends/tmux.sh` as the reference implementation every later adapter is measured against.
-[`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns the accepted backend list and each backend's status, new-spawn selection precedence and authorization, runtime auto-detection and its innermost-first nesting resolution, and the loud refusal of any other name.
+`bin/fm-backend.sh` centralizes backend selection, `state/<id>.meta` helpers, metadata-only cleanup identity validation, selector resolution, and operation dispatch to the one adapter, `bin/backends/stream.sh`; it also reads records left on the retired tmux and herdr backends as undrivable rather than crashing.
+[`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns selection and the loud refusal of any other name.
 [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) also owns explicit backend metadata and compatibility for legacy records.
-`fm-watch.sh` decides each window's busy state through the semantic contract above rather than by polling the backend for rendered text.
-Herdr's native `agent.get` verdict still participates, but only as evidence of activity: a native `busy` is accepted when the task has no record of its own, while a native `idle` is not, because `agent.get` reports generation state and reads idle while a worker blocks on its own long-running foreground tool call.
-Herdr is the only backend that exposes a native busy primitive; on every other backend a task is classified purely from its adapter's own lifecycle record.
-That poll loop is still the default event source for backends with no native push events, so this stays an extraction of the abstraction rather than a watcher rewrite.
-For capable Herdr sessions, the same watcher replaces its terminal sleep with a bounded native event wait that immediately surfaces `blocked`; [Push events and polling fallback](herdr-backend.md#push-events-and-polling-fallback) owns the current mechanism and capability gates, while [runtime backend verification](verification/runtime-backends.md#native-blocked-event) owns the active evidence.
-The deeper session-start agent-process liveness probe is separate from that busy-state poll: tmux, Herdr, and stream all have verified agent-process classifiers; [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns which backends accept a secondmate spawn.
-[`herdr-backend.md`](herdr-backend.md) owns Herdr's current setup, CI coverage, and safety limits, while [`verification/runtime-backends.md`](verification/runtime-backends.md#herdr) owns active empirical evidence.
-Herdr uses one tab per task; [Watching and task containers](herdr-backend.md#watching-and-task-containers) owns launcher-bound workspace placement, the label-only fallback, and recovery scope.
-Its default-on presentation projection may place one clean new task in a disposable workspace without changing endpoint authority or lifecycle ownership; [Presentation spaces](herdr-backend.md#presentation-spaces) owns that conditional design, the Herdr version floor its unconfigured default is gated behind, and its narrow home-local restored-shell cleanup at locked session start.
-stream's "session host" is the fleet's own central hub rather than a third-party multiplexer, and each task's pseudoterminal is owned by a thin agent on the machine that runs it.
-Relaying that pty over the network adds one state the local backends do not have - a silent agent reads `unreadable`, never `dead`, because an unreachable worker and a stopped one are indistinguishable from the hub - and [`stream-backend.md`](stream-backend.md) owns its setup, security model, and limits, while [`verification/runtime-backends.md`](verification/runtime-backends.md#stream) owns active live evidence.
+`fm-watch.sh` decides each endpoint's busy state through the semantic contract above rather than by polling the backend for rendered text; stream exposes no native busy primitive, so a task is classified purely from its adapter's own lifecycle record, and the watcher's poll loop is its event source.
+The deeper session-start agent-process liveness probe is separate from that busy-state poll and uses the stream adapter's agent-process classifier.
+stream's "session host" is the fleet's own central hub rather than a terminal multiplexer, and each task's pseudoterminal is owned by a thin agent on the machine that runs it.
+Relaying that pty over the network adds one state a local terminal would not have - a silent agent reads `unreadable`, never `dead`, because an unreachable worker and a stopped one are indistinguishable from the hub - and [`stream-backend.md`](stream-backend.md) owns its setup, security model, and limits, while [`verification/runtime-backends.md`](verification/runtime-backends.md#stream) owns active live evidence.
 
 ## Worktrees, not branches in your checkout
 
@@ -254,7 +246,6 @@ A local route points directly at its home, while a remote route adds an SSH alia
 `fm-home-seed.sh` provisions a local isolated home, clones the listed PR-based projects into it, initializes newly cloned `no-mistakes` projects, copies the charter to `data/charter.md`, and `fm-spawn.sh --secondmate` launches it through the same session-provider and status-file path as any direct report.
 For a domain whose subject is the firstmate repo itself, a deliberate `--no-projects` seed creates a project-less home whose crews take pooled worktrees of that repo instead of separate clones.
 The signal cannot be mixed with project names or omitted accidentally, and a populated home cannot be converted in place; the full seed contract is in [configuration.md](configuration.md#secondmate-routes-datasecondmatesmd).
-Herdr secondmate and child placement follows the launcher-binding contract in [Watching and task containers](herdr-backend.md#watching-and-task-containers).
 When seeded with `-`, the home is a durable treehouse lease under the secondmate id, so it survives with no live process and is not recycled by later `treehouse get` or pruning.
 Retirement or seed rollback returns the leased home; normal restart/recovery keeps it leased.
 If returning the lease fails during teardown, firstmate leaves the route and home intact instead of hiding a still-held lease.
@@ -419,7 +410,6 @@ The procedure and outcome vocabulary are owned by the [`/updatefirstmate` skill]
 ## Restart-proof
 
 Fleet state lives in each task's session-provider backend, no-mistakes run records, status event logs, local markdown under `data/` including `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`, and persistent secondmate homes.
-For herdr, respawning after a server-restored layout closes and replaces confirmed no-agent or dead task-tab husks instead of requiring manual tab cleanup.
 At session start, confirmed-dead secondmate agent endpoints are closed and relaunched through the same secondmate spawn path, while ambiguous liveness reads are left untouched to avoid duplicate supervisors.
 Use `/stow` before an intentional reset when the conversation may hold durable knowledge that has not yet been written to disk; after that, the next firstmate session can reconcile and carry on.
 

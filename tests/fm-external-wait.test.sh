@@ -229,15 +229,19 @@ test_expiry_is_a_reader_verdict_not_a_cleanup_step() {
 
 # --- watcher behavior -------------------------------------------------------
 
-# One stale parked pane fixture shared by the watcher cases: a static capture, a
-# non-terminal status line, and the .hash/.count state that makes the next poll
-# see the pane as already-stale.
-stale_case() {  # <name> <window> <status-line> -> prints the case dir
-  local name=$1 window=$2 status_line=$3 dir state capture_file key
+# One stale parked pane fixture shared by the watcher cases: a fake stream
+# endpoint with a static screen, a non-terminal status line, and the .hash/.count
+# state that makes the next poll see the pane as already-stale. The endpoint's
+# target is left in <dir>/window.
+stale_case() {  # <name> <status-line> -> prints the case dir
+  local name=$1 status_line=$2 dir state capture_file key window
   dir=$(make_case "$name"); state="$dir/state"
   capture_file="$dir/pane.txt"
   printf 'idle parked output' > "$capture_file"
-  printf 'window=%s\nkind=ship\n' "$window" > "$state/parked.meta"
+  window=$(stream_window "$state" parked)
+  printf '%s' "$window" > "$dir/window"
+  stream_capture "$window" "$capture_file"
+  printf 'window=%s\nbackend=stream\nkind=ship\n' "$window" > "$state/parked.meta"
   printf '%s\n' "$status_line" > "$state/parked.status"
   key=$(printf '%s' "$window" | tr ':/.' '___')
   printf '%s' "$(hash_text "idle parked output")" > "$state/.hash-$key"
@@ -248,8 +252,7 @@ stale_case() {  # <name> <window> <status-line> -> prints the case dir
 run_watcher() {  # <dir> <pid-var> [extra env assignments...]
   local dir=$1 pidvar=$2
   shift 2
-  env PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="${FM_FAKE_TMUX_WINDOW:-test:fm-parked}" \
-    FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+  env PATH="$dir/fakebin:$PATH" \
     FM_STATE_OVERRIDE="$dir/state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
     FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     "$@" "$WATCH" > "$dir/watch.out" 2> "$dir/watch.err" &
@@ -258,10 +261,10 @@ run_watcher() {  # <dir> <pid-var> [extra env assignments...]
 
 test_live_declaration_absorbs_the_wedge_ladder_and_clears_the_counter() {
   local dir state key pane_hash sig pid since_now
-  dir=$(stale_case absorb-wedge "test:fm-parked" "working: parked on the provider")
+  dir=$(stale_case absorb-wedge "working: parked on the provider")
   state="$dir/state"
   sig=$(seen_sig "$state/parked.status"); printf '%s' "$sig" > "$state/.seen-parked_status"
-  key=$(printf '%s' "test:fm-parked" | tr ':/.' '___')
+  key=$(tr ':/.' '___' < "$dir/window")
   pane_hash=$(cat "$state/.hash-$key")
   ext "$dir" declare parked --reason "provider outage, generation stopped" \
     --until "$(future_iso 7200)" --by "firstmate" >/dev/null || fail "declare failed"
@@ -284,10 +287,10 @@ test_live_declaration_absorbs_the_wedge_ladder_and_clears_the_counter() {
 
 test_expired_declaration_restores_ordinary_escalation() {
   local dir state key pane_hash sig pid
-  dir=$(stale_case expired-escalate "test:fm-parked" "working: parked on the provider")
+  dir=$(stale_case expired-escalate "working: parked on the provider")
   state="$dir/state"
   sig=$(seen_sig "$state/parked.status"); printf '%s' "$sig" > "$state/.seen-parked_status"
-  key=$(printf '%s' "test:fm-parked" | tr ':/.' '___')
+  key=$(tr ':/.' '___' < "$dir/window")
   pane_hash=$(cat "$state/.hash-$key")
   ext "$dir" declare parked --reason "provider outage, generation stopped" \
     --until "$(future_iso 60)" >/dev/null || fail "declare failed"
@@ -307,10 +310,10 @@ test_expired_declaration_restores_ordinary_escalation() {
 
 test_re_surface_names_the_declaration_and_is_distinguishable_from_a_pause() {
   local dir state key pid sig
-  dir=$(stale_case resurface-attribution "test:fm-parked" "working: parked on the provider")
+  dir=$(stale_case resurface-attribution "working: parked on the provider")
   state="$dir/state"
   sig=$(seen_sig "$state/parked.status"); printf '%s' "$sig" > "$state/.seen-parked_status"
-  key=$(printf '%s' "test:fm-parked" | tr ':/.' '___')
+  key=$(tr ':/.' '___' < "$dir/window")
   ext "$dir" declare parked --reason "provider outage, generation stopped" \
     --until "$(future_iso 7200)" --by "firstmate (supervisor)" >/dev/null || fail "declare failed"
   # The wait has held longer than the pause cadence: its bounded recheck is due.
@@ -338,7 +341,7 @@ test_re_surface_names_the_declaration_and_is_distinguishable_from_a_pause() {
 
 test_a_new_status_event_still_wakes_under_a_live_declaration() {
   local dir state pid
-  dir=$(stale_case new-event-pass "test:fm-parked" "done: PR https://example.test/pull/7 checks green")
+  dir=$(stale_case new-event-pass "done: PR https://example.test/pull/7 checks green")
   state="$dir/state"
   ext "$dir" declare parked --reason "provider outage, generation stopped" \
     --until "$(future_iso 7200)" >/dev/null || fail "declare failed"

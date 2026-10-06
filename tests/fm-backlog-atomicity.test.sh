@@ -21,14 +21,20 @@
 # so a persistent secondmate keeps its own books through its own copies of these
 # scripts. A parent's view of a mate lagging is a freshness question and is
 # deliberately not asserted here.
+# fm_test_stream_task prints a task record identity one field per word,
+# so its unquoted expansion in fm_write_meta argument lists is deliberate.
+# shellcheck disable=SC2046
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 # An exported TASKS_AXI_BACKEND would outrank each case's .tasks.toml fixture
 # in fm_tasks_axi_backend, so the backend cases must start from a clean slate.
 unset TASKS_AXI_BACKEND || :
+
+# Spawns and teardowns here run on the suite's fake stream hub.
+fm_test_fake_stream_ensure || fail "the fake stream hub did not start"
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
@@ -88,14 +94,9 @@ Delivery contract: mode=no-mistakes
 EOF
   done
 
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-case "$*" in *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;; esac
-case "${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
   fm_fake_exit0 "$fakebin" treehouse gh gh-axi no-mistakes deck
+  # A spawn's endpoint starts from the hub's plain defaults in every case.
+  fm_test_fake_stream_defaults '{}'
 
   fm_git_init_commit "$case_dir/project"
   fm_git_add_origin "$case_dir/project" "$case_dir/project.origin.git"
@@ -438,33 +439,49 @@ SH
   chmod +x "$case_dir/fakebin/tasks-axi"
 }
 
-break_launch_delivery() {  # <case-dir>
+# watch_spawn_resources <case-dir>: an endpoint the spawn creates leaves
+# task-endpoint-created at its first input, and its `treehouse get` leaves
+# local-copy-requested.
+watch_spawn_resources() {  # <case-dir>
   local case_dir=$1
-  cat > "$case_dir/fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-case "$*" in *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;; esac
-case "${1:-}" in
-  display-message) printf 'firstmate\n'; exit 0 ;;
-  send-keys) exit 1 ;;
-esac
+  cat > "$case_dir/spawn-witness" <<SH
+#!/bin/sh
+: > "$case_dir/task-endpoint-created"
+case "\$1" in *"treehouse get"*) : > "$case_dir/local-copy-requested" ;; esac
 exit 0
 SH
-  chmod +x "$case_dir/fakebin/tmux"
+  chmod +x "$case_dir/spawn-witness"
+  fm_test_fake_stream_defaults "$(jq -nc --arg h "$case_dir/spawn-witness" '{on_text: $h}')"
 }
 
+# The launch command never reaches the spawn's endpoint.
+break_launch_delivery() {  # <case-dir>
+  fm_test_fake_stream_defaults '{"fail_text": "encode launch-brief"}'
+}
+
+# Every endpoint this case's home records leaves a marker when cleanup reaches
+# its kill, and the local copy one when treehouse is asked to return it.
 track_teardown_resource_actions() {  # <case-dir>
   local case_dir=$1
-  cat > "$case_dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-: > "$case_dir/backend-resource-action"
-exit 0
-SH
+  printf '#!/bin/sh\n: > "%s"\n' "$case_dir/backend-resource-action" > "$case_dir/kill-witness"
+  chmod +x "$case_dir/kill-witness"
+  home_endpoints_on_kill "$case_dir" "$case_dir/kill-witness"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
 : > "$case_dir/local-copy-resource-action"
 exit 0
 SH
-  chmod +x "$case_dir/fakebin/tmux" "$case_dir/fakebin/treehouse"
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
+# home_endpoints_on_kill <case-dir> <hook>: set the kill hook on every fake
+# endpoint registered for a state directory under this case.
+home_endpoints_on_kill() {  # <case-dir> <hook>
+  local target
+  for target in $(fm_test_fake_stream_endpoints | jq -r --arg d "$1/" \
+      '.endpoints[] | select(.cwd | startswith($d)) | .endpoint_id'); do
+    fm_test_fake_stream_set "$target" "$(jq -nc --arg h "$2" '{on_kill: $h}')"
+  done
 }
 
 interrupt_teardown_during_treehouse_return() {  # <case-dir>
@@ -520,15 +537,9 @@ SH
 fail_the_confirm_stamp_after_a_proven_kill() {  # <case-dir>
   local case_dir=$1 real
   real=$(command -v perl)
-  cat > "$case_dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\${1:-}" in
-  kill-window) : > "$case_dir/kill-proved"; exit 0 ;;
-  list-windows) exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tmux"
+  printf '#!/bin/sh\n: > "%s"\n' "$case_dir/kill-proved" > "$case_dir/kill-witness"
+  chmod +x "$case_dir/kill-witness"
+  home_endpoints_on_kill "$case_dir" "$case_dir/kill-witness"
   cat > "$case_dir/fakebin/perl" <<SH
 #!/usr/bin/env bash
 if [ -f "$case_dir/kill-proved" ] && [ ! -f "$case_dir/stamp-refused" ]; then
@@ -549,17 +560,8 @@ stage_confirmed_kill_task() {  # <case-dir> <id>
   home=$(home_of "$case_dir")
   add_item "$case_dir" "$id" scout
   start_item "$case_dir" "$id"
-  cat > "$case_dir/fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-case "${1:-}" in
-  list-windows) exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tmux"
   fm_write_meta "$home/state/$id.meta" \
-    "window=fmtest:fm-$id" \
-    "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$home/state" "$id") \
     "worktree=$case_dir/absent-worktree" \
     "project=$case_dir/absent-project" \
     "harness=deck" "kind=scout" "mode=" "yolo=off" \
@@ -634,8 +636,7 @@ write_task_meta() {  # <case-dir> <id> <kind> <mode> [extra-line...]
   local case_dir=$1 id=$2 kind=$3 mode=$4
   shift 4
   fm_write_meta "$(home_of "$case_dir")/state/$id.meta" \
-    "window=firstmate:fm-$id" \
-    "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$(home_of "$case_dir")/state" "$id") \
     "worktree=$case_dir/absent-worktree" \
     "project=$case_dir/absent-project" \
     "harness=deck" \
@@ -652,7 +653,7 @@ run_spawn() {  # <case-dir> <args...>
   # the user's home can reach the developer's real one.
   mkdir -p "$case_dir/user-home"
   FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" HOME="$case_dir/user-home" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" \
     \
     PATH="$case_dir/fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
@@ -692,73 +693,51 @@ stage_unanswerable_task_with_work() {  # <case-dir> <id>
   home=$(home_of "$case_dir")
   add_item "$case_dir" "$id"
   start_item "$case_dir" "$id"
-  cat > "$case_dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\${1:-}" in
-  list-windows) printf 'fm-%s\n' '$id'; exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tmux"
   git init -q "$case_dir/project-$id"
   git -C "$case_dir/project-$id" -c user.name=test -c user.email=test@example.invalid \
     commit --allow-empty -qm base
   git -C "$case_dir/project-$id" worktree add -q --detach "$case_dir/wt-$id" >/dev/null 2>&1
   printf 'uncommitted draft\n' > "$case_dir/wt-$id/draft.txt"
   fm_write_meta "$home/state/$id.meta" \
-    "window=fmtest:fm-$id" \
-    "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$home/state" "$id") \
     "worktree=$case_dir/wt-$id" \
     "project=$case_dir/project-$id" \
     "harness=deck" "kind=ship" "mode=" "yolo=off" \
     "spawn_gen=spawn-unanswerable" "decisions_reviewed=1" "decision_keys="
+  fm_test_fake_stream_set "$(fm_test_stream_target_of "$home/state" "$id")" '{"kill_undelivered": true}'
 }
 
-# stage_live_tmux_task: a task whose worktree is clean, so cleanup reaches the
-# kill, and whose tmux keeps listing the window after every kill it accepts -
-# the adapter's own still-present read. Nothing but that read stands between
+# stage_live_task: a task whose worktree is clean, so cleanup reaches the
+# kill, and whose endpoint stays live after every kill the hub accepts - its
+# agent never acknowledges one. Nothing but that read stands between
 # this record and retirement.
-stage_live_tmux_task() {  # <case-dir> <id>
+stage_live_task() {  # <case-dir> <id>
   local case_dir=$1 id=$2 home
   home=$(home_of "$case_dir")
   add_item "$case_dir" "$id"
   start_item "$case_dir" "$id"
-  cat > "$case_dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\${1:-}" in
-  list-windows) printf 'fm-%s\n' '$id'; exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tmux"
   git init -q "$case_dir/project-$id"
   git -C "$case_dir/project-$id" -c user.name=test -c user.email=test@example.invalid \
     commit --allow-empty -qm base
   git -C "$case_dir/project-$id" worktree add -q --detach "$case_dir/wt-$id" >/dev/null 2>&1
   fm_write_meta "$home/state/$id.meta" \
-    "window=fmtest:fm-$id" \
-    "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$home/state" "$id") \
     "worktree=$case_dir/wt-$id" \
     "project=$case_dir/project-$id" \
     "harness=deck" "kind=ship" "mode=" "yolo=off" \
     "spawn_gen=spawn-live" "decisions_reviewed=1" "decision_keys="
+  fm_test_fake_stream_set "$(fm_test_stream_target_of "$home/state" "$id")" '{"kill_undelivered": true}'
 }
 
-# stage_unanswerable_herdr_task: a task whose RUNTIME cannot answer at all -
-# the herdr server is gone, so cleanup refuses in the adapter itself, before
-# and beside the kill contract's own gate. Its worktree is already gone, so
-# nothing but the runtime stands between this record and retirement.
-stage_unanswerable_herdr_task() {  # <case-dir> <id>
+# stage_retired_herdr_task: a task recorded on the retired herdr backend, so no
+# backend can answer for its endpoint and cleanup can never confirm it stopped.
+# Its worktree is already gone, so nothing but that endpoint stands between this
+# record and retirement.
+stage_retired_herdr_task() {  # <case-dir> <id>
   local case_dir=$1 id=$2 home
   home=$(home_of "$case_dir")
   add_item "$case_dir" "$id" scout
   start_item "$case_dir" "$id"
-  cat > "$case_dir/fakebin/herdr" <<'SH'
-#!/usr/bin/env bash
-echo "herdr: cannot reach the server" >&2
-exit 1
-SH
-  chmod +x "$case_dir/fakebin/herdr"
   fm_write_meta "$home/state/$id.meta" \
     "window=lab:wG:pQ" \
     "endpoint_task_id=$id" \
@@ -767,7 +746,7 @@ SH
     "harness=deck" "kind=scout" "mode=" "yolo=off" \
     "backend=herdr" "herdr_session=lab" "herdr_workspace_id=wG" \
     "herdr_tab_id=wG:tQ" "herdr_pane_id=wG:pQ" \
-    "spawn_gen=spawn-unanswerable-herdr" "decisions_reviewed=1" "decision_keys="
+    "spawn_gen=spawn-retired-herdr" "decisions_reviewed=1" "decision_keys="
   mkdir -p "$home/data/$id"
   printf 'findings\n' > "$home/data/$id/report.md"
 }
@@ -1058,17 +1037,7 @@ test_dispatch_refuses_a_pending_authoritative_close() {
   marker="$(home_of "$case_dir")/state/$id.backlog-close"
   printf 'id=%s\ndata=%s\nspawn_gen=spawn-closing\narg=--pr\narg=https://github.com/example/repo/pull/12\n' \
     "$id" "$(home_of "$case_dir")/data" > "$marker"
-  cat > "$case_dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\$*" in
-  *new-window*) : > "$case_dir/task-endpoint-created" ;;
-  *treehouse\\ get*) : > "$case_dir/local-copy-requested" ;;
-  *"#{pane_current_path}"*) printf '%s\n' "\${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
-esac
-case "\${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tmux"
+  watch_spawn_resources "$case_dir"
 
   out=$(run_ship_spawn "$case_dir" "$id") || rc=$?
   [ "$rc" -ne 0 ] || fail "spawn accepted work with an authoritative close still pending"
@@ -1093,17 +1062,7 @@ test_dispatch_refuses_a_held_row_before_creating_resources() {
   add_item "$case_dir" "$id"
   tasks-axi hold "$id" --reason "captain decision pending" --kind captain \
     --file "$(backlog_of "$case_dir")" >/dev/null
-  cat > "$case_dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\$*" in
-  *new-window*) : > "$case_dir/task-endpoint-created" ;;
-  *treehouse\\ get*) : > "$case_dir/local-copy-requested" ;;
-  *"#{pane_current_path}"*) printf '%s\n' "\${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
-esac
-case "\${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tmux"
+  watch_spawn_resources "$case_dir"
 
   out=$(run_ship_spawn "$case_dir" "$id") || rc=$?
   [ "$rc" -ne 0 ] || fail "spawn accepted a held backlog row"
@@ -1128,17 +1087,7 @@ test_dispatch_refuses_a_blocked_row_before_creating_resources() {
   add_item "$case_dir" "$blocker"
   tasks-axi add "$id" "item for $id" --kind ship --blocked-by "$blocker" \
     --file "$(backlog_of "$case_dir")" >/dev/null
-  cat > "$case_dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\$*" in
-  *new-window*) : > "$case_dir/task-endpoint-created" ;;
-  *treehouse\\ get*) : > "$case_dir/local-copy-requested" ;;
-  *"#{pane_current_path}"*) printf '%s\n' "\${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
-esac
-case "\${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tmux"
+  watch_spawn_resources "$case_dir"
 
   out=$(run_ship_spawn "$case_dir" "$id") || rc=$?
   [ "$rc" -ne 0 ] || fail "spawn accepted a dependency-blocked backlog row"
@@ -1163,17 +1112,7 @@ test_dispatch_refuses_a_held_in_flight_row_before_relaunch() {
   start_item "$case_dir" "$id"
   tasks-axi hold "$id" --reason "captain decision pending" --kind captain \
     --file "$(backlog_of "$case_dir")" >/dev/null
-  cat > "$case_dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\$*" in
-  *new-window*) : > "$case_dir/task-endpoint-created" ;;
-  *treehouse\\ get*) : > "$case_dir/local-copy-requested" ;;
-  *"#{pane_current_path}"*) printf '%s\n' "\${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
-esac
-case "\${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tmux"
+  watch_spawn_resources "$case_dir"
 
   out=$(run_ship_spawn "$case_dir" "$id") || rc=$?
   [ "$rc" -ne 0 ] || fail "spawn accepted a held In-flight backlog row"
@@ -1632,7 +1571,7 @@ test_deferred_signal_verification_outlives_an_unresponsive_tasks_axi() {
   mkdir -p "$case_dir/user-home"
   out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" \
     HOME="$case_dir/user-home" FM_SPAWN_NO_GUARD=1 \
-    FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
+    FM_FAKE_PANE_PATH="$case_dir/wt" \
     FM_TASKS_AXI_TIMEOUT=3 PATH="$case_dir/fakebin:$PATH" \
     timeout -k 5 30 "$SPAWN" "$id" "$case_dir/project" \
     --mode no-mistakes --yolo off 2>&1) || rc=$?
@@ -2165,25 +2104,17 @@ test_completion_marks_its_pending_close_when_the_worker_cannot_be_proved_stopped
   home=$(home_of "$case_dir")
   add_item "$case_dir" "$id" scout
   start_item "$case_dir" "$id"
-  # A tmux that accepts the kill and still lists the window afterwards: the
-  # close answered fine and closed nothing, so nothing proved the worker gone.
-  cat > "$case_dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\${1:-}" in
-  list-windows) printf 'fm-%s\n' '$id'; exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tmux"
+  # An endpoint whose agent never acknowledges the kill: the close answered
+  # fine and closed nothing, so nothing proved the worker gone.
   write_task_meta "$case_dir" "$id" scout '' \
     "spawn_gen=spawn-close-unconfirmed" "decisions_reviewed=1" "decision_keys="
   fm_write_meta "$home/state/$id.meta" \
-    "window=fmtest:fm-$id" \
-    "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$home/state" "$id") \
     "worktree=$case_dir/absent-worktree" \
     "project=$case_dir/absent-project" \
     "harness=deck" "kind=scout" "mode=" "yolo=off" \
     "spawn_gen=spawn-close-unconfirmed" "decisions_reviewed=1" "decision_keys="
+  fm_test_fake_stream_set "$(fm_test_stream_target_of "$home/state" "$id")" '{"kill_undelivered": true}'
   mkdir -p "$home/data/$id"
   printf 'findings\n' > "$home/data/$id/report.md"
   meta="$home/state/$id.meta"
@@ -2475,7 +2406,7 @@ test_retiring_past_an_unconfirmed_kill_names_what_cleanup_cannot_tell() {
   id=atomic-retire-present-c4
   case_dir=$(make_home retire-present)
   home=$(home_of "$case_dir")
-  stage_live_tmux_task "$case_dir" "$id"
+  stage_live_task "$case_dir" "$id"
 
   out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
     || fail "a confirmed retirement should complete past an unconfirmed kill: $out"
@@ -2492,47 +2423,6 @@ test_retiring_past_an_unconfirmed_kill_names_what_cleanup_cannot_tell() {
   [ "$(row_state "$case_dir" "$id")" = "done" ] \
     || fail "the retirement left the backlog row at $(row_state "$case_dir" "$id"): $out"
   pass "a retirement past an unconfirmed kill names what cleanup cannot tell apart"
-}
-
-# The other half of that split: an adapter that cannot be loaded at all. No
-# backend ever spoke, so cleanup must not describe an answer that does not
-# exist - the hedge that is honest for an unconfirmed kill would be a fresh
-# untrue sentence here. The endpoint's own adapter is missing from the bin
-# directory the run loads its libraries from, which is the only way this
-# verdict is reachable: every malformed target and unknown backend is refused
-# long before the kill.
-test_retiring_without_a_loadable_adapter_claims_no_backend_answer() {
-  local case_dir home id out lib f
-
-  id=atomic-retire-unloadable-d2
-  case_dir=$(make_home retire-unloadable)
-  home=$(home_of "$case_dir")
-  stage_live_tmux_task "$case_dir" "$id"
-  lib="$case_dir/binroot"
-  mkdir -p "$lib/backends"
-  for f in "$ROOT"/bin/*; do
-    [ -d "$f" ] || ln -s "$f" "$lib/$(basename "$f")"
-  done
-  for f in "$ROOT"/bin/backends/*; do
-    case "$(basename "$f")" in tmux.sh) continue ;; esac
-    ln -s "$f" "$lib/backends/$(basename "$f")"
-  done
-
-  out=$(printf '%s\n' "$id" | FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
-    PATH="$case_dir/fakebin:$PATH" "$lib/fm-retire-endpoint.sh" "$id" 2>&1) \
-    || fail "a confirmed retirement should complete without a loadable adapter: $out"
-  assert_contains "$out" "no backend ever answered for it" \
-    "cleanup did not say that no backend answered at all: $out"
-  case "$out" in
-    *"cannot tell whether the backend reported it still there"*)
-      fail "cleanup described a backend answer that never happened: $out" ;;
-  esac
-  assert_contains "$out" "on that assertion alone" \
-    "cleanup did not name the operator assertion the removal rests on: $out"
-  assert_absent "$home/state/$id.meta" "the retirement left the record it retired"
-  [ "$(row_state "$case_dir" "$id")" = "done" ] \
-    || fail "the retirement left the backlog row at $(row_state "$case_dir" "$id"): $out"
-  pass "a retirement with no loadable adapter claims no backend answer"
 }
 
 # Retiring a record is bookkeeping about the record, and work on disk is not
@@ -2561,42 +2451,11 @@ test_retiring_leaves_work_on_disk_byte_untouched() {
     "the retirement did not name the worktree it left behind"
   # Cleanup refused before any kill, so the endpoint was never closed and never
   # read - and the record that named it is now gone.
-  assert_contains "$out" "fmtest:fm-$id" \
+  assert_contains "$out" "$(fm_test_stream_target_of "$home/state" "$id")" \
     "the retirement did not name the endpoint nothing closed"
   assert_contains "$out" "neither closed nor checked" \
     "the retirement did not say the endpoint was never closed or checked"
   pass "a retirement leaves work on disk byte-untouched and names what remains"
-}
-
-# The louder assertion: a RUNTIME that refuses to answer at all is not
-# something the ordinary retirement decides for the operator. The default keeps
-# refusing, and only the flag that says what it does proceeds - recorded, like
-# the retirement itself, with who overrode it and when.
-test_retiring_needs_the_named_flag_to_override_a_runtime_refusal() {
-  local case_dir home id out rc=0
-  id=atomic-retire-runtime-b9
-  case_dir=$(make_home retire-runtime)
-  home=$(home_of "$case_dir")
-  stage_unanswerable_herdr_task "$case_dir" "$id"
-
-  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") || rc=$?
-  [ "$rc" -ne 0 ] || fail "a runtime refusal must not be retired without the flag: $out"
-  assert_contains "$out" "--override-runtime-refusal" \
-    "the refusal should name the flag that answers it"
-  assert_present "$home/state/$id.meta" \
-    "the default path retired a record whose runtime refused"
-  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
-    || fail "the default path moved the backlog row for a runtime that refused"
-
-  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id" --override-runtime-refusal) \
-    || fail "the explicit override should retire the record: $out"
-  assert_absent "$home/state/$id.meta" "the override did not retire the record"
-  assert_contains "$out" "$(id -un)" "the override was not recorded with who made it"
-  printf '%s' "$out" | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' \
-    || fail "the override was not recorded with when it was made: $out"
-  assert_contains "$out" "runtime refusal" \
-    "the override did not say a runtime refusal was overridden"
-  pass "only the named override flag retires a record whose runtime refused, and it is recorded"
 }
 
 # The operator's own abort must abort the retirement. A handler that only
@@ -2651,9 +2510,8 @@ test_a_refusal_that_is_not_the_work_gate_retires_nothing() {
   id=atomic-retire-other-refusal-b9
   case_dir=$(make_home retire-other-refusal)
   home=$(home_of "$case_dir")
-  stage_unanswerable_herdr_task "$case_dir" "$id"
+  stage_retired_herdr_task "$case_dir" "$id"
   rm -f "$home/data/$id/report.md"
-  rm -f "$case_dir/fakebin/herdr"
 
   out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") || rc=$?
   [ "$rc" -ne 0 ] || fail "a refusal that is not the work gate must retire nothing: $out"
@@ -2871,13 +2729,9 @@ test_a_retirement_records_its_author_durably() {
     *"	asserted	"*) : ;;
     *) fail "the log line does not read as an assertion: $line" ;;
   esac
-  case "$line" in
-    *override_runtime_refusal=0*) : ;;
-    *) fail "the retirement log does not say whether the override was used: $line" ;;
-  esac
   printf '%s' "$line" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' \
     || fail "the retirement log does not say when it was asserted: $line"
-  pass "a retirement records the record, its author, the time and the override durably"
+  pass "a retirement records the record, its author and the time durably"
 }
 
 # And the author is recorded FIRST: a retirement whose line cannot be appended
@@ -2971,7 +2825,7 @@ test_retirement_help_states_what_the_operator_is_asserting() {
   local case_dir out
   case_dir=$(make_home retire-help)
   out=$(run_retire "$case_dir" --help </dev/null) || fail "--help should succeed: $out"
-  assert_contains "$out" "hub-unanswerable" \
+  assert_contains "$out" "the endpoint is unanswerable" \
     "the help does not name the condition this command is for"
   assert_contains "$out" "no worker is still running" \
     "the help does not say what the operator is asserting"
@@ -3680,7 +3534,7 @@ test_teardown_rechecks_record_parent_after_lock_acquisition() {
   foreign_worktree="$case_dir/foreign-worktree"
   mkdir -p "$foreign_state" "$foreign_worktree"
   fm_write_meta "$foreign_state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$foreign_state" "$id") \
     "worktree=$foreign_worktree" "project=$case_dir/foreign-project" \
     "harness=deck" "kind=ship" "mode=local-only" "yolo=off"
   track_teardown_resource_actions "$case_dir"
@@ -3721,7 +3575,7 @@ test_teardown_refuses_a_symlinked_state_directory_at_entry() {
   external_state="$case_dir/external-state"
   mv "$home/state" "$external_state"
   fm_write_meta "$external_state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$external_state" "$id") \
     "worktree=$case_dir/foreign-worktree" "project=$case_dir/foreign-project" \
     "harness=deck" "kind=ship" "mode=local-only" "yolo=off"
   ln -s "$external_state" "$home/state"
@@ -3774,7 +3628,7 @@ test_spawn_refuses_a_special_file_tasks_config() {
   mkfifo "$home/.tasks.toml"
 
   out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" \
     \
     PATH="$case_dir/fakebin:$PATH" \
     timeout 60 "$SPAWN" "$id" "$case_dir/project" --mode no-mistakes --yolo off 2>&1) || rc=$?
@@ -4058,9 +3912,7 @@ test_no_automatic_path_retires_an_unanswerable_record
 test_retiring_refuses_wildcards_and_unconfirmed_ids
 test_retiring_records_who_asserted_it_and_when
 test_retiring_past_an_unconfirmed_kill_names_what_cleanup_cannot_tell
-test_retiring_without_a_loadable_adapter_claims_no_backend_answer
 test_retiring_leaves_work_on_disk_byte_untouched
-test_retiring_needs_the_named_flag_to_override_a_runtime_refusal
 test_an_interrupt_mid_retirement_retires_nothing
 test_a_refusal_that_is_not_the_work_gate_retires_nothing
 test_a_cleanup_that_failed_partway_is_not_reported_as_a_no_op

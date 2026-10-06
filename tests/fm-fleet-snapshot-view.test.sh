@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Behavior tests for the read-only fleet snapshot and its human renderer.
+# snap_identity prints a task's record identity one field per word, so its
+# unquoted expansion in fm_write_meta's argument list is deliberate.
+# shellcheck disable=SC2046
 set -u
 
-# shellcheck source=tests/lib.sh
+# shellcheck source=tests/fixtures.sh
 # shellcheck disable=SC1091
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 SNAPSHOT="$ROOT/bin/fm-fleet-snapshot.sh"
 VIEW="$ROOT/bin/fm-fleet-view.sh"
@@ -19,41 +22,30 @@ make_fakebin() {  # <dir>
 #!/usr/bin/env bash
 exit 0
 SH
-  cat > "$fb/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-target=""
-prev=""
-for arg in "$@"; do
-  if [ "$prev" = "-t" ]; then target=$arg; fi
-  prev=$arg
-done
-case "${1:-}" in
-  list-windows)
-    sed -n 's/^window=[^:]*://p' "${FM_HOME:?}"/state/*.meta
-    ;;
-  display-message)
-    case "$*" in
-      *pane_current_command*)
-        case "$target" in
-          *dead-secondmate*) printf 'zsh\n' ;;
-          *) printf 'codex\n' ;;
-        esac
-        ;;
-      *) printf '%%1\n' ;;
-    esac
-    ;;
-  capture-pane)
-    case "$target" in
-      *ship-task*|*active-secondmate*) printf 'work in progress\nesc to interrupt\n' ;;
-      *) printf 'all quiet\n> \n' ;;
-    esac
-    ;;
-esac
-exit 0
-SH
-  chmod +x "$fb/no-mistakes" "$fb/tmux"
+  chmod +x "$fb/no-mistakes"
   printf '%s\n' "$fb"
+}
+
+# snap_identity <home> <task-id> <label>: register the task's fake stream
+# endpoint and print its record identity lines, one per word. The endpoint's
+# screen reads busy for the ship-task and active-secondmate labels and quiet
+# otherwise, and its foreground is a dead shell for dead-secondmate and a live
+# codex agent otherwise.
+snap_identity() {  # <home> <task-id> <label>
+  local home=$1 id=$2 label=$3 capture target lines
+  mkdir -p "$home/captures"
+  capture="$home/captures/$id"
+  case "$label" in
+    *ship-task*|*active-secondmate*) printf 'work in progress\nesc to interrupt\n' > "$capture" ;;
+    *) printf 'all quiet\n> \n' > "$capture" ;;
+  esac
+  lines=$(fm_test_stream_task "$home/state" "$id" "" "$capture") || return 1
+  target=$(fm_test_stream_target_of "$home/state" "$id")
+  case "$label" in
+    *dead-secondmate*) fm_test_fake_stream_foreground "$target" zsh ;;
+    *) fm_test_fake_stream_foreground "$target" codex ;;
+  esac
+  printf '%s\n' "$lines"
 }
 
 make_home() {  # <name>
@@ -88,7 +80,7 @@ EOF
   mkdir -p "$home/data/scout-task"
   printf '# Scout\n' > "$home/data/scout-task/report.md"
   fm_write_meta "$home/state/ship-task.meta" \
-    "window=firstmate:fm-ship-task" \
+    $(snap_identity "$home" ship-task ship-task) \
     "worktree=$home/projects/alpha-worktree" \
     "project=alpha" \
     "harness=deck" \
@@ -104,7 +96,7 @@ EOF
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" ship-task busy --gen "$fixture_gen" \
     --source deck-wrapper --event turn-start
   fm_write_meta "$home/state/scout-task.meta" \
-    "window=firstmate:fm-scout-task" \
+    $(snap_identity "$home" scout-task scout-task) \
     "worktree=$home/projects/scout-worktree" \
     "project=alpha" \
     "harness=deck" \
@@ -113,7 +105,7 @@ EOF
     "yolo=off"
   printf 'done: report ready\n' > "$home/state/scout-task.status"
   fm_write_meta "$home/state/secondmate-task.meta" \
-    "window=firstmate:fm-secondmate-task" \
+    $(snap_identity "$home" secondmate-task secondmate-task) \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
     "harness=deck" \
@@ -273,7 +265,7 @@ another free-form queued note
 ## Done
 EOF
   fm_write_meta "$home/state/visible-ship.meta" \
-    "window=firstmate:fm-visible-ship" \
+    $(snap_identity "$home" visible-ship visible-ship) \
     "worktree=$home/projects/visible" \
     "project=alpha" \
     "harness=deck" \
@@ -301,7 +293,7 @@ EOF
 ## Done
 EOF
   fm_write_meta "$home/state/orphan-ship.meta" \
-    "window=firstmate:fm-orphan-ship" \
+    $(snap_identity "$home" orphan-ship orphan-ship) \
     "worktree=$home/projects/visible" \
     "project=alpha" \
     "harness=deck" \
@@ -337,7 +329,7 @@ test_normalized_roles_and_plural_blocker_readiness() {
 ## Done
 EOF
   fm_write_meta "$home/state/worker.meta" \
-    "window=firstmate:fm-worker" "worktree=$home/projects/worker" "project=alpha" \
+    $(snap_identity "$home" worker worker) "worktree=$home/projects/worker" "project=alpha" \
     "harness=deck" "kind=ship" "mode=ship"
   printf 'working: preparing canary\n' > "$home/state/worker.status"
   fakebin=$(make_fakebin "$home")
@@ -421,7 +413,7 @@ test_event_hints_follow_reconciled_current_state() {
     "$home/projects/stale-decision" \
     "$home/projects/stale-blocked"
   fm_write_meta "$home/state/active-decision.meta" \
-    "window=firstmate:fm-active-decision" \
+    $(snap_identity "$home" active-decision active-decision) \
     "worktree=$home/projects/active-decision" \
     "project=alpha" \
     "harness=deck" \
@@ -430,7 +422,7 @@ test_event_hints_follow_reconciled_current_state() {
   record_deck_idle "$home/state" active-decision
   printf 'needs-decision: choose an API shape\n' > "$home/state/active-decision.status"
   fm_write_meta "$home/state/active-blocked.meta" \
-    "window=firstmate:fm-active-blocked" \
+    $(snap_identity "$home" active-blocked active-blocked) \
     "worktree=$home/projects/active-blocked" \
     "project=alpha" \
     "harness=deck" \
@@ -439,7 +431,7 @@ test_event_hints_follow_reconciled_current_state() {
   record_deck_idle "$home/state" active-blocked
   printf 'blocked: waiting on access\n' > "$home/state/active-blocked.status"
   fm_write_meta "$home/state/stale-decision.meta" \
-    "window=firstmate:fm-stale-decision-ship-task" \
+    $(snap_identity "$home" stale-decision stale-decision-ship-task) \
     "worktree=$home/projects/stale-decision" \
     "project=alpha" \
     "harness=deck" \
@@ -450,7 +442,7 @@ test_event_hints_follow_reconciled_current_state() {
     --source deck-wrapper --event turn-start
   printf 'needs-decision: already answered\n' > "$home/state/stale-decision.status"
   fm_write_meta "$home/state/stale-blocked.meta" \
-    "window=firstmate:fm-stale-blocked-ship-task" \
+    $(snap_identity "$home" stale-blocked stale-blocked-ship-task) \
     "worktree=$home/projects/stale-blocked" \
     "project=alpha" \
     "harness=deck" \
@@ -525,7 +517,7 @@ test_backlog_tasks_axi_forms_and_overrides() {
 EOF
   printf '# Bold Scout\n' > "$data/bold-task/report.md"
   fm_write_meta "$home/state/bold-task.meta" \
-    "window=firstmate:fm-bold-task" \
+    $(snap_identity "$home" bold-task bold-task) \
     "worktree=$projects/bold-worktree" \
     "project=alpha" \
     "harness=deck" \
@@ -628,7 +620,7 @@ EOF
       and .paths.report.present == true
   ' >/dev/null || fail "bold task did not join to override-backed backlog and report"
   view=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_DATA_OVERRIDE="$data" FM_PROJECTS_OVERRIDE="$projects" "$VIEW")
-  assert_contains "$view" "| bold-task | done / status-log | scout | alpha | tmux | present | $data/bold-task/report.md" \
+  assert_contains "$view" "| bold-task | done / status-log | scout | alpha | stream | present | $data/bold-task/report.md" \
     "view should render bold in-flight row from snapshot"
   assert_contains "$view" "| blocked-reason | Blocked Reason | beta | ship | queued-comma - waits on queued-comma | - |" \
     "view should render blocked reason without title metadata"
@@ -737,7 +729,7 @@ test_view_renders_snapshot() {
   write_fixture "$home"
   fakebin=$(make_fakebin "$home")
   view=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW")
-  assert_contains "$view" "| ship-task | working / pane | ship | alpha | tmux | present | https://github.com/kunchenguid/firstmate/pull/9" \
+  assert_contains "$view" "| ship-task | working / pane | ship | alpha | stream | present | https://github.com/kunchenguid/firstmate/pull/9" \
     "view should render ship row from snapshot"
   assert_contains "$view" "| queued-task | Queued Task | alpha | ship | ship-task | -" \
     "view should render queued backlog row"
@@ -745,7 +737,7 @@ test_view_renders_snapshot() {
     "view should render done backlog row"
   assert_contains "$view" "bin/fm-send.sh fm-secondmate-task" \
     "view should show secondmate send guidance"
-  assert_contains "$view" "| secondmate-task | working / status-log | secondmate | $home/secondmate-home | tmux | present / alive |" \
+  assert_contains "$view" "| secondmate-task | working / status-log | secondmate | $home/secondmate-home | stream | present / alive |" \
     "view should show secondmate endpoint agent liveness"
   assert_not_contains "$view" "fm-peek.sh fm-secondmate-task" \
     "view must not tell firstmate to routinely peek secondmates"
@@ -756,7 +748,7 @@ test_view_renders_dead_secondmate_agent_status() {
   local home fakebin view
   home=$(make_home dead-secondmate)
   fm_write_meta "$home/state/dead-secondmate.meta" \
-    "window=firstmate:fm-dead-secondmate" \
+    $(snap_identity "$home" dead-secondmate dead-secondmate) \
     "project=$home/secondmate-home" \
     "harness=deck" \
     "kind=secondmate" \
@@ -766,9 +758,9 @@ test_view_renders_dead_secondmate_agent_status() {
   printf 'working: watching delegated scope\n' > "$home/state/dead-secondmate.status"
   fakebin=$(make_fakebin "$home")
   view=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW")
-  assert_contains "$view" "| dead-secondmate | unknown / none | secondmate | $home/secondmate-home | tmux | present / dead |" \
+  assert_contains "$view" "| dead-secondmate | unknown / none | secondmate | $home/secondmate-home | stream | present / dead |" \
     "view should distinguish a present secondmate endpoint from a dead agent"
-  assert_contains "$view" "| dead-secondmate | unknown / none | secondmate | $home/secondmate-home | tmux | present / dead | - | $home/secondmate-home (absent) |" \
+  assert_contains "$view" "| dead-secondmate | unknown / none | secondmate | $home/secondmate-home | stream | present / dead | - | $home/secondmate-home (absent) |" \
     "view should show a recorded missing secondmate home path"
   pass "fleet view renders secondmate agent liveness"
 }
@@ -782,7 +774,7 @@ test_open_decision_survives_later_unrelated_event() {
   home=$(make_home masking)
   mkdir -p "$home/secondmate-home"
   fm_write_meta "$home/state/masked-decision.meta" \
-    "window=firstmate:fm-masked-decision" \
+    $(snap_identity "$home" masked-decision masked-decision) \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
     "harness=deck" \
@@ -811,7 +803,7 @@ test_secondmate_open_decision_survives_live_endpoint() {
   home=$(make_home active-secondmate)
   mkdir -p "$home/secondmate-home"
   fm_write_meta "$home/state/active-secondmate.meta" \
-    "window=firstmate:fm-active-secondmate" \
+    $(snap_identity "$home" active-secondmate active-secondmate) \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
     "harness=deck" \
@@ -838,7 +830,7 @@ test_open_decision_transfers_to_captain_hold() {
   home=$(make_home captain-held-transfer)
   mkdir -p "$home/secondmate-home"
   fm_write_meta "$home/state/transferred-decision.meta" \
-    "window=firstmate:fm-transferred-decision" \
+    $(snap_identity "$home" transferred-decision transferred-decision) \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
     "harness=deck" \
@@ -863,7 +855,7 @@ test_open_decision_clears_on_keyed_resolution() {
   home=$(make_home resolution)
   mkdir -p "$home/secondmate-home"
   fm_write_meta "$home/state/resolved-decision.meta" \
-    "window=firstmate:fm-resolved-decision" \
+    $(snap_identity "$home" resolved-decision resolved-decision) \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
     "harness=deck" \
@@ -897,7 +889,7 @@ test_completed_scout_report_is_pointer_not_pending() {
   home=$(make_home completed-scout)
   mkdir -p "$home/projects/scout-wt" "$home/data/lavish-103"
   fm_write_meta "$home/state/lavish-103.meta" \
-    "window=firstmate:fm-lavish-103" \
+    $(snap_identity "$home" lavish-103 lavish-103) \
     "worktree=$home/projects/scout-wt" \
     "project=firstmate" \
     "harness=deck" \
@@ -929,7 +921,7 @@ test_parked_scout_decision_stays_pending() {
   home=$(make_home parked-scout)
   mkdir -p "$home/projects/scout-wt2"
   fm_write_meta "$home/state/parked-scout.meta" \
-    "window=firstmate:fm-parked-scout" \
+    $(snap_identity "$home" parked-scout parked-scout) \
     "worktree=$home/projects/scout-wt2" \
     "project=firstmate" \
     "harness=deck" \
@@ -963,7 +955,7 @@ test_home_summary_excludes_secondmate_from_child_inventory() {
 ## Done
 EOF
   fm_write_meta "$home/state/mate.meta" \
-    "window=firstmate:fm-mate" \
+    $(snap_identity "$home" mate mate) \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
     "harness=deck" \
@@ -1001,7 +993,7 @@ EOF
   ' >/dev/null || fail "terminal secondmate with a matching in-flight row must not produce terminal_in_flight: $out"
 
   fm_write_meta "$home/state/unowned-ship.meta" \
-    "window=firstmate:fm-unowned-ship" \
+    $(snap_identity "$home" unowned-ship unowned-ship) \
     "worktree=$home/projects/unowned" \
     "project=alpha" \
     "harness=deck" \
@@ -1027,7 +1019,7 @@ EOF
 ## Done
 EOF
   fm_write_meta "$home/state/terminal-ship.meta" \
-    "window=firstmate:fm-terminal-ship" \
+    $(snap_identity "$home" terminal-ship terminal-ship) \
     "worktree=$home/projects/terminal" \
     "project=alpha" \
     "harness=deck" \

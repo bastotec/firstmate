@@ -279,10 +279,9 @@ class Pty:
     def foreground_processes(self, until=None) -> list:
         """The pty's foreground process group, as identity records.
 
-        Scoped to the foreground group rather than every descendant, for the
-        same reason the tmux adapter is: a harness-named process left running in
-        the background of an otherwise idle endpoint must not read as a live
-        agent.
+        Scoped to the foreground group rather than every descendant: a
+        harness-named process left running in the background of an otherwise
+        idle endpoint must not read as a live agent.
         """
         tty = self.slave_name
         if tty.startswith("/dev/"):

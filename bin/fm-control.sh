@@ -6,7 +6,6 @@
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
-#                                         [--backend <tmux|herdr|stream>]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> recover-missing
 #                                         [--harness <name>] [--model <name>]
@@ -63,19 +62,6 @@
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
 #
-#   relaunch --backend <tmux|herdr|stream>
-#              Backend migration: the same relaunch transaction, but the
-#              replacement starts in a FRESH endpoint on the named backend, in
-#              the same worktree (or secondmate home), with the same task
-#              record. Before checkpointing, it requires recovery-grade proof
-#              of a dead agent, or an alive agent with shared semantic idle
-#              evidence; missing, unreadable, and ambiguous states refuse.
-#              The new endpoint is recorded atomically by the launch owner; only after the replacement reads alive is the old,
-#              agent-free endpoint closed. A close that cannot be confirmed is a
-#              warning, not a failure, because the task already runs on the new
-#              backend. Naming the recorded backend is an ordinary relaunch.
-#              Rollback is the same verb with the previous backend.
-#
 #   recover-missing Restore a terminal for a task whose endpoint reads missing,
 #              then hand the launch to the existing owner
 #              (bin/fm-spawn.sh --relaunch). Proves the missing
@@ -87,10 +73,8 @@
 #              launch owner's own git-excluded harness wiring, and the base
 #              refresh that would reset a worktree is skipped for a relaunch,
 #              which is how every recovery spawns. No new worktree or pool slot
-#              is created. Recreation covers tmux and stream; every other
-#              backend refuses before anything is touched. A tmux window comes
-#              back under the same recorded fm-<id> handle and so rewrites no
-#              durable record. A new stream agent generates a fresh endpoint
+#              is created. A record on a retired backend refuses before anything
+#              is touched. A new stream agent generates a fresh endpoint
 #              id, so recovery cannot recreate the old handle: it starts a
 #              NEW endpoint (same fm-<id> label, the recorded worktree as its
 #              cwd) and rebinds the record's window=/stream_hub=/
@@ -100,10 +84,6 @@
 #              restarted hub also says until each agent re-registers - stream
 #              recovery additionally refuses while a local stream agent matches
 #              both fm-<id> and this home's task status path.
-#              Both tmux losses are recovered: the task's window gone from a
-#              session that is still alive, and the whole session (or the whole
-#              server) gone, which is recreated under its exact recorded name
-#              before the window. A session that still exists is untouched.
 #              It continues the SAME run, so the recorded harness, model, and
 #              effort carry through unchanged - nothing is re-resolved from
 #              configuration, including a secondmate's config/secondmate-harness
@@ -145,8 +125,8 @@
 # here: interrupt, exit, and relaunch run THIS same plane on its host over
 # bin/fm-on.sh through bin/fm-remote-secondmate-control.sh, which verifies every
 # postcondition where the agent runs. A relaunch then re-reads the host's route
-# and rewrites this record's remote_* binding, so a backend migration of a
-# remote mate leaves the parent pointing at its new endpoint. recover-missing
+# and rewrites this record's remote_* binding, so the parent points at the
+# mate's new endpoint. recover-missing
 # stays refused for a remote mate; its recovery is the secondmate liveness
 # sweep (bin/fm-bootstrap.sh). bin/fm-remote-control-lib.sh owns that route.
 #
@@ -157,7 +137,7 @@
 #     noncanonical raw-command basename.
 #   - A backend that cannot deliver the harness's interrupt key is refused.
 #   - `exit`, `relaunch`, and `recover-missing` require a backend with a
-#     recovery-grade agent-state classifier (tmux, herdr, stream), because
+#     recovery-grade agent-state classifier (stream), because
 #     without one the "the agent stopped" or "the endpoint is missing"
 #     postcondition cannot be proven. Any other backend is refused rather
 #     than reported as successful blind. On stream a silent agent reads
@@ -300,8 +280,6 @@ fi
 NEW_HARNESS=
 NEW_MODEL=
 NEW_EFFORT=
-NEW_BACKEND=
-NEW_BACKEND_SET=0
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -317,7 +295,6 @@ for control_arg in "$@"; do
       harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
-      backend) NEW_BACKEND=$control_arg; NEW_BACKEND_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
@@ -335,8 +312,6 @@ for control_arg in "$@"; do
     --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
-    --backend) control_want_value=backend ;;
-    --backend=*) NEW_BACKEND=${control_arg#--backend=}; NEW_BACKEND_SET=1 ;;
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
@@ -360,13 +335,6 @@ case "$VERB" in
       || die "--harness, --model, and --effort apply to 'relaunch' and 'recover-missing' only, and --note to 'relaunch' or 'recover-missing' only"
     ;;
 esac
-if [ "$NEW_BACKEND_SET" = 1 ]; then
-  [ "$VERB" = relaunch ] || die "--backend applies to 'relaunch' only"
-  case "$NEW_BACKEND" in
-    tmux|herdr|stream) ;;
-    *) die "--backend must be one of tmux, herdr, stream" ;;
-  esac
-fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
@@ -818,14 +786,11 @@ relaunch_rollback() {
       # a relaunch refused before its agent was stopped. Without this every
       # failed attempt would leave another progress note appended.
       #
-      # The durable record is deliberately NOT restored, for the same reason
-      # the sibling checkpoint|noted arm has no restore: on tmux nothing in
-      # this phase writes it, so a restore could only revert another process's
-      # locked write - see docs/agent-control.md's rollback account, and the
-      # concurrent-record-write case in tests/fm-control-recover-missing.test.sh.
-      # A stream recovery that got as far as rebinding the record leaves it
-      # naming the new endpoint, whose state must be reconciled before the next
-      # `relaunch` adopts it; restoring the old binding would strand it.
+      # The durable record is deliberately NOT restored: a recovery that got
+      # as far as rebinding the record leaves it naming the new endpoint, whose
+      # state must be reconciled before the next `relaunch` adopts it, and
+      # restoring the old binding would strand it (docs/agent-control.md's
+      # rollback account).
       if [ -n "$RELAUNCH_BRIEF" ] && [ -f "$BRIEF_PRIOR" ]; then
         cp -p "$BRIEF_PRIOR" "$RELAUNCH_BRIEF" 2>/dev/null || true
       fi
@@ -1099,13 +1064,6 @@ do_relaunch() {
 
   require_state_verified_backend relaunch "the agent actually stopped"
   resolve_relaunch_profile
-  MIGRATE_FROM_BACKEND=
-  MIGRATE_FROM_TARGET=
-  if [ "$NEW_BACKEND_SET" = 1 ] && [ "$NEW_BACKEND" != "$BACKEND" ]; then
-    migrate_preflight
-    MIGRATE_FROM_BACKEND=$BACKEND
-    MIGRATE_FROM_TARGET=$T
-  fi
 
   case "$KIND" in
     ship|scout)
@@ -1148,7 +1106,6 @@ do_relaunch() {
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
   journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
-  [ -z "$MIGRATE_FROM_BACKEND" ] || spawn_args+=(--backend "$NEW_BACKEND")
   # A chained surface was only pre-flighted above: the ORIGINAL chain is what
   # the launch owner resolves and records the lane for, so its cooldown
   # decision is made at launch time, not at pre-flight time. A single label
@@ -1167,14 +1124,6 @@ do_relaunch() {
       || RELAUNCH_META_PUBLISHED=1
     die "the replacement agent for $ID could not be launched on $TARGET_HARNESS"
   fi
-  if [ -n "$MIGRATE_FROM_BACKEND" ]; then
-    # The launch owner published the new endpoint; every postcondition from
-    # here reads it, not the endpoint the task left.
-    fm_backend_validate_task_endpoint "$META" "$ID" \
-      || die "the replacement record for $ID does not validate after migrating to $NEW_BACKEND"
-    BACKEND=$FM_BACKEND_VALIDATED_BACKEND
-    T=$FM_BACKEND_VALIDATED_TARGET
-  fi
 
   state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {
     die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
@@ -1183,39 +1132,7 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
-  [ -z "$MIGRATE_FROM_BACKEND" ] || migrate_close_old_endpoint
-  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT${MIGRATE_FROM_BACKEND:+ from_backend=$MIGRATE_FROM_BACKEND from_endpoint=$MIGRATE_FROM_TARGET}"
-}
-
-# A backend migration moves only a task that is provably not mid-turn, and
-# only onto a backend that can be spawned and classified. Both refusals happen
-# before the checkpoint, so nothing has been touched.
-migrate_preflight() {
-  local verdict state
-  fm_backend_validate_spawn "$NEW_BACKEND" \
-    || die "task $ID cannot be migrated: backend '$NEW_BACKEND' cannot spawn here"
-  fm_control_backend_state_verified "$NEW_BACKEND" \
-    || die "task $ID cannot be migrated: backend '$NEW_BACKEND' has no recovery-grade agent-state classifier"
-  state=$(agent_state 2>/dev/null) || state=unreadable
-  case "$state" in
-    dead) return 0 ;;
-    alive) ;;
-    *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to migrate" ;;
-  esac
-  verdict=$(busy_verdict 2>/dev/null || printf 'unknown unreadable')
-  case "${verdict%% *}" in
-    idle) ;;
-    *) die "task $ID reads '$verdict'; a backend migration moves only an idle endpoint, so wait for it to finish its turn (bin/fm-crew-state.sh $ID) and retry" ;;
-  esac
-}
-
-# Close the endpoint the task migrated away from. Its agent was already proved
-# gone by the exit step, so this removes only the terminal left behind.
-migrate_close_old_endpoint() {
-  local rc=0 out
-  out=$(fm_backend_kill "$MIGRATE_FROM_BACKEND" "$MIGRATE_FROM_TARGET" "" "$LABEL" 2>&1) || rc=$?
-  [ "$rc" -eq 0 ] && return 0
-  echo "warning: $ID now runs on $BACKEND, but its previous $MIGRATE_FROM_BACKEND endpoint $MIGRATE_FROM_TARGET was not confirmed closed ($(fm_backend_kill_verdict "$rc")): $(printf '%s' "$out" | head -n 1)" >&2
+  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
 }
 
 # recover_stream_endpoint: start a NEW stream endpoint for this task on the
@@ -1249,10 +1166,6 @@ do_recover_missing() {
   local -a spawn_args
 
   require_state_verified_backend recover-missing "the endpoint is actually missing"
-  case "$BACKEND" in
-    tmux|stream) ;;
-    *) die "backend $BACKEND has no supported way to recreate an endpoint with the recorded identity; refusing to recover" ;;
-  esac
   resolve_relaunch_profile
   RELAUNCH_PAST_TENSE=recovered
 
@@ -1279,12 +1192,10 @@ do_recover_missing() {
     dead|alive|ambiguous) die "task $ID's endpoint reads '$state'; recover-missing requires a positively missing endpoint and no agent owning the task" ;;
     *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to recover" ;;
   esac
-  if [ "$BACKEND" = stream ]; then
-    local agent_pid
-    fm_backend_source stream || die "could not load backend stream"
-    if agent_pid=$(fm_backend_stream_local_agent_pid "$LABEL" "$STATE/$ID.status"); then
-      die "task $ID's stream endpoint is missing from the hub, but its agent process (pid $agent_pid) is still running on this machine - a restarted hub forgets endpoints until their agents re-register; wait for it to come back, or stop that agent first, then retry"
-    fi
+  local agent_pid
+  fm_backend_source stream || die "could not load backend stream"
+  if agent_pid=$(fm_backend_stream_local_agent_pid "$LABEL" "$STATE/$ID.status"); then
+    die "task $ID's stream endpoint is missing from the hub, but its agent process (pid $agent_pid) is still running on this machine - a restarted hub forgets endpoints until their agents re-register; wait for it to come back, or stop that agent first, then retry"
   fi
 
   wt=$(fm_meta_get "$META" worktree)
@@ -1319,33 +1230,9 @@ do_recover_missing() {
   journal_write recreating "${CHECKPOINT_LINES[@]}" "$note_line"
   wname="fm-$ID"
   proj_abs=$(cd "$wt" && pwd -P)
-  fm_backend_source "$BACKEND" || die "could not load backend $BACKEND"
-  # tmux: endpoint validation already proved $T is exactly <session>:fm-<id>
-  # with a non-empty session (bin/fm-backend.sh's
-  # fm_backend_validate_task_endpoint, called before any verb runs), which is
-  # what refuses a recorded endpoint string that will not parse. The window
-  # comes back under that same name, so $T keeps addressing the terminal and
-  # neither the postconditions below nor the durable record need rewriting.
-  # stream: recover_stream_endpoint makes a new endpoint and rebinds the record
-  # and $T to it.
-  #
-  # Two shapes read as a missing endpoint and both are recovered here: the
-  # task's window is gone from a session that is still alive, or the whole
-  # session (or the whole tmux server) is gone. The second needs the session
-  # back before a window can be added to it; the first leaves it untouched.
-  # A failure after the session is recreated but before the window exists still
-  # reads missing, so the verb stays retryable rather than stranding the task.
-  case "$BACKEND" in
-    tmux)
-      fm_backend_tmux_recreate_session "${T%%:*}" "$proj_abs" \
-        || die "task $ID's recorded tmux session '${T%%:*}' is gone and could not be recreated"
-      fm_backend_tmux_create_task "${T%%:*}" "$wname" "$proj_abs" >/dev/null \
-        || die "could not recreate tmux window for $ID"
-      ;;
-    stream)
-      recover_stream_endpoint "$wname" "$proj_abs"
-      ;;
-  esac
+  # recover_stream_endpoint makes a new endpoint and rebinds the record and $T
+  # to it.
+  recover_stream_endpoint "$wname" "$proj_abs"
 
   # The launch owner requires a positively agent-free endpoint, so wait for the
   # new terminal's shell to finish starting before handing it over. Still

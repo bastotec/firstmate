@@ -16,8 +16,8 @@
 # own config files are never written and real project commits made outside the
 # fixtures keep their configuration and signing.
 #
-# tests/lib.sh and tests/herdr-test-safety.sh source this for every suite that
-# uses them, bin/fm-test-run.sh sources it per suite in run_script_bounded, and a
+# tests/lib.sh sources this for every suite that
+# uses it, bin/fm-test-run.sh sources it per suite in run_script_bounded, and a
 # suite reaching none of those sources it directly so a hand-run invocation is
 # isolated too. tests/fm-test-fixtures.test.sh is the regression - it drives the
 # shared helpers, the runner, and the standalone entry points that run without a

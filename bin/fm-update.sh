@@ -22,8 +22,8 @@
 # the same library drives local and remote parent-targeted secondmate sync, so
 # there is one ff implementation, not several.
 #
-# It does NOT re-read AGENTS.md or nudge secondmates itself - those are LLM /
-# tmux actions the skill performs. The script's job is the safe git mechanics
+# It does NOT re-read AGENTS.md or nudge secondmates itself - those are LLM
+# actions the skill performs. The script's job is the safe git mechanics
 # plus a parseable summary telling the caller what to do next:
 #   - one status line per target (updated/already current/skipped)
 #   - reread-firstmate: yes|no    (did the running firstmate's instructions change)

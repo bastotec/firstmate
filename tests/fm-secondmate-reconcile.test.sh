@@ -11,16 +11,37 @@ set -u
 
 # shellcheck source=tests/secondmate-helpers.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/secondmate-helpers.sh"
+# Every local mate's endpoint is a fake stream endpoint (tests/fixtures.sh).
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 RECONCILE="$ROOT/bin/fm-secondmate-reconcile.sh"
 TMP_ROOT=$(fm_test_tmproot fm-secondmate-reconcile)
+fm_test_fake_stream_ensure || fail "the fake stream hub did not start"
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
 export FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 FM_SEND_RETRIES=1
 
-# A main home with one registered, live, local secondmate reachable through the
-# fake tmux backend, so fm-send's real inbox plane is exercised end to end.
+# A main home with one registered, live, local secondmate reachable through a
+# fake stream endpoint, so fm-send's real inbox plane is exercised end to end.
+
+# live_mate_lines <state-dir> <id>: register <id>'s endpoint with a running pi
+# and print the identity lines its meta carries.
+live_mate_lines() {  # <state-dir> <id>
+  fm_test_stream_task "$1" "$2" || return 1
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$1" "$2")" pi
+}
+
+# mate_on_text <home> <id> <script-body>: run <script-body> (bash) whenever the
+# mate's endpoint receives text, modelling a slow or blocked delivery.
+mate_on_text() {  # <home> <id> <script-body>
+  local hook="$1/$2-on-text.sh"
+  printf '#!/usr/bin/env bash\nset -u\n%s\n' "$3" > "$hook"
+  chmod +x "$hook"
+  fm_test_fake_stream_set "$(fm_test_stream_target_of "$1/state" "$2")" \
+    "$(jq -nc --arg h "$hook" '{on_text: $h}')"
+}
 make_main_home() {  # <name> <mate-id>
   local home="$TMP_ROOT/$1" mate="$TMP_ROOT/$1-mate" id=$2 abs fakebin
   mkdir -p "$home/data" "$home/state"
@@ -28,15 +49,16 @@ make_main_home() {  # <name> <mate-id>
   abs=$(cd "$mate" && pwd -P)
   printf -- '- %s - fixture domain (home: %s; scope: fixture; projects: sample; added 2026-08-26)\n' \
     "$id" "$abs" > "$home/data/secondmates.md"
-  cat > "$home/state/$id.meta" <<META
-window=firstmate:fm-$id
+  {
+    live_mate_lines "$home/state" "$id"
+    cat <<META
 kind=secondmate
 harness=deck
-backend=tmux
 spawn_gen=spawn-$id
 home=$abs
 worktree=$abs
 META
+  } > "$home/state/$id.meta"
   fakebin=$(make_fake_tmux "$TMP_ROOT/$1-fake")
   printf '%s\n' "$home" "$mate" "$fakebin"
 }
@@ -90,7 +112,7 @@ rc=0
 if [ "${FM_TEST_RECONCILE_REMOTE_DELAY:-0}" -gt 0 ]; then
   sleep "$FM_TEST_RECONCILE_REMOTE_DELAY"
 fi
-env FM_HOME="$remote_home" FM_ROOT_OVERRIDE="$FM_REMOTE_CODE_ROOT" \
+env -u FM_STREAM_HUB -u FM_STREAM_TOKEN FM_HOME="$remote_home" FM_ROOT_OVERRIDE="$FM_REMOTE_CODE_ROOT" \
   "$FM_REMOTE_CODE_ROOT/bin/$cmd" "${rargs[@]:1}" || rc=$?
 exit "$rc"
 SH
@@ -99,23 +121,23 @@ SH
 }
 
 # A seeded remote secondmate home the real host-local leg validates and writes
-# into (identity marker, Firstmate-checkout shape, parent-route endpoint meta).
+# into (identity marker, Firstmate-checkout shape, parent-route endpoint meta on
+# a hub nothing answers, so its best-effort doorbell fails like an unreachable
+# endpoint's while the durable record lands).
 make_remote_secondmate_home() {  # <name> -> echoes remote home dir
   local rh="$TMP_ROOT/$1-rhome"
   mkdir -p "$rh/state/parent-route" "$rh/bin"
   printf '%s\n' "$1" > "$rh/.fm-secondmate-home"
   printf '# remote secondmate home fixture\n' > "$rh/AGENTS.md"
   cat > "$rh/state/parent-route/$1.meta" <<META
-window=fm-remote:p1
+window=127.0.0.1-9:0123456789abcdef0123456789abcdef
 worktree=-
 project=-
-backend=herdr
+backend=stream
+stream_hub=http://127.0.0.1:9
+stream_endpoint_id=0123456789abcdef0123456789abcdef
 endpoint_task_id=$1
 harness=deck
-herdr_session=fm-remote
-herdr_workspace_id=w1
-herdr_tab_id=t1
-herdr_pane_id=p1
 META
   printf '%s\n' "$rh"
 }
@@ -138,9 +160,10 @@ mode=secondmate
 yolo=off
 remote_host=$host
 remote_root=/remote/root
-remote_backend=herdr
-remote_herdr_session=fm-remote
-remote_target=fm-remote:p1
+remote_backend=stream
+remote_stream_hub=http://127.0.0.1:9
+remote_stream_endpoint_id=0123456789abcdef0123456789abcdef
+remote_target=127.0.0.1-9:0123456789abcdef0123456789abcdef
 META
   cat > "$home/data/secondmates.md" <<EOF
 - $id - remote fixture domain (host: $host; root: /remote/root; home: $rhome; scope: remote fixture; projects: sample; added 2026-08-26)
@@ -168,11 +191,9 @@ age_cooldown() {  # <state-dir> <mate-id> <seconds-ago>
 run_notify() {  # <home> <fakebin> <name> <snapshot> [extra args...]
   local home=$1 fakebin=$2 name=$3 snap=$4
   shift 4
+  : "$name"
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$home/state" \
-    FM_FAKE_TMUX_WINDOW="firstmate:fm-mate" \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/$name-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/$name-fake/pane.txt" \
     "$RECONCILE" notify --snapshot "$snap" "$@"
 }
 
@@ -263,14 +284,8 @@ test_the_cooldown_starts_when_delivery_finishes() {
   { read -r home; read -r mate; read -r fakebin; } < <(make_main_home deliverytime mate)
   snap="$home/snapshot.json"
   write_snapshot "$snap" mate '{"kind":"orphan_in_flight","ids":["ghost"]}'
-  mv "$fakebin/tmux" "$fakebin/tmux-real"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-if [ "${1:-}" = send-keys ]; then sleep 2; fi
-exec "$(dirname "$0")/tmux-real" "$@"
-SH
-  chmod +x "$fakebin/tmux"
+  # Delivery takes two seconds: the endpoint holds every text it receives.
+  mate_on_text "$home" mate '/bin/sleep 2'
 
   started=$(date +%s)
   run_notify "$home" "$fakebin" deliverytime "$snap" >/dev/null \
@@ -360,9 +375,6 @@ test_the_ask_never_arms_a_reply_expectation_or_a_re_ring() {
   # the same inbox, same grace, with an ordinary unhandled steer added.
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$home/state" \
-    FM_FAKE_TMUX_WINDOW="firstmate:fm-mate" \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/fireforget-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/fireforget-fake/pane.txt" \
     "$ROOT/bin/fm-send.sh" mate "an ordinary steer that does expect handling" >/dev/null 2>&1 \
     || fail "the control steer could not be recorded"
   ladder=$(FM_TASK_INBOX_GRACE_SECS=0 bash -c '. "$1"; fm_task_inbox_due_action "$2" "$3"' _ \
@@ -519,7 +531,7 @@ test_a_stale_snapshot_never_targets_a_replacement_mate() {
 }
 
 test_teardown_cannot_leave_its_replacement_in_cooldown() {
-  local home mate fakebin snap signal release lifecycle_done cooldown notify_pid lifecycle_pid
+  local home mate fakebin snap signal release lifecycle_done cooldown notify_pid lifecycle_pid identity
   { read -r home; read -r mate; read -r fakebin; } < <(make_main_home lifecycle mate)
   snap="$home/snapshot.json"
   signal="$home/send-ringing"
@@ -527,20 +539,12 @@ test_teardown_cannot_leave_its_replacement_in_cooldown() {
   lifecycle_done="$home/lifecycle-done"
   cooldown="$home/state/mate.reconcile-nudged"
   write_snapshot "$snap" mate '{"kind":"orphan_in_flight","ids":["ghost"]}'
-  mv "$fakebin/tmux" "$fakebin/tmux-real"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-if [ "${1:-}" = send-keys ]; then
-  : > "$FM_FAKE_TMUX_SEND_SIGNAL"
-  while [ ! -f "$FM_FAKE_TMUX_SEND_RELEASE" ]; do sleep 0.01; done
-fi
-exec "$(dirname "$0")/tmux-real" "$@"
-SH
-  chmod +x "$fakebin/tmux"
+  # The doorbell blocks inside the endpoint until the test releases it.
+  mate_on_text "$home" mate ": > '$signal'
+while [ ! -f '$release' ]; do /bin/sleep 0.01; done"
+  identity=$(grep -E '^(window|backend|stream_hub|stream_endpoint_id|endpoint_task_id)=' "$home/state/mate.meta")
 
-  FM_FAKE_TMUX_SEND_SIGNAL="$signal" FM_FAKE_TMUX_SEND_RELEASE="$release" \
-    run_notify "$home" "$fakebin" lifecycle "$snap" >/dev/null 2>&1 &
+  run_notify "$home" "$fakebin" lifecycle "$snap" >/dev/null 2>&1 &
   notify_pid=$!
   while [ ! -f "$signal" ]; do sleep 0.01; done
 
@@ -551,15 +555,16 @@ SH
     fm_lock_acquire_wait "$home/state/.meta-mate.lock"
     rm -rf "$home/state/mate.inbox"
     rm -f "$home/state/mate.meta" "$home/state/mate.reconcile-nudged"
-    cat > "$home/state/mate.meta" <<META
-window=firstmate:fm-mate
+    {
+      printf '%s\n' "$identity"
+      cat <<META
 kind=secondmate
 harness=deck
-backend=tmux
 spawn_gen=spawn-replacement
 home=$mate
 worktree=$mate
 META
+    } > "$home/state/mate.meta"
     fm_lock_release "$home/state/.meta-mate.lock"
     fm_lock_release "$home/state/.control-mate.lock"
     : > "$lifecycle_done"
@@ -765,15 +770,16 @@ test_reconcile_requests_coalesce_per_target_until_delivery() {
   second_abs=$(cd "$second_mate" && pwd -P)
   printf -- '- coalesce-b - fixture domain (home: %s; scope: fixture; projects: sample; added 2026-08-26)\n' \
     "$second_abs" >> "$home/data/secondmates.md"
-  cat > "$home/state/coalesce-b.meta" <<META
-window=firstmate:fm-coalesce-b
+  {
+    live_mate_lines "$home/state" coalesce-b
+    cat <<META
 kind=secondmate
 harness=deck
-backend=tmux
 spawn_gen=spawn-coalesce-b
 home=$second_abs
 worktree=$second_abs
 META
+  } > "$home/state/coalesce-b.meta"
   snap="$home/coalesced-snapshot.json"
   write_snapshot "$snap" coalesce-a '{"kind":"orphan_in_flight","ids":["a-1"]}'
   jq '.secondmate_current.records += [(.secondmate_current.records[0]
@@ -832,8 +838,6 @@ META
   holder_b=$!
   while [ ! -f "$ready_a" ] || [ ! -f "$ready_b" ]; do sleep 0.01; done
   if PATH="$fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$home/state" \
-      FM_FAKE_TMUX_WINDOW='' FM_FAKE_TMUX_LOG="$home/tmux.log" \
-      FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/coalesced-requests-fake/pane.txt" \
       "$RECONCILE" process-requests > "$out"; then
     : > "$release_a"
     : > "$release_b"
@@ -854,8 +858,6 @@ META
   holder_b2=$!
   while [ ! -f "$ready_b2" ]; do sleep 0.01; done
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$home/state" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-coalesce-a' FM_FAKE_TMUX_LOG="$home/tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/coalesced-requests-fake/pane.txt" \
     "$RECONCILE" process-requests > "$out" 2>&1 || true
   : > "$release_b2"
   wait "$holder_b2" 2>/dev/null || true
@@ -868,8 +870,6 @@ META
     || fail "delivery of one target did not preserve the other target independently"
 
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$home/state" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-coalesce-b' FM_FAKE_TMUX_LOG="$home/tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/coalesced-requests-fake/pane.txt" \
     "$RECONCILE" process-requests > "$out" 2>&1 \
     || fail "the remaining target request could not be delivered"
   requests=$(find "$home/state/reconcile-notify" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d '[:space:]')

@@ -25,9 +25,9 @@
 #   - Daemon-using harnesses without native background execution run this
 #     THROUGH bin/fm-afk-launch.sh, which owns backend-specific launch and
 #     captures FM_SUPERVISOR_TARGET before creating the daemon endpoint.
-# Do not wrap this in `nohup ... &`: Codex/herdr can reap fire-and-forget shell
-# children after the tool call returns, while a tracked background terminal stays
-# attached and has a real lifecycle.
+# Do not wrap this in `nohup ... &`: a harness can reap fire-and-forget shell
+# children after the tool call returns, while a tracked background job or a
+# detached session leader has a real lifecycle.
 set -eu
 
 FM_AFK_START_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,8 +53,8 @@ fm_afk_start_usage() {
 # escalation - the delivery buffer is a transient cache, and any condition still
 # true (a crew still blocked, a check still firing) is re-derived and re-escalated
 # fresh by the daemon's heartbeat catch-all scan and the durable
-# state/.wake-queue replay (see docs/herdr-backend.md "Away-mode stale-artifact
-# lifecycle" and bin/fm-supervise-daemon.sh's escalate_add/inject_wedge_alarm).
+# state/.wake-queue replay (bin/fm-supervise-daemon.sh's
+# escalate_add/inject_wedge_alarm).
 # NOT called on a refresh (daemon already alive), so the current session's own
 # buffered escalations are preserved.
 fm_afk_clear_stale_artifacts() {  # <state-dir>

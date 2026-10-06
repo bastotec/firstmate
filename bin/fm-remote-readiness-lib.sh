@@ -2,10 +2,7 @@
 # fm-remote-readiness-lib.sh - the remote second-mate readiness gate sequence.
 #
 # Source this file and call:
-#   fm_remote_readiness_ensure <bin-dir> <secondmate-id> [herdr|stream]
-#
-# The optional backend selects which endpoint backend the doctor checks
-# (bin/fm-remote-doctor.sh --backend); omitted means herdr.
+#   fm_remote_readiness_ensure <bin-dir> <secondmate-id>
 #
 # It runs bin/fm-remote-doctor.sh on that route's configured host, and when the
 # read-only run reports any gap it runs the doctor again with --fix and then a
@@ -24,10 +21,11 @@
 # shellcheck disable=SC2034
 FM_REMOTE_READINESS_OUT=
 
-fm_remote_readiness_ensure() { # <bin-dir> <secondmate-id> [herdr|stream]
-  local bin_dir=$1 id=$2 backend=${3:-herdr} out rc
-  local -a doctor=(fm-remote-doctor.sh)
-  [ "$backend" = herdr ] || doctor+=(--backend "$backend")
+fm_remote_readiness_ensure() { # <bin-dir> <secondmate-id>
+  local bin_dir=$1 id=$2 out rc
+  # --backend stream stays explicit so a host whose code root predates
+  # stream-only (where the doctor defaulted to herdr) checks the right thing.
+  local -a doctor=(fm-remote-doctor.sh --backend stream)
 
   out=$("$bin_dir/fm-on.sh" "$id" "${doctor[@]}" < /dev/null 2>&1)
   rc=$?

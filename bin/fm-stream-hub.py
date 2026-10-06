@@ -733,7 +733,7 @@ class Screen:
         """The last <count> rendered lines of scrollback plus screen.
 
         Trailing blank rows are dropped first, so a 40-row screen holding two
-        lines of output reads like tmux's capture rather than like 38 empty
+        lines of output reads like a terminal capture rather than like 38 empty
         rows, and a caller asking for 40 lines of a young endpoint is not
         handed mostly padding.
         """

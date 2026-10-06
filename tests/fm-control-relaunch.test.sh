@@ -22,8 +22,8 @@
 #      a relaunched task still gets its merge notification.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
 # shellcheck source=/dev/null
@@ -49,94 +49,43 @@ relaunch_cleanup() {
     [ -n "$d" ] && rm -rf "$d"
   done
   rm -rf "$TMP_ROOT"
+  fm_test_cleanup
 }
 trap relaunch_cleanup EXIT
 
-# The same lifecycle-modelling tmux stub as tests/fm-control.test.sh: the
-# harness's exit command stops the agent, and a launch-brief literal starts the
-# harness named in `becomes`.
-make_tmux_stub() {  # <dir>
+# --- fake session provider --------------------------------------------------
+#
+# Each task is a fake stream endpoint driven by the fake-dir model in
+# tests/fixtures.sh (fm_test_fake_dir_*), as in tests/fm-control.test.sh:
+# command, becomes, cwd, pane, cursor and windows under $dir/fake steer the
+# endpoint, and literal and keys record what it received. A submitted exit
+# command stops the agent, and a typed launch brief starts `becomes`.
+#
+# The suite's fault hooks map onto the stub's endpoint knobs, set by
+# run_control/run_spawn from these variables:
+#   FM_FAKE_PROTOCOL_FIRST         touched when an exit command is typed (on_text)
+#   FM_FAKE_PRIOR_PID/_LIVE_MARKER marker touched if that pid is still alive when
+#                                  the launch brief is typed (on_text)
+#   FM_FAKE_TRACE_PREPARE/_RELEASE the GOTMPDIR export touches PREPARE, then
+#                                  stalls until RELEASE exists (on_text)
+#   FM_FAKE_TRACE_EXPORTED         touched when TRACEPARENT is exported (on_text)
+#   FM_FAKE_CWD_RACE_READY         every cwd read touches it, then stalls 1s
+#                                  (on_request)
+#   FM_FAKE_ON_REQUEST             a case's own on_request hook
+#   FM_FAKE_COMPOSER_READ_FAIL     every screen read fails (fail_capture)
+#   FM_FAKE_EXIT_TRANSPORT_FAIL_AFTER_STOP    typing the exit command reports
+#                                  failure while the agent stops anyway
+#                                  (fail_text_and_exit)
+#   FM_FAKE_LAUNCH_TRANSPORT_FAIL_AFTER_START the submitted launch brief starts
+#                                  the agent, then the input answers failure
+#                                  (fail_submit_text)
+make_fakebin() {  # <dir>
   local fb="$1/fakebin"
   mkdir -p "$fb"
   # Exit-0 stand-ins for every launchable worker harness, so a launch resolves
   # its executable here rather than whatever the developer has installed. A
   # case that needs a behaving binary overwrites its stub.
   fm_fake_exit0 "$fb" deck
-  cat > "$fb/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-D=$FM_FAKE_DIR
-case "${1:-}" in
-  send-keys)
-    shift
-    literal=0
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -t) shift 2 ;;
-        -l) literal=1; shift ;;
-        *) break ;;
-      esac
-    done
-    payload=${1:-}
-    if [ "$literal" = 1 ]; then
-      printf '%s\n' "$payload" >> "$D/literal"
-      case "$payload" in
-        /exit|/quit)
-          printf 'zsh' > "$D/command"
-          [ -z "${FM_FAKE_PROTOCOL_FIRST:-}" ] || : > "$FM_FAKE_PROTOCOL_FIRST"
-          [ -z "${FM_FAKE_EXIT_TRANSPORT_FAIL_AFTER_STOP:-}" ] || exit 1
-          ;;
-        *'encode launch-brief'*)
-          if [ -n "${FM_FAKE_PRIOR_PID:-}" ] && [ -n "${FM_FAKE_PRIOR_LIVE_MARKER:-}" ]; then
-            prior_stat=$(ps -o stat= -p "$FM_FAKE_PRIOR_PID" 2>/dev/null | tr -d '[:space:]')
-            case "$prior_stat" in ''|Z*) ;; *) : > "$FM_FAKE_PRIOR_LIVE_MARKER" ;; esac
-          fi
-          cat "$D/becomes" > "$D/command"
-          [ -z "${FM_FAKE_LAUNCH_TRANSPORT_FAIL_AFTER_START:-}" ] || exit 1
-          ;;
-      esac
-    else
-      printf '%s\n' "$payload" >> "$D/keys"
-      case "$payload" in
-        'export GOTMPDIR='*)
-          if [ -n "${FM_FAKE_TRACE_PREPARE:-}" ]; then
-            : > "$FM_FAKE_TRACE_PREPARE"
-            while [ ! -e "$FM_FAKE_TRACE_RELEASE" ]; do /bin/sleep 0.01; done
-          fi
-          ;;
-        'export TRACEPARENT='*)
-          [ -z "${FM_FAKE_TRACE_EXPORTED:-}" ] || : > "$FM_FAKE_TRACE_EXPORTED"
-          ;;
-      esac
-    fi
-    exit 0 ;;
-  display-message)
-    for a in "$@"; do
-      case "$a" in
-        *cursor_y*) printf '1\n'; exit 0 ;;
-        *pane_current_command*) cat "$D/command"; printf '\n'; exit 0 ;;
-        *pane_current_path*)
-          if [ -n "${FM_FAKE_CWD_RACE_READY:-}" ]; then
-            : > "$FM_FAKE_CWD_RACE_READY"
-            /bin/sleep 1
-          fi
-          cat "$D/cwd"; printf '\n'; exit 0 ;;
-      esac
-    done
-    printf 'fakepane\n'; exit 0 ;;
-  capture-pane)
-    [ -z "${FM_FAKE_COMPOSER_READ_FAIL:-}" ] || exit 1
-    if [ -s "$D/composer" ]; then
-      printf '╭────╮\n│ %s  │\n╰────╯\n' "$(cat "$D/composer")"
-    else
-      printf '╭────╮\n│    │\n╰────╯\n'
-    fi
-    exit 0 ;;
-  list-windows) [ -f "$D/windows" ] && cat "$D/windows"; exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$fb/tmux"
   cat > "$fb/sleep" <<'SH'
 #!/usr/bin/env bash
 [ -z "${FM_FAKE_LOCK_WAITING:-}" ] || : > "$FM_FAKE_LOCK_WAITING"
@@ -152,6 +101,67 @@ SH
   chmod +x "$fb/timeout"
 }
 
+# fake_hooks <case-dir>: write the endpoint's on_text and on_request hooks from
+# the fault variables above and print the knob patch that installs them.
+fake_hooks() {  # <case-dir>
+  local dir=$1 text_hook="$1/fake/on-text" request_hook="$1/fake/on-request" fail_submit='' fail_exit=''
+  cat > "$text_hook" <<SH
+#!/usr/bin/env bash
+case "\$1" in
+  /exit|/quit)
+    [ -z '${FM_FAKE_PROTOCOL_FIRST:-}' ] || : > '${FM_FAKE_PROTOCOL_FIRST:-}' ;;
+  *'encode launch-brief'*)
+    if [ -n '${FM_FAKE_PRIOR_PID:-}' ] && [ -n '${FM_FAKE_PRIOR_LIVE_MARKER:-}' ]; then
+      prior_stat=\$(ps -o stat= -p '${FM_FAKE_PRIOR_PID:-}' 2>/dev/null | tr -d '[:space:]')
+      case "\$prior_stat" in ''|Z*) ;; *) : > '${FM_FAKE_PRIOR_LIVE_MARKER:-}' ;; esac
+    fi ;;
+  'export GOTMPDIR='*)
+    if [ -n '${FM_FAKE_TRACE_PREPARE:-}' ]; then
+      : > '${FM_FAKE_TRACE_PREPARE:-}'
+      while [ ! -e '${FM_FAKE_TRACE_RELEASE:-}' ]; do /bin/sleep 0.01; done
+    fi ;;
+  'export TRACEPARENT='*)
+    [ -z '${FM_FAKE_TRACE_EXPORTED:-}' ] || : > '${FM_FAKE_TRACE_EXPORTED:-}' ;;
+esac
+exit 0
+SH
+  cat > "$request_hook" <<SH
+#!/usr/bin/env bash
+if [ "\$2" = cwd ] && [ -n '${FM_FAKE_CWD_RACE_READY:-}' ]; then
+  : > '${FM_FAKE_CWD_RACE_READY:-}'
+  /bin/sleep 1
+fi
+[ -z '${FM_FAKE_ON_REQUEST:-}' ] || '${FM_FAKE_ON_REQUEST:-}' "\$@"
+exit 0
+SH
+  chmod +x "$text_hook" "$request_hook"
+  [ -z "${FM_FAKE_EXIT_TRANSPORT_FAIL_AFTER_STOP:-}" ] || fail_exit=/quit
+  [ -z "${FM_FAKE_LAUNCH_TRANSPORT_FAIL_AFTER_START:-}" ] || fail_submit='encode launch-brief'
+  jq -nc --arg t "$text_hook" --arg r "$request_hook" --arg f "$fail_submit" --arg x "$fail_exit" \
+    --argjson c "$([ -n "${FM_FAKE_COMPOSER_READ_FAIL:-}" ] && echo true || echo false)" \
+    '{on_text: $t, on_request: $r, fail_submit_text: $f, fail_text_and_exit: $x, fail_capture: $c}'
+}
+
+# fake_push / fake_pull <case-dir>: the fake dir onto its endpoint before a
+# command, and what the endpoint received back into the fake dir after it.
+fake_push() {  # <case-dir>
+  local dir=$1
+  fm_test_fake_dir_push "$dir/fake"
+  [ -s "$dir/fake/target" ] && [ -s "$dir/fake/windows" ] || return 0
+  fm_test_fake_stream_set "$(cat "$dir/fake/target")" "$(fake_hooks "$dir")"
+}
+
+fake_pull() {  # <case-dir>
+  fm_test_fake_dir_pull "$1/fake"
+}
+
+# composer_holds <case-dir> <text>: the endpoint's screen is a bordered
+# composer box holding <text>, the cursor on it.
+composer_holds() {  # <case-dir> <text>
+  printf '╭────╮\n│ %s  │\n╰────╯\n' "$2" > "$1/fake/pane"
+  printf '1' > "$1/fake/cursor"
+}
+
 # new_case <name> [id] -> echoes a case dir with a live deck ship task.
 new_case() {
   local id=${2:-t1} dir="$TMP_ROOT/$1-$RANDOM"
@@ -161,7 +171,7 @@ new_case() {
   printf 'fm-deck-worker' > "$dir/fake/command"
   printf 'fm-deck-worker' > "$dir/fake/becomes"
   printf '%s\n' "fm-$id" > "$dir/fake/windows"
-  make_tmux_stub "$dir"
+  make_fakebin "$dir"
   printf '%s\n' "$dir"
 }
 
@@ -180,8 +190,7 @@ Exercise relaunch behavior for $id.
 Preserve the task while replacing its agent process.
 EOF
   {
-    echo "window=fmses:fm-$id"
-    echo "endpoint_task_id=$id"
+    fm_test_fake_dir_task "$dir/fake" "$home/state" "$id"
     echo "worktree=$wt"
     echo "project=$proj"
     echo "harness=$harness"
@@ -198,40 +207,40 @@ EOF
 }
 
 run_control() {  # <case-dir> <args...>
-  local dir=$1; shift
+  local dir=$1 rc; shift
   # A relaunch reaches the launch owner through fm-control.sh, so it runs
   # against a throwaway HOME: nothing a launch writes under the user's home may
   # reach the developer's real one.
   mkdir -p "$dir/user-home"
-  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+  fake_push "$dir"
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
     HOME="$dir/user-home" \
     FM_SPAWN_NO_GUARD=1 \
     FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT="${FM_TEST_EXIT_WAIT:-0.05}" FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_REAL_GIT="${FM_REAL_GIT:-}" FM_FAKE_GIT_FAILURE="${FM_FAKE_GIT_FAILURE:-}" \
     FM_REAL_MV="${FM_REAL_MV:-}" FM_FAKE_COMPLETE_JOURNAL_MV_FAIL="${FM_FAKE_COMPLETE_JOURNAL_MV_FAIL:-}" \
     FM_FAKE_META_PUBLISH_MV_FAIL="${FM_FAKE_META_PUBLISH_MV_FAIL:-}" \
-    FM_FAKE_TRACE_PREPARE="${FM_FAKE_TRACE_PREPARE:-}" \
-    FM_FAKE_TRACE_RELEASE="${FM_FAKE_TRACE_RELEASE:-}" \
     FM_FAKE_META_WRITER_READY="${FM_FAKE_META_WRITER_READY:-}" \
-    FM_FAKE_TRACE_EXPORTED="${FM_FAKE_TRACE_EXPORTED:-}" \
-    FM_FAKE_PROTOCOL_FIRST="${FM_FAKE_PROTOCOL_FIRST:-}" \
-    FM_FAKE_PRIOR_PID="${FM_FAKE_PRIOR_PID:-}" \
-    FM_FAKE_PRIOR_LIVE_MARKER="${FM_FAKE_PRIOR_LIVE_MARKER:-}" \
     "$CONTROL" "$@" 2>&1
+  rc=$?
+  fake_pull "$dir"
+  return "$rc"
 }
 
 run_spawn() {  # <case-dir> <args...>
-  local dir=$1; shift
+  local dir=$1 rc; shift
   # Runs against a throwaway HOME, so nothing a launch writes under the user's
   # home may reach the developer's real one.
   mkdir -p "$dir/user-home"
-  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+  fake_push "$dir"
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
     HOME="$dir/user-home" \
     FM_SPAWN_NO_GUARD=1 \
     FM_CONTROL_EXIT_WAIT="${FM_TEST_EXIT_WAIT:-0.05}" \
-    FM_FAKE_PRIOR_PID="${FM_FAKE_PRIOR_PID:-}" \
-    FM_FAKE_PRIOR_LIVE_MARKER="${FM_FAKE_PRIOR_LIVE_MARKER:-}" \
     "$SPAWN" "$@" 2>&1
+  rc=$?
+  fake_pull "$dir"
+  return "$rc"
 }
 
 meta_field() {  # <case-dir> <id> <key>
@@ -340,7 +349,7 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
   out=$(run_control "$dir" rl1 relaunch --note "stopped mid-refactor"); rc=$?
   expect_code 0 "$rc" "a same-harness relaunch should succeed"$'\n'"$out"
   assert_contains "$out" "relaunched rl1 harness=deck from=deck" "the outcome should name the transition"
-  [ "$(meta_field "$dir" rl1 window)" = "fmses:fm-rl1" ] \
+  [ "$(meta_field "$dir" rl1 window)" = "$(cat "$dir/fake/target")" ] \
     || fail "the endpoint must be reused, not recreated"
   [ "$(meta_field "$dir" rl1 worktree)" = "$dir/wt" ] \
     || fail "the worktree must be reused, not reallocated"
@@ -360,7 +369,7 @@ test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text() {
   local dir out rc
   dir=$(new_case pending-exit rl43)
   add_ship_task "$dir" rl43 deck
-  printf 'i' > "$dir/fake/composer"
+  composer_holds "$dir" i
 
   out=$(run_control "$dir" rl43 relaunch --note "preserve the pending draft"); rc=$?
 
@@ -809,8 +818,7 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
   printf 'sm3\n' > "$dir/smhome/.fm-secondmate-home"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   {
-    echo "window=fmses:fm-sm3"
-    echo "endpoint_task_id=sm3"
+    fm_test_fake_dir_task "$dir/fake" "$home/state" "sm3"
     echo "worktree=$dir/smhome"
     echo "project=$dir/smhome"
     echo "harness=deck"
@@ -863,8 +871,7 @@ test_secondmate_relaunch_onto_deck() {
   printf 'smdeck\n' > "$dir/smhome/.fm-secondmate-home"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   {
-    echo "window=fmses:fm-smdeck"
-    echo "endpoint_task_id=smdeck"
+    fm_test_fake_dir_task "$dir/fake" "$home/state" "smdeck"
     echo "worktree=$dir/smhome"
     echo "project=$dir/smhome"
     echo "harness=deck"
@@ -903,8 +910,7 @@ test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop() {
   printf 'sm6\n' > "$dir/smhome/.fm-secondmate-home"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   {
-    echo "window=fmses:fm-sm6"
-    echo "endpoint_task_id=sm6"
+    fm_test_fake_dir_task "$dir/fake" "$home/state" "sm6"
     echo "worktree=$dir/smhome"
     echo "project=$dir/smhome"
     echo "harness=deck"
@@ -925,7 +931,6 @@ test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop() {
     || fail "invalid configured effort should normalize to default"
   pass "fm-control relaunch: invalid configured effort is ignored before stop"
 }
-
 
 test_ship_relaunch_ignores_the_crew_harness_config() {
   local dir out
@@ -1018,8 +1023,7 @@ test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
       "$brief" > "$brief.filled"
     mv "$brief.filled" "$brief"
     {
-      echo "window=fmses:fm-$id"
-      echo "endpoint_task_id=$id"
+      fm_test_fake_dir_task "$dir/fake" "$home/state" "$id"
       echo "worktree=$dir/wt"
       echo "project=$dir/proj"
       echo "harness=deck"
@@ -1073,6 +1077,50 @@ test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
 
 
 # --- 3 and 4. refusals before the agent is touched ---------------------------
+
+# Backend migration is gone with the tmux and herdr backends: relaunch replaces
+# the agent on the endpoint the record already names, and a record still on a
+# retired backend is something firstmate can no longer drive at all.
+test_relaunch_refuses_a_backend_flag() {
+  local dir out rc before
+  dir=$(new_case backend-flag rl70)
+  add_ship_task "$dir" rl70 deck
+  before=$(cat "$dir/home/state/rl70.meta")
+  out=$(run_control "$dir" rl70 relaunch --backend stream --note "x"); rc=$?
+  expect_code 1 "$rc" "relaunch --backend should refuse"$'\n'"$out"
+  assert_contains "$out" "--backend" "the refusal should name the flag"
+  [ "$(cat "$dir/home/state/rl70.meta")" = "$before" ] || fail "a refused --backend relaunch changed the record"
+  [ "$(cat "$dir/fake/command")" = fm-deck-worker ] || fail "a refused --backend relaunch stopped the agent"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused --backend relaunch sent input"
+  pass "fm-control relaunch: --backend is refused; a relaunch never migrates backends"
+}
+
+test_relaunch_refuses_a_record_on_a_retired_backend() {
+  local dir out rc backend before
+  for backend in tmux herdr; do
+    dir=$(new_case "retired-$backend" rl71)
+    add_ship_task "$dir" rl71 deck
+    # The same task, recorded on a retired backend with that backend's endpoint.
+    {
+      grep -v '^\(window\|backend\|stream_hub\|stream_endpoint_id\)=' "$dir/home/state/rl71.meta"
+      if [ "$backend" = tmux ]; then
+        echo "window=fmses:fm-rl71"
+      else
+        printf '%s\n' window=default:w1:p2 herdr_session=default herdr_workspace_id=w1 \
+          herdr_tab_id=w1:t1 herdr_pane_id=w1:p2
+      fi
+      echo "backend=$backend"
+    } > "$dir/rl71.meta" && mv "$dir/rl71.meta" "$dir/home/state/rl71.meta"
+    before=$(cat "$dir/home/state/rl71.meta")
+    out=$(run_control "$dir" rl71 relaunch --note "x"); rc=$?
+    expect_code 1 "$rc" "relaunching a $backend record should refuse"$'\n'"$out"
+    assert_contains "$out" "$backend" "the refusal should name the retired $backend backend"
+    [ "$(cat "$dir/home/state/rl71.meta")" = "$before" ] || fail "a refused $backend relaunch changed the record"
+    [ ! -e "$dir/home/state/rl71.control-relaunch" ] || fail "a refused $backend relaunch started a transaction"
+    [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused $backend relaunch sent input"
+  done
+  pass "fm-control relaunch: a record on a retired tmux or herdr backend is refused before anything changes"
+}
 
 test_missing_worktree_refuses_before_stopping_anything() {
   local dir out rc
@@ -1217,7 +1265,10 @@ test_stop_transport_failure_reconciles_a_dead_agent() {
   out=$(FM_FAKE_EXIT_TRANSPORT_FAIL_AFTER_STOP=1 \
     run_control "$dir" rl25 relaunch --note "preserve this after stop"); rc=$?
   expect_code 1 "$rc" "a stop transport failure should fail closed"$'\n'"$out"
-  [ "$(cat "$dir/fake/command")" = zsh ] || fail "the fixture should stop the old agent before reporting transport failure"
+  case "$(cat "$dir/fake/command")" in
+    zsh|bash) ;;
+    *) fail "the fixture should stop the old agent before reporting transport failure" ;;
+  esac
   [ "$(journal_field "$dir" rl25 phase)" = failed:stopping ] \
     || fail "the journal should retain the pre-stop phase on a partial stop"
   [ "$(journal_field "$dir" rl25 rollback)" = prior-record-kept-agent-dead ] \
@@ -1303,8 +1354,7 @@ test_secondmate_relaunch_checkpoints_child_work_and_spares_the_charter() {
   printf 'window=x:fm-c1\n' > "$dir/smhome/state/c1.meta"
   printf 'window=x:fm-c2\n' > "$dir/smhome/state/c2.meta"
   {
-    echo "window=fmses:fm-sm1"
-    echo "endpoint_task_id=sm1"
+    fm_test_fake_dir_task "$dir/fake" "$home/state" "sm1"
     echo "worktree=$dir/smhome"
     echo "project=$dir/smhome"
     echo "harness=deck"
@@ -1342,8 +1392,7 @@ test_secondmate_relaunch_refuses_an_unmarked_home() {
   mkdir -p "$dir/smhome/state"
   printf 'someone-else\n' > "$dir/smhome/.fm-secondmate-home"
   {
-    echo "window=fmses:fm-sm2"
-    echo "endpoint_task_id=sm2"
+    fm_test_fake_dir_task "$dir/fake" "$home/state" "sm2"
     echo "worktree=$dir/smhome"
     echo "project=$dir/smhome"
     echo "harness=deck"
@@ -1370,8 +1419,7 @@ test_secondmate_checkpoint_refuses_unreadable_child_state() {
   mkdir -p "$dir/smhome/state/bad.meta"
   printf 'sm5\n' > "$dir/smhome/.fm-secondmate-home"
   {
-    echo "window=fmses:fm-sm5"
-    echo "endpoint_task_id=sm5"
+    fm_test_fake_dir_task "$dir/fake" "$home/state" "sm5"
     echo "worktree=$dir/smhome"
     echo "project=$dir/smhome"
     echo "harness=deck"
@@ -1508,15 +1556,14 @@ test_spawn_relaunch_refuses_a_symlinked_task_record_before_inspection() {
   target="$dir/foreign-task-record"
   mv "$meta" "$target"
   ln -s "$target" "$meta"
-  mv "$dir/fakebin/tmux" "$dir/fakebin/tmux-real"
-  cat > "$dir/fakebin/tmux" <<SH
+  # Any read of, or write to, the task's endpoint marks it inspected.
+  cat > "$dir/on-request" <<SH
 #!/usr/bin/env bash
 : > "$dir/relaunch-endpoint-inspected"
-exec "$dir/fakebin/tmux-real" "\$@"
 SH
-  chmod +x "$dir/fakebin/tmux"
+  chmod +x "$dir/on-request"
 
-  out=$(run_spawn "$dir" rl37 --relaunch --harness deck); rc=$?
+  out=$(FM_FAKE_ON_REQUEST="$dir/on-request" run_spawn "$dir" rl37 --relaunch --harness deck); rc=$?
   expect_code 1 "$rc" "relaunching from symlinked metadata should refuse"
   assert_contains "$out" "task record resolves outside its authorized directory" \
     "relaunch did not identify the unsafe task record"
@@ -1533,8 +1580,9 @@ test_spawn_relaunch_keeps_its_early_meta_lock_continuous() {
   add_ship_task "$dir" rl38 deck
   printf 'zsh' > "$dir/fake/command"
   lock="$dir/home/state/.meta-rl38.lock"
-  mv "$dir/fakebin/tmux" "$dir/fakebin/tmux-real"
-  cat > "$dir/fakebin/tmux" <<SH
+  # Every request the relaunch makes of its endpoint checks the meta lock is the
+  # same one it held at the first request.
+  cat > "$dir/on-request" <<SH
 #!/usr/bin/env bash
 if [ -d "$lock" ]; then
   if [ ! -e "$dir/lock-observation-started" ]; then
@@ -1544,11 +1592,10 @@ if [ -d "$lock" ]; then
     : > "$dir/meta-lock-was-recreated"
   fi
 fi
-exec "$dir/fakebin/tmux-real" "\$@"
 SH
-  chmod +x "$dir/fakebin/tmux"
+  chmod +x "$dir/on-request"
 
-  out=$(run_spawn "$dir" rl38 --relaunch --harness deck); rc=$?
+  out=$(FM_FAKE_ON_REQUEST="$dir/on-request" run_spawn "$dir" rl38 --relaunch --harness deck); rc=$?
   expect_code 0 "$rc" "relaunch with one continuous meta lock should succeed"$'\n'"$out"
   assert_present "$dir/lock-observation-started" \
     "test did not observe the relaunch-held meta lock"
@@ -1584,9 +1631,9 @@ test_spawn_relaunch_refuses_contradicting_flags() {
   dir=$(new_case flags rl16)
   add_ship_task "$dir" rl16 deck
   printf 'zsh' > "$dir/fake/command"
-  out=$(run_spawn "$dir" rl16 --relaunch --backend bogus); rc=$?
-  expect_code 1 "$rc" "an unknown --backend should be refused alongside --relaunch"
-  assert_contains "$out" "accepts tmux, herdr, or stream" "the refusal should name the migration backends"
+  out=$(run_spawn "$dir" rl16 --relaunch --backend stream); rc=$?
+  expect_code 1 "$rc" "--backend should be refused alongside --relaunch, even naming the recorded backend"
+  assert_contains "$out" "--backend cannot override it" "the refusal should name the recorded endpoint rule"
   out=$(run_spawn "$dir" rl16 --relaunch --scout); rc=$?
   expect_code 1 "$rc" "--scout should be refused alongside --relaunch"
   assert_contains "$out" "recorded kind" "the refusal should name the recorded kind rule"
@@ -1615,7 +1662,8 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
   out=$(run_spawn "$dir" rl18 --relaunch --harness deck); rc=$?
   expect_code 1 "$rc" "a pane outside the worktree should refuse"
   assert_contains "$out" "not its recorded worktree" "the refusal should name the wrong location"
-  [ ! -s "$dir/fake/keys" ] || fail "a refused tmux relaunch must send nothing to the pane"
+  [ ! -s "$dir/fake/keys" ] && [ ! -s "$dir/fake/literal" ] \
+    || fail "a refused relaunch must send nothing to the endpoint"
   pass "fm-spawn --relaunch: refuses to start a replacement outside the copy holding its work"
 }
 
@@ -1749,6 +1797,8 @@ test_ship_relaunch_ignores_the_crew_harness_config
 test_spawn_relaunch_without_a_harness_reuses_the_recorded_one
 test_direct_spawn_relaunch_stops_stale_deck_before_replacement_launch
 test_promoted_scout_relaunch_receives_the_current_delivery_contract
+test_relaunch_refuses_a_backend_flag
+test_relaunch_refuses_a_record_on_a_retired_backend
 test_missing_worktree_refuses_before_stopping_anything
 test_missing_instructions_refuse_before_stopping_anything
 test_checkpoint_refusal_leaves_the_record_byte_identical

@@ -147,27 +147,27 @@ fm_control_exit_command() {  # <harness>
   esac
 }
 
-# Which named keys a backend adapter can deliver. Every session provider
-# normalizes Enter, Ctrl+C, and the Ctrl+U composer clear. The stream agent
-# writes raw bytes to a pseudoterminal, so it delivers all four.
+# Which named keys a backend adapter can deliver. The stream agent writes raw
+# bytes to a pseudoterminal, so it delivers Escape, Enter, Ctrl+C, and the
+# Ctrl+U composer clear.
 fm_control_backend_supports_key() {  # <backend> <key>
   local backend=${1-} key=${2-}
   case "$backend" in
-    tmux|herdr|stream)
+    stream)
       case "$key" in Escape|Enter|C-c|C-u) return 0 ;; esac
       ;;
   esac
   return 1
 }
 
-# Whether <backend> has a recovery-grade agent-state classifier. tmux, herdr,
-# and stream implement fm_backend_agent_state; any other backend reports
-# `unverified`, so no reading of its can prove an agent stopped. The control
+# Whether <backend> has a recovery-grade agent-state classifier. stream
+# implements fm_backend_agent_state; a retired backend reports `unverified`,
+# so no reading of its can prove an agent stopped. The control
 # plane refuses a stop-proving verb there instead of reporting an unprovable
 # transition as success.
 fm_control_backend_state_verified() {  # <backend>
   case "${1-}" in
-    tmux|herdr|stream) return 0 ;;
+    stream) return 0 ;;
   esac
   return 1
 }
