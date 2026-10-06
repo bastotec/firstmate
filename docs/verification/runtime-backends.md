@@ -997,6 +997,9 @@ The daemon injection transport into a live composer keeps its coverage in `tests
 `tests/fm-endpoint-rebind-lib.test.sh` pins endpoint-only record replacement and identity refusals; `tests/fm-meta-backfill.test.sh` pins legacy backend backfill, dry-run, idempotency, and classification refusals.
 These fake-fleet cases prove integration routing, not real PTY behavior or installed-harness identity.
 The local-PID regression in `tests/fm-backend-stream.test.sh` instead runs the real Python hub and agent with a harness-named stand-in process, checks that its reported PID exists locally, and refuses other-machine and unknown-endpoint PID reads.
+`tests/fm-stream-agent-kill-safety.test.sh` exercises Python foreground-job cleanup, and the Rust PTY tests `foreground_job_dies_with_its_endpoint`, `foreground_pipeline_dies_with_its_endpoint`, and `foreground_job_started_during_close_dies` in `crates/fm-stream-agent/src/pty.rs` cover the corresponding native cases.
+Each implementation tests a SIGHUP-ignoring job, a pipeline whose group leader can exit before close, and a TERM-ignoring job started during the grace period, checking that no process remains in the job's group after close.
+The cases drain the PTY during close as the production reader does, because an exiting shell can wait on undrained terminal output.
 
 ### Rust hub isolated compatibility
 

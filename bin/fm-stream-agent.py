@@ -55,6 +55,7 @@ from __future__ import annotations
 import argparse
 import base64
 import concurrent.futures
+import ctypes
 import errno
 import fcntl
 import json
@@ -81,6 +82,9 @@ NATIVE_STEERING_CAPABILITY = "native_steering_receiver"
 STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
                  "failed", "resolved")
 MACHINE_RE = re.compile(r"\A[A-Za-z0-9._-]{1,128}\Z")
+_TCGETSID = ctypes.CDLL(None).tcgetsid
+_TCGETSID.argtypes = [ctypes.c_int]
+_TCGETSID.restype = ctypes.c_int
 
 
 def _now() -> float:
@@ -333,10 +337,9 @@ class Pty:
         On this fleet that stranger can be another worker's harness, so a
         reaped endpoint is never signalled at all.
 
-        The cost is that a grandchild outliving a reaped direct child is not
-        signalled here. That is the safe side of the trade: those processes lose
-        their controlling terminal when the pty master closes, whereas naming a
-        pid we no longer own has no safe failure mode.
+        A grandchild outliving a reaped direct child is not signalled here:
+        naming a pid we no longer own has no safe failure mode. Losing its
+        controlling terminal does not guarantee that the grandchild exits.
         """
         with self._reap_lock:
             if self.proc.poll() is not None:
@@ -367,20 +370,54 @@ class Pty:
                     return False
             return True
 
-    def close(self, signal_name: str = "TERM") -> bool:
-        """Signal the process group, wait for the reader, then release the fd.
+    def _foreground_group(self):
+        """The terminal's foreground process group, when it is a job of ours.
 
-        The reader is woken and joined BEFORE the descriptor is closed. A reader
-        still blocked in os.read() on a closed fd can be handed a later
-        endpoint's pty when the kernel reuses that fd number, and would then
-        publish one worker's output as another's.
+        docs/stream-backend.md owns endpoint-close behavior and limits;
+        crates/fm-stream-agent/src/pty.rs::foreground_group_locked documents the
+        shared terminal-session ownership proof, including leaderless pipelines.
+        """
+        with self._reap_lock:
+            if self.proc.poll() is not None:
+                return None
+            try:
+                fg = os.tcgetpgrp(self.master_fd)
+                if fg <= 0 or fg == self.pgid or fg in (os.getpgrp(), os.getsid(0)):
+                    return None
+                return fg if _TCGETSID(self.master_fd) == self.pgid else None
+            except OSError:
+                return None
+
+    def _signal_foreground(self, sig) -> bool:
+        with self._reap_lock:
+            fg = self._foreground_group()
+            if fg is None:
+                return False
+            try:
+                os.killpg(fg, sig)
+                return True
+            except OSError:
+                return False
+
+    def close(self, signal_name: str = "TERM") -> bool:
+        """Signal the foreground job and shell, then wait for the child.
+
+        The job must be signalled first on both passes, before the shell's death
+        removes the terminal session used by _foreground_group to prove ownership.
+
+        The caller must wake and join the reader BEFORE release() closes the
+        descriptor. A reader still blocked in os.read() on a closed fd can be
+        handed a later endpoint's pty when the kernel reuses that fd number, and
+        would then publish one worker's output as another's.
         """
         sig = signal.SIGTERM if signal_name == "TERM" else signal.SIGKILL
-        killed = self._signal_group(sig)
+        job_killed = self._signal_foreground(sig)
+        killed = self._signal_group(sig) or job_killed
         if killed:
             deadline = _now() + 3.0
-            while _now() < deadline and self.alive():
+            while _now() < deadline and (self.alive() or self._foreground_group() is not None):
                 time.sleep(0.05)
+            self._signal_foreground(signal.SIGKILL)
             self._signal_group(signal.SIGKILL)
         self._closed.set()
         with self._reap_lock:

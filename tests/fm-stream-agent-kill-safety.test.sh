@@ -310,6 +310,75 @@ while time.time() < deadline and alive(child):
 report("live-endpoint-is-killed", killed and not alive(child),
        "close() returned %r, child alive=%r" % (killed, alive(child)))
 
+# --- a job-control shell's foreground job dies with its endpoint ------------
+# The endpoint's interactive shell runs each command in a process group of its
+# own. A job that ignores SIGHUP survives the shell's death, so a close that
+# signals only the shell's group would orphan it with the pty still open. The
+# marker is split in the typed text so the terminal's echo never matches it.
+def foreground_case(name, command, marker):
+    pty = make_pty(["/bin/bash", "--norc", "--noprofile", "-i"])
+    job = None
+    drained = threading.Event()
+    drainer = None
+    try:
+        pty.write(command)
+        output = read_until(pty, marker, 20)
+        report(name + "-ready", marker in output, repr(output))
+        fg = os.tcgetpgrp(pty.master_fd)
+        if marker == b"FG_JOB_READY" and fg > 0 and fg != pty.pgid:
+            job = fg
+        elif marker == b"SHELL_READY":
+            report(name + "-initially-idle", fg == pty.pgid, "fg=%r" % fg)
+
+        def drain():
+            nonlocal job
+            output = b""
+            while not drained.is_set():
+                if select.select([pty.master_fd], [], [], 0.1)[0]:
+                    output += pty.read()
+                    if job is None and b"FG_JOB_READY" in output:
+                        fg = os.tcgetpgrp(pty.master_fd)
+                        if fg > 0 and fg != pty.pgid:
+                            job = fg
+
+        drainer = threading.Thread(target=drain, daemon=True)
+        drainer.start()
+        pty.close("TERM")
+        drained.set()
+        drainer.join(5)
+        deadline = time.time() + 8
+        while job and time.time() < deadline and alive(-job):
+            time.sleep(0.05)
+        report(name, job is not None and not alive(-job),
+               "job=%r alive=%r" % (job, job is not None and alive(-job)))
+    finally:
+        if job and alive(-job):
+            try:
+                os.killpg(job, signal.SIGKILL)
+            except OSError:
+                pass
+        pty.close("KILL")
+        drained.set()
+        if drainer is not None:
+            drainer.join(5)
+        pty.release()
+
+
+foreground_case(
+    "foreground-job-dies-with-endpoint",
+    b"bash -c 'trap \"\" HUP; echo FG_JOB_''READY; exec sleep 300'\n",
+    b"FG_JOB_READY")
+foreground_case(
+    "foreground-pipeline-dies-with-endpoint",
+    b"true | bash -c 'trap \"\" HUP; echo FG_JOB_''READY; exec sleep 300'\n",
+    b"FG_JOB_READY")
+foreground_case(
+    "foreground-job-started-during-close-dies",
+    b"late_job() { bash -c 'trap \"\" HUP TERM; echo FG_JOB_''READY; exec sleep 300'; }; "
+    # Stay in builtins: modern Bash can defer TERM traps while in readline.
+    b"trap late_job TERM; echo SHELL_''READY; while :; do :; done\n",
+    b"SHELL_READY")
+
 # --- a reaped endpoint is never signalled ----------------------------------
 guard, guard_pgid = sentinel()
 pty = make_pty(["true"])
@@ -399,7 +468,11 @@ for case_name in partial-write-completes \
   child-handles-sigint-with-parent-0 child-handles-sigint-with-parent-1 \
   parent-sigint-disposition-unchanged-0 parent-sigint-disposition-unchanged-1 \
   endpoint-is-session-leader recorded-pgid-matches-kernel \
-  live-endpoint-is-killed reaped-endpoint-is-not-signalled \
+  live-endpoint-is-killed foreground-job-dies-with-endpoint foreground-job-dies-with-endpoint-ready \
+  foreground-pipeline-dies-with-endpoint foreground-pipeline-dies-with-endpoint-ready \
+  foreground-job-started-during-close-dies foreground-job-started-during-close-dies-ready \
+  foreground-job-started-during-close-dies-initially-idle \
+  reaped-endpoint-is-not-signalled \
   concurrent-reap-never-escapes refuses-own-process-group refuses-own-session; do
   line=$(printf '%s\n' "$out" | grep -E "^(OK|FAIL) $case_name( |$)") \
     || fail "$case_name: the driver reported no verdict at all, so this guard proved nothing"
