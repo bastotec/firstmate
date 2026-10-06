@@ -229,8 +229,8 @@ For a local secondmate whose stream endpoint is positively agent-free and whose 
 bin/fm-spawn.sh <id> --secondmate --backend <recorded-backend>
 ```
 
-Use the recorded `home=` and `backend=` so the replacement preserves the mate's placement rather than ambient selection.
-[Runtime backend](../../../docs/configuration.md#runtime-backend-configbackend--fm_backend) owns legacy metadata and retired-backend refusals; [Secondmate lifecycle](../../../docs/stream-backend.md#secondmate-lifecycle) owns missing-registry recovery, which never treats absence from the hub as proof the agent stopped.
+Use the recorded `home=` in meta and pass its recorded `backend=` the same way, so the replacement stays on the mate's own backend rather than the ambient selection, exactly as the session-start liveness sweep's respawn does.
+A record whose `backend=` is absent or names the retired tmux or herdr backend cannot be relaunched; only the operator retires it, through `bin/fm-retire-endpoint.sh`.
 If meta is missing but `data/secondmates.md` still registers the secondmate, respawn from the registry entry and its persistent home.
 For a remote route, the same command probes and relaunches only on the configured host.
 An SSH transport failure or unreadable remote endpoint remains unknown and must be reconciled on that host; never launch a local replacement.
