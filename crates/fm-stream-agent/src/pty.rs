@@ -73,6 +73,7 @@ impl Pty {
             .env("FM_STREAM_ENDPOINT_ID", id)
             .env("FM_STREAM_HUB", hub)
             .env_remove("FM_STREAM_TOKEN")
+            .env_remove("FM_STREAM_CODE_ROOT")
             .env(
                 "TERM",
                 std::env::var("TERM").unwrap_or("xterm-256color".into()),

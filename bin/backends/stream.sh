@@ -374,6 +374,8 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path] [state-interval
     heartbeat=(--state-interval "$state_interval")
   fi
   (
+    export FM_STREAM_CODE_ROOT
+    FM_STREAM_CODE_ROOT=$(fm_stream_native_root) || exit 1
     fm_backend_stream_detached "${launcher[@]}" serve \
       --hub "$(fm_backend_stream_hub_url)" \
       --token-file "$token_file" \

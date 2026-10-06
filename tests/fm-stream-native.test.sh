@@ -51,6 +51,7 @@ write_shim() {
   cat > "$CASE_DIR/native/$1" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CASE_DIR/native/$1.calls"
+printf '%s\n' "\${FM_STREAM_CODE_ROOT:-}" >> "$CASE_DIR/native/$1.code-roots"
 exec python3 "$ROOT/bin/$2" "\$@"
 SH
   chmod +x "$CASE_DIR/native/$1"
@@ -88,6 +89,7 @@ test_rust_is_the_default_and_launches_the_native_agent() {
   out=$(FM_STREAM_NATIVE_DIR="$CASE_DIR/native" create "native-default-$$") \
     || fail "create with the default implementation failed: $out"
   assert_present "$CASE_DIR/native/fm-stream-agent.calls" "the default implementation did not run the native agent"
+  assert_equals "$ROOT" "$(cat "$CASE_DIR/native/fm-stream-agent.code-roots")" "the adapter must bind its code root into the cached agent"
   assert_grep "serve --hub $URL" "$CASE_DIR/native/fm-stream-agent.calls" "the native agent did not get the adapter's serve arguments"
   assert_grep "--label native-default-$$" "$CASE_DIR/native/fm-stream-agent.calls" "the native agent did not get the label"
   case "$out" in
@@ -178,10 +180,10 @@ new_checkout() {
   cat > "$CASE_DIR/fakebin/cargo" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CASE_DIR/cargo.calls"
-mkdir -p target/release
+mkdir -p "\${CARGO_TARGET_DIR:-target}/release"
 for name in fm-stream-hub fm-stream-agent fm-stream-bridge; do
-  printf '#!/bin/sh\necho %s\n' "\$name" > "target/release/\$name"
-  chmod +x "target/release/\$name"
+  printf '#!/bin/sh\necho %s\n' "\$name" > "\${CARGO_TARGET_DIR:-target}/release/\$name"
+  chmod +x "\${CARGO_TARGET_DIR:-target}/release/\$name"
 done
 SH
   chmod +x "$CASE_DIR/fakebin/cargo"
@@ -197,7 +199,7 @@ native() {  # <path-prefix> <function> [args...]: call the checkout's lib
 test_build_installs_once_per_source_key() {
   new_case build
   new_checkout
-  local out dir second third
+  local out dir second third fourth fifth key
   out=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale 2>/dev/null) || fail "ensure failed: $out"
   case "$out" in built\ *) ;; *) fail "the first ensure should build: $out" ;; esac
   dir=${out#built }
@@ -217,7 +219,63 @@ test_build_installs_once_per_source_key() {
   third=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale 2>/dev/null)
   case "$third" in built\ *) ;; *) fail "a crate edit should rebuild: $third" ;; esac
   assert_not_equals "built $dir" "$third" "a crate edit should install under a new source key"
-  pass "stream native: ensure builds once per crate source key, stamped, and rebuilds when crates change"
+  printf 'mod helper; fn main() {}\n' > "$CASE_DIR/repo/crates/demo/src/main.rs"
+  printf 'pub const VALUE: u8 = 1;\n' > "$CASE_DIR/repo/crates/demo/src/helper.rs"
+  fourth=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale 2>/dev/null)
+  case "$fourth" in built\ *) ;; *) fail "adding an untracked helper should rebuild: $fourth" ;; esac
+  printf 'pub const VALUE: u8 = 2;\n' > "$CASE_DIR/repo/crates/demo/src/helper.rs"
+  fifth=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale 2>/dev/null)
+  case "$fifth" in built\ *) ;; *) fail "editing an untracked helper should rebuild: $fifth" ;; esac
+  assert_not_equals "$fourth" "$fifth" "an untracked helper edit must change the source key"
+  assert_equals 4 "$(wc -l < "$CASE_DIR/cargo.calls" | tr -d ' ')" "each changed source set should build once"
+
+  rm "$CASE_DIR/repo/Cargo.lock"
+  key=$(native "$PATH" fm_stream_native_source_key) || fail "deleted tracked inputs should be skipped"
+  printf 'pub const VALUE: u8 = 3;\n' > "$CASE_DIR/repo/crates/demo/src/helper.rs"
+  assert_not_equals "$key" "$(native "$PATH" fm_stream_native_source_key)" "deleting an earlier input must not hide later edits"
+  pass "stream native: ensure rebuilds for tracked and untracked edits and skips deleted inputs"
+}
+
+test_relative_target_dir_installs_checkout_binaries() {
+  new_case relative-target
+  new_checkout
+  mkdir -p "$CASE_DIR/cwd/build-output/release"
+  local name out dir
+  for name in fm-stream-hub fm-stream-agent fm-stream-bridge; do
+    printf '#!/bin/sh\necho stale\n' > "$CASE_DIR/cwd/build-output/release/$name"
+    chmod +x "$CASE_DIR/cwd/build-output/release/$name"
+  done
+  out=$(cd "$CASE_DIR/cwd" && CARGO_TARGET_DIR=build-output native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build 2>/dev/null) \
+    || fail "relative target build failed: $out"
+  dir=${out#built }
+  assert_equals fm-stream-agent "$("$dir/fm-stream-agent")" "install must use the checkout's build, not the caller's stale executable"
+  [ -x "$CASE_DIR/repo/build-output/release/fm-stream-agent" ] || fail "cargo did not build in the checkout-relative target directory"
+  pass "stream native: relative CARGO_TARGET_DIR resolves once against the checkout"
+}
+
+test_hash_failure_refuses_cached_build() {
+  new_case hash-failure
+  new_checkout
+  local out before
+  native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale >/dev/null 2>&1 || fail "initial build failed"
+  before=$(wc -l < "$CASE_DIR/cargo.calls")
+  cat > "$CASE_DIR/fakebin/git" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = hash-object ]; then
+  echo 'hashing failed' >&2
+  exit 1
+fi
+exec "$(command -v git)" "\$@"
+SH
+  chmod +x "$CASE_DIR/fakebin/git"
+  if out=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale 2>&1); then
+    fail "hash failure resolved or published a cache: $out"
+  fi
+  assert_equals "$before" "$(wc -l < "$CASE_DIR/cargo.calls")" "hash failure must stop before cargo"
+  if native "$CASE_DIR/fakebin:$PATH" fm_stream_native_bin fm-stream-agent >/dev/null 2>&1; then
+    fail "hash failure resolved a cached executable"
+  fi
+  pass "stream native: hash failure refuses build and executable resolution"
 }
 
 test_no_cargo_refuses_with_rustup_and_prebuilt_options() {
@@ -244,4 +302,6 @@ test_missing_native_binaries_refuse_with_the_fix
 test_hub_start_runs_the_selected_hub
 test_hub_unit_prints_a_foreground_unit
 test_build_installs_once_per_source_key
+test_relative_target_dir_installs_checkout_binaries
+test_hash_failure_refuses_cached_build
 test_no_cargo_refuses_with_rustup_and_prebuilt_options

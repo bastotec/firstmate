@@ -170,7 +170,7 @@ Live comparisons exclude process-local clocks; help presentation, top-level comm
 `bin/backends/stream.sh` launches the native `fm-stream-agent serve` for every endpoint when the implementation is `rust`, with the same arguments, ready-file format (`machine endpoint_id`) and status-path contract as the Python agent.
 Its `--help` owns the full option surface.
 The port uses the shared wire protocol with Reqwest/rustls, Serde JSON, POSIX PTYs, and signal-hook; it needs no Python interpreter at runtime.
-Keep the pilot binary under this repository's `target/` tree: native source publication invokes the existing `bin/fm-task-inbox-lib.sh` writer rather than duplicating its sequence and record contract.
+The adapter binds `FM_STREAM_CODE_ROOT` to its checkout so cached native binaries can invoke the existing `bin/fm-task-inbox-lib.sh` writer; when launching the agent directly outside the repository, set that variable to the repository root.
 `crates/fm-stream-agent/src/receiver.rs` implements the native Deck application interface described under [Command path](#command-path); `crates/fm-stream-agent/src/commands.rs` owns the Rust scheduler and durable result reconciliation.
 HTTP redirects are refused rather than forwarding endpoint credentials to a redirect target; point directly at the final HTTP or HTTPS hub URL.
 Option names are full names rather than argparse abbreviations, geometry is bounded to the kernel's unsigned 16-bit values, and heartbeat/poll intervals must be finite, nonnegative, and representable by Rust's monotonic timers.

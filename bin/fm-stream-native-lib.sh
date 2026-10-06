@@ -73,15 +73,23 @@ fm_stream_native_sha() {
 # on disk now (git hash-object reads the working tree, so an edited crate
 # changes the key even before it is committed).
 fm_stream_native_source_key() {
-  local root listing
-  root=$(fm_stream_native_root)
-  listing=$(cd "$root" && git ls-files -- crates Cargo.toml Cargo.lock 2>/dev/null) || listing=
-  [ -n "$listing" ] || {
-    echo "error: $root has no tracked crates/; a home that is not a git checkout needs config/stream-native-dir pointing at prebuilt binaries" >&2
+  local root hashes path object
+  root=$(fm_stream_native_root) || return 1
+  hashes=$(
+    set -o pipefail
+    cd "$root" || exit 1
+    git ls-files --cached --others --exclude-standard -z -- crates Cargo.toml Cargo.lock |
+      while IFS= read -r -d '' path; do
+        [ -e "$path" ] || continue
+        object=$(git hash-object -- "$path") || exit 1
+        printf '%s %q\n' "$object" "$path"
+      done
+  ) || return 1
+  [ -n "$hashes" ] || {
+    echo "error: $root has no crate sources; a home that is not a git checkout needs config/stream-native-dir pointing at prebuilt binaries" >&2
     return 1
   }
-  (cd "$root" && printf '%s\n' "$listing" | git hash-object --stdin-paths | paste -d' ' - <(printf '%s\n' "$listing")) \
-    | fm_stream_native_sha
+  (set -o pipefail; printf '%s\n' "$hashes" | fm_stream_native_sha)
 }
 
 fm_stream_native_cache() {
@@ -149,13 +157,18 @@ fm_stream_native_installed() {  # <dir>
 # source key. With --if-stale an existing install for this key is left alone.
 # Prints one result line: built <dir> | current <dir> | prebuilt <dir>.
 fm_stream_native_build() {
-  local if_stale=0 root dir key cargo cache tmp lock name commit
+  local if_stale=0 root dir key cargo cache tmp lock name commit target
   [ "${1:-}" = "--if-stale" ] && if_stale=1
   if dir=$(fm_stream_native_prebuilt); then
     echo "prebuilt $dir"
     return 0
   fi
-  root=$(fm_stream_native_root)
+  root=$(fm_stream_native_root) || return 1
+  target=${CARGO_TARGET_DIR:-$root/target}
+  case "$target" in
+    /*) ;;
+    *) target="$root/$target" ;;
+  esac
   key=$(fm_stream_native_source_key) || return 1
   cache=$(fm_stream_native_cache)
   dir="$cache/$key"
@@ -179,14 +192,14 @@ fm_stream_native_build() {
   for name in $FM_STREAM_NATIVE_BINARIES; do
     packages+=(-p "$name")
   done
-  if ! (cd "$root" && "$cargo" build --release --locked "${packages[@]}") >&2; then
+  if ! (cd "$root" && CARGO_TARGET_DIR="$target" "$cargo" build --release --locked "${packages[@]}") >&2; then
     rmdir "$lock"
     echo "error: cargo build failed for the stream binaries; nothing was installed" >&2
     return 1
   fi
   mkdir -p "$tmp"
   for name in $FM_STREAM_NATIVE_BINARIES; do
-    cp "${CARGO_TARGET_DIR:-$root/target}/release/$name" "$tmp/$name" || { rm -rf "$tmp"; rmdir "$lock"; return 1; }
+    cp "$target/release/$name" "$tmp/$name" || { rm -rf "$tmp"; rmdir "$lock"; return 1; }
     chmod 755 "$tmp/$name"
   done
   commit=$(cd "$root" && git rev-parse HEAD 2>/dev/null) || commit=unknown

@@ -115,18 +115,28 @@ fi
 # Homes that selected the python rollback, or whose checkout has no
 # fm-stream.sh, are left alone. Cargo's own output goes to
 # state/.stream-native-build.log.
-if [ "$FF_STATUS" = "updated" ] || [ "$FF_STATUS" = "current" ]; then
-  if [ -x "$FM_ROOT/bin/fm-stream.sh" ] \
-    && impl=$(FM_HOME="$FM_HOME" bash -c '. "$1/bin/fm-stream-native-lib.sh" && fm_stream_impl' _ "$FM_ROOT" 2>/dev/null) \
+prepare_stream_native() (
+  root=$1 home=$2 state=$3 label=$4
+  export FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_CONFIG_OVERRIDE="${5:-$home/config}" FM_STATE_OVERRIDE="$state"
+  if [ -x "$root/bin/fm-stream.sh" ] \
+    && impl=$(bash -c '. "$1/bin/fm-stream-native-lib.sh" && fm_stream_impl' _ "$root" 2>/dev/null) \
     && [ "$impl" = rust ]; then
-    mkdir -p "$STATE"
-    if native_out=$(FM_HOME="$FM_HOME" "$FM_ROOT/bin/fm-stream.sh" native ensure \
-        2>"$STATE/.stream-native-build.log"); then
-      echo "stream-native: ${native_out##*$'\n'}"
+    if ! mkdir -p "$state" 2>/dev/null; then
+      echo "$label: failed: cannot create build log directory"
+      return 0
+    fi
+    if native_out=$("$root/bin/fm-stream.sh" native ensure \
+        2>"$state/.stream-native-build.log"); then
+      echo "$label: ${native_out##*$'\n'}"
     else
-      echo "stream-native: failed: $(grep '^error:' "$STATE/.stream-native-build.log" | tail -1 | sed 's/^error: //')"
+      echo "$label: failed: $(grep '^error:' "$state/.stream-native-build.log" | tail -1 | sed 's/^error: //')"
     fi
   fi
+  return 0
+)
+
+if [ "$FF_STATUS" = "updated" ] || [ "$FF_STATUS" = "current" ]; then
+  prepare_stream_native "$FM_ROOT" "$FM_HOME" "$STATE" stream-native "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 fi
 
 # --- secondmates -----------------------------------------------------------
@@ -193,6 +203,7 @@ fm_ff_after_secondmate_settled() {  # <id> <home> <window> <status> <instr>
   if [ "${4:-}" = "updated" ] && [ -x "$2/bin/fm-procevent-when.sh" ]; then
     FM_HOME="$2" FM_ROOT_OVERRIDE="$2" "$2/bin/fm-procevent-when.sh" rebind-all || true
   fi
+  prepare_stream_native "$2" "$2" "$2/state" "stream-native secondmate $1"
   claim_settled_secondmate "$1"
 }
 

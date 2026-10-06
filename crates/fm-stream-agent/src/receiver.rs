@@ -174,10 +174,21 @@ impl Receiver {
     }
     fn enqueue(&self, binding: &Value, text: &str) -> io::Result<PathBuf> {
         // Keep allocation/format/idempotency under the existing inbox owner.
-        let library = std::env::current_exe()?.ancestors()
-            .map(|root| root.join("bin/fm-task-inbox-lib.sh"))
-            .find(|path| path.is_file())
-            .ok_or_else(|| io::Error::other("Rust pilot binary must remain under its repository (task inbox writer unavailable)"))?;
+        let library = std::env::var_os("FM_STREAM_CODE_ROOT")
+            .map(|root| PathBuf::from(root).join("bin/fm-task-inbox-lib.sh"))
+            .filter(|path| path.is_file())
+            .or_else(|| {
+                std::env::current_exe()
+                    .ok()?
+                    .ancestors()
+                    .map(|root| root.join("bin/fm-task-inbox-lib.sh"))
+                    .find(|path| path.is_file())
+            })
+            .ok_or_else(|| {
+                io::Error::other(
+                    "task inbox writer unavailable; set FM_STREAM_CODE_ROOT to the repository root",
+                )
+            })?;
         let body = format!("[stream-order {}]\nNative Deck delivery only: do not execute this source as ordinary steering. Retain it until native guidance instructs acknowledgement.\n{text}", serde_json::to_string(binding).map_err(io::Error::other)?);
         let output = Command::new("bash")
             .args([
@@ -534,6 +545,63 @@ mod tests {
             &json!({"turn":turn,"active":true,"supported":true}),
         )
         .unwrap();
+    }
+    #[test]
+    fn enqueue_uses_code_root_outside_repository() {
+        if let Ok(mode) = std::env::var("FM_RECEIVER_ENQUEUE_TEST") {
+            assert!(!std::env::current_exe()
+                .unwrap()
+                .ancestors()
+                .any(|root| root.join("bin/fm-task-inbox-lib.sh").is_file()));
+            let lab = Lab::new();
+            let receiver = lab.receiver();
+            let binding =
+                json!({"order_id":"outside","execution":receiver.endpoint,"turn":"original"});
+            let result = receiver.enqueue(&binding, "native guidance");
+            if mode == "bound" {
+                let record = result.unwrap();
+                assert!(record.is_file());
+                let sources = receiver.sources().unwrap();
+                assert_eq!(sources.len(), 1);
+                assert_eq!(sources[0].1, binding);
+                assert_eq!(sources[0].2, "native guidance");
+            } else {
+                assert!(result.is_err());
+            }
+            return;
+        }
+        let outside = Lab(std::env::temp_dir().join(format!(
+            "fm-receiver-executable-{}-{}",
+            std::process::id(),
+            hash(&format!("{:?}", std::time::SystemTime::now()))
+        )));
+        fs::create_dir_all(&outside.0).unwrap();
+        let binary = outside.0.join("receiver-test");
+        fs::copy(std::env::current_exe().unwrap(), &binary).unwrap();
+        for mode in ["unbound", "bound"] {
+            let mut child = Command::new(&binary);
+            child
+                .args([
+                    "--exact",
+                    "receiver::tests::enqueue_uses_code_root_outside_repository",
+                    "--nocapture",
+                ])
+                .env("FM_RECEIVER_ENQUEUE_TEST", mode)
+                .env_remove("FM_STREAM_CODE_ROOT");
+            if mode == "bound" {
+                child.env(
+                    "FM_STREAM_CODE_ROOT",
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+                );
+            }
+            let output = child.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
     #[test]
     fn durable_reservation_recovery_never_borrows_a_successor() {
