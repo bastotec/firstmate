@@ -89,7 +89,6 @@ That warning uses `bin/fm-supervision-instructions.sh --repair-line`, so it alwa
 - Child crewmate and scout worktrees are outside scope.
 - A valid secondmate home is in scope; an idle secondmate endpoint with no Relay poll remains healthy because it has no supervision need.
 - The bounded-follow-up mechanism is limited to the Pi and pi-signed integration above.
-- The hook remains inert unless the payload `cwd` contains a per-task token pointer that resolves through Firstmate's private registry to one `state/<id>.turn-ended` marker.
 - Unreadable hook input remains fail-open.
 - No harness adapter uses a shell ampersand to manufacture supervision.
 

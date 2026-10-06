@@ -279,7 +279,7 @@ SH
   PATH="$fakebin:$BASE_PATH" bash -c \
     '. "$0/bin/fm-session-lock-lib.sh"; kill() { return 0; }; fm_harness_pid_alive 5252' \
     "$ROOT" 2>"$err"; status=$?
-  expect_code 0 "$status" "session-lock liveness should accept literal -pi as a harness process name"
+  expect_code 1 "$status" "session-lock liveness should reject literal -pi as a primary harness process name"
   [ ! -s "$err" ] || fail "session-lock liveness wrote basename option noise for literal -pi: $(cat "$err")"
 
   pass "harness identity: dash-leading ps command names are basename operands, not options"
