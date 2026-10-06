@@ -3017,6 +3017,7 @@ test_inject_msg_stream_with_real_steer_client() {
   (
     cd "$dir" || exit 1
     unset NO_MISTAKES_GATE FM_PRIMARY_STEER_BIN
+    # shellcheck disable=SC2329 # Invoked indirectly by the function under test.
     fm_backend_send_text_submit() { fail "typed input must not run while the deck-chat host is live"; }
     inject_real() {
       FM_HOME="$dir" FM_SUPERVISOR_BACKEND=stream FM_SUPERVISOR_TARGET=hub-7717:0123abcd \
