@@ -1029,3 +1029,42 @@ assert_contains "$DOCTOR_OUT" 'check entrypoint-link=human:' "an operator-owned 
 unset FM_ROOT_OVERRIDE
 pass "the entrypoint symlink is recreated when absent and never overwritten when operator-owned"
 
+
+# --- --backend stream: hub, token, and tools for a stream-hosted mate --------
+
+new_case Linux with-herdr no-gui
+STREAM_TOKEN="doctor-stream-token-$$"
+printf 'publish,subscribe,control:%s\n' "$STREAM_TOKEN" > "$CASE_DIR/hub-tokens"
+chmod 600 "$CASE_DIR/hub-tokens"
+python3 "$ROOT/bin/fm-stream-hub.py" serve --bind 127.0.0.1 --port 0 \
+  --token-file "$CASE_DIR/hub-tokens" --ready-file "$CASE_DIR/hub-ready" > "$CASE_DIR/hub.log" 2>&1 &
+STREAM_HUB_PID=$!
+HOLDER_PIDS+=("$STREAM_HUB_PID")
+for _ in $(seq 1 100); do [ -s "$CASE_DIR/hub-ready" ] && break; sleep 0.1; done
+[ -s "$CASE_DIR/hub-ready" ] || fail "the stream hub fixture did not start: $(cat "$CASE_DIR/hub.log")"
+read -r STREAM_HOST STREAM_PORT < "$CASE_DIR/hub-ready"
+mkdir -p "$CASE_PROJECT_HOME/config"
+printf 'http://%s:%s\n' "$STREAM_HOST" "$STREAM_PORT" > "$CASE_PROJECT_HOME/config/stream-hub"
+(umask 077; printf '%s\n' "$STREAM_TOKEN" > "$CASE_PROJECT_HOME/config/stream-token")
+doctor --backend stream
+assert_contains "$DOCTOR_OUT" 'backend=stream' "the doctor did not report the selected backend"
+assert_contains "$DOCTOR_OUT" 'check stream-tools=ok:' "stream tools were not confirmed: $DOCTOR_OUT"
+assert_contains "$DOCTOR_OUT" 'check stream-token=ok:' "a readable stream token was not confirmed: $DOCTOR_OUT"
+assert_contains "$DOCTOR_OUT" "check stream-hub=ok: http://$STREAM_HOST:$STREAM_PORT accepted this home's token" \
+  "a reachable hub accepting the token was not confirmed: $DOCTOR_OUT"
+assert_contains "$DOCTOR_OUT" 'check herdr-server=skip: the stream backend is selected' \
+  "a stream check still required the Herdr server: $DOCTOR_OUT"
+assert_not_contains "$DOCTOR_OUT" "$STREAM_TOKEN" "the doctor printed the stream credential"
+(umask 077; printf 'not-the-token\n' > "$CASE_PROJECT_HOME/config/stream-token")
+doctor --backend stream
+assert_contains "$DOCTOR_OUT" 'check stream-hub=human:' "a refused token was not a human gap: $DOCTOR_OUT"
+[ "$DOCTOR_RC" -ne 0 ] || fail "a refused stream token still reported the host ready"
+rm -f "$CASE_PROJECT_HOME/config/stream-token"
+doctor --backend stream
+assert_contains "$DOCTOR_OUT" 'check stream-token=human:' "a missing stream token was not a human gap: $DOCTOR_OUT"
+assert_contains "$DOCTOR_OUT" 'check stream-hub=skip:' "the hub was probed without a token: $DOCTOR_OUT"
+doctor
+assert_contains "$DOCTOR_OUT" 'backend=herdr' "the default backend is not herdr"
+assert_not_contains "$DOCTOR_OUT" 'check stream-' "a default doctor run checked stream: $DOCTOR_OUT"
+kill "$STREAM_HUB_PID" 2>/dev/null || true
+pass "doctor --backend stream checks the stream tools, token, and hub instead of Herdr"

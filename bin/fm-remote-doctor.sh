@@ -2,17 +2,17 @@
 # Check, and optionally repair, one remote account's second-mate readiness.
 #
 # Usage:
-#   bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh [--fix]
+#   bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh [--backend herdr|stream] [--fix]
 #
 # Run it through fm-on.sh so the fixed entrypoint invokes this readiness owner
 # over its plain SSH bootstrap. The command reports the same filesystem-composed
 # PATH used by worker jobs while retaining authority to inspect and repair the
 # worker itself.
 #
-# A remote second mate always runs on the Herdr backend in the dedicated
-# fm-remote session. Its account therefore needs the Firstmate-owned Aqua Herdr
-# agent plus the sibling dev.firstmate.remote-job worker that runs normal fm-on
-# commands through the Aqua or Linux job-worker path. On darwin, that Herdr
+# With the default --backend herdr, a remote second mate runs in the dedicated
+# fm-remote session. On darwin, its account needs the Firstmate-owned Aqua Herdr
+# agent. Both backends require the sibling dev.firstmate.remote-job worker that
+# runs normal fm-on commands through the Aqua or Linux job-worker path. That Herdr
 # agent runs bin/fm-remote-herdr-guard.sh through the remote account's login
 # shell (`-l -c`) so the server inherits the account's own environment; the
 # gui/<uid> launchd domain it is bootstrapped into, not the shell, is what
@@ -26,8 +26,21 @@
 # SSH cannot create an Aqua session, so a host with no GUI login is a human
 # gap rather than something --fix attempts to bypass.
 #
+# --backend stream checks the host for a stream-hosted second mate instead of
+# the Herdr-specific checks (herdr, gui-session, launchagent*, herdr-server,
+# each reported as skip): stream-tools (curl, jq, python3, and this checkout's
+# bin/fm-stream-agent.py), stream-token (the selected home's
+# config/stream-token is readable and non-empty; its value is never printed),
+# stream-hub (the hub that home's config/stream-hub names answers this host
+# with that token on the adapter's protocol), and stream-survival (on Linux,
+# systemd-logind does not kill the user's processes at logout, so a stream
+# agent started over SSH outlives the connection). Every stream gap is a human
+# one: --fix never starts a hub or mints a credential. The required-tool list
+# is unchanged, so herdr stays required until Herdr itself is removed.
+#
 # Line protocol, one fact per line, stable for script consumers:
 #   mode=check|fix
+#   backend=herdr|stream
 #   path=<the child PATH this command inherited>
 #   entrypoint=yes|no
 #   platform=darwin|linux|<uname -s>|unknown
@@ -46,8 +59,9 @@
 # exits non-zero.
 #
 # --fix is idempotent and closes only automatable gaps: it writes and reloads
-# both Firstmate-owned Aqua agents, starts the Linux workers where no Aqua agent
-# applies, recreates the entrypoint symlink, and may add an owned ~/.local/bin
+# the remote-job Aqua agent (and the Herdr agent when --backend herdr is selected),
+# starts the Linux workers where no Aqua agent applies, recreates the entrypoint
+# symlink, and may add an owned ~/.local/bin
 # wrapper for a required tool it can discover under nvm, asdf, or mise. It never
 # installs packages, creates a login session, writes an auto-login password,
 # changes FileVault, stores an account password, or replaces a non-Firstmate
@@ -84,6 +98,11 @@ ENTRYPOINT_LINK="${HOME:-}/.local/bin/fm-remote-entrypoint.sh"
 usage() { sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 MODE=check
+BACKEND=herdr
+if [ "${1:-}" = --backend ]; then
+  case "${2:-}" in herdr|stream) BACKEND=$2 ;; *) usage ;; esac
+  shift 2
+fi
 case "${1:-}" in
   '') ;;
   --fix) MODE=fix; shift ;;
@@ -632,7 +651,7 @@ check_herdr() {
     return 0
   fi
   record herdr "human: the herdr CLI does not resolve on the remote runtime PATH" \
-    "install herdr from https://herdr.dev on that account, or add a ~/.local/bin wrapper for it; a remote second mate always runs on the Herdr backend"
+    "install herdr from https://herdr.dev on that account, or add a ~/.local/bin wrapper for it; --backend herdr selects the dedicated fm-remote Herdr session"
 }
 
 check_gui_session() {
@@ -773,11 +792,83 @@ check_entrypoint_link() {
     "rerun this command with --fix to create it"
 }
 
+# --- stream checks (--backend stream) ---------------------------------------
+
+stream_adapter_load() {
+  declare -F fm_backend_stream_version_check >/dev/null 2>&1 && return 0
+  # shellcheck source=bin/backends/stream.sh
+  . "$SCRIPT_DIR/backends/stream.sh" 2>/dev/null
+}
+
+check_stream() {
+  local out token_file reason
+  local herdr_skip="skip: the stream backend is selected"
+  record herdr "$herdr_skip"
+  record gui-session "$herdr_skip"
+  record launchagent "$herdr_skip"
+  record launchagent-scope "$herdr_skip"
+  record launchagent-loaded "$herdr_skip"
+  record herdr-server "$herdr_skip"
+  if ! stream_adapter_load; then
+    record stream-tools "human: this checkout's stream adapter bin/backends/stream.sh cannot be loaded" \
+      "update this host's Firstmate checkout"
+    return 0
+  fi
+  if out=$(fm_backend_stream_tool_check 2>&1); then
+    record stream-tools "ok: curl, jq, python3, and $FM_BACKEND_STREAM_AGENT_BIN"
+  else
+    record stream-tools "human: ${out#error: }" \
+      "install the missing tool on that account's runtime PATH"
+  fi
+  token_file="$(fm_backend_stream_config_dir)/stream-token"
+  if [ -n "${FM_STREAM_TOKEN:-}" ]; then
+    record stream-token "ok: FM_STREAM_TOKEN is set"
+  elif [ -f "$token_file" ] && [ -r "$token_file" ] && fm_backend_stream_config_line stream-token >/dev/null; then
+    record stream-token "ok: $token_file is readable"
+  else
+    record stream-token "human: $token_file is missing, unreadable, or empty" \
+      "seed this home's stream credential from the home that hosts the hub (docs/stream-backend.md \"Security\")"
+  fi
+  if ! check_is_ok stream-tools || ! check_is_ok stream-token; then
+    record stream-hub "skip: the stream tools or token gap above comes first"
+  elif out=$(fm_backend_stream_version_check 2>&1); then
+    record stream-hub "ok: $(fm_backend_stream_hub_url) accepted this home's token on protocol $FM_BACKEND_STREAM_PROTOCOL"
+  else
+    reason=$(printf '%s\n' "$out" | sed -n '1{s/^error: //;p;}')
+    record stream-hub "human: ${reason:-the hub at $(fm_backend_stream_hub_url) did not answer}" \
+      "start or restart the fleet hub on its host, or fix this home's config/stream-hub and config/stream-token"
+  fi
+  if [ "$PLATFORM" != linux ]; then
+    record stream-survival "skip: logind applies only on linux"
+    return 0
+  fi
+  if ! command -v busctl >/dev/null 2>&1; then
+    record stream-survival "skip: busctl does not resolve, so systemd-logind cannot be asked"
+    return 0
+  fi
+  out=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager KillUserProcesses 2>/dev/null || true)
+  case "$out" in
+    'b false') record stream-survival "ok: systemd-logind KillUserProcesses=no" ;;
+    'b true')
+      record stream-survival "human: systemd-logind kills this user's processes at logout, so a stream agent started over SSH would die with the connection" \
+        "set KillUserProcesses=no in /etc/systemd/logind.conf on that host"
+      ;;
+    *) record stream-survival "skip: systemd-logind did not report KillUserProcesses" ;;
+  esac
+}
+
 run_checks() { # <resolved-login-shell>
   local shell=$1
   CHECK_NAMES=()
   CHECK_VALUES=()
   CHECK_ACTIONS=()
+  if [ "$BACKEND" = stream ]; then
+    check_stream
+    check_remote_job_worker
+    check_entrypoint_link
+    return 0
+  fi
   check_herdr
   check_gui_session
   check_remote_job_worker
@@ -941,6 +1032,7 @@ if [ "$MODE" = worker-tool-probe ]; then
 fi
 
 printf 'mode=%s\n' "$MODE"
+printf 'backend=%s\n' "$BACKEND"
 printf 'path=%s\n' "${PATH:-}"
 if [ -n "${FM_ROOT_OVERRIDE:-}" ] && [ "${PATH%%:*}" = "$FM_ROOT_OVERRIDE/bin" ]; then
   printf 'entrypoint=yes\n'

@@ -153,12 +153,12 @@ This section is the authoritative source for the accepted backend list, for each
 `tmux` is the verified reference backend (see [`docs/tmux-backend.md`](tmux-backend.md)); `herdr` has its own required CI lane (see [`docs/herdr-backend.md`](herdr-backend.md)).
 `stream` remains experimental; [`docs/stream-backend.md`](stream-backend.md#rust-pty-agent) owns its native adapter CI coverage and installed-harness verification limits.
 Treehouse remains the worktree provider for tmux, herdr, and stream, since all three are session providers only.
-New spawns choose the backend in this order: an explicit `--backend` flag that current authority for that exact task alone has authorized (a present captain instruction or the task's own accepted brief; never later-task precedent by analogy), then `FM_BACKEND`, then the first non-empty line of local gitignored `config/backend`, then runtime auto-detection from `$TMUX` or `HERDR_ENV=1`, then default `tmux`.
+New local spawns choose the backend in this order: an explicit `--backend` flag that current authority for that exact task alone has authorized (a present captain instruction or the task's own accepted brief; never later-task precedent by analogy), then `FM_BACKEND`, then the first non-empty line of local gitignored `config/backend`, then runtime auto-detection from `$TMUX` or `HERDR_ENV=1`, then default `tmux`.
 If both runtime markers are present, detection resolves innermost-first: `$TMUX` is checked before `HERDR_ENV=1`.
 Auto-detected herdr prints a stderr notice naming `config/backend` and `--backend tmux` as opt-outs; auto-detected tmux stays silent to preserve existing default behavior.
 Stream is never auto-detected; select it by putting the name in a local `config/backend` file, by exporting `FM_BACKEND=<name>`, or by telling the first mate in chat.
 Any value other than `tmux`, `herdr`, or `stream` is rejected, including in existing task metadata; the former `zellij`, `orca`, and `cmux` adapters were removed without automatic migration.
-`fm-spawn.sh` accepts all three for ship, scout, and `--secondmate` tasks.
+`fm-spawn.sh` accepts all three for local ship, scout, and `--secondmate` tasks; [remote placement](remote-secondmates.md#normal-operation) owns the remote secondmate exception to backend choices and selection precedence.
 The session-start secondmate liveness sweep uses the recovery-grade `fm_backend_agent_state` classifier where verified.
 The comment above that function in `bin/fm-backend.sh` is the single owner of its detailed state contract and recovery authorization.
 The compatibility helper `fm_backend_agent_alive` continues to collapse those detailed results to `alive`, `dead`, or `unknown` for older callers.
@@ -171,6 +171,8 @@ An absent `backend=` still reads as `tmux` for older records.
 Every new task records `endpoint_task_id=` as the cleanup binding between the metadata filename and its opaque runtime endpoint.
 A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
 A stream task additionally records `stream_hub=` and `stream_endpoint_id=`.
+The [`fm-remote-control-lib.sh` header](../bin/fm-remote-control-lib.sh) owns a remote secondmate's parent-record endpoint binding; [remote placement](remote-secondmates.md#stream-on-the-remote-host) owns its operator setup.
+Use the [control plane's backend migration](agent-control.md#verbs) to move an existing task; changing `config/backend` does not move a running endpoint.
 Ordinary task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` use the shared backend selector vocabulary.
 A selector containing `:` is passed through as an explicit backend endpoint escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that themselves start with `fm-` route to their own metadata instead of being stripped.
