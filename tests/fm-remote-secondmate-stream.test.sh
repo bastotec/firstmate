@@ -330,10 +330,10 @@ fi
 set_parent_profile() {
   local model=$1
   awk -F= '$1 != "harness" && $1 != "model" && $1 != "effort"' "$PARENT_META" > "$PARENT_META.profile"
-  printf 'harness=claude\nmodel=%s\neffort=high\n' "$model" >> "$PARENT_META.profile"
+  printf 'harness=pi\nmodel=%s\neffort=high\n' "$model" >> "$PARENT_META.profile"
   mv "$PARENT_META.profile" "$PARENT_META"
 }
-set_parent_profile anthropic/claude
+set_parent_profile fixture/pi
 : > "$DOCTOR_LOG"
 out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch --harness deck 2>&1) \
   || fail "remote harness-change reset failed: $out"
@@ -344,7 +344,7 @@ assert_equals default "$(meta_value "$PARENT_META" model)" "parent did not bind 
 assert_equals default "$(meta_value "$PARENT_META" effort)" "parent did not bind the reset effort"
 pass "remote: changing harness resets unnamed model and effort pins"
 
-set_parent_profile anthropic/claude
+set_parent_profile fixture/pi
 FM_HOME="$REMOTE_HOME" FM_STATE_OVERRIDE="$REMOTE_HOME/state/parent-route" \
   "$REMOTE_ROOT/bin/fm-record-model-refusal.sh" "$ID" fixture/first >/dev/null \
   || fail "could not seed the host's model cooldown"

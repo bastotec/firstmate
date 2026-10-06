@@ -38,8 +38,8 @@
 #   backend, kind, project or home, worktree, endpoint - comes from the task's
 #   validated state/<id>.meta, so --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; harness, model,
-#   effort, and a ship or scout's account slot may change, making a harness
-#   switch one ordinary relaunch. The one exception is --backend <tmux|herdr|stream>
+#   and effort may change, making a harness switch one ordinary relaunch.
+#   The one exception is --backend <tmux|herdr|stream>
 #   naming a backend other than the recorded one: that is a backend migration
 #   (bin/fm-control.sh <id> relaunch --backend), which creates a FRESH endpoint
 #   on the new backend in the recorded worktree or home, records it, and leaves
@@ -2748,7 +2748,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen model_chain_lane traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id stream_hub stream_endpoint_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort account_slot busy_gen spawn_gen model_chain_lane traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id stream_hub stream_endpoint_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
