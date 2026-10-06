@@ -421,7 +421,7 @@ fm_backend_expected_label_of_selector() {  # <raw-target> <state-dir>
 
 # fm_backend_source: source the named backend's adapter file, once per shell.
 # Each adapter is an independently linted canonical root. The /dev/null source
-# boundaries keep runtime dispatch from importing all five adapter ASTs into
+# boundaries keep runtime dispatch from importing every adapter AST into
 # every dispatcher consumer while preserving the runtime source operations.
 fm_backend_source() {  # <name>
   local name=$1

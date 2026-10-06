@@ -3,7 +3,7 @@
 # every shape a verified harness draws, every glyph, every container proof, and
 # the empty|pending|pending-unproven|unknown verdict, shared by every
 # session-provider adapter (tmux via bin/fm-tmux-lib.sh, and
-# bin/backends/{herdr,orca,cmux,zellij}.sh) and by fm-spawn.sh's kimi
+# bin/backends/{herdr,stream}.sh) and by fm-spawn.sh's kimi
 # launch-readiness check.
 #
 # WHY THIS EXISTS (tasks fm-composer-shellglyph-safety and
@@ -23,13 +23,13 @@
 # judged; they never change what the shapes ARE:
 #   styled=1    the capture preserves ANSI styling, so ghost/placeholder text
 #               is detectable and can be stripped (tmux -e, herdr --format
-#               ansi, zellij dump-screen --ansi). With styled=0 (cmux, orca)
+#               ansi, or the stream hub's styled capture). With styled=0,
 #               ghost text is unreadable, so a bare glyph row or left-bar row
 #               carrying trailing non-idle text degrades to `unknown` rather
 #               than `pending`: the text may be the harness's own idle
 #               suggestion, and a false `pending` blocks every safe caller.
-#   cursor=1    a cursor row is supplied (tmux #{cursor_y} only). The cursor
-#               anchors shape selection: the shape containing the cursor is the
+#   cursor=1    a cursor row is supplied (tmux #{cursor_y} or the stream hub's
+#               cursor row). It anchors shape selection: the shape containing the cursor is the
 #               composer. Without it, the bottom-most shape wins.
 #   identity=1  a native agent identity/state probe exists (herdr `agent get`;
 #               the tmux pi foreground-process probe). Identity is what makes
@@ -188,9 +188,8 @@ fm_composer_normalize_trim_var() {  # <varname>
 
 # fm_composer_strip_ghost: the ONE fleet-wide ANSI-aware extractor of "real typed
 # content" from a captured, styled composer row. Reads the styled line on stdin
-# (from `tmux capture-pane -e`, `herdr pane read --format ansi`, or
-# `zellij action dump-screen --ansi`) and prints the
-# plain, non-ghost text on stdout, dropping:
+# (from `tmux capture-pane -e`, `herdr pane read --format ansi`, or the stream
+# hub's styled capture) and prints the plain, non-ghost text on stdout, dropping:
 #   - dim/faint runs (SGR 2): how claude and codex render ghost/suggestion text.
 #     A reset (SGR 0) or normal-intensity (SGR 22) ends a dim run.
 #   - dark/muted TRUECOLOR foreground runs (SGR 38;2;r;g;b or the colon form
@@ -296,9 +295,8 @@ fm_composer_strip_ghost() {
 # These live here, in the ONE shared composer/delivery owner, rather than in any
 # single backend adapter, because every backend needs them for the SAME job:
 # proving a submitted Enter actually landed. Keeping them in bin/fm-tmux-lib.sh
-# made cursor's signature reachable only from tmux, even though herdr, zellij,
-# cmux, and orca run the same harnesses and face the same acknowledgement
-# problem.
+# made cursor's signature reachable only from tmux, even though herdr and stream
+# run the same harnesses and face the same acknowledgement problem.
 #
 # This is a DELIVERY guard, deliberately NOT a worker-state source. The semantic
 # busy contract - what firstmate records and supervises on - is owned by
@@ -1342,8 +1340,7 @@ EOF
     fm_composer_normalize_trim_var content
     # A styled agent-glyph placeholder disappears above when ghost stripping
     # proves it is furniture. If the same placeholder-looking bytes survive
-    # styling, they are real user input and must remain in the extracted content
-    # (the zellij paste proof depends on observing exactly what was typed).
+    # styling, they are real user input and must remain in the extracted content.
     # OpenCode's left-bar hint and legacy shell-glyph boxed placeholders have no
     # such styling proof, so their structurally fixed positions remain the two
     # idle-regex exceptions here.
@@ -1472,9 +1469,9 @@ EOF
 }
 
 # fm_composer_submit_retry_core: the ONE verify-and-retry-Enter submit loop
-# for the cursor-less backends (cmux, orca, zellij, stream), parameterised by the
-# adapter's send-key and composer-state functions. The caller has already
-# typed the text ONCE (send_literal) and settled; this loop submits with
+# for stream, parameterised by the adapter's send-key and composer-state
+# functions. The caller has already typed the text ONCE (send_literal) and
+# settled; this loop submits with
 # Enter, re-reading the composer verdict, and retries Enter ONLY - never
 # retypes, because a swallowed Enter leaves the text in the composer and
 # retyping would duplicate it. Proven pending (and pending-unproven) retries

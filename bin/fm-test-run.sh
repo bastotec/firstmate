@@ -628,7 +628,7 @@ emit_via_file() {
 
 # The portable serial remainder: every tests/*.test.sh that is neither
 # proven-isolated nor real-herdr-gated. Watcher, lock, AFK, real tmux, daemon,
-# secondmate lifecycle, bootstrap, the live-harness-optin family, GUI-backend,
+# secondmate lifecycle, bootstrap, the live-harness-optin family,
 # and other unproven work stays here. Derived rather than enumerated so a newly added test
 # lands here by default instead of falling out of every lane.
 list_portable_serial() {

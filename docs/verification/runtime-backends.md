@@ -352,7 +352,7 @@ Bounded output from the incident regression:
 
 ```text
 ok - fm-teardown: missing, empty, malformed, ambiguous, and task-mismatched endpoints refuse before every mutation or runtime call
-ok - cleanup identity: valid tmux and Herdr records validate, a removed backend refuses, and every empty backend target refuses
+ok - cleanup identity: valid tmux, Herdr, Zellij, Orca, and cmux records validate while every empty backend target refuses
 ok - tmux backend: direct empty target returns nonzero without invoking tmux
 ok - process cleanup: creation-time PID identity removes only the exact child and preserves the control child
 ok - fm-teardown: dedicated-socket invalid cleanup preserves target/control and valid cleanup removes only the exact target
@@ -360,7 +360,8 @@ ok - fm-teardown: dedicated-socket invalid cleanup preserves target/control and 
 
 The dedicated tmux cell removed ambient tmux variables, required a socket-bound wrapper, kept one target and one independent control window, and proved the wrapper was not called for invalid metadata or a direct empty target.
 Valid cleanup removed only the exact task-bound target and left the control window live.
-The metadata-only validation covers tmux, Herdr, and stream before backend dispatch, and refuses records on the removed Zellij, Orca, and cmux backends.
+The current metadata-only validation covers tmux, Herdr, and stream before backend dispatch, and refuses records on the removed Zellij, Orca, and cmux backends.
+`tests/fm-teardown-endpoint-safety.test.sh` now validates tmux and Herdr records and pins refusal of a removed-backend record; `tests/fm-backend-stream.test.sh` covers stream endpoint identity.
 Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that backend cleanup boundary; their harness-specific hook files, tokens, transcript bindings, and session-log sidecars are cleaned only after it, so no harness needs a separate endpoint parser.
 
 ### Endpoint kill confirmation
@@ -583,8 +584,8 @@ ok - live composer-matrix guard verified 8 live surface(s)
 
 All six installed harnesses' real idle composers reached a proven `empty` (Claude auto-updated to 2.1.227 between the audit and this rerun, so the shipped classifier is proven against the newer release as well), including Pi through the tmux foreground-process identity probe, Grok through the titled-bottom-border tolerance, and OpenCode through the left-bar shape; Codex and OpenCode first parked on vendor update-available modals that the strict classifier correctly refused until the guard's single non-submitting Escape dismissed them.
 The strict blank-row posture held live (a blank shell row deferred injection), and a zellij pane changing for reasons unrelated to submission never confirmed a delivery, replacing the retired content-diff heuristic's false positive.
-Kimi was not installed on the verification machine; its bordered shape is pinned by the portable byte-capture regressions in `tests/fm-composer-lib.test.sh`, which also carry the other five adapters' capability profiles for every harness under both a UTF-8 locale and `LC_ALL=C`.
-This guard is the refresh command after an upgrade to any matrix-covered harness; rerun it and update the versions above rather than trusting this table across releases.
+Kimi was not installed on the verification machine; its bordered shape is pinned by the portable byte-capture regressions in `tests/fm-composer-lib.test.sh`, which retain styled and plain capability profiles for every harness under both a UTF-8 locale and `LC_ALL=C`.
+Rerun this guard after upgrades for the retained tmux matrix rather than trusting dated results across releases; the Zellij result above is historical, and its adapter and live guard cell have been removed.
 The 2026-08-23 steering-inbox doorbell run observed grok 1.0.5's idle composer classifying `unknown` (and sometimes pending-family), never `empty`.
 Issue #3436's recorded idle capture reproduced the cause on 2026-09-14: Grok 1.0.5 renders the titled bottom border three columns wider than its aligned top and content rows, so the cursorless Herdr profile rejected the otherwise complete box as ambiguous.
 The classifier now accepts only that exact three-column overhang (`FM_COMPOSER_GROK_TITLE_OVERHANG` in `bin/fm-composer-lib.sh`) carrying a typed `Grok <model> (<effort>)` title; the portable regressions feed the real capture through both the shared Herdr capability profile and `fm_backend_herdr_composer_state`, and prove idle is `empty`, typed content is `pending`, and an unrecognized oversized title remains `unknown`.
@@ -592,7 +593,7 @@ Grok was not installed on the verification machine for this 2026-09-14 change, s
 This closes only #3436's idle-composer-misclassification symptom (Grok/Herdr composer read `unknown` instead of `empty`, blocking away-mode injection). The issue's second symptom - a leftover watcher never yielding and never being taken over or refused at AFK start - is unrelated to composer classification and is tracked separately in #2270, where #3436's reproduction serves as corroborating evidence.
 Cursor is deliberately outside this cursor-anchored empty-composer matrix because its terminal cursor is parked outside the composer; tmux's Cursor-specific, process-identity-gated cursorless fallback is covered by the [Cursor Agent CLI](#cursor-agent-cli) section's separate live evidence and drift guard.
 
-`zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which is the capability the zellij composer classifier reads.
+`zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which was the capability the former zellij composer classifier read.
 
 ### 2026-09-15 codex-cli 0.154.0 idle starfield and status footer through Herdr
 
@@ -622,7 +623,7 @@ After the fix, braille-only rows bound the wrap region (the status footer sits b
 A second read-only capture of the same pane, taken during the fix with a bright starfield cell drawn between the `›` and the placeholder, read `pending` before and `empty` after as well.
 `test_matrix_codex_idle_starfield_furniture` in `tests/fm-composer-lib.test.sh` carries both samples byte-for-byte, the divergence (the same screen with letters in place of the starfield reads `pending`), and the over-stripping negatives (wrapped typed input, braille mixed with text, a typed row with a middle dot, and the footer or a starfield row alone).
 
-The live guard that refreshes this entry launches the installed codex idle in an isolated tmux server and asserts `empty` through both the cursor-anchored tmux read and the cursorless styled read Herdr and Zellij use, naming codex and `codex --version` on failure; it is default-on wherever codex and tmux are installed and spends no tokens:
+The live guard that refreshes this entry launches the installed codex idle in an isolated tmux server and asserts `empty` through both the cursor-anchored tmux read and the cursorless styled read Herdr uses, naming codex and `codex --version` on failure; it is default-on wherever codex and tmux are installed and spends no tokens:
 
 ```sh
 tests/fm-composer-codex-idle-live-e2e.test.sh
@@ -1767,26 +1768,6 @@ The opencode tail adapter (`bin/fm-stream-opencode-tail.py`) measures a harness-
 As of 2026-09-19 this host has no live opencode storage to run it against - no opencode binary on `PATH`, no `~/.local/share/opencode/`, and no `opencode.db` anywhere under the home - so the schema proof remains the portable regression's fixture, derived from this host's opencode-history documentation of that storage rather than a recorded live run.
 Dated live end-to-end evidence is deferred until an opencode worker actually runs here: point the adapter at that worker's real `opencode.db` and record the result beside this note.
 
-## Codex App host tools
-
-A reusable Desktop host-tool smoke ran on 2026-07-06 against Codex Desktop bundle version 26.623.101652, build 4674, bundle id `com.openai.codex`.
-Local paths and task-specific ids are intentionally not retained here.
-
-The host-tool sequence was:
-
-1. list a saved project;
-2. create a Desktop-owned worktree thread;
-3. recover and read the thread while active and after completion;
-4. verify the thread appended a Firstmate status line and wrote its report;
-5. send a follow-up to the same thread;
-6. read the completed follow-up;
-7. archive the exact thread;
-8. read the archived transcript with state `notLoaded`.
-
-Observed guarantee: a Desktop-owned thread can write Firstmate lifecycle files when the prompt provides an authorized absolute path, and create, send, read, and archive work at the Desktop host-tool layer.
-The missing guarantee remains a supported shell-callable bridge that lets Firstmate perform those operations against the same visible Desktop endpoint.
-App-server partial methods and raw socket experiments do not satisfy that bridge contract.
-
 ## Cursor Agent CLI
 
 Cursor runs crewmate, scout, secondmate, and primary work; [`supervision.md`](supervision.md#cursor-primary-park-2026-08-13) owns the primary evidence.
@@ -1940,7 +1921,7 @@ All seven live panes of the running default session - one Pi, four Claude, two p
 
 **Typed-submit confirmation is verified on tmux and Herdr only.**
 Stream uses a submit core that never consults the busy footer, so a typed-plane Cursor send there lands but `fm-send` reports delivery unconfirmed and exits non-zero; ordinary text steers ride the durable inbox and exit 0 at enqueue.
-Teaching that shared core the same transition is deliberately separate work, because it changes the submit path for every harness on all of those backends and needs its own live validation on each.
+Teaching that shared core the same transition is deliberately separate work, because it changes stream's submit path for every harness and needs its own live validation.
 
 The portable regression is `tests/fm-cursor-harness.test.sh`, the composer captures are pinned in `tests/fm-composer-lib.test.sh`, and the Herdr submit and footer behavior is pinned in `tests/fm-backend-herdr.test.sh`.
 Refresh this harness-dependent proof before accepting a cursor upgrade:
