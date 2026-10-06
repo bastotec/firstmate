@@ -215,6 +215,9 @@ FM_SECONDMATE_CHARTER='Own operations from the workload host.' \
 # The fleet-seeded credential: this home's own hub URL and token files.
 printf '%s\n' "$HUB_URL" > "$REMOTE_HOME/config/stream-hub"
 (umask 077; printf '%s\n' "$TOKEN" > "$REMOTE_HOME/config/stream-token")
+# The copied code root has no native build of its own, so this home uses the
+# Python stream agent (the documented rollback, docs/stream-backend.md).
+printf 'python\n' > "$REMOTE_HOME/config/stream-impl"
 printf 'manual\n' > "$REMOTE_HOME/config/backlog-backend"
 
 PARENT_META="$PARENT/state/$ID.meta"

@@ -2460,10 +2460,9 @@ spawn_send_key() {  # <target> <key>
   esac
 }
 
-# A secondmate migrated to a fresh endpoint is created directly in its home,
-# exactly as a fresh secondmate spawn is, so it takes the same path (no
-# current-path proof) rather than the adopted-endpoint proof below.
-if [ "$RELAUNCH" -eq 1 ] && { [ "$RELAUNCH_MIGRATE" = 0 ] || [ "$KIND" != secondmate ]; }; then
+# A migration's fresh endpoint takes the same proof: its shell must answer in
+# the recorded worktree or home before the launch is typed into it.
+if [ "$RELAUNCH" -eq 1 ]; then
   # No worktree is acquired: the recorded one is reused as-is. What must be
   # proven instead is that the adopted endpoint's shell is actually sitting in
   # that worktree, so the replacement agent starts where the work is rather

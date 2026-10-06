@@ -1697,9 +1697,9 @@ test_spawn_relaunch_refuses_contradicting_flags() {
   dir=$(new_case flags rl16)
   add_ship_task "$dir" rl16 pi
   printf 'zsh' > "$dir/fake/command"
-  out=$(run_spawn "$dir" rl16 --relaunch --backend herdr); rc=$?
-  expect_code 1 "$rc" "--backend should be refused alongside --relaunch"
-  assert_contains "$out" "recorded backend" "the refusal should name the recorded backend rule"
+  out=$(run_spawn "$dir" rl16 --relaunch --backend bogus); rc=$?
+  expect_code 1 "$rc" "an unknown --backend should be refused alongside --relaunch"
+  assert_contains "$out" "accepts tmux, herdr, or stream" "the refusal should name the migration backends"
   out=$(run_spawn "$dir" rl16 --relaunch --scout); rc=$?
   expect_code 1 "$rc" "--scout should be refused alongside --relaunch"
   assert_contains "$out" "recorded kind" "the refusal should name the recorded kind rule"
