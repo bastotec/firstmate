@@ -18,8 +18,9 @@
 #
 # Why the terminal lifecycle exists (docs/herdr-backend.md "Away-mode supervisor support"):
 # bin/fm-afk-start.sh execs the supervise daemon in the FOREGROUND of its host.
-# Harnesses with a native in-pane tracked-background tool (claude, grok) run
-# it there directly. Other daemon-using harnesses need an isolated endpoint:
+# A harness with a native in-pane tracked-background tool would run it there
+# directly through the retained `start-native` path. Every supported harness
+# needs an isolated endpoint:
 # splitting the captain's active pane would visibly shrink it. Instead this
 # creates a non-visible tracked terminal (a herdr tab/workspace with --no-focus,
 # or a detached tmux session) that never touches the captain's active tab.
@@ -45,7 +46,7 @@
 #                              Repeatable --grant records captain-named task
 #                              ids that may merge-when-green while away.
 #   fm-afk-launch.sh confirm   Promote the required proposal and print the entry
-#                              announcement. On Pi this is the whole entry.
+#                              announcement.
 #   fm-afk-launch.sh start     Capture the captain pane, then (unless the daemon
 #                              is already running) launch the daemon in a fresh
 #                              non-visible terminal or detached process for the
