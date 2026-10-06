@@ -826,15 +826,19 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
 # still owns its pseudoterminal and worker, whatever the hub's registry says -
 # which is the fact a `missing` verdict cannot carry on its own, because a
 # restarted hub forgets endpoints until their agents re-register.
-fm_backend_stream_local_agent_pid() {  # <label>
-  local label=$1 bin
+fm_backend_stream_local_agent_pid() {  # <label> <status-path>
+  local label=$1 status_path=$2 bin
   bin=${FM_BACKEND_STREAM_AGENT_BIN##*/}
-  LC_ALL=C ps -eo pid=,args= 2>/dev/null | awk -v label="$label" -v bin="$bin" '
+  LC_ALL=C ps -eo pid=,args= 2>/dev/null | awk -v label="$label" -v status_path="$status_path" -v bin="$bin" '
     {
       if (index($0, "fm-stream-agent") == 0 && index($0, bin) == 0) next
+      label_match = 0
+      status_match = 0
       for (i = 2; i < NF; i++) {
-        if ($i == "--label" && $(i + 1) == label) { print $1; found = 1; exit }
+        if ($i == "--label" && $(i + 1) == label) label_match = 1
+        if ($i == "--status-path" && $(i + 1) == status_path) status_match = 1
       }
+      if (label_match && status_match) { print $1; found = 1; exit }
     }
     END { exit found ? 0 : 1 }'
 }

@@ -239,12 +239,12 @@ EOF
     echo "kind=ship"
     echo "mode=no-mistakes"
     echo "yolo=off"
-    echo "tasktmp=/tmp/fm-$id"
+    echo "tasktmp=$dir/tasktmp"
     echo "model=default"
     echo "effort=default"
   } > "$home/state/$id.meta"
   printf '%s' "$wt" > "$dir/fake/cwd"
-  TASK_TMPS+=("/tmp/fm-$id")
+  TASK_TMPS+=("$dir/tasktmp")
 }
 
 # Drop the recorded window out of the session inventory: tmux's recovery-grade
@@ -711,7 +711,7 @@ test_recover_missing_on_stream_refuses_while_its_agent_still_runs() {
   brief_before=$(cat "$dir/home/data/rm32/brief.md")
   # A stand-in for the endpoint's own agent, still running here while a
   # restarted hub has forgotten it.
-  bash -c "exec -a fm-stream-agent.py perl -e 'sleep 60' serve --label fm-rm32" &
+  bash -c 'exec -a fm-stream-agent.py perl -e "sleep 60" serve --label fm-rm32 --status-path "$1"' _ "$dir/home/state/rm32.status" &
   agent_pid=$!
   fm_test_track_helper_pid "$agent_pid"
 
@@ -723,6 +723,79 @@ test_recover_missing_on_stream_refuses_while_its_agent_still_runs() {
   [ "$(cat "$dir/home/data/rm32/brief.md")" = "$brief_before" ] || fail "a refused stream recovery must leave the instructions alone"
   assert_equals 0 "$(fm_test_fake_stream_endpoints | jq '.endpoints | length')" "a refused stream recovery must not create an endpoint"
   pass "fm-control recover-missing: stream refuses while the missing endpoint's agent still runs on this machine"
+}
+
+test_recover_missing_on_stream_ignores_unowned_agents() {
+  local dir out rc agent_pid other_pid
+  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
+    || { pass "fm-control recover-missing: stream ownership skipped (jq/curl unavailable)"; return 0; }
+  dir=$(new_case stream-agent-other-home rm33)
+  fm_test_fake_stream "$dir/stream" || fail "fake stream hub did not start"
+  add_stream_deck_task "$dir" rm33
+  bash -c 'exec -a fm-stream-agent.py perl -e "sleep 60" serve --label fm-rm33 --status-path "$1"' _ "$dir/other-home/state/rm33.status" &
+  agent_pid=$!
+  fm_test_track_helper_pid "$agent_pid"
+  bash -c 'exec -a fm-stream-agent.py perl -e "sleep 60" serve --label fm-other --status-path "$1"' _ "$dir/home/state/rm33.status" &
+  other_pid=$!
+  fm_test_track_helper_pid "$other_pid"
+
+  out=$(run_control "$dir" rm33 recover-missing --note "recover"); rc=$?
+  expect_code 0 "$rc" "stream recovery must ignore agents without both ownership tokens"$'\n'"$out"
+  kill -0 "$agent_pid" 2>/dev/null || fail "recovery must leave the other home's agent running"
+  kill -0 "$other_pid" 2>/dev/null || fail "recovery must leave the other label's agent running"
+  kill "$agent_pid" "$other_pid" 2>/dev/null || true
+  assert_contains "$out" "recovered rm33 harness=deck" "the task should recover beside unrelated agents"
+  assert_equals 1 "$(fm_test_fake_stream_endpoints | jq '.endpoints | length')" "recovery must create exactly one owned endpoint"
+  pass "fm-control recover-missing: stream recovery matches both label and owning status path"
+}
+
+test_recover_missing_on_stream_reports_rebind_cleanup() {
+  local dir out rc mode endpoint meta_before brief_before
+  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
+    || { pass "fm-control recover-missing: stream cleanup skipped (jq/curl unavailable)"; return 0; }
+  for mode in confirmed unconfirmed; do
+    dir=$(new_case "stream-rebind-$mode" rm34)
+    fm_test_fake_stream "$dir/stream" || fail "fake stream hub did not start"
+    add_stream_deck_task "$dir" rm34
+    meta_before=$(cat "$dir/home/state/rm34.meta")
+    brief_before=$(cat "$dir/home/data/rm34/brief.md")
+    printf '#!/usr/bin/env bash\nREAL_MV=%q\n' "$(command -v mv)" > "$dir/fakebin/mv"
+    cat >> "$dir/fakebin/mv" <<'SH'
+for arg in "$@"; do
+  case "$arg" in *.meta.rebind.*) exit 1 ;; esac
+done
+exec "$REAL_MV" "$@"
+SH
+    chmod +x "$dir/fakebin/mv"
+    if [ "$mode" = unconfirmed ]; then
+      printf '#!/usr/bin/env bash\nREAL_CURL=%q\n' "$(command -v curl)" > "$dir/fakebin/curl"
+      cat >> "$dir/fakebin/curl" <<'SH'
+for arg in "$@"; do
+  [ "$arg" != DELETE ] || exit 7
+done
+exec "$REAL_CURL" "$@"
+SH
+      chmod +x "$dir/fakebin/curl"
+    fi
+
+    out=$(run_control "$dir" rm34 recover-missing --note "recover"); rc=$?
+    expect_code 1 "$rc" "a failed stream rebind must refuse recovery"$'\n'"$out"
+    endpoint=$(fm_test_fake_stream_endpoints | jq -r '.endpoints[0].endpoint_id')
+    [ -n "$endpoint" ] && [ "$endpoint" != null ] || fail "recovery must have created an endpoint before the rebind failed"
+    assert_contains "$out" "could not be rebound" "the diagnostic should identify the failed publication"
+    if [ "$mode" = confirmed ]; then
+      assert_contains "$out" "the new endpoint was closed" "a confirmed kill should be reported as closed"
+      assert_equals false "$(fm_test_fake_stream_endpoints | jq '.endpoints[0].alive')" "confirmed cleanup must stop the endpoint"
+    else
+      assert_contains "$out" "the close was not confirmed" "a failed kill must not be reported as closed"
+      assert_contains "$out" "$FM_TEST_STREAM_TAG:$endpoint" "the diagnostic must name the orphan's target"
+      assert_not_contains "$out" "the new endpoint was closed" "unconfirmed cleanup must not claim success"
+      assert_equals true "$(fm_test_fake_stream_endpoints | jq '.endpoints[0].alive')" "the unclosed endpoint must remain available for reconciliation"
+    fi
+    assert_equals "$meta_before" "$(cat "$dir/home/state/rm34.meta")" "failed publication must preserve the old binding"
+    assert_equals "$brief_before" "$(cat "$dir/home/data/rm34/brief.md")" "failed recovery must roll back the progress note"
+  done
+  pass "fm-control recover-missing: failed stream rebind reports the actual cleanup verdict"
 }
 
 test_recover_missing_refuses_a_backend_it_cannot_recreate_on() {
@@ -1304,6 +1377,8 @@ test_recover_missing_records_the_dirty_state_it_found
 test_recover_missing_recreates_the_terminal_and_launches_the_replacement
 test_recover_missing_on_stream_rebinds_a_new_endpoint
 test_recover_missing_on_stream_refuses_while_its_agent_still_runs
+test_recover_missing_on_stream_ignores_unowned_agents
+test_recover_missing_on_stream_reports_rebind_cleanup
 test_recover_missing_accepts_an_explicit_replacement_harness
 test_recover_missing_replacement_resets_unnamed_profile_axes
 test_recover_missing_onto_deck_from_a_recorded_effort

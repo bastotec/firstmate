@@ -1239,8 +1239,10 @@ recover_stream_endpoint() {  # <label> <cwd>
   new_target="${pair%% *}:${pair##* }"
   if ! fm_endpoint_rebind_meta "$META" "$ID" stream "$new_target" \
       "stream_hub=$hub_url" "stream_endpoint_id=${pair##* }"; then
-    fm_backend_kill stream "$new_target" "" "$label" >/dev/null 2>&1 || true
-    die "task $ID's record could not be rebound to its new stream endpoint ($FM_ENDPOINT_REBIND_ERROR); the new endpoint was closed"
+    if fm_backend_kill stream "$new_target" "" "$label" >/dev/null 2>&1; then
+      die "task $ID's record could not be rebound to its new stream endpoint ($FM_ENDPOINT_REBIND_ERROR); the new endpoint was closed"
+    fi
+    die "task $ID's record could not be rebound to its new stream endpoint ($FM_ENDPOINT_REBIND_ERROR); the close was not confirmed; reconcile the new endpoint $new_target"
   fi
   T=$new_target
 }
@@ -1283,7 +1285,7 @@ do_recover_missing() {
   if [ "$BACKEND" = stream ]; then
     local agent_pid
     fm_backend_source stream || die "could not load backend stream"
-    if agent_pid=$(fm_backend_stream_local_agent_pid "$LABEL"); then
+    if agent_pid=$(fm_backend_stream_local_agent_pid "$LABEL" "$STATE/$ID.status"); then
       die "task $ID's stream endpoint is missing from the hub, but its agent process (pid $agent_pid) is still running on this machine - a restarted hub forgets endpoints until their agents re-register; wait for it to come back, or stop that agent first, then retry"
     fi
   fi
