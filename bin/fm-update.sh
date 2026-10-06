@@ -33,6 +33,8 @@
 #   - nudge-secondmates: fm-<id>...|none   (the residual: live secondmates on
 #     that same tip whose runtime CANNOT prove a restart, so the older re-read
 #     steer is all that is honest for them)
+#   - stream-native: built|current|prebuilt <dir> | failed: <reason>  (only on
+#     homes whose stream implementation is rust; see the native section below)
 #
 # The two sets are disjoint, and restart is UNCONDITIONAL on a successful update
 # of that home. It is deliberately not gated on the git diff: replacing the agent
@@ -102,6 +104,29 @@ if [ "$FF_STATUS" = "updated" ]; then
   # always where this very script file happens to live (FM_ROOT_OVERRIDE, as
   # this test suite uses to point fm-update.sh at a fixture checkout).
   FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" "$SCRIPT_DIR/fm-procevent-when.sh" rebind-all || true
+fi
+
+# --- native stream binaries --------------------------------------------------
+# The Rust stream hub/agent/bridge are built from crates/, not shipped in git.
+# After this home lands on its target, its OWN fm-stream.sh (the new bytes)
+# builds them when the source key changed or they are missing, so the next
+# spawn or hub start runs binaries that match the checkout. One summary line;
+# a failure (no cargo, build error) is reported and never fails the update.
+# Homes that selected the python rollback, or whose checkout has no
+# fm-stream.sh, are left alone. Cargo's own output goes to
+# state/.stream-native-build.log.
+if [ "$FF_STATUS" = "updated" ] || [ "$FF_STATUS" = "current" ]; then
+  if [ -x "$FM_ROOT/bin/fm-stream.sh" ] \
+    && impl=$(FM_HOME="$FM_HOME" bash -c '. "$1/bin/fm-stream-native-lib.sh" && fm_stream_impl' _ "$FM_ROOT" 2>/dev/null) \
+    && [ "$impl" = rust ]; then
+    mkdir -p "$STATE"
+    if native_out=$(FM_HOME="$FM_HOME" "$FM_ROOT/bin/fm-stream.sh" native ensure \
+        2>"$STATE/.stream-native-build.log"); then
+      echo "stream-native: ${native_out##*$'\n'}"
+    else
+      echo "stream-native: failed: $(grep '^error:' "$STATE/.stream-native-build.log" | tail -1 | sed 's/^error: //')"
+    fi
+  fi
 fi
 
 # --- secondmates -----------------------------------------------------------

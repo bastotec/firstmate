@@ -128,7 +128,7 @@ create_endpoint() {  # <label> [status-path] [state-interval]
 agent_pid_for() {  # <label>
   ps -eo pid,args 2>/dev/null \
     | awk -v l="--label $1" \
-        'index($0, "fm-stream-agent.py") && index($0, l) && !index($0, "awk") {print $1; exit}'
+        'index($0, "fm-stream-agent") && index($0, " serve ") && index($0, l) && !index($0, "awk") {print $1; exit}'
 }
 
 wait_for_capture() {  # <target> <needle>
@@ -1272,6 +1272,13 @@ PY
   done
   assert_grep 'Firstmate instruction waiting:' "$home/turns" "doorbell did not become a serialized Deck turn"
   # Genuine, unsubmitted input must still prevent lifecycle command injection.
+  # The doorbell turn may still be rendering when its log line lands; a fast
+  # publisher (the Rust agent) shows that mid-turn screen, so wait for idle.
+  waited=0
+  while [ "$(with_stream_env fm_backend_composer_state stream "$target")" != empty ] && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
   assert_equals "$(with_stream_env fm_backend_composer_state stream "$target")" empty "idle Deck composer must be empty"
   with_stream_env fm_backend_stream_send_literal "$target" 'fixture pending input' || fail "could not type pending input"
   wait_for_capture "$target" 'fixture pending input' || fail "pending input was not rendered"

@@ -1715,7 +1715,7 @@ The existing bridge suite also passes with `FM_TEST_STREAM_HUB_BINARY="$PWD/targ
 A complete hub-suite invocation on this host stops at the existing shell-died-at-birth refusal case documented below, after the earlier HTTP/body, stream, capture, registry, and state-read cases pass against Rust.
 The backend suite no longer requires a `setsid` executable; see [the stream prerequisites](../stream-backend.md#prerequisites) for the fallback dependency.
 This is not a claim that every stream suite passes on macOS: the existing Rust-bridge HTTPS fixture cannot validate its generated certificate with this host's Python trust store.
-The pilot and replacement prerequisites remain owned by [the stream guide](../stream-backend.md#rust-hub-pilot).
+The replacement prerequisites are owned by [the stream guide](../stream-backend.md#rust-hub).
 
 ### Deck home-host lifecycle
 

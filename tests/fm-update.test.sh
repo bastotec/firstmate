@@ -556,6 +556,48 @@ test_primary_update_rebinds_local_watch() {
   pass "T12 a self-update rebinds a locally armed watch on the primary"
 }
 
+
+# --- T13: crate changes rebuild the native stream binaries -----------------
+# The Rust stream binaries are built from crates/, not tracked, so an update
+# that lands new crate sources must build them (via the home's own
+# fm-stream.sh), and an update that changes nothing must not run cargo again.
+test_update_builds_native_stream_binaries() {
+  local w out
+  w=$(new_world t13)
+  cp -R "$ROOT/bin/." "$w/seed/bin/"
+  mkdir -p "$w/seed/crates/demo/src"
+  printf '[workspace]\n' > "$w/seed/Cargo.toml"
+  printf '# lock\n' > "$w/seed/Cargo.lock"
+  printf 'fn main() {}\n' > "$w/seed/crates/demo/src/main.rs"
+  printf '/target/\n' > "$w/seed/.gitignore"
+  git -C "$w/seed" add -A
+  git -C "$w/seed" commit -qm add-crates
+  git -C "$w/seed" push -q origin main
+  cat > "$w/fakebin/cargo" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$w/cargo.calls"
+mkdir -p target/release
+for name in fm-stream-hub fm-stream-agent fm-stream-bridge; do
+  printf '#!/bin/sh\n' > "target/release/\$name"
+  chmod +x "target/release/\$name"
+done
+SH
+  chmod +x "$w/fakebin/cargo"
+
+  out=$(FM_STREAM_IMPL=rust FM_STREAM_NATIVE_CACHE="$w/cache" run_update "$w")
+  assert_contains "$out" "firstmate: updated " "the primary advanced onto the crates"
+  assert_contains "$out" "stream-native: built $w/cache/" "an update landing crate sources should build the native binaries"
+  assert_equals 1 "$(wc -l < "$w/cargo.calls" | tr -d ' ')" "the build should run cargo once"
+
+  out=$(FM_STREAM_IMPL=rust FM_STREAM_NATIVE_CACHE="$w/cache" run_update "$w")
+  assert_contains "$out" "stream-native: current $w/cache/" "an unchanged checkout should report its binaries current"
+  assert_equals 1 "$(wc -l < "$w/cargo.calls" | tr -d ' ')" "an unchanged checkout must not rebuild"
+
+  out=$(FM_STREAM_IMPL=python FM_STREAM_NATIVE_CACHE="$w/cache" run_update "$w")
+  assert_not_contains "$out" "stream-native:" "a python-rollback home should not build native binaries"
+  pass "T13 an update builds the native stream binaries when crates change, and only then"
+}
+
 test_updates_main_and_secondmate
 test_reread_gate_is_instruction_only
 test_bin_only_advance_restarts
@@ -572,5 +614,6 @@ test_firstmate_wrong_branch_skipped
 test_firstmate_detached_head_skipped
 test_unsafe_secondmate_home_skipped_before_git_update
 test_primary_update_rebinds_local_watch
+test_update_builds_native_stream_binaries
 
 echo "# all fm-update tests passed"
