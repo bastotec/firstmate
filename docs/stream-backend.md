@@ -123,6 +123,19 @@ Ordinary supervision does not need any of that.
 [`fm_backend_agent_pids`](../bin/fm-backend.sh) owns the process-identity read contract, including stream's local-machine restriction.
 [Portable stream-parity regressions](verification/runtime-backends.md#portable-stream-parity-regressions) distinguish fake-fleet integration coverage from real agent process reporting.
 
+### Interactive attach
+
+`bin/fm-stream.sh attach --interactive <endpoint-or-target> [--detach-key C-]]` takes over the local terminal, which is how a TUI hosted on an endpoint (a `deck chat` primary, for one) is used by hand:
+
+- It puts the terminal in raw mode, paints the endpoint's current screen and cursor, and then streams its output from exactly the offset that screen already includes (the native hub's `GET /v1/tasks/<id>/snapshot` and `stream?from=<offset>`).
+- Every byte typed or pasted, escape sequences included, goes to the endpoint's pseudoterminal through `POST /v1/tasks/<id>/input`: as `text` when it is UTF-8, as `b64` raw bytes when it is not. Keys typed while a send is in flight go out together in the next one.
+- A local resize goes to `POST /v1/tasks/<id>/resize` (`rows`, `cols`, 1-1000 each). The agent applies it to the pseudoterminal, so the child gets `SIGWINCH`, and the hub resizes its own screen; re-registration after a hub restart reports the new size.
+- Ctrl-] (or `--detach-key`, written `C-<key>`) detaches and leaves the endpoint running; an endpoint that exits ends the attach with its exit code.
+
+The token goes to the native `fm-stream-agent attach` client through the environment, never argv, and every request needs a `control` credential, the same class as `fm-send`.
+The client is the native binary whatever `config/stream-impl` says; against the Python rollback hub it starts from the screen without exact offset continuity and cannot resize or send non-UTF-8 bytes, and the Python agent refuses both.
+`tests/fm-stream-attach-rust.test.sh` drives it from a real PTY against a disposable native hub and agent.
+
 ## Bridge feed
 
 `bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from the execution the hub marks current using the same decision as its order path.

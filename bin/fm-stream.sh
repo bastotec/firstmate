@@ -20,6 +20,7 @@
 #   fm-stream.sh machines
 #   fm-stream.sh tasks
 #   fm-stream.sh attach <endpoint-id|target> [--replay]
+#   fm-stream.sh attach --interactive <endpoint-id|target> [--detach-key C-]]
 #   fm-stream.sh -h | --help
 #
 # Commands:
@@ -56,6 +57,11 @@
 #   attach    Stream one endpoint's live output to stdout until interrupted.
 #             --replay starts from the oldest byte still in the ring buffer;
 #             the default starts from now.
+#             --interactive takes over this terminal instead: it paints the
+#             endpoint's screen, forwards every keystroke, paste and resize to
+#             its pseudoterminal, and detaches on Ctrl-] (or --detach-key)
+#             leaving the endpoint running. It runs the native
+#             `fm-stream-agent attach` client, whatever config/stream-impl says.
 #
 # Selection: FM_STREAM_HUB, then config/stream-hub, then a hub this home
 # started itself, then http://127.0.0.1:7717.
@@ -327,12 +333,38 @@ cmd_tasks() {
   printf '%s' "$out" | jq -r '.tasks[]? | "\(.machine)\t\(.label)\t\(.endpoint_id)\t\(if .closed_at then "closed" else "live" end)"'
 }
 
+cmd_attach_interactive() {
+  local raw="" detach="C-]" target url token client
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --detach-key) detach=${2:?--detach-key needs a key like C-]}; shift 2 ;;
+      -*) die "unknown option for attach --interactive: $1" ;;
+      *) [ -z "$raw" ] || die "attach --interactive takes one endpoint"; raw=$1; shift ;;
+    esac
+  done
+  [ -n "$raw" ] || die "attach --interactive needs an endpoint"
+  [ -t 0 ] || die "attach --interactive needs a terminal on stdin"
+  target=$(resolve_target "$raw") || exit 1
+  fm_backend_stream_parse_target "$target" || exit 1
+  url=$(fm_backend_stream_hub_url) || exit 1
+  token=$(fm_backend_stream_token) || exit 1
+  client=$(fm_stream_native_bin fm-stream-agent) || exit 1
+  # The token rides the environment, never argv.
+  FM_STREAM_TOKEN="$token" exec "$client" attach --hub "$url" \
+    --endpoint "$FM_BACKEND_STREAM_ENDPOINT" --detach-key "$detach"
+}
+
 cmd_attach() {
   local raw=${1:?attach needs an endpoint} ; shift || true
+  if [ "$raw" = "--interactive" ]; then
+    cmd_attach_interactive "$@"
+    return
+  fi
   local query="" target endpoint url token
   while [ $# -gt 0 ]; do
     case "$1" in
       --replay) query="?replay=1"; shift ;;
+      --interactive) shift; cmd_attach_interactive "$raw" "$@"; return ;;
       *) die "unknown option for attach: $1" ;;
     esac
   done

@@ -188,8 +188,10 @@ fn encode(value: &Value) -> String {
 enum Answer {
     Json(u16, Value),
     Text(String, &'static str),
-    Stream(String, bool),
+    Stream(String, bool, Option<u64>),
 }
+/// The largest PTY geometry a resize accepts, per side.
+const MAX_GEOMETRY: u16 = 1000;
 fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
     let method = r.method().as_str().to_owned();
     let method = method.as_str();
@@ -438,7 +440,8 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
             require(h, r, q, "control", false)?;
             return answer(h.delete(eid)?);
         }
-        let steering = method == "POST" && (tail == "input" || tail == "status");
+        let steering =
+            method == "POST" && (tail == "input" || tail == "status" || tail == "resize");
         require(
             h,
             r,
@@ -451,26 +454,75 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
             Hub::get(&s, eid)?;
         }
         if tail == "input" && method == "POST" {
-            let (p, forwarded) = r.command_body(&["submit"])?;
+            let (p, forwarded) = r.command_body(&["submit", "b64"])?;
+            // Raw bytes for interactive attach: keystrokes that are not UTF-8
+            // text. Validated here so the agent only ever sees real base64.
+            let raw = match &p["b64"] {
+                Value::Null => None,
+                Value::String(b64) if STANDARD.decode(b64).is_ok_and(|b| !b.is_empty()) => {
+                    Some(b64.clone())
+                }
+                _ => {
+                    return Err(Error::new(
+                        400,
+                        "bad_input",
+                        "'b64' must be non-empty base64",
+                    ))
+                }
+            };
             if matches!(forwarded.get("text"), payload::Json::Null)
                 && matches!(forwarded.get("keys"), payload::Json::Null)
+                && raw.is_none()
             {
                 return Err(Error::new(
                     400,
                     "bad_input",
-                    "an input needs 'text' or 'keys'",
+                    "an input needs 'text', 'keys' or 'b64'",
                 ));
             }
+            let mut fields = vec![
+                ("text", forwarded.get("text").encode()),
+                ("keys", forwarded.get("keys").encode()),
+                ("submit", truth(&p["submit"]).to_string()),
+            ];
+            // Only present when used, so ordinary inputs forward the same
+            // bytes the Python hub forwards.
+            if let Some(b64) = raw {
+                fields.push(("b64", encode(&json!(b64))));
+            }
+            h.submit_encoded(eid, "input", payload::object(&fields))?;
+            return answer(json!({"ok":true,"delivered":eid}));
+        }
+        if tail == "resize" && method == "POST" {
+            let (p, _) = r.command_body(&["rows", "cols"])?;
+            let bound = |name: &str| -> Result<u16> {
+                let value = positive(&p[name], 0, name)?;
+                u16::try_from(value)
+                    .ok()
+                    .filter(|v| *v <= MAX_GEOMETRY)
+                    .ok_or_else(|| {
+                        Error::new(
+                            400,
+                            &format!("bad_{name}"),
+                            format!("{name} must be 1-{MAX_GEOMETRY}"),
+                        )
+                    })
+            };
+            if p["rows"].is_null() || p["cols"].is_null() {
+                return Err(Error::new(
+                    400,
+                    "bad_resize",
+                    "a resize needs 'rows' and 'cols'",
+                ));
+            }
+            let (rows, cols) = (bound("rows")?, bound("cols")?);
             h.submit_encoded(
                 eid,
-                "input",
-                payload::object(&[
-                    ("text", forwarded.get("text").encode()),
-                    ("keys", forwarded.get("keys").encode()),
-                    ("submit", truth(&p["submit"]).to_string()),
-                ]),
+                "resize",
+                payload::object(&[("rows", rows.to_string()), ("cols", cols.to_string())]),
             )?;
-            return answer(json!({"ok":true,"delivered":eid}));
+            h.resize(eid, rows as usize, cols as usize)?;
+            return answer(json!({"ok":true,"resized":eid,"rows":rows,"cols":cols}));
         }
         if tail == "status" && method == "POST" {
             let (p, forwarded) = r.command_body(&["state"])?;
@@ -531,12 +583,34 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
                         json!({"ok":true,"cursor_row":e.screen.cy,"screen":e.screen.lines(ansi).join("\n")}),
                     )
                 }
+                // What an interactive attach paints first: the rendered
+                // screen, the cursor, the geometry, and the stream offset that
+                // screen already includes, all read under one lock so the
+                // stream can resume exactly after it.
+                "snapshot" => {
+                    return answer(json!({
+                        "ok":true,
+                        "screen":e.screen.lines(true).join("\n"),
+                        "cursor_row":e.screen.cy,
+                        "cursor_col":e.screen.cursor_col(),
+                        "rows":e.rows,
+                        "cols":e.cols,
+                        "stream_offset":e.end,
+                    }))
+                }
                 "stream" => {
+                    let from = match q.get("from") {
+                        None => None,
+                        Some(raw) => Some(raw.parse::<u64>().map_err(|_| {
+                            Error::new(400, "bad_from", "from must be a stream offset")
+                        })?),
+                    };
                     return Ok(Answer::Stream(
                         eid.into(),
                         q.get("replay")
                             .is_some_and(|s| ["1", "true", "yes"].contains(&s.as_str())),
-                    ))
+                        from,
+                    ));
                 }
                 "processes" | "cwd" => {
                     let age = e.age();
@@ -604,13 +678,15 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
     ))
 }
 type HttpBody = BoxBody<Bytes, Infallible>;
-fn stream(h: Arc<Hub>, eid: String, replay: bool) -> HttpBody {
+fn stream(h: Arc<Hub>, eid: String, replay: bool, from: Option<u64>) -> HttpBody {
     let (incarnation, mut offset) = {
         let s = h.state.lock().unwrap();
         let endpoint = s.endpoints.get(&eid);
         (
             endpoint.map(|e| e.created),
-            if replay {
+            if let Some(from) = from {
+                from
+            } else if replay {
                 0
             } else {
                 endpoint.map(|e| e.end).unwrap_or(0)
@@ -757,9 +833,9 @@ async fn handle(
             "application/json",
         ),
         Answer::Text(text, ctype) => (200, Full::new(Bytes::from(text)).boxed(), ctype),
-        Answer::Stream(eid, replay) => {
+        Answer::Stream(eid, replay, from) => {
             close = true;
-            (200, stream(h, eid, replay), "text/event-stream")
+            (200, stream(h, eid, replay, from), "text/event-stream")
         }
     };
     let mut response = Response::builder()
@@ -850,7 +926,7 @@ fn run() -> std::result::Result<(), String> {
     }
     if args.first().is_none_or(|s| s != "serve") || args.iter().any(|s| s == "--help" || s == "-h")
     {
-        println!("fm-stream-hub serve [--bind ADDR] [--port N] [--token-file PATH] [--state-max-age-secs N] [--command-ack-secs N] [--ready-file PATH] [--pid-file PATH]\nIsolated Rust pilot; docs/stream-backend.md owns deployment prerequisites.");
+        println!("fm-stream-hub serve [--bind ADDR] [--port N] [--token-file PATH] [--state-max-age-secs N] [--command-ack-secs N] [--ready-file PATH] [--pid-file PATH]\nNative stream hub; docs/stream-backend.md owns deployment and rollback.");
         return Ok(());
     }
     let mut opts = BTreeMap::new();
@@ -1049,6 +1125,100 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned()
+    }
+
+    #[tokio::test]
+    async fn interactive_resize_and_raw_input_reach_the_agent_over_http() {
+        let h = Hub::new(
+            vec![(
+                "test".into(),
+                vec!["publish".into(), "subscribe".into(), "control".into()],
+            )],
+            30.,
+            5.,
+        );
+        let (address, server) = server(h.clone()).await;
+        let eid = "b".repeat(32);
+        let (status, registration) = json_response(request(address, "POST", "/v1/agent/endpoints",
+            json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"attach","rows":24,"cols":80,
+                "capabilities":["idempotent_command_results"]}), "").await).await;
+        assert_eq!(status, 201);
+        let cap = registration["command_capability"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let place = |tail: &'static str, body: Value| {
+            let path = format!("/v1/tasks/{eid}/{tail}");
+            tokio::spawn(async move {
+                json_response(request(address, "POST", &path, body, "").await).await
+            })
+        };
+        let take = format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=3");
+        for (tail, body, kind, expected) in [
+            (
+                "resize",
+                json!({"rows":30,"cols":100}),
+                "resize",
+                json!({"rows":30,"cols":100}),
+            ),
+            (
+                "input",
+                json!({"b64":"/3g="}),
+                "input",
+                json!({"text":null,"keys":null,"submit":false,"b64":"/3g="}),
+            ),
+            (
+                "input",
+                json!({"text":"x"}),
+                "input",
+                json!({"text":"x","keys":null,"submit":false}),
+            ),
+        ] {
+            let placed = place(tail, body);
+            let (_, taken) =
+                json_response(request(address, "GET", &take, json!({}), &cap).await).await;
+            let command = &taken["commands"][0];
+            assert_eq!(command["kind"], kind, "{taken}");
+            assert_eq!(command["payload"], expected, "{taken}");
+            let result =
+                json!({"machine":"box","command_id":command["command_id"],"ok":true,"error":""});
+            assert_eq!(
+                request(address, "POST", "/v1/agent/results", result, &cap)
+                    .await
+                    .status(),
+                200
+            );
+            assert_eq!(placed.await.unwrap().0, 200);
+        }
+        let (_, snapshot) = json_response(
+            request(
+                address,
+                "GET",
+                &format!("/v1/tasks/{eid}/snapshot"),
+                json!({}),
+                "",
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            (snapshot["rows"].clone(), snapshot["cols"].clone()),
+            (json!(30), json!(100))
+        );
+        assert_eq!(snapshot["stream_offset"], 0);
+        for (tail, body) in [
+            ("input", json!({"b64":"not base64!"})),
+            ("resize", json!({"rows":0,"cols":80})),
+            ("resize", json!({"rows":24,"cols":1001})),
+            ("resize", json!({"rows":24})),
+        ] {
+            assert_eq!(
+                place(tail, body.clone()).await.unwrap().0,
+                400,
+                "{tail} {body}"
+            );
+        }
+        server.abort();
     }
 
     #[tokio::test]

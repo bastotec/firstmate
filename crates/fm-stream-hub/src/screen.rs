@@ -494,6 +494,55 @@ impl Screen {
         }
         out
     }
+    pub fn cursor_col(&self) -> usize {
+        self.cx.min(self.cols - 1)
+    }
+    /// Follow the endpoint's pseudoterminal to a new geometry. Rows leaving
+    /// the top go to history, the way a terminal keeps the bottom of the
+    /// screen; the scroll region resets to the full screen.
+    pub fn resize(&mut self, rows: usize, cols: usize) {
+        if rows == 0 || cols == 0 {
+            return;
+        }
+        for row in self.cells.iter_mut() {
+            row.resize(cols, (" ".into(), String::new()));
+        }
+        for row in self.history.iter_mut() {
+            row.resize(cols, (" ".into(), String::new()));
+        }
+        if rows < self.cells.len() {
+            let excess = self.cells.len() - rows;
+            // Drop blank rows below the cursor first, then scroll the rest off.
+            let mut trimmed = 0;
+            while trimmed < excess
+                && self.cells.len() - 1 > self.cy
+                && self
+                    .cells
+                    .last()
+                    .is_some_and(|r| r.iter().all(|(g, a)| g == " " && a.is_empty()))
+            {
+                self.cells.pop();
+                trimmed += 1;
+            }
+            for _ in trimmed..excess {
+                let row = self.cells.remove(0);
+                self.history.push_back(row);
+                if self.history.len() > 2000 {
+                    self.history.pop_front();
+                }
+                self.cy = self.cy.saturating_sub(1);
+            }
+        }
+        while self.cells.len() < rows {
+            self.cells.push(blank(cols));
+        }
+        self.rows = rows;
+        self.cols = cols;
+        self.cy = self.cy.min(rows - 1);
+        self.cx = self.cx.min(cols);
+        self.top = 0;
+        self.bot = rows - 1;
+    }
     pub fn lines(&self, ansi: bool) -> Vec<String> {
         self.cells.iter().map(|r| Self::render(r, ansi)).collect()
     }
