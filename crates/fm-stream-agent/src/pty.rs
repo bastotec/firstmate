@@ -243,11 +243,14 @@ fn inspect(program: &str, args: &[&str], until: Option<Instant>) -> String {
     if Instant::now() >= until {
         return String::new();
     }
+    // Its own process group, so a timeout can end whatever the probe started
+    // (a wrapper's grandchild would otherwise hold the pipe open).
     let Ok(mut child) = Command::new(program)
         .args(args)
         .env("LC_ALL", "C")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        .process_group(0)
         .spawn()
     else {
         return String::new();
@@ -270,15 +273,15 @@ fn inspect(program: &str, args: &[&str], until: Option<Instant>) -> String {
         }
     }
     if !success {
+        // SAFETY: the group was created for this unreaped child just above.
+        unsafe { libc::killpg(child.id() as i32, libc::SIGKILL) };
         let _ = child.kill();
         let _ = child.wait();
+        // Never wait on the pipe of a probe that ran out of time: anything
+        // that escaped the group would hold it for as long as it lives.
+        return String::new();
     }
-    let out = reader.join().unwrap_or_default();
-    if success {
-        out
-    } else {
-        String::new()
-    }
+    reader.join().unwrap_or_default()
 }
 
 #[cfg(test)]
