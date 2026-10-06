@@ -65,6 +65,18 @@
 #       and when that endpoint closes (the host exited), wait for the next one
 #       (the keeper's restart) and attach again. Returns when the client
 #       detaches (Ctrl-]) or fails while its endpoint is still the live one.
+#   fm-deck-chat.sh open [--home H]
+#       What a bare `deck chat` runs in this home or any directory under it
+#       (deck's project launcher, .agents/deck.chat.json). With no live
+#       primary it starts one first - through the running keeper when the
+#       service is installed (withdrawing a stopped marker), else with
+#       --stream here - and then attaches as `attach` does. A checkout that
+#       is not a firstmate home (no state/ directory: a worktree of this repo,
+#       or a clone that has never run) must never grow a primary, so there it
+#       runs a local `deck chat` in $DECK_CHAT_CWD instead. Refuses (exit 1)
+#       when the live host was started in a terminal of its own (plain
+#       `fm-deck-chat.sh`): that terminal is its only screen. `deck chat
+#       --local` skips this launcher.
 #   fm-deck-chat.sh install-service [--home H] [--model ROUTE]
 #       macOS: generate ~/Library/LaunchAgents/dev.firstmate.primary.<hash>.plist
 #       (<hash> = first 12 hex of sha256 of the canonical home) and bootstrap it
@@ -124,14 +136,12 @@ usage() { sed -n '/^# USAGE/,/^# ENVIRONMENT/p' "$SCRIPT_DIR/fm-deck-chat.sh" | 
 die() { printf 'fm-deck-chat: %s\n' "$1" >&2; exit "${2:-1}"; }
 q() { printf '%q' "$1"; }
 
-# Every mode starts, steers or stops a primary: refuse a no-mistakes gate agent.
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
-fm_refuse_if_gate_agent
 
 MODE=run
 case "${1:-}" in
-  stop|attach|install-service|uninstall-service|service-run|service-alert) MODE=$1; shift ;;
+  stop|attach|open|install-service|uninstall-service|service-run|service-alert) MODE=$1; shift ;;
 esac
 HOME_DIR=${FM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}
 MODEL='' SESSION='' ENDPOINT='' STREAM=0 SUMMARY=''
@@ -151,6 +161,7 @@ done
 HOME_DIR=$(cd "$HOME_DIR" && pwd -P)
 export FM_HOME=$HOME_DIR
 STATE="$FM_HOME/state"
+[ "$MODE" = open ] && [ ! -d "$STATE" ] || fm_refuse_if_gate_agent
 command -v python3 >/dev/null 2>&1 || die 'python3 is required' 2
 
 STOPPED="$STATE/primary-chat/stopped"
@@ -284,6 +295,35 @@ if [ "$MODE" = service-alert ]; then
     wedge_alarm_notify "$SUMMARY" "$STATE/primary-chat/service-down"
   )
   exit $?
+fi
+
+if [ "$MODE" = open ]; then
+  if [ ! -d "$STATE" ]; then
+    cd "${DECK_CHAT_CWD:-$PWD}" || exit 2
+    DECK=${FM_DECK_BIN:-deck}
+    DECK_NO_LAUNCHER=1 exec "$DECK" chat
+  fi
+  primary=$(python3 "$PRIMARY_CHAT" steer status --home "$FM_HOME" 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print("absent" if not d.get("present") else "stream" if d.get("endpoint") else "terminal")') \
+    || die 'could not read primary status'
+  if [ "$primary" = terminal ]; then
+    die 'the live primary runs in its own terminal, not a stream endpoint; use that terminal'
+  fi
+  if [ "$primary" = absent ]; then
+    # A held service.lock is the keeper (bin/fm_primary_chat.py service).
+    if [ -e "$STATE/primary-chat/service.lock" ] && ! python3 -c '
+import fcntl, sys
+fcntl.flock(open(sys.argv[1], "a"), fcntl.LOCK_EX | fcntl.LOCK_NB)' "$STATE/primary-chat/service.lock" 2>/dev/null; then
+      if [ -e "$STOPPED" ]; then
+        rm -f "$STOPPED"
+        printf 'fm-deck-chat: the primary was stopped on purpose; the keeper starts it again\n' >&2
+      fi
+    else
+      printf 'fm-deck-chat: no live primary and no keeper; starting one in a stream endpoint\n' >&2
+      "$SCRIPT_DIR/fm-deck-chat.sh" --stream --home "$FM_HOME" >/dev/null || exit $?
+    fi
+  fi
+  MODE=attach
 fi
 
 if [ "$MODE" = attach ]; then

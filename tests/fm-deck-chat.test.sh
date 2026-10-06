@@ -652,6 +652,148 @@ STREAM
   pass "fm-deck-chat.sh attach: reattaches when the primary's endpoint is replaced"
 }
 
+test_open_attaches_or_starts() {
+  local home BIN="$LAB/open-bin" OPEN="$LAB/open-bin/fm-deck-chat-open.sh" host keeper open rc=0 out mode
+  cp -R "$LAB/bundle/bin" "$BIN"
+  cp "$BIN/fm-deck-chat.sh" "$OPEN"
+  # A stand-in host; its --stream registers a new one at endpoint t:cc.
+  cat > "$BIN/fm-deck-chat.sh" <<'HOST'
+#!/usr/bin/env bash
+if [ "${1:-}" = --stream ]; then
+  printf '%s\n' "$*" >> "$OPEN_LOG"
+  # shellcheck disable=SC2016 # Expanded by the inner bash.
+  bash -c 'exec -a fm-deck-chat bash "$1" --home "$2"' _ "$0" "$3" </dev/null >/dev/null 2>&1 &
+  echo "$!" >> "$OPEN_LOG.hosts"
+  python3 "$(dirname "$0")/fm_primary_chat.py" prepare --home "$3" --session s1 >/dev/null
+  python3 "$(dirname "$0")/fm_primary_chat.py" record write --home "$3" --session s1 --host-pid "$!" --endpoint t:cc
+  exit 0
+fi
+sleep 300 & trap 'kill $!; exit 0' TERM; wait
+HOST
+  # shellcheck disable=SC2016 # Expanded by the stubs.
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$3" >> "$ATTACH_LOG"; exit 7' > "$BIN/fm-stream.sh"
+  # shellcheck disable=SC2016 # Expanded by the stub.
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s|%s|%s\n" "$PWD" "${DECK_NO_LAUNCHER:-}" "$*" > "$OPEN_LOG.local"' > "$LAB/tools/local-deck"
+  chmod +x "$BIN/fm-deck-chat.sh" "$BIN/fm-stream.sh" "$LAB/tools/local-deck"
+  export OPEN_LOG="$LAB/open.log" ATTACH_LOG="$LAB/open-attach.log"
+  start_host() {  # <home> <endpoint>
+    # shellcheck disable=SC2016 # Expanded by the inner bash.
+    bash -c 'exec -a fm-deck-chat bash "$1" --home "$2"' _ "$BIN/fm-deck-chat.sh" "$1" &
+    host=$!
+    fm_test_track_helper_pid "$host"
+    python3 "$BIN/fm_primary_chat.py" record write --home "$1" --session s1 --host-pid "$host" ${2:+--endpoint "$2"}
+  }
+
+  mkdir -p "$LAB/open-clone/sub"
+  home=$(cd "$LAB/open-clone" && pwd -P)
+  DECK_CHAT_CWD="$home/sub" FM_DECK_BIN="$LAB/tools/local-deck" "$OPEN" open --home "$home" || fail "open in a checkout that is not a home failed"
+  assert_equals "$home/sub|1|chat" "$(cat "$OPEN_LOG.local")" "open runs a local deck chat in a checkout that is not a firstmate home"
+  assert_absent "$home/state" "open leaves a checkout that is not a home untouched"
+  FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 DECK_CHAT_CWD="$home/sub" FM_DECK_BIN="$LAB/tools/local-deck" \
+    "$OPEN" open --home "$home" || fail "a gate marker must not block local chat outside a home"
+  assert_equals "$home/sub|1|chat" "$(cat "$OPEN_LOG.local")" "local fallback bypasses the gate marker"
+
+  git init -q "$home"
+  git -C "$home" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m fixture
+  mkdir -p "$LAB/.no-mistakes/repos"
+  git clone -q --bare "$home" "$LAB/.no-mistakes/repos/open.git"
+  git -C "$LAB/.no-mistakes/repos/open.git" worktree add -q "$LAB/open-gate" HEAD
+  home=$(cd "$LAB/open-gate" && pwd -P)
+  mkdir "$home/sub"
+  (
+    cd "$home/sub"
+    unset NO_MISTAKES_GATE
+    FM_GATE_REFUSE_BYPASS='' DECK_CHAT_CWD="$home/sub" FM_DECK_BIN="$LAB/tools/local-deck" \
+      "$OPEN" open --home "$home"
+  ) || fail "a no-state gate worktree must get local chat"
+  assert_equals "$home/sub|1|chat" "$(cat "$OPEN_LOG.local")" "local fallback bypasses the git-common-dir gate signal"
+  assert_absent "$home/state" "local chat in a gate worktree creates no primary state"
+  rm -f "$OPEN_LOG.local"
+  for mode in '' --stream stop attach install-service uninstall-service service-run service-alert; do
+    rc=0
+    FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 FM_DECK_BIN="$LAB/tools/local-deck" \
+      "$OPEN" ${mode:+"$mode"} --home "$home" 2>/dev/null || rc=$?
+    expect_code 3 "$rc" "$mode still refuses gate agents without state"
+  done
+  assert_absent "$home/state" "refused primary operations create no state"
+  mkdir "$home/state"
+  rc=0
+  FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 "$OPEN" open --home "$home" 2>/dev/null || rc=$?
+  expect_code 3 "$rc" "open in a firstmate home still refuses gate agents"
+  assert_absent "$OPEN_LOG.local" "refused primary operations never run local chat"
+
+  home=$(new_home open-live)
+  home=$(cd "$home" && pwd -P)
+  python3 "$BIN/fm_primary_chat.py" prepare --home "$home" --session s1 >/dev/null
+  start_host "$home" t:aa
+  rc=0; "$OPEN" open --home "$home" 2>/dev/null || rc=$?
+  expect_code 7 "$rc" "open returns the interactive client's exit"
+  assert_equals t:aa "$(cat "$ATTACH_LOG")" "open attaches to the live primary's endpoint"
+  kill "$host"; wait_for 10 "the live stand-in exits" dead "$host"
+  start_host "$home" ''
+  rc=0; out=$("$OPEN" open --home "$home" 2>&1) || rc=$?
+  expect_code 1 "$rc" "open refuses a primary that runs in a terminal of its own"
+  assert_contains "$out" 'runs in its own terminal' "the refusal says where the primary runs"
+  kill "$host"; wait_for 10 "the terminal stand-in exits" dead "$host"
+
+  rm -f "$ATTACH_LOG"
+  echo '{}' > "$home/state/primary-chat/stopped"
+  python3 -c 'import fcntl, sys, time
+handle = open(sys.argv[1], "a"); fcntl.flock(handle, fcntl.LOCK_EX); open(sys.argv[2], "w").close(); time.sleep(300)' \
+    "$home/state/primary-chat/service.lock" "$LAB/open-keeper.ready" &
+  keeper=$!
+  fm_test_track_helper_pid "$keeper"
+  wait_for 10 "the stand-in keeper holds service.lock" test -e "$LAB/open-keeper.ready"
+  "$OPEN" open --home "$home" 2>"$LAB/open-keeper.err" &
+  open=$!
+  fm_test_track_helper_pid "$open"
+  wait_for 10 "open withdraws the stopped marker for the keeper" test ! -e "$home/state/primary-chat/stopped"
+  wait_for 10 "open waits for the keeper's primary" grep -q 'no live primary; waiting' "$LAB/open-keeper.err"
+  start_host "$home" t:bb
+  rc=0; wait "$open" || rc=$?
+  expect_code 7 "$rc" "open attaches once the keeper's primary registers"
+  assert_equals t:bb "$(cat "$ATTACH_LOG")" "open attaches to the keeper-started primary"
+  assert_absent "$OPEN_LOG" "open leaves starting to a running keeper"
+  kill "$host"; wait_for 10 "the keeper's first stand-in exits" dead "$host"
+  rm -f "$ATTACH_LOG"
+  # shellcheck disable=SC2016
+  bash -c 'exec -a fm-deck-chat bash "$1" --home "$2"' _ "$BIN/fm-deck-chat.sh" "$home" &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  mkdir "$LAB/open-tools"
+  cat > "$LAB/open-tools/python3" <<'PYTHON'
+#!/usr/bin/env bash
+if [ "${2:-}" = steer ] && [ "${3:-}" = status ] && [ ! -e "$OPEN_LOG.snapshot" ]; then
+  "$REAL_PYTHON" "$@" > "$OPEN_LOG.snapshot"
+  rc=$?
+  "$REAL_PYTHON" "$1" record write --home "$FM_HOME" --session s1 --host-pid "$OPEN_REGISTER_PID" --endpoint t:dd || exit 2
+  cat "$OPEN_LOG.snapshot"
+  exit "$rc"
+fi
+exec "$REAL_PYTHON" "$@"
+PYTHON
+  chmod +x "$LAB/open-tools/python3"
+  rc=0
+  PATH="$LAB/open-tools:$PATH" OPEN_REGISTER_PID="$host" "$OPEN" open --home "$home" 2>"$LAB/open-race.err" || rc=$?
+  expect_code 7 "$rc" "open attaches when the keeper registers after the initial status snapshot"
+  python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["present"] is False' "$OPEN_LOG.snapshot" \
+    || fail "the initial snapshot must precede host registration"
+  assert_equals t:dd "$(cat "$ATTACH_LOG")" "a newly registered stream primary is never classified as terminal-hosted"
+  assert_absent "$OPEN_LOG" "open never starts beside a keeper registering its primary"
+  kill "$host" "$keeper"; wait_for 10 "the keeper stand-ins exit" dead "$host"
+
+  rm -f "$ATTACH_LOG"
+  home=$(new_home open-fresh)
+  home=$(cd "$home" && pwd -P)
+  rc=0; "$OPEN" open --home "$home" 2>/dev/null || rc=$?
+  expect_code 7 "$rc" "open attaches to the primary it started"
+  assert_equals "--stream --home $home" "$(cat "$OPEN_LOG")" "open starts a fresh home's first primary with --stream when no keeper runs"
+  assert_equals t:cc "$(cat "$ATTACH_LOG")" "open attaches to the endpoint --stream registered"
+  kill "$(cat "$OPEN_LOG.hosts")" 2>/dev/null || true
+  unset OPEN_LOG ATTACH_LOG
+  pass "fm-deck-chat.sh open: attaches, starts through the keeper or --stream, local chat outside a firstmate home"
+}
+
 test_service_launcher_shutdown() {
   local home keeper launcher
   home=$(new_home keeper-shutdown)
@@ -848,6 +990,7 @@ test_stop_marker
 test_service_install
 test_service_alert
 test_attach_follows_restarts
+test_open_attaches_or_starts
 test_service_launcher_shutdown
 test_service_late_registration
 test_service_inherited_outage
