@@ -853,6 +853,7 @@ test_service_late_registration() {
   wait_for 10 "the late host is stopped" dead "$host"
   wait "$host" 2>/dev/null || true
   assert_present "$home/state/primary-chat/stopped" "late registration never withdraws stop"
+  assert_absent "$home/state/primary-chat/captain-start" "a service start never records a captain start"
   assert_grep 'stopping a late-registered host' "$home/state/primary-chat/service.log" "the keeper logs the late stop"
   assert_grep '"stopped_at"' "$home/state/primary-chat.json" "the late host's record is retired"
   sleep 0.5
@@ -891,6 +892,63 @@ SH
   pass "fm-deck-chat.sh service-run: an inherited outage is already alerted"
 }
 
+test_service_captain_start_grace() {
+  local home keeper captain stopped rc BIN="$LAB/grace-bin"
+  cp -R "$LAB/bundle/bin" "$BIN"
+  cat > "$BIN/fm-backend.sh" <<'SH'
+#!/usr/bin/env bash
+fm_backend_source() { :; }
+fm_backend_stream_tool_check() { :; }
+fm_backend_stream_container_ensure() { :; }
+fm_backend_stream_create_task() {
+  touch "$FM_HOME/captain.dispatched"
+  while [ ! -e "$FM_HOME/captain.release" ]; do sleep 0.05; done
+  return 1
+}
+SH
+  cat > "$LAB/tools/grace-start" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  --stream) echo start >> "$FM_HOME/start.attempts"; exit 1 ;;
+  service-alert) echo alert >> "$FM_HOME/alerts" ;;
+esac
+SH
+  chmod +x "$LAB/tools/grace-start"
+  for stopped in no yes; do
+    home=$(new_home "keeper-grace-$stopped")
+    if [ "$stopped" = yes ]; then
+      rc=0; "$BIN/fm-deck-chat.sh" stop --home "$home" 2>/dev/null || rc=$?
+      expect_code 1 "$rc" "stop without a host leaves the marker"
+    fi
+    "$BIN/fm-deck-chat.sh" --stream --home "$home" > "$home/captain.out" 2>&1 &
+    captain=$!
+    fm_test_track_helper_pid "$captain"
+    wait_for 10 "the captain dispatches before taking the lock" test -e "$home/captain.dispatched"
+    assert_absent "$home/state/primary-chat/stopped" "captain dispatch withdraws stop"
+    python3 -c 'import sys,time; started=int(open(sys.argv[1]).read()); assert 0 <= time.time()-started < 60' \
+      "$home/state/primary-chat/captain-start" || fail "captain dispatch records its current epoch"
+    FM_DECK_CHAT_SERVICE_POLL=0.1 FM_DECK_CHAT_SERVICE_START_GRACE=60 FM_DECK_CHAT_SERVICE_ALERT_SECS=0 \
+      python3 "$BIN/fm_primary_chat.py" service --home "$home" --deck-chat "$LAB/tools/grace-start" \
+      > "$home/keeper.out" 2>&1 &
+    keeper=$!
+    fm_test_track_helper_pid "$keeper"
+    wait_for 10 "grace without ever sampling the stopped marker" service_state_is "$home" waiting
+    assert_equals 'captain start in progress' "$(record_field "$home/state/primary-chat/service.json" detail)" \
+      "the keeper reports the captain's pending start"
+    wait_for 10 "outage alerts continue during grace" test -s "$home/alerts"
+    assert_absent "$home/start.attempts" "the keeper does not race the captain's dispatch"
+    touch "$home/captain.release"
+    rc=0; wait "$captain" || rc=$?
+    expect_code 1 "$rc" "a failed captain dispatch leaves bounded grace"
+    printf '0\n' > "$home/state/primary-chat/captain-start"
+    wait_for 10 "the keeper starts once captain grace expires" test -s "$home/start.attempts"
+    kill -TERM "$keeper"
+    wait_for 10 "the grace keeper exits" dead "$keeper"
+    wait "$keeper"
+  done
+  pass "fm-deck-chat.sh service-run: durable captain grace survives an unsampled stop and expires"
+}
+
 test_service_keeper() {
   local home keeper first second deck_pid session out
   if ! start_test_hub "$LAB/keeper-hub"; then
@@ -908,7 +966,7 @@ test_service_keeper() {
   alarm_recorder "$LAB/tools/adoption-alarm"
   ALARM_LOG="$LAB/adoption-alarm.log" FM_WEDGE_ALARM_EXEC="$LAB/tools/adoption-alarm" FM_WEDGE_ALARM_CHANNEL=osascript \
     FM_DECK_CHAT_SERVICE_ALERT_SECS=0 FM_DECK_CHAT_SERVICE_POLL=0.2 FM_DECK_CHAT_SERVICE_BACKOFF=0.5 \
-    FM_DECK_CHAT_SERVICE_STABLE_SECS=2 \
+    FM_DECK_CHAT_SERVICE_STABLE_SECS=2 FM_DECK_CHAT_SERVICE_START_GRACE=2 \
     "$BIN/fm-deck-chat.sh" service-run --home "$home" --model fake/route > "$LAB/keeper.out" 2>&1 &
   keeper=$!
   fm_test_track_helper_pid "$keeper"
@@ -994,6 +1052,7 @@ test_open_attaches_or_starts
 test_service_launcher_shutdown
 test_service_late_registration
 test_service_inherited_outage
+test_service_captain_start_grace
 test_startup_completion_required
 test_startup_handoff
 test_host_lifecycle

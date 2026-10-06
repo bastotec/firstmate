@@ -168,7 +168,16 @@ STOPPED="$STATE/primary-chat/stopped"
 
 # A start the captain made (not the keeper's) withdraws an earlier stop.
 clear_stopped() {
-  [ "${FM_DECK_CHAT_SERVICE:-}" = 1 ] || rm -f "$STOPPED"
+  if [ "${FM_DECK_CHAT_SERVICE:-}" != 1 ]; then
+    local start
+    mkdir -p "$STATE" || die "cannot create $STATE" 2
+    [ -d "$STATE/primary-chat" ] || mkdir -m 700 "$STATE/primary-chat" || die "cannot create $STATE/primary-chat" 2
+    start=$(mktemp "$STATE/primary-chat/.captain-start.XXXXXX") || die 'cannot prepare captain start' 2
+    if ! { date +%s > "$start" && mv -f "$start" "$STATE/primary-chat/captain-start"; }; then
+      die 'cannot record captain start' 2
+    fi
+    rm -f "$STOPPED"
+  fi
 }
 
 # The live primary's endpoint for this home, or nothing.

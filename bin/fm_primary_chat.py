@@ -16,6 +16,9 @@ CLI. Both call this file, which owns the on-disk layout:
                                           `fm-deck-chat.sh stop`, removed by a
                                           captain-started host; the service
                                           keeper never restarts past it
+  state/primary-chat/captain-start        epoch of the latest captain start (atomic),
+                                          written before clearing stopped, even
+                                          when no stopped marker existed
   state/primary-chat/service.json         the keeper's current view (0600, atomic):
                                           {"pid","state","detail","since","home"};
                                           state is running|starting|down|waiting|stopped
@@ -50,18 +53,22 @@ Subcommands:
       Paused while state/.afk exists (the away daemon owns the watcher then).
   service --home H --deck-chat PATH [--model ROUTE]
       the keeper a launchd agent runs (bin/fm-deck-chat.sh install-service):
-      adopts a live host, waits while any live harness holds the session lock,
-      and otherwise starts one with `fm-deck-chat.sh --stream` (resuming the
-      persisted session), backing off while it keeps dying soon after start.
+      adopts a live host and waits while any live harness holds the session lock.
+      Otherwise, while captain-start is younger than FM_DECK_CHAT_SERVICE_START_GRACE,
+      publishes waiting with detail "captain start in progress", even if it never
+      observed the stopped marker. Once grace and any backoff expire, starts one
+      with `fm-deck-chat.sh --stream` (resuming the persisted session), backing off
+      while it keeps dying soon after start.
       Honours state/primary-chat/stopped, including hosts that register late.
       Waits for an in-flight --stream launcher even past its expected window;
       logs that delay once and leaves it to finish independently on shutdown.
-      After a start attempt returns, or while backing off, down past the alert
-      window (default 120s) writes service-down and raises
+      After a start attempt returns, or while backing off or waiting for a captain
+      start, down past the alert window (default 120s) writes service-down and raises
       `fm-deck-chat.sh service-alert` once per outage, across keeper replacement;
       a stable run or explicit stop clears the marker. Env: FM_DECK_CHAT_SERVICE_POLL (2),
       _BACKOFF (5), _BACKOFF_MAX (300), _STABLE_SECS (120), _ALERT_SECS (120),
-      _START_TIMEOUT (200, expected launcher window, not a termination deadline).
+      _START_TIMEOUT (200, expected launcher window, not a termination deadline),
+      _START_GRACE (60, captain-start grace seconds).
 """
 import argparse
 import fcntl
@@ -604,6 +611,7 @@ class Keeper:
         self.stable = env_seconds('FM_DECK_CHAT_SERVICE_STABLE_SECS', 120)
         self.alert_after = env_seconds('FM_DECK_CHAT_SERVICE_ALERT_SECS', 120)
         self.start_timeout = env_seconds('FM_DECK_CHAT_SERVICE_START_TIMEOUT', 200)
+        self.start_grace = env_seconds('FM_DECK_CHAT_SERVICE_START_GRACE', 60)
         self.view = None
 
     def log(self, message):
@@ -763,7 +771,13 @@ class Keeper:
                 self.log('primary is down; restarting %s'
                          % ('in %ds (it died %ds after its last start)' % (delay, now - last_start)
                             if crash_loop else 'now'))
-            if now >= next_try:
+            try:
+                captain_start = float((self.root / 'captain-start').read_text())
+            except (OSError, ValueError):
+                captain_start = 0.0
+            if now - captain_start < self.start_grace:
+                self.publish('waiting', 'captain start in progress')
+            elif now >= next_try:
                 self.publish('starting', 'fm-deck-chat.sh --stream')
                 last_start = now
                 if self.start():
