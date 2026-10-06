@@ -70,11 +70,12 @@
 #       (deck's project launcher, .agents/deck.chat.json). With no live
 #       primary it starts one first - through the running keeper when the
 #       service is installed (withdrawing a stopped marker), else with
-#       --stream here - and then attaches as `attach` does. In a checkout
-#       that has never hosted a primary (no state/primary-chat/session), such
-#       as a worktree or clone of this repo, it runs a local `deck chat` in
-#       $DECK_CHAT_CWD instead. Refuses (exit 1) when the live host runs in
-#       a terminal of its own rather than a stream endpoint. `deck chat
+#       --stream here - and then attaches as `attach` does. A checkout that
+#       is not a firstmate home (no state/ directory: a worktree of this repo,
+#       or a clone that has never run) must never grow a primary, so there it
+#       runs a local `deck chat` in $DECK_CHAT_CWD instead. Refuses (exit 1)
+#       when the live host was started in a terminal of its own (plain
+#       `fm-deck-chat.sh`): that terminal is its only screen. `deck chat
 #       --local` skips this launcher.
 #   fm-deck-chat.sh install-service [--home H] [--model ROUTE]
 #       macOS: generate ~/Library/LaunchAgents/dev.firstmate.primary.<hash>.plist
@@ -302,7 +303,7 @@ if [ "$MODE" = open ]; then
     if pid=$(python3 "$PRIMARY_CHAT" record pid --home "$FM_HOME" 2>/dev/null); then
       die "the live primary (host pid $pid) runs in its own terminal, not a stream endpoint; use that terminal"
     fi
-    if [ ! -e "$STATE/primary-chat/session" ]; then
+    if [ ! -d "$STATE" ]; then
       cd "${DECK_CHAT_CWD:-$PWD}" || exit 2
       DECK=${FM_DECK_BIN:-deck}
       DECK_NO_LAUNCHER=1 exec "$DECK" chat
