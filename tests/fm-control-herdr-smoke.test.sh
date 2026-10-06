@@ -160,9 +160,15 @@ mkdir -p "$FAKEBIN"
 # types that absolute path into the pane, so running it is the launch proof.
 cat > "$FAKEBIN/pi-signed" <<EOF
 #!/usr/bin/env bash
+if [ "\${1:-}" = --help ]; then
+  exit 0
+fi
 : > "$SCRATCH/replacement-launched"
 EOF
 chmod +x "$FAKEBIN/pi-signed"
+"$FAKEBIN/pi-signed" --help || fail "the replacement harness help probe failed"
+[ ! -e "$SCRATCH/replacement-launched" ] \
+  || fail "the replacement harness help probe created the launch marker"
 printf -v FAKEBIN_Q '%q' "$FAKEBIN"
 printf -v PROJ_Q '%q' "$PROJ"
 fm_backend_herdr_send_text_line "$SESSION:$PANE_ID" "export PATH=$FAKEBIN_Q:\$PATH" \
