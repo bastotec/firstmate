@@ -82,22 +82,18 @@ fm_backend_is_known() {  # <name>
 # HERDR_ENV=1 in that nested case. herdr injects HERDR_ENV=1 (plus
 # HERDR_SOCKET_PATH/HERDR_PANE_ID) into every process it manages a pane for;
 # HERDR_ENV=1 alone (no $TMUX) selects herdr.
-# Callers needing the winning signal read FM_BACKEND_DETECT_SIGNAL (set to
-# TMUX or HERDR_ENV) and FM_BACKEND_DETECTED after a direct
+# Callers needing the detected backend read FM_BACKEND_DETECTED after a direct
 # (non-command-substitution) call.
 
 fm_backend_detect() {
   FM_BACKEND_DETECTED=""
-  FM_BACKEND_DETECT_SIGNAL=""
   if [ -n "${TMUX:-}" ]; then
     FM_BACKEND_DETECTED=tmux
-    FM_BACKEND_DETECT_SIGNAL=TMUX
     printf 'tmux'
     return 0
   fi
   if [ "${HERDR_ENV:-}" = "1" ]; then
     FM_BACKEND_DETECTED=herdr
-    FM_BACKEND_DETECT_SIGNAL=HERDR_ENV
     printf 'herdr'
     return 0
   fi
@@ -129,8 +125,8 @@ fm_backend_name() {
       fi
     done < "$FM_BACKEND_CONFIG_DIR/backend"
   fi
-  # Called directly (not in a command substitution) so the detect signal
-  # globals survive into the notice below.
+  # Called directly (not in a command substitution) so the detected backend
+  # survives into the notice below.
   if fm_backend_detect >/dev/null; then
     detected=$FM_BACKEND_DETECTED
     if [ "$detected" = herdr ]; then

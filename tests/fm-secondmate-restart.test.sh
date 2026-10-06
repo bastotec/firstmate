@@ -20,8 +20,7 @@
 #      PARENT's own pin rather than the remote home's copy of it.
 #   6. End to end with bin/fm-update.sh: a live mate whose home needed no
 #      fast-forward is still named for restart and genuinely restarted, and one
-#      whose runtime cannot prove a restart keeps the honest re-read path with
-#      its agent left running.
+#      on a removed backend is reported unreached with its agent left running.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -353,28 +352,27 @@ SH
   pass "T2c a reply between the preliminary scan and timeout decision wins"
 }
 
-# --- T3: a runtime that cannot prove a restart never gets one ----------------
-test_unprovable_runtime_falls_back() {
-  local dir out rc
-  dir=$(new_case unprovable)
-  # A backend firstmate has no adapter for (zellij was removed) has no
-  # recovery-grade agent-state classifier, so "the old agent stopped and the
-  # replacement came up" can never be established there.
+# --- T3: a removed backend cannot restart or receive a fallback -------------
+test_removed_backend_is_unreached() {
+  local dir out rc before
+  dir=$(new_case removed-backend)
   add_local_mate "$dir" sm1 claude zellij
+  before=$(cat "$dir/home/state/sm1.meta")
 
   out=$(run_restart "$dir" sm1); rc=$?
 
-  expect_code 3 "$rc" "an unprovable runtime must not report a reload"$'\n'"$out"
-  assert_contains "$out" "nudged: sm1:" "an unprovable runtime must fall back to the re-read message"
-  assert_contains "$out" "cannot prove an agent stopped" "the fallback must name the runtime limit"
-  assert_not_contains "$out" "restarted: sm1" "an unprovable runtime must not be reported as restarted"
-  # It is never even asked to spend a turn persisting, because it could not be
-  # restarted afterwards either way; the only thing it was handed is the nudge.
-  assert_no_grep 'Open-record persistence' "$dir/home/state/sm1.inbox/001.msg" \
-    "a mate that cannot be restarted should not be asked to persist first"
-  assert_grep 're-read your AGENTS.md' "$dir/home/state/sm1.inbox/001.msg" \
-    "the fallback should hand the mate the ordinary re-read message"
-  pass "T3 a runtime that cannot prove a restart falls back to the re-read message"
+  expect_code 3 "$rc" "a removed backend must not report a reload"$'\n'"$out"
+  assert_contains "$out" "unreached: sm1:" "a removed backend cannot receive the re-read message"
+  assert_contains "$out" "cannot prove an agent stopped" "the refusal must name the runtime limit"
+  assert_contains "$out" "could not be delivered" "the failed fallback must be reported honestly"
+  assert_contains "$out" "summary: 0 of 1 restarted, 0 nudged, 1 unreached" \
+    "the summary must not claim a restart or a delivered nudge"
+  assert_absent "$dir/home/state/sm1.inbox" "an unknown backend must be refused before enqueue"
+  assert_absent "$dir/home/state/sm1.control-relaunch" "a removed backend must not open a restart transaction"
+  assert_no_grep '^/exit$' "$dir/fake/literal" "a removed backend must not stop the agent"
+  [ "$(cat "$dir/home/state/sm1.meta")" = "$before" ] \
+    || fail "the removed backend's metadata was migrated or changed"
+  pass "T3 a removed backend is unreached without restart, enqueue, or migration"
 }
 
 # --- T4: a mate with no durable record in this home --------------------------
@@ -798,12 +796,10 @@ test_already_current_mate_restarts_end_to_end() {
   pass "T15 an already-current live mate is named by the update pass and genuinely restarted"
 }
 
-# --- T16: an already-current mate that cannot prove a restart stays honest ----
-# Same already-current home, a runtime with no recovery-grade state classifier.
-# Unconditional restart must not become an unconditional CLAIM of one: the update
-# pass routes it to the re-read steer, and the restart pass reports a nudge with
-# the agent still running.
-test_already_current_unprovable_mate_stays_on_the_nudge_path() {
+# --- T16: an already-current mate on a removed backend stays honest ----------
+# The update pass keeps it out of the restart set; the restart pass cannot
+# deliver the fallback to an unknown backend and reports it unreached instead.
+test_already_current_removed_backend_is_unreached() {
   local dir out rc restart_line nudge_line before
   dir=$(new_case already-current-unprovable)
   # A backend with no adapter (zellij was removed) can never establish "the old
@@ -826,19 +822,22 @@ test_already_current_unprovable_mate_stays_on_the_nudge_path() {
   out=$(run_restart "$dir" sm1); rc=$?
 
   expect_code 3 "$rc" "an unprovable restart must not report success"$'\n'"$out"
-  assert_contains "$out" "nudged: sm1:" "the fallback must be reported as a nudge"
+  assert_contains "$out" "unreached: sm1:" "a removed backend's fallback cannot be delivered"
+  assert_contains "$out" "summary: 0 of 1 restarted, 0 nudged, 1 unreached" \
+    "the failed fallback must not be reported as a nudge"
+  assert_absent "$dir/home/state/sm1.inbox" "an unknown backend must be refused before enqueue"
   assert_not_contains "$out" "restarted: sm1" "an unprovable mate must never be reported as reloaded"
   [ "$(cat "$dir/fake/command")" = "$before" ] \
     || fail "the unprovable mate's agent was stopped anyway"
   assert_no_grep '^/exit$' "$dir/fake/literal" "nothing may be stopped on the nudge path"
-  pass "T16 an already-current mate with an unprovable runtime keeps the honest nudge path"
+  pass "T16 an already-current mate on a removed backend is honestly reported unreached"
 }
 
 test_persist_gates_and_asks_only_for_open_records
 test_persist_precedes_restart
 test_arrived_answer_precedes_deadline_check
 test_answer_between_resolution_and_timeout_wins
-test_unprovable_runtime_falls_back
+test_removed_backend_is_unreached
 test_unknown_mate_is_accounted_for
 test_refused_restart_falls_back_without_claiming_a_reload
 test_local_restart_uses_the_home_pin_and_reports_what_ran
@@ -852,6 +851,6 @@ test_relaunches_do_not_block_persist_polling
 test_unpublished_worker_result_is_accounted_for
 test_result_published_while_reaping_is_honored
 test_already_current_mate_restarts_end_to_end
-test_already_current_unprovable_mate_stays_on_the_nudge_path
+test_already_current_removed_backend_is_unreached
 
 echo "# all fm-secondmate-restart tests passed"
