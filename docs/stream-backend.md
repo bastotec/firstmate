@@ -384,6 +384,11 @@ A status line travels as a command to that endpoint's own agent, which appends i
 
 ## Closing an endpoint whose agent does not answer
 
+Both PTY agents close an endpoint by signalling its terminal's foreground job before the shell's own process group, so a job-control worker that ignores SIGHUP is not left running with the PTY open.
+After a bounded three-second grace period, close re-reads the foreground job before signalling it and the shell with SIGKILL, including a job that started during the grace period.
+The signal ownership boundary is documented beside `foreground_group_locked` in [`crates/fm-stream-agent/src/pty.rs`](../crates/fm-stream-agent/src/pty.rs); it does not authorize signalling arbitrary background jobs or descendants after the shell has been reaped.
+[Portable stream-parity regressions](verification/runtime-backends.md#portable-stream-parity-regressions) lists the foreground-job cleanup cases for both implementations.
+
 `DELETE /v1/tasks/<id>` hands the kill to the endpoint's own agent and waits for it to acknowledge.
 The answer carries `delivered`: true when that agent took the kill, and false when it never answered and the hub closed only its own record.
 A `delivered: false` close is not proof the worker stopped - its process lives on the worker's machine, which the hub cannot reach.

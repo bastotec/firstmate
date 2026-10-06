@@ -337,10 +337,9 @@ class Pty:
         On this fleet that stranger can be another worker's harness, so a
         reaped endpoint is never signalled at all.
 
-        The cost is that a grandchild outliving a reaped direct child is not
-        signalled here. That is the safe side of the trade: those processes lose
-        their controlling terminal when the pty master closes, whereas naming a
-        pid we no longer own has no safe failure mode.
+        A grandchild outliving a reaped direct child is not signalled here:
+        naming a pid we no longer own has no safe failure mode. Losing its
+        controlling terminal does not guarantee that the grandchild exits.
         """
         with self._reap_lock:
             if self.proc.poll() is not None:
@@ -374,14 +373,9 @@ class Pty:
     def _foreground_group(self):
         """The terminal's foreground process group, when it is a job of ours.
 
-        A job-control shell runs each command in a process group of its own and
-        hands it the terminal, so the worker is usually NOT in the group the
-        child leads. Signalling only that group kills the shell and orphans the
-        worker: on Linux the orphan keeps the pty open, the reader never sees
-        EOF, and the endpoint (and its label) stays open with the worker still
-        running. The group is named only while the child is unreaped and only
-        when it belongs to the child's own session, so it can never be a
-        stranger's.
+        docs/stream-backend.md owns endpoint-close behavior and limits;
+        crates/fm-stream-agent/src/pty.rs::foreground_group_locked documents the
+        shared terminal-session ownership proof, including leaderless pipelines.
         """
         with self._reap_lock:
             if self.proc.poll() is not None:
@@ -406,15 +400,15 @@ class Pty:
                 return False
 
     def close(self, signal_name: str = "TERM") -> bool:
-        """Signal the process group, wait for the reader, then release the fd.
+        """Signal the foreground job and shell, then wait for the child.
 
-        The terminal's foreground job is signalled with the child's group, for
-        the reason _foreground_group gives.
+        The job must be signalled first on both passes, before the shell's death
+        removes the terminal session used by _foreground_group to prove ownership.
 
-        The reader is woken and joined BEFORE the descriptor is closed. A reader
-        still blocked in os.read() on a closed fd can be handed a later
-        endpoint's pty when the kernel reuses that fd number, and would then
-        publish one worker's output as another's.
+        The caller must wake and join the reader BEFORE release() closes the
+        descriptor. A reader still blocked in os.read() on a closed fd can be
+        handed a later endpoint's pty when the kernel reuses that fd number, and
+        would then publish one worker's output as another's.
         """
         sig = signal.SIGTERM if signal_name == "TERM" else signal.SIGKILL
         job_killed = self._signal_foreground(sig)

@@ -157,18 +157,16 @@ impl Pty {
         deliver()?;
         Ok(true)
     }
-    // The terminal's foreground process group, when it is a job of ours. The
-    // endpoint's interactive shell runs each command in a process group of its
-    // own and hands it the terminal, so the worker is usually NOT in the group
-    // the child leads. Signalling only that group kills the shell and orphans
-    // the worker: on Linux the orphan keeps the pty open, the reader never sees
-    // EOF, and the endpoint (and its label) stays open with the worker still
-    // running. The group is named only while the child is unreaped and only
-    // when it belongs to the child's own session, so it can never be a
-    // stranger's.
+    // docs/stream-backend.md owns the endpoint-close behavior and its limits.
     fn foreground_group(&self) -> Option<i32> {
         self.foreground_group_locked(&mut self.child.lock().unwrap())
     }
+    // The kernel restricts a terminal's foreground group to that terminal's
+    // session, so tcgetsid(master) proves ownership without requiring a live
+    // group leader (the first process in a pipeline may already have exited).
+    // Read only while the child is unreaped, reject the shell and agent's own
+    // group/session, and never cache the result for a later signal: the signal
+    // helper must read it fresh and hold the child/reap lock through killpg.
     fn foreground_group_locked(&self, child: &mut Child) -> Option<i32> {
         if !matches!(child.try_wait(), Ok(None)) {
             return None;
@@ -189,6 +187,8 @@ impl Pty {
         unsafe { libc::killpg(fg, signal) == 0 }
     }
     pub fn close(&self, kill: bool) -> io::Result<()> {
+        // Signal the job first on both passes: once the shell dies, the
+        // terminal loses its session and can no longer prove job ownership.
         let signal = if kill { libc::SIGKILL } else { libc::SIGTERM };
         let job_signalled = self.signal_foreground(signal);
         let signalled = self.signal(signal)?;
