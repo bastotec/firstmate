@@ -7,8 +7,11 @@
 #     bin/fm-session-lock-lib.sh accepts as a harness, takes the lock with
 #     bin/fm-lock.sh before anything else (so a second primary of ANY harness
 #     is refused), and releases it on a clean exit;
-#   - it runs bin/fm-session-start.sh exactly once and publishes the digest as
-#     the first new steering message, which starts the first turn;
+#   - it runs bin/fm-session-start.sh exactly once and requires the completion
+#     record to name this host before publishing startup input or launching
+#     Deck. The digest (or a pointer to its full file when oversized) is the
+#     first new steering message, published before registration and launch;
+#     older pending messages are retained for the initial turn;
 #   - it starts `deck chat --session <persisted id> --steer-dir <dir>
 #     --events <file> --hook pre_complete=<lock check> [--mcp-config]
 #     [--model]` in the foreground of this terminal (or of the stream endpoint

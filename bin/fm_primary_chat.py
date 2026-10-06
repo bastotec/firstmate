@@ -421,6 +421,8 @@ class Supervisor:
                 proc.wait()
 
     def publish(self, output):
+        # Reports can exceed Deck's byte limit; the handling instructions must
+        # survive because the durable wake queue, not this preview, owns the work.
         preamble = WAKE_PREAMBLE.encode('utf-8')
         data = output.encode('utf-8')
         budget = MAX_BODY - len(preamble)
