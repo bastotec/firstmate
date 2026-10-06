@@ -12,6 +12,17 @@ CLI. Both call this file, which owns the on-disk layout:
                                           every name that is not <digits>.msg)
   state/primary-chat/<session>/events.ndjson  deck's --events file
   state/primary-chat/host.log             supervisor log (watcher, busy, steer)
+  state/primary-chat/stopped              "stopped on purpose" marker: written by
+                                          `fm-deck-chat.sh stop`, removed by a
+                                          captain-started host; the service
+                                          keeper never restarts past it
+  state/primary-chat/service.json         the keeper's current view (0600, atomic):
+                                          {"pid","state","detail","since","home"};
+                                          state is running|starting|down|waiting|stopped
+  state/primary-chat/service.log          keeper log (size-capped, one rotation)
+  state/primary-chat/service-down         durable alert marker while the primary
+                                          has been down past the alert window
+  state/primary-chat/service.lock         keeper singleton (flock)
 
 Record (state/primary-chat.json):
   {"version":1,"home":ABS,"session":ID,"steer_dir":ABS,"events_file":ABS,
@@ -37,6 +48,20 @@ Subcommands:
       the watcher child (bin/fm-watch-arm.sh) whose wakes become steer
       publishes; a failed watcher is restarted with backoff, never fatal.
       Paused while state/.afk exists (the away daemon owns the watcher then).
+  service --home H --deck-chat PATH [--model ROUTE]
+      the keeper a launchd agent runs (bin/fm-deck-chat.sh install-service):
+      adopts a live host, waits while any live harness holds the session lock,
+      and otherwise starts one with `fm-deck-chat.sh --stream` (resuming the
+      persisted session), backing off while it keeps dying soon after start.
+      Honours state/primary-chat/stopped, including hosts that register late.
+      Waits for an in-flight --stream launcher even past its expected window;
+      logs that delay once and leaves it to finish independently on shutdown.
+      After a start attempt returns, or while backing off, down past the alert
+      window (default 120s) writes service-down and raises
+      `fm-deck-chat.sh service-alert` once per outage, across keeper replacement;
+      a stable run or explicit stop clears the marker. Env: FM_DECK_CHAT_SERVICE_POLL (2),
+      _BACKOFF (5), _BACKOFF_MAX (300), _STABLE_SECS (120), _ALERT_SECS (120),
+      _START_TIMEOUT (200, expected launcher window, not a termination deadline).
 """
 import argparse
 import fcntl
@@ -552,6 +577,212 @@ class Supervisor:
         return 0
 
 
+# ---------------------------------------------------------------- service keeper
+
+SERVICE_LOG_MAX = 1 << 20
+
+
+def env_seconds(name, default):
+    try:
+        value = float(os.environ.get(name, default))
+    except ValueError:
+        return float(default)
+    return value if value >= 0 else float(default)
+
+
+class Keeper:
+    """Keeps one home's primary host running; see the `service` docstring entry."""
+
+    def __init__(self, args):
+        self.home, self.state, _, self.root = paths(args.home)
+        self.deck_chat = args.deck_chat
+        self.model = args.model
+        self.stop = threading.Event()
+        self.poll = env_seconds('FM_DECK_CHAT_SERVICE_POLL', 2)
+        self.backoff = env_seconds('FM_DECK_CHAT_SERVICE_BACKOFF', 5)
+        self.backoff_max = env_seconds('FM_DECK_CHAT_SERVICE_BACKOFF_MAX', 300)
+        self.stable = env_seconds('FM_DECK_CHAT_SERVICE_STABLE_SECS', 120)
+        self.alert_after = env_seconds('FM_DECK_CHAT_SERVICE_ALERT_SECS', 120)
+        self.start_timeout = env_seconds('FM_DECK_CHAT_SERVICE_START_TIMEOUT', 200)
+        self.view = None
+
+    def log(self, message):
+        path = self.root / 'service.log'
+        try:
+            if path.stat().st_size > SERVICE_LOG_MAX:
+                os.replace(path, self.root / 'service.log.1')
+        except OSError:
+            pass
+        with open(path, 'a') as handle:
+            handle.write('%s %s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S'), message))
+
+    def publish(self, state, detail=''):
+        if self.view == (state, detail):
+            return
+        self.view = (state, detail)
+        atomic_write(self.root / 'service.json', json.dumps({
+            'version': 1, 'home': str(self.home), 'pid': os.getpid(), 'state': state,
+            'detail': detail, 'since': int(time.time())}, sort_keys=True) + '\n')
+
+    def stopped_on_purpose(self):
+        return (self.root / 'stopped').exists()
+
+    def lock_holder(self):
+        """The pid of a live harness holding the session lock, else None."""
+        result = subprocess.run([str(BIN / 'fm-lock.sh'), 'status'], capture_output=True, text=True,
+                                env=dict(os.environ, FM_HOME=str(self.home)), stdin=subprocess.DEVNULL)
+        match = re.search(r'held by live harness pid (\d+)', result.stdout)
+        return match.group(1) if match else None
+
+    def run_deck_chat(self, argv, timeout):
+        """Bound helper commands, but wait for --stream without cancelling it."""
+        env = dict(os.environ, FM_HOME=str(self.home), FM_DECK_CHAT_SERVICE='1')
+        with tempfile.TemporaryFile() as out:
+            proc = subprocess.Popen([self.deck_chat] + argv, stdout=out, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+            end = time.monotonic() + timeout
+            streaming = argv[0] == '--stream'
+            overdue = False
+            while proc.poll() is None and not self.stop.is_set():
+                if time.monotonic() >= end:
+                    if not streaming:
+                        break
+                    if not overdue:
+                        self.log('start still running past expected %gs window; waiting for launcher pid=%d'
+                                 % (timeout, proc.pid))
+                        overdue = True
+                self.stop.wait(0.2)
+            if proc.poll() is None:
+                if streaming:
+                    return 125, ''
+                proc.terminate()
+                try:
+                    proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                rc = 124
+            else:
+                rc = proc.returncode
+            out.seek(0)
+            return rc, out.read().decode('utf-8', 'replace')
+
+    def start(self):
+        argv = ['--stream', '--home', str(self.home)]
+        if self.model:
+            argv += ['--model', self.model]
+        rc, out = self.run_deck_chat(argv, self.start_timeout)
+        tail = ' | '.join(line for line in out.strip().splitlines()[-3:])
+        self.log('start exit %d: %s' % (rc, tail or 'no output'))
+        return rc == 0
+
+    def alert(self, down_for):
+        summary = ('firstmate primary for %s has been down %ds despite the service; '
+                   'see %s' % (self.home, down_for, self.root / 'service.log'))
+        try:
+            (self.root / 'service-down').write_text(
+                '%s %s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S%z'), summary))
+        except OSError:
+            pass
+        self.log('ALERT: ' + summary)
+        rc, out = self.run_deck_chat(['service-alert', '--home', str(self.home), '--summary', summary], 120)
+        if rc != 0:
+            self.log('service-alert exit %d: %s' % (rc, out.strip()[-300:]))
+
+    def recovered(self):
+        try:
+            (self.root / 'service-down').unlink()
+        except OSError:
+            pass
+
+    def run(self):
+        signal.signal(signal.SIGTERM, lambda *_: self.stop.set())
+        signal.signal(signal.SIGHUP, lambda *_: self.stop.set())
+        signal.signal(signal.SIGINT, lambda *_: self.stop.set())
+        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        lock = open(self.root / 'service.lock', 'a')
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.log('another keeper holds service.lock; waiting for it')
+            while not self.stop.is_set():
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    self.stop.wait(self.poll)
+            if self.stop.is_set():
+                return 0
+        self.log('keeper started pid=%d model=%s' % (os.getpid(), self.model or 'default'))
+        outage = time.time() if (self.root / 'service-down').exists() else None
+        up_since = None
+        last_start = 0.0
+        delay = 0.0
+        next_try = 0.0
+        alerted = outage is not None
+        was_down = False
+        while not self.stop.is_set():
+            now = time.time()
+            if self.stopped_on_purpose():
+                if live_record(self.home):
+                    self.log('stopped on purpose; stopping a late-registered host')
+                    self.run_deck_chat(['stop', '--home', str(self.home)], 60)
+                if outage is not None or was_down:
+                    self.log('stopped on purpose; not restarting')
+                self.publish('stopped', 'state/primary-chat/stopped present')
+                outage, up_since, alerted, was_down, delay = None, None, False, False, 0.0
+                self.recovered()
+                self.stop.wait(self.poll)
+                continue
+            record = live_record(self.home)
+            if record:
+                if was_down:
+                    self.log('primary is up in endpoint %s' % record.get('endpoint'))
+                    was_down = False
+                up_since = up_since or now
+                if outage is not None and now - up_since >= self.stable:
+                    outage, alerted, delay = None, False, 0.0
+                    self.recovered()
+                self.publish('running', record.get('endpoint') or 'pid %s' % record.get('host_pid'))
+                self.stop.wait(self.poll)
+                continue
+            up_since = None
+            holder = self.lock_holder()
+            if holder:
+                self.publish('waiting', 'session lock held by live harness pid %s' % holder)
+                self.stop.wait(self.poll)
+                continue
+            if not was_down:
+                was_down = True
+                crash_loop = bool(last_start) and now - last_start < self.stable
+                if not crash_loop:
+                    delay = 0.0
+                if outage is None:
+                    outage = now
+                next_try = now + (delay if crash_loop else 0.0)
+                self.log('primary is down; restarting %s'
+                         % ('in %ds (it died %ds after its last start)' % (delay, now - last_start)
+                            if crash_loop else 'now'))
+            if now >= next_try:
+                self.publish('starting', 'fm-deck-chat.sh --stream')
+                last_start = now
+                if self.start():
+                    was_down = False
+                if self.stop.is_set():
+                    break
+                delay = min(max(delay * 2, self.backoff), self.backoff_max)
+                next_try = time.time() + delay
+            else:
+                self.publish('down', 'next start at %s' % time.strftime('%H:%M:%S', time.localtime(next_try)))
+            if (not alerted and outage is not None and live_record(self.home) is None
+                    and time.time() - outage >= self.alert_after):
+                alerted = True
+                self.alert(int(time.time() - outage))
+            self.stop.wait(self.poll)
+        self.log('keeper stopped')
+        return 0
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog='fm_primary_chat.py')
     sub = parser.add_subparsers(dest='cmd', required=True)
@@ -584,6 +815,10 @@ def main(argv):
     supervise.add_argument('--host-pid', type=int, required=True)
     supervise.add_argument('--gen', required=True)
     supervise.add_argument('--events-offset', type=int, required=True)
+    service = sub.add_parser('service')
+    service.add_argument('--home', required=True)
+    service.add_argument('--deck-chat', required=True)
+    service.add_argument('--model', default='')
     args = parser.parse_args(argv)
     if args.cmd == 'steer':
         if not Path(args.home).is_dir():
@@ -595,6 +830,8 @@ def main(argv):
         return prepare(args)
     if args.cmd == 'record':
         return {'write': record_write, 'stop': record_stop, 'pid': record_pid}[args.action](args)
+    if args.cmd == 'service':
+        return Keeper(args).run()
     return Supervisor(args).run()
 
 

@@ -19,7 +19,7 @@ It lists channel directives, one per non-empty, non-comment line, and every list
 - `command:<cmd>` runs `<cmd>` through `sh -c` with the alarm summary as `$1` and on stdin, allowing delivery to a phone or pager service.
 
 An absent `config/wedge-alarm` behaves as `auto`, which is default-on on macOS.
-This is deliberate because the alarm fires only after a genuine max-defer wedge and is rate-limited to at most once per max-defer window.
+Away-mode delivery alarms fire only after a genuine max-defer wedge and are rate-limited to at most once per max-defer window.
 
 Each channel is best-effort.
 A missing binary or non-zero exit logs a warning and continues to the next channel without crashing the daemon loop.
@@ -28,12 +28,18 @@ On timeout or daemon shutdown, the notifier process group is terminated and the 
 AppleScript receives the summary as an argv item rather than interpolated source, so summary text cannot alter the script.
 See [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
 
+## Primary down alert
+
+The `deck chat` primary service also uses these channels, seam and bounds; the [chat host header](../bin/fm-deck-chat.sh) owns service commands and the [keeper's `service` docstring](../bin/fm_primary_chat.py) owns outage detection, alert deduplication and marker recovery.
+
 ## Test safety
 
 Every notifier routes through `FM_WEDGE_ALARM_EXEC` in `wedge_alarm_emit`.
-When the daemon is sourced as a library, that seam defaults to `discard`, so a test cannot accidentally post a real notification.
+When the daemon is sourced as a library, that seam defaults to `discard`, so direct library tests cannot accidentally post a real notification.
+The primary's `service-alert` entrypoint restores the caller's seam after sourcing, so tests invoking it must explicitly set `FM_WEDGE_ALARM_EXEC` to a recorder or `discard`.
 `tests/wake-helpers.sh` replaces it with a recorder when a suite needs to assert channel selection and summary propagation.
 Production leaves the seam unset and uses the configured real channels.
 
 `tests/fm-daemon.test.sh` covers directive parsing, rate limiting, timeout and process-group cleanup, argv-safe dispatch, channel fallback, and safe `command:` summary delivery.
+`tests/fm-deck-chat.test.sh` covers the primary down alert's channel use, its once-per-outage rule, and its marker.
 [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) records the bounded manual macOS and Herdr channel proof.

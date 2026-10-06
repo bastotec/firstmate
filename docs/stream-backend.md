@@ -321,7 +321,7 @@ The browser never writes state directly, supplies an owner-home path, or invokes
 A crew-owned `no-mistakes axi respond` remains worker-owned and is never invoked by this host route.
 Existing owner guards remain authoritative, including endpoint retirement and stand-down refusals; the host route does not bypass those refusals to revive or reassign workers.
 
-A `deck chat` primary can run inside a stream endpoint through `bin/fm-deck-chat.sh --stream`; [its header](../bin/fm-deck-chat.sh) owns that path.
+For `deck chat` primary hosting in a stream endpoint, optional macOS launchd recovery and restart-following attach, see the [chat host header](../bin/fm-deck-chat.sh).
 The [host executable's header and help](../bin/fm-ui-host-control.py) own discovery, execution-bound payloads and the honest refusal boundary for unregistered sessions.
 Primary decision control is supported through an explicit host-registry captain-call binding under the primary owner's `FM_HOME`, while task-key decisions use an exact task binding in their owning home.
 Notes-only, worker-only and unregistered primary bindings do not constitute primary lifecycle control.
