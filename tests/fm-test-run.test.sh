@@ -995,7 +995,7 @@ test_live_guards_expect_a_capability_skip_class() {
   # FM_LIVE=0 makes every live guard refuse without touching a harness, so this
   # exercises the real family through the real runner in bounded time.
   FM_LIVE=0 "$RUNNER" --json "$tmp/timing.json" \
-    tests/fm-composer-matrix-live-e2e.test.sh >"$out" 2>"$tmp/err.txt" \
+    tests/fm-pi-primary-live-e2e.test.sh >"$out" 2>"$tmp/err.txt" \
     || fail "a disabled live guard must not fail the runner: $(cat "$tmp/err.txt")"
   grep -q 'expected_gate_skip=live-capability' "$out" \
     || fail "the live-harness family must expect a capability skip: $(grep FM_TEST_BEGIN "$out")"
@@ -1114,9 +1114,9 @@ test_list_scheduled_non_lane_selections_use_serial_weights() {
   local -a scripts=(
     tests/fm-operational-input.test.sh
     tests/fm-lint.test.sh
-    tests/fm-muse-harness.test.sh
+    tests/fm-deck-harness.test.sh
     tests/fm-captain-hold-lifecycle.test.sh
-    tests/fm-kimi-harness.test.sh
+    tests/fm-task-delivery.test.sh
     tests/fm-brief.test.sh
   )
   tmp=$(fm_test_tmproot fm-test-run-non-lane-schedule)
@@ -1134,11 +1134,11 @@ test_list_scheduled_non_lane_selections_use_serial_weights() {
     printf '\n' >>"$repo/$script"
   done
   printf '%s\n' \
-    tests/fm-muse-harness.test.sh \
+    tests/fm-deck-harness.test.sh \
     tests/fm-brief.test.sh \
     tests/fm-captain-hold-lifecycle.test.sh \
     tests/fm-lint.test.sh \
-    tests/fm-kimi-harness.test.sh \
+    tests/fm-task-delivery.test.sh \
     tests/fm-operational-input.test.sh >"$tmp/expected"
   for selection in family all changed scripts; do
     case "$selection" in

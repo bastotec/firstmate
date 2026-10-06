@@ -89,6 +89,15 @@ deregister() {
   jq --arg p "$1" 'del(.typed[$p]) | del(.working[$p])' "$HERDR_STATE" > "$HERDR_STATE.tmp"
   mv -f "$HERDR_STATE.tmp" "$HERDR_STATE"
 }
+# Leave the recorded endpoint's agent running but no longer in its pane: the
+# pane reads back at its shell (a Deck endpoint's liveness is its driver in the
+# pane's foreground, not a registration), so the endpoint is dead while the
+# agent process itself survives, and a later pane close cannot hang it up.
+detach_agent() {
+  jq --arg p "$1" 'del(.typed[$p]) | del(.working[$p]) | del(.agents[$p]) | del(.argv[$p])' \
+    "$HERDR_STATE" > "$HERDR_STATE.tmp"
+  mv -f "$HERDR_STATE.tmp" "$HERDR_STATE"
+}
 # --- 1. A first launch proves its agent and records its identity ------------
 out=$(umask 002; control launch "$SM_ID" deck - - herdr 2>&1) || fail "first launch failed: $out"
 # The parent-route root is also the Deck driver's status directory. Exercise
@@ -132,13 +141,11 @@ pane=$(route_pane)
 survivor=$(pane_agent "$pane")
 alive "$survivor" || fail "the clean relaunch left no live agent"
 grep -q "^$survivor " "$IDENTITY" || fail "the clean relaunch did not record its agent"
-deregister "$pane"
-: > "$KNOB.survive"
+detach_agent "$pane"
 tabs_before=$(jq '.tabs | length' "$HERDR_STATE")
 if out=$(control launch "$SM_ID" deck - - herdr 2>&1); then
   fail "a relaunch started a second agent beside a previous one still running: $out"
 fi
-rm -f "$KNOB.survive"
 EXTRA_PIDS+=("$survivor")
 assert_contains "$out" "(pid $survivor) is still running without its endpoint" \
   "the refusal did not name the surviving previous agent"
@@ -164,13 +171,15 @@ fi
 assert_contains "$out" "the previous agent process (pid $current) is still running" \
   "the failure did not name the old agent still running"
 assert_not_contains "$out" "relaunched $SM_ID" "a failed proof still reported the relaunch"
-# A control plane that genuinely replaces it, in the same pane.
+# A control plane that genuinely replaces it, in the same pane, by resubmitting
+# the endpoint's own Deck driver line.
 cat > "$CODE/bin/fm-control.sh" <<SH
 #!/usr/bin/env bash
 pid=\$(jq -r --arg p '$pane' '.agents[\$p] // empty' '$HERDR_STATE')
+line=\$(jq -r --arg p '$pane' '.text[\$p] // empty' '$HERDR_STATE')
 kill -HUP "\$pid"
 while kill -0 "\$pid" 2>/dev/null; do sleep 0.1; done
-herdr pane send-text '$pane' 'FM_SUPERVISION_MODEL=autoarm exec -a fm-deck-worker bash host' --session fm-remote
+herdr pane send-text '$pane' "\$line" --session fm-remote
 herdr pane send-keys '$pane' enter --session fm-remote
 echo "relaunched \$1 harness=deck from=deck model=default effort=default backend=herdr"
 SH
@@ -223,7 +232,7 @@ cp -p "$ROUTE_META" "$TMP_ROOT/meta.before-survivor"
 tabs_before=$(jq '.tabs | length' "$HERDR_STATE")
 # The pane reads positively agent-free while the recorded agent keeps running
 # outside its process view - the survivor shape a launch refuses.
-deregister "$pane"
+detach_agent "$pane"
 cat > "$CODE/bin/fm-control.sh" <<SH
 #!/usr/bin/env bash
 : > '$TMP_ROOT/relaunch-delegated'
@@ -241,7 +250,7 @@ assert_contains "$out" "still running without its endpoint" \
 assert_contains "$out" "refusing to start a second agent beside it" \
   "the relaunch was not refused before its replacement could start"
 [ ! -e "$TMP_ROOT/relaunch-delegated" ] || fail "the relaunch delegated instead of refusing the surviving agent"
-[ "$(pane_agent "$pane")" = "$survivor" ] || fail "the relaunch swapped the surviving agent's registration"
+[ -z "$(pane_agent "$pane")" ] || fail "the relaunch started an agent in the endpoint beside the survivor"
 alive "$survivor" || fail "the refusal stopped the surviving agent itself"
 cmp -s "$TMP_ROOT/meta.before-survivor" "$ROUTE_META" || fail "the refused relaunch rewrote the endpoint"
 [ "$(jq '.tabs | length' "$HERDR_STATE")" = "$tabs_before" ] || fail "the refused relaunch created a new endpoint"

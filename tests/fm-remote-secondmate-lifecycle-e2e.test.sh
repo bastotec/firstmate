@@ -1124,9 +1124,14 @@ publish_healthy_watcher_identity "$PARENT/state" "$PARENT" "$ROOT/bin/fm-watch.s
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
   || fail "remote endpoint was not projected alive from its own host"
 # Herdr reports a native agent state, so the delivery observation resolves
-# without the rendered-output fallback a tmux endpoint needs.
-[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh observe ios)" = idle ] \
-  || fail "remote endpoint delivery observation did not execute on its own host"
+# without the rendered-output fallback a tmux endpoint needs. A Deck endpoint's
+# liveness above is proved from its driver process, not an agent read, so this
+# is the first native read since the launch submitted its turn: busy or idle are
+# both native answers, while fallback-idle or unknown would mean it never ran.
+case "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh observe ios)" in
+  busy|idle) ;;
+  *) fail "remote endpoint delivery observation did not execute on its own host" ;;
+esac
 pass "remote spawn launches on the remote-local backend and records a host-qualified route"
 grep -Fx 'model=codex/gpt-6-luna' "$PARENT/state/ios.meta" >/dev/null \
   || fail "configured exact model did not reach parent metadata"
@@ -1307,9 +1312,10 @@ unconfirmed_pane=$(sed -n 's/^herdr_pane_id=//p' "$remote_route_meta")
 [ -n "$unconfirmed_pane" ] || fail "remote route metadata carries no herdr pane to close"
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-unconfirmed-kill.meta"
 cp "$HERDR_STATE" "$TMP_ROOT/herdr-before-unconfirmed-kill.state"
-# The registration is gone but the pane is still standing: the agent-less state
-# the launch path treats as a reusable id.
-jq --arg p "$unconfirmed_pane" 'del(.typed[$p]) | del(.working[$p])' \
+# The Deck driver has left the pane but the pane is still standing: the
+# agent-less state the launch path treats as a reusable id. The driver stand-in
+# itself keeps running until the saved fixture state is restored below.
+jq --arg p "$unconfirmed_pane" 'del(.typed[$p]) | del(.working[$p]) | del(.agents[$p]) | del(.argv[$p])' \
   "$TMP_ROOT/herdr-before-unconfirmed-kill.state" > "$HERDR_STATE"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = dead ] \
   || fail "an agent-less remote pane was not projected dead, so the relaunch gate is not the case under test"

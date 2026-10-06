@@ -1169,6 +1169,10 @@ meta_value() {
 
 retire_busy_state() {
   local state_dir=$1 id=$2 gen=${3:-}
+  # A secondmate whose state lives inside its own home (a remote endpoint's
+  # parent-route directory) has already lost it with the home; its busy files
+  # went with it, so there is nothing left to retire.
+  [ -d "$state_dir" ] || return 0
   if [ -n "$gen" ]; then
     "$SCRIPT_DIR/fm-busy-event.sh" retire "$state_dir" "$id" --gen "$gen"
   elif [ -f "$state_dir/$id.busy-gen" ]; then
