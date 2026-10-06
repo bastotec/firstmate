@@ -54,12 +54,13 @@ Subcommands:
       and otherwise starts one with `fm-deck-chat.sh --stream` (resuming the
       persisted session), backing off while it keeps dying soon after start.
       Honours state/primary-chat/stopped, including hosts that register late.
-      In-flight --stream launchers finish independently on keeper shutdown.
+      Waits for an in-flight --stream launcher even past its expected window;
+      logs that delay once and leaves it to finish independently on shutdown.
       Down past the alert window (default 120s) writes service-down and raises
       `fm-deck-chat.sh service-alert` once per outage, across keeper replacement;
       a stable run clears the marker. Env: FM_DECK_CHAT_SERVICE_POLL (2),
       _BACKOFF (5), _BACKOFF_MAX (300), _STABLE_SECS (120), _ALERT_SECS (120),
-      _START_TIMEOUT (200, minimum 200).
+      _START_TIMEOUT (200, expected launcher window, not a termination deadline).
 """
 import argparse
 import fcntl
@@ -601,7 +602,7 @@ class Keeper:
         self.backoff_max = env_seconds('FM_DECK_CHAT_SERVICE_BACKOFF_MAX', 300)
         self.stable = env_seconds('FM_DECK_CHAT_SERVICE_STABLE_SECS', 120)
         self.alert_after = env_seconds('FM_DECK_CHAT_SERVICE_ALERT_SECS', 120)
-        self.start_timeout = max(200, env_seconds('FM_DECK_CHAT_SERVICE_START_TIMEOUT', 200))
+        self.start_timeout = env_seconds('FM_DECK_CHAT_SERVICE_START_TIMEOUT', 200)
         self.view = None
 
     def log(self, message):
@@ -633,16 +634,25 @@ class Keeper:
         return match.group(1) if match else None
 
     def run_deck_chat(self, argv, timeout):
-        """Bound a command; leave --stream running independently on shutdown."""
+        """Bound helper commands, but wait for --stream without cancelling it."""
         env = dict(os.environ, FM_HOME=str(self.home), FM_DECK_CHAT_SERVICE='1')
         with tempfile.TemporaryFile() as out:
             proc = subprocess.Popen([self.deck_chat] + argv, stdout=out, stderr=subprocess.STDOUT,
                                     stdin=subprocess.DEVNULL, env=env, start_new_session=True)
-            end = time.time() + timeout
-            while proc.poll() is None and time.time() < end and not self.stop.is_set():
-                time.sleep(0.2)
+            end = time.monotonic() + timeout
+            streaming = argv[0] == '--stream'
+            overdue = False
+            while proc.poll() is None and not self.stop.is_set():
+                if time.monotonic() >= end:
+                    if not streaming:
+                        break
+                    if not overdue:
+                        self.log('start still running past expected %gs window; waiting for launcher pid=%d'
+                                 % (timeout, proc.pid))
+                        overdue = True
+                self.stop.wait(0.2)
             if proc.poll() is None:
-                if self.stop.is_set() and argv[0] == '--stream':
+                if streaming:
                     return 125, ''
                 proc.terminate()
                 try:

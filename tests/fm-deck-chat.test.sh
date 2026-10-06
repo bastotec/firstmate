@@ -660,12 +660,15 @@ test_service_launcher_shutdown() {
 import json, os, pathlib, time
 home = pathlib.Path(os.environ['FM_HOME'])
 (home / 'launcher.json').write_text(json.dumps({'pid': os.getpid(), 'sid': os.getsid(0)}))
+with open(home / 'launcher.attempts', 'a') as handle:
+    handle.write('%d\n' % os.getpid())
 while not (home / 'launcher.release').exists():
     time.sleep(0.05)
 (home / 'launcher.finished').touch()
 PY
   chmod +x "$LAB/tools/delayed-start"
-  FM_DECK_CHAT_SERVICE_POLL=0.1 python3 "$BIN/fm_primary_chat.py" service --home "$home" \
+  FM_DECK_CHAT_SERVICE_POLL=0.1 FM_DECK_CHAT_SERVICE_START_TIMEOUT=0.2 \
+    python3 "$BIN/fm_primary_chat.py" service --home "$home" \
     --deck-chat "$LAB/tools/delayed-start" > "$LAB/keeper-shutdown.out" 2>&1 &
   keeper=$!
   fm_test_track_helper_pid "$keeper"
@@ -674,6 +677,11 @@ PY
   fm_test_track_helper_pid "$launcher"
   assert_equals 0o700 "$(dir_mode "$home/state/primary-chat")" "the keeper creates a private primary-chat directory"
   assert_equals "$launcher" "$(record_field "$home/launcher.json" sid)" "the launcher runs in its own session"
+  wait_for 10 "the keeper notices an overdue launcher" grep -q 'start still running past expected' "$home/state/primary-chat/service.log"
+  sleep 0.6
+  alive "$launcher" || fail "the expected registration window killed the in-flight launcher"
+  assert_equals 1 "$(wc -l < "$home/launcher.attempts" | tr -d ' ')" "an overdue launcher never triggers a concurrent attempt"
+  assert_equals 1 "$(grep -c 'start still running past expected' "$home/state/primary-chat/service.log")" "the keeper logs an overdue launcher only once"
   kill -TERM "$keeper"
   wait_for 10 "the keeper exits without waiting for registration" dead "$keeper"
   wait "$keeper"
@@ -681,7 +689,7 @@ PY
   touch "$home/launcher.release"
   wait_for 10 "the detached launcher finishes" test -e "$home/launcher.finished"
   wait_for 10 "the finished launcher exits" dead "$launcher"
-  pass "fm-deck-chat.sh service-run: shutdown leaves a detached launcher to finish independently"
+  pass "fm-deck-chat.sh service-run: waits past the launcher window without duplication and leaves it running on shutdown"
 }
 
 test_service_late_registration() {
