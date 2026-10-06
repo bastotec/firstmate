@@ -18,10 +18,10 @@
 #       Append one lifecycle event: validate the gen against the armed
 #       sidecar, advance seq under the lock, atomically replace the record.
 #       Adapter wiring passes the exact --gen embedded at arm time, so a
-#       hook that outlives its incarnation fails closed here. The legacy
-#       Claude fm-send --key Escape path (fm-interrupt) and firstmate recovery
-#       paths (fm-recovery) may pass --current-gen to bind to the incarnation
-#       armed right now.
+#       hook that outlives its incarnation fails closed here. An explicit
+#       --current-gen reads the armed generation instead of requiring a
+#       caller-supplied token; a generation change before the locked check
+#       still refuses the event.
 #
 #   progress <state-dir> <id> --gen G
 #       Refresh state/<id>.progress for observed native-harness activity under
