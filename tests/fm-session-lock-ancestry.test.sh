@@ -311,11 +311,11 @@ SH
       fail "$name claimed the home's session lock"
     fi
   done
-  for name in pi pi-signed fm-deck-worker; do
+  for name in pi pi-signed fm-deck-worker fm-deck-chat; do
     FM_TEST_COMM="$name" lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'" \
       || fail "$name did not recognize its own session lock"
   done
-  pass "session-lock: only pi, pi-signed, and fm-deck-worker may own a home session lock"
+  pass "session-lock: only pi, pi-signed, fm-deck-worker, and fm-deck-chat may own a home session lock"
 }
 
 # --- end-to-end layer: real lock acquisition in real process trees ----------

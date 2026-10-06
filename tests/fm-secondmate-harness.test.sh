@@ -250,11 +250,11 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$pid:$field" in
-  4242:comm=) printf '%s\n' '/opt/test/bin/codex' ;;
-  4242:args=) printf '%s\n' 'codex' ;;
+  4242:comm=) printf '%s\n' '/opt/test/bin/pi' ;;
+  4242:args=) printf '%s\n' 'pi' ;;
   4242:ppid=) printf '%s\n' 1 ;;
-  5252:comm=) printf '%s\n' '-codex' ;;
-  5252:args=) printf '%s\n' '-codex' ;;
+  5252:comm=) printf '%s\n' '-pi' ;;
+  5252:args=) printf '%s\n' '-pi' ;;
   5252:ppid=) printf '%s\n' 1 ;;
   *:comm=) printf '%s\n' '-zsh' ;;
   *:args=) printf '%s\n' '-zsh' ;;
@@ -264,9 +264,9 @@ SH
   chmod +x "$fakebin/ps"
 
   err="$dir/fm-harness.err"
-  got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT \
+  got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS \
     PATH="$fakebin:$BASE_PATH" "$ROOT/bin/fm-harness.sh" 2>"$err")
-  [ "$got" = codex ] || fail "dash-leading shell ancestry resolved '$got', expected codex"
+  [ "$got" = pi ] || fail "dash-leading shell ancestry resolved '$got', expected pi"
   [ ! -s "$err" ] || fail "fm-harness wrote basename option noise for literal -zsh: $(cat "$err")"
 
   err="$dir/fm-session-lock-ancestry.err"
@@ -279,7 +279,7 @@ SH
   PATH="$fakebin:$BASE_PATH" bash -c \
     '. "$0/bin/fm-session-lock-lib.sh"; kill() { return 0; }; fm_harness_pid_alive 5252' \
     "$ROOT" 2>"$err"; status=$?
-  expect_code 0 "$status" "session-lock liveness should accept literal -codex as a harness process name"
+  expect_code 0 "$status" "session-lock liveness should accept literal -pi as a harness process name"
   [ ! -s "$err" ] || fail "session-lock liveness wrote basename option noise for literal -pi: $(cat "$err")"
 
   pass "harness identity: dash-leading ps command names are basename operands, not options"
