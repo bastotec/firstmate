@@ -42,8 +42,8 @@
 # environment, which is also what FM_INBOX_PROFILE= (empty) forces.
 #
 # `note`, `status`, `list` and `drain` need NO configuration at all, because they
-# make no model call. The voice handover depends on `note`, so it keeps working in
-# a home that has configured nothing.
+# make no model call. The records handover depends on `note`, so it keeps working
+# in a home that has configured nothing.
 #
 # Environment:
 #   FM_HOME              operational home whose state/ and data/ are used.
@@ -51,13 +51,13 @@
 # PRIVACY: `say` sends your audio and `ask` sends your question to Bedrock.
 # `note`, `status`, `list` and `drain` make no network call at all.
 #
-# `note` is also the queueing half of the spoken interface: when the voice agent
-# in bin/fm-voice-relay.py hands real work over to firstmate, it runs this
-# subcommand rather than carrying a second queue of its own. Keep the `note`
-# contract stable for that caller. `status` is the HUMAN view of the records;
-# bin/fm_voice_records.py owns the scope-controlled machine view the voice agent
-# reads, because the voice agent must be able to answer without record free text
-# ever reaching a model.
+# `note` is also the queueing half of bin/fm_voice_records.py: when Ziggy's
+# firstmate agent (agents/firstmate/fm_a2a_server.py in the Ziggy repository)
+# hands real work over to firstmate, it runs this subcommand rather than
+# carrying a second queue of its own. Keep the `note` contract stable for that
+# caller. `status` is the HUMAN view of the records; fm_voice_records.py owns
+# the scope-controlled machine view that agent reads, because it must be able to
+# answer without record free text ever reaching a model.
 set -euo pipefail
 
 # A non-interactive `ssh host fm-inbox.sh ...` does NOT get a login shell, so it
@@ -165,8 +165,8 @@ wake_for() {
 
 # Say so when firstmate is not reading its inbox: an earlier note still unread
 # past FM_INBOX_OVERDUE_SECS means this one will not be picked up promptly
-# either. The voice relay passes this line on (bin/fm_voice_records.py), so the
-# captain hears it instead of waiting out an ask that nobody is going to answer.
+# either. bin/fm_voice_records.py passes this line on as `delivery_warning`, so
+# Ziggy reports it instead of waiting out an ask that nobody is going to answer.
 delivery_health() {  # <new-note-id>
   local overdue count oldest age
   overdue=$(fm_inbox_overdue_notes "$STATE" "${FM_INBOX_OVERDUE_SECS:-$FM_INBOX_OVERDUE_DEFAULT}" \

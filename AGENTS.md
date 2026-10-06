@@ -130,7 +130,6 @@ state/               runtime records and signals; gitignored
   .lease-<task>        per-task supervision lease naming which actor (main or branch) may change that task; bin/fm-lease-lib.sh owns the contract the guarded scripts enforce
   ask-triage/        optional possible-ask cursors, flags, and token usage; written only by bin/fm-ask-triage.sh
   wake-gate/         optional wake-gate decision log, per-task last-model-look records retired with their tasks, and token usage; written only by bin/fm-wake-gate.sh
-  voice-gate/        optional hybrid-engine fast-layer usage and shadow-decision logs; written only by bin/fm_voice_gate.py (docs/voice-relay.md)
   x-watch.check.sh   generated Relay poll shim; present only when opted in (section 14)
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
   autoland.check.sh  generated auto-land shim and its .check-trust binding, present only after bin/fm-autoland.sh arm; deploy records, hook logs, and reports live under autoland/ (bin/fm-autoland.sh)
@@ -142,7 +141,7 @@ state/               runtime records and signals; gitignored
   decision-bindings/ private records marking a captured-answer source as feeding the keyed-answer intake, with a legacy origin on pre-collapse records; written only by bin/fm-captain-hold.sh bind, dropped by unbind and by source retirement (section 13; docs/captain-hold-lifecycle.md)
   reconcile-requests/ private open obligations to re-check a captain call whose board selection was `reconcile`; written only by bin/fm-captain-hold.sh, retired by its verify-then-decide outcomes or a normal answer that settles the call (section 13; docs/captain-hold-lifecycle.md)
   when/              private condition->action watch specs, their trust bindings, and single-fire markers; written only by bin/fm-procevent-when.sh (section 13's process-event-sources trigger)
-  inbox/             captain notes captured out of band by bin/fm-inbox.sh, including the voice handover's queued requests; each note appends one `check` wake and stays pending until acknowledged with `bin/fm-inbox.sh drain --ack <id>`, which moves it to inbox/handled/ (docs/voice-relay.md)
+  inbox/             captain notes captured out of band by bin/fm-inbox.sh, including requests queued through bin/fm_voice_records.py; see docs/configuration.md "Inbox and voice records" for delivery and acknowledgement
   x-inbox/           generated Relay pending mention payloads; fmx-respond drains it (section 14)
   x-context/         generated Relay durable per-request reply context and one-wake offer markers, keyed by request_id; survives inbox cleanup and expires within seven days (section 14; bin/fm-x-lib.sh)
   x-outbox/          generated Relay dry-run reply and dismiss previews; inspect it when FMX_DRY_RUN is set (section 14)
