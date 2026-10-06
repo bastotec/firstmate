@@ -111,7 +111,7 @@ fm_remote_route_rebind_meta() {  # <meta> <state-dir>
 
 # shellcheck disable=SC2153 # META, STATE, ID, VERB, and NEW_* are fm-control.sh's parsed globals.
 fm_remote_control_run() {
-  local host harness model effort prior_harness out rc route
+  local host harness model effort prior_harness backend out rc route
   local -a args
   host=$(fm_meta_get "$META" remote_host)
   case "$VERB" in
@@ -142,6 +142,22 @@ fm_remote_control_run() {
   [ -n "$harness" ] || { echo "error: task $ID has no recorded harness; pass --harness" >&2; return 1; }
   args=("$ID" "$harness" "$model" "$effort")
   [ "$NEW_BACKEND_SET" = 0 ] || args+=(--backend "$NEW_BACKEND")
+  backend=$(fm_meta_get "$META" remote_backend)
+  backend=${backend:-herdr}
+  [ "$NEW_BACKEND_SET" = 0 ] || backend=$NEW_BACKEND
+  # shellcheck source=bin/fm-remote-readiness-lib.sh
+  . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+  rc=0
+  fm_remote_readiness_ensure "$SCRIPT_DIR" "$ID" "$backend" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -eq 255 ]; then
+      echo "error: remote secondmate $ID on $host readiness is unknown; relaunch refused" >&2
+    else
+      echo "error: remote secondmate $ID host $host is not ready for backend $backend; relaunch refused" >&2
+    fi
+    [ -z "$FM_REMOTE_READINESS_OUT" ] || printf '%s\n' "$FM_REMOTE_READINESS_OUT" >&2
+    return "$rc"
+  fi
   rc=0
   out=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh relaunch "${args[@]}" < /dev/null 2>&1) || rc=$?
   if [ "$rc" -ne 0 ]; then

@@ -32,6 +32,7 @@ REMOTE_HOME="$TMP_ROOT/remote-home"
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/fake")
 SSH_COUNT="$TMP_ROOT/ssh.count"
 DOCTOR_LOG="$TMP_ROOT/doctor.log"
+CONTROL_LOG="$TMP_ROOT/control.log"
 CLAIMS="$TMP_ROOT/claims"
 TOKEN="remote-stream-token-$$"
 ID=ops
@@ -156,8 +157,15 @@ EOF
 # doctor's own checks); the log records which backend each launch asked for.
 if [ "$command_name" = fm-remote-doctor.sh ]; then
   printf '%s %s\n' "${command_action:--}" "${command_arg:--}" >> "$FM_FAKE_DOCTOR_LOG"
+  if [ "${FM_FAKE_DOCTOR_RC:-0}" -ne 0 ]; then
+    printf 'check stream-survival=human: systemd-logind kills this user at logout\n'
+    exit "$FM_FAKE_DOCTOR_RC"
+  fi
   printf 'ok: remote second-mate readiness confirmed on this host\n'
   exit 0
+fi
+if [ "$command_name" = fm-remote-secondmate-control.sh ]; then
+  printf '%s %s\n' "$command_action" "$command_arg" >> "$FM_FAKE_CONTROL_LOG"
 fi
 exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
 SH
@@ -174,6 +182,7 @@ remote_env() {
   FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" \
   FM_FAKE_REMOTE_CWD="$TMP_ROOT" \
   FM_FAKE_DOCTOR_LOG="$DOCTOR_LOG" \
+  FM_FAKE_CONTROL_LOG="$CONTROL_LOG" \
   FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 \
   "$@"
 }
@@ -236,6 +245,40 @@ for pid in $(stream_agent_pids); do
 done
 pass "remote: a stream launch records the stream binding and runs the agent on the host's hub"
 
+assert_readiness_refusal() {
+  local expected_rc=$1 expected_check=$2 expected_calls=$3 out rc=0
+  shift 3
+  cp "$PARENT_META" "$TMP_ROOT/parent-before.meta"
+  cp "$HOST_META" "$TMP_ROOT/host-before.meta"
+  cp "$REMOTE_HOME/state/parent-route/$ID.agent-identity" "$TMP_ROOT/identity-before"
+  cp "$CONTROL_LOG" "$TMP_ROOT/control-before.log"
+  : > "$DOCTOR_LOG"
+  out=$(FM_FAKE_DOCTOR_RC="$expected_rc" remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch "$@" 2>&1) || rc=$?
+  expect_code "$expected_rc" "$rc" "readiness refusal"
+  assert_contains "$out" 'relaunch refused' "readiness did not refuse relaunch: $out"
+  assert_contains "$out" 'systemd-logind kills this user at logout' "readiness did not relay the doctor gap: $out"
+  if [ "$expected_rc" -eq 255 ]; then
+    assert_contains "$out" 'readiness is unknown' "SSH failure did not report unknown readiness: $out"
+  fi
+  assert_equals "$expected_check" "$(head -n 1 "$DOCTOR_LOG")" "readiness selected the wrong backend"
+  assert_equals "$expected_calls" "$(wc -l < "$DOCTOR_LOG" | tr -d ' ')" "readiness ran the wrong check/repair sequence"
+  cmp -s "$PARENT_META" "$TMP_ROOT/parent-before.meta" || fail "readiness refusal changed the parent record"
+  cmp -s "$HOST_META" "$TMP_ROOT/host-before.meta" || fail "readiness refusal changed the host record"
+  cmp -s "$REMOTE_HOME/state/parent-route/$ID.agent-identity" "$TMP_ROOT/identity-before" \
+    || fail "readiness refusal replaced the mate's identity"
+  cmp -s "$CONTROL_LOG" "$TMP_ROOT/control-before.log" || fail "readiness refusal reached host lifecycle control"
+  wait_hub_state "$STREAM_TARGET" alive
+}
+
+assert_readiness_refusal 1 '- -' 3 --backend herdr
+assert_readiness_refusal 1 '--backend stream' 3
+assert_readiness_refusal 255 '--backend stream' 1 --backend stream
+cp "$PARENT_META" "$TMP_ROOT/recorded-backend.meta"
+awk -F= '$1 != "remote_backend"' "$TMP_ROOT/recorded-backend.meta" > "$PARENT_META"
+assert_readiness_refusal 1 '- -' 3
+mv "$TMP_ROOT/recorded-backend.meta" "$PARENT_META"
+pass "remote: readiness gaps and unknown outcomes preserve the mate before relaunch"
+
 if [ "${FM_REMOTE_SECONDMATE_PROFILE_ONLY:-0}" != 1 ]; then
 # --- steering, peek, state, and the parent's lifecycle verbs ----------------
 out=$(remote_env "$ROOT/bin/fm-send.sh" "$ID" 'remote stream steer' 2>&1) || fail "remote send failed: $out"
@@ -288,8 +331,10 @@ set_parent_profile() {
   mv "$PARENT_META.profile" "$PARENT_META"
 }
 set_parent_profile anthropic/claude
+: > "$DOCTOR_LOG"
 out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch --harness deck 2>&1) \
   || fail "remote harness-change reset failed: $out"
+assert_equals '--backend stream' "$(cat "$DOCTOR_LOG")" "a ready stream relaunch did not check its recorded backend"
 assert_equals default "$(meta_value "$HOST_META" model)" "harness change retained the old model"
 assert_equals default "$(meta_value "$HOST_META" effort)" "harness change retained the old effort"
 assert_equals default "$(meta_value "$PARENT_META" model)" "parent did not bind the reset model"
