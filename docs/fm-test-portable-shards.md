@@ -5,8 +5,8 @@
 
 ## Verification inputs
 
-Balance hints come from serial runs of the real lanes on `ubuntu-latest`.
-The concurrent isolation proof in [fm-test-isolation-proof.md](fm-test-isolation-proof.md) establishes concurrency safety, not serial CI duration.
+The current balance hint baselines come from fully serial runs of the real lanes on `ubuntu-latest`; future refreshes use the concurrent execution conditions described below.
+The concurrent isolation proof in [fm-test-isolation-proof.md](fm-test-isolation-proof.md) establishes concurrency safety, not CI duration.
 Local timings are not interchangeable with CI timings: platform and machine load can affect each script differently and change their relative weights.
 
 The parallel hint baseline uses the slowest completed value each script reached across six CI runs on 2026-09-10; later replacements are recorded under [Parallel lanes](#parallel-lanes): [34459949083](https://github.com/kunchenguid/firstmate/actions/runs/34459949083), [34460760299](https://github.com/kunchenguid/firstmate/actions/runs/34460760299), [34462530836](https://github.com/kunchenguid/firstmate/actions/runs/34462530836), [34462758357](https://github.com/kunchenguid/firstmate/actions/runs/34462758357), [34466966385](https://github.com/kunchenguid/firstmate/actions/runs/34466966385), and [34470382458](https://github.com/kunchenguid/firstmate/actions/runs/34470382458).
@@ -45,7 +45,7 @@ The CI cap and its rationale are owned by [`.github/workflows/ci.yml`](../.githu
 Its scheduling regressions also check stored parallel lane order, the proven-isolated set's longest-first order, and serial-weight scheduling for other selections.
 These checks do not detect a script outgrowing an existing hint or establish measured job headroom.
 Refresh `portable_parallel_weight_hints` with the slowest completed `duration_ms` per script from several green CI runs' `fm-test-timing-portable-parallel` artifacts whenever the set gains scripts or a member grows materially.
-Those durations are measured with four scripts sharing the runner, so they include that contention, which is the condition the job runs under.
+New artifacts measure scripts sharing the runner at the job's configured concurrency, so refreshed hints include that contention; the historical serial hints above do not establish concurrent job duration.
 
 ## Portable serial remainder
 
@@ -59,16 +59,14 @@ On green CI run [30725985757](https://github.com/kunchenguid/firstmate/actions/r
 On [PR 1495](https://github.com/kunchenguid/firstmate/pull/1495), its main step ran about 19m51s before the job was cancelled at that boundary.
 `portable-serial-<k>of<n>` splits it across `n` separate CI runners.
 
-Inside one shard, each family with a recorded concurrent proof (`list_concurrent_safe_families`) runs as its own phase on up to `PORTABLE_SERIAL_PHASE_JOBS` workers, and every unproven script then runs strictly serially, alone on the runner.
-Members of one family only ever share the machine with each other, which is exactly what that family's proof in [fm-test-isolation-proof.md](fm-test-isolation-proof.md#family-concurrency-proofs) covers.
-The phase worker count is three, below every family's proven bound of four, because a hosted runner has four vCPUs where the proofs ran on a fourteen-core host and the watcher family fails on elapsed-time assertions when the machine is starved.
-`--jobs 1` runs a shard fully serially, and an explicit larger `--jobs` on a shard is still refused because the shard holds unproven work.
+[`bin/fm-test-run.sh`](../bin/fm-test-run.sh)'s header owns the shard phase schedule, worker count, isolation boundaries, and explicit `--jobs` overrides.
+Family-phase admission rests on the evidence in [fm-test-isolation-proof.md](fm-test-isolation-proof.md#family-concurrency-proofs), not on treating all serial-lane scripts as independently isolated.
+The runner's `PORTABLE_SERIAL_PHASE_JOBS` rationale preserves CPU headroom because the watcher proof is sensitive to starvation on hosted runners.
 
-`bin/fm-test-run.sh` owns `n` and the phase worker count, and refuses any lane whose `of<n>` disagrees with it.
+`bin/fm-test-run.sh` owns `n` and refuses any lane whose `of<n>` disagrees with it.
 `.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the required suite unrun.
 
-Assignment is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`, on the same phase model the shard runs: a shard's estimate is its unproven hints summed plus, for each family phase, its busiest worker's load.
-Each script, longest first, goes to the shard whose estimate would be lowest after adding it, and a family script to that phase's least-loaded worker.
+`portable_serial_assignments` in [`bin/fm-test-run.sh`](../bin/fm-test-run.sh) owns the phase-aware longest-processing-time packing algorithm; its comments define how family worker loads and unproven hints contribute to the estimate.
 The embedded hints are the slowest completed `duration_ms` per script from the `fm-test-timing-portable-serial-*` artifacts of six green CI runs from 2026-10-04 to 2026-10-06, [37272453924](https://github.com/bastotec/firstmate/actions/runs/37272453924), [37251695405](https://github.com/bastotec/firstmate/actions/runs/37251695405), [37253443319](https://github.com/bastotec/firstmate/actions/runs/37253443319), [37247916281](https://github.com/bastotec/firstmate/actions/runs/37247916281), [37397713888](https://github.com/bastotec/firstmate/actions/runs/37397713888), and [37401433503](https://github.com/bastotec/firstmate/actions/runs/37401433503), plus the 5121 ms native-Windows focused runner measurement for `tests/fm-pi-windows-shell-invocation.test.sh` from 2026-09-06T21:02Z.
 Taking the slowest of several CI runs rather than a single run keeps the balance honest on a slow runner.
 A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
@@ -81,13 +79,13 @@ Refresh the hints whenever the serial lane gains scripts, rather than waiting fo
 `bin/fm-test-run.sh` owns the per-shard packing, so its `--check-coverage` output is the current account of lane size, shard count, phase workers, and the slowest shard's packed estimate (`serial_max_ms=`) rather than a copied table.
 Before the phase model, twelve fully serial shards ran 8-14 minutes on runs 37397713888 and 37401433503, and the single-script `tests/fm-watch-triage.test.sh` (about 11 minutes) was the floor for any shard count.
 That script is now five topic suites, `tests/fm-watch-triage*.test.sh`, sharing `tests/watch-triage-helpers.sh`; each case lives in exactly one of them, and each carries its cases' share of the old script's hint, from the per-case output timestamps of run 37401433503.
-With the phase model, nine shards pack to about 9 minutes each of slowest-run hints.
+The phase-model packing estimate is not a measured concurrent job duration; use `serial_max_ms=` for its current critical-path estimate.
 
 Refresh the CI-derived hints by downloading the per-shard timing artifacts from several green CI runs and replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the slowest measured `duration_ms` per `path`:
 
 ```sh
 for run in <run-id> <run-id> <run-id>; do
-  gh run download "$run" -R kunchenguid/firstmate --pattern 'fm-test-timing-portable-serial-*' -D "/tmp/fm-serial/$run"
+  gh run download "$run" -R bastotec/firstmate --pattern 'fm-test-timing-portable-serial-*' -D "/tmp/fm-serial/$run"
 done
 jq -r '.scripts[] | [.path, .duration_ms] | @tsv' /tmp/fm-serial/*/*.json \
   | awk -F'\t' '$2 > m[$1] { m[$1] = $2 } END { for (p in m) print p, m[p] }' \
@@ -96,7 +94,7 @@ bin/fm-test-run.sh --check-coverage
 ```
 
 A timed-out shard uploads no artifact, so pick runs where every serial shard is green or the lane's slowest scripts go unmeasured in exactly the shard that needs them most.
-A family-phase script's duration is measured beside its phase siblings, so it includes that contention, which is the condition the packing estimates.
+New family-phase artifacts measure scripts beside their phase siblings, so refreshed hints include that contention; the current historical hints and split-suite shares above were measured without it.
 Measure native-Windows-only scripts through the focused Git Bash runner and retain that `duration_ms` separately, because the portable CI shards skip them.
 Opt-in live-harness timing hints can measure credential-free CI skips, not native harness execution; `tests/lib.sh`'s `fm_live_gate` owns that skip policy.
 

@@ -92,12 +92,6 @@ wait_poll_cycle() {  # <state> <pid> [limit-ticks]
   return 1
 }
 
-# Every wait_for_exit budget in this file is 100 ticks (10s), not because any
-# watcher takes that long to decide, but because fm-watch.sh does bounded
-# startup work before its first poll: a tighter budget reaps the process while
-# it is still starting and reports a spurious "did not surface" failure. A
-# generous budget can only remove that false negative - a watcher that never
-# exits still fails the assertion when the budget runs out.
 wait_numeric_file() {
   local file=$1 limit=${2:-30} i=0 value
   while [ "$i" -lt "$limit" ]; do
@@ -157,32 +151,15 @@ record_pi_busy() {  # <state-dir> <id>
 
 reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
 
-# --- pure classifier predicates (fm-classify-lib.sh) ------------------------
-
 size_of() { LC_ALL=C wc -c < "$1" | tr -d '[:space:]'; }
 
-# --- work the captain is already holding: pane churn must not re-alarm -------
-# The other record of a legitimate wait. The declared-wait bound above reads the
-# status LINE, and a delivered task's line stays `done: PR ...` while the wait
-# itself lives in the BACKLOG, written there by bin/fm-captain-hold.sh. No line
-# predicate can see that record, so both stale alarms - the captain-relevant one
-# and the inconclusive one - re-fired on every new pane hash for as long as the
-# captain was deciding, which is the 2026-09 loop observed on delivered work
-# awaiting their merge word.
-# Pinned here, in both directions: while the call stands the first sight still
-# alarms, further sights of the SAME call and status-log state are absorbed, and
-# a new pane hash after the window's end alarms once more; and the identical
-# fixture WITHOUT the hold keeps alarming on every hash, because a bound that
-# swallowed an unheld delivery or blocker would be worse than the churn it removes.
-#
+# Backlog-hold churn cases live in fm-watch-triage-resurface.test.sh; status-line
+# declared waits live in fm-watch-triage-declared-wait.test.sh. A delivered
+# task's status can stay `done: PR ...` while its wait lives only in the backlog,
+# so a status-line predicate alone cannot prove the hold.
 # The backlog is real rather than a fixture file: bin/fm-captain-hold.sh is the
 # only writer of a hold and tasks-axi the only reader, so a hand-written row
 # would pin this test's idea of a hold instead of the one the watcher consults.
-#
-# Cost: every case below drives churn through ONE watcher process rather than
-# relaunching per pane change. Watcher startup dominates a round here, and an
-# absorbing watcher stays in its poll loop across churn in production anyway, so
-# the cheaper shape is also the more faithful one.
 
 # The window key every hold fixture uses, derived the way fm-watch.sh derives it.
 hold_key() {
@@ -215,8 +192,8 @@ make_hold_home() {  # <name> <status-line> <hold|nohold>
   printf '%s\n' "$dir"
 }
 
-# Launch one watcher against a hold fixture, armed the way parked_watch_round
-# arms one, plus the home the backlog read resolves against. The crew reads
+# Launch one watcher against a hold fixture as a handling successor, with the
+# home the backlog read resolves against. The crew reads
 # stopped: a delivered worker's agent has exited, and that is the population
 # whose alarm the call must bound. The pid lands in HOLD_WATCH_PID rather than on
 # stdout: a command substitution would background the watcher inside a subshell,
