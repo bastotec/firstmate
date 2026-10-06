@@ -20,8 +20,8 @@
 #     own child's environment. It is checked BEFORE $TMUX_PANE because the
 #     agent's child also inherits whatever $TMUX_PANE its launcher had, which
 #     names the launcher's pane, not the primary.
-#   - a live deck-chat primary record, state/primary-chat.json (written by the
-#     deck-chat host, read by bin/fm-primary-steer.sh). It is checked before the
+#   - a live deck-chat primary (bin/fm-deck-chat.sh), as bin/fm-primary-steer.sh
+#     status reports it from state/primary-chat.json. It is checked before the
 #     tmux/herdr markers too: while a deck-chat primary owns this home, the pane
 #     the caller happens to run in is never the primary. Its endpoint may be
 #     null (a host not on a stream endpoint); the target is then "-" and only
@@ -32,6 +32,7 @@
 # configured, nothing detected) assumes tmux - matching the daemon's pre-herdr
 # behavior byte-for-byte when run outside both tmux and herdr.
 FM_SUPERVISOR_TARGET_DEFAULT="firstmate:0"
+FM_SUPERVISOR_TARGET_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_SUPERVISOR_BACKEND_DEFAULT="tmux"
 
 # The stream endpoint this process runs inside, from the variables the stream
@@ -49,21 +50,17 @@ fm_supervisor_stream_env_target() {
   printf '%s:%s' "$tag" "$FM_STREAM_ENDPOINT_ID"
 }
 
-# The endpoint of a LIVE deck-chat primary record for this home: the record
-# exists, is not marked stopped, and its host_pid is alive. Prints the recorded
-# endpoint, or "-" when the host has none; returns 1 when there is no live record.
+# The endpoint of a LIVE deck-chat primary for this home, as the steer client
+# reports it (`fm-primary-steer.sh status`; FM_PRIMARY_STEER_BIN overrides it).
+# The client owns what "live" means for state/primary-chat.json - not stopped,
+# and host_pid a running fm-deck-chat - so this never re-derives it. Prints the
+# endpoint, or "-" when the host has none; returns 1 when there is no live host.
 fm_supervisor_primary_chat_endpoint() {
-  local state record pid stopped endpoint
-  state=${FM_STATE_OVERRIDE:-${FM_HOME:-.}/state}
-  record="$state/primary-chat.json"
-  [ -f "$record" ] || return 1
-  command -v jq >/dev/null 2>&1 || return 1
-  pid=$(jq -r '.host_pid // empty' "$record" 2>/dev/null) || return 1
-  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  kill -0 "$pid" 2>/dev/null || return 1
-  stopped=$(jq -r '(.stopped == true) or (.state == "stopped") or (.stopped_at != null)' "$record" 2>/dev/null) || return 1
-  [ "$stopped" = false ] || return 1
-  endpoint=$(jq -r '.endpoint // empty' "$record" 2>/dev/null) || return 1
+  local bin status endpoint
+  bin=${FM_PRIMARY_STEER_BIN:-$FM_SUPERVISOR_TARGET_LIB_DIR/fm-primary-steer.sh}
+  [ -x "$bin" ] || return 1
+  status=$("$bin" status --home "${FM_HOME:-$FM_SUPERVISOR_TARGET_LIB_DIR/..}" </dev/null 2>/dev/null) || return 1
+  endpoint=$(printf '%s' "$status" | jq -r '.endpoint // empty' 2>/dev/null) || return 1
   printf '%s' "${endpoint:--}"
 }
 
@@ -94,7 +91,7 @@ discover_supervisor_source() {
 #      signals below apply, and the result is "-" when neither is present.
 #   2. FM_STREAM_ENDPOINT_ID + FM_STREAM_HUB - this process runs inside a stream
 #      endpoint; compose its "<hub-tag>:<endpoint-id>" target.
-#   3. a live state/primary-chat.json record - its endpoint, or "-" when null.
+#   3. a live deck-chat primary (steer status) - its endpoint, or "-" when null.
 #   4. $TMUX_PANE - tmux sets this in every pane's environment; inherited by a
 #      process launched from firstmate's own pane.
 #   5. $HERDR_ENV=1 + $HERDR_PANE_ID - herdr injects both into every process it
@@ -135,7 +132,7 @@ discover_supervisor_target() {
 # discover_supervisor_target:
 #   1. FM_SUPERVISOR_BACKEND env (explicit override).
 #   2. FM_STREAM_ENDPOINT_ID + FM_STREAM_HUB - stream.
-#   3. a live state/primary-chat.json record - stream.
+#   3. a live deck-chat primary (steer status) - stream.
 #   4. $TMUX_PANE set - tmux.
 #   5. $HERDR_ENV=1 (with $HERDR_PANE_ID present) - herdr.
 #   6. FM_SUPERVISOR_BACKEND_DEFAULT (tmux) - matches the target fallback. Returns 1.

@@ -1259,6 +1259,20 @@ e2e_stream_real_daemon() {
   else
     fail "stream e2e: daemon not running or not supervising ($out; log: $(cat "$st/state/.supervise-daemon.log" 2>/dev/null))"
   fi
+  # The deck-chat host pauses its own watcher while state/.afk exists; the
+  # daemon's watcher child must then hold the home's watcher lock.
+  local watch_pid='' tries=0
+  while [ "$tries" -lt 100 ]; do
+    watch_pid=$(cat "$st/state/.watch.lock/pid" 2>/dev/null || true)
+    [ -n "$watch_pid" ] && break
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  if [ -n "$watch_pid" ] && [ "$(ps -o ppid= -p "$watch_pid" 2>/dev/null | tr -d ' ')" = "$pid" ]; then
+    pass "stream e2e: the daemon's own watcher child holds the home's watcher lock"
+  else
+    fail "stream e2e: watcher lock not held by the daemon's child (lock pid='$watch_pid', daemon=$pid)"
+  fi
   printf 'needs-decision: pick A\n' > "$st/state/.subsuper-escalations"
   date +%s > "$st/state/.subsuper-escalations.since"
   FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" stop >/dev/null 2>&1

@@ -2867,40 +2867,45 @@ stream_inject() {  # <dir> <message> - inject_msg against the stream supervisor
 }
 
 test_discover_supervisor_stream_signals() {
-  local dir state out rc
+  local dir state steer out rc
   dir=$(make_supercase discover-stream)
-  state="$dir/state"
+  state="$dir/state"; steer="$dir/steer"
+  mkdir -p "$steer"
+  : > "$steer/absent"
 
-  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND='' FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' \
+  out=$(FAKE_STEER_DIR="$steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_SUPERVISOR_BACKEND='' FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' \
     FM_STREAM_ENDPOINT_ID=0123abcd FM_STREAM_HUB=http://127.0.0.1:7717 discover_supervisor_backend)
   [ "$out" = stream ] || fail "a stream endpoint's env should select stream over an inherited TMUX_PANE: $out"
-  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' \
+  out=$(FAKE_STEER_DIR="$steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' \
     FM_STREAM_ENDPOINT_ID=0123abcd FM_STREAM_HUB=http://127.0.0.1:7717 discover_supervisor_target)
   [ "$out" = "127.0.0.1-7717:0123abcd" ] || fail "stream env target should be <hub-tag>:<endpoint-id>: $out"
 
-  printf '{"version":1,"home":"%s","session":"s1","steer_dir":"%s/steer","events_file":"%s/ev","endpoint":"hub-7717:feedbeef","host_pid":%s,"started_at":1}\n' \
-    "$dir" "$dir" "$dir" "$$" > "$state/primary-chat.json"
-  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_backend)
-  [ "$out" = stream ] || fail "a live primary-chat record should select stream over TMUX_PANE: $out"
-  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_target)
-  [ "$out" = "hub-7717:feedbeef" ] || fail "a live primary-chat record should supply its endpoint: $out"
+  out=$(FAKE_STEER_DIR="$steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_SUPERVISOR_BACKEND='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_backend)
+  [ "$out" = tmux ] || fail "no deck-chat primary and no stream env should leave TMUX_PANE in charge: $out"
 
-  printf '{"version":1,"endpoint":null,"host_pid":%s}\n' "$$" > "$state/primary-chat.json"
-  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_TARGET='' TMUX_PANE='' FM_STREAM_ENDPOINT_ID='' discover_supervisor_target)
-  [ "$out" = "-" ] || fail "a live record with no endpoint should resolve to '-': $out"
+  rm -f "$steer/absent"
+  printf 'hub-7717:feedbeef' > "$steer/endpoint"
+  out=$(FAKE_STEER_DIR="$steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_SUPERVISOR_BACKEND='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_backend)
+  [ "$out" = stream ] || fail "a live deck-chat primary should select stream over TMUX_PANE: $out"
+  out=$(FAKE_STEER_DIR="$steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_target)
+  [ "$out" = "hub-7717:feedbeef" ] || fail "a live deck-chat primary should supply its endpoint: $out"
+  rm -f "$steer/endpoint"
+  out=$(FAKE_STEER_DIR="$steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_SUPERVISOR_TARGET='' TMUX_PANE='' FM_STREAM_ENDPOINT_ID='' discover_supervisor_target)
+  [ "$out" = "-" ] || fail "a live primary with no endpoint should resolve to '-': $out"
 
-  printf '{"version":1,"endpoint":"hub-7717:feedbeef","host_pid":%s,"stopped_at":5}\n' "$$" > "$state/primary-chat.json"
-  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_backend)
-  [ "$out" = tmux ] || fail "a record marked stopped must not select stream: $out"
-
-  printf '{"version":1,"endpoint":"hub-7717:feedbeef","host_pid":999999}\n' > "$state/primary-chat.json"
-  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_backend)
-  [ "$out" = tmux ] || fail "a record whose host_pid is dead must not select stream: $out"
-
-  out=$(FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND=stream FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_target)
+  : > "$steer/absent"
+  out=$(FAKE_STEER_DIR="$steer" FM_PRIMARY_STEER_BIN="$FAKE_STEER" FM_SUPERVISOR_BACKEND=stream FM_SUPERVISOR_TARGET='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_target)
   rc=$?
   [ "$rc" -ne 0 ] && [ "$out" = "-" ] || fail "explicit stream with no endpoint should print '-' and warn (rc=$rc): $out"
-  pass "supervisor discovery: stream endpoint env > live primary-chat record > TMUX_PANE; dead or stopped records ignored"
+
+  # The real steer client decides liveness: a record whose host_pid is not a
+  # running fm-deck-chat (here this test's own shell), or that is marked
+  # stopped, is not a deck-chat primary.
+  printf '{"version":1,"session":"s1","steer_dir":"%s/steer-in","events_file":"%s/ev","endpoint":"hub-7717:feedbeef","host_pid":%s,"started_at":1}\n' \
+    "$dir" "$dir" "$$" > "$state/primary-chat.json"
+  out=$(FM_HOME="$dir" FM_PRIMARY_STEER_BIN='' FM_SUPERVISOR_BACKEND='' TMUX_PANE='%7' FM_STREAM_ENDPOINT_ID='' discover_supervisor_backend)
+  [ "$out" = tmux ] || fail "a record whose host_pid is not fm-deck-chat must not select stream: $out"
+  pass "supervisor discovery: stream endpoint env > live deck-chat primary (steer status) > TMUX_PANE; a non-host pid is ignored"
 }
 
 test_inject_msg_stream_publishes_and_confirms() {
@@ -2994,6 +2999,45 @@ test_inject_msg_stream_no_primary_falls_back_to_endpoint() {
     if stream_inject "$dir" "done: B"; then fail "fallback must defer on a pending composer"; fi
   ) || fail "stream fallback composer-guard subshell failed"
   pass "inject_msg (stream): no deck-chat primary falls back to the endpoint's typed input with its own guards"
+}
+
+# The same delivery against the REAL bin/fm-primary-steer.sh: a stand-in host
+# process named fm-deck-chat registers state/primary-chat.json, and the test
+# plays deck's side by writing its events file.
+test_inject_msg_stream_with_real_steer_client() {
+  local dir state steer events host rc
+  dir=$(make_stream_case inject-stream-real-client)
+  state="$dir/state"; steer="$dir/chat/steer"; events="$dir/chat/events.ndjson"
+  mkdir -p "$steer"
+  printf '{"type":"idle"}\n' > "$events"
+  bash -c 'exec -a fm-deck-chat sleep 120' &
+  host=$!
+  printf '{"version":1,"home":"%s","session":"s1","steer_dir":"%s","events_file":"%s","endpoint":"hub-7717:0123abcd","host_pid":%s,"started_at":1}\n' \
+    "$dir" "$steer" "$events" "$host" > "$state/primary-chat.json"
+  (
+    cd "$dir" || exit 1
+    unset NO_MISTAKES_GATE FM_PRIMARY_STEER_BIN
+    fm_backend_send_text_submit() { fail "typed input must not run while the deck-chat host is live"; }
+    inject_real() {
+      FM_HOME="$dir" FM_SUPERVISOR_BACKEND=stream FM_SUPERVISOR_TARGET=hub-7717:0123abcd \
+        FM_INJECT_CONFIRM_RETRIES=1 FM_INJECT_CONFIRM_SLEEP=0.01 inject_msg "done: PR https://x/y/pull/4" "$state"
+    }
+    if inject_real; then fail "a steer deck has not acknowledged must not count as delivered"; fi
+    [ -f "$steer/1.msg" ] || fail "the real client did not publish 1.msg into the steer dir"
+    message_is_injection "$(cat "$steer/1.msg")" || fail "the published steer lost the operational prefix"
+    printf '{"type":"steer_received","seq":1}\n{"type":"steer_acked","seq":1}\n{"type":"run_started"}\n' >> "$events"
+    inject_real || fail "deck's steer_acked did not confirm the pending steer"
+    [ ! -e "$steer/2.msg" ] || fail "confirming the acknowledged steer published it again"
+    if FM_HOME="$dir" FM_SUPERVISOR_BACKEND=stream FM_SUPERVISOR_TARGET=hub-7717:0123abcd \
+      FM_INJECT_CONFIRM_RETRIES=1 FM_INJECT_CONFIRM_SLEEP=0.01 inject_msg "needs-decision: pick C" "$state"; then
+      fail "a busy deck-chat turn (run_started) must defer"
+    fi
+    [ ! -e "$steer/2.msg" ] || fail "a busy primary was published to"
+  )
+  rc=$?
+  kill "$host" 2>/dev/null; wait "$host" 2>/dev/null
+  [ "$rc" -eq 0 ] || fail "real steer client subshell failed"
+  pass "inject_msg (stream): the real fm-primary-steer.sh publishes, confirms on deck's steer_acked, and its busy state defers"
 }
 
 test_stream_supervisor_reachable() {
@@ -3183,5 +3227,6 @@ test_inject_msg_stream_busy_defers
 test_inject_msg_stream_unacked_never_republishes
 test_inject_msg_stream_rejected_republishes
 test_inject_msg_stream_no_primary_falls_back_to_endpoint
+test_inject_msg_stream_with_real_steer_client
 test_stream_supervisor_reachable
 test_stream_flush_and_max_defer_wedge

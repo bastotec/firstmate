@@ -1363,7 +1363,9 @@ fm_daemon_steer() {  # <subcommand> [args...]
   local bin=${FM_PRIMARY_STEER_BIN:-$FM_DAEMON_DIR/fm-primary-steer.sh}
   # A missing client is the same as no registered deck-chat primary.
   [ -x "$bin" ] || return 3
-  FM_HOME="$FM_HOME" "$bin" "$@" </dev/null 2>/dev/null
+  local sub=$1
+  shift
+  "$bin" "$sub" --home "$FM_HOME" "$@" </dev/null 2>/dev/null
 }
 
 # fm_daemon_steer_wait_delivered: poll `delivered <seq>` within the inject

@@ -5,6 +5,7 @@
 # in $FAKE_STEER_DIR:
 #   absent        present -> every subcommand exits 3 (no deck-chat primary)
 #   state         status's "state" value (default idle)
+#   endpoint      status's "endpoint" value (default null)
 #   ack           never -> delivered exits 1; reject -> exits 2; else acks (0)
 #   seq           last published seq
 #   published/N.msg   each published body; calls.log records every call
@@ -15,12 +16,22 @@ printf '%s\n' "$*" >> "$dir/calls.log"
 [ ! -e "$dir/absent" ] || exit 3
 sub=${1:-}
 shift || true
+args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --home) shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+set -- "${args[@]+"${args[@]}"}"
 case "$sub" in
   status)
     state=$(cat "$dir/state" 2>/dev/null || printf idle)
     seq=$(cat "$dir/seq" 2>/dev/null || printf 0)
-    printf '{"present":true,"state":"%s","last_event":"idle","last_event_at":0,"acked_seq":%s,"published_seq":%s,"pending":0,"endpoint":null}\n' \
-      "$state" "$seq" "$seq"
+    endpoint=null
+    [ ! -s "$dir/endpoint" ] || endpoint="\"$(cat "$dir/endpoint")\""
+    printf '{"present":true,"state":"%s","last_event":"idle","last_event_at":0,"acked_seq":%s,"published_seq":%s,"pending":0,"endpoint":%s}\n' \
+      "$state" "$seq" "$seq" "$endpoint"
     ;;
   publish)
     file='' text='' kind=other
@@ -29,7 +40,6 @@ case "$sub" in
         --file) file=$2; shift 2 ;;
         --text) text=$2; shift 2 ;;
         --kind) kind=$2; shift 2 ;;
-        --home) shift 2 ;;
         *) exit 2 ;;
       esac
     done
