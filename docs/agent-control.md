@@ -161,9 +161,8 @@ There are two ways out:
   Muse is a crewmate and scout adapter only, so relaunching a secondmate onto it refuses while its agent is still up rather than leaving that secondmate with no agent when the launch owner refuses.
   The same table refuses a `recover-missing` before the terminal is recreated, where there is no running agent to stop and nothing has been touched at all.
 - A backend that cannot deliver the harness's interrupt key, or the composer clear that key needs, is refused rather than sent a different key.
-  Orca's terminal API exposes only an interrupt and an Enter, so it can deliver neither Escape nor Ctrl+U.
 - `exit`, `relaunch`, and `recover-missing` require a backend with a recovery-grade agent-state classifier - tmux, herdr, and stream - because without one the "the agent stopped" or "the endpoint is missing" postcondition cannot be proven.
-  zellij, orca, and cmux are refused rather than reported as successful blind.
+  Any other backend is refused rather than reported as successful blind.
   On stream a silent agent reads `unreadable` rather than `dead`, so a partition refuses here instead of proving a stop that never happened.
 - `recover-missing` additionally requires a backend that can recreate a terminal under the recorded endpoint handle, which today is tmux only: its window keeps the recorded `fm-<id>` name, so recovery rewrites no durable record.
   Herdr mints a fresh pane id for every new tab, so recreating there would have to republish the task's endpoint; that is refused rather than shipped without regression coverage.
@@ -185,10 +184,7 @@ Backend capability comes from each adapter's real surface, not from a policy cho
 | --- | --- | --- | --- | --- | --- |
 | tmux | yes | yes | yes | yes | yes |
 | herdr | yes | yes | yes | yes | yes |
-| zellij | yes | yes | yes | yes | no |
-| cmux | yes | yes | yes | yes | no |
 | stream | yes | yes | yes | yes | yes |
-| orca | no | yes | yes | no | no |
 
 Per-harness interrupt keys, repeat counts, composer clears, exit commands, and supported task kinds live in `bin/fm-control-lib.sh` and are exercised for every verified harness by `tests/fm-control.test.sh`, with adapters outside its lane pinning their control mechanics in their own harness suites.
 The empirical basis for each adapter's value is the `harness-adapters` skill's verification record for that adapter.

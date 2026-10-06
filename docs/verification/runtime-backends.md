@@ -332,7 +332,7 @@ Both recorded runtime identities now classify the exact `pi-launcher` foreground
 Backend applicability was reviewed across every spawn adapter.
 Tmux needs the exact `pi-launcher`, `pi-signed`, `pi`, and `Pi` process identities for recovery-grade liveness.
 Herdr uses native registered-agent state and needs no process-name branch.
-Zellij has no verified recovery-grade agent process probe, while Orca and cmux do not support secondmate spawns, so those three retain their existing generic ordinary-launch semantics without a new liveness matcher.
+Stream classifies through the same shared process owner.
 
 The current classifier matrix and its refresh guard are recorded in [Composer classification matrix](#composer-classification-matrix), with portable shape coverage in `tests/fm-composer-lib.test.sh` and `tests/fm-composer-ghost.test.sh`.
 Kimi pointer delivery and OpenCode 1.18.4 busy-queue behavior remain pinned by `tests/fm-kimi-harness.test.sh`, `tests/fm-tmux-submit-busy.test.sh`, and `tests/fm-composer-lib.test.sh`.
@@ -346,9 +346,6 @@ The cleanup identity boundary was validated on 2026-07-28 with tmux 3.6a and met
 tests/fm-teardown-endpoint-safety.test.sh
 tests/fm-teardown.test.sh
 tests/fm-backend-herdr.test.sh
-tests/fm-backend-zellij.test.sh
-tests/fm-backend-orca.test.sh
-tests/fm-backend-cmux.test.sh
 ```
 
 Bounded output from the incident regression:
@@ -363,7 +360,8 @@ ok - fm-teardown: dedicated-socket invalid cleanup preserves target/control and 
 
 The dedicated tmux cell removed ambient tmux variables, required a socket-bound wrapper, kept one target and one independent control window, and proved the wrapper was not called for invalid metadata or a direct empty target.
 Valid cleanup removed only the exact task-bound target and left the control window live.
-The metadata-only validation covers tmux, Herdr, Zellij, Orca, and cmux before backend dispatch.
+The current metadata-only validation covers tmux, Herdr, and stream before backend dispatch, and refuses records on the removed Zellij, Orca, and cmux backends.
+`tests/fm-teardown-endpoint-safety.test.sh` now validates tmux and Herdr records and pins refusal of a removed-backend record; `tests/fm-backend-stream.test.sh` covers stream endpoint identity.
 Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that backend cleanup boundary; their harness-specific hook files, tokens, transcript bindings, and session-log sidecars are cleaned only after it, so no harness needs a separate endpoint parser.
 
 ### Endpoint kill confirmation
@@ -375,19 +373,6 @@ Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that 
 - Herdr confirms from `pane get`'s structured `pane_not_found`, read under the same presentation lock the close ran under.
   A refused lock, an unreachable server, a still-present pane, and an unparseable answer are unconfirmed.
   The focus-safe close path writes its own diagnostics - a repositioned workspace it could not confirm removed, for instance - and the kill captures them so they cannot be mistaken for its verdict: an unconfirmed kill folds them into its single refusal line, and a confirmed one reports them after the close has already been proved.
-- Zellij confirms from an `action list-panes --json` listing that omits the pane, from a `list-sessions` run that omits the session, and from a `list-tabs` read that ran and shows the task's pane under a tab carrying some other name.
-  A listing that does not run or does not parse is unconfirmed, including an absent zellij CLI: one classifier owns that answer and folds the failing listing's own first line into the single refusal line, so the refusal names its cause without exceeding the contract.
-  An expected label that merely failed to resolve is not proof either: the label check refuses an ambiguous legacy bare title exactly as it refuses a real mismatch, so a live pane under an unproven label is unconfirmed.
-  zellij exits nonzero for an empty session list as well as for a real failure, so the exit status alone cannot separate them: a zero exit means the listing ran, and otherwise only zellij's own documented empty-listing message reads as absence.
-- cmux confirms from a workspace inventory that omits the workspace, built by walking `list-windows --json` and asking each window for its own `workspace list --window` - `workspace list --json` alone is scoped to the current window, so it can never establish absence, only presence.
-  A window enumeration that fails, or any single window's list that fails, is unconfirmed, and so is a window listing that parses but carries a window with no usable id, which enumerates nothing while looking like an answer: a partial inventory proves nothing about the windows it did not read.
-  `close-workspace` answers `OK` whether or not it closed anything (see [Current operation and safety](../cmux-backend.md#current-operation-and-safety)), so its status is never the verdict, and an unreadable cmux is unconfirmed.
-  That also covers the expected-label path, which answers one false for several different reasons: a listing that ran and carries neither the recorded id nor this task's title, or that shows the id under another title, decides; a listing that failed is unconfirmed; and a workspace the listing still shows under this task's own title is live, so it is closed and confirmed under the recorded id, or - when only a differently numbered workspace carries that title after a cmux relaunch - reported unconfirmed rather than closed under an id the record never named.
-  The read that confirms the close carries the same expected title and is stricter than the pre-close one: only a listing that omits both the recorded id and this task's title confirms, so a relaunch that moved the worker to a new id is unconfirmed, and so is the recorded id now listed under another title.
-  That last answer decides only BEFORE the close, where it proves the id no longer names this task; taking it afterwards would report an endpoint gone without ever applying the relaunch rule, which is the one direction that could license removing records for a worker still running.
-- Orca confirms from an `orca terminal read` absence probe taken after the close, never from the close's own acceptance or refusal, because a close that answers positively and performs nothing is a real failure mode on another backend, and Orca refuses a close against a terminal it no longer has - ordinary already-absent cleanup that the probe, not the refusal, settles.
-  Only a reachable runtime answers in its own `{"ok":false,...}` envelope, so that envelope proves reachability - not absence - while a transport failure that produces no envelope is unconfirmed.
-  Its error codes are unenumerated, since no live Orca was available, so the probe reads absence only from this terminal's own not-found code, matched whole, and leaves every other refusal - including an app- or runtime-scoped not-found from a quit Orca - unconfirmed ([orca-backend.md](../orca-backend.md)).
 - stream confirms only from the endpoint's own agent, either a record it closed after watching the worker exit or a kill the hub reports it took.
   A hub that cannot answer, a record the hub closed by itself, and a target tagged for a different hub are unconfirmed - the last of those names a real worker this home simply cannot reach ([stream-backend.md](../stream-backend.md)).
   A target that is not an endpoint address at all is unsupported rather than unconfirmed: no worker was ever named and no hub was reached, so there is no answer about one to report.
@@ -411,14 +396,13 @@ ok - real tmux: kill reports gone for the window it removed and for one already 
 ok - fm-teardown: an unconfirmed endpoint kill keeps every durable record, while an already-absent endpoint and a confirmed kill both stay successful
 ```
 
-The cleanup case runs against the same real tmux server and suppresses only the close, reproducing a backend that accepts a close and performs none - the shape cmux documents.
+The cleanup case runs against the same real tmux server and suppresses only the close, reproducing a backend that accepts a close and performs none - the shape the former cmux adapter documented.
 It asserts the window really did survive before asserting the records did, so the refusal cannot go vacuous.
 
 Each adapter's own answer is pinned beside it, against the real hub and real agents for stream and against each backend's canned protocol responses for the rest:
 
 ```sh
-bin/fm-test-run.sh tests/fm-backend-herdr.test.sh tests/fm-backend-zellij.test.sh \
-  tests/fm-backend-cmux.test.sh tests/fm-backend-orca.test.sh tests/fm-backend-stream.test.sh
+bin/fm-test-run.sh tests/fm-backend-herdr.test.sh tests/fm-backend-stream.test.sh
 ```
 
 Observed output, bounded to the kill-contract cases:
@@ -427,17 +411,6 @@ Observed output, bounded to the kill-contract cases:
 ok - fm_backend_herdr_kill: an unavailable session lock defers the pane close and reports it unconfirmed
 ok - fm_backend_herdr_kill: the repositioning path still reports exactly one relayable reason
 ok - fm_backend_herdr_kill: a close that failed and one that left the pane standing both report unconfirmed
-ok - fm_backend_zellij_kill: never fails when the target session no longer exists
-ok - fm_backend_zellij_kill: a session listing that failed is unconfirmed, not gone
-ok - fm_backend_zellij_kill: zellij's nonzero empty-listing answer still reads as gone
-ok - fm_backend_zellij_kill: an unreadable pane listing on the label path is unconfirmed
-ok - fm_backend_cmux_kill: a close that failed, one that silently closed nothing, and one nothing could confirm all report unconfirmed
-ok - fm_backend_cmux_kill: an unreadable listing on the label path is unconfirmed, not gone
-ok - fm_backend_cmux_kill: a listing that ran and omits the workspace still reads as gone
-ok - fm_backend_cmux_kill: a title still live under a new id after the close is unconfirmed, not gone
-ok - fm_backend_cmux_kill: a foreign title after the close is unconfirmed, not gone
-ok - fm_backend_cmux_kill: a window listing with no usable ids is unconfirmed, not gone
-ok - fm_backend_orca_kill: confirms a close with an absence read and reports every unproved close unconfirmed
 ok - stream: only a close the endpoint's own agent reported counts as a stop
 ok - stream: a kill the hub cannot answer is reported as unconfirmed
 ok - stream: an unaddressable target reports whether a worker was ever named
@@ -467,7 +440,7 @@ ok - session start still finishes an ordinary interrupted cleanup
 ```
 
 Two of those cases are what keep the refusal from becoming a permanent hold: a cleanup interrupted after a proven kill still replays, and so does the identical record without the stamp, so an ordinary interrupted cleanup is finished rather than stranded.
-The herdr repositioning case, the cmux post-close cases and these pending-close cases were observed on 2026-09-18; the tmux run remains the 2026-09-17 one dated above.
+The herdr repositioning case and these pending-close cases were observed on 2026-09-18; the tmux run remains the 2026-09-17 one dated above.
 
 ## Claude workspace trust
 
@@ -611,8 +584,8 @@ ok - live composer-matrix guard verified 8 live surface(s)
 
 All six installed harnesses' real idle composers reached a proven `empty` (Claude auto-updated to 2.1.227 between the audit and this rerun, so the shipped classifier is proven against the newer release as well), including Pi through the tmux foreground-process identity probe, Grok through the titled-bottom-border tolerance, and OpenCode through the left-bar shape; Codex and OpenCode first parked on vendor update-available modals that the strict classifier correctly refused until the guard's single non-submitting Escape dismissed them.
 The strict blank-row posture held live (a blank shell row deferred injection), and a zellij pane changing for reasons unrelated to submission never confirmed a delivery, replacing the retired content-diff heuristic's false positive.
-Kimi was not installed on the verification machine; its bordered shape is pinned by the portable byte-capture regressions in `tests/fm-composer-lib.test.sh`, which also carry the other five adapters' capability profiles for every harness under both a UTF-8 locale and `LC_ALL=C`.
-This guard is the refresh command after an upgrade to any matrix-covered harness; rerun it and update the versions above rather than trusting this table across releases.
+Kimi was not installed on the verification machine; its bordered shape is pinned by the portable byte-capture regressions in `tests/fm-composer-lib.test.sh`, which retain styled and plain capability profiles for every harness under both a UTF-8 locale and `LC_ALL=C`.
+Rerun this guard after upgrades for the retained tmux matrix rather than trusting dated results across releases; the Zellij result above is historical, and its adapter and live guard cell have been removed.
 The 2026-08-23 steering-inbox doorbell run observed grok 1.0.5's idle composer classifying `unknown` (and sometimes pending-family), never `empty`.
 Issue #3436's recorded idle capture reproduced the cause on 2026-09-14: Grok 1.0.5 renders the titled bottom border three columns wider than its aligned top and content rows, so the cursorless Herdr profile rejected the otherwise complete box as ambiguous.
 The classifier now accepts only that exact three-column overhang (`FM_COMPOSER_GROK_TITLE_OVERHANG` in `bin/fm-composer-lib.sh`) carrying a typed `Grok <model> (<effort>)` title; the portable regressions feed the real capture through both the shared Herdr capability profile and `fm_backend_herdr_composer_state`, and prove idle is `empty`, typed content is `pending`, and an unrecognized oversized title remains `unknown`.
@@ -620,7 +593,7 @@ Grok was not installed on the verification machine for this 2026-09-14 change, s
 This closes only #3436's idle-composer-misclassification symptom (Grok/Herdr composer read `unknown` instead of `empty`, blocking away-mode injection). The issue's second symptom - a leftover watcher never yielding and never being taken over or refused at AFK start - is unrelated to composer classification and is tracked separately in #2270, where #3436's reproduction serves as corroborating evidence.
 Cursor is deliberately outside this cursor-anchored empty-composer matrix because its terminal cursor is parked outside the composer; tmux's Cursor-specific, process-identity-gated cursorless fallback is covered by the [Cursor Agent CLI](#cursor-agent-cli) section's separate live evidence and drift guard.
 
-`zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which is the capability the zellij composer classifier reads.
+`zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which was the capability the former zellij composer classifier read.
 
 ### 2026-09-15 codex-cli 0.154.0 idle starfield and status footer through Herdr
 
@@ -650,7 +623,7 @@ After the fix, braille-only rows bound the wrap region (the status footer sits b
 A second read-only capture of the same pane, taken during the fix with a bright starfield cell drawn between the `›` and the placeholder, read `pending` before and `empty` after as well.
 `test_matrix_codex_idle_starfield_furniture` in `tests/fm-composer-lib.test.sh` carries both samples byte-for-byte, the divergence (the same screen with letters in place of the starfield reads `pending`), and the over-stripping negatives (wrapped typed input, braille mixed with text, a typed row with a middle dot, and the footer or a starfield row alone).
 
-The live guard that refreshes this entry launches the installed codex idle in an isolated tmux server and asserts `empty` through both the cursor-anchored tmux read and the cursorless styled read Herdr and Zellij use, naming codex and `codex --version` on failure; it is default-on wherever codex and tmux are installed and spends no tokens:
+The live guard that refreshes this entry launches the installed codex idle in an isolated tmux server and asserts `empty` through both the cursor-anchored tmux read and the cursorless styled read Herdr uses, naming codex and `codex --version` on failure; it is default-on wherever codex and tmux are installed and spends no tokens:
 
 ```sh
 tests/fm-composer-codex-idle-live-e2e.test.sh
@@ -1675,133 +1648,6 @@ The current catch-up reporting boundary is pinned by `tests/fm-afk-return.test.s
 The fixture captures submitted input through Pi's `input` extension hook, so the lab agent directory needs no provider credentials.
 The daemon injection transport into a live composer keeps its coverage in `tests/fm-afk-inject-herdr-e2e.test.sh` for the harnesses that still run the daemon, and the dedicated Herdr daemon workspace topology is covered by `tests/fm-afk-launch.test.sh` and preserves the captain tab's pane count.
 
-## Zellij
-
-The current compatibility floor and latest verification are Zellij 0.44.0 with `jq` on macOS aarch64.
-All real tests use a uniquely named session and `tests/zellij-test-safety.sh`; they never touch a session named `firstmate` or call all-session deletion.
-
-| Guarantee | Command shape | Result |
-| --- | --- | --- |
-| Headless session | `zellij attach -b <name>` without a TTY | Created a persistent background session and returned. |
-| Session list | `zellij list-sessions --short --no-formatting` | Returned one plain name per line without starting a session. |
-| Create tab | `zellij action new-tab --cwd <dir> --name <title>` | Returned a numeric tab id and focused the new tab when a client was attached. |
-| Pane discovery | `zellij action list-panes --json` | Included terminal pane id, tab id, plugin flag, and top-level `pane_cwd`. |
-| Literal send | `zellij action paste --pane-id <id> -- <text>` | Left text unsubmitted. |
-| Keys | `send-keys --pane-id <id> Enter`, `Esc`, and one argument `Ctrl c` | All three shared operations worked. |
-| Capture | `dump-screen --pane-id <id>` or `--full` | Worked with no attached client; no line-bound flag exists. |
-| Styled capture | `dump-screen --pane-id <id> --ansi` | Preserved ANSI styling ("Composer classification matrix" above); feeds the zellij composer classifier. |
-| Close | `close-tab-by-id <id>` | Removed the live task pane and tab together. |
-| Failure exit | actions against missing targets | Returned exit 0, requiring structural preflight and output-shape validation. |
-
-`pane_cwd` stayed frozen when a foreground subshell changed directory.
-The marker-delimited `pwd` probe returned the live nested cwd and is covered by the real smoke.
-The focus mitigation restored the previously active tab after `new-tab`, with the unavoidable narrow race documented in the operator guide.
-
-```sh
-tests/fm-backend-zellij.test.sh
-tests/fm-backend-zellij-smoke.test.sh
-```
-
-The real lifecycle smoke proved spawn, metadata, nested-subshell worktree discovery, send, capture, unlanded-work refusal, approved local landing, exact tab cleanup, and session cleanup without retaining task-specific ids or branch names here.
-
-## Orca
-
-Real readiness was verified against `/usr/local/bin/orca` with `/Applications/Orca.app` bundle version 1.4.116.
-
-```sh
-orca status --json
-```
-
-Observed fields:
-
-```text
-result.runtime.reachable=true
-result.runtime.state=ready
-```
-
-`orca terminal create --json` returned `result.terminal.handle`.
-`orca worktree create` returned `result.worktree.id` and `result.worktree.path`.
-Speculative bare ids and nested terminal fields were deliberately rejected.
-
-```sh
-tests/fm-backend-orca.test.sh
-tests/fm-backend.test.sh
-tests/fm-bootstrap.test.sh
-```
-
-The fake-Orca suite covers readiness, registration, create response parsing, metadata routing, popup-safe submit, and path-matched release refusal.
-
-## cmux
-
-The current compatibility floor is cmux 0.64, and the active live evidence uses 0.64.17 build 97 on macOS aarch64.
-Real tests use only exact `fm-test-` workspaces guarded by `tests/cmux-test-safety.sh` and never quit or relaunch the captain's app.
-
-```sh
-cmux version
-cmux ping
-```
-
-Observed version:
-
-```text
-cmux 0.64.17 (97) [9ed29d81a]
-```
-
-Source and live checks established the five control modes:
-
-- `off` starts no listener.
-- `cmuxOnly` rejects an external Firstmate process by ancestry.
-- `automation` uses an owner-only 0600 socket with no handshake.
-- `password` uses the same 0600 socket plus `auth <password>`.
-- `allowAll` uses a 0666 socket with no authentication.
-
-The live default rejection was `Access denied - only processes started inside cmux can connect`.
-The live password challenge was `Authentication required - send auth <password> first`.
-The app configuration writer did not retain a hand-added socket password, which is why the operator guide requires Settings and a local Firstmate password source.
-
-Current active CLI findings:
-
-| Guarantee | Command shape | Result |
-| --- | --- | --- |
-| Create | `new-workspace --name <title> --cwd <dir> --focus false --id-format uuids` | Created one workspace with one surface without focusing it. |
-| Fresh readiness | `list-panes --workspace <id> --json --id-format uuids` | Found a brand-new surface before content existed. |
-| Fresh read counterexample | `read-screen` before any write | Returned `internal_error: Failed to read terminal text`. |
-| Literal send | `send --workspace <id> --surface <id> -- <text>` | Left text unsubmitted. |
-| Keys | `send-key ... enter|escape|ctrl-c` | All shared key operations worked. |
-| Nested cwd | `current_directory` plus foreground subshell | Structured cwd froze; the marker-delimited `pwd` probe found the live cwd. |
-| Last surface | `close-surface` on the only surface | Refused with `invalid_state: Cannot close the last surface`. |
-| Last workspace | `close-workspace` on the only workspace in a window | Printed success but left the workspace present. |
-
-The last-workspace workaround was reverified on 2026-07-10 in Automation mode.
-After creating one unfocused unnamed sibling in the same window, `close-workspace` removed the exact task workspace and left only cmux's default sibling.
-A selected non-last workspace closed directly, proving that window cardinality rather than selection is the trigger.
-
-Source inspection confirmed each workspace constructor creates a new UUID with no restored-id input.
-Recovery therefore remains title-based.
-The bundled Claude wrapper was observed stripping `CMUX_*` variables on its failed socket-probe path while retaining the app bundle id, supporting the macOS-only bundle-id and ancestry fallbacks.
-
-```sh
-tests/fm-backend-cmux.test.sh
-tests/fm-backend-cmux-smoke.test.sh
-```
-
-The real smoke proves socket access, fresh readiness, current-path probing, send and keys, bounded capture, title identity, and guarded exact cleanup.
-
-### Claude composer confirmation
-
-The borderless Claude composer confirmation was verified on 2026-08-09 with cmux 0.64.22 build 102 and Claude Code 2.1.226 on macOS aarch64.
-An isolated real Claude worker rendered a bare `❯` plus U+00A0 row between horizontal rules.
-The cmux classifier returned `empty`, and one `fm-send.sh --resolve-key <key> ALBATROSS` command - which used the typed path before ordinary task steers moved to the inbox - appended the matching `resolved` event before the worker reported completion.
-The terminal capture contained exactly one submitted `❯ ALBATROSS` row.
-The dated proof used this command:
-
-```sh
-FM_CMUX_CLAUDE_COMPOSER_LIVE=1 bin/fm-test-run.sh tests/fm-cmux-claude-composer-live-e2e.test.sh
-```
-
-That guard still addresses the worker by task selector, so it no longer reaches the typed submit path and is not a current refresh entry point for this guarantee.
-The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
-
 ## stream
 
 ### Managed primary ownership and execution-bound steering
@@ -1921,26 +1767,6 @@ Re-run the guard after any harness upgrade before trusting this evidence.
 The opencode tail adapter (`bin/fm-stream-opencode-tail.py`) measures a harness-dependent surface of its own: opencode's on-disk SQLite session storage.
 As of 2026-09-19 this host has no live opencode storage to run it against - no opencode binary on `PATH`, no `~/.local/share/opencode/`, and no `opencode.db` anywhere under the home - so the schema proof remains the portable regression's fixture, derived from this host's opencode-history documentation of that storage rather than a recorded live run.
 Dated live end-to-end evidence is deferred until an opencode worker actually runs here: point the adapter at that worker's real `opencode.db` and record the result beside this note.
-
-## Codex App host tools
-
-A reusable Desktop host-tool smoke ran on 2026-07-06 against Codex Desktop bundle version 26.623.101652, build 4674, bundle id `com.openai.codex`.
-Local paths and task-specific ids are intentionally not retained here.
-
-The host-tool sequence was:
-
-1. list a saved project;
-2. create a Desktop-owned worktree thread;
-3. recover and read the thread while active and after completion;
-4. verify the thread appended a Firstmate status line and wrote its report;
-5. send a follow-up to the same thread;
-6. read the completed follow-up;
-7. archive the exact thread;
-8. read the archived transcript with state `notLoaded`.
-
-Observed guarantee: a Desktop-owned thread can write Firstmate lifecycle files when the prompt provides an authorized absolute path, and create, send, read, and archive work at the Desktop host-tool layer.
-The missing guarantee remains a supported shell-callable bridge that lets Firstmate perform those operations against the same visible Desktop endpoint.
-App-server partial methods and raw socket experiments do not satisfy that bridge contract.
 
 ## Cursor Agent CLI
 
@@ -2094,8 +1920,8 @@ Other harnesses on Herdr are unaffected by the edge-detector change.
 All seven live panes of the running default session - one Pi, four Claude, two plain shells - classified identically under the pre-fix and current classifiers.
 
 **Typed-submit confirmation is verified on tmux and Herdr only.**
-Zellij, cmux, Orca, and stream share a submit core that never consults the busy footer, so a typed-plane Cursor send there lands but `fm-send` reports delivery unconfirmed and exits non-zero; ordinary text steers ride the durable inbox and exit 0 at enqueue.
-Teaching that shared core the same transition is deliberately separate work, because it changes the submit path for every harness on all of those backends and needs its own live validation on each.
+Stream uses a submit core that never consults the busy footer, so a typed-plane Cursor send there lands but `fm-send` reports delivery unconfirmed and exits non-zero; ordinary text steers ride the durable inbox and exit 0 at enqueue.
+Teaching that shared core the same transition is deliberately separate work, because it changes stream's submit path for every harness and needs its own live validation.
 
 The portable regression is `tests/fm-cursor-harness.test.sh`, the composer captures are pinned in `tests/fm-composer-lib.test.sh`, and the Herdr submit and footer behavior is pinned in `tests/fm-backend-herdr.test.sh`.
 Refresh this harness-dependent proof before accepting a cursor upgrade:

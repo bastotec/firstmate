@@ -41,7 +41,7 @@ Secondmate spawns use the existing isolated-home launch path, including Deck's p
 
 ## Secondmate lifecycle
 
-The same owners serve stream, tmux, Herdr, and Zellij secondmate launches: `bin/fm-spawn.sh` selects the home and harness, and `bin/fm-task-inbox-lib.sh` with `bin/fm-send.sh` owns durable steering and the doorbell.
+The same owners serve stream, tmux, and Herdr secondmate launches: `bin/fm-spawn.sh` selects the home and harness, and `bin/fm-task-inbox-lib.sh` with `bin/fm-send.sh` owns durable steering and the doorbell.
 Deck's backend-independent host invariants are documented in `bin/fm-deck-worker.sh`: a watcher wake is never lost between turns, turns never overlap, and failures are reported rather than swallowed.
 `tests/fm-deck-harness.test.sh` exercises those invariants with serialized watcher and stdin turns.
 `tests/fm-backend-stream.test.sh` exercises a Deck home through the real stream transport, including launch, unacknowledged steering, liveness, interrupt, exit, same-endpoint relaunch, and recovery.

@@ -44,6 +44,6 @@ A missing key fails the first turn with Deck's own error in the pane; a quota re
 
 Persistent secondmates and opt-in managed Deck primaries use `../../../../../docs/supervision-protocols/deck.md`.
 [`docs/managed-primary.md`](../../../../../docs/managed-primary.md) owns the managed-primary setup and supported boundary; directly launched, unregistered primary processes cannot be adopted.
-A Deck secondmate uses the same persistent driver and durable inbox wake path on every backend that hosts secondmates: tmux, Herdr, Zellij, or stream locally, and Herdr remotely.
+A Deck secondmate uses the same persistent driver and durable inbox wake path on every backend that hosts secondmates: tmux, Herdr, or stream locally, and Herdr remotely.
 The driver header owns startup, lock lifetime, watcher wake turns, and the supervisor-specific completion postcondition.
 Daemon-owned away/quiet mode (`state/.afk`) is refused rather than competing with a daemon; clear that posture through the owning supervisor before relaunch.

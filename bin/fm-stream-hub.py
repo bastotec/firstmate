@@ -27,8 +27,7 @@ late acknowledgement changes); HTTP 404 no_such_order means only that this id
 is absent, possibly evicted or lost on restart, never that its worker is gone.
 No command text or endpoint capability is exposed by this read.
 
-The five-point backend lifecycle contract in docs/codex-app-backend.md maps
-onto these routes:
+The five-point backend lifecycle contract maps onto these routes:
 
   1. create a task endpoint with a durable id   the agent creates the pty and
                                                 POSTs /v1/agent/endpoints

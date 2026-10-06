@@ -1,12 +1,9 @@
 # ShellCheck 0.11.0
 # Cold per-root RSS (KiB), macOS arm64, 2026-09-23; not a heap limit.
 # Refresh using fm-lint.sh header; stale source-closure fingerprints run alone.
-bin/backends/cmux.sh	9ae314f6e802cddc5b5cbf7310da9b38b2e2dda5efd0f2860fd7c6a1b5933e08	244944
 bin/backends/herdr.sh	bc7a67a178ed9fa10c2a8753363e3b0926f785a5873fe2492b0fc35a385a843c	1264320
-bin/backends/orca.sh	463a9f3b65cf378878dd43a141504f3416fe305c37a7aa227e5b0be279a31686	216224
 bin/backends/stream.sh	7c4ae7b6646f84490ef15e9682cbe5450a3e50fe1124de32e90f52074a65bfd0	316656
 bin/backends/tmux.sh	8f67c5f45f1b4d1e6479b35d7f95269d851ccdbe5dca35367db3463fb4eed2d7	461616
-bin/backends/zellij.sh	f429b484859e77641c396494d89c24676beba3fe82d891ef21e81fc39685ff64	260272
 bin/fm-account-slot-lib.sh	7158051651282ae9f752706400eabe5b9755b6fbdd2b7c29a78c47b3ea5f1c7e	56448
 bin/fm-account-slot.sh	7eb75205267285037ae11b40ccc17b3ded965d1cb2af73c00895cdfda76a4e98	101552
 bin/fm-afk-contract.sh	766070dbc46bb494e7578958d49e0647bbed257f45f7db5f428cc35473d940ce	399584
@@ -17,7 +14,6 @@ bin/fm-agent-process-lib.sh	032d9aaee0e9222f28b40985fd5f27e488ecdc760b30b323e2a0
 bin/fm-agy-trust.sh	0802642fc7ba3f4daaca48373adc810ed84a4f339b21ec5f730fc396f4771f42	36832
 bin/fm-arm-pretool-check.sh	b008a974700621d6d8afad37affd5a2fd61f0cf3aa4402673333350fb7dbe0ae	31824
 bin/fm-ask-triage.sh	4cafe4c8f3814b34603d4b839c10f9dff911b92019dce1273ef7faaef90bd09d	341216
-bin/fm-backend-hometag-lib.sh	b1e127ad86c76bb9620b6360ff35cdb93bf6dd79c861b2cb769f81e32e5904ad	24400
 bin/fm-backend.sh	0a68859a1a6bd60c55302f4430399476e316b56ae3efab01138d9d04a000367d	103584
 bin/fm-backlog-handoff.sh	8212bdd05232bd7e1f5f217f3cc960238fd30fc8230aa4e2cfe67c697f60c49b	5089568
 bin/fm-backlog-receive.sh	64db49cdcb82c4fa108100538174fd73bb744b8cf946d33379a52a862632e4b9	667872
@@ -191,7 +187,6 @@ bin/fm-x-lib.sh	0d0a2766e903c5554f26fe2e97d1dff95d89599b20e4004574b49df50a5e5954
 bin/fm-x-link.sh	bcf0722146d61878f0b24060b4839ca8012e969c9e04714f12645a364f9eec03	1404064
 bin/fm-x-poll.sh	5068bfcfeb6daae840382e21ccf60413fb75973cde199864000e81eaf9a5c10c	1180928
 bin/fm-x-reply.sh	4604f96f9521ddcd3d5b5f777a6fda2af0945431394ebbd9000aaecf4d142e7f	461056
-tests/cmux-test-safety.sh	b56b4c90ae74c41ba072f1184091dd4980dc6cd712c55ea8924c6eb3c5d1c0bf	22480
 tests/fixtures.sh	03f847a8fe3d52787644c2b763473d86de77889f6f4c1df74dbb6830e3be17d0	80096
 tests/fm-account-slot-live-e2e.test.sh	724f773fe207ad358abd58de99b5fa11c15e516a9bd04509f8a9b8f0b00e9646	111840
 tests/fm-account-slot.test.sh	82824d22fc19494b136f31688041afbae96574c27729e3b3821c8dee5e78e7bd	177424
@@ -206,9 +201,6 @@ tests/fm-agy-signals-live-e2e.test.sh	5cfb5d86fdaf1c76bd1f73e489dd340bbe50528af6
 tests/fm-arm-pretool-check.test.sh	87a814d8448f8e1f0c39249daad8a9aa91f37c0e06d6ef63c74761ecd717b67e	120064
 tests/fm-ask-triage.test.sh	7fa696c16eb41c6b60d569c136b388ddab09fe180c8b4f8bf4428df39e585a5d	133360
 tests/fm-ask-user-authority.test.sh	86c18aa6a5ed251ace7591062b474ce9eca4150b6447c4a41bbe0f2c228225b7	78080
-tests/fm-backend-autodetect-smoke.test.sh	2972a82caa3151288a38adc7330f45d90e2abbb05cf6905ef0ecc26a68da10ea	45152
-tests/fm-backend-cmux-smoke.test.sh	ac0a7bd97975cd8e3cb6ad07a806358d3739fb2eb1026c6a20679bd3454f5e35	40016
-tests/fm-backend-cmux.test.sh	9f2f6ae9d1262c06902ef0849d875c406808c84157ae2f3e76f95987d86e6757	709888
 tests/fm-backend-herdr-agent-exit-shell-e2e.test.sh	0ba860ed361addc737fa26177b7a71b561045325185f9a6d29e781caa0d32465	102624
 tests/fm-backend-herdr-eventwait-smoke.test.sh	fb2f54ee25e878d35133b864b2a0bdcc3fcc91e8f7851b697177850a395ab0bd	44144
 tests/fm-backend-herdr-focus-flash-e2e.test.sh	b196a122fa1564ca3e26a51843e8dcd270b392c0dad5acc77bf4dbe7bd22b5ef	84080
@@ -220,11 +212,8 @@ tests/fm-backend-herdr-smoke.test.sh	121fb6755273c8e8909e85df434ee2174f9d565c468
 tests/fm-backend-herdr-stale-active-tab-e2e.test.sh	ac7062757ae742d90300be8fd4e1fded6b0c6a095a4f5f62016f8d1711544812	28704
 tests/fm-backend-herdr-workspace-per-home-e2e.test.sh	fb3ac5d761590a38246b238af09a5f22740b401fa49734cf89788b960a2d9a38	68720
 tests/fm-backend-herdr.test.sh	77b62f826c6f3ceebbb6e24fe334011300c1f1c59698604c934fd5e4c3052e00	3825728
-tests/fm-backend-orca.test.sh	6636003ebc09763769e0768e49cf1847058275205dbfe1643a8f9061c3e4bd4f	278784
 tests/fm-backend-stream.test.sh	cc8896246130f37ec09f1bf342742ebc6887bc84325902ddc1b33bcae2a8f0cc	783648
 tests/fm-backend-tmux-smoke.test.sh	f1161379e6497afab8f27aa16c15138cceef5019c76e89fa56f58ab6959f5db2	47280
-tests/fm-backend-zellij-smoke.test.sh	788ea56b5b89b35981612f8e8ea755ebb354db6702bce9987cbbc54056fe12d6	47184
-tests/fm-backend-zellij.test.sh	be4cdb070c38d0e59371f0243e5f106b67e0ef71c5f0417b420832626d04ffd9	734832
 tests/fm-backend.test.sh	77b4f05ed3697a20e61d154401e2e64c96225e050074b3aadeb15e8fbbf648b1	190720
 tests/fm-backlog-atomicity.test.sh	3e321e0256ce31b58124bcaa1032dbad7be258f83a697994fb49acb12ddb0ec8	832240
 tests/fm-backlog-handoff.test.sh	229b9dadab36112edd4f00cb3e4b583bbee1874406ab082302e1225c271695f5	207120
@@ -249,7 +238,6 @@ tests/fm-classify-decision-key.test.sh	932da33e12915815095846c0594520f86da0bc9b1
 tests/fm-claude-stop-autoarm-live-e2e.test.sh	f021a6dce0ca02da9bce25807429bd1fa7cc5edb9edbb1e9892bab11f5ffdf49	92432
 tests/fm-claude-stop-autoarm.test.sh	7957993249b28d78b682516db8a6eb8172d23b445fddc8a3e3e8bbb4929a83ec	219392
 tests/fm-claude-trust.test.sh	37b303875b648fe0ca1850597ba19c58027db817fa33f38078413ab26c832eb7	175328
-tests/fm-cmux-claude-composer-live-e2e.test.sh	a098025d95efff1327c43b01b6f6ebc14b4aa9ef03f76701ac645faf1c929fcb	194816
 tests/fm-codex-continuity-live-e2e.test.sh	b7511b8c5905304cbfea95d7f164c1c471a0ef4b07fec1badc1ee7cb5a1ebffd	79088
 tests/fm-composer-codex-idle-live-e2e.test.sh	9db5bf62ef2cb445141aaab4405c64f87e0ce72ba68177bb617738cd34353388	90352
 tests/fm-composer-ghost.test.sh	f2dbcc1c2173b836ee40813e6e05839a9face8ef782329835f3b7105ba2610d9	133360
@@ -424,4 +412,3 @@ tests/lib.sh	03f847a8fe3d52787644c2b763473d86de77889f6f4c1df74dbb6830e3be17d0	62
 tests/remote-herdr-fixture.sh	6a4b60575fa36ab5e23e0e19d67510f9c15b1e7cb6b0caa8f4aafa271b4f15ff	23504
 tests/secondmate-helpers.sh	e655191e6ec5e94193c8be5dcebd10e608722d14327d24bb8cad39e5d30247df	79072
 tests/wake-helpers.sh	03f847a8fe3d52787644c2b763473d86de77889f6f4c1df74dbb6830e3be17d0	85248
-tests/zellij-test-safety.sh	b3d887934f0e9f832f42d0b6dd208fe811b1df5a4f95bf5946b0849794bb441f	22496

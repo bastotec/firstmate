@@ -217,8 +217,8 @@ test_bin_only_advance_restarts() {
 test_unprovable_runtime_gets_fallback_nudge() {
   local w out
   w=$(new_world t3c)
-  # zellij has no recovery-grade agent-state classifier, so no restart there can
-  # ever prove the old agent stopped and the replacement came up.
+  # A backend with no adapter (zellij was removed) has no recovery-grade
+  # agent-state classifier, so no restart there can ever prove the old agent stopped and the replacement came up.
   add_sm "$w" sm1 claude zellij
   bump_origin "$w" instr
 

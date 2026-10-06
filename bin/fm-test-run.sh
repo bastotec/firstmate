@@ -301,7 +301,7 @@ family_for_basename() {
     fm-watcher-lock.test.sh|fm-inactive-reconcile.test.sh)
       printf '%s\n' watcher-wake-lock
       ;;
-    fm-afk-inject-herdr-e2e.test.sh|fm-afk-launch.test.sh|fm-backend-autodetect-smoke.test.sh|\
+    fm-afk-inject-herdr-e2e.test.sh|fm-afk-launch.test.sh|\
     fm-backend-herdr-eventwait-smoke.test.sh|fm-backend-herdr-presentation-e2e.test.sh|\
     fm-backend-herdr-launcher-workspace-e2e.test.sh|\
     fm-backend-herdr-prune-safety-e2e.test.sh|fm-backend-herdr-respawn-idem-e2e.test.sh|\
@@ -335,7 +335,6 @@ family_for_basename() {
     fm-account-slot-live-e2e.test.sh|fm-afk-pi-herdr-return-e2e.test.sh|\
     fm-bearings-board-lavish-live-e2e.test.sh|\
     fm-claude-stop-autoarm-live-e2e.test.sh|\
-    fm-cmux-claude-composer-live-e2e.test.sh|\
     fm-composer-matrix-live-e2e.test.sh|\
     fm-composer-codex-idle-live-e2e.test.sh|\
     fm-codex-continuity-live-e2e.test.sh|fm-grok-continuity-live-e2e.test.sh|\
@@ -377,15 +376,6 @@ family_for_basename() {
     fm-fleet-snapshot-view.test.sh|fm-home-summary-refresh.test.sh)
       printf '%s\n' snapshot-bearings
       ;;
-    fm-backend-cmux.test.sh|fm-backend-cmux-smoke.test.sh)
-      printf '%s\n' cmux
-      ;;
-    fm-backend-zellij.test.sh|fm-backend-zellij-smoke.test.sh)
-      printf '%s\n' zellij
-      ;;
-    fm-backend-orca.test.sh)
-      printf '%s\n' orca
-      ;;
     fm-branch-supervision.test.sh|fm-busy-adapter-wiring.test.sh|\
     fm-busy-state.test.sh|fm-classify-corr-token.test.sh|\
     fm-claude-stop-autoarm.test.sh|fm-cursor-harness.test.sh|\
@@ -412,7 +402,6 @@ expected_gate_skip_for_family() {
   case "$1" in
     real-herdr-gated) printf '%s\n' herdr ;;
     live-harness-optin) printf '%s\n' live-capability ;;
-    cmux|zellij|orca) printf '%s\n' optional-binary ;;
     snapshot-bearings) printf '%s\n' optional-binary ;;
     *) printf '%s\n' none ;;
   esac
@@ -430,9 +419,6 @@ backend-dispatch
 pr-forge
 afk
 snapshot-bearings
-cmux
-zellij
-orca
 standalone
 unclassified
 EOF
@@ -642,7 +628,7 @@ emit_via_file() {
 
 # The portable serial remainder: every tests/*.test.sh that is neither
 # proven-isolated nor real-herdr-gated. Watcher, lock, AFK, real tmux, daemon,
-# secondmate lifecycle, bootstrap, the live-harness-optin family, GUI-backend,
+# secondmate lifecycle, bootstrap, the live-harness-optin family,
 # and other unproven work stays here. Derived rather than enumerated so a newly added test
 # lands here by default instead of falling out of every lane.
 list_portable_serial() {
@@ -689,13 +675,8 @@ tests/fm-agy-harness.test.sh 48173
 tests/fm-agy-signals-live-e2e.test.sh 105
 tests/fm-ask-triage.test.sh 14351
 tests/fm-ask-user-authority.test.sh 171
-tests/fm-backend-cmux-smoke.test.sh 44
-tests/fm-backend-cmux.test.sh 5140
-tests/fm-backend-orca.test.sh 26175
 tests/fm-backend-stream.test.sh 295585
 tests/fm-backend-tmux-smoke.test.sh 399
-tests/fm-backend-zellij-smoke.test.sh 22
-tests/fm-backend-zellij.test.sh 11698
 tests/fm-backend.test.sh 22395
 tests/fm-backlog-atomicity.test.sh 288280
 tests/fm-backlog-handoff.test.sh 54892
@@ -717,7 +698,6 @@ tests/fm-classify-decision-key.test.sh 1190
 tests/fm-claude-stop-autoarm-live-e2e.test.sh 58
 tests/fm-claude-stop-autoarm.test.sh 60892
 tests/fm-claude-trust.test.sh 23751
-tests/fm-cmux-claude-composer-live-e2e.test.sh 72
 tests/fm-codex-continuity-live-e2e.test.sh 98
 tests/fm-composer-codex-idle-live-e2e.test.sh 79
 tests/fm-composer-matrix-live-e2e.test.sh 109
@@ -1425,19 +1405,10 @@ families_for_changed_path() {
       printf '%s\n' real-herdr-gated
       printf '%s\n' backend-dispatch
       ;;
-    bin/backends/zellij*|tests/zellij-test-safety.sh)
-      printf '%s\n' zellij
+    bin/backends/tmux.sh)
       printf '%s\n' backend-dispatch
       ;;
-    bin/backends/cmux*|tests/cmux-test-safety.sh)
-      printf '%s\n' cmux
-      printf '%s\n' backend-dispatch
-      ;;
-    bin/backends/orca*|bin/backends/tmux.sh)
-      printf '%s\n' backend-dispatch
-      printf '%s\n' orca
-      ;;
-    bin/fm-backend.sh|bin/fm-backend-hometag-lib.sh)
+    bin/fm-backend.sh)
       printf '%s\n' backend-dispatch
       printf '%s\n' real-herdr-gated
       ;;

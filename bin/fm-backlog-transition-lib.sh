@@ -1196,7 +1196,7 @@ fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen
 # what has been proved by the time it publishes. Teardown publishes UNCONFIRMED
 # and re-stages to confirmed once its endpoint gate passes: at publish time
 # nothing has proved this task's worker stopped, and a refusal between here and
-# that gate - a failed worktree return, an unmatched Orca worktree id - would
+# that gate - a failed worktree return - would
 # otherwise leave a record replay reads as an ordinary interrupted close and
 # finishes, removing the task record and closing the row for a worker nobody
 # even asked to stop. bin/fm-retire-endpoint.sh publishes CONFIRMED, because

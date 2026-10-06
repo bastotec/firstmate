@@ -9,8 +9,7 @@
 # arm) and at fm_backend_herdr_workspace_label's FM_HOME read; neither is
 # exercised by the adapter-primitive smoke test.
 #
-# Mirrors tests/fm-backend-autodetect-smoke.test.sh's isolated-session
-# convention: a private throwaway HERDR_SESSION (never the captain's
+# Uses an isolated-session convention: a private throwaway HERDR_SESSION (never the captain's
 # default), scratch FM_HOME(s), and scratch local-only projects.
 #
 # Safety (2026-07-02 incident, see tests/herdr-test-safety.sh): cleanup uses
@@ -60,8 +59,7 @@ command -v treehouse >/dev/null 2>&1 || { echo "skip: treehouse not found (requi
 herdr_forget_inherited_pane
 
 # TMP_ROOT is physically resolved (mktemp -d "$(pwd -P)"-relative) for the same
-# low-noise scratch fixture shape used by
-# tests/fm-backend-autodetect-smoke.test.sh.
+# low-noise scratch fixture shape used by the other real-Herdr smoke tests.
 # fm-spawn no longer needs this as a symlink workaround: fm-spawn-symlink-guard-s8
 # canonicalized project and backend cwd comparisons in the worktree-discovery
 # poll.
