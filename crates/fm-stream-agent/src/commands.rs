@@ -144,6 +144,7 @@ impl Agent {
         let mut loaded = receiver.is_none();
         let mut load_due = Instant::now();
         let mut poll_due = Instant::now();
+        let mut take_started = Instant::now();
         let mut backoff = 2.0f64;
         let mut shutdown: Option<Instant> = None;
         let mut wake_generation = self.wake.snapshot();
@@ -157,6 +158,9 @@ impl Agent {
             > = None;
             let mut post: Option<(String, std::thread::ScopedJoinHandle<'_, bool>)> = None;
             loop {
+                // Taken before looking at the threads, so a take or post that
+                // finishes after this point still ends this iteration's wait.
+                let tick = self.tick.snapshot();
                 let instant = Instant::now();
                 let wall = now();
                 let stopping =
@@ -179,7 +183,17 @@ impl Agent {
                     match take.take().unwrap().join().expect("command take thread") {
                         Ok(answer) => {
                             backoff = 2.0;
-                            poll_due = instant;
+                            // Poll again at once after a command (the next key
+                            // is likely close behind); an empty answer keeps the
+                            // old 100 ms floor, so a zero wait never spins.
+                            poll_due = if answer["commands"]
+                                .as_array()
+                                .is_some_and(|commands| !commands.is_empty())
+                            {
+                                instant
+                            } else {
+                                take_started + Duration::from_millis(100)
+                            };
                             let answer = Arc::new(answer);
                             for command in answer["commands"].as_array().into_iter().flatten() {
                                 if let Some(id) = command["command_id"].as_str() {
@@ -351,14 +365,17 @@ impl Agent {
                         wake_generation = generation;
                     }
                     if Instant::now() >= poll_due {
+                        take_started = Instant::now();
                         let path = &path;
                         take = Some(scope.spawn(move || {
-                            self.hub.call(
+                            let answer = self.hub.call(
                                 "GET",
                                 path,
                                 None,
                                 Duration::from_secs_f64(self.options.poll_secs + 15.0),
-                            )
+                            );
+                            self.tick.notify();
+                            answer
                         }));
                     }
                 }
@@ -384,7 +401,7 @@ impl Agent {
                         post = Some((
                             id,
                             scope.spawn(move || {
-                                matches!(
+                                let settled = matches!(
                                     self.hub.call(
                                         "POST",
                                         "/v1/agent/results",
@@ -396,12 +413,16 @@ impl Agent {
                                     // it is not a verdict on this result and
                                     // the hub may still be able to accept it.
                                     Ok(_) | Err(Error::Rejected)
-                                )
+                                );
+                                self.tick.notify();
+                                settled
                             }),
                         ));
                     }
                 }
-                std::thread::sleep(Duration::from_millis(100));
+                // Timers (retries, Deck application) still run on this
+                // 100 ms cadence; a returning take or post ends it at once.
+                self.tick.settle(tick, Duration::from_millis(100));
             }
         });
     }

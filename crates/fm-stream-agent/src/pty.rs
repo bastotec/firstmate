@@ -168,13 +168,18 @@ impl Pty {
         Ok(())
     }
     pub fn read(&self, buffer: &mut [u8]) -> io::Result<Option<usize>> {
+        self.read_within(buffer, 100)
+    }
+    /// Read what is available, waiting at most `millis` for the first byte.
+    /// The wait only bounds an idle read: output returns as soon as it exists.
+    pub fn read_within(&self, buffer: &mut [u8], millis: i32) -> io::Result<Option<usize>> {
         let mut fd = libc::pollfd {
             fd: self.master.as_raw_fd(),
             events: libc::POLLIN,
             revents: 0,
         };
         // SAFETY: the fd is owned for the lifetime of self; poll borrows this stack record.
-        let rc = unsafe { libc::poll(&mut fd, 1, 100) };
+        let rc = unsafe { libc::poll(&mut fd, 1, millis) };
         if rc < 0 {
             return Err(io::Error::last_os_error());
         }

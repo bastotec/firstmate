@@ -152,11 +152,25 @@ Ordinary supervision does not need any of that.
   Endpoint exit status is propagated; a negative signal status becomes `128 + signal`, and an unknown status becomes 1.
 - Every session exit restores terminal attributes and locally leaves the alternate screen, shows the cursor, disables bracketed paste and mouse reporting, and resets SGR before printing the final message.
 
+When the endpoint's native agent runs on the same machine as the client, the session skips the hub entirely and runs over that agent's private unix socket, `<dir>/<endpoint-id>.sock`:
+
+- `<dir>` is `FM_STREAM_LOCAL_DIR`, else `/tmp/fm-stream-<uid>`. It must be a directory this user owns with no group or other permissions (the agent creates it 0700), the socket is 0600, and the agent only serves a peer with its own uid. Anything else disables the fast path rather than trusting it.
+- The agent keeps its own copy of the hub's screen model fed with the same bytes it publishes, so the session has the same shape: resize first, then a snapshot and the output that continues exactly after it, every keystroke written straight to the pseudoterminal, resizes forwarded, Ctrl-] and the signals detaching after a drain the agent confirms by closing its end, at most two seconds, and the endpoint's exit status propagated.
+  A client that falls far enough behind to queue 4096 output chunks is cut off with a message rather than stalling the endpoint.
+- Output still reaches the hub for every other watcher, and a local resize reaches the hub's screen in order with that output, but a session in progress does not depend on the hub at all.
+- No socket, a stale one, a Python agent, or an endpoint on another machine falls back to the hub path above. `FM_STREAM_ATTACH_LOCAL=0` forces the hub path.
+- A long `FM_STREAM_LOCAL_DIR` can push the socket path past the 104-byte limit macOS puts on it, which also just disables the fast path.
+
+Both paths depend on how the agent publishes: it reads the pseudoterminal as fast as the program writes, takes whatever more arrives within a millisecond (bounded at 8 ms and 64 KiB) as one burst, and hands the burst to local clients at once and to the hub in one request over a kept-alive connection.
+A full-screen redraw therefore leaves as one frame rather than one round trip per kernel read, which is what painted a `deck chat` redraw line by line.
+The command poll wakes as soon as a take or result post returns instead of on a 100 ms tick, and the native hub sends with `TCP_NODELAY`.
+`tests/assets/stream-attach-bench.py` measures keystroke echo and redraw paint time through a delay proxy that stands in for the tunnel to a remote hub; with 10 ms round trip and a 26 KB, 200-line frame, the hub path went from 52 ms echo and 413 ms paint spread to about 34 ms and 1 ms, and the same-machine path echoes in about 3 ms and paints a full redraw in about 11 ms.
+
 The wrapper passes the token to the native `fm-stream-agent attach` client through the environment, never argv.
 Interactive attach needs both `subscribe` and `control` grants; [Security](#security) owns token classes and configuration.
 The client requires [native binaries](#implementation-and-native-binaries) whatever `config/stream-impl` says, including in a Python home.
 Against the Python rollback hub it starts from the screen without exact offset continuity and cannot resize or send non-UTF-8 bytes; a Python-backed endpoint on the native hub supports exact-offset output but refuses resize and raw-byte input.
-`tests/fm-stream-attach-rust.test.sh` drives it from a real PTY against a disposable native hub and agent.
+`tests/fm-stream-attach-rust.test.sh` drives it from a real PTY against a disposable native hub and agent, over both the hub path and the same-machine socket (the latter with the hub address pointing nowhere).
 
 ## Bridge feed
 
@@ -213,6 +227,7 @@ Live comparisons exclude process-local clocks; help presentation, top-level comm
 Its `--help` owns the full option surface.
 The port uses the shared wire protocol with Reqwest/rustls, Serde JSON, POSIX PTYs, and signal-hook; it needs no Python interpreter at runtime.
 The adapter binds `FM_STREAM_CODE_ROOT` to its checkout so cached native binaries can invoke the existing `bin/fm-task-inbox-lib.sh` writer; when launching the agent directly outside the repository, set that variable to the repository root.
+`crates/fm-stream-agent/src/local.rs` owns the same-machine attach socket and its wire format ([Interactive attach](#interactive-attach)).
 `crates/fm-stream-agent/src/receiver.rs` implements the native Deck application interface described under [Command path](#command-path); `crates/fm-stream-agent/src/commands.rs` owns the Rust scheduler and durable result reconciliation.
 The native receiver scans both the task inbox and its `handled/` directory, leaving ordinary steering and unparseable stream-order sources untouched rather than letting them block other orders or recovery.
 Invalid UTF-8, missing source framing, invalid JSON bindings, and non-object bindings are skipped; filesystem errors and malformed receiver-owned recovery records still fail recovery.
@@ -364,6 +379,7 @@ Agents retain the capability only in memory, and listings, state reads, logs, an
 [Command path](#command-path) owns Bridge order compatibility; the endpoint authentication here also protects those orders.
 The Rust bridge remains a read-only feed, not a command adapter.
 The bundled viewer page is served without a credential - it is static, and the token it reads out of the URL fragment is what its own requests carry - but every data route behind it is authenticated, and opening it with a viewing token gives a read-only view whose send box is refused.
+The same-machine attach socket ([Interactive attach](#interactive-attach)) carries no token: it is a 0600 socket in a 0700 directory, served only to the agent's own uid, which already holds the agent's credentials and could drive its pseudoterminal directly.
 
 ### The hub speaks plain HTTP
 

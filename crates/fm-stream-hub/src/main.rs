@@ -1053,6 +1053,9 @@ fn run() -> std::result::Result<(), String> {
                 tokio::time::timeout(Duration::from_millis(200), listener.accept()).await
             {
                 let (socket, _) = accepted.map_err(|e| e.to_string())?;
+                // Output is pushed to subscribers as it arrives, often a few
+                // bytes of echo: never let Nagle hold it for an ACK.
+                let _ = socket.set_nodelay(true);
                 let h = hub.clone();
                 tokio::spawn(async move {
                     let service =

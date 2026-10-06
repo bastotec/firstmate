@@ -6,10 +6,17 @@
 //! forwards local resizes as hub `resize` commands, and detaches on one key
 //! (Ctrl-] by default) without touching the endpoint. docs/stream-backend.md
 //! "Interactive attach" owns the operator contract.
+//!
+//! When the endpoint's agent runs on this same machine, the same session runs
+//! over the agent's private unix socket instead (local.rs), never touching the
+//! hub; FM_STREAM_ATTACH_LOCAL=0 forces the hub path.
+use crate::local;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::blocking::{Client, Response};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::fs::MetadataExt;
+use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -249,6 +256,31 @@ pub fn run(args: &[String]) -> Result<(), String> {
     if unsafe { libc::isatty(0) } != 1 {
         return Err("interactive attach needs a terminal on stdin".into());
     }
+    let resized = Arc::new(AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    for (signal, flag) in [
+        (signal_hook::consts::SIGWINCH, &resized),
+        (signal_hook::consts::SIGINT, &stop),
+        (signal_hook::consts::SIGTERM, &stop),
+        (signal_hook::consts::SIGHUP, &stop),
+    ] {
+        signal_hook::flag::register(signal, flag.clone()).map_err(|e| e.to_string())?;
+    }
+    if std::env::var("FM_STREAM_ATTACH_LOCAL").as_deref() != Ok("0") {
+        if let Some(stream) = connect_local(&session.endpoint) {
+            if let Some((snapshot, reader, writer)) = handshake(&session.endpoint, stream)? {
+                return run_local(
+                    session.endpoint,
+                    snapshot,
+                    reader,
+                    writer,
+                    detach,
+                    resized,
+                    stop,
+                );
+            }
+        }
+    }
     let (status, task) = session.json("GET", &session.task_path(""), None)?;
     if status != 200 {
         return Err(format!(
@@ -259,16 +291,6 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     if !task["task"]["closed_at"].is_null() {
         return Err(format!("endpoint {} has closed", session.endpoint));
-    }
-    let resized = Arc::new(AtomicBool::new(false));
-    let stop = Arc::new(AtomicBool::new(false));
-    for (signal, flag) in [
-        (signal_hook::consts::SIGWINCH, &resized),
-        (signal_hook::consts::SIGINT, &stop),
-        (signal_hook::consts::SIGTERM, &stop),
-        (signal_hook::consts::SIGHUP, &stop),
-    ] {
-        signal_hook::flag::register(signal, flag.clone()).map_err(|e| e.to_string())?;
     }
     let mut resize_supported = true;
     if let Some((rows, cols)) = local_size() {
@@ -446,11 +468,19 @@ pub fn run(args: &[String]) -> Result<(), String> {
             }
         });
     }
+    let outcome = await_outcome(&inbox, &stop, || {
+        let _ = keys.send(Input::Detach);
+    });
+    conclude(outcome, &stop, raw, &session.endpoint)
+}
+
+/// Wait for the session's outcome. A signal starts a bounded detach drain.
+fn await_outcome(inbox: &mpsc::Receiver<Event>, stop: &AtomicBool, detach: impl Fn()) -> Event {
     let mut drain_until = None;
-    let outcome = loop {
+    loop {
         if stop.load(Ordering::SeqCst) && drain_until.is_none() {
             drain_until = Some(Instant::now() + Duration::from_secs(2));
-            let _ = keys.send(Input::Detach);
+            detach();
         }
         if drain_until.is_some_and(|until| Instant::now() >= until) {
             break Event::Lost(
@@ -465,16 +495,17 @@ pub fn run(args: &[String]) -> Result<(), String> {
             Err(mpsc::RecvTimeoutError::Timeout) => (),
             Err(mpsc::RecvTimeoutError::Disconnected) => break Event::Lost("internal".into()),
         }
-    };
+    }
+}
+
+/// Restore the terminal, say why the session ended, and exit with it.
+fn conclude(outcome: Event, stop: &AtomicBool, raw: RawMode, endpoint: &str) -> ! {
     stop.store(true, Ordering::SeqCst);
     drop(raw);
     let mut stdout = std::io::stdout();
     let (message, code) = match outcome {
         Event::Detach => (
-            format!(
-                "\r\n[detached from {}; it keeps running]\r\n",
-                session.endpoint
-            ),
+            format!("\r\n[detached from {endpoint}; it keeps running]\r\n"),
             0,
         ),
         Event::Closed(exit) => (
@@ -488,6 +519,194 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let _ = stdout.flush();
     // Reader threads may still be blocked in read(); exiting ends them.
     std::process::exit(code);
+}
+
+/// The endpoint's own agent, when it runs on this machine as this user.
+fn connect_local(endpoint: &str) -> Option<UnixStream> {
+    let path = local::socket_path(endpoint)?;
+    // SAFETY: geteuid has no preconditions.
+    let euid = unsafe { libc::geteuid() };
+    if !std::fs::symlink_metadata(&path).is_ok_and(|m| m.uid() == euid) {
+        return None;
+    }
+    let stream = UnixStream::connect(&path).ok()?;
+    local::same_user(&stream).then_some(stream)
+}
+
+fn message_of(payload: &[u8]) -> String {
+    serde_json::from_slice::<Value>(payload)
+        .ok()
+        .and_then(|v| v["message"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unknown error".into())
+}
+
+type Handshake = (Value, UnixStream, Arc<Mutex<UnixStream>>);
+
+/// Hello, with the local size so the agent resizes before its snapshot. An
+/// agent's definitive answer (closed, refused) ends the attach; one that does
+/// not answer sends the client to the hub path instead (Ok(None)).
+fn handshake(endpoint: &str, stream: UnixStream) -> Result<Option<Handshake>, String> {
+    let Ok(mut reader) = stream.try_clone() else {
+        return Ok(None);
+    };
+    let mut writer = stream;
+    let mut hello = json!({ "endpoint": endpoint });
+    if let Some((rows, cols)) = local_size() {
+        hello["rows"] = json!(rows);
+        hello["cols"] = json!(cols);
+    }
+    if local::write_frame(&mut writer, b'H', hello.to_string().as_bytes()).is_err()
+        || reader
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .is_err()
+    {
+        return Ok(None);
+    }
+    let snapshot = match local::read_frame(&mut reader) {
+        Ok(Some((b'S', payload))) => match serde_json::from_slice::<Value>(&payload) {
+            Ok(snapshot) => snapshot,
+            Err(_) => return Ok(None),
+        },
+        Ok(Some((b'C', _))) => return Err(format!("endpoint {endpoint} has closed")),
+        Ok(Some((b'E', payload))) => {
+            return Err(format!(
+                "the local agent refused endpoint {endpoint}: {}",
+                message_of(&payload)
+            ))
+        }
+        _ => return Ok(None),
+    };
+    if reader.set_read_timeout(None).is_err() {
+        return Ok(None);
+    }
+    Ok(Some((snapshot, reader, Arc::new(Mutex::new(writer)))))
+}
+
+/// The same session as the hub path, over the agent's local socket: output
+/// frames written as they arrive, input written straight to the agent, and a
+/// detach that waits for the agent to confirm it has written everything typed
+/// before it.
+fn run_local(
+    endpoint: String,
+    snapshot: Value,
+    mut reader: UnixStream,
+    writer: Arc<Mutex<UnixStream>>,
+    detach: u8,
+    resized: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let raw = RawMode::enter()?;
+    paint(&snapshot);
+    let (events, inbox) = mpsc::channel::<Event>();
+    let detaching = Arc::new(AtomicBool::new(false));
+    // Begin the drain once: stop writing, and let the agent's close prove
+    // that everything before it reached the pty.
+    let begin_detach = {
+        let writer = writer.clone();
+        let events = events.clone();
+        let detaching = detaching.clone();
+        move || {
+            if !detaching.swap(true, Ordering::SeqCst) {
+                let _ = events.send(Event::Detaching(Instant::now() + Duration::from_secs(2)));
+                let _ = writer.lock().unwrap().shutdown(std::net::Shutdown::Write);
+            }
+        }
+    };
+
+    {
+        let events = events.clone();
+        let output = raw.output.clone();
+        let detaching = detaching.clone();
+        std::thread::spawn(move || {
+            let mut stdout = std::io::stdout();
+            loop {
+                match local::read_frame(&mut reader) {
+                    Ok(Some((b'O', bytes))) => {
+                        let active = output.lock().unwrap();
+                        if !*active {
+                            return;
+                        }
+                        let _ = stdout.write_all(&bytes);
+                        let _ = stdout.flush();
+                    }
+                    Ok(Some((b'C', payload))) => {
+                        let exit = serde_json::from_slice::<Value>(&payload)
+                            .map(|v| v["exit_code"].clone())
+                            .unwrap_or(Value::Null);
+                        let _ = events.send(Event::Closed(exit));
+                        return;
+                    }
+                    Ok(Some((b'E', payload))) => {
+                        let _ = events.send(Event::Lost(format!(
+                            "local agent: {}",
+                            message_of(&payload)
+                        )));
+                        return;
+                    }
+                    Ok(Some(_)) => (),
+                    Ok(None) | Err(_) => {
+                        let _ = events.send(if detaching.load(Ordering::SeqCst) {
+                            Event::Detach
+                        } else {
+                            Event::Lost("the local agent closed the connection".into())
+                        });
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let events = events.clone();
+        let writer = writer.clone();
+        let begin_detach = begin_detach.clone();
+        std::thread::spawn(move || {
+            let mut stdin = std::io::stdin().lock();
+            let mut buffer = [0u8; 4096];
+            loop {
+                let (chunk, last) = match stdin.read(&mut buffer) {
+                    Ok(0) | Err(_) => (&buffer[..0], true),
+                    Ok(n) => match buffer[..n].iter().position(|b| *b == detach) {
+                        Some(at) => (&buffer[..at], true),
+                        None => (&buffer[..n], false),
+                    },
+                };
+                if !chunk.is_empty()
+                    && local::write_frame(&mut *writer.lock().unwrap(), b'I', chunk).is_err()
+                {
+                    let _ = events.send(Event::Lost(
+                        "input delivery failed: the local agent connection closed; not retried"
+                            .into(),
+                    ));
+                    return;
+                }
+                if last {
+                    begin_detach();
+                    return;
+                }
+            }
+        });
+    }
+
+    {
+        let stop = stop.clone();
+        let writer = writer.clone();
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                if resized.swap(false, Ordering::SeqCst) {
+                    if let Some((rows, cols)) = local_size() {
+                        let body = json!({ "rows": rows, "cols": cols }).to_string();
+                        let _ =
+                            local::write_frame(&mut *writer.lock().unwrap(), b'Z', body.as_bytes());
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+    }
+    let outcome = await_outcome(&inbox, &stop, begin_detach);
+    conclude(outcome, &stop, raw, &endpoint)
 }
 
 fn exit_status(exit: &Value) -> i32 {

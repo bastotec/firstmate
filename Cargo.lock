@@ -172,6 +172,7 @@ name = "fm-stream-agent"
 version = "2.1.0"
 dependencies = [
  "base64",
+ "east-asian-width",
  "fm-stream-wire",
  "libc",
  "reqwest",
@@ -179,6 +180,7 @@ dependencies = [
  "sha2",
  "signal-hook",
  "unicode-general-category",
+ "unicode-normalization",
 ]
 
 [[package]]
