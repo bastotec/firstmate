@@ -380,7 +380,7 @@ test_stream_endpoint_host() {
     || fail "--stream failed: $out"
   target=$(printf '%s\n' "$out" | sed -n 's/^primary-chat: running in stream endpoint //p')
   [ -n "$target" ] || fail "--stream prints the endpoint target: $out"
-  assert_contains "$out" "attach: bin/fm-stream.sh attach $target" "--stream prints the read-only attach command"
+  assert_contains "$out" "attach: bin/fm-stream.sh attach --interactive $target (Ctrl-] detaches)" "--stream prints the interactive attach command and detach key"
   assert_contains "$out" 'input: bin/fm-send.sh primary <text>' "--stream names the input path"
   assert_contains "$("$STEER" status --home "$home")" "\"endpoint\": \"$target\"" "the record carries the endpoint"
   wait_for 10 "the digest turn inside the endpoint" turns_with "$LAB/deck-stream.log" 'fixture session digest'

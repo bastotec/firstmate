@@ -140,9 +140,8 @@ if [ "$STREAM" = 1 ]; then
     if status=$("$SCRIPT_DIR/fm-primary-steer.sh" status --home "$FM_HOME" 2>/dev/null) \
         && [ "$(printf '%s' "$status" | jq -r '.endpoint // empty')" = "$target" ]; then
       printf 'primary-chat: running in stream endpoint %s\n' "$target"
-      printf 'attach: bin/fm-stream.sh attach %s\n' "$target"
+      printf 'attach: bin/fm-stream.sh attach --interactive %s (Ctrl-] detaches)\n' "$target"
       printf 'input: bin/fm-send.sh primary <text>\n'
-      printf 'note: typing into the TUI needs bin/fm-stream.sh attach --interactive (built separately).\n'
       exit 0
     fi
     sleep 0.1
