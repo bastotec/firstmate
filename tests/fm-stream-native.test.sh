@@ -22,7 +22,7 @@ URL=""
 trap 'fm_test_reap_helper_pids; fm_test_cleanup' EXIT INT TERM
 # tests/lib.sh pins the Python reference for other suites; this one tests the
 # unpinned default, so every case states its own selection.
-unset FM_STREAM_IMPL FM_STREAM_NATIVE_DIR FM_STREAM_NATIVE_CACHE CARGO_TARGET_DIR
+unset FM_STREAM_IMPL FM_STREAM_NATIVE_DIR FM_STREAM_NATIVE_CACHE CARGO_TARGET_DIR CARGO_BUILD_TARGET
 
 new_case() {  # <name>
   fm_test_reap_helper_pids
@@ -166,6 +166,30 @@ test_hub_unit_prints_a_foreground_unit() {
   pass "stream: hub unit prints a systemd user unit for hub start --foreground"
 }
 
+test_hub_unit_refuses_unsafe_paths_and_arguments() {
+  new_case unsafe-unit
+  local path out repo="$CASE_DIR/checkout with spaces"
+  for path in "$CASE_DIR/home with spaces" "$CASE_DIR/home\"quote" "$CASE_DIR/home'quote" \
+    "$CASE_DIR/home%specifier" "$CASE_DIR/home\\backslash" "$CASE_DIR/home\$variable"; do
+    if out=$(FM_HOME="$path" "$ROOT/bin/fm-stream.sh" hub unit 2>"$CASE_DIR/unit.error"); then
+      fail "hub unit accepted an unsafe home: $path"
+    fi
+    assert_equals "" "$out" "refusal must not emit a partial unit"
+    assert_grep "hub unit requires paths and arguments" "$CASE_DIR/unit.error" "refusal should explain the unsupported path"
+  done
+  mkdir -p "$repo"
+  cp -R "$ROOT/bin" "$repo/"
+  if out=$(FM_HOME="$CASE_DIR/home" "$repo/bin/fm-stream.sh" hub unit 2>"$CASE_DIR/unit.error"); then
+    fail "hub unit accepted an unsafe executable path"
+  fi
+  assert_equals "" "$out" "an unsafe executable path must not emit a unit"
+  if out=$(FM_HOME="$CASE_DIR/home" "$ROOT/bin/fm-stream.sh" hub unit --bind $'127.0.0.1\nRestart=no' 2>"$CASE_DIR/unit.error"); then
+    fail "hub unit accepted a directive injection in --bind"
+  fi
+  assert_equals "" "$out" "an unsafe argument must not emit a unit"
+  pass "stream: hub unit refuses unsafe homes, executable paths and arguments without emitting a unit"
+}
+
 # A throwaway checkout with tracked crates/, so the source key is real.
 new_checkout() {
   local repo="$CASE_DIR/repo"
@@ -180,10 +204,16 @@ new_checkout() {
   cat > "$CASE_DIR/fakebin/cargo" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CASE_DIR/cargo.calls"
-mkdir -p "\${CARGO_TARGET_DIR:-target}/release"
+output="\${CARGO_TARGET_DIR:-target}"
+if [ -n "\${CARGO_BUILD_TARGET:-}" ]; then
+  output="\$output/\$CARGO_BUILD_TARGET"
+elif [ -f .cargo/config.toml ]; then
+  output="\$output/configured-target"
+fi
+mkdir -p "\$output/release"
 for name in fm-stream-hub fm-stream-agent fm-stream-bridge; do
-  printf '#!/bin/sh\necho %s\n' "\$name" > "\${CARGO_TARGET_DIR:-target}/release/\$name"
-  chmod +x "\${CARGO_TARGET_DIR:-target}/release/\$name"
+  printf '#!/bin/sh\necho %s\n' "\$name" > "\$output/release/\$name"
+  chmod +x "\$output/release/\$name"
 done
 SH
   chmod +x "$CASE_DIR/fakebin/cargo"
@@ -253,6 +283,47 @@ test_relative_target_dir_installs_checkout_binaries() {
   pass "stream native: relative CARGO_TARGET_DIR resolves once against the checkout"
 }
 
+test_build_unsets_environment_target() {
+  new_case environment-target
+  new_checkout
+  local out dir
+  out=$(CARGO_BUILD_TARGET=configured-target native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build 2>&1) \
+    || fail "environment target should not redirect the native build: $out"
+  dir=${out#built }
+  assert_equals fm-stream-agent "$("$dir/fm-stream-agent")" "the installed executable should come from the native build"
+  assert_absent "$CASE_DIR/repo/target/configured-target" "the build must unset CARGO_BUILD_TARGET"
+  pass "stream native: builds ignore CARGO_BUILD_TARGET and install native artifacts"
+}
+
+test_configured_target_refuses_stale_release_artifacts() {
+  new_case configured-target
+  new_checkout
+  local out name dir
+  mkdir -p "$CASE_DIR/repo/target/release" "$CASE_DIR/repo/.cargo"
+  for name in fm-stream-hub fm-stream-agent fm-stream-bridge; do
+    printf '#!/bin/sh\necho stale\n' > "$CASE_DIR/repo/target/release/$name"
+    chmod +x "$CASE_DIR/repo/target/release/$name"
+    touch -t 200001010000 "$CASE_DIR/repo/target/release/$name"
+  done
+  printf '[build]\ntarget = "configured-target"\n' > "$CASE_DIR/repo/.cargo/config.toml"
+  dir=$(native "$PATH" fm_stream_native_dir) || fail "could not resolve native directory"
+  if out=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale 2>&1); then
+    fail "a redirected build installed stale release artifacts: $out"
+  fi
+  assert_contains "$out" "build.target" "refusal should name the target configuration"
+  assert_contains "$out" "nothing was installed" "refusal should explain the installation outcome"
+  assert_absent "$dir" "a redirected build must not publish a source-key install or stamp"
+  assert_absent "$CASE_DIR/cache/.build-${dir##*/}.lock" "refusal must release the build lock"
+  [ -x "$CASE_DIR/repo/target/configured-target/release/fm-stream-agent" ] \
+    || fail "the fixture did not emit redirected artifacts"
+  rm "$CASE_DIR/repo/.cargo/config.toml"
+  out=$(native "$CASE_DIR/fakebin:$PATH" fm_stream_native_build --if-stale 2>&1) \
+    || fail "build should recover once build.target is removed: $out"
+  assert_equals "built $dir" "$out" "the refused install must not become current"
+  assert_equals fm-stream-agent "$("$dir/fm-stream-agent")" "recovery must install the fresh native executable"
+  pass "stream native: redirected builds refuse stale artifacts without stamping, then recover"
+}
+
 test_hash_failure_refuses_cached_build() {
   new_case hash-failure
   new_checkout
@@ -301,7 +372,10 @@ test_python_rollback_never_touches_the_native_agent
 test_missing_native_binaries_refuse_with_the_fix
 test_hub_start_runs_the_selected_hub
 test_hub_unit_prints_a_foreground_unit
+test_hub_unit_refuses_unsafe_paths_and_arguments
 test_build_installs_once_per_source_key
 test_relative_target_dir_installs_checkout_binaries
+test_build_unsets_environment_target
+test_configured_target_refuses_stale_release_artifacts
 test_hash_failure_refuses_cached_build
 test_no_cargo_refuses_with_rustup_and_prebuilt_options

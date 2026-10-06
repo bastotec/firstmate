@@ -208,6 +208,12 @@ cmd_hub_unit() {
       *) die "unknown option for hub unit: $1" ;;
     esac
   done
+  local value
+  for value in "$FM_HOME" "$BIN_DIR" "$bind" "$port"; do
+    case "$value" in
+      *[[:space:]\"\'\\%\$]*) die "hub unit requires paths and arguments without whitespace, quotes, backslashes, % or \$: $value" ;;
+    esac
+  done
   # The implementation is not pinned here: the unit follows config/stream-impl,
   # so a rollback is a config edit plus a restart, not a unit rewrite.
   cat <<UNIT

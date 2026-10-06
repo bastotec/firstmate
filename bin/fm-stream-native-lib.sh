@@ -192,11 +192,19 @@ fm_stream_native_build() {
   for name in $FM_STREAM_NATIVE_BINARIES; do
     packages+=(-p "$name")
   done
-  if ! (cd "$root" && CARGO_TARGET_DIR="$target" "$cargo" build --release --locked "${packages[@]}") >&2; then
+  touch "$lock" || { rmdir "$lock"; return 1; }
+  if ! (cd "$root" && unset CARGO_BUILD_TARGET && CARGO_TARGET_DIR="$target" "$cargo" build --release --locked "${packages[@]}") >&2; then
     rmdir "$lock"
     echo "error: cargo build failed for the stream binaries; nothing was installed" >&2
     return 1
   fi
+  for name in $FM_STREAM_NATIVE_BINARIES; do
+    if [ ! -f "$target/release/$name" ] || [ -z "$(find "$target/release/$name" -newer "$lock" -print)" ]; then
+      rmdir "$lock"
+      echo "error: $target/release/$name was not refreshed by this build; check Cargo build.target configuration; nothing was installed" >&2
+      return 1
+    fi
+  done
   mkdir -p "$tmp"
   for name in $FM_STREAM_NATIVE_BINARIES; do
     cp "$target/release/$name" "$tmp/$name" || { rm -rf "$tmp"; rmdir "$lock"; return 1; }
