@@ -152,9 +152,9 @@ bin/fm-stream.sh attach --interactive <target printed above>
 Ctrl-] detaches and leaves the host running; [Interactive attach](stream-backend.md#interactive-attach) owns the prerequisites and limits.
 Plain `bin/fm-stream.sh attach <target>` is read-only, and `FM_HOME=<home> bin/fm-send.sh primary <text>` steers the primary without attaching.
 
-Stop it with `/quit` in the chat, or `bin/fm-deck-chat.sh stop --home <home>`.
+Stop it with `/quit` in the chat, or `bin/fm-deck-chat.sh stop --home <home>`; the command refuses a record that fails the shared [host identity check](../bin/fm_primary_chat.py).
 After a clean exit, another primary can start in the same home.
-Verification: [`tests/fm-deck-chat.test.sh`](../tests/fm-deck-chat.test.sh) drives the host with a fake `deck chat`, including a run inside a disposable stream hub endpoint, symlinked-code-root launch/steer/stop, rejection of another home's recorded PID even when its path is a whitespace-delimited prefix, and the task-name refusal.
+Verification: [`tests/fm-deck-chat.test.sh`](../tests/fm-deck-chat.test.sh) drives the host with a fake `deck chat`, including a run inside a disposable stream hub endpoint, symlinked-code-root launch/steer/stop, rejection of stale PIDs belonging to another home (including whitespace-delimited path-prefix cases), and the task-name refusal.
 
 ## Verification and scope
 
