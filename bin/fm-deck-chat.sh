@@ -61,7 +61,7 @@
 # refusal (bin/fm-gate-refuse-lib.sh).
 set -u
 
-SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 PRIMARY_CHAT="$SCRIPT_DIR/fm_primary_chat.py"
 BUSY_EVENT="$SCRIPT_DIR/fm-busy-event.sh"
 

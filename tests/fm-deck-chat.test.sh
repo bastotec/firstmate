@@ -218,10 +218,11 @@ test_steer_contract_without_a_host() {
 }
 
 test_host_lifecycle() {
-  local home other host second rc=0 out first_watch session
+  local home other host second rc=0 out first_watch session linked="$LAB/linked-code"
+  ln -s "$LAB/bundle" "$linked"
   home=$(new_home 'host backup')
   echo 'export FM_CHECK_INTERVAL=30' > "$home/config/x-mode.env"
-  FAKE_DECK_LOG="$LAB/deck.log" "$BIN/fm-deck-chat.sh" --home "$home" --model fake/route \
+  FAKE_DECK_LOG="$LAB/deck.log" "$linked/bin/fm-deck-chat.sh" --home "$home" --model fake/route \
     < /dev/null > "$LAB/host.out" 2>&1 &
   host=$!
   fm_test_track_helper_pid "$host"
@@ -256,7 +257,7 @@ test_host_lifecycle() {
 
   # A steer while idle starts a new turn; busy-state follows the events.
   wait_for 10 "busy-state idle after the digest turn" busy_is "$home" idle
-  "$STEER" publish --home "$home" --text 'SLOW captain question' >/dev/null
+  "$linked/bin/fm-primary-steer.sh" publish --home "$home" --text 'SLOW captain question' >/dev/null
   wait_for 10 "busy-state busy during the turn" busy_is "$home" busy
   wait_for 10 "the steer turn" turns_with "$LAB/deck.log" 'SLOW captain question'
   wait_for 10 "busy-state idle after the turn" busy_is "$home" idle
@@ -298,7 +299,7 @@ test_host_lifecycle() {
 
   # A clean stop releases everything and marks the record stopped.
   second=$(last_watch_pid "$home")
-  "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
+  "$linked/bin/fm-deck-chat.sh" stop --home "$home" >/dev/null
   wait_for 10 "the host exits" dead "$host"
   wait "$host" 2>/dev/null || true
   assert_absent "$home/state/.lock" "the lock is released"
