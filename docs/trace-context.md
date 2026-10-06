@@ -16,7 +16,7 @@ This feature adds only that carrier seam.
 When enabled, for each spawn Firstmate resolves one W3C `traceparent` carrier for the task - minted as a fresh root on the task's first spawn and reused verbatim from the meta on relaunch - and:
 
 - forms it as `00-<32 hex trace id>-<16 hex span id>-<2 hex flags>`, with random ids for a new root;
-- injects it into the agent's pane shell as the `TRACEPARENT` environment variable immediately before launch, through the same `spawn_send_text_line` channel that already ships `GOTMPDIR`; and
+- injects it into the agent's endpoint shell as the `TRACEPARENT` environment variable immediately before launch, through the same `spawn_send_text_line` channel that already ships `GOTMPDIR`; and
 - records the identical value as `traceparent=` in `state/<id>.meta`.
 
 `TRACEPARENT` as an environment variable is a Firstmate convention carrying a W3C-formatted value: W3C Trace Context standardizes the `traceparent` HTTP header, not an env var, and OpenTelemetry SDKs do not read it from the environment automatically, so a downstream observer must explicitly read this env value or the `traceparent=` meta field.
@@ -25,7 +25,7 @@ This feature parents no SDK span by itself.
 Because the injected carrier and the recorded carrier are the same string, an observer that reads the metadata reconstructs exactly the identity the child received.
 The injection sits at the unconditional pre-launch export site, so it covers ship, scout, and secondmate spawns on `deck`.
 This is the same coverage `GOTMPDIR` already has and requires no trace-specific `launch_template()` behavior.
-Ship and scout spawns reach that site on every accepted spawn backend, and a Secondmate reaches it on every backend that accepts a Secondmate spawn at all; [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns both sets.
+Every local ship, scout, and Secondmate spawn reaches that site on stream, the only runtime backend ([`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend)).
 
 ### Remote Secondmate routes
 
@@ -33,7 +33,7 @@ A Secondmate on a [remote route](remote-secondmates.md) never reaches that expor
 The identity is still the parent's, because the parent home holds the task metadata an observer reads.
 The parent therefore resolves the carrier against that task's own metadata under its own frozen decision - reused verbatim on relaunch, freshly rooted otherwise, never adopting the parent process's ambient `TRACEPARENT` - and passes it to the remote host, which exports it at the same unconditional pre-launch site and returns the carrier its endpoint actually holds.
 The parent records that returned value, so an already-alive remote endpoint that was not relaunched reports the identity its agent really received rather than one the parent merely intended.
-The remote host validates the delivered carrier as a strict W3C value before it can reach any pane, and a disabled parent passes nothing, leaving the remote launch identical to the untraced one.
+The remote host validates the delivered carrier as a strict W3C value before it can reach any endpoint, and a disabled parent passes nothing, leaving the remote launch identical to the untraced one.
 If the endpoint is already alive, no new launch or injection occurs; the parent still records any carrier that endpoint reports, even when the parent's current decision is `off`, so its metadata does not deny the running agent's actual identity.
 The enablement decision travels with it exactly as on the local path: the remote home inherits `config/trace-context` as declared inherited material and the new Secondmate process receives the parent's frozen `FM_TRACE_CONTEXT=on|off` snapshot.
 
@@ -104,7 +104,7 @@ This is a deliberate, source-owned choice:
   If the backend reports that failed trace input could not be cleared, Firstmate refuses to append the launch command rather than risk launching with an unknown partial carrier.
   If recording the carrier fails after export, Firstmate unsets `TRACEPARENT` in the launch command and still launches the task, so the child never receives an identity absent from its metadata.
 - **Metadata-only.**
-  The value lives in the ephemeral pane shell and in `state/<id>.meta`; teardown removes state as before, so there is no new durable surface and no schema migration.
+  The value lives in the ephemeral endpoint shell and in `state/<id>.meta`; teardown removes state as before, so there is no new durable surface and no schema migration.
 
 ## Relationship to OpenTelemetry and later increments
 

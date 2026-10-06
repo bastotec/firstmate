@@ -1,215 +1,165 @@
 # Architecture
 
-How firstmate works, in depth.
+How firstmate works, for maintainers.
 
 The [README](../README.md) carries the high-level diagram and a short synopsis.
-This document expands every part of it.
 firstmate's supervisor contract and routing index for conditional procedures is [`AGENTS.md`](../AGENTS.md); this is the human-facing companion.
+This page owns stable ownership, extension points, mechanism boundaries, and safety rationale.
+Exact flags, paths, and record formats live in the named script headers.
 
 ## Event-driven supervision
 
-A zero-token bash watcher (`bin/fm-watch.sh`) sleeps on the fleet, classifies detected wakes in bash, and wakes the first mate only when something is actionable.
-Actionable wakes include captain-relevant status signals, no-verb signals without positive evidence that their crew is still executing, authenticated check output such as PR merge polling or a Relay mention, stale panes whose crew is not provably working whether their status log looks terminal or non-terminal, unbounded provably-working stale panes that persist past `FM_STALE_ESCALATE_SECS` without their own task worktree being written, declared external waits and attended captain-held transfers that remain declared past `FM_PAUSE_RESURFACE_SECS`, and heartbeat backstop hits.
-For an ordinary crew task, a wait is read from each of its records: the status line a worker declared, the supervisor-declared external-wait record `bin/fm-external-wait.sh` owns for a worker that cannot declare one itself, and the backlog hold `bin/fm-captain-hold.sh` recorded once firstmate handed the work to the captain.
-A proven open backlog captain call bounds both repeated alarms from new pane hashes and due possible-wedge alarms from the unchanged-pane ladder to the `FM_PAUSE_RESURFACE_SECS` cadence for the length of the captain's decision.
-The first sight of the call still alarms, later new hashes and due ladder alarms inside that window are absorbed, and the hold re-surfaces after the window; a terminal pane hash that never changes stays inert after its first alarm exactly as it did before this bound.
-The throttle is scoped to both the current captain-call lifecycle and the status-log state, so releasing and re-holding the same task without a status append starts a fresh window whose first sight alarms.
-Only a successful open-hold predicate applies the bound; an absent or unreadable backlog, an incompatible `tasks-axi`, or a task this home does not carry leaves the existing alarm path unchanged.
-A secondmate reaches the stale path only for a wait declared in its status line, so a hold recorded only in the backlog while its last line is `working:` or `done:` is outside this guard.
-Reaching that case would require consulting the backlog for windows the secondmate gate deliberately skips, putting backlog reads on the ordinary poll hot path this design preserves.
-Repeated unbounded provably-working stale escalations on the same unchanged pane add an escalation count to the wake reason and, at `FM_WEDGE_DEMAND_INSPECT_COUNT`, a `demand-deep-inspection` marker.
-The `tests/fm-watch-triage*.test.sh` suites pin the first-sight alarm, call-lifecycle throttle identity, fail-open backlog cases, and declared-wait ladder reset.
-A pane holding a file newer than the start of its own quiet window, anywhere in the worktree recorded for that task, is deferred instead of escalated, because a crew writing source, then tests, then documentation behind a static pane is liveness that neither pane quietness nor the run step can show.
-That deferral re-surfaces on the same `FM_PAUSE_RESURFACE_SECS` cadence as a declared wait, with a reason naming the write evidence rather than a wedge, and it is bounded to one pruned, depth-bounded, wall-clock-bounded walk (`FM_WORKTREE_WRITE_PRUNE`, `FM_WORKTREE_WRITE_MAXDEPTH`, `FM_WORKTREE_WRITE_TIMEOUT`) taken only in the branch that was about to escalate, never on every poll.
-Every absence of write evidence, including a missing worktree record, a torn-down worktree, a walk that outlives its wall-clock bound on a hung mount, and a failed walk, leaves the existing escalation schedule untouched, so a crew that writes nothing still escalates exactly as before.
-A secondmate's recorded worktree is never probed for write activity, because it is a provisioned firstmate home whose own supervision keeps writing inside it whether or not the mate produces anything, so its panes keep escalating on the unchanged schedule.
-A busy pane is otherwise exempt from staleness, but only until its last completed turn or explicit native-harness progress reaches `FM_BUSY_TURN_MAX_SECS` (`bin/fm-watch.sh` owns marker selection); past that bound it is routed through the same wedge escalation, with the identical reason, escalation count, worktree-write deferral, and `demand-deep-inspection` marker, for inspection only - never an automatic interrupt, signal, or restart.
-A status-declared external wait (`paused:`) or verified captain-held transfer is handled before that ladder: its busy verdict supplies liveness while identifying the long-running foreground call as the declared wait, so it clears prior wedge bookkeeping and takes the bounded `FM_PAUSE_RESURFACE_SECS` recheck instead, except that a captain-held transfer is not rechecked while the away-posture record exists.
-A supervisor-declared external wait is absorbed before that ladder as well: `bin/fm-external-wait.sh` records the wait's reason, declarer, and expected clear time for a worker that cannot write its own `paused:` line, and while that declaration is live the watcher absorbs the whole wedge ladder - clearing the escalation counter exactly as a worker-authored pause clears it - and re-surfaces the pane on the same bounded cadence with a reason naming the declaration.
-The declaration expires at its stated time, and that expiry alone restores ordinary escalation; it never suppresses a genuinely new status line, check result, terminal outcome, or PR merge, and under daemon-backed away mode the watcher absorbs it itself instead of handing it to the daemon, whose declared-wait vocabulary reads status lines this record cannot supply, so the absorb stays bounded by the declaration's own expiry.
-`tests/fm-external-wait.test.sh` pins declare's bounded-input refusals, the live ladder absorb and counter clear, expiry restoring ordinary escalation, new-event pass-through, and audit distinguishability from a worker-authored pause.
-A proven ordinary-crew backlog captain call also bounds a due ladder alarm even when a later ordinary status line replaced the declaration; it resets the ladder and uses a call-scoped re-surface throttle rather than claiming the worker declared a pause.
-Lifting a status declaration or releasing the backlog hold restores the busy-pane wedge path, while a pane that is no longer busy returns to the existing idle declared-wait classification.
-While the legacy daemon flag is active, a busy pane that crosses the bound under a declared external wait is handed to the daemon as the plain wake identity instead of taking that recheck in the watcher, because the daemon owns triage there and a wake already decorated as a possible wedge would override the daemon's own declared-wait verdict; an undeclared busy pane past the bound still takes the wedge escalation.
-That handoff is keyed on the declaration itself (the status log's signature) rather than on the pane capture, so a harness footer that ticks on every poll wakes the daemon once per declaration instead of once per poll, and it clears the wedge timer, escalation count, and worktree-write deferral exactly as the normal-mode absorber does, so an undeclared busy phase's timer does not resume when the declaration lifts.
-Those actionable wakes are written to a durable local queue (`state/.wake-queue`) only after generation-bound recovery evidence is published, so an interrupted watcher or handling turn can be recovered without losing the queue record.
-Agent endpoint liveness and queue-consumption liveness are separate: on each poll, the primary watcher reads the oldest valid actionable row from every endpoint-recorded local secondmate home's durable wake queue without locking, consuming, or rewriting that foreign queue.
-A queue that is draining is not stalled, so the primary times the interval since that oldest actionable row last changed rather than the age of the row itself, and rows that declare themselves a bounded external wait (`awaiting external - declared pause`) are not actionable evidence at all.
-Once that no-progress interval reaches `FM_SECONDMATE_WAKE_STALL_SECS` and the mate is not provably inside an active turn (an exact busy verdict, bounded by `FM_BUSY_TURN_MAX_SECS`), the primary appends one keyed `check` wake naming the mate, row sequence, and observed idle interval; parent receipts and queued-key deduplication suppress repeats across watcher and handling crashes, one notification covers a whole no-progress episode, and any move of that position - drain progress, or the fresh rows of a queue reprovisioned under the same task id, at whatever sequence it restarts - ends that episode and starts a fresh observation interval, while empty, advancing, and declared-wait queues remain silent.
-Endpointless registered mates remain outside this scan because startup secondmate-liveness owns dead or missing endpoint recovery, and remote homes retain their host-local supervision boundary.
-`tests/fm-wake-queue.test.sh` pins the no-progress notification, drain-progress reset, declared-pause exclusion, active-turn deferral, idempotence, quiet-queue, and byte-for-byte foreign-row preservation guarantees, including delivery after injection at the real poll-wait boundary.
-Its real-watcher fixture separates singleton/first-poll setup readiness from the post-injection delivery bound and verifies publication-descendant cleanup; [`tests/assets/watcher-queue-fixture.py`](../tests/assets/watcher-queue-fixture.py) owns those fixture timing and cleanup mechanics.
-When a canonical validated PR poll returns exactly `merged`, the watcher routes it through the shared merge-outcome emitter before retiring the poll.
-[`bin/fm-merge-outcome-lib.sh`](../bin/fm-merge-outcome-lib.sh)'s header owns role routing, PR-specific wake identity, marker-locked normal deduplication, and the at-least-once ordering that prefers a rare duplicate over silence.
-After successful outcome publication, the watcher immediately delivers the emitter's local actionable poll row and publishes a private retirement receipt bound to the poll's registration, bytes, file identities, metadata, provider, URL, and task ID.
-The retirement receipt makes poll cleanup safely retryable across restarts: fixed-path recovery revalidates the same evidence, removes the runnable check first, removes its registration and data sidecars, removes the receipt last, and preserves task metadata including `pr=` and `pr_head=`.
-A concurrent replacement remains armed, every non-merged or invalid observation remains unchanged, and retirement never performs task or persistent-secondmate cleanup.
-`bin/fm-pr-lib.sh` owns the notification-marker and retirement-receipt formats plus their strict identity mechanics, [`bin/fm-merge-outcome-lib.sh`](../bin/fm-merge-outcome-lib.sh) owns role-routed publication, the local durable row, and marker ordering, and `bin/fm-watch.sh` owns immediate poll-result delivery and retirement.
-No-verb wakes, such as `working:` notes and bare turn-ended signals, are benign only when every referenced task independently has positive evidence that its crew is still working: a currently attributed active no-mistakes step, or an exact busy verdict from the semantic busy-state contract, both read through `bin/fm-crew-state.sh`.
-A home that creates `config/turnend-churn-absorb` lets each eligible bare turn-ended task that lacks either authoritative proof use a third form: pane content that changed since the previous poll, compared against the same `state/.hash-*` marker the staleness backbone records, which claims no harness semantics and needs no adapter cooperation.
-That form stays opt-in because it infers execution from rendered bytes rather than from a verdict the harness vouches for, so with the flag absent triage behaves exactly as it did before ([`configuration.md`](configuration.md) "Turn-end pane-churn absorb").
-That evidence clears the pane's prior stale classification and wedge-escalation count, then defers such a wake rather than swallowing it, since a crew that has stopped renders nothing further and its now-static pane surfaces through the staleness backbone within a poll or two, even if its final bytes match an earlier stale render.
-A wake naming any status file remains governed solely by the strict authoritative proof, and the pane-churn fallback is unavailable to an entire batch that references a secondmate.
-An unresolvable endpoint, an ambiguous marker key, a missing or malformed prior hash, a capture that fails or returns empty, an invalid deferral bound or deadline, or an unwritable deferral marker surfaces without clearing prior stale classification.
-The deferral is bounded per endpoint by `FM_TURNEND_CHURN_ABSORB_SECS`, tracked in `state/.churn-since-*`, after which the turn-end surfaces and the window restarts.
-That bound is load-bearing rather than cosmetic: churn and staleness read the same pane, so a pane that renders continuously - a clock, a spinner, a shell heartbeat, or a harness that leaves a background renderer alive after its agent yields - never reaches the staleness backbone's two-identical-hashes test either, and an unbounded churn absorb would leave a genuinely stopped worker behind such a renderer with no path left to surface it.
-If two metadata records derive the same per-window marker key, including two records that name the same endpoint, that marker is not attributable churn evidence for either task, so the bare turn-ended wake surfaces without changing or migrating existing marker state.
-A `kind=secondmate` task's status signal is the parent-directed reply stream and is never absorbed as provably working; its bare turn-ended signal is absorbed only by the ordinary authoritative working proof because an active secondmate does not enter the staleness backbone that would resurface deferred pane-churn evidence.
-A crew that declares `paused:` for a known external wait, or carries a verified `captain-held` transfer, is separately absorbed while idle and re-surfaced only on the longer pause cadence, rather than being treated as a possible wedge, except that a captain-held transfer is not rechecked while the away-posture record exists.
-A crew parked under a supervisor-declared external wait is absorbed the same way with no status line behind it, and its bounded re-surface names the declarer, reason, and expected clear time so an audit can tell it from a worker-authored pause.
-For an ordinary crew that has stopped, the normal-mode watcher first surfaces one stale wake, then applies that same cadence to an unchanged `paused:` or durable `captain-held` endpoint while attended; the pause classification itself is recovered only when the backend confidently reports its agent dead.
-Live or inconclusive liveness remains fail-open at that initial surface, so a worker genuinely waiting on a decision is never silenced.
-Its later sights are still held to that same bounded cadence rather than re-alarming on every pane-hash change, because the throttle is keyed to the declaration and not to the pane an idle parked worker keeps ticking.
-A secondmate's endpoint liveness is still never read at all; a mate is admitted to that same cadence only to serve a status-declared wait's bounded re-surface, so a forgotten `paused:` declaration, or an attended `captain-held` declaration, cannot rot invisibly.
-Its initial normal-mode status signal still surfaces through the no-verb path, while a daemon-backed away posture self-handles that routine signal and owns later external-wait rechecks.
-Fresh stale panes use the same current-state read before trusting the status log, so an active run or a proven busy worker outranks an old captain-relevant status-log line left behind before validation.
-No-change heartbeats are also benign.
-Separately from heartbeat backoff and wedge handling, the watcher poll runs `bin/fm-inactive-reconcile.sh` on its own bounded cadence, while locked session start sends the same bounded local scan through `bin/fm-startup-network.sh`'s deferred worker so current-state reads never block the digest.
-In each home the scan considers only that home's long-inactive direct ordinary crewmates, excludes captain-held work, and accepts only `done` or `failed` from `bin/fm-crew-state.sh`.
-A secondmate retains a durable receipt for its idempotent report through the established parent route, and main-home captain presentation retains a separate receipt; neither path performs a forge or PR check.
-A secondmate home's terminal child ledger lines, PR registrations, captain holds, and merges are published on that same parent route by the scripts that record them, so no captain-facing outcome depends on the mate model appending it ([secondmate-parent-channel.md](secondmate-parent-channel.md)).
-Absorbed wakes advance their suppression markers, log to `state/.watch-triage.log`, and keep the watcher blocking without a queue record or LLM turn.
-Each `fm-wake-drain.sh` presentation runs the same liveness guard as the supervision scripts, so a lapsed watcher chain surfaces even on a turn that only handles queued wakes.
-Routine watcher polling, supervision no-ops, elapsed waiting time, and absorbed benign wakes stay silent.
-A status-declared external wait or an attended verified captain-held transfer trades that silence for one bounded recheck per pause window, naming which human the wait is on; while the away-posture record exists, captain-held work waits without rechecks and remains visible in the return brief.
+A zero-token bash watcher (`bin/fm-watch.sh`) sleeps on the fleet, classifies each detected wake in bash, and wakes the first mate only when something is actionable.
+The watcher header owns the printed reason vocabulary and every absorb and re-surface rule; this section owns why the rules have the shape they do.
+
+### Absorb only on positive evidence
+
+A no-verb wake, such as a `working:` note or a bare turn-ended signal, is benign only when every referenced task independently shows positive evidence that its crew is still working.
+That evidence is an attributed active no-mistakes step or an exact busy verdict, both read through `bin/fm-crew-state.sh`.
+Everything else surfaces, so a crew that finishes, or stops and waits, is never silently swallowed.
+Absorbed wakes advance their suppression markers, log to `state/.watch-triage.log`, and keep the watcher blocking without a queue record or model turn.
+Routine polling, supervision no-ops, elapsed waiting time, and absorbed benign wakes stay silent.
+
+A home that creates `config/turnend-churn-absorb` lets an eligible bare turn-ended task without authoritative proof use a third form: pane content that changed since the previous poll, compared against the staleness backbone's own `state/.hash-*` marker.
+That form stays opt-in because it infers execution from rendered bytes rather than from a verdict the harness vouches for ([`configuration.md`](configuration.md) "Turn-end pane-churn absorb").
+It defers a wake rather than swallowing it and clears prior stale classification, since a crew that has stopped renders nothing further and its static pane surfaces through the staleness backbone within a poll or two.
+The deferral is bounded per endpoint by `FM_TURNEND_CHURN_ABSORB_SECS`, after which the turn-end surfaces.
+That bound is required: churn and staleness read the same pane, so a pane that renders continuously, such as a clock, a spinner, or a renderer left alive after the agent yields, never reaches the two-identical-hashes staleness test, and an unbounded absorb would leave a stopped worker behind it with no path to surface.
+A wake naming any status file, and any batch that references a secondmate, gets only the strict authoritative proof.
+Every unreadable or ambiguous input surfaces the wake without clearing prior stale classification; `bin/fm-watch.sh`'s `signal_turnend_panes_churned` owns the exact evidence and fail-closed list.
+
+A `kind=secondmate` task's status signal is its parent-directed reply stream and is never absorbed as provably working.
+Its bare turn-ended signal is absorbed only by the authoritative proof, because an active secondmate does not enter the staleness backbone that would resurface deferred churn evidence.
+
+### Stale panes and the wedge ladder
+
+Stale panes take the same current-state read before the status log is trusted, so an active run or a proven busy worker outranks an old captain-relevant log line.
+A busy pane is exempt from staleness only until its last completed turn or explicit progress reaches `FM_BUSY_TURN_MAX_SECS`.
+Past that bound, and for provably-working stale panes past `FM_STALE_ESCALATE_SECS`, the pane takes the wedge escalation: an escalation count in the reason and, at `FM_WEDGE_DEMAND_INSPECT_COUNT`, a `demand-deep-inspection` marker.
+Escalation is for inspection only, never an automatic interrupt, signal, or restart of the worker or its tool process.
+
+A pane whose recorded task worktree holds a file newer than its quiet window is deferred instead of escalated, because a crew writing files behind a static pane is liveness that neither pane quietness nor the run step can show.
+That deferral re-surfaces on the `FM_PAUSE_RESURFACE_SECS` cadence and costs one pruned, depth-bounded, wall-clock-bounded walk taken only when about to escalate, never on every poll.
+Every absence of write evidence, including a missing worktree, a walk that outlives its bound on a hung mount, and a failed walk, leaves the escalation schedule untouched.
+A secondmate's worktree is never probed, because it is a firstmate home whose own supervision keeps writing inside it whether or not the mate produces anything.
+
+### Declared waits
+
+Four records declare that a crew waits on something outside the fleet: a worker's `paused:` status line, a supervisor-declared external wait recorded by `bin/fm-external-wait.sh` for a worker that cannot write its own line, a verified `captain-held` status transfer, and the backlog captain call `bin/fm-captain-hold.sh` records.
+A declared wait re-surfaces on the long `FM_PAUSE_RESURFACE_SECS` cadence instead of being treated as a wedge, busy or idle, and the re-surface names which human or declarer the wait is on.
+For a stopped ordinary crew the first sight still surfaces one stale wake, with inconclusive liveness fail-open, so a worker genuinely waiting on a decision is never silenced.
+A supervisor declaration's expiry alone restores ordinary escalation, and no declaration suppresses a genuinely new status line, check result, terminal outcome, or PR merge.
+A backlog captain call's first sight alarms and later alarms in its window are throttled, scoped to the call's lifecycle so a release and re-hold starts fresh; an unreadable backlog or incompatible `tasks-axi` leaves the ordinary alarm path unchanged.
+A secondmate's endpoint liveness is never read, and it reaches the pause cadence only through a status-line declaration, so a forgotten `paused:` cannot rot invisibly; a backlog-only secondmate hold is outside this guard to keep backlog reads off the poll hot path.
+While the away-posture record exists, captain-held work is not rechecked and waits for the return brief.
+`tests/fm-watch-triage*.test.sh` and `tests/fm-external-wait.test.sh` pin these boundaries.
+
+### Durable wake queue and drain
+
+Actionable wakes are written to `state/.wake-queue` only after generation-bound recovery evidence is published, and stay until the exact acknowledgement `bin/fm-wake-drain.sh` prints succeeds after handling.
+[`watcher-continuity.md`](watcher-continuity.md) owns the arm layer, recovery episodes, and queue acknowledgement.
+
 Crew status files are append-only wake-event logs, not current-state fields.
-Because of that, a per-wake read of only the latest line can bury an earlier still-open `needs-decision`/`blocked` under later unrelated appends; `fm-wake-drain.sh` prints a separate, fleet-wide OPEN DECISIONS section on every presentation (including the empty-queue path session-start relies on), built through `fm-classify-lib.sh`'s cursor-backed incremental scan using the authoritative `status_open_decisions` fold semantics so the buried decision keeps surfacing until it is explicitly resolved while each presentation folds only new status-log appends.
-The drain coordinates that fold and its annotations through a locked fleet-wide snapshot whose `.status-presentation-cursor` manifest records each status file's identity plus independent annotation and outcome-backstop byte offsets.
-The latter offset drives the bounded STATUS OUTCOME BACKSTOP, which re-presents a task's newest captain-facing status event that no drain ever presented; `bin/fm-wake-drain.sh` owns it.
-A queued signal annotation prints every status line still unread at that cursor, while the fleet-wide UNREAD STATUS section prints `note:` lines and reserved-key pending-reply resolutions once even on an empty-queue drain because those verbs never enter the OPEN DECISIONS fold.
-A third bounded section, RECORD DIVERGENCE, prints on the same drains for the opposite failure: the status fold went quiet on a key that the durable captain-held task still shows as open, so the status side reads as complete while the two records contradict each other; `bin/fm-captain-hold.sh diverged` decides what counts and closes nothing, and `docs/captain-hold-lifecycle.md` owns the mechanism.
-A failed read, output, or concurrent-replacement check prevents the snapshot cursor from advancing across uncertain bytes, and teardown retires a task's manifest row before that task ID can be reused.
-The explicit resolution is written by the actor that answers, not the busy worker: `fm-send`'s `--resolve-key` appends the closing `resolved` line to this home's own copy of the ledger at answer time, which covers crewmates, local secondmates, and remote secondmates identically because a remote mate's escalations reach that local copy through the parent-replies ingest and only the answer message itself crosses the transport.
-This home's answerer close, pending-reply escalation close, and captain-held transfer use the provenance-guarded append owned by `bin/fm-wake-lib.sh`, so they advance the watcher marker only across their own bytes when all earlier bytes were already announced; pending or interleaved foreign bytes fail toward an ordinary wake.
-A turn-ended-only queue row omits its historical status annotation when that status file exactly matches the same seen marker.
-Any direct or remaining historical annotation prints every status line unread at the presentation cursor instead of replaying only the latest line.
-`bin/fm-crew-state.sh <id>` is the cheap current-state read for an actionable heartbeat review: it attributes an active or terminal no-mistakes run under the shared run-attribution contract, then keeps that run-step authoritative even if the pane has closed, except that a `blocked:` event reporting a refused or missing daemon socket outranks a potentially stale active run record.
-For other daemon, timeout, or unreachability claims, a running or fixing run with recent pipeline-reported activity supersedes the event and names reattachment as the recovery instead of surfacing a false block.
-[`bin/fm-nm-run-lib.sh`](../bin/fm-nm-run-lib.sh)'s header owns the exact branch, head, pipeline-custody, and newest-first attribution rules.
-It also owns which binding run wins when more than one recorded run binds to the same worktree: a live run outranks a terminal one, so a crashed run sitting at the worktree's own commit never reports a healthy task as failed while its live successor is still validating.
-A run head the task copy cannot resolve locally is attributed only when the pipeline's own runs ledger proves it is an active continuation of the submitted head, so a pipeline fix round never reads as an older failed run.
-During no-mistakes' `ci` monitor phase, it also reads the ci step log tail because `axi status` reports both "still waiting on checks" and "checks green, waiting on merge" as `ci,running`.
-The most recent recognized ci log marker wins, so checks-green monitoring reports done while a later re-arm, failed-check, or issue marker returns the crew to working.
-A terminal failed run whose only failure is the ci monitor step, after every substantive step completed and the same marker reads checks green, also reports done with the run's PR URL, because a monitor whose only remaining job is to observe a human merge decision must not convert the absence of that decision into a failure verdict.
-In the coarse runs-ledger fallback, which has no steps table and no ci log, a terminal failed record whose daemon an explicit `daemon status` probe proves down reports unknown as unverified instead: an instrument failure must never read as work failure.
-Only when no matching run exists does it consult semantic busy state; exact busy reports working, exact idle permits fallback to a status-log event whose verb maps to a recognized run-state, and unknown or a dead pane stays unknown instead of trusting a stale log.
-Decision-only events such as `resolved` never become current state or leak their prose into the current-state detail.
-In that status-log fallback, a declared external wait reports the distinct `paused` state with its reason.
-The semantic branch reports working only on an exact busy verdict and names the source that produced it; an unknown verdict never becomes working, never permits the status-log fallback, and never becomes a silent idle.
-For whole-fleet review, `bin/fm-fleet-snapshot.sh --json` emits schema `fm-fleet-snapshot.v1` from the backlog, task metadata, local current crew state, supervision-owned endpoint evidence, PR/report pointers, scout reports, bounded current summaries from registered secondmate homes, and secondmate return-channel guidance.
-Each home atomically publishes that bounded home summary with freshness epoch metadata at `state/home-summary.json` after a locked session start, a watcher-observed status change, task spawn, task teardown, and on a recurring live-watcher cadence; `bin/fm-home-summary-refresh.sh` owns the publication mechanics.
-The fleet snapshot and Bearings paths use the concurrent remote-ledger collection, cache, unreadable-home disclosure, and remote-liveness boundary owned by `bin/fm-fleet-snapshot.sh`'s header.
-`bin/fm-fleet-view.sh` renders that snapshot as Markdown for humans, while `bin/fm-bearings-snapshot.sh` provides the bounded bearings projection, so both views consume one structured contract instead of reparsing raw fleet files.
-The script header owns the exact JSON schema.
+Reading only the latest line would bury an earlier open `needs-decision` or `blocked`, so every drain prints a fleet-wide OPEN DECISIONS section through the `status_open_decisions` fold in `bin/fm-classify-lib.sh` until the decision is explicitly resolved.
+The drain header owns its other sections (UNREAD STATUS, STATUS OUTCOME BACKSTOP, RECORD DIVERGENCE) and the cursor, which never advances across uncertain bytes; [`captain-hold-lifecycle.md`](captain-hold-lifecycle.md) owns record divergence.
+The resolution is written by the actor that answers, not the busy worker: `fm-send.sh --resolve-key` appends the closing line to this home's ledger copy, which covers crewmates and local and remote secondmates alike.
+Answerer closes use the provenance-guarded append in `bin/fm-wake-lib.sh`, which advances the watcher marker only across its own bytes and fails toward an ordinary wake when foreign bytes are pending.
+
+Every drain also runs the supervision liveness guard, so a lapsed watcher chain surfaces even on a turn that only handles queued wakes.
+`bin/fm-guard.sh` warns, and never blocks, when the primary checkout is tangled, when supervised sources have an unhealthy verdict, or when queued wakes wait for main.
+
+### Other wake sources
+
+A validated PR poll that reads exactly `merged` goes through the shared emitter in [`bin/fm-merge-outcome-lib.sh`](../bin/fm-merge-outcome-lib.sh), whose header owns routing and the at-least-once ordering that prefers a rare duplicate over silence.
+The poll then retires through a receipt bound to its identity; a concurrent replacement stays armed, and retirement never performs task or secondmate cleanup.
+
+The primary watcher reads, without locking or rewriting, the oldest actionable row in each endpoint-recorded local secondmate's wake queue.
+Endpoint liveness and queue consumption are separate, so a queue position that has not moved for `FM_SECONDMATE_WAKE_STALL_SECS` while the mate is not provably in a turn gets one keyed `check` wake per episode, while draining, declared-wait, and empty queues stay silent (`tests/fm-wake-queue.test.sh`).
+
+`bin/fm-inactive-reconcile.sh` runs on its own bounded poll cadence and in session start's deferred network stage, accepts only `done` or `failed` for long-inactive direct crewmates, and performs no forge check.
+A secondmate home's terminal outcomes, PR registrations, holds, and merges reach its parent through the scripts that record them ([`secondmate-parent-channel.md`](secondmate-parent-channel.md)).
+
+### Current-state reads
+
+`bin/fm-crew-state.sh <id>` is the cheap current-state read, and its header owns the precedence.
+An attributed no-mistakes run step is authoritative even if the pane has closed, under [`bin/fm-nm-run-lib.sh`](../bin/fm-nm-run-lib.sh)'s attribution rules, and a live run outranks a terminal one so a crashed run never reports a healthy task as failed.
+A run whose only failure is the ci monitor after checks read green reports done, because a monitor observing a human merge decision must not turn its absence into failure.
+A terminal record whose daemon a probe proves down reports unknown, because an instrument failure must never read as work failure.
+Without a matching run, exact busy reports working, exact idle permits the status-log fallback, and unknown or dead stays unknown rather than trusting a stale log.
+
+`bin/fm-fleet-snapshot.sh --json` emits the `fm-fleet-snapshot.v1` contract that `bin/fm-fleet-view.sh` and `bin/fm-bearings-snapshot.sh` render, and its header owns the schema and remote-home collection.
 
 ### Registered secondmate current state
 
-A registered secondmate's validated home is the authority for bearings current state because it owns the child metadata inventory, each child's current-state result, endpoint observations, backlog holds and dependencies, keyed unresolved decisions, and recent Done baseline.
-The original cross-home projection instead treated the secondmate agent as an ordinary parent task, so an idle secondmate's `fm-crew-state` fallback selected the latest append-only parent status event even when structured state in the registered home contradicted it.
-The parent-status contract also required explicit keyed resolution for decisions and blockers but not for a material `working` phase, so a start event could remain unsuperseded after the corresponding home backlog had moved the work to Done.
-Generated secondmate charters reject generic receipt or start acknowledgements, key only supervisor-actionable material phase reports, and close an opened phase with a same-key later state or `resolved` event, while the structured home remains authoritative even if that closure is missing.
-Cross-home reads validate the seeded identity and operational-directory boundaries and classify unavailable, malformed, or inconsistent structured state as unknown rather than reviving a parent event as current work; `bin/fm-fleet-snapshot.sh`'s header owns collection, cache selection, and unreadable-home behavior.
-When only an owned child's current classification is unavailable, the home classification stays unknown while independently trustworthy structured decisions, holds, queued and landed records, endpoint identities, counts, and provenance remain available; every other invalid path stays strict and exposes none of those child-derived surfaces.
-A bounded direct-report terminal tail can help diagnose a mismatch by showing that historical parent wording is still visible, but it is untrusted supplemental evidence because scrollback, prompts, copied output, idle shells, and agent prose are not durable state.
-The snapshot strips control sequences, retains only capture metadata and literal event-corroboration flags, and never lets terminal evidence override a valid structured classification.
+A registered secondmate's validated home is the authority for its current state, because it owns the child inventory, child states, endpoint observations, holds, keyed decisions, and recent Done baseline.
+Treating the mate as an ordinary parent task would let an idle mate's latest append-only parent event read as current work after its home had moved that work to Done.
+Generated charters therefore key only supervisor-actionable phase reports and close them with a same-key later state or `resolved`, while the structured home stays authoritative when that closure is missing.
+Cross-home reads validate identity and directory boundaries and classify unavailable or inconsistent structured state as unknown rather than reviving a parent event.
+A bounded terminal tail may be shown for diagnosis, but scrollback and agent prose are not durable state, so it is stripped of control sequences and never overrides a valid structured classification.
 Live GitHub enrichment exists only behind the bearings `--include-prs` opt-in.
-Optional Relay integrates with the watcher only after explicit opt-in; [configuration.md](configuration.md#relay-env) owns its generated-artifact and dispatch mechanics.
+Optional Relay integrates with the watcher only after explicit opt-in; [`relay.md`](relay.md) owns its mechanics.
 
-At session start, `bin/fm-session-start.sh` emits exactly one primary-harness supervision block rendered by `bin/fm-supervision-instructions.sh` from `docs/supervision-protocols/`.
-That block owns the live wait shape for the running primary harness: [Deck's home-driver protocol](supervision-protocols/deck.md) covers persistent secondmates and the [Deck chat host](../bin/fm-deck-chat.sh) primary.
-`bin/fm-watch-arm.sh` remains the verified arm wrapper for protocols that call it; it forks the watcher as a tracked child, verifies it is genuinely alive with a fresh liveness beacon, and prints an honest `started`, `attached`, or nonzero `FAILED` status.
-[`watcher-continuity.md`](watcher-continuity.md#arm-layer-cycle-contract) owns the arm layer's successor, terminal-delivery, re-arm recovery, and typed clean-close failure contract.
-The arm layer records one bounded lifecycle row per observed cycle in `state/.watch-cycle-exits.log`; `state/.watch-triage.log` remains exclusively the absorbed-wake debug log.
-Deck `run` home hosts check the persistent driver's postcondition before each turn completes; the chat host's supervisor child owns the watcher for the primary, as its [header](../bin/fm-deck-chat.sh) describes.
-Its `--restart` mode signals only the watcher recorded in the current home's `state/.watch.lock`, so restarting one home cannot kill sibling secondmate watchers.
-A pull-based guard (`bin/fm-guard.sh`) warns through supervision tool output if the primary checkout is tangled or if work, process-event sources, registered custom checks, or Relay polling has an unhealthy model-aware supervision verdict; on main it also warns when queued wakes are waiting for main itself to drain.
-The drain script calls that guard after presenting the queue; records remain durable until the exact generation-bound acknowledgement printed by the drain succeeds after handling, and main may keep the queued-wakes warning visible until then.
-It leads with a prominent bordered tangle banner, while `bin/fm-guard.sh` owns the watcher-down banner and reminder policy so repeated guarded commands stay noisy without reprinting the full banner in the same episode.
+### Session start and watcher arming
 
-Away mode is a posture of the one supervision session, recorded in `state/.afk-contract` by `bin/fm-afk-contract.sh` after the captain confirms a read-back of their away words and mandate clauses, and announced at entry as hold-for-return only because no phone channel exists.
-The record owner's header is the single owner of the record schema and clause fields, and by the captain's mandate no static parser reads the clause text: the object and precondition are recorded verbatim, structural presence and the verb list are checked, and the coarse best-effort never-set flag can miss spellings including joined compounds such as `oneTimeCode`.
-That scan flags a clause without refusing it and is not authoritative; never-set, forbidden-action, and precondition judgment belongs to the supervision session at execution time in phase 4.
+At session start, `bin/fm-session-start.sh` emits one supervision block rendered by `bin/fm-supervision-instructions.sh` from [`supervision-protocols/deck.md`](supervision-protocols/deck.md), which owns the handling duty for the [Deck chat host](../bin/fm-deck-chat.sh) primary and Deck-hosted secondmate homes.
+The chat host's supervisor child owns the primary's watcher and a secondmate's `bin/fm-deck-worker.sh` driver owns its own, so neither depends on the model remembering to re-arm.
+`bin/fm-watch-arm.sh` forks the watcher as a tracked child, verifies a fresh liveness beacon, and prints an honest `started`, `attached`, or nonzero `FAILED`.
+Its `--restart` signals only the watcher in the current home's `state/.watch.lock`, so restarting one home cannot kill sibling watchers.
+
+### Away mode
+
+Away mode is a posture of the one supervision session, recorded in `state/.afk-contract` by `bin/fm-afk-contract.sh` after the captain confirms a read-back of their away words and mandate clauses; that header owns the schema.
+Clauses are recorded verbatim and checked only structurally, and judgment belongs to the supervision session at execution time.
 Forbidden, destructive, irreversible, and security-sensitive actions are never pre-authorizable regardless of clause text, and no recorded clause is authority by itself.
-The record's presence is the posture on every harness, `bin/fm-afk-launch.sh` owns entry and exit, and `bin/fm-afk-return.sh` archives the record and renders the return brief (supervisor health first, then the recorded clauses, what waits on the captain, what could not be fixed, what was handled, and cost) from the held set and the status logs.
-While the record exists neither supervisor rechecks an item held for the captain, and a status-declared external wait names when it clears with `until` for a condition-aware recheck in both postures that occurs at the declared time or the hours-long `FM_PAUSE_RESURFACE_SECS` bound, whichever comes first.
-This release records clauses and does not execute them.
-A presence-gated sub-supervisor (`bin/fm-supervise-daemon.sh`) still extends this for walk-away supervision: the `/afk` skill starts it through the tracked foreground helper `bin/fm-afk-start.sh` once the record exists, after which the watcher reverts to daemon-managed one-shot mode and the daemon self-handles routine wakes in bash.
-The watcher and daemon share `bin/fm-classify-lib.sh` for captain-relevant status verbs, declared-wait vocabulary (a `paused:` external wait and a verified `captain-held` transfer alike, through one combined predicate), and status-scan primitives.
-Terminal verbs remain captain-relevant, while a nonterminal progress verb cannot become terminal merely because its prose contains a legacy free-text token such as `merged`; bare legacy free-text lines remain compatible.
-Both supervisors classify the status bytes appended since they last classified that log, never its last line alone, and report every actionable event through the captured endpoint before committing that position.
-The watcher's `.seen-*` and `.hb-surfaced-<task>` markers and the daemon's `.subsuper-seen-status-<task>` marker independently track reported file state and successfully classified position, so an unchanged unreadable state reports once without advancing past unread content, while a changed state retries and an unusable position re-reads the whole log.
-A keyed `needs-decision` or `blocked` transition accepted by the whole-file decision fold is retired only when that fold proves the exact opening closed, while a reserved-key transition the fold rejects surfaces as a reconciliation signal without becoming an open decision.
-The fold remains the sole owner of open/closed semantics, including same-key reopening and reserved-key handling, shared with the durable OPEN DECISIONS surface.
-The always-on watcher also uses that library's absorb classification on no-verb signals and first-sighting stale panes before status-log terminality is trusted, while the daemon maintains distinct wedge and declared-wait recheck cadences.
-The daemon's declared-wait window ages against the crew's own latest status line rather than against pane busy state, because a declared wait can legitimately hold a pane busy, and only a status append that stops declaring the wait ends that routing and restores wedge detection.
-A wake already decorated as a possible wedge does not override the daemon's own declared-wait verdict either, so a declaration keeps its pane on the recheck cadence instead of the wedge cadence.
-In away mode, seen-status dedupe does not clear possible-wedge aging for nonterminal progress, so housekeeping still re-escalates an unchanged idle pane at the configured bound.
-Away-mode housekeeping has no worktree-write deferral of its own, so while `state/.afk` exists a quiet crew that is writing its own worktree still escalates as a possible wedge at that bound.
-The daemon escalates captain-relevant events, plus a bounded recheck for a declared external wait that is still declared, as one batched, single-line digest using the canonical `away-supervisor` kind from `bin/fm-operational-input.sh` so firstmate can distinguish it structurally from real messages; captain-held transfers remain silent until return while the posture record exists.
-[`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns supported supervisor transports and discovery, independently from task-spawn selection.
-The following pane primitives apply only to typed-input delivery, not deck-chat steering.
-Endpoint existence, busy checks, composer checks, capture, and verified submit route through `bin/fm-backend.sh` to the stream adapter, which confirms a submit with a proven cleared composer.
-Composer classification has one shared owner, `bin/fm-composer-lib.sh`: the stream adapter contributes only a screen capture plus declarative styled, cursor, identity, and row capabilities, while the shared classifier owns every shape and the `empty`/`pending`/`pending-unproven`/`unknown` verdict.
-For typed-input delivery, the daemon injects only into an affirmatively `empty` composer, so every other or future verdict defers; positive container proof is required, and a blank unidentified row or bare dead-shell prompt cannot receive an escalation.
-[`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns delivery routing and fallback; the [`afk` skill](../.agents/skills/afk/SKILL.md#busy-guard-and-composer-guard) owns the typed-injection guards.
-Stalled escalation delivery writes `state/.subsuper-inject-wedged` and attempts a configured backend-independent active alert after `FM_MAX_DEFER_SECS` instead of silently deferring forever.
-On an unmarked return, `bin/fm-afk-return.sh` owns ordered shutdown, the record archive, durable catch-up evidence, the return brief, and the fail-closed gate that keeps ordinary work behind every live firstmate-actionable blocker the away session could not fix.
-For task steers, `fm-send.sh`'s header owns durable-inbox and typed-plane routing; the [Deck chat host](../bin/fm-deck-chat.sh) primary uses the primary steering inbox instead.
-A task inbox's doorbell line is a shell no-op and is never typed into an endpoint classified as dead or missing; that record surfaces once for recovery instead of walking the re-ring ladder (`bin/fm-task-inbox-lib.sh` header).
-Its local-only typed plane - harness-native invocations and explicit backend targets - selects a pre-Enter popup-settle for slash commands, then adds its own `FM_SEND_SETTLE` pause after successful typed sends so immediate peeks catch the receiving turn starting; the sub-supervisor uses only the shared submit core and does not pay that post-submit pause.
+On return, `bin/fm-afk-return.sh` owns ordered shutdown, the archive, the return brief, and the fail-closed gate that keeps ordinary work behind every live blocker the away session could not fix.
+
+The presence-gated sub-supervisor `bin/fm-supervise-daemon.sh`, started by the `/afk` skill, owns triage while its `state/.afk` flag exists, and the watcher runs one-shot.
+Both share `bin/fm-classify-lib.sh` and classify every byte appended since they last read a log, never its last line alone.
+The daemon escalates as one batched digest with the canonical `away-supervisor` kind from `bin/fm-operational-input.sh`, so firstmate can tell it from a real message.
+It types only into a composer `bin/fm-composer-lib.sh` classifies as affirmatively `empty`, so every other or future verdict defers.
+Stalled delivery writes `state/.subsuper-inject-wedged` and attempts an active alert after `FM_MAX_DEFER_SECS` instead of deferring forever.
+Away housekeeping has no worktree-write deferral, so a quiet crew still escalates as a possible wedge.
+[`configuration.md`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns the supervisor transport.
+
+### Data plane and control plane
 
 Text for a worker to read and commands that drive a worker's process are separate planes.
-`fm-send.sh` is the data plane and always routing-marks a `kind=secondmate` target, which is right for a message and wrong for a lifecycle command, because a marked exit command arrives as chat the agent reasons about instead of executing.
-`bin/fm-control.sh` is the control plane: an allowlisted `interrupt`, `exit`, and transactional `relaunch`/`recover-missing` addressed to an exact task id, with per-harness mechanics owned by `bin/fm-control-lib.sh`, a verified postcondition per verb, and no arbitrary-text or raw-key entry point.
-[`docs/agent-control.md`](agent-control.md) owns the verb contract, the capability matrix, the relaunch transaction, and the fail-closed boundaries.
+`fm-send.sh` is the data plane, and its header owns inbox and typed-plane routing.
+It always routing-marks a `kind=secondmate` target, which is right for a message and wrong for a lifecycle command, because a marked exit command arrives as chat the agent reasons about instead of executing.
+A task inbox's doorbell is never typed into a dead or missing endpoint; the record surfaces once for recovery instead.
+`bin/fm-control.sh` is the control plane, and [`agent-control.md`](agent-control.md) owns its verbs, relaunch transaction, and fail-closed boundaries.
 
 ## Busy state is semantic, per adapter
 
-`bin/fm-busy-lib.sh` is the single owner of what "this worker is busy" means, and `bin/fm-busy-event.sh` is the only writer of the per-task records it reads.
-Every classification returns a verdict of busy, idle, unknown, or dead together with the source that produced it, so a consumer or a diagnostic can never confuse semantic state with a fallback.
-
-Each worker adapter reports its own turn lifecycle through a machine-readable semantic contract rather than through rendered footer text: Deck through its Firstmate-owned worker wrapper.
-Any other recorded harness has no trusted record source; the classification precedence is owned by `bin/fm-busy-lib.sh`.
-
-Missing, malformed, stale, untrusted, or unverified semantic state is unknown, never idle, and unknown is never promoted to busy either.
-Ordinary task-state consumers act only on an exact busy verdict, so an unreadable worker surfaces for a closer look instead of being absorbed as still-working or written off as finished.
-Endpoint death is the only process-level override and yields dead; child processes, CPU, process sleep state, and marker modification times are not state signals.
-`state/<id>.turn-ended` files remain wake notifications, not current state.
-
-Each record is bound to an incarnation token minted when the task's wiring is armed, so an event from a superseded incarnation is rejected rather than applied, and a record left behind by one classifies unknown.
-Delivery acknowledgement remains separate from recorded task state: ordinary typed-plane submits can use composer structure, backend-native state, or a harness-scoped rendered busy transition, while Deck requires the next exact `deck-wrapper` turn-start sequence after an idle baseline.
-The away-mode supervisor-pane busy guard consumes the shared delivery-footer matcher owned by `bin/fm-composer-lib.sh`, while `bin/fm-pending-reply-lib.sh` owns the secondmate delivery-confirmation observation.
-These delivery checks are harness-scoped rather than a global pattern union, and none supplies recorded worker state.
+`bin/fm-busy-lib.sh` is the single owner of what "this worker is busy" means, and `bin/fm-busy-event.sh` is the only writer of its records.
+Every classification returns busy, idle, unknown, or dead with the source that produced it, so semantic state is never confused with a fallback.
+Deck reports its turn lifecycle through the `bin/fm-deck-worker.sh` driver as the `deck-wrapper` source, and a record from a source not trusted for the recorded harness classifies unknown.
+Missing, malformed, stale, or unverified state is unknown, never idle, and unknown is never promoted to busy.
+Consumers act only on an exact busy verdict, so an unreadable worker surfaces instead of being absorbed as working or written off as finished.
+Endpoint death is the only process-level override; child processes, CPU, sleep state, and marker modification times are not state signals.
+Each record is bound to an incarnation token minted when the task is armed, so a superseded incarnation's event is rejected.
+`state/<id>.turn-ended`, touched by the Deck driver at turn end, is a wake notification, not current state.
 
 ## Runtime session backends
 
-The runtime backend is the session-provider layer below firstmate's scripts.
-It owns task endpoint creation, bounded capture, text/key sends, current-path reads for spawn-time worktree discovery, agent-process liveness probes, and endpoint teardown.
-Endpoint teardown carries one cross-backend contract that the layer above depends on: a kill reports whether the endpoint is gone, could not be proved gone, or could never be attempted, and only the first licenses removing the durable records that assert a worker stopped - `fm_backend_kill` in `bin/fm-backend.sh` owns that contract, and each adapter's own header owns what its backend can prove.
-`bin/fm-backend.sh` centralizes backend selection, `state/<id>.meta` helpers, metadata-only cleanup identity validation, selector resolution, and operation dispatch to the one adapter, `bin/backends/stream.sh`; it also reads records left on the retired tmux and herdr backends as undrivable rather than crashing.
-[`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns selection and the loud refusal of any other name.
-[`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) also owns explicit backend metadata and compatibility for legacy records.
-`fm-watch.sh` decides each endpoint's busy state through the semantic contract above rather than by polling the backend for rendered text; stream exposes no native busy primitive, so a task is classified purely from its adapter's own lifecycle record, and the watcher's poll loop is its event source.
-The deeper session-start agent-process liveness probe is separate from that busy-state poll and uses the stream adapter's agent-process classifier.
-stream's "session host" is the fleet's own central hub rather than a terminal multiplexer, and each task's pseudoterminal is owned by a thin agent on the machine that runs it.
-Relaying that pty over the network adds one state a local terminal would not have - a silent agent reads `unreadable`, never `dead`, because an unreachable worker and a stopped one are indistinguishable from the hub - and [`stream-backend.md`](stream-backend.md) owns its setup, security model, and limits, while [`verification/runtime-backends.md`](verification/runtime-backends.md#stream) owns active live evidence.
+The runtime backend is the session-provider layer below firstmate's scripts: endpoint creation, bounded capture, text and key sends, current-path reads, agent-process probes, and teardown.
+Teardown carries one contract the layer above depends on: a kill reports whether the endpoint is gone, could not be proved gone, or could never be attempted, and only the first licenses removing the records that assert a worker stopped (`fm_backend_kill` in `bin/fm-backend.sh`).
+`bin/fm-backend.sh` centralizes selection, `state/<id>.meta` helpers, endpoint identity validation, and dispatch to the one adapter, `bin/backends/stream.sh`.
+Records left on the retired tmux and herdr backends read as undrivable rather than crashing, and `bin/fm-retire-endpoint.sh` retires them.
+[`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns selection, the refusal of other names, and legacy-record compatibility.
+stream's session host is the fleet's own hub, and each task's pseudoterminal is owned by a thin agent on the machine that runs it.
+Relaying that pty adds one state a local terminal lacks: a silent agent reads `unreadable`, never `dead`, because an unreachable worker and a stopped one look the same from the hub.
+[`stream-backend.md`](stream-backend.md) owns setup, security model, and limits, and [`verification/runtime-backends.md`](verification/runtime-backends.md#stream) owns live evidence.
 
 ## Worktrees, not branches in your checkout
 
-Crewmates never intentionally touch your project clone; [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns the worktree-provider contract.
-The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns ship/scout worktree isolation and fresh-base refusal rules, including spawns from linked homes.
-Portable regressions live in [`tests/fm-spawn-pool-base-freshen.test.sh`](../tests/fm-spawn-pool-base-freshen.test.sh) for spawn isolation and base freshness, and [`tests/fm-control-relaunch.test.sh`](../tests/fm-control-relaunch.test.sh) for preserving the recorded copy on relaunch.
+Crewmates never intentionally touch your project clone: [treehouse](https://github.com/kunchenguid/treehouse) pools clean worktrees, and stream only provides the session.
+The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns worktree isolation and fresh-base refusal, pinned by [`tests/fm-spawn-pool-base-freshen.test.sh`](../tests/fm-spawn-pool-base-freshen.test.sh).
 
 The firstmate repo has one extra exposure because it can dispatch crewmates to work on itself.
-Its operating checkout (`FM_ROOT`) and the disposable crewmate worktrees are all linked git worktrees of the same repository, so the valid discriminator is branch state, not whether the checkout is linked.
-The primary checkout is healthy on its default branch, and linked worktrees or secondmate homes are healthy at detached HEAD.
-Only a named non-default branch checked out in `FM_ROOT` is a worktree tangle.
-
-`fm-tangle-lib.sh` resolves the default branch from `origin/HEAD`, then local `main` or `master`, and classifies that named non-default primary branch as the tangle.
-`fm-guard.sh` prints the repair command on the next mutable fleet action, while `bin/fm-session-start.sh` reports the same condition through bootstrap as a `TANGLE:` line at session start.
-If another live session holds the fleet lock, both surfaces keep the alarm but switch to read-only wording with no repair command.
-Ship briefs also tell the crewmate to verify `pwd -P` and `git rev-parse --show-toplevel` before creating `fm/<id>`, then stop with a blocked status if it landed in the primary checkout.
-Placement is proven only at launch, so `bin/fm-spawn.sh` also exports the task id as `FM_TASK_ID` into every ship and scout pane, and `bin/fm-test-run.sh` refuses to execute the behavior suite from the primary checkout while that marker is set; the runner's header owns the predicate and [`tests/fm-test-run.test.sh`](../tests/fm-test-run.test.sh) pins it.
+Its operating checkout (`FM_ROOT`) and crewmate worktrees are linked worktrees of one repository, so the discriminator is branch state: the primary is healthy on its default branch, linked worktrees and secondmate homes at detached HEAD, and only a named non-default branch in `FM_ROOT` is a tangle.
+`fm-tangle-lib.sh` owns that classification; `fm-guard.sh` and session start report it, read-only when another live session holds the fleet lock.
+Because placement is proven only at launch, `bin/fm-spawn.sh` exports `FM_TASK_ID` into every ship and scout endpoint, and `bin/fm-test-run.sh` refuses to run the suite from the primary checkout while it is set ([`tests/fm-test-run.test.sh`](../tests/fm-test-run.test.sh)).
 
 ## No-mistakes gate authority boundary
 
@@ -217,7 +167,7 @@ Firstmate's own no-mistakes gate runs agents inside a checkout that also contain
 The tracked `.no-mistakes.yaml` sets `disable_project_settings: true`; no-mistakes honors that setting only from the trusted default-branch copy, so a pushed branch cannot enable its own project instructions during validation.
 Independently, `fm-spawn.sh`, `fm-send.sh`, `fm-control.sh`, and `fm-teardown.sh` source `bin/fm-gate-refuse-lib.sh` and refuse fleet mutation under its gate-context contract.
 The [Deck chat host](../bin/fm-deck-chat.sh) and [primary steer CLI](../bin/fm-primary-steer.sh) apply the same boundary to their mutating entrypoints; the steer CLI's status and delivery reads remain available.
-A normal primary checkout or crewmate worktree has neither signal and remains unaffected.
+A normal primary checkout or crewmate worktree has neither signal and is unaffected.
 The helper's header owns the exact signal detection, relocated-home limitation, test-harness bypass, and relationship to no-mistakes' HEAD-continuity guard.
 
 ## Two task shapes
@@ -227,192 +177,108 @@ The intake and authority contract in `AGENTS.md` owns when separate scout resear
 
 ## Dispatch profiles
 
-Crewmate and scout dispatch can stay on the static crewmate harness resolved by `config/crew-harness`, or it can use local dispatch profiles in `config/crew-dispatch.json`.
-The dispatch file is intentionally judgment-based: firstmate reads the natural-language rules at intake, chooses the best matching rule, resolves profile arrays itself from current quota output under the `AGENTS.md` section 4 intake boundary, and passes concrete profile axes to `fm-spawn.sh`.
-The shell scripts validate the JSON shape and verified harness/effort combinations, but they do not parse task intent, match natural-language rules, or own array selection.
-The session-start bootstrap step keeps valid dispatch configuration silent unless verbose facts are enabled and surfaces a concise invalid-config line when validation fails.
-When the file exists, `fm-spawn.sh` refuses crewmate and scout launches without an explicit harness, so `config/crew-harness` is only automatic when no dispatch profile file is active.
-Secondmate launches are exempt because they resolve the secondmate harness and any optional secondmate model or effort tokens instead.
-Unsupported effort values are generally still recorded in task meta when passed to `fm-spawn.sh`, while the launch template omits any effort flag that the selected harness does not accept.
-Deck is deliberately stricter because it has no effort control: dispatch validation rejects Deck profiles with effort, and spawn or relaunch refuses non-default effort before creating metadata or stopping a worker.
-The adapter references own each harness's exact effort contract.
+Crewmate and scout dispatch uses either `config/crew-harness` or the natural-language profiles in [`config/crew-dispatch.json`](configuration.md#crew-dispatch-profiles-configcrew-dispatchjson).
+The dispatch file is judgment-based: firstmate reads its rules at intake, resolves profile arrays from current quota output under the `AGENTS.md` section 4 boundary, and passes concrete axes to `fm-spawn.sh`.
+The scripts validate shape and harness and effort combinations but never parse task intent or select from arrays.
+When the file exists, `fm-spawn.sh` refuses crewmate and scout launches without an explicit harness, so the rules cannot be silently skipped.
+Deck is the only harness and has no effort control, so validation rejects profiles with effort and spawn or relaunch refuses a non-default effort before creating metadata or stopping a worker.
 
 ## Optional secondmates
 
 `data/secondmates.md` records persistent secondmates with natural-language scopes, project clone lists, and home paths.
-A local route points directly at its home, while a remote route adds an SSH alias and remote Firstmate code root so the entire home and all of its child work stay on that host.
-[`remote-secondmates.md`](remote-secondmates.md) owns current setup, supplied-origin provisioning, transport, relay, failure, and retirement behavior.
-`fm-home-seed.sh` provisions a local isolated home, clones the listed PR-based projects into it, initializes newly cloned `no-mistakes` projects, copies the charter to `data/charter.md`, and `fm-spawn.sh --secondmate` launches it through the same session-provider and status-file path as any direct report.
-For a domain whose subject is the firstmate repo itself, a deliberate `--no-projects` seed creates a project-less home whose crews take pooled worktrees of that repo instead of separate clones.
-The signal cannot be mixed with project names or omitted accidentally, and a populated home cannot be converted in place; the full seed contract is in [configuration.md](configuration.md#secondmate-routes-datasecondmatesmd).
-When seeded with `-`, the home is a durable treehouse lease under the secondmate id, so it survives with no live process and is not recycled by later `treehouse get` or pruning.
-Retirement or seed rollback returns the leased home; normal restart/recovery keeps it leased.
-If returning the lease fails during teardown, firstmate leaves the route and home intact instead of hiding a still-held lease.
-Seeding is transactional: if validation, cloning, initialization, or registry update fails, generated briefs, new homes, new project clones, and registry edits are rolled back.
-`local-only` projects stay with the main first mate because they merge into the main local checkout instead of a remote-backed PR path.
-The same project may appear in multiple secondmate homes when their scopes differ, such as issue triage versus feature development.
-Secondmates are idle by default: after startup recovery reconciles only work already in their own home, an empty queue waits silently for routed tasks, and they never self-initiate surveys or audits.
-When called with `FM_HOME=<this-firstmate-home>` or when `FM_HOME` is already set to the active firstmate home, metadata-routed `fm-send.sh` requests to a live `kind=secondmate` use the live-charter-compatible `from-firstmate` carrier owned by `bin/fm-operational-input.sh`, so the secondmate returns terse answers through status lines and detailed answers through docs plus status pointers instead of replying only in its own chat.
-The parent guards every reply-bearing marked request against a missing correlated report without reading the secondmate conversation; `bin/fm-pending-reply-lib.sh` owns the correlation, recovery, escalation, and retention contract, while `bin/fm-send.sh` owns the explicit fire-and-forget exception.
-Explicit backend-target sends and direct human typing stay unmarked, so captain intervention in a secondmate pane remains conversational.
-After seeding a secondmate, `fm-backlog-handoff.sh` validates the fleet-specific handoff, atomically delegates already-judged in-scope queued item moves to `tasks-axi mv`, and then attempts a marked routed-work wake through the receiver's recorded endpoint.
-The [`fm-backlog-handoff.sh`](../bin/fm-backlog-handoff.sh) header owns route-specific wake outcomes, remote outbox release after receipt, and stable wake-correlation retry behavior.
-`tests/fm-backlog-handoff.test.sh` and `tests/fm-remote-backlog-handoff.test.sh` pin the local and remote delivery boundaries.
-An unreachable remote host is unknown rather than dead, preserves its route and durable work, and is never failed over or relaunched locally.
-Idle secondmate panes are healthy; teardown is explicit and refuses while the secondmate home has in-flight work unless the captain has approved discard with `--force`.
+A remote route keeps the home and all its child work on another host; [`remote-secondmates.md`](remote-secondmates.md) owns remote setup, transport, failure, and retirement.
+`fm-home-seed.sh` provisions an isolated home transactionally, rolling back on any failure, and `fm-spawn.sh --secondmate` launches it through the same session-provider and status-file path as any direct report; [configuration.md](configuration.md#secondmate-routes-datasecondmatesmd) owns the seed contract.
+A home seeded with `-` is a durable treehouse lease under the secondmate id, and a failed return at retirement leaves the route and home intact rather than hiding a still-held lease.
+`local-only` projects stay with the main first mate because they merge into the main local checkout.
 
-Secondmate homes converge conservatively to the primary's version and declared inherited local material at launch and during locked session start.
-The [`secondmate-provisioning` skill](../.agents/skills/secondmate-provisioning/SKILL.md) owns the full guarded sync, propagation, nudge, and mid-session local-material push contract.
+Secondmates are idle by default: after startup recovery of their own home, an empty queue waits silently, and they never self-initiate surveys or audits.
+Marked `fm-send.sh` requests use the `from-firstmate` carrier owned by `bin/fm-operational-input.sh`, so answers come back through status lines rather than a chat nobody reads, and `bin/fm-pending-reply-lib.sh` guards each reply-bearing request against a missing report.
+Direct human typing stays unmarked, so captain intervention in a secondmate remains conversational.
+`fm-backlog-handoff.sh` moves already-judged in-scope queued items to a secondmate and wakes it; its header owns delivery outcomes.
+An unreachable remote host is unknown rather than dead, keeps its route and durable work, and is never failed over or relaunched locally.
+Teardown refuses while the home has in-flight work unless the captain approved discard with `--force`.
 
-Secondmate agents can run on a different verified harness than crewmates.
-`config/secondmate-harness` controls the primary's secondmate launch harness and may also carry optional model and effort tokens as `<harness> [<model>] [<effort>]` on the first non-empty, non-comment line.
-A bare harness line remains harness-only, so existing `config/secondmate-harness` files keep their previous behavior.
-When the harness token is unset or `default`, launch falls back to `config/crew-harness`, then to the primary's own harness, and the model and effort tokens are ignored.
-Those optional tokens are re-read on every secondmate spawn or respawn and are overridden by explicit per-spawn `--model` or `--effort` flags.
-For a local route, an explicit per-spawn harness or raw launch command does not inherit model or effort tokens from `config/secondmate-harness`.
-Remote routes accept verified harness adapters only and reject raw launch commands.
-`config/crew-harness` remains the crewmate harness and is inherited into secondmate homes.
-`config/crew-dispatch.json` is inherited too; secondmates use the same natural-language dispatch profiles when spawning their own crewmates.
-The [`secondmate-provisioning` skill](../.agents/skills/secondmate-provisioning/SKILL.md) owns the inherited-local-material propagation contract and points to the implementation's item declaration.
-
-The `data/secondmates.md` line contract is owned by the [`secondmate-provisioning` skill](../.agents/skills/secondmate-provisioning/SKILL.md#routing-table), and the secondmate environment variables are documented in [configuration.md](configuration.md).
+`config/secondmate-harness` may carry optional model and effort tokens, an absent or `default` harness defers to `config/crew-harness`, and any harness other than Deck is refused (`bin/fm-harness.sh` header).
+Those tokens are re-read on every spawn or respawn, and the `bin/fm-spawn.sh` header owns their override and inheritance rules.
+`config/crew-harness` and `config/crew-dispatch.json` are inherited into secondmate homes, and homes converge conservatively to the primary's version at launch and locked session start.
+The [`secondmate-provisioning` skill](../.agents/skills/secondmate-provisioning/SKILL.md) owns that sync and the [`data/secondmates.md` line contract](../.agents/skills/secondmate-provisioning/SKILL.md#routing-table).
 
 ## Delivery modes are explicit per task
 
-`no-mistakes` tasks run the full validation pipeline, `direct-PR` tasks open PRs without that pipeline, and `local-only` tasks stay local until firstmate performs an approved fast-forward merge.
-Each task's mode and `yolo` merge posture are firstmate's decision at intake.
-The mode is passed explicitly to `bin/fm-brief.sh`, and both values are passed explicitly to `bin/fm-spawn.sh` and `bin/fm-promote.sh`; each command refuses to guess the values it consumes.
-A ship brief records its mode as a fixed machine-readable line and the spawn refuses to launch on a different one, so the worker's instructions and the recorded task delivery cannot diverge.
-`bin/fm-dod-lib.sh` is the one owner of that mode's definition of done, rendered into a generated ship brief, the ship instructions a promoted scout receives, and that scout's own `brief.md` so a later relaunch reads the same contract, so a promoted worker cannot be handed a weaker contract than a briefed one.
-It is also the one owner of the no-mistakes `--intent` contract those workers follow.
-`data/projects.md` records each project's standing posture and optional `+yolo` merge flag as the captain's default and as context for that decision, including the conditional `no-mistakes-prod-only` policy; a ship spawn that drops below the registered rigor prints a deviation notice and continues.
-`bin/fm-project-mode.sh` remains the one registry parser for the mechanical consumers that have no task in hand: fleet sync's `local-only` skip, home seeding's refusal and no-mistakes initialization, and auto-land's current project authority and attestation requirement ([configuration](configuration.md#auto-land-configautolandjson-configpost-merge)).
-When a selected delivery path calls for a diff, `bin/fm-review-diff.sh` refreshes the authoritative base and, when task meta records `pr=`, always fetches and compares against `refs/pull/<n>/head` by default (recorded `pr_head=` is only an offline fallback) before falling back to the local branch with a warning.
-Where a no-mistakes pipeline stores evidence in the repo, it publishes that PR-viewable validation evidence to an orphan evidence branch that shares no history with code branches, so it never enters the crew branch or the default branch.
-This repo uses that setting, and its own `.no-mistakes/` directory remains local state that stays gitignored and is rejected by CI if tracked; [`configuration.md`](configuration.md) owns the setting.
-PR-based task merges go through `bin/fm-pr-merge.sh`, which records `pr=` and any available `pr_head=` through `bin/fm-pr-check.sh` before calling the forge CLI.
-The helper requires a full canonical URL and rejects malformed URLs or repo override flags before recording merge state.
-A `https://github.com/<owner>/<repo>/pull/<n>` URL requires `gh` and `jq`, is merged only after one live read confirms the pull request is open, not a draft, mergeable, conflict-free, and every unwaived check is green at the current head, then `gh pr merge` binds that verified head with `--match-head-commit`.
-[`bin/fm-pr-lib.sh`'s `fm_pr_github_checks_not_green`](../bin/fm-pr-lib.sh) owns the shared GitHub green-check rule, including superseded check runs.
-`--auto`, `--admin`, and branch-deletion flags are refused unless `--attended-override` is passed for an explicit captain instruction; that override never skips the live green check, the away-grant check, or a captain hold.
-An attended `--allow-red <check-name>` may appear once, waives only GitHub checks with that exact name, and is refused while the away-posture record exists.
-Because away merge authority is read from that record and then acted on by the forge, the authority read and synchronous forge command share the record's cross-subsystem lock, closing the common live-owner TOCTOU.
-A lock that cannot be taken refuses the merge.
-While the record exists, GitHub auto-merge and any base whose rules cannot prove the absence of a merge queue are refused before submission, and GitLab auto-merge flags or scheduled state are refused while an immediate merge is forced with a final `--auto-merge=false`; a branch-rules read that fails only because the repository's plan does not expose branch rules at all (GitHub's plan-upgrade 403) proves the absence of a merge queue on its own and does not refuse, while every other failure to read that state still does.
-This is deliberately confused-agent-grade rather than fully atomic: it stops an accidental merge, not a determined bypass.
-A GitHub queue-rule or PR-base change after the queue-free preflight can still enqueue a merge that lands after its away grant lapses, and killing the lock-owning shell while its forge child survives lets stale-owner recovery admit archive or replacement before that child completes.
+`no-mistakes` tasks run the full validation pipeline, `direct-PR` tasks open PRs without it, and `local-only` tasks stay local until firstmate performs an approved fast-forward merge.
+Each task's mode and `yolo` merge posture are firstmate's decision at intake, passed explicitly to `bin/fm-brief.sh`, `bin/fm-spawn.sh`, and `bin/fm-promote.sh`, each of which refuses to guess.
+A ship brief records its mode as a fixed line and spawn refuses a mismatch, so the worker's instructions and the recorded delivery cannot diverge.
+`bin/fm-dod-lib.sh` owns each mode's definition of done and the no-mistakes `--intent` contract for briefed and promoted workers alike, so a promoted worker cannot receive a weaker contract.
+`data/projects.md` records each project's standing posture as the captain's default, and `bin/fm-project-mode.sh` parses it for consumers with no task in hand.
+No-mistakes evidence goes to an orphan evidence branch that shares no history with code branches ([`configuration.md`](configuration.md) owns the setting).
+
+PR-based merges go through `bin/fm-pr-merge.sh`, whose header owns forge mechanics.
+It merges only after one live read confirms the PR or MR is open, mergeable, conflict-free, and green at the current head, and binds the merge to that head, because recorded metadata goes stale on a rebase.
+`--auto`, `--admin`, and branch deletion need `--attended-override`, which never skips the live green check, the away grant, or a captain hold.
+Only a confirmed landing records a landed outcome; a queued or unconfirmed request leaves its poll armed.
+
+While the away-posture record exists, a merge needs `yolo=on` or an away grant, and the authority read and the synchronous forge command share the record's cross-subsystem lock, closing the common live-owner TOCTOU; a lock that cannot be taken refuses.
+Auto-merge, `--allow-red`, and any base whose rules cannot prove the absence of a merge queue are refused while away.
+This is confused-agent-grade, not fully atomic: it stops an accidental merge, not a determined bypass.
+A queue-rule or PR-base change after the queue-free preflight can still enqueue a merge that lands after its away grant lapses, and killing the lock-owning shell while its forge child survives lets stale-owner recovery admit archive or replacement before that child completes.
 These are accepted limitations, not oversights; durable authority, landing re-verification, and child-lock handoff are outside this boundary.
-`bin/fm-afk-contract.sh` owns the lock contract, while `tests/fm-afk-contract.test.sh` and `tests/fm-pr-merge.test.sh` pin the serialization and fail-closed merge behavior.
-A `https://<host>/<path>/-/merge_requests/<n>` URL (see [docs/gitlab-merge-watch.md](gitlab-merge-watch.md)) invokes `glab mr merge <n> -R https://<host>/<path>`, so the instance comes from the URL, and adds no merge-method flag because the project's own merge method applies.
-That path merges only after one live read of the merge request confirms it is open, mergeable, conflict-free, with blocking discussions resolved and a successful pipeline at the current head, and it binds the merge to that verified head; recorded metadata is never the authority for those conditions because a rebase leaves it stale.
-After either forge command returns, the script confirms the PR or MR actually landed, and only a confirmed landing records a landed outcome; a queued or unconfirmed request records none and leaves its poll armed.
-On GitLab an auto-merge-queued or unconfirmed request is reported without failing the run.
-On GitHub an outcome that is neither merged nor queued is refused loudly and non-zero, naming the observed state, and in attended posture a base branch that requires the merge queue is refused with the concrete `--attended-override -- --auto --<method>` retry flags its configured method requires rather than having a merge method chosen on the caller's behalf.
-When the forge already accepted exactly those flags and the pull request still has not entered the queue, that refusal points at the queue state to re-check instead of echoing back the flags the caller just ran.
-An auto-merge request is held to the same standard: `--auto` that leaves the pull request neither merged nor queued is refused rather than reported as success.
-Every GitHub refusal states what it could not observe as plainly as what it did, so an unreadable branch-rule response, an unrecognised queue method, and a merge queue no available read can see are each named rather than left to look like a base branch with no queue at all.
-A confirmed merge leaves a durable role-routed outcome instead of living only in the merging agent's memory, and [`bin/fm-merge-outcome-lib.sh`](../bin/fm-merge-outcome-lib.sh)'s header owns its destination, shape, identity, normal-case deduplication, and at-least-once recovery.
-The same emitter handles a merge firstmate performed and one its poll detected, while the watcher immediately delivers the emitter's local actionable poll row.
-After the forge accepts firstmate's merge request, the merge path persists the resolved yolo, away-grant, or attended authority bound to the task's canonical PR identity.
-A later merged poll consumes only that matching persisted value; with no match it records the landing as external rather than consulting a live away-posture record that may have been archived or replaced.
-[`bin/fm-merge-authority-lib.sh`](../bin/fm-merge-authority-lib.sh)'s header owns resolution, private atomic persistence, identity-checked consumption, and retirement, while only the merge path gates on the answer.
-Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committed work must be landed before the worktree is returned.
-A pool worktree is only returned after teardown passes the slot-ownership proof: a contradictory task record or a supported live endpoint refuses without touching either task, and no discard authority relaxes that.
-A slot's own owner claim, written by the spawn that takes it under the allocation lock and owned by [`bin/fm-wake-lib.sh`](../bin/fm-wake-lib.sh), covers a slot reassigned to a task that left no record the scan could reach: a claim naming a different task releases nothing - teardown warns, names the claimant, and finishes only the task's own cleanup - because Treehouse's own live process lease cannot answer ownership once the worker's exit releases it.
-Allocation and return serialize on one project lock per machine-local Firstmate tree: every home reachable through local parent links shares that lock, and a home seeded from another machine anchors its own, because a lock taken on this filesystem is neither held nor observable across that boundary.
-Before the worktree is returned, teardown concludes the task's own no-mistakes run when it is parked at a gate, including a run whose head the task copy cannot resolve - the shared runs-ledger continuation proof is the only recognition for that case, so cleanup never orphans a parked run the pipeline advanced past the submitted head.
-[`bin/fm-teardown.sh`](../bin/fm-teardown.sh)'s header owns the landed-work proofs, slot-ownership proof, PR-discovery fallback, pre-teardown run conclusion, and stale-lock recovery procedure; [`tests/fm-teardown-endpoint-safety.test.sh`](../tests/fm-teardown-endpoint-safety.test.sh) and [`tests/fm-secondmate-safety.test.sh`](../tests/fm-secondmate-safety.test.sh) pin the slot-collision boundary.
+`bin/fm-afk-contract.sh` owns the lock, and `tests/fm-afk-contract.test.sh` and `tests/fm-pr-merge.test.sh` pin it; [`captain-hold-lifecycle.md`](captain-hold-lifecycle.md) owns the separate merge-to-cleanup residual.
+
+A confirmed merge leaves a durable role-routed outcome rather than living in the merging agent's memory.
+The merge path persists the resolved yolo, away-grant, or attended authority bound to the PR identity, and a later merged poll consumes only that value or records the landing as external rather than consulting a live away record that may have been replaced ([`bin/fm-merge-authority-lib.sh`](../bin/fm-merge-authority-lib.sh)).
+
+Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committed work must be landed first.
+A pool worktree is returned only after the slot-ownership proof passes, and no discard authority relaxes it; the spawn's own slot claim backs that proof because Treehouse's process lease cannot answer ownership once the worker's exit releases it.
+Allocation and return serialize on one project lock per machine-local Firstmate tree, because a lock on one filesystem is not observable from another machine.
+Teardown concludes the task's own parked no-mistakes run first, so cleanup never orphans a run the pipeline advanced past the submitted head.
+[`bin/fm-teardown.sh`](../bin/fm-teardown.sh)'s header owns these proofs, and [`tests/fm-teardown-endpoint-safety.test.sh`](../tests/fm-teardown-endpoint-safety.test.sh) pins the slot boundary.
 
 ## Optional Relay
 
-Relay is opt-in presence for the shared `@myfirstmate` bot on both public surfaces it supports, X and Discord.
-A user enables it by putting `FMX_PAIRING_TOKEN` in the firstmate home's gitignored `.env`; `FMX_RELAY_URL` is optional and defaults to `https://myfirstmate.io`.
-That token is standing authorization for firstmate to answer public mentions and act autonomously on normal reversible mention requests.
+Relay is opt-in presence for the shared `@myfirstmate` bot on X and Discord, enabled by `FMX_PAIRING_TOKEN` in the home's gitignored `.env`; [`relay.md`](relay.md) owns its artifacts and wire contract.
+That token is standing authorization for firstmate to answer public mentions and act autonomously on normal reversible requests.
 Destructive, irreversible, or security-sensitive asks are escalated for trusted-channel confirmation instead of being executed from a public mention.
 The relay uses owner-only routing: a mention delivered to a home is from that home's owner, while its surrounding conversation context may still include other public accounts.
-On the locked session-start bootstrap step, that token creates the local polling and watcher-cadence artifacts described in the [Relay configuration reference](configuration.md#relay-env).
-Without the token, the locked session-start bootstrap step removes those artifacts on opt-out and otherwise stays silent, so non-Relay users see no behavior change.
-Newly offered mentions are stored as `state/x-inbox/<request_id>.json` and wake firstmate once per retained request ID; the [Relay configuration reference](configuration.md#relay-env) owns the durable offer-marker and re-offer contract.
-Attached media stays in that stashed payload as URLs the responding agent fetches and views with its own tools, so the polling path itself never downloads third-party content.
-The `fmx-respond` agent-only skill drains that inbox, uses the preserved Relay conversation context for continuity under the wire contract owned by the [Relay configuration reference](configuration.md#relay-env), classifies each mention as an actionable request, question, or pure acknowledgment, and submits public-safe replies through `bin/fm-x-reply.sh`.
-When a reply has a real visual artifact, `--image <path>` attaches one local PNG, JPEG, GIF, WebP, BMP, or TIFF to the relay's optional `{media_type,data_base64}` image object.
-Actionable reversible requests run through firstmate's normal intake, backlog, dispatch, investigation, or ship lifecycle.
-Work that completes in the answering turn gets one outcome reply.
-Work that spawns a longer-running task gets an acknowledgement reply first; `bin/fm-x-link.sh` records `x_request=`, `x_request_ts=`, `x_followups=0`, and optional reply-platform context in that task's `state/<id>.meta`, while durable per-request context preserves the original platform and budget independently of task links and inbox cleanup.
-That link therefore reaches only work whose task record lives in the answering home; work routed to a secondmate is bound instead by a typed promised-final commitment registered with `--work-home secondmate:<id>`, and `bin/fm-x-link.sh` refuses a non-local task with that path named rather than leaving the public promise unbound.
-Later milestone wakes use `bin/fm-x-followup.sh` to post up to three public-safe follow-ups through the relay's `connector/followup` endpoint, ending with a `--final` one for ordinary Relay-linked work.
-A typed promised-final commitment owns its terminal reply through `bin/fm-public-followup.sh`; after its receipt is validated, that owner asks the bound work home to remove any legacy link without posting another reply, routing a REMOTE secondmate clear through its SSH transport with the registration's Relay request identity as the mutation guard.
-The [Relay configuration reference](configuration.md#relay-env) owns the exact context retention, platform-resolution, and fail-safe posting contract.
-If recovery relinks the same relay request onto a successor task, `fm-x-link.sh --carry-count <n> --carry-ts <epoch> --carry-platform <x|discord> --carry-max <n>` preserves the consumed follow-up count, original 7-day window, and reply split budget instead of granting a fresh local budget or falling back to the wrong platform.
-The follow-up helper forwards `--image <path>` to the same reply client when a follow-up needs an image.
-Each follow-up is bounded by a local 7-day window and a 3-post cap; a successful non-final post increments the counter and keeps the link, while `--final`, reaching the cap, the window lapsing, or the relay itself rejecting an exhausted binding all clear it, and the helper is skipped for tasks that did not originate from a Relay mention.
-Pure acknowledgments or mentions with nothing to answer are dismissed through `bin/fm-x-dismiss.sh`, which calls the relay's `connector/dismiss` endpoint and posts no text, then the local inbox file is cleared.
-Concise replies stay single unnumbered messages; genuinely long replies are split by the client into bounded, numbered threads using the target platform's reply budget, with `texts` carrying the ordered chunks for the relay.
-Splitting preserves fenced-code, paragraph, line, and word boundaries when possible.
-If an image is attached to a split reply, the relay puts it on the first/opener message only and leaves later chunks text-only.
-For preview testing, `FMX_DRY_RUN` makes `fm-x-reply.sh` and `fm-x-dismiss.sh` skip the public post or dismiss call and record the would-be payload under `state/x-outbox/`, including `texts` when the reply would be a thread and an `endpoint` marker when the preview is a completion follow-up or dismiss, while the rest of the poll -> compose -> would-post loop still succeeds.
-Attached images are recorded as compact `{media_type, bytes, source_path}` metadata in dry-run instead of base64 bytes.
-Relay remains layered on top of the existing check mechanism without changing its request-handling behavior.
+Without the token, session start removes Relay artifacts and otherwise stays silent, so non-Relay users see no change.
+Attached media stays as URLs the responding agent fetches, so the polling path never downloads third-party content.
+The `fmx-respond` skill owns the response procedure, and the `bin/fm-x-*.sh` headers own replies, bounded follow-ups, task links, and dismissals.
 
-A promised *final* public reply is a stronger commitment than a milestone follow-up, because forgetting it is publicly visible.
-It is therefore not carried in conversation memory at all: intake turns it into a typed `kind=public-followup` obligation owned by `tasks-axi public-followup`, and every later step reads that obligation from disk.
-The mechanism boundary is deliberately narrow.
-`tasks-axi` owns the obligation state machine and is the only thing that validates a terminal result's source home, work id, generation, schema, outcome, and deliverables.
-`state/x-context/` remains the only owner of the private full request context.
-`bin/fm-x-reply.sh` remains the only thing that posts.
-`bin/fm-public-followup.sh` composes those three and adds the activation gate, a private terminal-event inbox, the idempotent delivery sequence, and retained-loop disposition: delivery stamps the registration delivered, `rechain` hands its thread binding to one follow-on obligation, and `retire` is the only close.
-Work routed to another home reports a *typed* terminal result through `bin/fm-public-followup-emit.sh`; firstmate never recovers the source home, work id, outcome, or deliverables by parsing a free-form `done:` sentence, and the child never learns the thread.
-When that home is a remote secondmate, no local path reaches the owning home, so the result is staged where the work runs and the owning home pulls it over the same SSH route with `bin/fm-public-followup-collect.sh`.
-Because a terminal event's id is derived from its identity tuple rather than generated, duplicate reports and restart replay converge without coordination.
-Reconciliation rides the existing relay poll and the session-start digest instead of a new watcher, daemon, or timer, and both are gated on the same `.env` activation contract so a home that never opted into the relay executes none of it.
-The [Relay configuration reference](configuration.md#promised-public-replies-statepublic-followup) owns the operator-facing contract, and the `fmx-respond` skill owns the procedure.
+A promised final public reply is a stronger commitment than a milestone follow-up, because forgetting it is publicly visible.
+It is therefore not carried in conversation memory: intake turns it into a typed `kind=public-followup` obligation owned by `tasks-axi public-followup`, and every later step reads it from disk.
+The boundary is deliberately narrow: `tasks-axi` is the only validator of a terminal result, `state/x-context/` the only owner of the private request context, and `bin/fm-x-reply.sh` the only thing that posts.
+`bin/fm-public-followup.sh` composes those three, and `retire` is its only close.
+Work routed to another home reports a typed result through `bin/fm-public-followup-emit.sh`; firstmate never recovers it by parsing a free-form `done:` sentence, and the child never learns the thread.
+Event ids derive from their identity tuple, so duplicate reports and restart replay converge without coordination.
+Reconciliation rides the existing relay poll and session-start digest, gated on the same `.env` activation, so a home that never opted in runs none of it ([operator contract](relay.md#promised-public-replies-statepublic-followup)).
 
 ## Project memory belongs to projects
 
-Durable project-intrinsic agent knowledge lives in each project's committed `AGENTS.md`, with `CLAUDE.md` as a real `@AGENTS.md` import pointer.
-Ship briefs prompt crewmates to create or update those files through the normal delivery path; `data/projects.md` stays a thin private registry.
-Each project `AGENTS.md` carries self-governance guidance; [`bin/fm-ensure-agents-md.sh`](../bin/fm-ensure-agents-md.sh) owns the canonical wording and idempotent insertion, while its header and help document the explicit mark for equivalent project-owned guidance.
-It refuses a case-variant real memory file such as a lowercase `agents.md`, so the pointer's `@AGENTS.md` import resolves to a real `AGENTS.md` on a case-sensitive filesystem, and surfaces the mismatch for manual reconciliation.
-The full ownership rule - what is project-intrinsic versus fleet-private, and how firstmate keeps the two apart without writing into project clones - is owned by [`AGENTS.md`](../AGENTS.md) (project and knowledge management).
+Durable project-intrinsic agent knowledge lives in each project's committed `AGENTS.md`, with `CLAUDE.md` as a real `@AGENTS.md` import pointer, and `data/projects.md` stays a thin private registry.
+[`bin/fm-ensure-agents-md.sh`](../bin/fm-ensure-agents-md.sh) owns the self-governance wording and refuses a case-variant file such as `agents.md` so the import resolves on a case-sensitive filesystem.
+[`AGENTS.md`](../AGENTS.md) owns what is project-intrinsic versus fleet-private.
 
 ## Operational memory routing
 
-`/stow` sweeps the current session for durable knowledge that only exists in conversation and routes each finding to the most specific disk home.
-Home-domain captain preferences go to `data/captain.md`, cross-domain shared captain preferences go to the primary home's `data/captain-shared.md`, fleet-local operational facts and gotchas go to home-local `data/learnings.md`, project-intrinsic knowledge goes through normal crewmate delivery into that project's committed `AGENTS.md`, and task-scoped notes or undone next steps go to the backlog.
-Memory writes use inspect-then-update rather than blind append; the internal [`stow` skill](../.agents/skills/stow/SKILL.md) owns tier markers, decay, cold archival, and offload.
-The same pass also persists open-work record state the session is holding - filing a thread that was never recorded and correcting one the session knows went stale - bounded to the open work that session is actually holding.
-It is deliberately not a reconciliation of durable records against repository or PR reality: its input is the volatile context, so it can only preserve what the session still knows, and no reconciliation that outlives a session exists today.
-Task-scoped notes use `bin/fm-tasks-axi.sh show <id> --full` followed by `bin/fm-tasks-axi.sh update <id> --body-file <path>`, adding `--archive-body` when the prior body should remain recoverable.
-The stow pass never writes a skill, but a separately executed, captain-approved migration may move conditional knowledge into a user-owned local skill excluded from the Firstmate clone; changes to Firstmate's tracked skills remain deliberate repository work through the normal PR pipeline.
-Invoked in a primary home, `/stow` then cascades the same sweep to every registered secondmate, enumerated through `bin/fm-stow-cascade.sh`: each home is accounted and curated against its own startup-memory allowance, a live secondmate sweeps its own session, and a slow or unreachable home is reported as an exception rather than blocking the primary.
+`/stow` sweeps the session for knowledge that exists only in conversation and routes each finding to `data/captain.md`, the primary's `data/captain-shared.md`, home-local `data/learnings.md`, a project's `AGENTS.md` through crewmate delivery, or the backlog.
+The internal [`stow` skill](../.agents/skills/stow/SKILL.md) owns tiers, decay, and archival.
+It is not a reconciliation against repository or PR reality: its input is volatile context, so it can only preserve what the session still knows.
+It never writes a skill, and in a primary home it cascades to every registered secondmate through `bin/fm-stow-cascade.sh` without letting an unreachable home block the primary.
 
 ## Local clones stay fresh
 
-The locked session-start deferred network stage, PR-based teardown, and merged-PR wake handling refresh remote-backed project clones when the clone is safe to move.
-Wake-time refreshes can target a single clone by project name, so the primary home also catches up when a secondmate reports a merge from its own home.
-Clean default-branch clones fast-forward to `origin/<default>`, and a clean detached HEAD that holds no unique commits is re-attached to the default branch before the same fast-forward path runs.
-Dirty clones, non-default branches, detached HEADs with unique commits, diverged defaults, and default branches checked out in another worktree are reported as `STUCK:` with their behind count and left untouched.
-Fetches blocked by an orphaned `.git/packed-refs.lock` use bounded retries and remove the lock only when the shared staleness proof can prove it abandoned; [configuration.md](configuration.md#toolchain) owns the recovery details and tuning knobs.
-Local-only projects, clones without an origin remote, and fetch failures remain benign skips.
-The refresh also prunes local branches whose remote is gone and that no worktree still needs.
+Locked session start, PR-based teardown, and merged-PR wakes fast-forward remote-backed project clones only when the clone is safe to move.
+Dirty clones, non-default branches, detached HEADs with unique commits, and diverged defaults are reported as `STUCK:` and left untouched.
+A stale `.git/packed-refs.lock` is removed only when the shared staleness proof shows it abandoned ([configuration.md](configuration.md#toolchain)).
 
 ## Self-updates stay safe
 
-`/updatefirstmate` fast-forwards the running firstmate repo and registered secondmate homes from `origin` without touching project clones.
-It restarts every live second mate whose home the pass left on the target commit through a persist-gated replacement, including a home that needed no advance, because a restart is also the only thing that re-resolves launch-time harness wiring; the re-read nudge is retained only as the fallback for live agents whose runtime cannot prove a restart.
-For a remote route, the configured code root updates from its own origin on that host before the persistent home fast-forwards to the code-root commit.
-The primary update is fast-forward only, while a clean secondmate divergence may reconcile with `reset --keep` only when a three-way temporary-index proof shows its complete local tree result is already present at the target, including after a squash merge.
-Dirty, uniquely diverged, offline, and off-default targets are reported and left untouched, and genuine secondmate divergence remains visible through a durable reconciliation record until a later successful convergence clears it.
-Local homes share the guarded fast-forward helper, while remote updates delegate the same safety decision to the configured host through the generic transport.
-The procedure and outcome vocabulary are owned by the [`/updatefirstmate` skill](../.agents/skills/updatefirstmate/SKILL.md); the relevant script headers own the mechanics.
+`/updatefirstmate` fast-forwards the firstmate repo and registered secondmate homes without touching project clones.
+It restarts every live secondmate whose home ended on the target commit, because a restart is the only thing that re-resolves launch-time wiring.
+A clean secondmate divergence may reconcile with `reset --keep` only when a temporary-index proof shows its tree is already present at the target; dirty, diverged, offline, and off-default targets are reported and left untouched.
+The [`/updatefirstmate` skill](../.agents/skills/updatefirstmate/SKILL.md) owns the procedure.
 
 ## Restart-proof
 
-Fleet state lives in each task's session-provider backend, no-mistakes run records, status event logs, local markdown under `data/` including `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`, and persistent secondmate homes.
-At session start, confirmed-dead secondmate agent endpoints are closed and relaunched through the same secondmate spawn path, while ambiguous liveness reads are left untouched to avoid duplicate supervisors.
-Use `/stow` before an intentional reset when the conversation may hold durable knowledge that has not yet been written to disk; after that, the next firstmate session can reconcile and carry on.
-
-## Development notes
-
-The current watcher reliability work combines always-on bash triage with a durable queue for actionable wakes, generation-bound post-handling acknowledgement, deterministic re-arm recovery after watcher downtime, a race-proof singleton lock, duplicate self-eviction, drain-time liveness assertion, and a self-verifying tracked-child arm wrapper.
-The away posture is the record `bin/fm-afk-contract.sh` owns; the presence-gated sub-supervisor (`bin/fm-supervise-daemon.sh`) still provides walk-away delivery via the `/afk` skill while reusing the same shared wake classifier as the always-on watcher.
+Fleet state lives in each task's stream endpoint, no-mistakes run records, status event logs, local markdown under `data/`, and persistent secondmate homes.
+At session start, confirmed-dead secondmate endpoints are relaunched through the same spawn path, while ambiguous liveness reads are left untouched to avoid duplicate supervisors.
+Run `/stow` before an intentional reset when the conversation may hold knowledge not yet on disk.

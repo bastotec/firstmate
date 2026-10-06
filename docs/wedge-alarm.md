@@ -1,8 +1,9 @@
 # Away-mode injection wedge alarm
 
-The away-mode sub-supervisor (`bin/fm-supervise-daemon.sh`) buffers escalations and delivers them through the transport owned by [Away-mode supervisor backend](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target).
-When injection cannot confirm a submit past `FM_MAX_DEFER_SECS`, `inject_wedge_alarm` raises a loud, rate-limited alarm so the stall never stays invisible.
-The active alert is endpoint-independent so it can reach an unattended captain even when the primary's endpoint is unreadable.
+The away-mode sub-supervisor (`bin/fm-supervise-daemon.sh`) buffers escalations and delivers them to the primary.
+[`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns how that delivery reaches a stream primary.
+When delivery cannot be confirmed past `FM_MAX_DEFER_SECS`, `inject_wedge_alarm` raises a loud, rate-limited alarm so the stall never stays invisible.
+The active alert does not depend on the primary's endpoint, because a stalled endpoint is exactly what it reports and it must reach an unattended captain.
 The durable `state/.subsuper-inject-wedged` marker remains as an additional signal.
 
 ## Channels
@@ -11,12 +12,13 @@ The durable `state/.subsuper-inject-wedged` marker remains as an additional sign
 It lists channel directives, one per non-empty, non-comment line, and every listed non-`off` channel fires best-effort.
 `FM_WEDGE_ALARM_CHANNEL` overrides the file with one directive for focused testing.
 
-- `off` disables every active alert while retaining the durable marker.
+- `off` disables every active alert, wherever it appears in the list, while retaining the durable marker.
 - `auto` or `default` resolves to `osascript` on macOS.
   Other platforms have no built-in OS channel, so configure `command:` when a durable marker alone is insufficient.
-- `osascript` posts a macOS Notification Center banner outside the terminal pane.
+- `osascript` posts a macOS Notification Center banner outside the terminal.
 - `command:<cmd>` runs `<cmd>` through `sh -c` with the alarm summary as `$1` and on stdin, allowing delivery to a phone or pager service.
 
+An unrecognized directive logs a warning and fires nothing; the marker is still written.
 An absent `config/wedge-alarm` behaves as `auto`, which is default-on on macOS.
 Away-mode delivery alarms fire only after a genuine max-defer wedge and are rate-limited to at most once per max-defer window.
 
@@ -40,5 +42,4 @@ The primary's `service-alert` entrypoint restores the caller's seam after sourci
 Production leaves the seam unset and uses the configured real channels.
 
 `tests/fm-daemon.test.sh` covers directive parsing, rate limiting, timeout and process-group cleanup, argv-safe dispatch, channel fallback, and safe `command:` summary delivery.
-`tests/fm-deck-chat.test.sh` covers the primary down alert's channel use, its once-per-outage rule, and its marker.
-[`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) records the bounded manual macOS channel proof.
+[`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) records the bounded manual channel proof.

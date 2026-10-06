@@ -3,7 +3,7 @@
 The stream backend puts every task's live terminal output on one central hub, so a single place can watch workers on any machine and talk to them.
 It is firstmate's only runtime backend; [`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns the separate primary-supervisor discovery.
 
-[`docs/configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns backend selection, task-selector resolution, and the metadata contract that every backend shares.
+[`docs/configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns backend selection, task-selector resolution, and the task metadata contract.
 This document owns setup, security, and the limits specific to stream.
 
 ## What it is
@@ -18,7 +18,7 @@ Three pieces, and the split matters:
 
 The hub and agent are the Rust binaries by default; [Implementation and native binaries](#implementation-and-native-binaries) owns how they are built, where they live, and the Python rollback.
 
-The hub owning no pseudoterminal is the load-bearing part of that split: it is what lets the hub fail without taking a worker with it.
+Because the hub owns no pseudoterminal, it can fail without taking a worker with it.
 [When the hub is down](#when-the-hub-is-down) owns what that does and does not cost you.
 
 ## Setup
@@ -36,49 +36,47 @@ Every other home points at that hub rather than starting its own, by writing its
 Resolution order is `FM_STREAM_HUB`, then `config/stream-hub`, then a hub this home started itself, then `http://127.0.0.1:7717`.
 The locally started hub ranks below both configured sources, so a home pointed at the fleet's hub keeps using it even while running a hub of its own; it ranks above the default so that starting a hub on a non-default port does not leave every other command resolving a port nothing bound.
 
-The hub groups endpoints by the machine that owns them, and this home's name in that view comes from `FM_STREAM_MACHINE`, then `config/stream-machine`, then the hostname; it is a readable identity rather than an opaque id, so set it on any home whose hostname says nothing useful.
+The hub groups endpoints by the machine that owns them, and this home's name in that view comes from `FM_STREAM_MACHINE`, then `config/stream-machine`, then the hostname.
+It is a readable identity rather than an opaque id, so set it on any home whose hostname says nothing useful.
 
-Select the backend the way any explicit backend is selected: `config/backend`, `FM_BACKEND=stream`, or an explicit per-task request.
-Task-spawn selection is never auto-detected.
-Secondmate spawns use the existing isolated-home launch path, including Deck's persistent home-host driver (`bin/fm-deck-worker.sh`); no home migration is performed.
+An absent `config/backend` means stream, and a leftover `tmux` or `herdr` value is refused rather than ignored.
+Secondmate spawns use the isolated-home launch path through Deck's persistent home-host driver (`bin/fm-deck-worker.sh`).
 
 ## Secondmate lifecycle
 
-The same owners serve every secondmate launch: `bin/fm-spawn.sh` selects the home and harness, and `bin/fm-task-inbox-lib.sh` with `bin/fm-send.sh` owns durable steering and the doorbell.
-Deck's backend-independent host invariants are documented in `bin/fm-deck-worker.sh`: a watcher wake is never lost between turns, turns never overlap, and failures are reported rather than swallowed.
-`tests/fm-deck-harness.test.sh` exercises those invariants with serialized watcher and stdin turns.
-`tests/fm-backend-stream.test.sh` exercises a Deck home through the real stream transport, including launch, unacknowledged steering, liveness, interrupt, exit, same-endpoint relaunch, and recovery.
+`bin/fm-spawn.sh` selects the home and harness, and `bin/fm-task-inbox-lib.sh` with `bin/fm-send.sh` owns durable steering and the doorbell.
+Deck's host invariants are documented in `bin/fm-deck-worker.sh`: a watcher wake is never lost between turns, turns never overlap, and failures are reported rather than swallowed.
+`tests/fm-deck-harness.test.sh` exercises those invariants, and `tests/fm-backend-stream.test.sh` exercises a Deck home through the real stream transport, including launch, steering, liveness, interrupt, exit, same-endpoint relaunch, and recovery.
 
-Recovery classification remains `fm_backend_agent_state` in `bin/fm-backend.sh`, with one stream-only secondmate rule reading on top of it in `bin/fm-bootstrap.sh`: for a stream mate, `missing` is the hub's in-memory registry not knowing that endpoint, which an agent still pacing its rejoin after a hub restart also produces, so it licenses no respawn and the sweep skips with an `absence from the hub registry` diagnostic.
-The consequence: a stream mate whose own agent is gone reads `unreadable` while the hub still holds its record, then `missing` once the hub reaps that record after an hour of agent silence, so it is never respawned automatically and that skip line is the only signal.
-A stream mate whose worker exited while its agent lived still reads `dead` from the agent's own closing report, and the sweep respawns it only after endpoint closure is confirmed.
-`bin/fm-bootstrap.sh` owns secondmate recovery respawn, preserving the recorded backend rather than selecting a different backend from ambient configuration.
+Recovery classification is `fm_backend_agent_state` in `bin/fm-backend.sh`, with one stream secondmate rule on top of it in `bin/fm-bootstrap.sh`.
+For a stream mate, `missing` means the hub's in-memory registry does not know that endpoint, which an agent still pacing its rejoin after a hub restart also produces, so it licenses no respawn and the sweep skips with an `absence from the hub registry` diagnostic.
+A stream mate whose own agent is gone therefore reads `unreadable` while the hub still holds its record, then `missing` once the hub reaps that record after an hour of agent silence, so it is never respawned automatically and that skip line is the only signal.
+A stream mate whose worker exited while its agent lived reads `dead` from the agent's own closing report, and the sweep respawns it, preserving the recorded backend.
 `bin/fm-control.sh` owns interrupt, exit, same-endpoint relaunch, and `recover-missing`.
-A new stream agent generates a fresh endpoint id rather than recreating the old handle, so `recover-missing` on stream starts a new endpoint on this home's configured hub (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the task's endpoint identity through [`bin/fm-endpoint-rebind-lib.sh`](../bin/fm-endpoint-rebind-lib.sh), keeping its worktree and non-endpoint fields.
-Because a stream `missing` alone does not prove the worker gone, recovery checks for a local stream agent matching both the task label and this home's task status path, rather than refusing on another home's matching label.
+
+A new stream agent generates a fresh endpoint id, so `recover-missing` starts a new endpoint on this home's configured hub (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the task's endpoint identity through [`bin/fm-endpoint-rebind-lib.sh`](../bin/fm-endpoint-rebind-lib.sh), keeping its worktree and non-endpoint fields.
+Because a stream `missing` alone does not prove the worker gone, recovery first looks for a local stream agent matching both the task label and this home's task status path.
 A matching agent blocks recovery even when the hub has forgotten it; wait for its re-registration or stop that exact agent before retrying.
 [Agent control](agent-control.md#failure-and-rollback) owns failed-rebind cleanup, retained new-endpoint bindings, and retry handling.
 
 [Remote placement](remote-secondmates.md#stream-on-the-remote-host) owns stream-hosted remote mates and their supported lifecycle routes.
 
 A locally seeded stream-hosted second mate launches, is steered, and reports its own lifecycle, but it cannot itself spawn or supervise on stream until the hub has restarted since its seeding wrote the home a credential.
-Both PTY agents hand the hosted process the hub address and deliberately withhold the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`, so the launch path still carries no credential.
-The credential arrives through seeding instead, and until that restart the seeded token is one the running hub has not loaded, so the home's first stream call is refused by the hub rather than dying in `fm_backend_stream_token` (`bin/backends/stream.sh`).
-[Security](#security) owns the local seeding contract, including the homes it leaves without a credential; for those the first stream call still dies in `fm_backend_stream_token` before any endpoint exists, and the remedy that refusal names does not work there: `bin/fm-stream.sh token --ensure` mints a fresh random token, which the fleet hub refuses.
+Both PTY agents hand the hosted process the hub address and deliberately withhold the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`, so the launch path carries no credential.
+The credential arrives through seeding instead, and until the hub restarts the seeded token is one the running hub has not loaded, so the home's first stream call is refused by the hub.
+A home that seeding left without a credential (see [Security](#security)) dies in `fm_backend_stream_token` (`bin/backends/stream.sh`) on its first stream call, before any endpoint exists.
+The remedy that refusal names does not work there: `bin/fm-stream.sh token --ensure` mints a fresh random token, which the fleet hub refuses.
 
 ## Implementation and native binaries
 
 `FM_STREAM_IMPL`, then `config/stream-impl`, then `rust` selects which implementation `hub start` and endpoint launches run.
-`rust` runs the `fm-stream-hub` and `fm-stream-agent` binaries; `python` runs `bin/fm-stream-hub.py` and `bin/fm-stream-agent.py` and is the rollback until the Rust cutover is verified on the fleet.
+`rust` runs the `fm-stream-hub` and `fm-stream-agent` binaries; `python` runs `bin/fm-stream-hub.py` and `bin/fm-stream-agent.py` and is the explicit rollback.
 Nothing falls back from one to the other: a rust home without built binaries refuses with the build command and the rollback.
 
-The binaries are built from `crates/`, not tracked in git:
+The binaries are built from `crates/`, not tracked in git, and [`bin/fm-stream-native-lib.sh`](../bin/fm-stream-native-lib.sh)'s header owns the build and location mechanics:
 
-- `bin/fm-stream.sh native build` runs `cargo build --release --locked --target <host-triple> -p fm-stream-hub -p fm-stream-agent -p fm-stream-bridge` (Rust 1.96 or newer; the host triple comes from `rustc -vV`, using the compiler beside Cargo or on `PATH`) and installs the three binaries from `<target-dir>/<host-triple>/release/`, with a `stamp` naming the source key and commit, into `~/.local/share/firstmate/stream-native/<source-key>/` (`FM_STREAM_NATIVE_CACHE` or `XDG_DATA_HOME` move it).
-  The source key hashes existing tracked and non-ignored untracked files under `crates/`, plus `Cargo.toml` and `Cargo.lock`, using their working-tree content; deleted paths are skipped and hashing failures refuse resolution rather than selecting a partial key.
-  A primary and its local secondmate worktrees on the same sources share one build, and a checkout whose crate inputs changed resolves a new, unbuilt directory instead of running stale binaries.
-  Relative `CARGO_TARGET_DIR` values resolve against the build checkout, not the caller's working directory, for both Cargo output and installation.
-  The build unsets `CARGO_BUILD_TARGET` and explicitly selects the host triple, overriding Cargo's `build.target` configuration.
+- `bin/fm-stream.sh native build` builds the hub, agent and bridge with `cargo build --release --locked` for the host triple (Rust 1.96 or newer) and installs them, with a `stamp` naming the source key and commit, into `~/.local/share/firstmate/stream-native/<source-key>/` (`FM_STREAM_NATIVE_CACHE` or `XDG_DATA_HOME` move it).
+  The source key hashes the working-tree content of `crates/`, `Cargo.toml` and `Cargo.lock`, so a primary and its local secondmate worktrees on the same sources share one build, and a checkout whose crate inputs changed resolves a new, unbuilt directory instead of running stale binaries.
 - `native ensure` reuses a complete stamped install for the current key and builds otherwise.
   `bin/fm-update.sh` runs it for a rust primary left updated or already current, and for each settled local secondmate with a recorded window whose own selection is rust; skipped homes, registry-only homes without a window, and remote homes are not prepared by this path.
   Native preparation is best-effort and never fails the update; the script's header owns summary labels and build-log locations.
@@ -89,15 +87,11 @@ The binaries are built from `crates/`, not tracked in git:
   It is used as is, with no source-key check.
 
 Running hubs and agents keep the binary they started with; a rebuild changes only what the next `hub start` or spawn runs.
-
-The Bridge order path has its own limit:
-
-- The Bridge order path (`command`, `reconcile`) is still Python-only; [Rust bridge](#rust-bridge) owns what the native bridge covers.
+The Bridge order path (`command`, `reconcile`) is still Python-only; [Rust bridge](#rust-bridge) owns what the native bridge covers.
 
 ### Running the hub as a systemd user service
 
-`bin/fm-stream.sh hub unit [--bind ADDR] [--port N]` prints a unit that runs `fm-stream.sh hub start --foreground` in this home; it installs nothing.
-Generation refuses home or executable-directory paths and bind or port arguments containing whitespace, quotes, backslashes, `%`, or `$`, rather than emitting an unsafe unit.
+`bin/fm-stream.sh hub unit [--bind ADDR] [--port N]` prints a unit that runs `fm-stream.sh hub start --foreground` in this home; it installs nothing and refuses paths or arguments it cannot quote safely.
 The unit does not pin the implementation, so it follows `config/stream-impl`, and a rollback is a config edit plus a restart.
 Install it with `bin/fm-stream.sh hub unit --bind 127.0.0.1 > ~/.config/systemd/user/fm-stream-hub.service`, remove any drop-in under `fm-stream-hub.service.d/` that overrides `ExecStart` with a hand-built binary, then `systemctl --user daemon-reload`.
 Restarting the hub is a quiet-window operation: [Rust hub](#rust-hub) lists what to drain first.
@@ -107,7 +101,7 @@ Restarting the hub is a quiet-window operation: [Rust hub](#rust-hub) lists what
 `python3`, `curl`, and `jq` must be present, and the hub's protocol must match the adapter's.
 A rust home also needs the native binaries for its checkout ([Implementation and native binaries](#implementation-and-native-binaries)).
 Launching a local endpoint or a background hub also requires either `setsid` on `PATH` or, when it is absent (as on stock macOS), `perl` with `POSIX::setsid` support.
-A missing dependency, an unreachable hub, a refused token, or a protocol mismatch is terminal for the selected backend: it refuses and names what is wrong rather than falling back to another backend.
+A missing dependency, an unreachable hub, a refused token, or a protocol mismatch is terminal: the adapter refuses and names what is wrong.
 
 Run `bin/fm-stream.sh --help` for the operator commands; that help and each script's header own their exact flags.
 
@@ -117,41 +111,27 @@ Run `bin/fm-stream.sh --help` for the operator commands; that help and each scri
 
 ## Watching and steering
 
-`bin/fm-stream.sh web` prints the browser URL for the one central subscriber view, carrying the token as a URL fragment, which a browser never sends - so the navigation to the page carries no credential.
+`bin/fm-stream.sh web` prints the browser URL for the one central subscriber view, carrying the token as a URL fragment, which a browser never sends, so the navigation to the page carries no credential.
 The page's own event stream is the one request that does carry the token in a URL, because an `EventSource` cannot set a header: the hub logs nothing, but a TLS terminator or proxy in front of it logs whatever it is configured to.
 `bin/fm-stream.sh tasks` lists every endpoint across every machine, and `attach` streams one endpoint to stdout.
 
-Ordinary supervision does not need any of that.
-`fm-peek.sh`, `fm-send.sh`, `fm-crew-state.sh`, and `fm-control.sh` all work against a stream-backed task through the shared dispatcher, exactly as they do for any other backend.
-
-[Configuration](configuration.md#runtime-backend-configbackend--fm_backend) owns task metadata and selector routing; [`fm-send.sh`'s header](../bin/fm-send.sh) owns unrecorded explicit-target inference, including stream targets on this home's configured hub.
+Ordinary supervision does not need any of that: `fm-peek.sh`, `fm-send.sh`, `fm-crew-state.sh`, and `fm-control.sh` all work against stream-backed tasks through the shared dispatcher.
+[`fm-send.sh`'s header](../bin/fm-send.sh) owns unrecorded explicit-target inference, including stream targets on this home's configured hub.
 [`fm_backend_agent_pids`](../bin/fm-backend.sh) owns the process-identity read contract, including stream's local-machine restriction.
 [Portable stream-parity regressions](verification/runtime-backends.md#portable-stream-parity-regressions) distinguish fake-fleet integration coverage from real agent process reporting.
 
 ### Interactive attach
 
-`bin/fm-stream.sh attach --interactive <endpoint-or-target> [--detach-key C-]]` takes over the local terminal, which is how a TUI hosted on an endpoint (a `deck chat` primary, for one) is used by hand:
-
-- It first sends the local terminal size when resize is supported, then puts the terminal in raw mode, paints the endpoint's current screen and cursor, and streams output from the snapshot's parser-safe offset (`GET /v1/tasks/<id>/snapshot` and `stream?from=<offset>`).
-  The offset excludes incomplete escape sequences and UTF-8 characters, so the stream replays their buffered prefixes.
-  Paint restores cells and cursor only, not the scroll region or pending autowrap; a full-screen TUI should repaint on its own, as most do on `SIGWINCH` or their next frame.
-  An exact offset outside the retained ring range returns HTTP 409 with a continuity error; if output overruns the ring during the subscription, the stream emits a continuity error and closes, and the client reports it and exits non-zero rather than rendering discontinuous bytes.
-  Read-only `--replay` remains best-effort from the oldest retained byte.
-- Every byte typed or pasted, escape sequences included, goes to the endpoint's pseudoterminal through `POST /v1/tasks/<id>/input`: as `text` when it is UTF-8, as `b64` raw bytes when it is not.
-  Keys typed while a send is in flight go out together in the next one.
-  Any non-2xx response or transport error ends the session with an explicit failed or uncertain delivery message, without retrying input.
-- A local resize goes to `POST /v1/tasks/<id>/resize` (`rows`, `cols`, 1-1000 each).
-  Resize monitoring starts before the initial size is sampled, so a resize during startup requests is preserved for forwarding once the session starts.
-  The native agent serializes PTY reads and both resize paths: it publishes buffered old-size output, changes the PTY and local screen size, then queues geometry before any new-size output.
-  The publisher sends those queued frames in order, and the native hub resizes its screen at geometry ingestion; re-registration after a hub restart reports the current size.
-  Identical geometry leaves the screen and scroll region unchanged.
-  HTTP 404 or a 502 `agent_refused` response reporting `unknown command kind` disables further resizes while keeping the session open, supporting older hubs and Python-backed endpoints.
-  Any other non-2xx response or transport error ends the session with a failed or uncertain resize delivery message, without retrying.
-- Ctrl-] (or `--detach-key`, written `C-<key>`) detaches and leaves the endpoint running after draining preceding input, including partial-byte payloads, for at most two seconds.
-  External `SIGINT`, `SIGTERM`, and `SIGHUP` follow the same bounded detach drain; typed Ctrl-C remains ordinary input forwarded to the endpoint.
-  A failed or timed-out drain reports unsuccessful or uncertain delivery instead of a clean detach.
-  Endpoint exit status is propagated; a negative signal status becomes `128 + signal`, and an unknown status becomes 1.
-- Every session exit restores terminal attributes and locally leaves the alternate screen, shows the cursor, disables bracketed paste and mouse reporting, and resets SGR before printing the final message.
+`bin/fm-stream.sh attach --interactive <endpoint-or-target> [--detach-key C-]]` takes over the local terminal, which is how a TUI hosted on an endpoint (a `deck chat` primary, for one) is used by hand.
+Over the hub it paints the endpoint's current screen and cursor, then streams output from an exact offset and forwards every keystroke, paste and local resize to the endpoint's pseudoterminal.
+Paint restores cells and cursor only, so a full-screen TUI should repaint on its own, as most do on `SIGWINCH` or their next frame.
+If output overruns the ring buffer during the session, the client reports a continuity error and exits non-zero rather than rendering discontinuous bytes; read-only `--replay` remains best-effort from the oldest retained byte.
+Any failed input or resize delivery ends the session with an explicit failed or uncertain delivery message, without retrying input.
+The native agent publishes buffered old-size output before it resizes the pseudoterminal, then queues the new geometry ahead of any new-size output, so the hub's screen resizes in order.
+A hub or endpoint that does not support resize (an older hub, or a Python-backed endpoint) disables further resizes and keeps the session open.
+Ctrl-] (or `--detach-key`, written `C-<key>`) detaches and leaves the endpoint running after draining preceding input for at most two seconds; external `SIGINT`, `SIGTERM`, and `SIGHUP` detach the same way, while typed Ctrl-C is forwarded to the endpoint.
+A failed or timed-out drain reports unsuccessful or uncertain delivery instead of a clean detach.
+Endpoint exit status is propagated, and every session exit restores the local terminal before printing the final message.
 
 When the endpoint's native agent runs on the same machine as the client, the interactive session uses that agent's private unix socket, `<dir>/<endpoint-id>.sock`, instead of the hub transport:
 
@@ -183,15 +163,14 @@ Against the Python rollback hub it starts from the screen without exact offset c
 
 ## Bridge feed
 
-`bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from the execution the hub marks current using the same decision as its order path.
+`bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from the execution the hub marks current.
 The feed direction only reads the hub: `serve`, `snapshot`, and `compare` in live mode hold a `subscribe` credential, open no listening socket, and send nothing to any worker.
 `translate` is offline and needs no hub credential.
-Writing is the adapter's other direction, a separate command with its own credential, which [Command path](#command-path) owns.
-Before any live bridge subcommand does work, the adapter negotiates both the hub protocol and the advertised `current_execution` capability; [Command path](#command-path) owns the additional order compatibility requirements.
-It rejects an older running hub before processing records and directs the operator to restart or upgrade it rather than guessing which execution is current or placing an order without reliable acknowledgement.
-Its header owns the record mapping and every field the hub cannot supply; the short version is that the `/v1/tasks` listing this bridge consumes carries no token counters, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
-When the hub cannot be read it emits nothing.
-The Bridge's clock only moves when a record arrives, so during an outage, or after a hub restart that lists no endpoints, the Bridge keeps showing each worker's last state rather than aging it out as stale.
+Writing is a separate command with its own credential, which [Command path](#command-path) owns.
+Before any live subcommand does work, the adapter negotiates the hub protocol and the advertised `current_execution` capability, and rejects an older running hub with a restart-or-upgrade diagnostic rather than guessing which execution is current.
+Its header owns the record mapping and every field the hub cannot supply.
+The short version: the hub listing carries no token counters, so every record is a heartbeat, and only an exit the endpoint's own agent reported becomes `Stopped` or `Failed` while everything else is `Unknown`.
+When the hub cannot be read it emits nothing, so during an outage, or after a hub restart that lists no endpoints, the Bridge keeps showing each worker's last state.
 
 The Bridge does not consume this feed yet.
 The record format follows the ingest contract in the Bridge UI project's `docs/telemetry.md`, which lives in that project, not this one.
@@ -201,167 +180,113 @@ Run it on the host that runs the hub:
 
 1. Give it its own read-only credential: add a bare token line to `config/stream-hub-tokens` and put the same token alone in a 0600 file for `bin/fm-stream-bridge.py`.
    A home still on the single `config/stream-token` has no such file, and creating one replaces that token's every-class grant, so write the home's own `publish,subscribe,control:<token>` line into it as well.
-   The hub reads its token file only at start; restarting it clears terminal scrollback and Bridge-order reconciliation, so make this change only when no order is pending or may need a resend.
-   Running endpoints re-register automatically after an ordinary same-protocol restart, but a wire-protocol upgrade requires restarting every endpoint with matching software.
+   The hub reads its token file only at start, and [a restart](#when-the-hub-restarts) clears terminal scrollback and Bridge-order reconciliation, so make this change only when no order is pending or may need a resend.
 2. Start it against the local hub:
 
    ```
    bin/fm-stream-bridge.py serve --hub http://127.0.0.1:7717 --token-file <file> --fleet-id <name>
    ```
 
-3. To read the feed from another machine, run that same command over SSH from the reading machine and consume its stdout, which keeps the feed inside the SSH session and needs nothing listening on the hub host.
+3. To read the feed from another machine, run that same command over SSH from the reading machine and consume its stdout.
    There is no network listener for the feed.
 
-`bin/fm-stream-bridge.py snapshot` prints one tick and exits, and `translate` replays recorded hub listings, which is how its tests drive it.
-`bin/fm-stream-bridge.py compare` sets the feed's rendered state for each of this home's stream-backed tasks against `bin/fm-crew-state.sh`, and flags a worker the feed calls stopped while the pane read says it is working.
+`snapshot` prints one tick and exits, and `translate` replays recorded hub listings, which is how its tests drive it.
+`compare` sets the feed's rendered state for each of this home's stream-backed tasks against `bin/fm-crew-state.sh`, and flags a worker the feed calls stopped while the pane read says it is working.
 Nothing runs it automatically.
 
 ### Rust bridge
 
-The Rust bridge is built and installed with the other native binaries by [the native build commands](#implementation-and-native-binaries), but its use remains opt-in.
-Use `fm-stream-bridge` from the directory resolved by `bin/fm-stream.sh native path` in place of `bin/fm-stream-bridge.py` for the read-only `serve`, `snapshot`, `translate`, and `compare` subcommands with explicit hub, token-file, and fleet-id flags; this does not replace or restart any deployed Python process.
-Order placement and passive reconciliation remain Python-only bridge subcommands.
-Install it beside the existing scripts in `bin/` if using `compare`'s executable-relative home default, or pass `--home` and `--crew-state` explicitly.
-The Cargo workspace shares the protocol handshake and heartbeat wire mapping in `crates/fm-stream-wire`.
-The bridge uses Tokio, Hyper, and rustls for HTTP and HTTPS access and Serde JSON for parsing, without an LLM framework.
-It follows HTTP redirects and accepts argparse-style unique long-option abbreviations.
-Epochs remain limited to signed 64-bit integers, unlike Python's arbitrary-precision values.
-The bridge retains a 128-container nesting bound at its shared JSON compatibility entry point, matching its Serde value parser's supported depth.
-`tests/fm-stream-bridge-rust.test.sh` compares recorded NDJSON byte-for-byte, and polls disposable loopback Python hubs for live-feed and refusal parity without touching a shared deployment.
-Live comparisons exclude process-local clocks; help presentation, top-level command choices, and transport-library error details are not byte contracts.
+The Rust bridge is built with the other [native binaries](#implementation-and-native-binaries), but the Python bridge remains the deployed reference until the port's parity is proven.
+`fm-stream-bridge` from `bin/fm-stream.sh native path` can replace `bin/fm-stream-bridge.py` for the read-only `serve`, `snapshot`, `translate`, and `compare` subcommands with explicit hub, token-file, and fleet-id flags; switching does not replace or restart any deployed Python process.
+Order placement and passive reconciliation remain Python-only.
+For `compare`'s executable-relative home default, install it beside the existing scripts in `bin/`, or pass `--home` and `--crew-state` explicitly.
+It follows HTTP redirects, limits epochs to signed 64-bit integers, and bounds JSON nesting at 128 containers.
+`tests/fm-stream-bridge-rust.test.sh` owns the parity comparison against disposable Python hubs.
 
 ### Rust PTY agent
 
-`bin/backends/stream.sh` launches the native `fm-stream-agent serve` for every endpoint when the implementation is `rust`, with the same arguments, ready-file format (`machine endpoint_id`) and status-path contract as the Python agent.
-Its `--help` owns the full option surface.
-The port uses the shared wire protocol with Reqwest/rustls, Serde JSON, POSIX PTYs, and signal-hook; it needs no Python interpreter at runtime.
-The adapter binds `FM_STREAM_CODE_ROOT` to its checkout so cached native binaries can invoke the existing `bin/fm-task-inbox-lib.sh` writer; when launching the agent directly outside the repository, set that variable to the repository root.
+`bin/backends/stream.sh` launches the native `fm-stream-agent serve` for every endpoint when the implementation is `rust`, with the same arguments, ready-file format (`machine endpoint_id`) and status-path contract as the Python agent; its `--help` owns the option surface.
+It needs no Python interpreter at runtime.
+The adapter binds `FM_STREAM_CODE_ROOT` to its checkout so cached native binaries can invoke `bin/fm-task-inbox-lib.sh`; when launching the agent directly outside the repository, set that variable to the repository root.
 `crates/fm-stream-agent/src/local.rs` owns the same-machine attach socket and its wire format ([Interactive attach](#interactive-attach)).
-`crates/fm-stream-agent/src/receiver.rs` implements the native Deck application interface described under [Command path](#command-path); `crates/fm-stream-agent/src/commands.rs` owns the Rust scheduler and durable result reconciliation.
-The native receiver scans both the task inbox and its `handled/` directory, leaving ordinary steering and unparseable stream-order sources untouched rather than letting them block other orders or recovery.
-Invalid UTF-8, missing source framing, invalid JSON bindings, and non-object bindings are skipped; filesystem errors and malformed receiver-owned recovery records still fail recovery.
-HTTP redirects are refused rather than forwarding endpoint credentials to a redirect target; point directly at the final HTTP or HTTPS hub URL.
-Option names are full names rather than argparse abbreviations, geometry is bounded to the kernel's unsigned 16-bit values, and heartbeat/poll intervals must be finite, nonnegative, and representable by Rust's monotonic timers.
-Successful command-poll responses preserve Python input/status value conversion, including exact integers, non-finite numbers, deeply nested list/dict values, and escaped lone surrogates inside composites.
-Top-level strings containing lone surrogates still fail UTF-8 encoding; literal escapes and valid surrogate pairs retain their meaning, and other hub responses remain strict JSON.
-`tests/fm-stream-agent-rust.test.sh` compares both executable agents against disposable Python hubs for native execution-bound acceptance, duplicate and conflict refusal, stale execution, byte-exact durable sources, handled/rejected application proof, original-turn uncertainty and late acknowledgement without successor delivery, unsupported receiver refusal, PTY input/output, Python command-value conversion including non-finite numbers and composite surrogates, large NUL/surrogate composites and 150-deep lists with exact status rendering and result acknowledgement, zero and multi-day scheduling intervals, concurrent complete local status records, result-response loss, unknown-command result retry without native reapplication, restart/rejoin, stale hub-generation order refusal, revoked private capability refusal, stand-down contests, child exits with fully redirected background jobs, and signal shutdown.
-`cargo test -p fm-stream-agent` covers durable reservation/result recovery, malformed and ordinary inbox source isolation (`receiver::tests::records_that_are_not_stream_orders_never_block_the_receiver`), original-turn binding after storage failure, and the process-group signal ownership boundary through executable filesystem and process interfaces.
+`crates/fm-stream-agent/src/receiver.rs` implements the native Deck receiver described under [Command path](#command-path), and `crates/fm-stream-agent/src/commands.rs` owns the Rust scheduler and durable result reconciliation.
+The receiver leaves ordinary steering and unparseable stream-order sources in the task inbox untouched rather than letting them block other orders or recovery.
+HTTP redirects are refused rather than forwarding endpoint credentials to a redirect target, so point it directly at the final HTTP or HTTPS hub URL.
+Option names must be given in full, geometry is bounded to the kernel's unsigned 16-bit values, and heartbeat and poll intervals must be finite and nonnegative.
+
+`tests/fm-stream-agent-rust.test.sh` compares both agents against disposable Python hubs, and `cargo test -p fm-stream-agent` covers durable reservation and result recovery and the process-group signal boundary.
 `tests/fm-backend-stream.test.sh` runs the whole adapter suite against the native agent in the Rust CI job (`FM_TEST_STREAM_IMPL=rust`); other suites pin the Python reference because their runners have no native build.
 
 ## Rust hub
 
-The `fm-stream-hub` workspace binary implements the hub HTTP surfaces; `bin/fm-stream.sh hub start` runs it when the implementation is `rust`, with the same bind, port, token file, ready file and pid file as the Python hub.
+`bin/fm-stream.sh hub start` runs the `fm-stream-hub` binary when the implementation is `rust`, with the same bind, port, token file, ready file and pid file as the Python hub.
 Building or rebuilding the binaries does not stop, replace, or restart a running hub.
-The binary's `--help` owns its CLI flags, and it shares the protocol constant and identity validation with `fm-stream-wire`.
+The binary's `--help` owns its CLI flags, which must be given in full with a separate value.
 [Security](#security) applies to both hubs, including the plain-HTTP transport boundary.
-CLI option names must be supplied in full with a separate value, rather than argparse-style abbreviations or `--name=value` forms.
-Rust query integers (`wait` and `lines`) must fit signed 64-bit values before clamping, unlike Python's arbitrary-precision query parsing.
-Forwarded input and status values preserve Python JSON semantics, including `NaN`, `Infinity`, `-Infinity`, and escaped lone surrogates, so the owning Python agent receives the original values rather than null or replacement characters.
-Their parsing, encoding, and destruction are stack-safe, preserving Python-supported nested notes without inheriting the control-field parser's 128-container limit; genuinely malformed JSON still returns `bad_json`.
-
-To compare it against the Python hub without touching the fleet, run an isolated pilot with a newly created token file, an ephemeral loopback port, and ready/pid paths belonging only to that pilot:
-
-```sh
-cargo build --release --locked -p fm-stream-hub
-target/release/fm-stream-hub serve --bind 127.0.0.1 --port 0 \
-  --token-file /path/to/pilot-only-tokens \
-  --ready-file /path/to/pilot-only-ready --pid-file /path/to/pilot-only-pid
-```
-
-Point only disposable Python agents and a separate Python bridge process at the address in the pilot ready file.
-Do not redirect live agents, reuse the fleet's ready/pid files, or mirror control requests from production: an order is an action on a worker, not passive shadow traffic.
-`tests/fm-stream-hub-rust.test.sh` drives isolated Rust and Python hubs from equivalent state, compares HTTP/stream records and lifecycle outcomes, exercises the deployed Python peers, and prints observational startup/RSS/frame-throughput measurements without enforcing a budget.
-The existing hub and bridge suites accept `FM_TEST_STREAM_HUB_BINARY` for HTTP compatibility runs; the hub suite's accelerated Python-retention fixture remains reference-only, with Rust expiry boundaries covered by the crate's tests.
+Forwarded input and status values keep Python JSON semantics, so a Python agent behind the native hub receives the original values.
+`tests/fm-stream-hub-rust.test.sh` drives isolated Rust and Python hubs from equivalent state and compares their records and lifecycle outcomes.
 [Runtime verification](verification/runtime-backends.md#stream) records current evidence and host-specific gaps.
 
-Switching the central hub between implementations is a separate, explicitly approved quiet-window operation.
-Before replacement, require green compatibility checks, a pilot against the deployed agent/bridge versions, the same protocol and token-class configuration, verified endpoint capability rejoin, an unchanged external URL/TLS termination, and an available Python rollback command.
-Drain or resolve every queued, taken-but-unacknowledged, or otherwise unconfirmed command/order before stopping either hub; [Command path](#command-path) and [When the hub restarts](#when-the-hub-restarts) own the in-memory reconciliation and rejoin contracts.
-Plan and verify agent re-registration after replacement under those contracts.
-Rollback also requires a quiet window because it incurs the same restart losses.
+Switching the central hub between implementations, in either direction, is a separate, explicitly approved quiet-window operation.
+Before replacement, require green compatibility checks, the same protocol and token-class configuration, an unchanged external URL and TLS termination, and an available rollback command.
+Drain or resolve every queued, taken-but-unacknowledged, or otherwise unconfirmed command or order before stopping either hub; [Command path](#command-path) and [When the hub restarts](#when-the-hub-restarts) own the in-memory reconciliation and rejoin contracts.
+Verify agent re-registration after replacement under those contracts.
+Never redirect live agents at a trial hub, reuse the fleet's ready or pid files for one, or mirror production control requests to it: an order is an action on a worker, not passive shadow traffic.
 
 ## Command path
 
-The reading half of the Bridge chain is the feed above; the writing half is `bin/fm-stream-bridge.py command`.
-It reads one `command` record per line on stdin - the composer's order - places valid orders with the hub, and writes each resulting `command_ack` or `command_nack` to stdout in the feed's NDJSON framing.
-The [adapter's header and help](../bin/fm-stream-bridge.py) own the command record shapes, required identity and payload fields, acknowledgement rules, and process lifetime options.
-By default, `command` keeps reading until stdin EOF; an opt-in post-record idle bound lets a newly spawned UI command process exit even if its caller keeps stdin open.
-That bound does not wait for or reconcile a late result, and enabling it does not change an already-running bridge.
+The writing half of the Bridge chain is `bin/fm-stream-bridge.py command`.
+It reads one `command` record per line on stdin (the composer's order), places valid orders with the hub, and writes each resulting `command_ack` or `command_nack` to stdout in the feed's NDJSON framing.
+The [adapter's header and help](../bin/fm-stream-bridge.py) own the record shapes, acknowledgement rules, hub capability negotiation, and process lifetime options, including the opt-in stdin idle bound, which does not wait for or reconcile a late result.
 
-At operator level, every order names both a worker by `leaf_worker_id` - `<machine>/<label>`, from the same machine and label the feed emits and `fm-stream.sh tasks` lists - and the exact execution the feed showed.
+Every order names both a worker by `leaf_worker_id` (`<machine>/<label>`, as the feed emits and `fm-stream.sh tasks` lists) and the exact execution the feed showed.
 That binding prevents an order composed for one run from being typed into its replacement.
-For Deck, Bridge orders correct the already-running turn without ending, displacing, restarting, or manufacturing lifecycle evidence for it; ordinary `fm-send` inbox doorbells still use the existing next-turn path.
-Native Deck acceptance is execution-bound through the durable receiver, never a PTY write; non-Deck endpoints retain the complete PTY typing contract.
-Native steering requires a Deck build supporting `deck run --steer-dir`; an unavailable interface is refused without changing the running turn or falling back to PTY input.
-Native text must be nonblank and fit below Deck's 64 KiB projection ceiling, with space reserved for source paths and acknowledgement guidance; that limit does not apply to other harnesses' PTY orders.
-The adapter header owns acceptance and hub capability negotiation, and `bin/fm_stream_deck.py` owns Deck's durable source, original-turn binding, idempotency, reconciliation, and refusal mechanics.
+For Deck, a Bridge order corrects the already-running turn without ending, displacing, or restarting it; ordinary `fm-send` doorbells still use the next-turn path.
+Native Deck acceptance is execution-bound through the durable receiver, never a PTY write (non-Deck endpoints keep PTY typing), and requires a Deck build supporting `deck run --steer-dir`; an unavailable interface is refused without changing the running turn or falling back to PTY input.
+Native text must be nonblank and fit below Deck's 64 KiB projection ceiling, with space reserved for source paths and acknowledgement guidance.
+`bin/fm_stream_deck.py` owns Deck's durable source, original-turn binding, idempotency, reconciliation, and refusal mechanics.
 In `command` mode, the owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership or application produces no record and remains pending.
-Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
-Ordinary PTY agents advertise both reliable result acknowledgement and `native_steering_receiver`, and the hub requires both per-endpoint capabilities before placing Bridge orders.
-Retained protocol-3 agents without the receiver capability can re-register and retain input, status, and kill support, but Bridge orders are refused before routing rather than sent through legacy PTY input; upgrade those agents only at a safe worker boundary.
-Protocol-2 agents cannot register, while protocol-3 tail publishers remain visible but non-orderable.
-Each internal HTTP order carries the hub generation returned by compatibility negotiation; a replacement hub rejects a stale generation before placement, the adapter renegotiates before retrying, and the Bridge `command`, `command_ack`, and `command_nack` records do not change.
 
-The Bridge order journal lives in the hub's memory, not on disk; Deck's local durable source and receiver records do not replace it.
-The journal retains bindings for the most recent 512 orders.
-After an unconfirmed placement, `bin/fm-stream-bridge.py reconcile` reads the original order's current fate with a `subscribe` credential, independently of the still-open command process.
-It reads once per invocation, so a UI can poll the original command id for late acceptance or refusal without resubmitting an order, changing its execution, or stopping or restarting its bridge.
-Both Python and Rust hubs support this passive journal read; a compatible older deployed hub without the route leaves reconciliation pending rather than triggering placement or a restart.
-The [adapter's header and help](../bin/fm-stream-bridge.py) own the exact reconcile interface, output records, and exit statuses; pending and missing-journal records are lookup diagnostics, not worker-membership verdicts.
-`tests/fm-stream-bridge.test.sh` pins late-result reads, error handling, optional stdin bounds, and repeated reconciliation while the original command process and endpoint remain open; `tests/assets/stream-hub-differential.py` compares journal reads and bridge reconciliation across both hubs.
-While an id remains there, an identical resend is answered from the original order, including when it overtakes the original placement; reuse with a different leaf, execution, or text is refused as an idempotency conflict.
+The hub places Bridge orders only to endpoints whose agent advertises reliable result acknowledgement and the native steering receiver.
+An agent requires the hub's `idempotent_command_results` capability before registering, so an older running hub is rejected with a restart-or-upgrade diagnostic.
+Protocol-2 agents cannot register; retained protocol-3 agents without the receiver capability keep input, status, and kill support, but Bridge orders to them are refused before routing, so upgrade them only at a safe worker boundary.
+Each order carries the hub generation, so a replacement hub rejects a stale order before placement and the adapter renegotiates before retrying.
+
+The Bridge order journal lives in the hub's memory, not on disk, and retains bindings for the most recent 512 orders.
+While an id remains there, an identical resend is answered from the original order; reuse with a different leaf, execution, or text is refused as an idempotency conflict.
 A retry after more than 512 newer orders is not guaranteed to be deduplicated.
-An order whose membership remains unresolved keeps that binding, while an identical resend may retry placement because no command was created.
-Both hubs keep taken commands pending for 15 minutes and completed results idempotently answerable for 15 minutes after completion, subject to endpoint authorization.
-When pending retention elapses, reaping retires only unfinished commands still referenced by an order in the journal; commands without that reference are dropped as before.
-Retirement removes a command from work in flight without requeuing it or changing its execution and private capability binding, allowing the original authenticated result to complete it for a further 15 minutes measured from retirement.
-The retired set is capped at 512 entries per machine, matching the journal bound; expired entries and entries whose journal reference has been evicted are pruned before the cap drops the oldest remaining retirements.
-A rejected result does not renew retirement or return the command to pending, and loss of completion eligibility leaves the retained order honestly unconfirmed rather than synthesizing a result or replaying the command.
-`tests/fm-stream-hub-retention.test.sh` and the Rust hub's model and HTTP regressions cover late completion, authorization, duplicate/conflict handling, expiry, and journal-only bounded retention.
-An endpoint whose worker exits while acknowledgement is retrying keeps its publisher alive while the result can still settle.
-Result-post retries do not block local Deck reconciliation or later command polling; `bin/fm-stream-agent.py` and `crates/fm-stream-agent/src/commands.rs` own their respective scheduling and durable retry metadata.
-A definitive result rejection - including capability revocation after the hub closes the endpoint - or retry expiry ends retrying so the closing frame can publish, while the caller's unresolved order remains unconfirmed.
-Both agents treat `no_such_command` as retryable unknown, not a settled rejection of the result: they retry the same original result within the existing retry budget without reapplying the command.
-A hub restart empties its journal along with the registry, so a resend has no hub-side delivery history.
-After the same endpoint re-registers, retained Deck receiver records can still reconcile the same order id against its original turn; other endpoints have no such local native proof.
+After an unconfirmed placement, `bin/fm-stream-bridge.py reconcile` reads the original order's current fate with a `subscribe` credential, once per invocation, so a UI can poll for late acceptance or refusal without resubmitting.
+Pending and missing-journal answers are lookup diagnostics, not worker-membership verdicts.
+Both hubs keep taken commands pending for 15 minutes and completed results answerable for 15 minutes after completion; a journal-referenced command that times out stays completable by its original authenticated result for a further 15 minutes rather than being requeued.
+Loss of completion eligibility leaves the order honestly unconfirmed rather than synthesizing a result or replaying the command.
+An agent retries a result post after a lost response without reapplying the command, and a worker that exits meanwhile keeps its publisher alive while the result can still settle.
+A hub restart empties the journal along with the registry, so a resend has no hub-side delivery history; after the same endpoint re-registers, retained Deck receiver records can still reconcile the same order id against its original turn.
+`tests/fm-stream-bridge.test.sh` and `tests/fm-stream-hub-retention.test.sh` pin reconciliation and retention.
 
 The credentials are separate on purpose: `command` needs a `control`-class token, the class that can type into workers, while the feed holds `subscribe` alone, so a host running only the feed cannot order anything with the credential the feed uses.
-Run `command` on the host that runs the hub, reading its stdin from wherever the composer's records come from over SSH or an equivalent encrypted transport - the same open exposure decision the feed names, with a sharper edge, because this direction carries the credential that steers the fleet.
+Run `command` on the host that runs the hub, reading its stdin over SSH or an equivalent encrypted transport - the same open exposure decision the feed names, with a sharper edge, because this direction carries the credential that steers the fleet.
 
 ### Private host control routing
 
 The same-origin, local-only UI adapter may call `bin/fm-ui-host-control.py` only after checking its per-launch browser-session authorization and authority for that exact action.
 This executable is a host-side routing surface, not an HTTP endpoint or an authentication substitute.
-Its header and `--help` own the operator-maintained 0600 binding registry, exact target resolution, and supported verbs.
+The [host executable's header and help](../bin/fm-ui-host-control.py) own the operator-maintained 0600 binding registry, target resolution, supported verbs, payload fields, the read-only `targets` discovery schema, and retry limits.
 The host resolves `(machine, label)` to an explicit `FM_HOME` and exact task or captain-call binding; neither the registry's home paths nor control-class credentials are supplied by or returned to the browser.
-Invalid registry bindings refuse before dispatch; stale captain calls and deeper task eligibility are checked by the existing owners.
-Task lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or [remote lifecycle routing boundaries](remote-secondmates.md#lifecycle-control).
+Invalid registry bindings refuse before dispatch.
+Task lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its backlog eligibility, endpoint identity, or [remote lifecycle routing boundaries](remote-secondmates.md#lifecycle-control), and existing owner refusals such as endpoint retirement and stand-down stay authoritative.
 The host adapter must keep backend credentials in host-only 0600 files and must never send them in page content, browser environment, or browser storage.
-
-Decision actions carry the captain's authenticated exact answer to the existing send or captain-hold owner; the [host executable's header and help](../bin/fm-ui-host-control.py) own payload fields, delegation, acknowledgement framing, host-only diagnostics, and retry limits.
-Owner success does not prove that a worker acted on its inbox answer, and owner errors remain pending rather than being misreported as proof that nothing changed.
 The browser never writes state directly, supplies an owner-home path, or invokes an owner command itself.
-`note` remains only the supervisor-note path through `bin/fm-inbox.sh`, not a substitute for a decision action.
-A crew-owned `no-mistakes axi respond` remains worker-owned and is never invoked by this host route.
-Existing owner guards remain authoritative, including endpoint retirement and stand-down refusals; the host route does not bypass those refusals to revive or reassign workers.
 
-For `deck chat` primary hosting in a stream endpoint, optional macOS launchd recovery and restart-following attach, see the [chat host header](../bin/fm-deck-chat.sh).
-The [host executable's header and help](../bin/fm-ui-host-control.py) own discovery, execution-bound payloads and the honest refusal boundary for unregistered sessions.
-Primary decision control is supported through an explicit host-registry captain-call binding under the primary owner's `FM_HOME`, while task-key decisions use an exact task binding in their owning home.
-Notes-only, worker-only and unregistered primary bindings do not constitute primary lifecycle control.
-
-The read-only `targets` subcommand provides browser-safe discovery for registered primaries, secondmates, and workers even when they are absent from the hub feed.
-The [host executable's header and help](../bin/fm-ui-host-control.py) own its row schema, classification, advertised operations, call-binding semantics, and all-or-nothing validation.
+Decision actions carry the captain's exact answer to the existing send or captain-hold owner.
+Owner success does not prove that a worker acted on its inbox answer, and owner errors remain pending rather than being misreported as proof that nothing changed.
+`note` is only the supervisor-note path through `bin/fm-inbox.sh`, not a decision action, and a crew-owned `no-mistakes axi respond` is never invoked by this route.
+A `deck chat` primary can run inside a stream endpoint through `bin/fm-deck-chat.sh --stream`; primary decision control needs an explicit captain-call binding under the primary owner's `FM_HOME`, and unregistered primaries are not adopted.
+Task-key decisions use an exact task binding in their owning home, and notes-only, worker-only or unregistered primary bindings do not constitute primary lifecycle control.
 [Primary sessions](agent-control.md#primary-sessions) own their own lifecycle; discovery alone does not implement primary controls.
 
-The Bridge command plane remains `steer` only.
-The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.
-The hub's endpoint-addressed non-order command path carries `input`, `kill`, and `status`, plus the native hub's `resize`, through command submission and the agent's take/result acknowledgement path, independent of the Bridge journal.
-Those are different planes, not interchangeable Bridge orders: raw input bypasses native steering, kill closes an endpoint rather than executing guarded lifecycle control, and status appends worker events rather than carrying captain intent.
-That path's acknowledgement does not supply the Bridge journal's leaf binding, command-id replay, or late-result lookup, so a preflight lookup followed by a plain command cannot honestly inherit the journal contract.
-Consequently this host route does not expose those routes as composer kinds or fabricate equivalent acknowledgement and retry guarantees.
-A future generalized hub journal belongs to the core stream owner and must establish each kind's execution binding, idempotency, and authority before a UI can expose it.
-Use guarded host lifecycle verbs for process control and supervisor notes for intent; raw endpoint commands remain outside this host surface, and existing unregistered primaries are not adopted.
+The Bridge command plane is `steer` only.
+The hub's separate endpoint-addressed commands (`input`, `kill`, `status`, and the native hub's `resize`) have no leaf binding, command-id replay, or late-result lookup, so this route does not expose them as composer kinds or claim the journal's guarantees for them.
+Use guarded host lifecycle verbs for process control and supervisor notes for intent.
 
 ## Security
 
@@ -369,25 +294,28 @@ The hub binds `127.0.0.1` by default and every data route requires a bearer toke
 
 Tokens are class-scoped, and there are three classes:
 
-- `publish` registers endpoints and publishes frames. Agents hold it; nobody else needs it.
+- `publish` registers endpoints and publishes frames; agents hold it, and nobody else needs it.
 - `subscribe` reads only: list, stream, capture, screen, the native hub's snapshot, state, and the order journal.
 - `control` steers: sending input to a worker, resizing its terminal on the native hub, appending a status line, closing an endpoint, and placing a leaf-addressed order.
 
 A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, so an operator credential is written `subscribe,control:<token>` and a home's own client credential, which both publishes and steers, is `publish,subscribe,control:<token>`.
 A bare token line grants `subscribe` alone, so the unqualified line is the read-only one.
-
-Seeding a secondmate home mints that home its own token rather than copying the primary's: `bin/fm-home-seed.sh` appends one `publish,subscribe,control:<token>` line to the hub host's `config/stream-hub-tokens` - the home hosting the hub is the one owning that file, since a client home's `config/stream-hub` names a remote hub its seeding must not touch - and writes the fresh token into the mate home's own `config/stream-token`, the same client-credential file any home reads (`bin/fm-stream-secondmate-credential-lib.sh`).
-A seeded token is INACTIVE until the hub restarts: the hub reads its token file once at serve start, so the credential the mate presents is refused until then.
-That restart is a planned quiet-boundary operation, not part of seeding - a restart clears terminal scrollback and empties Bridge-order reconciliation, the same cost [When the hub restarts](#when-the-hub-restarts) names, so it must not happen while an order is pending or may need a resend.
-The first real seeding gets one such planned restart; a supported token reload is separate queued work, because seeding recurs and every restart spends that fleet-wide cost again.
 A viewing token cannot register an endpoint, publish, or steer a worker: input, native resize, status, and close are all refused with 403.
+
+Seeding a secondmate home mints that home its own token rather than copying the primary's, but only when the seeding home hosts the hub, which it signals by owning `config/stream-hub-tokens`.
+`bin/fm-home-seed.sh` then appends one `publish,subscribe,control:<token>` line to that file and writes the fresh token into the mate home's own `config/stream-token` ([`bin/fm-stream-secondmate-credential-lib.sh`](../bin/fm-stream-secondmate-credential-lib.sh)).
+A home seeded from a client home, whose `config/stream-hub` names a remote hub that seeding must not touch, gets no credential.
+A seeded token is INACTIVE until the hub restarts: the hub reads its token file once at serve start, so the credential the mate presents is refused until then.
+That restart is a planned quiet-boundary operation, not part of seeding, because it clears terminal scrollback and empties Bridge-order reconciliation ([When the hub restarts](#when-the-hub-restarts)), so it must not happen while an order is pending or may need a resend.
+A supported token reload is separate queued work.
+`tests/fm-secondmate-safety.test.sh` covers credential seeding.
+
 Command retrieval and result submission additionally require the endpoint's private `command_capability`, established by registration and carried in the `X-Endpoint-Capability` request header.
 A poll must name that endpoint; machine-wide command retrieval is refused.
-A recovering agent presents its current capability when registering an endpoint, and the hub adopts or retains that same value so retrying after a lost registration response is idempotent; closing the endpoint revokes it.
+A recovering agent presents its current capability when registering, and the hub adopts or retains that same value so retrying after a lost registration response is idempotent; closing the endpoint revokes it.
 Agents retain the capability only in memory, and listings, state reads, logs, and status lines never expose it.
-[Command path](#command-path) owns Bridge order compatibility; the endpoint authentication here also protects those orders.
-The Rust bridge remains a read-only feed, not a command adapter.
-The bundled viewer page is served without a credential - it is static, and the token it reads out of the URL fragment is what its own requests carry - but every data route behind it is authenticated, and opening it with a viewing token gives a read-only view whose send box is refused.
+The Rust bridge is a read-only feed, not a command adapter.
+The bundled viewer page is served without a credential, because it is static and the token it reads out of the URL fragment is what its own requests carry; every data route behind it is authenticated, and opening it with a viewing token gives a read-only view whose send box is refused.
 The same-machine attach socket authenticates by filesystem isolation and peer uid rather than a token; [Interactive attach](#interactive-attach) owns its permission checks.
 That uid already holds the agent's credentials and could drive its pseudoterminal directly.
 
@@ -400,7 +328,7 @@ Anyone who can read the path can read all of it; anyone who can read a `publish`
 
 Loopback is the only setting where that is safe on its own.
 Cross-machine use means an SSH tunnel or an equivalent encrypted transport, which firstmate does not create, manage, or check for; a configured `https://` hub URL means only that something in front of the hub terminates TLS, not that the hub does.
-Nothing binds a public interface on your behalf, so changing `--bind` is a deliberate act - and doing it without a tunnel publishes your fleet's terminals and their control channel to that network.
+Nothing binds a public interface on your behalf, so changing `--bind` is a deliberate act, and doing it without a tunnel publishes your fleet's terminals and their control channel to that network.
 
 Terminal content is never written to disk.
 Hub replay lives in each endpoint's bounded in-memory ring buffer, which exists so a late subscriber can catch up, and it is lost when the hub restarts.
@@ -418,149 +346,106 @@ The signal ownership boundary is documented beside `foreground_group_locked` in 
 
 `DELETE /v1/tasks/<id>` hands the kill to the endpoint's own agent and waits for it to acknowledge.
 The answer carries `delivered`: true when that agent took the kill, and false when it never answered and the hub closed only its own record.
-A `delivered: false` close is not proof the worker stopped - its process lives on the worker's machine, which the hub cannot reach.
-The adapter refuses such a close: `fm_backend_stream_kill` exits nonzero and says the worker may still be running.
-It answers the same way to every other refusal, including `no_such_endpoint`: a hub that has forgotten an endpoint it stopped hearing from says nothing about whether that worker is still running, so a kill it cannot confirm is never reported as one it made.
+A `delivered: false` close is not proof the worker stopped, because its process lives on the worker's machine, which the hub cannot reach.
+`fm_backend_stream_kill` refuses such a close, exits nonzero, and says the worker may still be running.
+It answers the same way to every other refusal, including `no_such_endpoint`: a hub that has forgotten an endpoint says nothing about whether that worker is still running.
 
-One answer is a confirmed stop, and only one.
 An endpoint carries `closed_by`: `agent` when its own agent reported the worker gone and brought its exit code back, and `hub` when the hub closed a record it could no longer steer.
-A kill against an endpoint already closed by its agent reports success without asking again - that agent watched the worker exit, which is the best evidence there will ever be - while every other outcome, `closed_by: hub` included, reports an unconfirmed stop.
-A close record moves from presumption to fact and never the reverse: a `hub` close is what the hub assumed about a worker it could not reach, so when that agent comes back and reports its own worker's exit, its report takes the record over - attribution and exit code together - and the endpoint then reads as one the agent closed.
-A hub close can never take over an agent's, and it never overwrites the exit code an agent recorded, which is what keeps an unacknowledged kill from ever claiming confirmation.
-That distinction now reaches every caller: an unacknowledged kill is the shared kill contract's unconfirmed result, `fm_backend_kill` in `bin/fm-backend.sh` owns it, and cleanup keeps the task's durable records rather than recording a worker as gone that nothing has stopped.
+Only `closed_by: agent` is a confirmed stop; a kill against such an endpoint reports success without asking again, while every other outcome, `closed_by: hub` included, reports an unconfirmed stop.
+When an agent comes back and reports its own worker's exit, its report takes over a `hub` close, attribution and exit code together; a hub close never takes over an agent's and never overwrites the exit code an agent recorded.
+`fm_backend_kill` in `bin/fm-backend.sh` owns that unconfirmed result, and cleanup keeps the task's durable records rather than recording a worker as gone that nothing has stopped.
 
 ## When the hub has not heard from an agent
 
-After ten seconds of silence - several missed heartbeats, and less than the budget an agent gives its own startup - the hub presumes that endpoint's agent is gone.
-Agents are heard from on every frame, every state heartbeat, and every command poll.
-
+After ten seconds of silence the hub presumes that endpoint's agent is gone; agents are heard from on every frame, every state heartbeat, and every command poll.
 A presumption is not a close, and it does exactly one thing: it frees the endpoint's label, so a spawn abandoned mid-startup does not make its task id unusable.
-Everything else stays as it was.
-The worker is still listed, its stream still runs, and input, status lines and kills still reach it - because a worker the hub has not heard from lately may be perfectly healthy, and if it really is gone those calls fail on their own and say so.
-A state read answers `unreadable` rather than `dead` for the same reason: the hub cannot see the worker's process either way.
-Staleness withholds a verdict about a live READING, though, not about a recorded one: an endpoint its own agent closed reported the worker's exit and its exit code, and that answers `dead` however long ago it was recorded.
-A record the hub closed by itself is an unacknowledged kill and keeps reading `unreadable`, until and unless its own agent comes back and reports that worker's exit.
+The worker is still listed, its stream still runs, and input, status lines and kills still reach it, because a worker the hub has not heard from lately may be perfectly healthy.
+A state read answers `unreadable` rather than `dead` for the same reason.
+An endpoint its own agent closed still answers `dead`, however long ago it was recorded, while a record the hub closed by itself keeps reading `unreadable` until its own agent reports that worker's exit.
 The agent's next word to the hub takes the presumption back.
-Where two registrations answer to one machine and label, the contest is settled by which agent the hub has heard from, not by which record is newer: an agent that is publishing keeps the name against a record nothing stands behind, and loses it only to one the hub has heard from just as lately.
-An agent that loses stands down - it stops publishing state and stops taking commands - but it does NOT stop its worker, and when that worker eventually exits it still closes its own record out.
-Two records contesting one name tell the hub nothing about which holds the real work, and a worker left unsupervised can be recovered while a worker killed by mistake cannot.
 
-Standing down protects WORK IN PROGRESS, which is the reason behind the rule rather than the rule itself: a worker mid-task holds something the captain cares about, so when the hub cannot tell which record is real, the agent goes quiet rather than destroy it.
-An agent that loses the name during its own startup, before the endpoint is ready, has no work in progress to protect - nothing has been asked of that worker, the spawn has not returned, and firstmate has never learned the task exists - so keeping it alive would preserve nothing and leak a process nobody supervises and nobody can find.
-That loser stops its worker and closes its own record out.
-A close is a statement about the record an agent already holds rather than a claim on the identity, so nothing refuses it - not the hub's contest, not the agent's own stand-down, and not a spent startup budget: no ordering of supersession and close leaves an open endpoint with no agent behind it.
-A record nothing has been heard from for the full retention period is dropped; a kill against an endpoint the hub has forgotten reports an unconfirmed stop, because by then the hub knows nothing about that worker at all.
-
-There is one case with no way back: the agent speaks again to find another endpoint already answering to its machine and label, because the next attempt at that task claimed the name while it was out of touch.
-The hub refuses that agent, and it stops rather than let two workers answer to one identity.
+Where two registrations answer to one machine and label, the hub settles the contest by which agent it has heard from, not by which record is newer.
+An agent that loses stands down: it stops publishing state and taking commands, but it does NOT stop its worker, and when that worker exits it still closes its own record out.
+Standing down protects work in progress, since a worker left unsupervised can be recovered while a worker killed by mistake cannot.
+An agent that loses the name during its own startup, before the endpoint is ready, has no work to protect, so it stops its worker and closes its own record rather than leak a process nobody can find.
+A close is always accepted, so no ordering of supersession and close leaves an open endpoint with no agent behind it.
+A record nothing has been heard from for the full retention period (an hour) is dropped.
+An agent that speaks again to find another endpoint already answering to its machine and label is refused, and it stands down rather than let two workers answer to one identity.
 
 ## When the hub restarts
 
-Endpoints live in the hub's memory only, so a restarted hub has never heard of any of them and refuses a running agent's next publish with `no_such_endpoint`.
-For an ordinary same-protocol restart, that refusal is what an agent registers itself again on, under the endpoint id it already held, so a worker returns to the fleet listing and to steering without anyone touching the machine it runs on.
-Every registration names protocol 3; an older running endpoint is refused with `protocol_mismatch` and must be restarted from matching software rather than being listed without authenticated command delivery.
-Listed and steerable arrive together rather than one after the other, because the thread that receives steers is told the endpoint is back at the moment it comes back rather than finding out on its own schedule.
-The residual is small and worth stating: the two are separate calls, so a steer aimed at the instant between a worker being listed again and its next command poll reaching the hub can still be reported undelivered, and is delivered on the retry.
+Endpoints live in the hub's memory only, so a restarted hub refuses a running agent's next publish with `no_such_endpoint`.
+For an ordinary same-protocol restart, the agent registers itself again on that refusal under the endpoint id it already held, so its metadata binding, steering and status channel keep meaning what they meant, and the worker returns to the listing and to steering without anyone touching its machine.
+Every registration names protocol 3; an older running endpoint is refused with `protocol_mismatch`, so a wire-protocol upgrade requires restarting every endpoint with matching software.
+The scrollback does not come back: output produced while the hub was gone is lost and the endpoint's buffer starts again from the reconnect.
+A steer aimed at the instant between a worker being listed again and its next command poll can still be reported undelivered, and is delivered on the retry.
 
-This is why a kill against an endpoint the hub does not have reports an unconfirmed stop rather than a gone endpoint.
-Absence from the task table is a statement about the hub's own memory, never about a process on another machine, and every worker behind those answers while a hub is restarting is still running.
+Absence from a restarted hub's task table is a statement about the hub's own memory, never about a process on another machine, which is why a kill against an endpoint the hub does not have reports an unconfirmed stop.
+Inside the restart window something may start a fresh worker for the same task under the same name; a record the hub has never heard from takes no name from the agent that is publishing under it.
+That protection covers only the gap between a replacement's registration and its first state frame; past it the recovering agent is refused, because two workers then really do answer to one name.
 
-The identity is the point.
-The endpoint id an agent re-registers is the one the task's own records name, so its metadata binding, its steering and its status channel all keep meaning what they meant; an agent that came back under a fresh id would be listed while every record pointing at it was stranded, which is a worse outcome than staying away.
-The history does not come back with it.
-The ring buffer was in memory too, so the terminal output produced while the hub was gone is lost and that endpoint's scrollback starts again from the reconnect.
-
-A worker coming back this way must not lose its identity to the replacement its own absence provoked.
-Inside the restart window every stream endpoint reads unknown to the hub, so something may well start a fresh worker for the same task under the same name; registering it is not what decides the contest.
-A record the hub has never heard from stands for no worker, so it takes no name from the agent that is publishing under it - the rule the hub already applied to publishing, applied to registering too, so the contest is decided by which agent speaks rather than by which one registered first.
-That is a narrow protection, and worth being exact about: a replacement publishes its own first state frame immediately after registering, so the interval in which it stands for nothing at all is the gap between those two calls.
-Past it, the recovering agent is the one refused - correctly, because by then two workers really do answer to one name and the one the hub has heard from is the one it can account for.
-Readers on this side wait one ordinary rejoin window before answering an unresolved order, but absence from the restarted hub is never evidence that the worker is gone.
-If no endpoint appears in that window, the order remains pending without a membership nack and an identical resend can try placement again after the agent's backoff.
+Readers wait one ordinary rejoin window before answering an unresolved Bridge order; if no endpoint appears, the order remains pending without a membership nack, and an identical resend can try placement again.
 The cheap presence probe behind capture, current-path and endpoint-addressed input answers from the first reply and pays no rejoin wait.
-The recovery-grade worker classifier waits its separate bounded six-second rejoin window, after which it can report `missing` while a live agent remains in a longer backoff; that classifier verdict does not produce a Bridge membership nack, which remains pending as described above.
+The recovery-grade worker classifier waits its own bounded six-second window, after which it can report `missing` while a live agent remains in a longer backoff; that verdict produces no Bridge membership nack.
 
-`no_such_endpoint` is the only thing an agent acts on here, and only the hub states it.
-A failed connection is not that, and is never treated as it: a hub on its way back up passes through exactly that state, and a returning hub that still holds the record must not be re-registered against.
-An agent finds out through its own publishing, so an endpoint with nothing to say comes back on its state heartbeat rather than waiting for its worker to print something.
-
-Attempts are paced rather than repeated.
-One restart strands every agent in the fleet at once, so an agent leaves at least a couple of seconds between attempts, backs further off while the hub cannot take it back, and spreads the wait by a random margin so the fleet does not return in one burst against a hub that has only just come up.
-A registration the hub takes ends the widening and the wait behind it together, so a hub that forgets the same endpoint again a moment later - a second restart, or a hub taking registrations while it still refuses frames - is met at that couple of seconds rather than at the wait the outage before it had grown.
-A worker whose own process ended while the hub was down is recovered the same way and on the same terms: if the hub is back by the time its agent posts the closing frame, the agent takes the identity back in order to deliver it, so the task's end and its exit code land under the id that names them rather than being lost with the record that was meant to hold them.
-Its closing frame is the one thing the pace does not apply to: pacing exists to stop an agent asking again and again, and a closing frame is the last call that agent will ever make, so it takes its one attempt whether or not the wait from an earlier attempt has run out.
-That is the whole of the licence. It is one attempt on ordinary timeouts, and an agent whose hub is still down exits rather than holding its teardown open.
-The single thing it does wait for is a recovery already in flight on another of the agent's own threads, and only for a few seconds: a heartbeat that met the same forgotten endpoint holds the agent's registration to itself for one round trip, and a closing frame that gave up there would be dropped for good rather than retried.
-
-One answer ends the attempts instead of continuing them, and only one.
-An agent that comes back to find another endpoint already answering to its machine and label stands down exactly as it would have anywhere else, because two workers behind one identity is the outcome worse than any lost endpoint.
-Everything else the hub can say is kept, including a credential it will not take: the hub reads its tokens once at startup, so a hub that came back with the wrong token file refuses the whole fleet at once, and an agent that treated that as settled would strand every worker permanently over a condition that ends the moment the hub is restarted correctly.
-So a refusal that is not a lost name is waited out on the same backoff as an unreachable hub, and the worker is there when the hub is right again.
-In either case the worker itself is left running and untouched, because a refused agent says nothing at all about the work its worker is in the middle of.
+Only `no_such_endpoint` from the hub triggers re-registration; a failed connection never does, because a hub on its way back up may still hold the record.
+An idle endpoint finds out on its state heartbeat rather than waiting for its worker to print something.
+Attempts are paced, backed off, and jittered so the fleet does not return in one burst, and a successful registration resets the pacing.
+A worker whose process ended while the hub was down is recovered the same way, so its closing frame and exit code land under the id that names them; the closing frame gets one unpaced attempt, and an agent whose hub is still down then exits.
+A refusal other than a lost name, including a refused credential after a hub came back with the wrong token file, is waited out on the same backoff as an unreachable hub rather than treated as settled.
+In every case the worker itself is left running and untouched.
 
 ## Retiring a record no backend can answer for
 
 Cleanup removes a task's durable records only once a backend has proved the worker stopped, and `--force` does not lift that: it authorizes discarding unlanded WORK, never asserting a stop nobody observed.
-A hub restart leaves records in exactly that state - the hub has never heard of the endpoint, a kill against it reports an unconfirmed stop, and no later read can change that answer - so cleanup refuses every time and the record would stay forever.
+A hub restart can leave records in exactly that state, where the hub has never heard of the endpoint and no later read can change the unconfirmed answer, so cleanup refuses every time.
 
 `bin/fm-retire-endpoint.sh <task-id> [<task-id>...]` is the one way such a record is retired, and only a human runs it.
-Nothing in firstmate invokes it, and it names each id exactly - wildcards and all-records forms are refused - then asks you to type those ids back before anything is written.
-
+Nothing in firstmate invokes it; it names each id exactly, refuses wildcards and all-records forms, and asks you to type those ids back before anything is written.
 By naming a record you assert, from your own inspection of the machine that ran it, that no worker is still running behind it.
-That is the hub-unanswerable condition: the backend that owned the worker can no longer say anything about it, so no read will ever settle the question.
-Your username and the time are recorded with the assertion: every run appends one line to `state/endpoint-retirements.log` recording that a named person asserted, at a named time, that a named record should be retired.
-That line is written before anything is removed, and a run whose line cannot be appended retires nothing - a record is never removed without a durable author.
-Because it is written first, cleanup can still refuse afterwards and retire nothing: each line records the assertion that was made, not an outcome, and no outcome is written back to it.
+Every run first appends one line to `state/endpoint-retirements.log` with your username, the time, and the ids; a run whose line cannot be appended retires nothing, and the line records the assertion, not an outcome.
 
 What it touches, and what it does not:
 
 - It retires RECORDS: the durable task record and, where firstmate owns the transition, the task's backlog row.
-  A home whose backlog is kept manually, or which keeps no backlog file, has its row left exactly as the operator keeps it.
+  A manually kept backlog, or a home with no backlog file, is left exactly as the operator keeps it.
 - Cleanup runs first and finishes the job properly whenever its own gates allow.
-  The first of two refusals the retirement proceeds past is cleanup's work-protection gate, which refuses before anything on disk has been touched.
-  In that case the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
+  When cleanup's work-protection gate refuses, the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
   It never discards work and never passes `--force` to anything.
-- The second is cleanup's unconfirmed-kill gate, and it is the command's honest cost: the records are retired even for an endpoint the backend still reports present after its kill, with no further flag, on your assertion alone.
-  Cleanup cannot tell you which case you are in - a backend answering "still there" and a backend that cannot answer at all reach it as the same unconfirmed verdict, so its warning claims neither and says only that the endpoint was never confirmed gone.
-  A worker may still be running behind a record retired that way, and stopping it is yours to do.
-- Every other cleanup refusal stands and nothing is retired - an outcome that has not reached the parent channel, a backlog transition that cannot be replayed.
-  The one exception is a cleanup that fails only after it has already removed the durable task record: the run reports that partial state, naming the record that is gone and the pending close left behind, instead of claiming nothing was retired.
+- When cleanup's unconfirmed-kill gate refuses, the records are retired anyway on your assertion alone, even for an endpoint the backend still reports present after its kill.
+  Cleanup cannot tell which case you are in, so a worker may still be running behind a record retired that way, and stopping it is yours to do.
+- Every other cleanup refusal stands and nothing is retired, such as an outcome that has not reached the parent channel or a backlog transition that cannot be replayed.
+  A cleanup that fails only after it has already removed the durable task record reports that partial state instead of claiming nothing was retired.
 
-A record left on the retired tmux or herdr backends reaches cleanup as an unconfirmed kill, so this command retires it the same way.
-
-The command is not stream-specific, but the stream hub's restart behavior above is the condition it exists for.
+Records left on the removed tmux and herdr backends, including any record with no `backend=` field, read as `unverified` to recovery and as gone to presence checks, cannot be relaunched, and reach cleanup as an unconfirmed kill.
+Stop any process still behind one by hand, then retire it with this command.
 
 ## When the hub is down
 
-One hub means one blast radius, and it is worth being exact about its edges.
-
+One hub means one blast radius.
 The hub owns no pseudoterminal, so it cannot take a worker with it.
 While it is down, unreachable, or restarting:
 
 - Every worker keeps running, and keeps producing output into the pty its own agent holds.
 - Hub-backed watching, new steering, capture, and kill requests are unavailable.
-  Same-machine interactive attach has a separate local transport ([Interactive attach](#interactive-attach)); it does not restore fleet-wide supervision.
-  Already-reserved native Deck orders continue local reconciliation independently of hub connectivity under the [Command path](#command-path) contract.
+  Same-machine interactive attach has its own local transport ([Interactive attach](#interactive-attach)), but it does not restore fleet-wide supervision.
+  Already-reserved native Deck orders continue local reconciliation under the [Command path](#command-path) contract.
 - Every endpoint reads stale, which is `unreadable`, never `dead`.
   Supervision must not treat that as evidence a worker died, because it is evidence of nothing at all.
-- Status lines are the exception, and deliberately so: they are written by each agent on its own machine, so the durable record a task reports into keeps working while the hub is gone.
+- Status lines keep working, because each agent writes them on its own machine.
 
 A hub that was merely unreachable comes back to the same endpoints, and agents pick up where they left off.
-A hub that RESTARTED comes back to none, and each agent registers its own endpoint again; [When the hub restarts](#when-the-hub-restarts) owns what that recovers and what it does not.
-Either way the terminal output produced in the meantime is gone, because the ring buffer is in memory too.
-
-The operational shape of that is worth saying plainly.
+A hub that RESTARTED comes back to none, and each agent registers its own endpoint again; [When the hub restarts](#when-the-hub-restarts) owns what that recovers.
+Either way the terminal output produced in the meantime is gone.
 Losing the hub costs centralized observation across the whole fleet at once, but does not stop the worker processes.
 
 ## Limits
 
-- Experimental; CI's Rust agent parity step exercises disposable Python hubs and real PTYs, not installed harnesses.
-  [Rust PTY agent](#rust-pty-agent) owns the native agent's verification coverage.
-  Native Deck steering has its own live guard and portable receiver regressions, linked in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
-  The other portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, and `tests/fm-stream-bridge.test.sh`.
-  The secondmate credential-seeding regressions from the Security section above ride `tests/fm-secondmate-safety.test.sh`.
-  `tests/fm-ui-host-control.test.sh` covers the private host route's registry, browser-safe discovery and classification, distinct primary captain-call bindings, repeated primary capability refusals, captain-call decisions, exact-task and harness-switch races, independent-host lease preservation, stdin isolation, and host-only diagnostics; `tests/fm-control.test.sh` covers integration with the existing worker owners.
 - Scrollback is bounded by the ring buffer, so it is a live window, not a transcript.
 - An unreachable agent and a dead worker are indistinguishable from the hub, so a stale read carries no liveness verdict at all.
   Only one of those two states authorizes recovery, and reporting silence as death is how a healthy worker gets torn down.
 - The hub is a single point of observation, not of execution; [When the hub is down](#when-the-hub-is-down) owns that contract.
+- The hub token file is read only at start, so adding or revoking a credential costs a hub restart.
+- CI's Rust agent parity step exercises disposable Python hubs and real PTYs, not installed harnesses.
+  Native Deck steering has its own live guard, recorded in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
+  The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, and `tests/fm-stream-bridge.test.sh`; `tests/fm-ui-host-control.test.sh` and `tests/fm-control.test.sh` cover the private host route.
