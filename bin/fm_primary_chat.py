@@ -631,14 +631,26 @@ class Keeper:
         return match.group(1) if match else None
 
     def run_deck_chat(self, argv, timeout):
+        """Run fm-deck-chat.sh; a timeout or keeper shutdown terminates it."""
         env = dict(os.environ, FM_HOME=str(self.home), FM_DECK_CHAT_SERVICE='1')
-        try:
-            result = subprocess.run([self.deck_chat] + argv, capture_output=True, text=True,
-                                    env=env, stdin=subprocess.DEVNULL, timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            out = exc.stdout or ''
-            return 124, (out.decode('utf-8', 'replace') if isinstance(out, bytes) else out)
-        return result.returncode, (result.stdout + result.stderr)
+        with tempfile.TemporaryFile() as out:
+            proc = subprocess.Popen([self.deck_chat] + argv, stdout=out, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, env=env)
+            end = time.time() + timeout
+            while proc.poll() is None and time.time() < end and not self.stop.is_set():
+                time.sleep(0.2)
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                rc = 124
+            else:
+                rc = proc.returncode
+            out.seek(0)
+            return rc, out.read().decode('utf-8', 'replace')
 
     def start(self):
         argv = ['--stream', '--home', str(self.home)]

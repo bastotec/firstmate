@@ -201,7 +201,8 @@ PY
   # Replacing a loaded agent stops only its keeper (AbandonProcessGroup).
   "$LAUNCHCTL" bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
   ok=0
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
+  # A replaced keeper can take a few seconds to exit.
+  for _ in $(seq 1 60); do
     if "$LAUNCHCTL" bootstrap "$DOMAIN" "$PLIST" 2>"$STATE/primary-chat/.bootstrap.err"; then ok=1; break; fi
     sleep 0.5
   done
@@ -225,9 +226,13 @@ if [ "$MODE" = uninstall-service ]; then
   service_prereqs
   "$LAUNCHCTL" bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
   rm -f "$PLIST"
-  if "$LAUNCHCTL" print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
-    die "launchd still lists $DOMAIN/$LABEL"
-  fi
+  # launchd lists the job until the keeper has exited.
+  gone=0
+  for _ in $(seq 1 60); do
+    if ! "$LAUNCHCTL" print "$DOMAIN/$LABEL" >/dev/null 2>&1; then gone=1; break; fi
+    sleep 0.5
+  done
+  [ "$gone" = 1 ] || die "launchd still lists $DOMAIN/$LABEL"
   printf 'service: %s/%s removed; a running primary keeps running\n' "$DOMAIN" "$LABEL"
   exit 0
 fi
