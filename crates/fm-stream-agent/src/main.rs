@@ -1,4 +1,4 @@
-//! Independent pilot port. The Python deployment remains the default.
+//! Native PTY agent. Deployment selection and limits: docs/stream-backend.md.
 mod command_value;
 mod commands;
 mod hub_json;

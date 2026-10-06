@@ -33,8 +33,9 @@
 #   - nudge-secondmates: fm-<id>...|none   (the residual: live secondmates on
 #     that same tip whose runtime CANNOT prove a restart, so the older re-read
 #     steer is all that is honest for them)
-#   - stream-native: built|current|prebuilt <dir> | failed: <reason>  (only on
-#     homes whose stream implementation is rust; see the native section below)
+#   - stream-native: built|current|prebuilt <dir> | failed: <reason>  (primary)
+#   - stream-native secondmate <id>: same result (settled local mate with a
+#     recorded window); only for rust selections, see the native section below
 #
 # The two sets are disjoint, and restart is UNCONDITIONAL on a successful update
 # of that home. It is deliberately not gated on the git diff: replacing the agent
@@ -108,8 +109,9 @@ fi
 
 # --- native stream binaries --------------------------------------------------
 # The Rust stream hub/agent/bridge are built from crates/, not shipped in git.
-# After this home lands on its target, its OWN fm-stream.sh (the new bytes)
-# builds them when the source key changed or they are missing, so the next
+# For the updated or current primary and each settled local mate with a
+# recorded window, the home's OWN fm-stream.sh (the new bytes) builds them
+# when the source key changed or they are missing, so the next
 # spawn or hub start runs binaries that match the checkout. One summary line;
 # a failure (no cargo, build error) is reported and never fails the update.
 # Homes that selected the python rollback, or whose checkout has no

@@ -45,7 +45,7 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # but newer than tmux's long-proven default path.
 # stream is EXPERIMENTAL and spawn-capable, session-provider-only like
 # herdr, but its "session host" is the fleet's own central hub
-# (bin/fm-stream-hub.py) rather than a third-party multiplexer. Each task's
+# rather than a third-party multiplexer. Each task's
 # pseudoterminal is owned by a thin agent on the machine that runs it, which is
 # what lets one surface watch endpoints on several machines at once
 # (docs/stream-backend.md).

@@ -1,12 +1,11 @@
 //! Shared wire contract for the Rust stream-backend port.
 //!
-//! One compiled definition of what crosses the wire for the Rust pieces as
-//! they replace the Python backend one at a time.  The bridge uses it today;
-//! later hub and agent ports should reuse it rather than restating the
-//! protocol.  The Python deployment at `bin/fm-stream-hub.py`,
-//! `bin/fm-stream-agent.py`, and `bin/fm-stream-bridge.py` remains the
-//! reference implementation while the port proceeds; its OBSERVED BEHAVIOUR,
-//! not its source, is the spec.  The byte-level encoders here reproduce the
+//! One compiled wire definition shared by the Rust hub, agent, and bridge.
+//! Deployment selection is owned by `docs/stream-backend.md`.
+//! The Python implementations at `bin/fm-stream-hub.py`,
+//! `bin/fm-stream-agent.py`, and `bin/fm-stream-bridge.py` remain the
+//! compatibility reference; their OBSERVED BEHAVIOUR,
+//! not their source, is the spec.  The byte-level encoders here reproduce the
 //! Python toolchain's observable output exactly - `json.dumps` with default
 //! `ensure_ascii` and the interpreter's `repr` for floats - because the
 //! bridge's NDJSON feed is diffed byte-for-byte against the reference in

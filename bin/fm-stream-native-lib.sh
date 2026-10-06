@@ -69,9 +69,9 @@ fm_stream_native_sha() {
   fi
 }
 
-# fm_stream_native_source_key: a hash of the tracked crate sources as they are
-# on disk now (git hash-object reads the working tree, so an edited crate
-# changes the key even before it is committed).
+# fm_stream_native_source_key: hash existing tracked and non-ignored untracked
+# crate inputs as they are on disk, skipping deleted paths. Refuse hashing
+# failures rather than resolving an install with a partial source key.
 fm_stream_native_source_key() {
   local root hashes path object
   root=$(fm_stream_native_root) || return 1

@@ -60,11 +60,11 @@ FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[
 #   Lower bound - what it has to outlast, which is three terms, not one. An
 #   agent discovers the hub forgot it only by publishing, and an idle worker
 #   publishes nothing but its state heartbeat, so the wait comes first: at
-#   shipped defaults every 5s (bin/fm-stream-agent.py's --state-interval
-#   default, capped by the hub's state_max_age_secs/3). Then the frame BUILD,
-#   which is not free - state_loop shells out through Pty.foreground_processes
-#   and foreground_cwd before it posts anything, so a tenth of a second when
-#   the box is idle and appreciably more when it is not. Then the 404 and the
+#   shipped defaults every 5s (both agents' --state-interval default, capped
+#   by the hub's state_max_age_secs/3). Then the frame BUILD, which is not
+#   free - the agent inspects foreground processes and cwd before it posts
+#   anything, so a tenth of a second when the box is idle and appreciably
+#   more when it is not. Then the 404 and the
 #   registration round trip it answers with.
 #   Upper bound - what it has to fit inside. Callers bound this classifier:
 #   fm-fleet-snapshot.sh gives 10s to a whole crew-state read, of which this
@@ -82,8 +82,8 @@ FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[
 # the FIRST attempt the agent makes after a restart. It does not cover a rejoin
 # delayed behind a failed attempt. An attempt that times out or meets a hub
 # still coming up doubles that agent's re-registration backoff and pushes the
-# next attempt out by it (bin/fm-stream-agent.py's REREGISTER_BACKOFF_MIN ->
-# REREGISTER_BACKOFF_MAX with jitter), which can be far longer than this
+# next attempt out by it (both agents back off from 2s to 60s with jitter),
+# which can be far longer than this
 # window; the endpoint is then reported `missing` while its worker is healthy
 # and still coming back. That verdict is not retried into harmlessness later:
 # fm-watch.sh treats `missing` like `dead` and escalates the pending steer, and
