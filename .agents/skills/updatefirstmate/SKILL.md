@@ -34,7 +34,7 @@ It never forces, never creates a merge commit, and never stashes.
 A clean secondmate divergence advances with `reset --keep` only when a three-way tree proof shows its complete local result is already present at the target, which recognizes squash-merged contributions without discarding unique content.
 Every other dirty, diverged, offline, or wrong-branch target is skipped and reported, and a genuine divergence leaves a durable `state/.secondmate-update-reconcile/<id>.pending` record that future bootstrap and update passes surface until convergence clears it.
 A tracked-files fast-forward leaves the gitignored operational dirs (data/, state/, config/, projects/, .no-mistakes/) untouched, so a secondmate's in-flight work is never disrupted.
-This touches only the firstmate repo and its own worktrees, never anything under `projects/`.
+Checkout convergence touches only the firstmate repo and its own worktrees, never anything under `projects/`.
 
 ## What it does
 
@@ -46,7 +46,7 @@ Do not infer those lists from a capped notification summary, assume skipped home
    bin/fm-update.sh
    ```
    It fast-forwards this firstmate repo's default branch from origin, then updates every registered local or remote secondmate home through its placement-specific guarded path.
-   It prints one status line per target (`updated <old>..<new>` / `reconciled redundant divergence <old>..<new>` / `already current` / `skipped: <reason>`), followed by three action lines that tell you exactly what to do next:
+   It prints one status line per target (`updated <old>..<new>` / `reconciled redundant divergence <old>..<new>` / `already current` / `skipped: <reason>`) and native-preparation summaries when applicable, followed by three action lines that tell you exactly what to do next:
    - `reread-firstmate: yes|no`
    - `restart-secondmates: fm-<id>...|none`
    - `nudge-secondmates: fm-<id>...|none`
@@ -55,6 +55,8 @@ Do not infer those lists from a capped notification summary, assume skipped home
    `restart-secondmates:` carries every live mate the pass left on the latest commit, whether it advanced or was already there.
    A mate reaches neither set only because its home was skipped, because it has no live endpoint recorded here, or because its endpoint was positively classified as dead or missing.
    A skipped genuine divergence still requires attention through its durable reconciliation record; the other two cases need no update action from you.
+   [Stream native preparation](../../../docs/stream-backend.md#implementation-and-native-binaries) owns build scope, cache writes, and best-effort failure behavior; the updater's header owns the result labels and build-log locations.
+   Surface a native-preparation failure as a remaining launch blocker rather than treating a successful checkout update as proof that the next stream launch is ready.
 
 2. **Re-read AGENTS.md if your own instructions changed.**
    When the updater printed `reread-firstmate: yes`, the tracked instruction surface (`AGENTS.md`, `bin/`, or `.agents/skills/`) just advanced under you.
@@ -102,7 +104,7 @@ Do not infer those lists from a capped notification summary, assume skipped home
   A dirty, offline, non-default, or uniquely diverged target is skipped and reported, never forced or stashed.
   Only a clean secondmate divergence whose complete local result is already present upstream may move without ancestry, and `reset --keep` still refuses conflicting working-tree changes.
   Nothing with unlanded work is ever discarded - this is prime directive #3.
-- **Only the firstmate repo and its worktrees** are touched, never `projects/`.
+- **Only firstmate checkouts are updated**, never `projects/`.
   It is the same sanctioned self-write as the fleet sync.
 - **Nothing with work in it is disrupted.**
   A local or remote second mate gets a tracked-files fast-forward only when its own checkout is safe to advance, and a mate whose home was skipped is not restarted either.
