@@ -1333,7 +1333,10 @@ mod tests {
             .await;
             assert_eq!(status, 409);
             assert_eq!(error["error"], "stream_continuity_error");
-            assert!(error["message"].as_str().unwrap().contains("continuity lost"));
+            assert!(error["message"]
+                .as_str()
+                .unwrap()
+                .contains("continuity lost"));
         }
         for offset in [1, 262145] {
             let body = stream(h.clone(), eid.clone(), false, Some(offset)).unwrap();
