@@ -1498,6 +1498,29 @@ SH
   done
   pass "stream: relaunch --backend refuses a mid-turn mate without touching it"
 
+  host_command fm-busy-event.sh apply "$CASE_DIR/home/state" "$id" unknown \
+    --current-gen --source fm-recovery --event fixture-unknown >/dev/null \
+    || { migrate_cleanup; fail "could not seed an unknown live incarnation"; }
+  out=$(host_command fm-control.sh "$id" relaunch --backend tmux 2>&1) \
+    && { migrate_cleanup; fail "a live mate with unknown busy state was migrated: $out"; }
+  assert_contains "$out" 'a backend migration moves only an idle endpoint' "unknown refusal was not named: $out"
+  assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" alive "unknown refusal stopped the mate"
+  host_command fm-busy-event.sh apply "$CASE_DIR/home/state" "$id" idle \
+    --current-gen --source fm-recovery --event fixture-idle >/dev/null \
+    || { migrate_cleanup; fail "could not restore the idle incarnation"; }
+
+  cp "$meta" "$meta.saved"
+  awk -F= '
+    $1 == "window" { sub(/:[^:]+$/, ":00000000000000000000000000000000") }
+    $1 == "stream_endpoint_id" { $0="stream_endpoint_id=00000000000000000000000000000000" }
+    { print }
+  ' "$meta.saved" > "$meta"
+  out=$(host_command fm-control.sh "$id" relaunch --backend tmux 2>&1) \
+    && { migrate_cleanup; fail "a missing stream registry entry was treated as dead: $out"; }
+  assert_contains "$out" "endpoint reads 'missing'" "missing registry refusal was not named: $out"
+  mv "$meta.saved" "$meta"
+  assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" alive "missing registry refusal stopped the mate"
+
   # Idle: stream -> tmux. Same home and record, fresh endpoint, old one closed.
   printf 'unhandled steer\n' > "$CASE_DIR/home/state/$id.inbox/900.msg"
   out=$(host_command fm-control.sh "$id" relaunch --backend tmux 2>&1) \
@@ -1531,10 +1554,35 @@ SH
   # shellcheck disable=SC2031 # deliberate: the private tmux shim is scoped to this call
   out=$(PATH="$fakebin:$PATH" tmux list-windows -a -F '#{session_name}:#{window_name}' 2>/dev/null || true)
   assert_not_contains "$out" "fm-$id" "the tmux window outlived the move back to stream"
-  host_command fm-control.sh "$id" exit >/dev/null 2>&1 || true
-  with_stream_env fm_backend_kill stream "$target" >/dev/null 2>&1 || true
-  migrate_cleanup
   pass "stream: relaunch --backend stream moves the mate back (rollback path)"
+
+  out=$(host_command fm-control.sh "$id" exit 2>&1) \
+    || { migrate_cleanup; fail "pre-migration exit failed: $out"; }
+  wait_for_agent_state "$target" dead
+  assert_equals unknown "$(with_stream_env migrate_busy_word "$meta" "$id" "$CASE_DIR/home/state")" \
+    "exit did not retire the busy incarnation"
+  out=$(host_command fm-control.sh "$id" relaunch --backend tmux 2>&1) \
+    || { migrate_cleanup; fail "migration of an exited mate failed: $out"; }
+  assert_grep 'backend=tmux' "$meta" "an exited mate did not move to tmux"
+  out=$(host_command fm-control.sh "$id" relaunch --backend stream 2>&1) \
+    || { migrate_cleanup; fail "migration back after exited-mate recovery failed: $out"; }
+  target=$(sed -n 's/^window=//p' "$meta")
+  pid=$(agent_pid_for "fm-$id")
+  fm_test_track_helper_pid "$pid"
+  wait_for_agent_state "$target" alive
+  out=$(host_command fm-control.sh "$id" exit 2>&1) \
+    || { migrate_cleanup; fail "pre-stale-record exit failed: $out"; }
+  wait_for_agent_state "$target" dead
+  host_command fm-busy-event.sh arm "$CASE_DIR/home/state" "$id" --state busy \
+    --source fm-recovery --event fixture-stale >/dev/null \
+    || { migrate_cleanup; fail "could not seed a stale busy incarnation"; }
+  assert_equals busy "$(with_stream_env migrate_busy_word "$meta" "$id" "$CASE_DIR/home/state")" \
+    "the dead mate did not retain the stale busy evidence"
+  out=$(host_command fm-control.sh "$id" relaunch --backend tmux 2>&1) \
+    || { migrate_cleanup; fail "a stale busy record blocked a positively dead mate: $out"; }
+  assert_grep 'backend=tmux' "$meta" "a dead mate with stale busy evidence did not move"
+  migrate_cleanup
+  pass "stream: migration accepts positively dead mates with retired or stale busy evidence"
 }
 
 test_cleanup_validation_binds_a_record_to_the_hub_that_made_it() {
@@ -1601,6 +1649,11 @@ test_the_key_vocabulary_is_only_what_the_control_plane_permits() {
   done
   pass "stream: the key vocabulary is exactly the control plane's four keys"
 }
+
+if [ "${FM_BACKEND_STREAM_MIGRATION_ONLY:-0}" = 1 ]; then
+  test_relaunch_backend_moves_an_idle_deck_secondmate_between_stream_and_tmux
+  exit 0
+fi
 
 test_spawn_hosts_a_deck_secondmate
 test_relaunch_backend_moves_an_idle_deck_secondmate_between_stream_and_tmux

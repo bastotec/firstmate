@@ -1202,14 +1202,20 @@ do_relaunch() {
 # only onto a backend that can be spawned and classified. Both refusals happen
 # before the checkpoint, so nothing has been touched.
 migrate_preflight() {
-  local verdict
+  local verdict state
   fm_backend_validate_spawn "$NEW_BACKEND" \
     || die "task $ID cannot be migrated: backend '$NEW_BACKEND' cannot spawn here"
   fm_control_backend_state_verified "$NEW_BACKEND" \
     || die "task $ID cannot be migrated: backend '$NEW_BACKEND' has no recovery-grade agent-state classifier"
+  state=$(agent_state 2>/dev/null) || state=unreadable
+  case "$state" in
+    dead) return 0 ;;
+    alive) ;;
+    *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to migrate" ;;
+  esac
   verdict=$(busy_verdict 2>/dev/null || printf 'unknown unreadable')
   case "${verdict%% *}" in
-    idle|dead) ;;
+    idle) ;;
     *) die "task $ID reads '$verdict'; a backend migration moves only an idle endpoint, so wait for it to finish its turn (bin/fm-crew-state.sh $ID) and retry" ;;
   esac
 }

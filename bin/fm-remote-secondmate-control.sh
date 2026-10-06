@@ -194,6 +194,8 @@ print_route() { # <id>
     printf 'herdr_session=%s\n' "$REMOTE_HERDR_SESSION"
   fi
   printf 'harness=%s\n' "$harness"
+  printf 'model=%s\n' "$(fm_meta_get "$REMOTE_ENDPOINT_META" model)"
+  printf 'effort=%s\n' "$(fm_meta_get "$REMOTE_ENDPOINT_META" effort)"
   [ -z "$traceparent" ] || printf 'traceparent=%s\n' "$traceparent"
 }
 

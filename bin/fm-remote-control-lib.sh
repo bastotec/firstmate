@@ -32,6 +32,8 @@ fm_remote_route_parse() {  # <route-output>
   FM_REMOTE_ROUTE_BACKEND=$(fm_remote_route_field "$out" backend)
   FM_REMOTE_ROUTE_TARGET=$(fm_remote_route_field "$out" target)
   FM_REMOTE_ROUTE_HARNESS=$(fm_remote_route_field "$out" harness)
+  FM_REMOTE_ROUTE_MODEL=$(fm_remote_route_field "$out" model)
+  FM_REMOTE_ROUTE_EFFORT=$(fm_remote_route_field "$out" effort)
   FM_REMOTE_ROUTE_HERDR_SESSION=$(fm_remote_route_field "$out" herdr_session)
   FM_REMOTE_ROUTE_STREAM_HUB=$(fm_remote_route_field "$out" stream_hub)
   FM_REMOTE_ROUTE_STREAM_ENDPOINT_ID=$(fm_remote_route_field "$out" stream_endpoint_id)
@@ -81,8 +83,8 @@ fm_remote_route_binding_lines() {
 
 # Rewrite <meta>'s binding (and harness/model/effort) from the parsed route,
 # keeping every other line, under the record lock and one atomic publish.
-fm_remote_route_rebind_meta() {  # <meta> <state-dir> <model> <effort>
-  local meta=$1 state=$2 model=$3 effort=$4 lock tmp rc=0
+fm_remote_route_rebind_meta() {  # <meta> <state-dir>
+  local meta=$1 state=$2 lock tmp rc=0
   lock=$(fm_meta_lock_path "$meta") || return 1
   fm_lock_acquire_wait "$lock" || return 1
   tmp="$meta.rebind.${BASHPID:-$$}"
@@ -95,8 +97,8 @@ fm_remote_route_rebind_meta() {  # <meta> <state-dir> <model> <effort>
       !($1 in owned)
     ' "$meta"
     echo "harness=$FM_REMOTE_ROUTE_HARNESS"
-    echo "model=$model"
-    echo "effort=$effort"
+    echo "model=$FM_REMOTE_ROUTE_MODEL"
+    echo "effort=$FM_REMOTE_ROUTE_EFFORT"
     fm_remote_route_binding_lines
   } > "$tmp" || rc=1
   if [ "$rc" -eq 0 ] && ! fm_backlog_atomic_transition publish "$tmp" "$meta" "task record" "$state"; then
@@ -109,7 +111,7 @@ fm_remote_route_rebind_meta() {  # <meta> <state-dir> <model> <effort>
 
 # shellcheck disable=SC2153 # META, STATE, ID, VERB, and NEW_* are fm-control.sh's parsed globals.
 fm_remote_control_run() {
-  local host harness model effort out rc route
+  local host harness model effort prior_harness out rc route
   local -a args
   host=$(fm_meta_get "$META" remote_host)
   case "$VERB" in
@@ -127,9 +129,14 @@ fm_remote_control_run() {
   esac
   # Keep the recorded profile unless the caller names an axis; a backend
   # migration moves the same agent profile to a new endpoint.
-  harness=${NEW_HARNESS:-$(fm_meta_get "$META" harness)}
+  prior_harness=$(fm_meta_get "$META" harness)
+  harness=${NEW_HARNESS:-$prior_harness}
   model=${NEW_MODEL:-$(fm_meta_get "$META" model)}
   effort=${NEW_EFFORT:-$(fm_meta_get "$META" effort)}
+  if [ "$harness" != "$prior_harness" ]; then
+    [ "$MODEL_SET" = 1 ] || model=default
+    [ "$EFFORT_SET" = 1 ] || effort=default
+  fi
   [ -n "$model" ] || model=default
   [ -n "$effort" ] || effort=default
   [ -n "$harness" ] || { echo "error: task $ID has no recorded harness; pass --harness" >&2; return 1; }
@@ -149,9 +156,7 @@ fm_remote_control_run() {
     echo "error: remote secondmate $ID was relaunched on $host, but its new route could not be read (${FM_REMOTE_ROUTE_ERROR:-exit $rc}); this record still names the previous endpoint" >&2
     return 1
   fi
-  [ "$model" != - ] || model=default
-  [ "$effort" != - ] || effort=default
-  if ! fm_remote_route_rebind_meta "$META" "$STATE" "$model" "$effort"; then
+  if ! fm_remote_route_rebind_meta "$META" "$STATE"; then
     printf '%s\n' "$out"
     echo "error: remote secondmate $ID was relaunched on $host as $FM_REMOTE_ROUTE_BACKEND $FM_REMOTE_ROUTE_TARGET, but this record could not be updated" >&2
     return 1

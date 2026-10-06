@@ -236,6 +236,7 @@ for pid in $(stream_agent_pids); do
 done
 pass "remote: a stream launch records the stream binding and runs the agent on the host's hub"
 
+if [ "${FM_REMOTE_SECONDMATE_PROFILE_ONLY:-0}" != 1 ]; then
 # --- steering, peek, state, and the parent's lifecycle verbs ----------------
 out=$(remote_env "$ROOT/bin/fm-send.sh" "$ID" 'remote stream steer' 2>&1) || fail "remote send failed: $out"
 assert_grep 'remote stream steer' "$REMOTE_HOME/state/parent-route/$ID.inbox/001.msg" \
@@ -273,9 +274,40 @@ assert_equals "$STREAM_TARGET" "$(meta_value "$PARENT_META" remote_target)" "the
 assert_equals "$EID" "$(meta_value "$PARENT_META" remote_stream_endpoint_id)" "the parent record lost the endpoint id"
 assert_no_grep 'remote_herdr_session=' "$PARENT_META" "the stale Herdr binding survived the rebind"
 assert_equals deck "$(meta_value "$PARENT_META" harness)" "the rebind changed the harness"
+assert_equals "$(meta_value "$HOST_META" model)" "$(meta_value "$PARENT_META" model)" "the rebind did not read the host model"
+assert_equals "$(meta_value "$HOST_META" effort)" "$(meta_value "$PARENT_META" effort)" "the rebind did not read the host effort"
 wait_hub_state "$STREAM_TARGET" alive
 assert_present "$REMOTE_HOME/state/parent-route/$ID.inbox/001.msg" "the relaunch discarded the durable steer"
 pass "remote: relaunch runs on the host and rewrites the parent's binding from its route"
+fi
+
+set_parent_profile() {
+  local model=$1
+  awk -F= '$1 != "harness" && $1 != "model" && $1 != "effort"' "$PARENT_META" > "$PARENT_META.profile"
+  printf 'harness=claude\nmodel=%s\neffort=high\n' "$model" >> "$PARENT_META.profile"
+  mv "$PARENT_META.profile" "$PARENT_META"
+}
+set_parent_profile anthropic/claude
+out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch --harness deck 2>&1) \
+  || fail "remote harness-change reset failed: $out"
+assert_equals default "$(meta_value "$HOST_META" model)" "harness change retained the old model"
+assert_equals default "$(meta_value "$HOST_META" effort)" "harness change retained the old effort"
+assert_equals default "$(meta_value "$PARENT_META" model)" "parent did not bind the reset model"
+assert_equals default "$(meta_value "$PARENT_META" effort)" "parent did not bind the reset effort"
+pass "remote: changing harness resets unnamed model and effort pins"
+
+set_parent_profile anthropic/claude
+FM_HOME="$REMOTE_HOME" FM_STATE_OVERRIDE="$REMOTE_HOME/state/parent-route" \
+  "$REMOTE_ROOT/bin/fm-record-model-refusal.sh" "$ID" fixture/first >/dev/null \
+  || fail "could not seed the host's model cooldown"
+out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch --harness deck --model fixture/first,fixture/second 2>&1) \
+  || fail "remote explicit model chain failed: $out"
+assert_equals fixture/second "$(meta_value "$HOST_META" model)" "host did not skip the cooled model"
+assert_equals fixture/second "$(meta_value "$PARENT_META" model)" "parent recorded the requested chain instead of the resolved model"
+assert_equals default "$(meta_value "$PARENT_META" effort)" "an explicit model prevented the unnamed effort reset"
+assert_equals "$(meta_value "$HOST_META" effort)" "$(meta_value "$PARENT_META" effort)" "parent and host effort pins diverged"
+pass "remote: explicit model chains resolve on the host and rebind their resolved pins"
+[ "${FM_REMOTE_SECONDMATE_PROFILE_ONLY:-0}" != 1 ] || exit 0
 
 out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" recover-missing 2>&1) \
   && fail "recover-missing was accepted for a remote mate: $out"
