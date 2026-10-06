@@ -59,14 +59,12 @@ Because a stream `missing` alone does not prove the worker gone, recovery checks
 A matching agent blocks recovery even when the hub has forgotten it; wait for its re-registration or stop that exact agent before retrying.
 [Agent control](agent-control.md#failure-and-rollback) owns failed-rebind cleanup, retained new-endpoint bindings, and retry handling.
 
-`bin/fm-control.sh <id> relaunch --backend stream|tmux|herdr` moves an idle task (crew, local second mate, or remote second mate) onto another backend: the replacement starts in a fresh endpoint in the same worktree or home, the record is republished with the new binding, and only then is the old agent-free endpoint closed.
-A task that reads busy is refused before anything is touched, and rollback is the same command naming the previous backend.
-A remote second mate runs on stream on its own host; [`remote-secondmates.md`](remote-secondmates.md#stream-on-the-remote-host) owns that route.
+[Agent control](agent-control.md#verbs) owns backend migration through `relaunch --backend`; [remote placement](remote-secondmates.md#stream-on-the-remote-host) owns stream-hosted remote mates and their supported lifecycle routes.
 
-A stream-hosted second mate launches, is steered, and reports its own lifecycle, but it cannot itself spawn or supervise on stream until the hub has restarted since its seeding wrote the home a credential.
+A locally seeded stream-hosted second mate launches, is steered, and reports its own lifecycle, but it cannot itself spawn or supervise on stream until the hub has restarted since its seeding wrote the home a credential.
 Both PTY agents hand the hosted process the hub address and deliberately withhold the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`, so the launch path still carries no credential.
 The credential arrives through seeding instead, and until that restart the seeded token is one the running hub has not loaded, so the home's first stream call is refused by the hub rather than dying in `fm_backend_stream_token` (`bin/backends/stream.sh`).
-[Security](#security) owns the seeding contract, including the homes it leaves without a credential; for those the first stream call still dies in `fm_backend_stream_token` before any endpoint exists, and the remedy that refusal names does not work there: `bin/fm-stream.sh token --ensure` mints a fresh random token, which the fleet hub refuses.
+[Security](#security) owns the local seeding contract, including the homes it leaves without a credential; for those the first stream call still dies in `fm_backend_stream_token` before any endpoint exists, and the remedy that refusal names does not work there: `bin/fm-stream.sh token --ensure` mints a fresh random token, which the fleet hub refuses.
 
 ## Implementation and native binaries
 

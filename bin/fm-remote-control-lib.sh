@@ -20,7 +20,7 @@
 # host's route afterwards. It reads fm-control.sh's parsed globals.
 
 # fm_remote_route_parse <route-output>: validate one host route. Sets
-# FM_REMOTE_ROUTE_BACKEND, _TARGET, _HARNESS, _HERDR_SESSION, _STREAM_HUB,
+# FM_REMOTE_ROUTE_BACKEND, _TARGET, _HARNESS, _MODEL, _EFFORT, _HERDR_SESSION, _STREAM_HUB,
 # _STREAM_ENDPOINT_ID; on refusal returns 1 with FM_REMOTE_ROUTE_ERROR.
 fm_remote_route_field() {  # <route-output> <key>
   printf '%s\n' "$1" | sed -n "s/^$2=//p" | tail -1

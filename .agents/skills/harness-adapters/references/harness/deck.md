@@ -44,7 +44,7 @@ A missing key fails the first turn with Deck's own error in the pane; a quota re
 
 Persistent secondmates, opt-in managed Deck primaries and Deck chat primaries use `../../../../../docs/supervision-protocols/deck.md`.
 [`docs/managed-primary.md`](../../../../../docs/managed-primary.md) owns both primary launch choices and their supported boundaries; the managed owner cannot adopt an unregistered process.
-A Deck secondmate uses the same persistent driver and durable inbox wake path on every backend that hosts secondmates: tmux, Herdr, or stream locally, and Herdr remotely.
+A Deck secondmate uses the same persistent driver and durable inbox wake path on every backend that hosts secondmates; [runtime configuration](../../../../../docs/configuration.md#runtime-backend-configbackend--fm_backend) and [remote placement](../../../../../docs/remote-secondmates.md) own the supported backend choices.
 The driver header owns startup, lock lifetime, watcher wake turns, and the supervisor-specific completion postcondition.
 The `run` driver refuses daemon-owned away/quiet mode (`state/.afk`) rather than competing with a daemon; clear that posture through the owning supervisor before relaunch.
 The chat host has a different handoff, owned by [its header](../../../../../bin/fm-deck-chat.sh).

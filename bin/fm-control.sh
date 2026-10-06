@@ -67,10 +67,10 @@
 #              Backend migration: the same relaunch transaction, but the
 #              replacement starts in a FRESH endpoint on the named backend, in
 #              the same worktree (or secondmate home), with the same task
-#              record. It refuses unless the task reads idle (or its agent is
-#              already gone) on the shared busy classifier, before anything is
-#              touched. The new endpoint is recorded atomically by the launch
-#              owner; only after the replacement reads alive is the old,
+#              record. Before checkpointing, it requires recovery-grade proof
+#              of a dead agent, or an alive agent with shared semantic idle
+#              evidence; missing, unreadable, and ambiguous states refuse.
+#              The new endpoint is recorded atomically by the launch owner; only after the replacement reads alive is the old,
 #              agent-free endpoint closed. A close that cannot be confirmed is a
 #              warning, not a failure, because the task already runs on the new
 #              backend. Naming the recorded backend is an ordinary relaunch.

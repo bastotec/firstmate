@@ -19,7 +19,7 @@
 # parent selects - Herdr in the dedicated fm-remote session, or stream, whose
 # agent is started on this host and publishes to the hub this home's
 # config/stream-hub names (this host's own loopback hub on the fleet), with the
-# credential seeded into this home's config/stream-token and never passed on a
+# credential provisioned in this home's config/stream-token and never passed on a
 # command line (docs/stream-backend.md "Security"). Launch refuses any other
 # selection rather than reading this home's config/backend, which stays this
 # home's choice for its own crew. The interactive default session remains for
