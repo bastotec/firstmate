@@ -47,8 +47,12 @@
 #       `bin/fm-stream.sh attach --interactive <target>` (Ctrl-] detaches and
 #       leaves the host running; docs/stream-backend.md "Interactive attach"
 #       owns prerequisites). `bin/fm-send.sh primary <text>` also steers it.
-#       Refuses (exit 1) while a live host is already registered for the home,
-#       and fails fast when the host exits before registering.
+#       Refuses (exit 1) while a live host is already registered for the home.
+#       Before creating a new endpoint, waits for the previous recorded endpoint
+#       to close and requests its close if still open (one live label per machine).
+#       After dispatch, waits up to 150s for host registration and fails fast
+#       when the endpoint's agent reports the host exited. A registration
+#       timeout leaves the endpoint running for inspection.
 #   fm-deck-chat.sh stop [--home H]
 #       Write the "stopped on purpose" marker state/primary-chat/stopped, then
 #       SIGTERM the live registered host: deck quits and the host exits cleanly.
@@ -69,7 +73,11 @@
 #       keep the keeper itself up, and AbandonProcessGroup keeps launchd from
 #       touching anything the keeper started. An in-flight --stream launcher
 #       finishes independently on keeper shutdown. A live host is adopted,
-#       never duplicated. Re-running replaces the agent (e.g. to change --model).
+#       never duplicated. New starts always use --stream; configure this home's
+#       hub and credentials per docs/stream-backend.md before installing.
+#       The generated plist does not capture FM_STREAM_* overrides; use the
+#       home's config files for persistent stream settings.
+#       Re-running replaces the agent (e.g. to change --model).
 #   fm-deck-chat.sh uninstall-service [--home H]
 #       Boot the agent out and delete its plist; a running primary keeps running.
 #   fm-deck-chat.sh service-run [--home H] [--model ROUTE]

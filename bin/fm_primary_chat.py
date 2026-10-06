@@ -56,9 +56,10 @@ Subcommands:
       Honours state/primary-chat/stopped, including hosts that register late.
       Waits for an in-flight --stream launcher even past its expected window;
       logs that delay once and leaves it to finish independently on shutdown.
-      Down past the alert window (default 120s) writes service-down and raises
+      After a start attempt returns, or while backing off, down past the alert
+      window (default 120s) writes service-down and raises
       `fm-deck-chat.sh service-alert` once per outage, across keeper replacement;
-      a stable run clears the marker. Env: FM_DECK_CHAT_SERVICE_POLL (2),
+      a stable run or explicit stop clears the marker. Env: FM_DECK_CHAT_SERVICE_POLL (2),
       _BACKOFF (5), _BACKOFF_MAX (300), _STABLE_SECS (120), _ALERT_SECS (120),
       _START_TIMEOUT (200, expected launcher window, not a termination deadline).
 """
