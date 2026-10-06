@@ -97,18 +97,10 @@ SH
 test_tmux_agent_state_classifies() {
   local fb out
 
-  for harness in fm-deck-worker fm-deck-chat deck; do
+  for harness in claude codex opencode grok pi pi-signed pi-launcher Pi fm-deck-worker fm-deck-chat deck; do
     fb=$(make_probe_tmux "$TMP_ROOT/tmux-$harness" "$harness")
     out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:win' "$ROOT")
     [ "$out" = alive ] || fail "a live $harness foreground process should classify as alive, got '$out'"
-  done
-
-  # A removed harness's process is not proof of an agent: it reads ambiguous,
-  # never dead, so nothing relaunches over it.
-  for harness in pi claude; do
-    fb=$(make_probe_tmux "$TMP_ROOT/tmux-$harness" "$harness")
-    out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:win' "$ROOT")
-    [ "$out" = ambiguous ] || fail "a removed $harness foreground process should classify as ambiguous, got '$out'"
   done
 
   for shell in zsh bash -zsh; do

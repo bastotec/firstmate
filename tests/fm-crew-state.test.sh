@@ -1426,7 +1426,7 @@ test_no_run_herdr_unknown_uses_backend_capture() {
   make_repo_on_branch "$d/wt" fm/feat-herdr
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-herdr.meta" "window=default:w1:p2" "worktree=$d/wt" "kind=ship" \
-    "backend=herdr" "harness=deck"
+    "backend=herdr" "harness=pi"
   FM_FAKE_AXI_STATUS=""
   FM_FAKE_RUNS_LIST=""
   FM_FAKE_TMUX_MISSING=1
@@ -1464,7 +1464,7 @@ exit 1
 SH
   chmod +x "$d/fakebin/herdr"
   fm_write_meta "$d/state/feat-herdr-cli.meta" "window=default:w1:p2" "worktree=$d/wt" "kind=ship" \
-    "backend=herdr" "harness=deck"
+    "backend=herdr" "harness=pi"
   FM_FAKE_AXI_STATUS=""
   FM_FAKE_RUNS_LIST=""
   FM_FAKE_TMUX_MISSING=1
@@ -1486,7 +1486,7 @@ test_no_run_herdr_alive_with_failed_read_stays_live() {
   make_repo_on_branch "$d/wt" fm/feat-herdr-alive
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-herdr-alive.meta" "window=default:w1:p2" "worktree=$d/wt" "kind=ship" \
-    "backend=herdr" "harness=deck"
+    "backend=herdr" "harness=pi"
   FM_FAKE_AXI_STATUS=""
   FM_FAKE_RUNS_LIST=""
   FM_FAKE_TMUX_MISSING=1
@@ -1512,7 +1512,7 @@ test_no_run_herdr_stale_registration_over_shell_reads_agent_gone() {
   make_repo_on_branch "$d/wt" fm/feat-herdr-stale
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-herdr-stale.meta" "window=default:w1:p2" "worktree=$d/wt" "kind=ship" \
-    "backend=herdr" "harness=deck"
+    "backend=herdr" "harness=pi"
   FM_FAKE_TMUX_MISSING=1
   FM_FAKE_HERDR_READ_FAIL=1
   FM_FAKE_HERDR_AGENT_STATUS=idle
@@ -1534,7 +1534,7 @@ test_no_run_herdr_stale_working_record_is_never_busy() {
   make_repo_on_branch "$d/wt" fm/feat-herdr-stale-working
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-herdr-stale-working.meta" "window=default:w1:p2" "worktree=$d/wt" "kind=ship" \
-    "backend=herdr" "harness=deck"
+    "backend=herdr" "harness=pi"
   FM_FAKE_TMUX_MISSING=1
   FM_FAKE_HERDR_AGENT_STATUS=working
   FM_FAKE_HERDR_PROCESS=shell
@@ -1558,7 +1558,7 @@ test_no_run_herdr_husk_dead_still_reads_gone() {
   make_repo_on_branch "$d/wt" fm/feat-herdr-husk
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-herdr-husk.meta" "window=default:w1:p2" "worktree=$d/wt" "kind=ship" \
-    "backend=herdr" "harness=deck"
+    "backend=herdr" "harness=pi"
   FM_FAKE_AXI_STATUS=""
   FM_FAKE_RUNS_LIST=""
   FM_FAKE_TMUX_MISSING=1

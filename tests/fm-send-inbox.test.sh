@@ -213,10 +213,17 @@ test_secondmate_failed_ring_reports_durable_delivery() {
 }
 
 test_harness_invocations_stay_typed() {
-  local dir err typed
+  local dir err typed rc
   # A slash command must reach the harness's own parser, on any harness.
+  # A Deck submit is confirmed only by the wrapper's next busy turn, which this
+  # stub never records, so the typed send exits 3 (delivered, unconfirmed).
+  # The plane is what this case proves: the text was typed, not queued.
   dir=$(setup_case slash); err="$dir/send.err"
-  run_send "$dir" "$err" -- t1 "/no-mistakes" || fail "a slash send should succeed"
+  rc=0; run_send "$dir" "$err" -- t1 "/no-mistakes" || rc=$?
+  case "$rc" in
+    0|3) ;;
+    *) fail "a slash send should be typed (rc $rc): $(cat "$err")" ;;
+  esac
   typed=$(cat "$dir/send.log")
   assert_contains "$typed" "/no-mistakes" "the slash command should be typed literally"
   [ ! -d "$dir/home/state/t1.inbox" ] || fail "a slash command must not be routed to the inbox"

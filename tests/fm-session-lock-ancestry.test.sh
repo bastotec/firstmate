@@ -315,7 +315,7 @@ SH
 install_lock_scripts() {
   local dir=$1
   mkdir -p "$dir/bin"
-  cp "$ROOT/bin/fm-lock.sh" "$ROOT/bin/fm-session-lock-lib.sh" \
+  cp "$ROOT/bin/fm-lock.sh" "$ROOT/bin/fm-session-lock-lib.sh" "$ROOT/bin/fm-cursor-lib.sh" \
     "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/"
   chmod +x "$dir/bin/fm-lock.sh"
 }
