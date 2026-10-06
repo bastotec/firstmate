@@ -17,7 +17,7 @@ Record (state/primary-chat.json):
   {"version":1,"home":ABS,"session":ID,"steer_dir":ABS,"events_file":ABS,
    "endpoint":"<hub-tag>:<endpoint-id>"|null,"host_pid":N,"started_at":EPOCH}
 A clean host exit adds "stopped_at". A record is live only when it has no
-stopped_at and host_pid is a live fm-deck-chat process.
+stopped_at and host_alive(host_pid, home) validates the host identity below.
 
 Subcommands:
   steer publish (--text T | --file F) [--kind wake|away|captain|other] [--home H]
@@ -31,6 +31,7 @@ Subcommands:
   record write --home H --session ID --host-pid N [--endpoint T] [--startup-file F]
       publishes startup before making the host visible, retaining pending messages
   record stop --home H --host-pid N
+  record pid --home H        print the live host pid; exit 3 when none
   supervise --home H --host-pid N --gen G --events-offset N
       events -> busy-state (state/primary.busy-state, source deck-wrapper) and
       the watcher child (bin/fm-watch-arm.sh) whose wakes become steer
@@ -97,7 +98,16 @@ def read_record(home):
         return None
 
 
-def host_alive(pid):
+def host_alive(pid, home):
+    """True when pid is a live fm-deck-chat host for exactly this home.
+
+    The host re-execs with argv[0] fm-deck-chat, the physical script path,
+    and --home <canonical home> last. The terminal home suffix prevents a
+    whitespace-delimited path prefix from accepting another home's host;
+    resolving the script path keeps symlinked launches consistent with BIN.
+    Steering reads, publications and stop all use this identity check.
+    Regression coverage: tests/fm-deck-chat.test.sh.
+    """
     if not isinstance(pid, int) or pid <= 1:
         return False
     try:
@@ -109,14 +119,28 @@ def host_alive(pid):
     # An exited host can linger as a zombie until its parent (a stream agent)
     # reaps it; that is not a live host.
     out = subprocess.run(['ps', '-o', 'stat=,args=', '-p', str(pid)], capture_output=True, text=True)
-    return 'fm-deck-chat' in out.stdout and not out.stdout.lstrip().startswith('Z')
+    fields = out.stdout.strip().split(None, 1)
+    if len(fields) != 2 or fields[0].startswith('Z'):
+        return False
+    args = fields[1]
+    home = str(Path(home).resolve())
+    return (args.startswith('fm-deck-chat %s ' % (BIN / 'fm-deck-chat.sh'))
+            and args.endswith(' --home ' + home))
 
 
 def live_record(home):
     record = read_record(home)
-    if not record or record.get('stopped_at') or not host_alive(record.get('host_pid')):
+    if not record or record.get('stopped_at') or not host_alive(record.get('host_pid'), home):
         return None
     return record
+
+
+def record_pid(args):
+    record = live_record(args.home)
+    if record is None:
+        return 3
+    print(record['host_pid'])
+    return 0
 
 
 def msg_seqs(directory):
@@ -551,6 +575,7 @@ def main(argv):
     write.add_argument('--endpoint', default='')
     write.add_argument('--startup-file')
     stop = record.add_parser('stop')
+    record.add_parser('pid').add_argument('--home', required=True)
     for command in (write, stop):
         command.add_argument('--home', required=True)
         command.add_argument('--host-pid', type=int, required=True)
@@ -569,7 +594,7 @@ def main(argv):
     if args.cmd == 'prepare':
         return prepare(args)
     if args.cmd == 'record':
-        return {'write': record_write, 'stop': record_stop}[args.action](args)
+        return {'write': record_write, 'stop': record_stop, 'pid': record_pid}[args.action](args)
     return Supervisor(args).run()
 
 

@@ -37,12 +37,13 @@
 #   fm-deck-chat.sh --stream [--home H] [--model ROUTE] [--session ID]
 #       Start a stream endpoint (label primary-chat) through the stream
 #       backend's own agent launcher, run the host inside it, print the
-#       endpoint target and return. Attach from any terminal with
-#       `bin/fm-stream.sh attach <target>` (read-only); send input through
-#       `bin/fm-send.sh primary <text>`. For typing into the TUI, see
-#       docs/stream-backend.md "Interactive attach".
+#       endpoint target and return. Use the TUI from any terminal with
+#       `bin/fm-stream.sh attach --interactive <target>` (Ctrl-] detaches and
+#       leaves the host running; docs/stream-backend.md "Interactive attach"
+#       owns prerequisites). `bin/fm-send.sh primary <text>` also steers it.
 #   fm-deck-chat.sh stop [--home H]
-#       SIGTERM the registered host: deck quits and the host exits cleanly.
+#       SIGTERM the live registered host: deck quits and the host exits cleanly.
+#       Refuses when bin/fm_primary_chat.py's host_alive identity check fails.
 # --home defaults to FM_HOME, else this checkout. --session defaults to the id
 # persisted in state/primary-chat/session (created on first run).
 #
@@ -57,11 +58,12 @@
 #                          is used when no key is set, as for deck workers
 #
 # Exit: deck chat's own exit code once it ran; 1 refused (lock held by another
-# session, session start failed); 2 usage or missing prerequisite; 3 gate-context
-# refusal (bin/fm-gate-refuse-lib.sh).
+# session, task named primary exists, session start failed, no live host to stop
+# or stop failed); 2 usage or missing prerequisite; 3 gate-context refusal
+# (bin/fm-gate-refuse-lib.sh).
 set -u
 
-SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 PRIMARY_CHAT="$SCRIPT_DIR/fm_primary_chat.py"
 BUSY_EVENT="$SCRIPT_DIR/fm-busy-event.sh"
 
@@ -92,19 +94,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ] || die "home not found: $HOME_DIR" 2
-HOME_DIR=$(cd "$HOME_DIR" && pwd)
+HOME_DIR=$(cd "$HOME_DIR" && pwd -P)
 export FM_HOME=$HOME_DIR
 STATE="$FM_HOME/state"
 command -v python3 >/dev/null 2>&1 || die 'python3 is required' 2
 
 if [ "$MODE" = stop ]; then
-  pid=$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print("" if r.get("stopped_at") else r.get("host_pid",""))' \
-    "$STATE/primary-chat.json" 2>/dev/null) || pid=''
-  case "$pid" in ''|*[!0-9]*) die 'no deck-chat primary is registered for this home' ;; esac
-  case "$(ps -o args= -p "$pid" 2>/dev/null)" in
-    *fm-deck-chat*) ;;
-    *) die "registered host pid $pid is not running" ;;
-  esac
+  # Only a live host for exactly this home is signalled, never a recycled pid.
+  pid=$(python3 "$PRIMARY_CHAT" record pid --home "$FM_HOME") \
+    || die 'no live deck-chat primary is registered for this home'
   kill -TERM "$pid" || die "could not signal host pid $pid"
   # A stream agent reaps its child on its own poll, so an exited host can
   # linger as a zombie; that counts as stopped.
@@ -152,10 +150,11 @@ fi
 
 # Run mode. Re-exec once under the harness name the session lock recognises.
 if [ "${FM_DECK_CHAT_HOST:-}" != "$$" ]; then
-  again=(--home "$FM_HOME")
+  again=()
   [ -z "$MODEL" ] || again+=(--model "$MODEL")
   [ -z "$SESSION" ] || again+=(--session "$SESSION")
   [ -z "$ENDPOINT" ] || again+=(--endpoint "$ENDPOINT")
+  again+=(--home "$FM_HOME")
   FM_DECK_CHAT_HOST=$$ exec -a fm-deck-chat bash "$SCRIPT_DIR/fm-deck-chat.sh" "${again[@]}"
 fi
 unset FM_DECK_CHAT_HOST
@@ -201,6 +200,9 @@ trap 'exit 1' HUP TERM
 
 # The lock comes first: it refuses a second primary of any harness, including
 # a second host, before this one changes anything.
+# The busy-state id `primary` belongs to the primary; a task with that id
+# would share its records, so the host refuses to start next to one.
+[ ! -e "$STATE/primary.meta" ] || die 'a task named primary exists in this home (state/primary.meta); not starting'
 "$SCRIPT_DIR/fm-lock.sh" >&2 || die 'the home session lock is held by another session; not starting'
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/fm-deck-chat.XXXXXX") || exit 1
 prepared=$(python3 "$PRIMARY_CHAT" prepare --home "$FM_HOME" --session "$SESSION") || die "could not prepare the primary-chat state" 2

@@ -113,7 +113,12 @@ watch_count() { [ "$(wc -l < "$1/watch.pids" | tr -d ' ')" -ge "$2" ]; }
 busy_is() { grep -q "state=$2 " "$1/state/primary.busy-state"; }
 
 test_steer_contract_without_a_host() {
-  local home rc=0 out pid
+  local home rc=0 out pid BIN="$LAB/steer-bin" STEER STOP
+  cp -R "$LAB/bundle/bin" "$BIN"
+  STEER="$BIN/fm-primary-steer.sh"
+  STOP="$BIN/fm-deck-chat-stop.sh"
+  cp "$BIN/fm-deck-chat.sh" "$STOP"
+  printf '%s\n' '#!/usr/bin/env bash' 'sleep 300; :' > "$BIN/fm-deck-chat.sh"
   home=$(new_home steer-contract)
   "$STEER" publish --home "$home" --text 'hello' >/dev/null 2>&1 || rc=$?
   expect_code 3 "$rc" "publish with no registered primary"
@@ -123,12 +128,22 @@ test_steer_contract_without_a_host() {
   rc=0; "$STEER" delivered 1 --home "$home" || rc=$?
   expect_code 3 "$rc" "delivered with no registered primary"
 
-  # A registered host: any live process whose argv carries fm-deck-chat.
-  bash -c 'exec -a fm-deck-chat sleep 300' &
+  # shellcheck disable=SC2016 # Expanded by the inner bash.
+  bash -c 'exec -a fm-deck-chat bash "$1" --home "$2"' _ "$BIN/fm-deck-chat.sh" "$home" &
   pid=$!
   fm_test_track_helper_pid "$pid"
   python3 "$BIN/fm_primary_chat.py" prepare --home "$home" --session s1 >/dev/null
   python3 "$BIN/fm_primary_chat.py" record write --home "$home" --session s1 --host-pid "$pid"
+  # The same pid recorded by another home is not that home's primary (pid reuse).
+  local other
+  other=$(new_home steer-other)
+  python3 "$BIN/fm_primary_chat.py" prepare --home "$other" --session s1 >/dev/null
+  python3 "$BIN/fm_primary_chat.py" record write --home "$other" --session s1 --host-pid "$pid"
+  rc=0; "$STEER" status --home "$other" >/dev/null || rc=$?
+  expect_code 3 "$rc" "a host serving another home is not present"
+  rc=0; "$STOP" stop --home "$other" 2>/dev/null || rc=$?
+  expect_code 1 "$rc" "stop refuses a host serving another home"
+  alive "$pid" || fail "stop never signals another home's host"
   local steer="$home/state/primary-chat/s1/steer" events="$home/state/primary-chat/s1/events.ndjson"
   assert_equals '0o600' "$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' \
     "$home/state/primary-chat.json")" "the record is 0600"
@@ -192,7 +207,7 @@ test_steer_contract_without_a_host() {
   expect_code 3 "$rc" "a gate agent's publish is refused"
   assert_equals "$before" "$(cat "$steer/.seq")" "a refused publish allocates no sequence"
   FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 "$STEER" status --home "$home" >/dev/null || fail "status stays readable for a gate agent"
-  rc=0; FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 "$BIN/fm-deck-chat.sh" stop --home "$home" 2>/dev/null || rc=$?
+  rc=0; FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 "$STOP" stop --home "$home" 2>/dev/null || rc=$?
   expect_code 3 "$rc" "a gate agent cannot stop the primary"
   alive "$pid" || fail "a refused stop leaves the host running"
 
@@ -203,14 +218,28 @@ test_steer_contract_without_a_host() {
 }
 
 test_host_lifecycle() {
-  local home host second rc=0 out first_watch session
-  home=$(new_home host)
+  local home other host second rc=0 out first_watch session linked="$LAB/linked-code"
+  ln -s "$LAB/bundle" "$linked"
+  home=$(new_home 'host backup')
   echo 'export FM_CHECK_INTERVAL=30' > "$home/config/x-mode.env"
-  FAKE_DECK_LOG="$LAB/deck.log" "$BIN/fm-deck-chat.sh" --home "$home" --model fake/route \
+  FAKE_DECK_LOG="$LAB/deck.log" "$linked/bin/fm-deck-chat.sh" --home "$home" --model fake/route \
     < /dev/null > "$LAB/host.out" 2>&1 &
   host=$!
   fm_test_track_helper_pid "$host"
   wait_for 10 "the host registers" "$STEER" status --home "$home"
+  other=$(new_home host)
+  python3 "$BIN/fm_primary_chat.py" prepare --home "$other" --session s1 >/dev/null
+  python3 "$BIN/fm_primary_chat.py" record write --home "$other" --session s1 --host-pid "$host"
+  assert_equals "$host" "$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")" "the exact home resolves its host"
+  rc=0; out=$(python3 "$BIN/fm_primary_chat.py" record pid --home "$other") || rc=$?
+  expect_code 3 "$rc" "a whitespace-delimited home prefix never resolves another home's host"
+  assert_equals '' "$out" "the shorter home exposes no host pid"
+  rc=0; "$STEER" status --home "$other" >/dev/null || rc=$?
+  expect_code 3 "$rc" "the shorter home has no live primary"
+  rc=0; "$BIN/fm-deck-chat.sh" stop --home "$other" 2>/dev/null || rc=$?
+  expect_code 1 "$rc" "stop refuses the shorter home's stale record"
+  alive "$host" || fail "stop leaves the longer home's host alive"
+  "$STEER" status --home "$home" >/dev/null || fail "the longer home's primary stays registered"
   assert_equals "$host" "$(cat "$home/state/.lock")" "the host holds the session lock"
   assert_equals "fm-deck-chat" "$(ps -o args= -p "$host" | awk '{print $1}')" "the host runs as fm-deck-chat"
   wait_for 10 "the startup digest turn" turns_with "$LAB/deck.log" 'fixture session digest'
@@ -228,7 +257,7 @@ test_host_lifecycle() {
 
   # A steer while idle starts a new turn; busy-state follows the events.
   wait_for 10 "busy-state idle after the digest turn" busy_is "$home" idle
-  "$STEER" publish --home "$home" --text 'SLOW captain question' >/dev/null
+  "$linked/bin/fm-primary-steer.sh" publish --home "$home" --text 'SLOW captain question' >/dev/null
   wait_for 10 "busy-state busy during the turn" busy_is "$home" busy
   wait_for 10 "the steer turn" turns_with "$LAB/deck.log" 'SLOW captain question'
   wait_for 10 "busy-state idle after the turn" busy_is "$home" idle
@@ -270,7 +299,7 @@ test_host_lifecycle() {
 
   # A clean stop releases everything and marks the record stopped.
   second=$(last_watch_pid "$home")
-  "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
+  "$linked/bin/fm-deck-chat.sh" stop --home "$home" >/dev/null
   wait_for 10 "the host exits" dead "$host"
   wait "$host" 2>/dev/null || true
   assert_absent "$home/state/.lock" "the lock is released"
@@ -337,6 +366,18 @@ PY
   wait_for 10 "oversized-wake host exits" dead "$host"
   wait "$host" 2>/dev/null || true
   pass "fm-deck-chat.sh: oversized ASCII and multibyte wakes retain instructions within the byte limit"
+}
+
+test_task_named_primary_blocks_the_host() {
+  local home rc=0
+  home=$(new_home primary-task)
+  printf 'id=primary\n' > "$home/state/primary.meta"
+  FAKE_DECK_LOG="$LAB/deck-task.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/host-task.out" 2>&1 || rc=$?
+  expect_code 1 "$rc" "the host refuses a home with a task named primary"
+  assert_grep 'a task named primary exists' "$LAB/host-task.out" "the refusal names the task"
+  assert_absent "$home/state/.lock" "the refused host takes no lock"
+  assert_absent "$LAB/deck-task.log" "the refused host never starts deck"
+  pass "fm-deck-chat.sh: a task named primary blocks the host"
 }
 
 test_away_mode_pauses_the_watcher() {
@@ -446,4 +487,5 @@ test_startup_handoff
 test_host_lifecycle
 test_oversized_watcher_output
 test_stream_endpoint_host
+test_task_named_primary_blocks_the_host
 test_away_mode_pauses_the_watcher
