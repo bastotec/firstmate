@@ -68,9 +68,9 @@ README.md            public overview and development notes
 skills/              standalone public installer-facing skills, committed; not loaded by firstmate
 bin/                 helper scripts, committed; read each script's header before first use
 .env                 optional Relay pairing token (presence-gates section 14) and mail-plane credentials (schema: docs/configuration.md "Mail plane"); LOCAL, gitignored
-config/crew-harness  crewmate harness override; LOCAL, gitignored; absent or "default" = same as firstmate. Inherited as the literal file: a concrete primary adapter value also controls a secondmate home's own crewmates (section 4)
+config/crew-harness  crewmate harness setting; LOCAL, gitignored; see docs/configuration.md "Harness support" and secondmate-provisioning for inheritance
 config/crew-dispatch.json  optional crewmate dispatch profiles; LOCAL, gitignored; firstmate-maintained but human-editable natural-language rules that choose a per-task harness/model/effort profile (section 4). Inherited by secondmate homes
-config/secondmate-harness  harness the PRIMARY uses to launch SECONDMATE agents, optionally followed by a model and effort token on the same line ("<harness> [<model>] [<effort>]"; section 4); LOCAL, gitignored; absent or "default" harness falls back to config/crew-harness then firstmate's own. The primary's own setting; NOT inherited into secondmate homes (secondmates do not spawn secondmates)
+config/secondmate-harness  primary's secondmate launch profile; LOCAL, gitignored; see docs/configuration.md "Harness support" and secondmate-provisioning for inheritance
 config/backlog-backend  backlog backend override; LOCAL, gitignored; absent or "tasks-axi" = the configured tasks-axi backend, "manual" = force routine backlog updates to hand-editing; inherited by secondmate homes (section 10)
 config/backend  runtime session-provider backend override for new tasks; LOCAL, gitignored; absent = falls through to runtime auto-detection (the runtime firstmate itself is executing inside), then tmux; docs/configuration.md "Runtime backend" is the single owner of the accepted values and each one's status, so never dispatch on a name from memory; inherited by secondmate homes under the primary-authoritative contract in secondmate-provisioning
 config/startup-memory-budget     primary-authoritative per-home startup-memory budget; LOCAL, gitignored, materialized as 7,500 estimated tokens by locked primary bootstrap and inherited into secondmate homes; see docs/configuration.md "Startup memory budget"
@@ -208,7 +208,7 @@ A silent bootstrap section needs no action; for any printed actionable diagnosti
 
 Load `harness-adapters` before every spawn or recovery and before trust handling, skill invocation, interrupt, exit, resume, or adapter verification.
 The only verified harness is `deck`; never dispatch on an unverified adapter.
-If static `config/crew-harness` or `config/secondmate-harness` names an unverified adapter, report it and fall back only to a verified adapter rather than launching it.
+If static `config/crew-harness` or `config/secondmate-harness` names another adapter, report the refusal; never silently fall back around invalid configuration.
 
 `docs/configuration.md` owns dispatch-profile and runtime-backend schemas, `bin/fm-harness.sh` owns static resolution, and `bin/fm-spawn.sh` owns launch flags and fail-closed validation.
 When dispatch profiles exist, consult them at every crewmate or scout intake and pass the resolved concrete profile required by `fm-spawn`.

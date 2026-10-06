@@ -87,7 +87,7 @@ tmux -L "$socket" display-message -p -t "$session:$harness" '#{pane_current_comm
 ps -t "${tty#/dev/}" -o pgid=,tpgid=,comm=      # rows where pgid = tpgid
 ```
 
-Observed identities, and the resulting verdict:
+Observed historical identities and verdicts (not current harness support):
 
 | Harness | Version | `#{pane_current_command}` | Foreground `comm` | Verdict |
 | --- | --- | --- | --- | --- |
@@ -102,7 +102,7 @@ That is the evidence for treating any single process name as a surface under ven
 
 `#{pane_current_command}` and foreground `ps -o comm=` read different name fields, but which one preserves executable identity is platform-dependent.
 On macOS the pane command reflected the rewritable title while the full install path could survive in `ps -o comm=`; in the Linux portable regression those roles reversed for the version-named native executable, with the identifying path retained in argv[0].
-The classifier therefore accepts a harness basename first, then an exact harness path component in the full executable path, then the same component in argv[0], without depending on which field carries it on a given platform.
+The current process vocabulary is owned by `bin/fm-agent-process-lib.sh`; [the tmux guide](../tmux-backend.md#agent-liveness-probe) describes current attribution and refusal semantics.
 
 The portable regression is CI-enforced.
 The real-harness drift guard was removed with the non-Deck adapters; the retained observations are dated evidence, not current harness-support or refresh instructions.
@@ -125,7 +125,7 @@ The first default-on run failed on Cursor with `LIVENESS DRIFT: cursor unknown i
 The classifier was not at fault: the guard resolved the harness through a generic `command -v cursor`, which on a machine that also has the Cursor editor finds `~/.local/bin/cursor` - the editor launcher, not the agent.
 That binary exits immediately, leaving a bare shell in the pane.
 The guard then used `fm_cursor_resolve_binary` first for `cursor`, so the probe launched `cursor-agent` rather than the editor CLI.
-Cursor remains in this guard only for retained process-detection and endpoint-liveness checks; it no longer owns a home session lock or has a supported primary or worker launch path.
+The guard and Cursor resolver have since been removed; these historical probes do not establish current harness support.
 
 Bounded output from the 2026-08-03 run that produced the first table above:
 

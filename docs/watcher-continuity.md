@@ -41,6 +41,7 @@ An acknowledged episode does not freeze the generation, because the next downtim
 ## Queue acknowledgement
 
 `bin/fm-wake-drain.sh` claims every presented row under the durable queue lock and presents and acknowledges only that claimed view; it never reclassifies a row itself.
+The [drain header](../bin/fm-wake-drain.sh) owns bounded presentation-lock waits and blocking mutation-lock semantics, so a contended presentation remains retriable without weakening acknowledgement atomicity.
 A row that lost the five appended fields or its numeric sequence can never be claimed, presented, or named by an `--ack-through` cutoff, so the drain retires it under the queue lock and reports how many it removed together with those rows verbatim, bounded to the first 20 and a count of the rest, because the queue was their only durable record.
 A retirement that cannot be read or written is reported and never fails the drain: the rows that remain usable are still presented with their acknowledgement command, the unusable ones stay queued for a later drain to retire, and failing the whole drain would strand the usable rows too.
 The drain's `--ack-through <SEQ>` deletes only claimed rows at or below the cutoff, subject to the unread captain-note exception owned by [`configuration.md`](configuration.md#inbox-and-voice-records-configinbox--configvoice-read-).

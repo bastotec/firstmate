@@ -105,7 +105,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-tool-version-lib.sh` | Shared tool-associated semantic-version parser and floor comparison                  |
 | `fm-backlog-transition-lib.sh` | Pair task-record changes with their backlog transitions and replay interrupted closes |
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
-| `fm-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, recovery, and supervision checks |
+| `fm-wake-drain.sh`       | Present and acknowledge this home's claimed wake rows alongside status, outcome-backstop, decision, divergence, recovery, and supervision checks |
 | `fm-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |
 | `fm-classify-lib.sh`     | Shared wake classification, durable keyed-decision folds and scans, unread status selection, and bounded latest-event snapshots |
 | `fm-send.sh`             | Send task text, keys, or typed harness invocations, or publish primary chat input (routing contract: [script header](../bin/fm-send.sh)) |
@@ -129,7 +129,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task with an explicit delivery mode, write the ship instructions carrying that mode's definition of done, and supersede the task's brief so a later relaunch cannot revive stale scout delivery text |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |
 | `fm-retire-endpoint.sh`  | Operator-only: retire the durable records of named tasks whose endpoint no backend can answer for, recording the operator's assertion and its time first |
-| `fm-harness.sh`          | Detect the running harness, resolve crew or secondmate harness, model, and effort, and validate the native-only `ultra` effort |
+| `fm-harness.sh`          | Detect Deck ancestry and resolve the supported crew or secondmate harness, model, and effort tokens |
 | `fm-lock.sh`             | Per-home firstmate session lock                                                      |
 | `fm-x-lib.sh`            | Shared Relay config, relay, and reply-threading helpers                              |
 | `fm-x-poll.sh`           | One bounded Relay poll: stash newly offered mentions and emit their once-only wake   |

@@ -39,9 +39,7 @@ Trust handling is complete only when inspection proves the target started proces
 
 ## Detection
 
-`../../../bin/fm-harness.sh` prints firstmate's own harness from process ancestry: `deck` under a deck host (`fm-deck-chat`, `fm-deck-worker`, or `deck` itself), `unknown` otherwise.
-`../../../bin/fm-harness.sh crew` resolves `config/crew-harness`, where absent or `default` means deck; any other harness name is refused.
-`../../../bin/fm-harness.sh secondmate` resolves `config/secondmate-harness` -> `config/crew-harness` -> deck, with the same refusal.
+`../../../bin/fm-harness.sh` owns process-ancestry detection and static harness resolution; [`../../../docs/configuration.md`](../../../docs/configuration.md#harness-support) owns the supported set and config precedence.
 `../../../bin/fm-spawn.sh` re-resolves on every spawn, and an explicit per-spawn argument wins for that spawn.
 A new adapter's verified command name must land in `../../../bin/fm-harness.sh`.
 

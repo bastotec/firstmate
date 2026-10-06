@@ -58,10 +58,9 @@
 #   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
 #   axes chosen by firstmate at intake. --model may be a fallback chain
 #   (comma-separated <provider>/<model-id> labels; docs/configuration.md "Model
-#   fallback chains"); a single label stays an exact pin. They are only threaded
-#   into harnesses whose
-#   installed CLIs were verified to support that axis; unsupported axes are omitted
-#   from that harness's launch rather than guessed.
+#   fallback chains"); a single label stays an exact pin. Deck accepts the
+#   model axis but has no effort control, so a non-default effort is refused
+#   before launch rather than silently omitted.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). For a new local spawn without it, the script resolves

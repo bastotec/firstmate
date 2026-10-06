@@ -7,11 +7,11 @@ Load this before changing session startup, turn-end handling, watcher supervisio
 
 `../../../AGENTS.md` section 3 remains the behavioral owner.
 `../../../bin/fm-deck-chat.sh` runs `../../../bin/fm-session-start.sh` once per host start and hands its digest to the Deck session.
-There are no harness hooks: the host itself owns startup, supervision, and cleanup for its whole lifetime.
+There is no separate primary hook layer: the host itself owns startup, supervision, and cleanup for its whole lifetime.
 
 ## Turn end
 
-`../../../bin/fm-deck-worker.sh` (secondmates) and `../../../bin/fm-deck-chat.sh` (primaries) own turn-end handling through Deck's `pre_complete` hook, which proves the turn still runs inside the session that holds the home lock.
+The home-host headers own Deck's `pre_complete` lock check: [`bin/fm-deck-worker.sh`](../../../../../bin/fm-deck-worker.sh) for secondmates and [`bin/fm-deck-chat.sh`](../../../../../bin/fm-deck-chat.sh) for primaries.
 `../../../bin/fm-busy-lib.sh` remains the semantic busy owner; the deck tool reference names only its source and evidence.
 Validate any turn-end change against the real harness in a scratch project or throwaway home, and record the evidence in `../../../docs/verification/supervision.md`.
 
