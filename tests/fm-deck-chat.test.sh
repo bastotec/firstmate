@@ -653,7 +653,7 @@ STREAM
 }
 
 test_open_attaches_or_starts() {
-  local home BIN="$LAB/open-bin" OPEN="$LAB/open-bin/fm-deck-chat-open.sh" host keeper open rc=0 out
+  local home BIN="$LAB/open-bin" OPEN="$LAB/open-bin/fm-deck-chat-open.sh" host keeper open rc=0 out mode
   cp -R "$LAB/bundle/bin" "$BIN"
   cp "$BIN/fm-deck-chat.sh" "$OPEN"
   # A stand-in host; its --stream registers a new one at endpoint t:cc.
@@ -689,6 +689,38 @@ HOST
   DECK_CHAT_CWD="$home/sub" FM_DECK_BIN="$LAB/tools/local-deck" "$OPEN" open --home "$home" || fail "open in a checkout that is not a home failed"
   assert_equals "$home/sub|1|chat" "$(cat "$OPEN_LOG.local")" "open runs a local deck chat in a checkout that is not a firstmate home"
   assert_absent "$home/state" "open leaves a checkout that is not a home untouched"
+  FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 DECK_CHAT_CWD="$home/sub" FM_DECK_BIN="$LAB/tools/local-deck" \
+    "$OPEN" open --home "$home" || fail "a gate marker must not block local chat outside a home"
+  assert_equals "$home/sub|1|chat" "$(cat "$OPEN_LOG.local")" "local fallback bypasses the gate marker"
+
+  git init -q "$home"
+  git -C "$home" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m fixture
+  mkdir -p "$LAB/.no-mistakes/repos"
+  git clone -q --bare "$home" "$LAB/.no-mistakes/repos/open.git"
+  git -C "$LAB/.no-mistakes/repos/open.git" worktree add -q "$LAB/open-gate" HEAD
+  home=$(cd "$LAB/open-gate" && pwd -P)
+  mkdir "$home/sub"
+  (
+    cd "$home/sub"
+    unset NO_MISTAKES_GATE
+    FM_GATE_REFUSE_BYPASS='' DECK_CHAT_CWD="$home/sub" FM_DECK_BIN="$LAB/tools/local-deck" \
+      "$OPEN" open --home "$home"
+  ) || fail "a no-state gate worktree must get local chat"
+  assert_equals "$home/sub|1|chat" "$(cat "$OPEN_LOG.local")" "local fallback bypasses the git-common-dir gate signal"
+  assert_absent "$home/state" "local chat in a gate worktree creates no primary state"
+  rm -f "$OPEN_LOG.local"
+  for mode in '' --stream stop attach install-service uninstall-service service-run service-alert; do
+    rc=0
+    FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 FM_DECK_BIN="$LAB/tools/local-deck" \
+      "$OPEN" ${mode:+"$mode"} --home "$home" 2>/dev/null || rc=$?
+    expect_code 3 "$rc" "$mode still refuses gate agents without state"
+  done
+  assert_absent "$home/state" "refused primary operations create no state"
+  mkdir "$home/state"
+  rc=0
+  FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 "$OPEN" open --home "$home" 2>/dev/null || rc=$?
+  expect_code 3 "$rc" "open in a firstmate home still refuses gate agents"
+  assert_absent "$OPEN_LOG.local" "refused primary operations never run local chat"
 
   home=$(new_home open-live)
   home=$(cd "$home" && pwd -P)
@@ -722,6 +754,32 @@ handle = open(sys.argv[1], "a"); fcntl.flock(handle, fcntl.LOCK_EX); open(sys.ar
   expect_code 7 "$rc" "open attaches once the keeper's primary registers"
   assert_equals t:bb "$(cat "$ATTACH_LOG")" "open attaches to the keeper-started primary"
   assert_absent "$OPEN_LOG" "open leaves starting to a running keeper"
+  kill "$host"; wait_for 10 "the keeper's first stand-in exits" dead "$host"
+  rm -f "$ATTACH_LOG"
+  # shellcheck disable=SC2016
+  bash -c 'exec -a fm-deck-chat bash "$1" --home "$2"' _ "$BIN/fm-deck-chat.sh" "$home" &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  mkdir "$LAB/open-tools"
+  cat > "$LAB/open-tools/python3" <<'PYTHON'
+#!/usr/bin/env bash
+if [ "${2:-}" = steer ] && [ "${3:-}" = status ] && [ ! -e "$OPEN_LOG.snapshot" ]; then
+  "$REAL_PYTHON" "$@" > "$OPEN_LOG.snapshot"
+  rc=$?
+  "$REAL_PYTHON" "$1" record write --home "$FM_HOME" --session s1 --host-pid "$OPEN_REGISTER_PID" --endpoint t:dd || exit 2
+  cat "$OPEN_LOG.snapshot"
+  exit "$rc"
+fi
+exec "$REAL_PYTHON" "$@"
+PYTHON
+  chmod +x "$LAB/open-tools/python3"
+  rc=0
+  PATH="$LAB/open-tools:$PATH" OPEN_REGISTER_PID="$host" "$OPEN" open --home "$home" 2>"$LAB/open-race.err" || rc=$?
+  expect_code 7 "$rc" "open attaches when the keeper registers after the initial status snapshot"
+  python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["present"] is False' "$OPEN_LOG.snapshot" \
+    || fail "the initial snapshot must precede host registration"
+  assert_equals t:dd "$(cat "$ATTACH_LOG")" "a newly registered stream primary is never classified as terminal-hosted"
+  assert_absent "$OPEN_LOG" "open never starts beside a keeper registering its primary"
   kill "$host" "$keeper"; wait_for 10 "the keeper stand-ins exit" dead "$host"
 
   rm -f "$ATTACH_LOG"

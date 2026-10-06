@@ -136,10 +136,8 @@ usage() { sed -n '/^# USAGE/,/^# ENVIRONMENT/p' "$SCRIPT_DIR/fm-deck-chat.sh" | 
 die() { printf 'fm-deck-chat: %s\n' "$1" >&2; exit "${2:-1}"; }
 q() { printf '%q' "$1"; }
 
-# Every mode starts, steers or stops a primary: refuse a no-mistakes gate agent.
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
-fm_refuse_if_gate_agent
 
 MODE=run
 case "${1:-}" in
@@ -163,6 +161,7 @@ done
 HOME_DIR=$(cd "$HOME_DIR" && pwd -P)
 export FM_HOME=$HOME_DIR
 STATE="$FM_HOME/state"
+[ "$MODE" = open ] && [ ! -d "$STATE" ] || fm_refuse_if_gate_agent
 command -v python3 >/dev/null 2>&1 || die 'python3 is required' 2
 
 STOPPED="$STATE/primary-chat/stopped"
@@ -299,15 +298,18 @@ if [ "$MODE" = service-alert ]; then
 fi
 
 if [ "$MODE" = open ]; then
-  if [ -z "$(live_endpoint)" ]; then
-    if pid=$(python3 "$PRIMARY_CHAT" record pid --home "$FM_HOME" 2>/dev/null); then
-      die "the live primary (host pid $pid) runs in its own terminal, not a stream endpoint; use that terminal"
-    fi
-    if [ ! -d "$STATE" ]; then
-      cd "${DECK_CHAT_CWD:-$PWD}" || exit 2
-      DECK=${FM_DECK_BIN:-deck}
-      DECK_NO_LAUNCHER=1 exec "$DECK" chat
-    fi
+  if [ ! -d "$STATE" ]; then
+    cd "${DECK_CHAT_CWD:-$PWD}" || exit 2
+    DECK=${FM_DECK_BIN:-deck}
+    DECK_NO_LAUNCHER=1 exec "$DECK" chat
+  fi
+  primary=$(python3 "$PRIMARY_CHAT" steer status --home "$FM_HOME" 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print("absent" if not d.get("present") else "stream" if d.get("endpoint") else "terminal")') \
+    || die 'could not read primary status'
+  if [ "$primary" = terminal ]; then
+    die 'the live primary runs in its own terminal, not a stream endpoint; use that terminal'
+  fi
+  if [ "$primary" = absent ]; then
     # A held service.lock is the keeper (bin/fm_primary_chat.py service).
     if [ -e "$STATE/primary-chat/service.lock" ] && ! python3 -c '
 import fcntl, sys
