@@ -16,10 +16,13 @@
 # match would claim unrelated commands.
 FM_HARNESS_RE='^fm-deck-worker$|^fm-deck-chat$'
 
-# Host names for the stricter path evidence below, where a loose regex would
-# also match ordinary firstmate paths. Worker liveness
-# (bin/fm-agent-process-lib.sh) reads this list too.
-FM_HARNESS_NAMES=(fm-deck-worker fm-deck-chat)
+# Harness executable names for the stricter path evidence below, where a loose
+# regex would also match ordinary firstmate paths. Pane liveness
+# (bin/fm-agent-process-lib.sh) reads this list too, so it still names the
+# removed harnesses: a leftover session of one reads as a live agent rather
+# than an idle shell that could be relaunched over. A session-lock match still
+# has to pass FM_HARNESS_RE, so only the deck hosts ever own a lock.
+FM_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi omp fm-deck-worker fm-deck-chat)
 
 # Print the exact host name carried by executable path $1 - its own basename or
 # any directory component - or return 1. Matching whole path components only

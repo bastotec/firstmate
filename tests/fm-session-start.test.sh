@@ -443,6 +443,12 @@ case "${1:-} ${2:-}" in
       exit 1
     fi
     ;;
+  "pane process-info")
+    # A deck record is proven agent-free only by the pane's process view: a
+    # real, childless shell stands in for the pane shell.
+    shell_pid=${FM_FAKE_HERDR_SHELL_PID:?}
+    printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"zsh","argv0":"zsh","argv":["-zsh"]}]}}}\n' "${4:-}" "$shell_pid" "$shell_pid" "$shell_pid"
+    ;;
   "pane close")
     [ "${3:-}" = p-old ] && : > "$killed"
     ;;
@@ -564,11 +570,17 @@ EOF
 }
 
 run_session_start_herdr_secondmate() {
-  local root=$1 home=$2 fakebin=$3 mate=$4 log=$5 state=$6
+  local root=$1 home=$2 fakebin=$3 mate=$4 log=$5 state=$6 shell_pid rc=0
+  # The fixture's ps is faked for session-lock ancestry, so the pane-shell
+  # proof reads the real process table, against a real childless process.
+  sleep 300 &
+  shell_pid=$!
   FM_BACKEND=herdr FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_STATE="$state" \
     FM_FAKE_SECOND_MATE_ID="$SESSION_START_HERDR_SECOND_MATE_ID" \
-    FM_FAKE_HARNESS_PID=$$ \
-    run_session_start "$home" "$root" "$fakebin:$BASE_PATH"
+    FM_FAKE_HARNESS_PID=$$ FM_FAKE_HERDR_SHELL_PID="$shell_pid" FM_HERDR_PS_BIN=/bin/ps \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH" || rc=$?
+  printf '%s\n' "$shell_pid" > "$state.shell-pid"
+  return "$rc"
 }
 
 # wait_for_network_stage <home> <root> [seconds]
@@ -1195,6 +1207,7 @@ EOF
 
   run_session_start_herdr_secondmate "$root" "$home" "$fakebin" "$mate" "$log" "$state" >/dev/null
   wait_for_network_stage "$home" "$root" || fail "the deferred network stage never published"
+  kill "$(cat "$state.shell-pid")" 2>/dev/null || true
 
   out=$(network_stage_report "$home" "$root")
   assert_not_contains "$out" "SECONDMATE_LIVENESS:" "successful Herdr husk recovery should stay non-actionable"

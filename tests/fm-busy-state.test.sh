@@ -288,6 +288,7 @@ test_converted_adapters_ignore_footer_text() {
    ■■■■⬝⬝⬝⬝  esc interrupt
 Working...
 Ctrl+c:cancel'
+  h=deck
   out=$(fm_busy_classify tmux w1 "$h" t1 "$state" "$tail")
   [ "$out" = "unknown missing" ] || fail "$h must never classify from footer text, got '$out'"
   pass "converted adapters never classify busy from rendered footer text"

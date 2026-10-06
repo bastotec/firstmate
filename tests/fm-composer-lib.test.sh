@@ -137,8 +137,8 @@ test_real_text_is_pending() {
 # Fixtures are the audit's byte-level captures of six REAL idle harnesses:
 # claude 2.1.226 (bare `❯` + U+00A0 NO-BREAK SPACE), codex 0.146.0 (bold `›`
 # + SGR-2 dim hint), codex 0.154.0 (the same `›` amid a braille starfield over
-# a status footer, captured through Herdr on 2026-09-15), opencode 1.14.46
-# (left-bar `┃` rows), and grok
+# a status footer, captured through Herdr on 2026-09-15), pi (blank row
+# between solid `─` rules), opencode 1.14.46 (left-bar `┃` rows), and grok
 # 1.0.0 (bordered box with a TITLED bottom border), plus claude captured
 # inside zellij through `dump-screen --ansi` (`ESC[m` `❯` U+00A0).
 #
@@ -284,6 +284,69 @@ test_matrix_herdr_halfblock_rule_bounds_bare_wrap() {
   pass "matrix: herdr half-block rules bound a bare composer's wrap region"
 }
 
+test_matrix_omp_status_row_bounds_bare_composer() {
+  # omp (Oh My Pi) draws its status line directly BELOW the borderless `❯`
+  # composer. Captured live through Herdr on omp 18.1.11 under the captain's
+  # unicode preset (idle), plus the nerd-preset idle row and the busy spinner
+  # row from the 18.1.2 investigation. Without the status-row rule the bare
+  # wrap region swallows that row and an idle omp pane reads `pending`, which
+  # skipped the doorbell on the first live omp worker.
+  local idle_unicode idle_nerd busy typed wrapped
+  idle_unicode=$'transcript line
+
+❯
+ π  · ◔ GPT-6-Astra · 🌳 …-workspace · ⑂ detached · ◫ 15.4%/272K ⟲ · (sub)'
+  idle_nerd=$'transcript line
+
+❯
+ 󰵗  ·  qwen3:8b ·  kun-agent-workspace/… ·  detached ?1 ·  36.7%/41K'
+  busy=$'transcript line
+
+  ⎋ Working…
+
+❯
+ ⠧ 11s  · ◔ GPT-6-Astra · ◫ 15.4%/272K'
+  typed=$'transcript line
+
+❯ fix the flaky test
+ π  · ◔ GPT-6-Astra · 🌳 …-workspace · ⑂ detached · ◫ 15.4%/272K ⟲ · (sub)'
+  # Non-vacuousness: each status row is real non-blank content that the wrap
+  # region would otherwise take as typed input.
+  _fm_composer_row_is_omp_status ' π  · ◔ GPT-6-Astra · 🌳 …-workspace' \
+    || fail "the unicode-preset omp status row must be recognized as furniture"
+  _fm_composer_row_is_omp_status ' 󰵗  ·  qwen3:8b ·  kun-agent-workspace/… ·  detached ?1 ·  36.7%/41K' \
+    || fail "the nerd-preset omp status row must be recognized as furniture"
+  _fm_composer_row_is_omp_status ' ⠧ 11s  · ◔ GPT-6-Astra' \
+    || fail "the busy omp spinner row must be recognized as furniture"
+  _fm_composer_row_is_omp_status 'fix the flaky test' \
+    && fail "ordinary typed text must not be mistaken for omp status furniture"
+  _fm_composer_row_is_omp_status 'please rerun the suite and report' \
+    && fail "ordinary prose must not be mistaken for omp status furniture"
+  # Only omp's identity cell opens the row: a wrapped typed row that happens
+  # to begin with a short word and a spaced middle dot is composer input.
+  _fm_composer_row_is_omp_status 'fix · tests before pushing' \
+    && fail "wrapped typed text with a middle dot must not be mistaken for omp status furniture"
+  # The ascii preset's identity cell is `pi`, but that preset separates its
+  # cells with ` - `, so a row opening `pi ·` is never omp furniture.
+  _fm_composer_row_is_omp_status 'pi · e · phi as the three constants' \
+    && fail "typed text opening 'pi ·' must not be mistaken for omp status furniture"
+  _fm_composer_row_is_omp_status ' ⣾ 3s  · ◔ GPT-6-Astra' \
+    || fail "the status-set omp spinner row must be recognized as furniture"
+  assert_screen "idle omp (unicode preset)" empty "$CAPS_STYLED" "$idle_unicode"
+  assert_screen "idle omp (nerd preset)" empty "$CAPS_STYLED" "$idle_nerd"
+  assert_screen "busy omp keeps an empty composer" empty "$CAPS_STYLED" "$busy"
+  assert_screen "typed omp text is pending" pending "$CAPS_STYLED" "$typed"
+  assert_screen "idle omp on a plain capture" empty "$CAPS_PLAIN" "$idle_unicode"
+  # The boundary must not cut a bare composer's own wrapped input: with the
+  # cursor on a continuation row that opens `fix · tests`, the composer is a
+  # proven wrap region and reads pending, exactly as it did before the rule.
+  wrapped=$'transcript line\n\n❯ please run the suite and then\nfix · tests before pushing'
+  assert_screen "wrapped typed text with a middle dot stays pending" pending "$CAPS_TMUX" "$wrapped" 3
+  wrapped=$'transcript line\n\n❯ document the constants in the order\npi · e · phi with one example each'
+  assert_screen "wrapped typed text opening 'pi ·' stays pending" pending "$CAPS_TMUX" "$wrapped" 3
+  pass "matrix: omp's status row bounds the bare composer's wrap region"
+}
+
 # codex_cell <grey> <glyph>: one codex 0.154 starfield cell exactly as the
 # harness draws it - a truecolor grey foreground, the composer's grey
 # background, the braille glyph, then a reset.
@@ -378,17 +441,43 @@ test_matrix_codex_idle_starfield_furniture() {
   pass "matrix: codex 0.154's starfield rows are furniture; typed, mixed, and unanchored rows keep their verdicts"
 }
 
-test_matrix_rule_below_candidate_is_stale() {
-  # A solid `─` rule below the bottom-most candidate means that candidate is
-  # transcript, not the live composer, so a cursorless read refuses it. A rule
-  # above the candidate changes nothing.
-  local stale live
-  stale=$'❯ \n────────────────\n'
-  live=$'────────────────\n❯ \n'
-  assert_screen "agent glyph above a solid rule" unknown "$CAPS_STYLED" "$stale"
-  assert_screen "agent glyph above a solid rule on a plain capture" unknown "$CAPS_PLAIN" "$stale"
-  assert_screen "agent glyph below a solid rule" empty "$CAPS_STYLED" "$live"
-  pass "matrix: a solid rule below the cursorless candidate proves it stale"
+test_matrix_pi_separated_needs_identity() {
+  # Real idle pi: a blank row between two solid rules. The blank row alone is
+  # exactly what the strict rule refuses; only structure PLUS a live
+  # idle/done pi identity proves the composer (herdr's rule, now
+  # fleet-wide; tmux supplies identity from its foreground-process probe).
+  local screen typed pi_idle pi_working pi_blocked none
+  screen=$'transcript\n────────────────────────\n\n────────────────────────\n footer'
+  pi_idle=$(printf 'pi\tidle'); pi_working=$(printf 'pi\tworking'); none=$(printf 'zsh\t')
+  pi_blocked=$(printf 'pi\tblocked')
+  assert_screen "pi idle with identity" empty "$CAPS_STYLED" "$screen" '' "$pi_idle"
+  assert_screen "pi idle on tmux with identity" empty "$CAPS_TMUX" "$screen" 2 "$pi_idle"
+  assert_screen "pi idle on zellij" unknown "$CAPS_STYLED_NOID" "$screen"
+  # Identity-capable but unfetched: the adapter is asked to probe lazily.
+  [ "$(fm_composer_classify_screen "$CAPS_STYLED" "$screen")" = need-identity ] \
+    || fail "an identity-capable profile should request the lazy identity probe"
+  # No identity capability (cmux/orca/zellij): the shape is unprovable.
+  assert_screen "pi pair without identity capability" unknown "$CAPS_PLAIN" "$screen"
+  # A working pi cannot authorize injection into the blank region.
+  assert_screen "working pi defers" unknown "$CAPS_STYLED" "$screen" '' "$pi_working"
+  # A pi parked on an interactive prompt reports `blocked`: it is waiting on a
+  # human keystroke, so the blank region is a menu's, not a free composer's.
+  # Typing there answers the prompt and the text is discarded (issue #2797).
+  assert_screen "blocked pi defers" unknown "$CAPS_STYLED" "$screen" '' "$pi_blocked"
+  # The audit's live counterexample: a plain shell running sleep, cursor
+  # parked on a blank line between two rules, NO pi process. The permissive
+  # rule read this `empty`; identity+structure refuses it.
+  assert_screen "sleep-pane counterexample" unknown "$CAPS_TMUX" "$screen" 2 "$none"
+  assert_screen "absent identity cannot prove blank pi pair" unknown "$CAPS_TMUX" "$screen" 2 probe-absent
+  typed=$'────────────────────────\nfix the flaky test\n────────────────────────'
+  assert_screen "pi typed" pending "$CAPS_STYLED" "$typed" '' "$pi_idle"
+  typed=$'────────────────────────\n❯\n────────────────────────'
+  assert_screen "pi lone-glyph draft with identity" pending "$CAPS_STYLED" "$typed" '' "$pi_idle"
+  assert_screen "pi lone-glyph draft on tmux" pending "$CAPS_TMUX" "$typed" 1 "$pi_idle"
+  assert_screen "lone glyph without identity capability" empty "$CAPS_STYLED_NOID" "$typed"
+  assert_screen "lone glyph on plain backend" empty "$CAPS_PLAIN" "$typed"
+  assert_screen "lone glyph with non-pi identity" empty "$CAPS_STYLED" "$typed" '' "$none"
+  pass "matrix: pi's separated composer needs identity + structure; the blank row alone never proves it"
 }
 
 test_matrix_opencode_leftbar_signals() {
@@ -693,8 +782,9 @@ test_matrix_codex_dim_hint_row
 test_matrix_truecolor_glyph_survives_signal_loss
 test_matrix_cursor_reverse_video_placeholder_remnant
 test_matrix_herdr_halfblock_rule_bounds_bare_wrap
+test_matrix_omp_status_row_bounds_bare_composer
 test_matrix_codex_idle_starfield_furniture
-test_matrix_rule_below_candidate_is_stale
+test_matrix_pi_separated_needs_identity
 test_matrix_opencode_leftbar_signals
 test_matrix_grok_titled_bottom_border
 test_matrix_kimi_bordered_shell_glyph_box

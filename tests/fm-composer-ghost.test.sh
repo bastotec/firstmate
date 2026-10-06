@@ -347,6 +347,29 @@ test_proven_box_bottom_border_cursor_classifies_content() {
   pass "fm_tmux_composer_state: a proven titled box tolerates a bottom-border cursor"
 }
 
+test_pi_identity_requires_readable_busy_state() (
+  local out
+  # Keep the mocks in this subshell so they cannot affect later tests. Defining
+  # functions directly inside a command substitution does not parse in Bash 3.2.
+  # shellcheck disable=SC2329 # Mock invoked indirectly by the sourced adapter.
+  tmux() {
+    local arg
+    for arg in "$@"; do
+      case "$arg" in
+        *pane_tty*) printf '\n'; return 0 ;;
+        *pane_current_command*) printf 'pi\n'; return 0 ;;
+      esac
+    done
+    return 1
+  }
+  # shellcheck disable=SC2329 # Mock invoked indirectly by the sourced adapter.
+  fm_pane_busy_state() { printf 'unknown'; }
+  if out=$(fm_tmux_composer_identity fakepane); then
+    fail "a live Pi process with unreadable busy state must not produce identity, got '$out'"
+  fi
+  pass "fm_tmux_composer_identity: unknown busy state cannot become idle identity"
+)
+
 test_bordered_busy_signatures_are_pending() {
   local dir fb capture out signature
   dir="$TMP_ROOT/bordered-busy-signatures"; mkdir -p "$dir"
@@ -359,7 +382,7 @@ test_bordered_busy_signatures_are_pending() {
     [ "$out" = pending ] \
       || fail "typed bordered busy signature '$signature' should be pending, got '$out'"
   done
-  pass "fm_tmux_composer_state: typed busy signatures inside a box are pending"
+  pass "fm_tmux_composer_state: typed Pi and Grok busy signatures inside a box are pending"
 }
 
 test_non_bordered_busy_footer_is_unknown_strict() {
@@ -367,7 +390,7 @@ test_non_bordered_busy_footer_is_unknown_strict() {
   # busy-footer row under the cursor is not a composer container, so it no
   # longer reads `empty` the way the old allow-busy compatibility fallback
   # did. Its one load-bearing consumer - submit confirmation on a harness
-  # whose mid-turn screen hides the composer - moved to the submit
+  # whose mid-turn screen hides the composer (pi) - moved to the submit
   # core's baseline-idle turn-started conversion (fm_tmux_submit_core), which
   # requires an idle-to-busy transition across our own Enter instead of
   # trusting any busy-looking row.
@@ -512,11 +535,12 @@ test_all_tmux_harness_composers_share_classification() {
   dir="$TMP_ROOT/all-harness-composers"; mkdir -p "$dir"
   fb=$(make_fake_tmux "$dir")
   capture="$dir/styled.txt"
-  for harness in claude codex opencode grok; do
+  for harness in claude codex opencode pi pi-signed grok; do
     case "$harness" in
       claude) printf '╭────────────╮\n│ ❯ \033[2mtry\033[0m      │\n╰────────────╯\n' > "$capture" ;;
       codex) printf '╭────────────╮\n│ › \033[2mtip\033[0m      │\n╰────────────╯\n' > "$capture" ;;
       opencode) printf '╭────────────╮\n│ >          │\n╰────────────╯\n' > "$capture" ;;
+      pi|pi-signed) printf '╭────────────╮\n│            │\n╰────────────╯\n' > "$capture" ;;
       grok) printf '╭────────────╮\n│ ❯ \033[38;2;50;47;70mType\033[0m     │\n╰────────────╯\n' > "$capture" ;;
     esac
     out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=1 \
@@ -526,7 +550,7 @@ test_all_tmux_harness_composers_share_classification() {
     case "$harness" in
       claude|grok) printf '╭────────────╮\n│ ❯ fix      │\n╰────────────╯\n' > "$capture" ;;
       codex) printf '╭────────────╮\n│ › fix      │\n╰────────────╯\n' > "$capture" ;;
-      opencode) printf '╭────────────╮\n│ > fix      │\n╰────────────╯\n' > "$capture" ;;
+      opencode|pi|pi-signed) printf '╭────────────╮\n│ > fix      │\n╰────────────╯\n' > "$capture" ;;
     esac
     out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=1 \
       fm_tmux_composer_state "fakepane")
@@ -567,7 +591,7 @@ test_single_capture_leaves_no_fallback_race() {
   pass "fm_tmux_composer_state: one capture feeds the classifier; no band-capture race remains"
 }
 
-test_rule_enclosed_glyph_keeps_bare_verdict_under_cursor() {
+test_absent_tmux_identity_keeps_enclosed_bare_verdict() {
   local dir fb capture out nbsp
   dir="$TMP_ROOT/absent-identity"; mkdir -p "$dir"
   fb=$(make_fake_tmux "$dir")
@@ -577,8 +601,8 @@ test_rule_enclosed_glyph_keeps_bare_verdict_under_cursor() {
   out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=1 \
     fm_tmux_composer_state "fakepane")
   [ "$out" = empty ] \
-    || fail "a glyph enclosed by solid rules must keep its bare empty verdict under the cursor, got '$out'"
-  pass "fm_tmux_composer_state: a glyph enclosed by solid rules keeps its bare verdict under the cursor"
+    || fail "an enclosed Claude glyph must keep its bare empty verdict when the Pi-only probe is absent, got '$out'"
+  pass "fm_tmux_composer_state: absent Pi identity preserves Claude's enclosed bare verdict"
 }
 
 test_legitimate_empty_routes_remain_empty() {
@@ -672,6 +696,7 @@ test_real_text_with_trailing_ghost_is_pending
 test_two_row_composer_reads_text_above_empty_cursor_row
 test_wrapped_composer_reads_all_content_rows
 test_proven_box_bottom_border_cursor_classifies_content
+test_pi_identity_requires_readable_busy_state
 test_bordered_busy_signatures_are_pending
 test_non_bordered_busy_footer_is_unknown_strict
 test_clipped_bordered_box_is_unknown
@@ -684,7 +709,7 @@ test_wide_composer_text_is_pending
 test_all_tmux_harness_composers_share_classification
 test_unrecognized_state_defers_input_guard
 test_single_capture_leaves_no_fallback_race
-test_rule_enclosed_glyph_keeps_bare_verdict_under_cursor
+test_absent_tmux_identity_keeps_enclosed_bare_verdict
 test_legitimate_empty_routes_remain_empty
 test_non_bordered_composer_uses_compatibility_fallback
 test_non_bordered_interior_edges_are_pending
