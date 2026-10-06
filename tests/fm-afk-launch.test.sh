@@ -27,6 +27,9 @@ CONTRACT="$ROOT/bin/fm-afk-contract.sh"
 # every unit below; the Pi refusal has its own units (unit_pi_never_launches_the_daemon).
 unset PI_CODING_AGENT FM_PI_HARNESS CURSOR_AGENT CURSOR_INVOKED_AS GEMINI_CLI ATLASSIAN_AGENT_TYPE ROVODEV_CLI
 export CLAUDECODE=1
+# A run from inside a stream endpoint would otherwise select the stream backend.
+unset FM_STREAM_ENDPOINT_ID
+FAKE_STEER="$ROOT/tests/assets/fake-primary-steer.sh"
 
 FAILED=0
 fail() { printf 'not ok - %s\n' "$1" >&2; FAILED=1; }
@@ -1185,6 +1188,136 @@ e2e_tmux() {
   rm -rf "$home_tmp" 2>/dev/null || true
 }
 
+
+# ---------------------------------------------------------------------------
+# STREAM: a primary on a stream endpoint has no local pane, so the daemon runs
+# as a detached process in its own session, recorded by pid.
+# ---------------------------------------------------------------------------
+unit_stream_detached_process_lifecycle() {
+  local st pid rec
+  st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-stream.XXXXXX")
+  mkdir -p "$st/state"
+  confirm_posture "$st" || fail "stream lifecycle: could not confirm fixture posture"
+  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_BACKEND=stream \
+    FM_SUPERVISOR_TARGET=hub-7717:0123abcd FM_AFK_LAUNCH_ENTRY="$SLEEPER" \
+    "$LAUNCH" start >/dev/null 2>&1
+  rec=$(cat "$st/state/.afk-daemon-terminal" 2>/dev/null || true)
+  pid=$(printf '%s' "$rec" | cut -f2)
+  if [ "$(printf '%s' "$rec" | cut -f1)" = process ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
+    && [ "$(ps -o pgid= -p "$pid" | tr -d ' ')" = "$pid" ] && [ -e "$st/state/.afk" ]; then
+    pass "stream lifecycle: start runs the entry as a detached session leader and records its pid"
+  else
+    fail "stream lifecycle: no detached process record (record='$rec')"
+  fi
+  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" stop >/dev/null 2>&1
+  if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && [ ! -e "$st/state/.afk-daemon-terminal" ] \
+    && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-contract" ]; then
+    pass "stream lifecycle: stop ends the recorded process by pid, clears .afk, and archives the posture"
+  else
+    fail "stream lifecycle: stop left the process or state behind (pid=$pid)"
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null
+  fi
+  rm -rf "$st"
+}
+
+unit_stream_reused_pid_is_not_signalled() {
+  local st other
+  st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-stream-reuse.XXXXXX")
+  mkdir -p "$st/state"
+  # A live pid that does not lead its own process group stands in for a reused one.
+  sleep 600 &
+  # shellcheck disable=SC2031 # $! is read right after this function's own background job
+  other=$!
+  printf 'process\t%s\t%s\n' "$other" "$st/state/.afk-daemon.out" > "$st/state/.afk-daemon-terminal"
+  : > "$st/state/.afk"
+  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" stop >/dev/null 2>&1
+  if kill -0 "$other" 2>/dev/null && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
+    pass "stream lifecycle: a recorded pid that no longer leads its group is never signalled"
+  else
+    fail "stream lifecycle: stop signalled a reused pid or kept the record"
+  fi
+  kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
+  rm -rf "$st"
+}
+
+unit_stream_identity_mismatch_is_not_signalled() {
+  local st other action
+  for action in stop reconcile; do
+    st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-stream-identity.XXXXXX")
+    mkdir -p "$st/state"
+    confirm_posture "$st" || fail "stream identity: could not confirm fixture posture"
+    FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_BACKEND=stream \
+      FM_SUPERVISOR_TARGET=hub-7717:0123abcd FM_AFK_LAUNCH_ENTRY="$SLEEPER" \
+      "$LAUNCH" start >/dev/null 2>&1
+    other=$(cut -f2 "$st/state/.afk-daemon-terminal")
+    FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
+      . "$1"
+      fm_afk_launch_record_read && fm_afk_launch_terminal_alive "$FM_AFK_REC_BACKEND" "$FM_AFK_REC_TARGET"
+    ' _ "$LAUNCH" || fail "stream identity: matching live session leader was not alive"
+    printf 'process\t%s\tstale process identity\n' "$other" > "$st/state/.afk-daemon-terminal"
+    FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
+      . "$1"
+      fm_afk_launch_record_read || exit 1
+      ! fm_afk_launch_terminal_alive "$FM_AFK_REC_BACKEND" "$FM_AFK_REC_TARGET" || exit 1
+      fm_afk_launch_terminal_absent "$FM_AFK_REC_BACKEND" "$FM_AFK_REC_TARGET"
+    ' _ "$LAUNCH" || fail "stream identity: mismatched live session leader did not read as gone"
+    FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" "$action" >/dev/null 2>&1
+    if kill -0 "$other" 2>/dev/null && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
+      pass "stream identity: $action never signals a live session leader with a mismatched identity"
+    else
+      fail "stream identity: $action signalled an unrelated session leader or kept its record"
+    fi
+    kill "$other" 2>/dev/null || true
+    rm -rf "$st"
+  done
+}
+
+e2e_stream_real_daemon() {
+  local st steer pid out
+  st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-stream-e2e.XXXXXX")
+  steer="$st/steer"
+  mkdir -p "$st/state" "$steer"
+  printf '{"session":"s1"}\n' > "$st/state/primary-chat.json"
+  confirm_posture "$st" || fail "stream e2e: could not confirm fixture posture"
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_BACKEND=stream \
+    FM_PRIMARY_STEER_BIN="$FAKE_STEER" FAKE_STEER_DIR="$steer" FM_ESCALATE_BATCH_SECS=99999 \
+    FM_WEDGE_ALARM_EXEC=discard "$LAUNCH" start 2>&1)
+  pid=$(cut -f2 "$st/state/.afk-daemon-terminal" 2>/dev/null || true)
+  if bash -c '. "$1"; fm_afk_daemon_owns_supervision "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$st/state" \
+    && [ "$(cat "$st/state/.supervise-daemon.lock/pid" 2>/dev/null)" = "$pid" ] \
+    && grep -F 'backend=stream' "$st/state/.supervise-daemon.log" >/dev/null; then
+    pass "stream e2e: the detached daemon starts on backend=stream and owns supervision"
+  else
+    fail "stream e2e: daemon not running or not supervising ($out; log: $(cat "$st/state/.supervise-daemon.log" 2>/dev/null))"
+  fi
+  # The deck-chat host pauses its own watcher while state/.afk exists; the
+  # daemon's watcher child must then hold the home's watcher lock.
+  local watch_pid='' tries=0
+  while [ "$tries" -lt 100 ]; do
+    watch_pid=$(cat "$st/state/.watch.lock/pid" 2>/dev/null || true)
+    [ -n "$watch_pid" ] && break
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  if [ -n "$watch_pid" ] && [ "$(ps -o ppid= -p "$watch_pid" 2>/dev/null | tr -d ' ')" = "$pid" ]; then
+    pass "stream e2e: the daemon's own watcher child holds the home's watcher lock"
+  else
+    fail "stream e2e: watcher lock not held by the daemon's child (lock pid='$watch_pid', daemon=$pid)"
+  fi
+  printf 'needs-decision: pick A\n' > "$st/state/.subsuper-escalations"
+  date +%s > "$st/state/.subsuper-escalations.since"
+  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" stop >/dev/null 2>&1
+  if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && grep -F 'pick A' "$steer/published/1.msg" >/dev/null 2>&1 \
+    && [ ! -s "$st/state/.subsuper-escalations" ] && [ ! -e "$st/state/.afk" ] \
+    && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
+    pass "stream e2e: stop flushes the buffer through the steer client before the daemon exits"
+  else
+    fail "stream e2e: stop did not flush via steer or left state (published: $(ls "$steer/published" 2>/dev/null); log: $(tail -5 "$st/state/.supervise-daemon.log" 2>/dev/null))"
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null
+  fi
+  rm -rf "$st"
+}
+
 unit_clear_stale
 unit_propose_confirm_records_the_posture_without_a_daemon
 unit_pi_never_launches_the_daemon
@@ -1226,7 +1359,11 @@ unit_clear_failure_aborts_entry
 unit_confirmed_absence_succeeds
 unit_incomplete_restore_retains_backup
 unit_flag_write_failure_aborts
+unit_stream_detached_process_lifecycle
+unit_stream_reused_pid_is_not_signalled
+unit_stream_identity_mismatch_is_not_signalled
 e2e_herdr
 e2e_tmux
+e2e_stream_real_daemon
 
 [ "$FAILED" -eq 0 ] || exit 1

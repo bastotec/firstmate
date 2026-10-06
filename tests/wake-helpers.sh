@@ -20,6 +20,11 @@ if [ -z "${FM_ROOT_OVERRIDE:-}" ]; then
   export FM_ROOT_OVERRIDE
 fi
 
+# A suite run from inside a stream endpoint (a worker on the stream backend)
+# inherits FM_STREAM_ENDPOINT_ID, which selects the stream supervisor backend in
+# bin/fm-supervisor-target-lib.sh. Clear it so discovery sees only what a test sets.
+unset FM_STREAM_ENDPOINT_ID
+
 # Wedge-alarm notifier recorder (safety seam). The away-mode wedge alarm fires a
 # real OS-level desktop notification by default. Point its FM_WEDGE_ALARM_EXEC
 # seam at a recorder for every

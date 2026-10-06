@@ -196,13 +196,29 @@ Stream has no session layer: one hub serves the whole fleet, each task's pseudot
 
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
 
-The `/afk` sub-supervisor injects escalation digests into firstmate's own pane independently of where new task endpoints are spawned.
-It currently supports only `tmux` and `herdr` supervisor panes.
-Set `FM_SUPERVISOR_BACKEND=tmux|herdr` and `FM_SUPERVISOR_TARGET=<target>` to override both axes explicitly; for herdr the target is `"<session>:<pane-id>"`.
-Without overrides, backend detection uses `$TMUX_PANE` first, then `HERDR_ENV=1` with `HERDR_PANE_ID`, then falls back to `tmux`.
-That keeps a tmux pane nested inside herdr on the tmux transport, matching the runtime backend's innermost-first rule.
-Target detection uses `FM_SUPERVISOR_TARGET`, then `$TMUX_PANE`, then `"${HERDR_SESSION:-default}:${HERDR_PANE_ID}"` under herdr, then the legacy `firstmate:0` tmux fallback with a warning.
+The `/afk` sub-supervisor delivers escalation digests to firstmate independently of where new task endpoints are spawned.
+It supports `tmux`, `herdr`, and `stream` supervisors.
+Set `FM_SUPERVISOR_BACKEND=tmux|herdr|stream` and `FM_SUPERVISOR_TARGET=<target>` to override both axes explicitly; for herdr the target is `"<session>:<pane-id>"`, for stream `"<hub-tag>:<endpoint-id>"`.
+Without overrides, backend detection uses, in order: `FM_STREAM_ENDPOINT_ID` with `FM_STREAM_HUB` (set by the stream agent for the process it hosts), a live deck-chat primary reported by `bin/fm-primary-steer.sh status`, `$TMUX_PANE`, then `HERDR_ENV=1` with `HERDR_PANE_ID`, then falls back to `tmux`.
+The stream signals come first because a stream-hosted process also inherits its launcher's `$TMUX_PANE`, and while a deck-chat primary owns the home the caller's own pane is never the primary.
+A tmux pane nested inside herdr stays on the tmux transport, matching the runtime backend's innermost-first rule.
+Target detection follows the same order: `FM_SUPERVISOR_TARGET`, the stream endpoint from the environment, the record's `endpoint` (or `-` when it has none), `$TMUX_PANE`, `"${HERDR_SESSION:-default}:${HERDR_PANE_ID}"` under herdr, then the legacy `firstmate:0` tmux fallback with a warning.
+With an explicit `FM_SUPERVISOR_BACKEND=stream` and no explicit target, only the stream signals are considered; when neither supplies a target, it resolves to `-` so delivery can use steering alone.
+Both discovery sources are logged at startup so a wrong-but-resolving fallback is detectable.
 Selecting any other supervisor backend refuses at daemon startup instead of trying tmux injection primitives against a non-tmux pane.
+
+On `stream`, a digest goes to the deck-chat primary through `bin/fm-primary-steer.sh publish --kind away` (override the client with `FM_PRIMARY_STEER_BIN`), keeping the typed operational-input prefix so the primary reads it as internal.
+`fm-primary-steer.sh status` is the busy guard: anything but `idle` defers.
+Submit proof is `fm-primary-steer.sh delivered <seq>` within the usual `FM_INJECT_CONFIRM_RETRIES` x `FM_INJECT_CONFIRM_SLEEP` budget.
+An unacknowledged digest stays buffered and its pending sequence is re-checked only against the publishing session; a changed or unreadable session drops the binding and retains the buffer for republication.
+A growing digest waits for the earlier sequence to settle before publishing the expanded digest, which can repeat older events rather than lose them.
+[`inject_msg_stream` in `bin/fm-supervise-daemon.sh`](../bin/fm-supervise-daemon.sh) owns the pending-record format and retry mechanics.
+The steer body is capped at 60,000 UTF-8 bytes after operational encoding, retaining the operational prefix and complete events that fit, and reporting the omitted count and evidence path; before a truncated digest is published, the full buffer is appended to `state/.subsuper-escalations.overflow`.
+That evidence survives buffer clearing and fresh entry; the cap does not apply to typed-pane delivery.
+Max-defer and the wedge alarm fire as they do for a pane.
+When the steer client reports no deck-chat primary (exit 3), the digest is typed into the recorded stream endpoint through the stream adapter, with the same composer guard and submit proof as `fm-send.sh`.
+`bin/fm-afk-launch.sh start` runs the daemon for a stream primary as a detached process in its own session, with output in `state/.afk-daemon.out`; a recorded process whose identity no longer matches is never signalled.
+[`bin/fm-afk-launch.sh`'s header](../bin/fm-afk-launch.sh) owns the launch-record schema and process-identity mechanics.
 
 ## Away-mode wedge alarm channels (config/wedge-alarm)
 
@@ -1211,8 +1227,9 @@ FM_PENDING_REPLY_GRACE_SECS=120   # seconds after marked-request delivery before
 FM_ASK_TRIAGE_KEY_VAR=            # overrides config/ask-triage-key-var: the ~/.secrets variable holding the gateway key for the possible-ask pass
 FM_ASK_TRIAGE_THRESHOLD=0.60      # possible-ask probability at or above which a working: line is flagged; bin/fm-ask-triage.sh owns the other bounds
 # sub-supervisor (bin/fm-supervise-daemon.sh); presence-gated via /afk
-FM_SUPERVISOR_BACKEND=             # optional supervisor pane backend override; tmux/herdr only, otherwise detects $TMUX_PANE then HERDR_ENV/HERDR_PANE_ID before tmux fallback
-FM_SUPERVISOR_TARGET=              # optional supervisor pane target override; tmux target or herdr <session>:<pane-id>, otherwise auto-detected
+FM_SUPERVISOR_BACKEND=             # optional override; see "Away-mode supervisor backend" above for supported values and discovery
+FM_SUPERVISOR_TARGET=              # optional target override; see "Away-mode supervisor backend" above
+FM_PRIMARY_STEER_BIN=              # optional steer client override; see bin/fm-supervise-daemon.sh's header
 FM_INJECT_SKIP=heartbeat           # |-prefixes force-self-handled bypassing classification; empty disables
 FM_ESCALATE_BATCH_SECS=90          # buffer window for batched escalation digests; 0 = flush immediately
 FM_MAX_DEFER_SECS=300              # max buffered escalation age before retry plus wedge alarm; 0 disables
