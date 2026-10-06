@@ -18,6 +18,9 @@ rebind() {  # <state-dir> <args...>
     . "$1/bin/fm-wake-lib.sh"
     . "$1/bin/fm-endpoint-rebind-lib.sh"
     shift
+    if [ "${FM_TEST_FAIL_REPLACE:-0}" = 1 ]; then
+      mv() { return 1; }
+    fi
     fm_endpoint_rebind_meta "$@" || { echo "refused: $FM_ENDPOINT_REBIND_ERROR"; exit 1; }
   ' _ "$ROOT" "$@"
 }
@@ -68,5 +71,26 @@ EOF
   pass "fm_endpoint_rebind_meta: a foreign task, unknown backend, empty window, or non-endpoint line refuses with the record untouched"
 }
 
+test_rebind_replace_failure_preserves_the_record_and_releases_the_lock() {
+  local state="$TMP_ROOT/replace-failure" meta before out rc
+  mkdir -p "$state"
+  meta="$state/t3.meta"
+  fm_write_meta "$meta" "window=hub:old" "endpoint_task_id=t3" "backend=stream"
+  before=$(cat "$meta")
+  out=$(FM_TEST_FAIL_REPLACE=1 rebind "$state" "$meta" t3 stream "hub:new" "stream_endpoint_id=new"); rc=$?
+  expect_code 1 "$rc" "a failed atomic replacement must refuse"
+  assert_contains "$out" "$meta could not be rewritten" "the failure should expose the rewrite error"
+  assert_equals "$before" "$(cat "$meta")" "a failed replacement must preserve the persisted task record"
+  [ ! -e "$state/.meta-t3.lock" ] || fail "a failed replacement left the meta lock behind"
+  out=$(rebind "$state" "$meta" t3 stream "hub:new" "stream_endpoint_id=new") \
+    || fail "a retry after a failed replacement should succeed: $out"
+  assert_equals "endpoint_task_id=t3
+window=hub:new
+backend=stream
+stream_endpoint_id=new" "$(cat "$meta")" "the retry must publish the new endpoint in the persisted record"
+  pass "fm_endpoint_rebind_meta: replacement failure reports an error, preserves the task, releases the lock, and permits retry"
+}
+
 test_rebind_replaces_every_endpoint_line_and_keeps_the_task
 test_rebind_refuses_and_leaves_the_record_alone
+test_rebind_replace_failure_preserves_the_record_and_releases_the_lock

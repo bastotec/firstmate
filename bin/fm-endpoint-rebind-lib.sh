@@ -38,7 +38,7 @@ fm_endpoint_rebind_is_endpoint_key() {  # <key>
 }
 
 fm_endpoint_rebind_meta() {  # <meta> <task-id> <backend> <window> [key=value...]
-  local meta=$1 id=$2 backend=$3 window=$4 lock tmp line key extra rc=0
+  local meta=$1 id=$2 backend=$3 window=$4 lock tmp line key extra
   shift 4
   FM_ENDPOINT_REBIND_ERROR=
   fm_backend_validate "$backend" 2>/dev/null || {
@@ -66,12 +66,10 @@ fm_endpoint_rebind_meta() {  # <meta> <task-id> <backend> <window> [key=value...
   fm_lock_acquire_wait "$lock"
   if [ -L "$meta" ] || [ ! -f "$meta" ]; then
     FM_ENDPOINT_REBIND_ERROR="$meta is not a regular task record"
-    rc=1
   elif [ "$(fm_meta_get "$meta" endpoint_task_id)" != "$id" ]; then
     FM_ENDPOINT_REBIND_ERROR="$meta is not bound to task $id (endpoint_task_id differs)"
-    rc=1
   fi
-  if [ "$rc" -eq 0 ]; then
+  if [ -z "$FM_ENDPOINT_REBIND_ERROR" ]; then
     tmp="$meta.rebind.$$"
     if {
       while IFS= read -r line || [ -n "$line" ]; do
@@ -91,9 +89,8 @@ fm_endpoint_rebind_meta() {  # <meta> <task-id> <backend> <window> [key=value...
     else
       rm -f "$tmp"
       FM_ENDPOINT_REBIND_ERROR="$meta could not be rewritten"
-      rc=1
     fi
   fi
   fm_lock_release "$lock"
-  return "$rc"
+  [ -z "$FM_ENDPOINT_REBIND_ERROR" ]
 }
