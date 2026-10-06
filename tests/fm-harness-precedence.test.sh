@@ -87,6 +87,7 @@ test_deck_ancestry_is_detected() {
   local name got native
   native="$TMP_ROOT/deck"
   ln -s "$(command -v bash)" "$native"
+  # shellcheck disable=SC2016 # the single-quoted body expands inside the named shell
   got=$("$native" -c 'r=$("$1"); printf %s "$r"' _ "$HARNESS")
   [ "$got" = deck ] || fail "a session under a native deck process resolved '$got', expected deck"
   for name in fm-deck-worker fm-deck-chat; do
