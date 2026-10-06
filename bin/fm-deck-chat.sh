@@ -67,8 +67,9 @@
 #       into gui/<uid>. Its program is `fm-deck-chat.sh service-run` from this
 #       code root, with this shell's PATH and SHELL; RunAtLoad and KeepAlive
 #       keep the keeper itself up, and AbandonProcessGroup keeps launchd from
-#       touching anything the keeper started. A live host is adopted, never
-#       duplicated. Re-running replaces the agent (e.g. to change --model).
+#       touching anything the keeper started. An in-flight --stream launcher
+#       finishes independently on keeper shutdown. A live host is adopted,
+#       never duplicated. Re-running replaces the agent (e.g. to change --model).
 #   fm-deck-chat.sh uninstall-service [--home H]
 #       Boot the agent out and delete its plist; a running primary keeps running.
 #   fm-deck-chat.sh service-run [--home H] [--model ROUTE]
@@ -177,7 +178,8 @@ service_prereqs() {
 if [ "$MODE" = install-service ]; then
   service_prereqs
   BASH_BIN=$(command -v bash) || die 'bash not found on PATH' 2
-  mkdir -p "$AGENTS_DIR" "$STATE/primary-chat" || die "cannot create $AGENTS_DIR" 2
+  mkdir -p "$AGENTS_DIR" || die "cannot create $AGENTS_DIR" 2
+  mkdir -p -m 700 "$STATE/primary-chat" || die "cannot create $STATE/primary-chat" 2
   python3 - "$PLIST" "$LABEL" "$FM_HOME" "$BASH_BIN" "$SCRIPT_DIR/fm-deck-chat.sh" "$MODEL" <<'PY' \
     || die "could not write $PLIST" 2
 import os, plistlib, sys, tempfile
@@ -302,7 +304,7 @@ fi
 
 if [ "$MODE" = stop ]; then
   # The marker comes first, so a keeper never restarts what this stops.
-  if ! { mkdir -p "$STATE/primary-chat" \
+  if ! { mkdir -p -m 700 "$STATE/primary-chat" \
       && printf '{"stopped_at": %s, "by": "fm-deck-chat.sh stop"}\n' "$(date +%s)" > "$STOPPED"; }; then
     die "could not write $STOPPED"
   fi
@@ -362,7 +364,7 @@ if [ "$STREAM" = 1 ]; then
   }
   # The endpoint's interactive shell reads the operator's rc files first,
   # which can take a while.
-  deadline=$((SECONDS + 90)) checked=$SECONDS
+  deadline=$((SECONDS + 150)) checked=$SECONDS
   while [ "$SECONDS" -lt "$deadline" ]; do
     if status=$("$SCRIPT_DIR/fm-primary-steer.sh" status --home "$FM_HOME" 2>/dev/null); then
       registered=$(printf '%s' "$status" | jq -r '.endpoint // empty')
@@ -390,7 +392,7 @@ if [ "$STREAM" = 1 ]; then
     sleep 0.1
   done
   fm_backend_stream_capture "$target" 40 2>/dev/null | tail -n 20 >&2 || true
-  die "the host did not register from stream endpoint $target within 90s; the endpoint is left running for inspection"
+  die "the host did not register from stream endpoint $target within 150s; the endpoint is left running for inspection"
 fi
 
 # Run mode. Re-exec once under the harness name the session lock recognises.

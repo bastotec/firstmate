@@ -53,11 +53,13 @@ Subcommands:
       adopts a live host, waits while any live harness holds the session lock,
       and otherwise starts one with `fm-deck-chat.sh --stream` (resuming the
       persisted session), backing off while it keeps dying soon after start.
-      Honours state/primary-chat/stopped. Down past the alert window (default
-      120s) writes service-down and raises `fm-deck-chat.sh service-alert` once
-      per outage. Env: FM_DECK_CHAT_SERVICE_POLL (2), _BACKOFF (5),
-      _BACKOFF_MAX (300), _STABLE_SECS (120), _ALERT_SECS (120),
-      _START_TIMEOUT (150).
+      Honours state/primary-chat/stopped, including hosts that register late.
+      In-flight --stream launchers finish independently on keeper shutdown.
+      Down past the alert window (default 120s) writes service-down and raises
+      `fm-deck-chat.sh service-alert` once per outage, across keeper replacement;
+      a stable run clears the marker. Env: FM_DECK_CHAT_SERVICE_POLL (2),
+      _BACKOFF (5), _BACKOFF_MAX (300), _STABLE_SECS (120), _ALERT_SECS (120),
+      _START_TIMEOUT (200, minimum 200).
 """
 import argparse
 import fcntl
@@ -599,7 +601,7 @@ class Keeper:
         self.backoff_max = env_seconds('FM_DECK_CHAT_SERVICE_BACKOFF_MAX', 300)
         self.stable = env_seconds('FM_DECK_CHAT_SERVICE_STABLE_SECS', 120)
         self.alert_after = env_seconds('FM_DECK_CHAT_SERVICE_ALERT_SECS', 120)
-        self.start_timeout = env_seconds('FM_DECK_CHAT_SERVICE_START_TIMEOUT', 150)
+        self.start_timeout = max(200, env_seconds('FM_DECK_CHAT_SERVICE_START_TIMEOUT', 200))
         self.view = None
 
     def log(self, message):
@@ -631,15 +633,17 @@ class Keeper:
         return match.group(1) if match else None
 
     def run_deck_chat(self, argv, timeout):
-        """Run fm-deck-chat.sh; a timeout or keeper shutdown terminates it."""
+        """Bound a command; leave --stream running independently on shutdown."""
         env = dict(os.environ, FM_HOME=str(self.home), FM_DECK_CHAT_SERVICE='1')
         with tempfile.TemporaryFile() as out:
             proc = subprocess.Popen([self.deck_chat] + argv, stdout=out, stderr=subprocess.STDOUT,
-                                    stdin=subprocess.DEVNULL, env=env)
+                                    stdin=subprocess.DEVNULL, env=env, start_new_session=True)
             end = time.time() + timeout
             while proc.poll() is None and time.time() < end and not self.stop.is_set():
                 time.sleep(0.2)
             if proc.poll() is None:
+                if self.stop.is_set() and argv[0] == '--stream':
+                    return 125, ''
                 proc.terminate()
                 try:
                     proc.wait(5)
@@ -659,10 +663,6 @@ class Keeper:
         rc, out = self.run_deck_chat(argv, self.start_timeout)
         tail = ' | '.join(line for line in out.strip().splitlines()[-3:])
         self.log('start exit %d: %s' % (rc, tail or 'no output'))
-        if rc == 0 and self.stopped_on_purpose():
-            # A stop arrived while this start was registering; honour it.
-            self.log('stopped on purpose during start; stopping the new host')
-            self.run_deck_chat(['stop', '--home', str(self.home)], 60)
         return rc == 0
 
     def alert(self, down_for):
@@ -688,7 +688,7 @@ class Keeper:
         signal.signal(signal.SIGTERM, lambda *_: self.stop.set())
         signal.signal(signal.SIGHUP, lambda *_: self.stop.set())
         signal.signal(signal.SIGINT, lambda *_: self.stop.set())
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         lock = open(self.root / 'service.lock', 'a')
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -703,16 +703,19 @@ class Keeper:
             if self.stop.is_set():
                 return 0
         self.log('keeper started pid=%d model=%s' % (os.getpid(), self.model or 'default'))
-        outage = None        # first moment of this outage; cleared after a stable run
+        outage = time.time() if (self.root / 'service-down').exists() else None
         up_since = None
         last_start = 0.0
         delay = 0.0
         next_try = 0.0
-        alerted = False
+        alerted = outage is not None
         was_down = False
         while not self.stop.is_set():
             now = time.time()
             if self.stopped_on_purpose():
+                if live_record(self.home):
+                    self.log('stopped on purpose; stopping a late-registered host')
+                    self.run_deck_chat(['stop', '--home', str(self.home)], 60)
                 if outage is not None or was_down:
                     self.log('stopped on purpose; not restarting')
                 self.publish('stopped', 'state/primary-chat/stopped present')
@@ -754,6 +757,8 @@ class Keeper:
                 last_start = now
                 if self.start():
                     was_down = False
+                if self.stop.is_set():
+                    break
                 delay = min(max(delay * 2, self.backoff), self.backoff_max)
                 next_try = time.time() + delay
             else:

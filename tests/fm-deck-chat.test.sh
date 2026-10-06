@@ -501,6 +501,7 @@ start_test_hub() {  # <dir>
   HUB_URL="http://$host:$port"
 }
 record_field() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2]) or "")' "$1" "$2" 2>/dev/null; }
+dir_mode() { python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$1"; }
 service_state_is() { [ "$(record_field "$1/state/primary-chat/service.json" state)" = "$2" ]; }
 host_is_not() {  # <home> <pid>: a live host other than <pid> is registered
   local now
@@ -514,7 +515,15 @@ alarm_recorder() {  # <path>
 }
 
 test_stop_marker() {
-  local home host rc=0 out
+  local home empty host rc=0 out
+  empty=$(new_home stop-empty)
+  "$BIN/fm-deck-chat.sh" stop --home "$empty" 2>/dev/null || rc=$?
+  expect_code 1 "$rc" "stop in a fresh home records intent without a host"
+  assert_equals 0o700 "$(dir_mode "$empty/state/primary-chat")" "stop creates a private primary-chat directory"
+  chmod 710 "$empty/state/primary-chat"
+  rc=0; "$BIN/fm-deck-chat.sh" stop --home "$empty" 2>/dev/null || rc=$?
+  expect_code 1 "$rc" "repeated stop without a host still refuses"
+  assert_equals 0o710 "$(dir_mode "$empty/state/primary-chat")" "stop preserves an existing directory's mode"
   home=$(new_home stop-marker)
   mkdir -p "$home/state/primary-chat"
   echo '{}' > "$home/state/primary-chat/stopped"
@@ -569,8 +578,11 @@ assert data['ProgramArguments'][1:] == [script, 'service-run', '--home', home, '
 assert data['RunAtLoad'] is True and data['KeepAlive'] is True and data['AbandonProcessGroup'] is True, data
 assert data['WorkingDirectory'] == home and data['EnvironmentVariables']['PATH'], data
 PY
+  assert_equals 0o700 "$(dir_mode "$home/state/primary-chat")" "install-service creates a private primary-chat directory"
+  chmod 710 "$home/state/primary-chat"
   # A second install replaces the first definition in place.
   "$BIN/fm-deck-chat.sh" install-service --home "$home" >/dev/null || fail "reinstall failed"
+  assert_equals 0o710 "$(dir_mode "$home/state/primary-chat")" "reinstall preserves an existing directory's mode"
   python3 -c 'import plistlib,sys; sys.exit("--model" in plistlib.load(open(sys.argv[1],"rb"))["ProgramArguments"])' "$plist" \
     || fail "a reinstall without --model drops the old model"
   "$BIN/fm-deck-chat.sh" uninstall-service --home "$home" >/dev/null || fail "uninstall-service failed"
@@ -640,6 +652,94 @@ STREAM
   pass "fm-deck-chat.sh attach: reattaches when the primary's endpoint is replaced"
 }
 
+test_service_launcher_shutdown() {
+  local home keeper launcher
+  home=$(new_home keeper-shutdown)
+  cat > "$LAB/tools/delayed-start" <<'PY'
+#!/usr/bin/env python3
+import json, os, pathlib, time
+home = pathlib.Path(os.environ['FM_HOME'])
+(home / 'launcher.json').write_text(json.dumps({'pid': os.getpid(), 'sid': os.getsid(0)}))
+while not (home / 'launcher.release').exists():
+    time.sleep(0.05)
+(home / 'launcher.finished').touch()
+PY
+  chmod +x "$LAB/tools/delayed-start"
+  FM_DECK_CHAT_SERVICE_POLL=0.1 python3 "$BIN/fm_primary_chat.py" service --home "$home" \
+    --deck-chat "$LAB/tools/delayed-start" > "$LAB/keeper-shutdown.out" 2>&1 &
+  keeper=$!
+  fm_test_track_helper_pid "$keeper"
+  wait_for 10 "the in-flight launcher" test -s "$home/launcher.json"
+  launcher=$(record_field "$home/launcher.json" pid)
+  fm_test_track_helper_pid "$launcher"
+  assert_equals 0o700 "$(dir_mode "$home/state/primary-chat")" "the keeper creates a private primary-chat directory"
+  assert_equals "$launcher" "$(record_field "$home/launcher.json" sid)" "the launcher runs in its own session"
+  kill -TERM "$keeper"
+  wait_for 10 "the keeper exits without waiting for registration" dead "$keeper"
+  wait "$keeper"
+  alive "$launcher" || fail "keeper shutdown killed its in-flight launcher"
+  touch "$home/launcher.release"
+  wait_for 10 "the detached launcher finishes" test -e "$home/launcher.finished"
+  wait_for 10 "the finished launcher exits" dead "$launcher"
+  pass "fm-deck-chat.sh service-run: shutdown leaves a detached launcher to finish independently"
+}
+
+test_service_late_registration() {
+  local home keeper host rc=0
+  home=$(new_home keeper-late)
+  "$BIN/fm-deck-chat.sh" stop --home "$home" 2>/dev/null || rc=$?
+  expect_code 1 "$rc" "stop before registration leaves the marker"
+  chmod 710 "$home/state/primary-chat"
+  FM_DECK_CHAT_SERVICE_POLL=0.1 "$BIN/fm-deck-chat.sh" service-run --home "$home" \
+    > "$LAB/keeper-late.out" 2>&1 &
+  keeper=$!
+  fm_test_track_helper_pid "$keeper"
+  wait_for 10 "the keeper honours stop before registration" service_state_is "$home" stopped
+  assert_equals 0o710 "$(dir_mode "$home/state/primary-chat")" "the keeper preserves an existing directory's mode"
+  FM_DECK_CHAT_SERVICE=1 FAKE_DECK_LOG="$LAB/deck-late.log" "$BIN/fm-deck-chat.sh" --home "$home" \
+    </dev/null > "$LAB/host-late.out" 2>&1 &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  wait_for 10 "the late host is stopped" dead "$host"
+  wait "$host" 2>/dev/null || true
+  assert_present "$home/state/primary-chat/stopped" "late registration never withdraws stop"
+  assert_grep 'stopping a late-registered host' "$home/state/primary-chat/service.log" "the keeper logs the late stop"
+  assert_grep '"stopped_at"' "$home/state/primary-chat.json" "the late host's record is retired"
+  sleep 0.5
+  runs_are "$home" 1 || fail "the keeper restarted the late host despite stop"
+  kill -TERM "$keeper"
+  wait_for 10 "the late-registration keeper exits" dead "$keeper"
+  wait "$keeper"
+  pass "fm-deck-chat.sh service-run: stop also retires a host that registers late"
+}
+
+test_service_inherited_outage() {
+  local home keeper
+  home=$(new_home keeper-inherited)
+  mkdir -m 700 "$home/state/primary-chat"
+  echo 'previously alerted outage' > "$home/state/primary-chat/service-down"
+  cat > "$LAB/tools/failed-start" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  --stream) echo start >> "$FM_HOME/start.attempts"; exit 1 ;;
+  service-alert) echo alert >> "$FM_HOME/alerts" ;;
+esac
+SH
+  chmod +x "$LAB/tools/failed-start"
+  FM_DECK_CHAT_SERVICE_POLL=0.1 FM_DECK_CHAT_SERVICE_BACKOFF=0.1 FM_DECK_CHAT_SERVICE_BACKOFF_MAX=0.1 \
+    FM_DECK_CHAT_SERVICE_ALERT_SECS=0 python3 "$BIN/fm_primary_chat.py" service --home "$home" \
+    --deck-chat "$LAB/tools/failed-start" > "$LAB/keeper-inherited.out" 2>&1 &
+  keeper=$!
+  fm_test_track_helper_pid "$keeper"
+  wait_for 10 "repeated starts during an inherited outage" bash -c '[ "$(wc -l < "$1")" -ge 3 ]' _ "$home/start.attempts"
+  kill -TERM "$keeper"
+  wait_for 10 "the inherited-outage keeper exits" dead "$keeper"
+  wait "$keeper"
+  assert_present "$home/state/primary-chat/service-down" "an ongoing outage retains its alert marker"
+  assert_absent "$home/alerts" "a replacement keeper never re-alerts the same outage"
+  pass "fm-deck-chat.sh service-run: an inherited outage is already alerted"
+}
+
 test_service_keeper() {
   local home keeper first second deck_pid session out
   if ! start_test_hub "$LAB/keeper-hub"; then
@@ -653,7 +753,11 @@ test_service_keeper() {
   out=$("$BIN/fm-deck-chat.sh" --stream --home "$home" --model fake/route 2>&1) || fail "--stream failed: $out"
   first=$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")
   session=$(cat "$home/state/primary-chat/session")
-  FM_DECK_CHAT_SERVICE_POLL=0.2 FM_DECK_CHAT_SERVICE_BACKOFF=0.5 FM_DECK_CHAT_SERVICE_STABLE_SECS=2 \
+  echo 'previously alerted outage' > "$home/state/primary-chat/service-down"
+  alarm_recorder "$LAB/tools/adoption-alarm"
+  ALARM_LOG="$LAB/adoption-alarm.log" FM_WEDGE_ALARM_EXEC="$LAB/tools/adoption-alarm" FM_WEDGE_ALARM_CHANNEL=osascript \
+    FM_DECK_CHAT_SERVICE_ALERT_SECS=0 FM_DECK_CHAT_SERVICE_POLL=0.2 FM_DECK_CHAT_SERVICE_BACKOFF=0.5 \
+    FM_DECK_CHAT_SERVICE_STABLE_SECS=2 \
     "$BIN/fm-deck-chat.sh" service-run --home "$home" --model fake/route > "$LAB/keeper.out" 2>&1 &
   keeper=$!
   fm_test_track_helper_pid "$keeper"
@@ -661,6 +765,8 @@ test_service_keeper() {
   sleep 1
   runs_are "$home" 1 || fail "the keeper started a second primary next to a live one"
   assert_equals "$first" "$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")" "the adopted host is untouched"
+  wait_for 10 "an inherited alert marker clears after stable adoption" test ! -e "$home/state/primary-chat/service-down"
+  assert_absent "$LAB/adoption-alarm.log" "adoption of a recovered host never re-alerts"
 
   # Anything but stop is a crash: deck exiting on its own is restarted.
   deck_pid=$(record_field "$FAKE_DECK_LOG" pid)
@@ -733,6 +839,9 @@ test_stop_marker
 test_service_install
 test_service_alert
 test_attach_follows_restarts
+test_service_launcher_shutdown
+test_service_late_registration
+test_service_inherited_outage
 test_startup_completion_required
 test_startup_handoff
 test_host_lifecycle
