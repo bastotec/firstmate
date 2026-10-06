@@ -13,7 +13,7 @@
 #   well-formed backend target. fm-send refuses unresolved guesses rather than falling back to a
 #   tmux window search, because a "successful" send to the wrong endpoint is
 #   worse than a loud failure. An explicit target no record names is guessed by
-#   shape: two colons is herdr, "<hub-tag>:<32-hex id>" on this home's
+#   shape: two or more colons is herdr, "<hub-tag>:<32-hex id>" on this home's
 #   configured stream hub is stream, any other "a:b" is tmux; the guessed
 #   endpoint must then verify live.
 # Special keys instead of text: fm-send.sh <target> --key Enter

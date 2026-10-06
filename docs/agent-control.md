@@ -140,7 +140,7 @@ There are two ways out:
 - A launch failure **after** the agent is stopped but before replacement-record publication keeps the prior durable record, keeps the progress note so a later recovery still has it, marks the journal `failed:launching`, and reports plainly that no agent is running and where the work is preserved.
 - If the launch owner already published the new record but no running agent can be confirmed, the new record is kept: the task is recorded on the new harness with no agent confirmed, which is exactly what recovery reconciles.
   Rewriting it back to the old harness would be a second, worse inaccuracy.
-- A `recover-missing` failure while the terminal is being recreated restores the prior instructions byte-exact, because no agent was ever touched in that phase.
+- A `recover-missing` failure while the terminal is being recreated restores the prior instructions byte-exact, because no replacement harness has been launched in that phase.
   The durable record is left exactly as it stands rather than restored: on tmux this phase does not write it, and restoring it could revert another writer's locked change, such as an armed merge poll's `pr=` line.
   On stream a successful endpoint rebind is retained even if settling or handover later fails; the new endpoint's state must be reconciled before retrying with `relaunch`.
   If the rebind itself fails, recovery attempts to close the new endpoint and reports either a confirmed close or an unconfirmed close with the new target for reconciliation; the old metadata binding remains intact.

@@ -80,8 +80,8 @@
 #              is created. Recreation covers tmux and stream; every other
 #              backend refuses before anything is touched. A tmux window comes
 #              back under the same recorded fm-<id> handle and so rewrites no
-#              durable record. A stream endpoint id is assigned when its agent
-#              registers, so the old one cannot be recreated: recovery starts a
+#              durable record. A new stream agent generates a fresh endpoint
+#              id, so recovery cannot recreate the old handle: it starts a
 #              NEW endpoint (same fm-<id> label, the recorded worktree as its
 #              cwd) and rebinds the record's window=/stream_hub=/
 #              stream_endpoint_id= to it (bin/fm-endpoint-rebind-lib.sh), keeping
@@ -831,10 +831,10 @@ relaunch_rollback() {
       fi
       ;;
     recreating)
-      # Recovery only ever runs against a missing endpoint, so no agent was
-      # touched in any phase: the instructions go back byte-exact, exactly as
-      # they do for a relaunch refused before its agent was stopped. Without
-      # this every failed attempt would leave another progress note appended.
+      # No replacement harness has been launched in this phase, and recovery
+      # never stops the old worker. The instructions go back byte-exact, as for
+      # a relaunch refused before its agent was stopped. Without this every
+      # failed attempt would leave another progress note appended.
       #
       # The durable record is deliberately NOT restored, for the same reason
       # the sibling checkpoint|noted arm has no restore: on tmux nothing in
@@ -1222,8 +1222,8 @@ do_relaunch() {
 }
 
 # recover_stream_endpoint: start a NEW stream endpoint for this task on the
-# configured hub and rebind the durable record to it. The hub assigns endpoint
-# ids at registration, so the missing one cannot come back under its old id.
+# configured hub and rebind the durable record to it. Each new agent generates
+# a fresh endpoint id; this launch cannot request the missing endpoint's old id.
 # On success $T names the new endpoint, so every postcondition below reads it.
 # If the record cannot be rebound, closing the new endpoint is best effort:
 # failure reports the unconfirmed close and exact target for reconciliation.
@@ -1353,7 +1353,7 @@ do_recover_missing() {
   # The launch owner requires a positively agent-free endpoint, so wait for the
   # new terminal's shell to finish starting before handing it over. Still
   # inside the `recreating` phase: a refusal here rolls the progress note back
-  # and touches nothing else.
+  # but retains any successful stream endpoint rebind for reconciliation.
   state=$(wait_endpoint_settled "$EXIT_WAIT") || {
     die "task $ID's recreated terminal did not settle to an agent-free shell within ${EXIT_WAIT}s (endpoint reads '$state'); the terminal exists now, so once its shell is idle bring the worker up with 'relaunch'"
   }

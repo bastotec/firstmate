@@ -751,9 +751,10 @@ fm_backend_agent_pids() {  # <backend> <target>
   esac
 }
 
-# Backward-compatible three-state view for existing callers. An
-# authoritatively missing endpoint is confidently not a live agent, while every
-# ambiguous, unreadable, or unverified result stays unknown.
+# Backward-compatible three-state view for existing callers: `dead` and
+# `missing` both map to `dead`; ambiguous, unreadable, and unverified map to
+# `unknown`. This lossy view does not prove a worker stopped: recovery must use
+# fm_backend_agent_state's verdict and caller ownership guards above.
 fm_backend_agent_alive() {  # <backend> <target>
   case "$(fm_backend_agent_state "$1" "$2")" in
     alive) printf 'alive' ;;

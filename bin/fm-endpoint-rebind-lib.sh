@@ -12,7 +12,7 @@
 #   task keeps its worktree, session, and identity and only its endpoint moves.
 #
 #   Callers: bin/fm-control.sh recover-missing on stream, which has to record
-#   the NEW hub-assigned endpoint for a task whose old one is gone, and any
+#   the NEW agent-generated endpoint for a task whose old one is gone, and any
 #   verb that moves a task between backends.
 #
 #   Runs under the record's own meta lock (bin/fm-wake-lib.sh's

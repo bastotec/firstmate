@@ -51,7 +51,7 @@ The consequence is a deliberate asymmetry with tmux and Herdr, whose `missing` i
 A stream mate whose worker exited while its agent lived still reads `dead` from the agent's own closing report, and the sweep respawns it exactly as it does on any other backend.
 `bin/fm-bootstrap.sh` owns secondmate recovery respawn, preserving the recorded backend rather than selecting a different backend from ambient configuration.
 `bin/fm-control.sh` owns interrupt, exit, same-endpoint relaunch, and `recover-missing`.
-A hub-assigned endpoint id cannot be recreated, so `recover-missing` on stream starts a new endpoint on this home's configured hub (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the task's endpoint identity through [`bin/fm-endpoint-rebind-lib.sh`](../bin/fm-endpoint-rebind-lib.sh), keeping its worktree and non-endpoint fields.
+A new stream agent generates a fresh endpoint id rather than recreating the old handle, so `recover-missing` on stream starts a new endpoint on this home's configured hub (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the task's endpoint identity through [`bin/fm-endpoint-rebind-lib.sh`](../bin/fm-endpoint-rebind-lib.sh), keeping its worktree and non-endpoint fields.
 Because a stream `missing` alone does not prove the worker gone, recovery checks for a local stream agent matching both the task label and this home's task status path, rather than refusing on another home's matching label.
 A matching agent blocks recovery even when the hub has forgotten it; wait for its re-registration or stop that exact agent before retrying.
 [Agent control](agent-control.md#failure-and-rollback) owns failed-rebind cleanup, retained new-endpoint bindings, and retry handling.
