@@ -113,7 +113,12 @@ watch_count() { [ "$(wc -l < "$1/watch.pids" | tr -d ' ')" -ge "$2" ]; }
 busy_is() { grep -q "state=$2 " "$1/state/primary.busy-state"; }
 
 test_steer_contract_without_a_host() {
-  local home rc=0 out pid
+  local home rc=0 out pid BIN="$LAB/steer-bin" STEER STOP
+  cp -R "$LAB/bundle/bin" "$BIN"
+  STEER="$BIN/fm-primary-steer.sh"
+  STOP="$BIN/fm-deck-chat-stop.sh"
+  cp "$BIN/fm-deck-chat.sh" "$STOP"
+  printf '%s\n' '#!/usr/bin/env bash' 'sleep 300; :' > "$BIN/fm-deck-chat.sh"
   home=$(new_home steer-contract)
   "$STEER" publish --home "$home" --text 'hello' >/dev/null 2>&1 || rc=$?
   expect_code 3 "$rc" "publish with no registered primary"
@@ -123,9 +128,8 @@ test_steer_contract_without_a_host() {
   rc=0; "$STEER" delivered 1 --home "$home" || rc=$?
   expect_code 3 "$rc" "delivered with no registered primary"
 
-  # A registered host: any live process whose argv carries fm-deck-chat.
   # shellcheck disable=SC2016 # Expanded by the inner bash.
-  bash -c 'exec -a fm-deck-chat bash -c "sleep 300; :" fm-deck-chat --home "$1"' _ "$home" &
+  bash -c 'exec -a fm-deck-chat bash "$1" --home "$2"' _ "$BIN/fm-deck-chat.sh" "$home" &
   pid=$!
   fm_test_track_helper_pid "$pid"
   python3 "$BIN/fm_primary_chat.py" prepare --home "$home" --session s1 >/dev/null
@@ -137,7 +141,7 @@ test_steer_contract_without_a_host() {
   python3 "$BIN/fm_primary_chat.py" record write --home "$other" --session s1 --host-pid "$pid"
   rc=0; "$STEER" status --home "$other" >/dev/null || rc=$?
   expect_code 3 "$rc" "a host serving another home is not present"
-  rc=0; "$BIN/fm-deck-chat.sh" stop --home "$other" 2>/dev/null || rc=$?
+  rc=0; "$STOP" stop --home "$other" 2>/dev/null || rc=$?
   expect_code 1 "$rc" "stop refuses a host serving another home"
   alive "$pid" || fail "stop never signals another home's host"
   local steer="$home/state/primary-chat/s1/steer" events="$home/state/primary-chat/s1/events.ndjson"
@@ -203,7 +207,7 @@ test_steer_contract_without_a_host() {
   expect_code 3 "$rc" "a gate agent's publish is refused"
   assert_equals "$before" "$(cat "$steer/.seq")" "a refused publish allocates no sequence"
   FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 "$STEER" status --home "$home" >/dev/null || fail "status stays readable for a gate agent"
-  rc=0; FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 "$BIN/fm-deck-chat.sh" stop --home "$home" 2>/dev/null || rc=$?
+  rc=0; FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 "$STOP" stop --home "$home" 2>/dev/null || rc=$?
   expect_code 3 "$rc" "a gate agent cannot stop the primary"
   alive "$pid" || fail "a refused stop leaves the host running"
 
@@ -214,14 +218,27 @@ test_steer_contract_without_a_host() {
 }
 
 test_host_lifecycle() {
-  local home host second rc=0 out first_watch session
-  home=$(new_home host)
+  local home other host second rc=0 out first_watch session
+  home=$(new_home 'host backup')
   echo 'export FM_CHECK_INTERVAL=30' > "$home/config/x-mode.env"
   FAKE_DECK_LOG="$LAB/deck.log" "$BIN/fm-deck-chat.sh" --home "$home" --model fake/route \
     < /dev/null > "$LAB/host.out" 2>&1 &
   host=$!
   fm_test_track_helper_pid "$host"
   wait_for 10 "the host registers" "$STEER" status --home "$home"
+  other=$(new_home host)
+  python3 "$BIN/fm_primary_chat.py" prepare --home "$other" --session s1 >/dev/null
+  python3 "$BIN/fm_primary_chat.py" record write --home "$other" --session s1 --host-pid "$host"
+  assert_equals "$host" "$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")" "the exact home resolves its host"
+  rc=0; out=$(python3 "$BIN/fm_primary_chat.py" record pid --home "$other") || rc=$?
+  expect_code 3 "$rc" "a whitespace-delimited home prefix never resolves another home's host"
+  assert_equals '' "$out" "the shorter home exposes no host pid"
+  rc=0; "$STEER" status --home "$other" >/dev/null || rc=$?
+  expect_code 3 "$rc" "the shorter home has no live primary"
+  rc=0; "$BIN/fm-deck-chat.sh" stop --home "$other" 2>/dev/null || rc=$?
+  expect_code 1 "$rc" "stop refuses the shorter home's stale record"
+  alive "$host" || fail "stop leaves the longer home's host alive"
+  "$STEER" status --home "$home" >/dev/null || fail "the longer home's primary stays registered"
   assert_equals "$host" "$(cat "$home/state/.lock")" "the host holds the session lock"
   assert_equals "fm-deck-chat" "$(ps -o args= -p "$host" | awk '{print $1}')" "the host runs as fm-deck-chat"
   wait_for 10 "the startup digest turn" turns_with "$LAB/deck.log" 'fixture session digest'

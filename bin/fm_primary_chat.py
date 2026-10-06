@@ -118,9 +118,10 @@ def host_alive(pid, home):
     fields = out.stdout.strip().split(None, 1)
     if len(fields) != 2 or fields[0].startswith('Z'):
         return False
-    args = fields[1] + ' '
+    args = fields[1]
     home = str(Path(home).resolve())
-    return args.startswith('fm-deck-chat ') and (' --home %s ' % home) in args
+    return (args.startswith('fm-deck-chat %s ' % (BIN / 'fm-deck-chat.sh'))
+            and args.endswith(' --home ' + home))
 
 
 def live_record(home):

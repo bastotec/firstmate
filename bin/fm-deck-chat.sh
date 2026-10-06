@@ -148,10 +148,11 @@ fi
 
 # Run mode. Re-exec once under the harness name the session lock recognises.
 if [ "${FM_DECK_CHAT_HOST:-}" != "$$" ]; then
-  again=(--home "$FM_HOME")
+  again=()
   [ -z "$MODEL" ] || again+=(--model "$MODEL")
   [ -z "$SESSION" ] || again+=(--session "$SESSION")
   [ -z "$ENDPOINT" ] || again+=(--endpoint "$ENDPOINT")
+  again+=(--home "$FM_HOME")
   FM_DECK_CHAT_HOST=$$ exec -a fm-deck-chat bash "$SCRIPT_DIR/fm-deck-chat.sh" "${again[@]}"
 fi
 unset FM_DECK_CHAT_HOST
