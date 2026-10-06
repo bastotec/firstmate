@@ -84,8 +84,12 @@ SH
 # is still `bash`; only argv[0] carries the host name, which is how
 # bin/fm-deck-chat.sh and fm-deck-worker launches really look there.
 test_deck_ancestry_is_detected() {
-  local name got
-  for name in deck fm-deck-worker fm-deck-chat; do
+  local name got native
+  native="$TMP_ROOT/deck"
+  ln -s "$(command -v bash)" "$native"
+  got=$("$native" -c 'r=$("$1"); printf %s "$r"' _ "$HARNESS")
+  [ "$got" = deck ] || fail "a session under a native deck process resolved '$got', expected deck"
+  for name in fm-deck-worker fm-deck-chat; do
     got=$(under_named "$name" "$HARNESS")
     [ "$got" = deck ] || fail "a session under a process named $name resolved '$got', expected deck"
   done
