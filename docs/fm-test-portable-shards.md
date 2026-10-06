@@ -5,7 +5,7 @@
 
 ## Verification inputs
 
-The current balance hint baselines come from fully serial runs of the real lanes on `ubuntu-latest`; future refreshes use the concurrent execution conditions described below.
+The balance hints come from CI measurements on `ubuntu-latest`; [Parallel lanes](#parallel-lanes) and [Portable serial CI shards](#portable-serial-ci-shards) own each set's provenance and measured concurrency.
 The concurrent isolation proof in [fm-test-isolation-proof.md](fm-test-isolation-proof.md) establishes concurrency safety, not CI duration.
 Local timings are not interchangeable with CI timings: platform and machine load can affect each script differently and change their relative weights.
 
@@ -96,7 +96,8 @@ bin/fm-test-run.sh --check-coverage
 ```
 
 A timed-out shard uploads no artifact, so pick runs where every serial shard is green or the lane's slowest scripts go unmeasured in exactly the shard that needs them most.
-New family-phase artifacts measure scripts beside their phase siblings, so refreshed hints include that contention; the current historical hints and split-suite shares above were measured without it.
+Family-phase artifacts measure scripts beside their phase siblings, so refreshed hints include that contention.
+The pre-phase measurements and split-suite shares remain serial baselines, not measured concurrent durations.
 Measure native-Windows-only scripts through the focused Git Bash runner and retain that `duration_ms` separately, because the portable CI shards skip them.
 Opt-in live-harness timing hints can measure credential-free CI skips, not native harness execution; `tests/lib.sh`'s `fm_live_gate` owns that skip policy.
 
