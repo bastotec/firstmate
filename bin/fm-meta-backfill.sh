@@ -70,7 +70,7 @@ export FM_STATE_OVERRIDE="$STATE_DIR"
 
 # classify <meta>: prints "skip", "tmux", or "refuse <reason>".
 classify() {
-  local meta=$1 line key has_backend=0 backend_value= window= remote_host= remote_backend= foreign=
+  local meta=$1 line key has_backend=0 backend_value='' window='' remote_host='' remote_backend='' foreign=''
   while IFS= read -r line || [ -n "$line" ]; do
     key=${line%%=*}
     [ "$key" != "$line" ] || continue

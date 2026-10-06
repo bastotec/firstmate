@@ -174,8 +174,10 @@ test_unmatched_single_colon_target_must_exist() {
 # stream; the same shape tagged for another hub keeps the tmux guess.
 test_unrecorded_stream_target_routes_to_stream() {
   local dir fb home err log rc pair target foreign
-  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
-    || { pass "fm-send strict: stream routing skipped (jq/curl unavailable)"; return 0; }
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "fm-send strict: stream routing skipped (jq/curl unavailable)"
+    return 0
+  fi
   dir="$TMP_ROOT/stream-explicit"; mkdir -p "$dir/cwd"
   fb=$(make_stubs "$dir"); home=$(setup_home streamexplicit); err="$dir/send.err"; log="$dir/tmux.log"; : > "$log"
   fm_test_fake_stream "$dir" || fail "fake stream hub did not start"

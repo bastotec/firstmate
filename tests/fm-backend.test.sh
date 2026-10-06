@@ -859,8 +859,10 @@ test_spawn_default_backend_records_tmux() {
 # hub-assigned endpoint and its hub, the endpoint is labelled for the task, and
 # the worktree treehouse hands the endpoint is the one recorded.
 test_spawn_on_fake_stream_records_the_endpoint() (
-  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
-    || { pass "fm-spawn.sh on stream: skipped (jq/curl unavailable)"; exit 0; }
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "fm-spawn.sh on stream: skipped (jq/curl unavailable)"
+    exit 0
+  fi
   local proj wt data id state config out fb window endpoint
   proj="$TMP_ROOT/stream-project"; wt="$TMP_ROOT/stream-wt"; data="$TMP_ROOT/stream-data"
   id="streamdispatchz6"

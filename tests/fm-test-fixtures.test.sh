@@ -334,8 +334,10 @@ test_spawn_home_layout() {
 
 test_fake_stream_round_trip() {
   local dir="$TMP_ROOT/fake-stream" pair target out
-  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
-    || { pass "fake stream: skipped (jq/curl unavailable)"; return 0; }
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "fake stream: skipped (jq/curl unavailable)"
+    return 0
+  fi
   fm_test_fake_stream "$dir" || fail "the fake stream hub did not start"
   mkdir -p "$dir/home/state" "$dir/cwd"
   stream() (

@@ -673,8 +673,10 @@ add_stream_deck_task() {
 
 test_recover_missing_on_stream_rebinds_a_new_endpoint() {
   local dir out rc window endpoint
-  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
-    || { pass "fm-control recover-missing: stream case skipped (jq/curl unavailable)"; return 0; }
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "fm-control recover-missing: stream case skipped (jq/curl unavailable)"
+    return 0
+  fi
   dir=$(new_case stream-recovery rm31)
   fm_test_fake_stream "$dir/stream" || fail "fake stream hub did not start"
   add_stream_deck_task "$dir" rm31
@@ -702,8 +704,10 @@ test_recover_missing_on_stream_rebinds_a_new_endpoint() {
 
 test_recover_missing_on_stream_refuses_while_its_agent_still_runs() {
   local dir out rc meta_before brief_before agent_pid
-  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
-    || { pass "fm-control recover-missing: stream refusal skipped (jq/curl unavailable)"; return 0; }
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "fm-control recover-missing: stream refusal skipped (jq/curl unavailable)"
+    return 0
+  fi
   dir=$(new_case stream-agent-alive rm32)
   fm_test_fake_stream "$dir/stream" || fail "fake stream hub did not start"
   add_stream_deck_task "$dir" rm32
@@ -727,8 +731,10 @@ test_recover_missing_on_stream_refuses_while_its_agent_still_runs() {
 
 test_recover_missing_on_stream_ignores_unowned_agents() {
   local dir out rc agent_pid other_pid
-  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
-    || { pass "fm-control recover-missing: stream ownership skipped (jq/curl unavailable)"; return 0; }
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "fm-control recover-missing: stream ownership skipped (jq/curl unavailable)"
+    return 0
+  fi
   dir=$(new_case stream-agent-other-home rm33)
   fm_test_fake_stream "$dir/stream" || fail "fake stream hub did not start"
   add_stream_deck_task "$dir" rm33
@@ -751,8 +757,10 @@ test_recover_missing_on_stream_ignores_unowned_agents() {
 
 test_recover_missing_on_stream_reports_rebind_cleanup() {
   local dir out rc mode endpoint meta_before brief_before
-  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
-    || { pass "fm-control recover-missing: stream cleanup skipped (jq/curl unavailable)"; return 0; }
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "fm-control recover-missing: stream cleanup skipped (jq/curl unavailable)"
+    return 0
+  fi
   for mode in confirmed unconfirmed; do
     dir=$(new_case "stream-rebind-$mode" rm34)
     fm_test_fake_stream "$dir/stream" || fail "fake stream hub did not start"

@@ -2586,8 +2586,10 @@ stream_crew() {
 }
 
 test_stream_crew_reads_busy_idle_missing_and_unreachable() {
-  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
-    || { pass "stream crew-state skipped without jq/curl"; return; }
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "stream crew-state skipped without jq/curl"
+    return
+  fi
   reset_fakes
   local d target gen out
   d=$(new_case stream-crew)
