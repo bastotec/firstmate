@@ -65,6 +65,11 @@ usage() { sed -n '/^# USAGE/,/^# ENVIRONMENT/p' "$SCRIPT_DIR/fm-deck-chat.sh" | 
 die() { printf 'fm-deck-chat: %s\n' "$1" >&2; exit "${2:-1}"; }
 q() { printf '%q' "$1"; }
 
+# Every mode starts, steers or stops a primary: refuse a no-mistakes gate agent.
+# shellcheck source=bin/fm-gate-refuse-lib.sh
+. "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
+fm_refuse_if_gate_agent
+
 MODE=run
 case "${1:-}" in
   stop) MODE=stop; shift ;;

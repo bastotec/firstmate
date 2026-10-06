@@ -185,6 +185,17 @@ test_steer_contract_without_a_host() {
   for i in $pids; do wait "$i"; done
   assert_equals "$(seq 6 15)" "$(cat "$LAB"/par.* | sed 's/seq=//' | sort -n)" "parallel publishes are unique and ordered"
 
+  # A no-mistakes gate agent cannot steer or stop the primary; reads stay open.
+  local before
+  before=$(cat "$steer/.seq")
+  rc=0; FM_GATE_REFUSE_BYPASS= NO_MISTAKES_GATE=1 "$STEER" publish --home "$home" --text 'from a gate' 2>/dev/null || rc=$?
+  expect_code 3 "$rc" "a gate agent's publish is refused"
+  assert_equals "$before" "$(cat "$steer/.seq")" "a refused publish allocates no sequence"
+  FM_GATE_REFUSE_BYPASS= NO_MISTAKES_GATE=1 "$STEER" status --home "$home" >/dev/null || fail "status stays readable for a gate agent"
+  rc=0; FM_GATE_REFUSE_BYPASS= NO_MISTAKES_GATE=1 "$BIN/fm-deck-chat.sh" stop --home "$home" 2>/dev/null || rc=$?
+  expect_code 3 "$rc" "a gate agent cannot stop the primary"
+  alive "$pid" || fail "a refused stop leaves the host running"
+
   kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
   rc=0; "$STEER" publish --home "$home" --text 'late' 2>/dev/null || rc=$?
   expect_code 3 "$rc" "a dead host is not present"
